@@ -52,7 +52,7 @@ func TestAnaylizeRealTagData(t *testing.T) {
 		"module":  "test",
 		"flow_id": "12345x",
 	})
-	strList := "base,bk_biz_id=9,bk_cloud_id=0,bk_collect_config_id=171,bk_supplier_id=0,bk_target_cloud_id=0,bk_target_ip=10.0.0.1,bk_target_service_instance_id=5237,bk_target_topo_id=1077,bk_target_topo_level=module,dc_name=Datacenter_shenzheng,host_name=10.0.0.1,ip=10.0.0.1,metric_name=vmware_vm_guest_disk_capacity,partition=E:\\\\\\\\e,vm_name=nzmobile_ruiqingkong_10.0.0.1 metric_value=1541891158016 1611215601000000000"
+	strList := "base,bk_biz_id=9,bk_cloud_id=0,bk_collect_config_id=171,bk_supplier_id=0,bk_target_cloud_id=0,bk_target_ip=127.0.0.1,bk_target_service_instance_id=5237,bk_target_topo_id=1077,bk_target_topo_level=module,dc_name=Datacenter_shenzheng,host_name=127.0.0.1,ip=127.0.0.1,metric_name=vmware_vm_guest_disk_capacity,partition=E:\\\\\\\\e,vm_name=nzmobile_ruiqingkong_127.0.0.1 metric_value=1541891158016 1611215601000000000"
 	ch := make(chan common.Points)
 	go func() {
 		for points := range ch {

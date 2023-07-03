@@ -996,7 +996,7 @@
         }
       ],
       "host": "127.0.0.1 localhost.localdomain localhost\n127.0.0.1 localhost4.localdomain4 localhost4\n\n::1 localhost.localdomain localhost\n::1 localhost6.localdomain6 localhost6\n127.0.0.1 paasee-dev.bktencent.com\n127.0.0.1 jobsee-dev.bktencent.com\n127.0.0.1 cmdbee-dev.bktencent.com\n",
-      "route": "Kernel IP routing table\nDestination     Gateway         Genmask         Flags Metric Ref    Use Iface\n0.0.0.0         127.0.0.1        0.0.0.0         UG    0      0        0 eth0\n10.0.0.1        0.0.0.0         255.255.255.0   U     0      0        0 eth0\n169.254.0.0     0.0.0.0         255.255.0.0     U     1002   0        0 eth0\n"
+      "route": "Kernel IP routing table\nDestination     Gateway         Genmask         Flags Metric Ref    Use Iface\n0.0.0.0         127.0.0.1        0.0.0.0         UG    0      0        0 eth0\n127.0.0.1        0.0.0.0         255.255.255.0   U     0      0        0 eth0\n169.254.0.0     0.0.0.0         255.255.0.0     U     1002   0        0 eth0\n"
     },
     "load": {
       "load_avg": {

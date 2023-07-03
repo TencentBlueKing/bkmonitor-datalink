@@ -7,13 +7,10 @@
 # an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+import bson
 # -*- coding: utf-8 -*-
-import json
 import pymongo
 from dateutil import parser
-import bson
-import random
-
 
 # 脚本实现三个功能
 # 1. insert_host_to_target()  插入主机到某个目标模块
@@ -46,7 +43,7 @@ total_host_count = 600000
 # biz_host_count = 0
 # set_host_count = 0
 # host_count = 0
-# y = col.find_one({"bk_host_innerip": "10.0.0.1"})
+# y = col.find_one({"bk_host_innerip": "127.0.0.1"})
 # y['_id'] = str(y['_id'])
 # print(json.dumps(y))
 

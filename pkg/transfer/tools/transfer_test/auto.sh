@@ -22,7 +22,7 @@ cmd="../transfer"
 chmod +x $cmd
 
 # transfer指标地址
-http_addr="http://10.0.0.1:10202/"
+http_addr="http://127.0.0.1:10202/"
 token="bk_bkmonitorv3:383660fb-2e70-44f0-a0ac-a7cf7540d44c"
 
 # 遍历配置项，逐个测试

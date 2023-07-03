@@ -32,7 +32,7 @@ var tagItems = []TagTestItem{
 		"db1/table1/bk_biz_id==2",
 	},
 	{
-		"SELECT MAX(\"usage\") as _value_ FROM cpu_detail WHERE ((bk_target_ip = '10.0.0.1' AND bk_target_cloud_id = '0') AND bk_biz_id = '2') AND time >= 1606115623000000000 AND time < 1606119223000000000 GROUP BY device_name, bk_target_cloud_id, time(1m), bk_target_ip ORDER BY time asc LIMIT 50000",
+		"SELECT MAX(\"usage\") as _value_ FROM cpu_detail WHERE ((bk_target_ip = '127.0.0.1' AND bk_target_cloud_id = '0') AND bk_biz_id = '2') AND time >= 1606115623000000000 AND time < 1606119223000000000 GROUP BY device_name, bk_target_cloud_id, time(1m), bk_target_ip ORDER BY time asc LIMIT 50000",
 		"db1",
 		"table1",
 		"db1/table1/bk_biz_id==2",
@@ -63,7 +63,7 @@ func TestGetTagsKey(t *testing.T) {
 
 // 测试将一个sql语句解析成tag(用于cluster层路由匹配)需要的损耗
 func BenchmarkGetTagsKey(b *testing.B) {
-	sql := "SELECT MAX(\"usage\") as _value_ FROM cpu_detail WHERE ((bk_target_ip = '10.0.0.1' AND bk_target_cloud_id = '0') AND bk_biz_id = '2') AND time >= 1606115623000000000 AND time < 1606119223000000000 GROUP BY device_name, bk_target_cloud_id, time(1m), bk_target_ip ORDER BY time asc LIMIT 50000"
+	sql := "SELECT MAX(\"usage\") as _value_ FROM cpu_detail WHERE ((bk_target_ip = '127.0.0.1' AND bk_target_cloud_id = '0') AND bk_biz_id = '2') AND time >= 1606115623000000000 AND time < 1606119223000000000 GROUP BY device_name, bk_target_cloud_id, time(1m), bk_target_ip ORDER BY time asc LIMIT 50000"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		tags, err := common.GetSelectTag(tagNames, sql)

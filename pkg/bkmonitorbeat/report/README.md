@@ -69,7 +69,7 @@ Usage of ./bkmonitorbeat:
     ]}'
 
 # 通过http方式发送自定义事件，成功返回code200，result true
-./bkmonitorbeat -report -report.bk_data_id 1500512 -report.type http -report.http.server 10.0.0.1:10205 -report.message.kind event -report.message.body '{
+./bkmonitorbeat -report -report.bk_data_id 1500512 -report.type http -report.http.server 127.0.0.1:10205 -report.message.kind event -report.message.body '{
     "data_id":1500512,
     "access_token":"991146b7e97b409f8952d59355b5f5c7",
     "data":[{
@@ -125,7 +125,7 @@ Usage of ./bkmonitorbeat:
 ```bash
 ./bkmonitorbeat -report \
 -report.type http \
--report.http.server 10.0.1.10:10205 \
+-report.http.server 127.0.0.1:10205 \
 -report.http.token 991146b7e97b409f8952d59355b5f5c7 \
 -report.message.kind event \
 -report.bk_data_id 1500512 \

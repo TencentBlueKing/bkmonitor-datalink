@@ -51,7 +51,7 @@ func TestCalcPortStat(t *testing.T) {
 				},
 				{
 					Protocol:  ProtocolTCP,
-					ConnLaddr: "10.0.0.1",
+					ConnLaddr: "127.0.0.1",
 					ConnLport: 200,
 				},
 				{
@@ -73,7 +73,7 @@ func TestCalcPortStat(t *testing.T) {
 					Protocol:          ProtocolTCP,
 					Listen:            []uint16{300},
 					NonListen:         []uint16{400},
-					NotAccurateListen: []string{"10.0.0.1:200"},
+					NotAccurateListen: []string{"127.0.0.1:200"},
 					BindIP:            "0.0.0.0",
 					ParamRegex:        "",
 					DisplayName:       display,

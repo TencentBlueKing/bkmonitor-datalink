@@ -78,9 +78,9 @@ func (bs *BackendSuite) TestUsage() {
 	common.Config.SetDefault(common.ConfigKeyMaxFlushConcurrency, 100)
 	influxInstance, _, _ := influxdb.NewBackend(context.Background(), influxInfo)
 	bs.Equal(influxInstance.String(), "influxdb_backend[test:127.0.0.1:8087]disabled[false]backup_rate_limit[0]")
-	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
+	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
 	_, err = influxInstance.Write(0, backend.NewWriteParams("test", "", "", ""), backend.NewPointsReaderWithBytes(points), nil)
 	bs.Equal(err, nil)
 	_, err = influxInstance.Query(0, backend.NewQueryParams("test", "select * from cpu_summary", "", "", "", ""), nil)
@@ -127,9 +127,9 @@ func (bs *BackendSuite) TestPushFailed() {
 	common.Config.SetDefault(common.ConfigKeyMaxFlushConcurrency, 100)
 	influxInstance, _, _ := influxdb.NewBackend(context.Background(), influxInfo)
 
-	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
+	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
 	_, err := influxInstance.Write(0, backend.NewWriteParams("test", "", "", ""), backend.NewPointsReaderWithBytes(points), nil)
 	bs.Equal(err, nil)
 
@@ -174,9 +174,9 @@ func (bs *BackendSuite) TestBufferUsage() {
 	common.Config.SetDefault(common.ConfigKeyMaxFlushConcurrency, 100)
 	influxInstance, _, _ := influxdb.NewBackend(context.Background(), influxInfo)
 	bs.Equal(influxInstance.String(), "influxdb_backend[test:127.0.0.1:8087]disabled[false]backup_rate_limit[0]")
-	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
-cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=10.0.1.10 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
+	points := []byte(`cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu1,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1788673.01,iowait=46041.32,stolen=0,system=83036.86,usage=47.47134187529686,user=454551.33 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu2,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1795464.24,iowait=30038.12,stolen=0,system=83006.4,usage=42.99191374630933,user=464300.79 1552898829000000000
+cpu_summary,bk_biz_id=2,bk_cloud_id=0,bk_supplier_id=0,device_name=cpu3,hostname=VM_1_10_centos,ip=127.0.0.1 idle=1807027.32,iowait=23940.69,stolen=0,system=82860.09,usage=44.98991257572465,user=458930.71 1552898829000000000`)
 	time.Sleep(5 * time.Second)
 	_, err = influxInstance.Write(0, backend.NewWriteParams("test", "", "", ""), backend.NewPointsReaderWithBytes(points), nil)
 	bs.Equal(err, nil)

@@ -55,7 +55,7 @@
            "bk_module_id": 58,
          }
 ##### output 示例
-         
+
         - 
         {
                    "result": true,
@@ -69,10 +69,10 @@
                            }
                          },
                          "id": 55,
-                         "name": "10.0.0.1_a1",
+                         "name": "127.0.0.1_a1",
                          "service_template_id": 50,
                          "bk_host_id": 3,
-                         "bk_host_innerip": "10.0.0.1",
+                         "bk_host_innerip": "127.0.0.1",
                          "bk_module_id": 58,
                          "bk_supplier_account": "0"
                        }

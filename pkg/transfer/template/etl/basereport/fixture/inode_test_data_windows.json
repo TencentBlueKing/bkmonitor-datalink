@@ -1,0 +1,287 @@
+{
+  "bkmonitorbeat": {
+    "address": [
+      "fe80::1de6:cc57:ff6f:3881",
+      "127.0.0.1"
+    ],
+    "hostname": "10_0_1_9",
+    "name": "10_0_1_9",
+    "version": "10.1.7"
+  },
+  "bizid": 0,
+  "cloudid": 0,
+  "bk_agent_id": "010000525400c48bdc1670385834306k",
+  "bk_biz_id": 2,
+  "bk_host_id": 30145,
+  "data": {
+    "city": "",
+    "country": "",
+    "cpu": {
+      "cpuinfo": [
+        {
+          "cacheSize": 0,
+          "coreId": "",
+          "cores": 1,
+          "cpu": 0,
+          "family": "1",
+          "flags": [],
+          "mhz": 2394,
+          "microcode": "",
+          "model": "",
+          "modelName": "Intel(R) Xeon(R) Gold 61xx CPU",
+          "physicalId": "0F8BFBFF000506E3",
+          "stepping": 0,
+          "vendorId": "GenuineIntel"
+        }
+      ],
+      "per_stat": [
+        {
+          "cpu": "cpu0",
+          "guest": 0,
+          "guestNice": 0,
+          "idle": 99,
+          "iowait": 0,
+          "irq": 0,
+          "nice": 0,
+          "softirq": 0,
+          "steal": 0,
+          "stolen": 0,
+          "system": 0,
+          "user": 0
+        }
+      ],
+      "per_usage": [
+        1
+      ],
+      "total_stat": {
+        "cpu": "cpu-total",
+        "guest": 0,
+        "guestNice": 0,
+        "idle": 673480.015625,
+        "iowait": 0,
+        "irq": 0,
+        "nice": 0,
+        "softirq": 0,
+        "steal": 0,
+        "stolen": 0,
+        "system": 18907.984375,
+        "user": 13134.3125
+      },
+      "total_usage": 16.05839416058394
+    },
+    "datetime": "2019-04-16 14:49:26",
+    "disk": {
+      "diskstat": {
+        "C:": {
+          "avgqu_sz": 0,
+          "avgrq_sz": 0,
+          "await": 0,
+          "ioTime": 0,
+          "iopsInProgress": 0,
+          "major": 0,
+          "mergedReadCount": 0,
+          "mergedWriteCount": 0,
+          "minor": 0,
+          "name": "C:",
+          "readBytes": 0,
+          "readCount": 0,
+          "readSectors": 0,
+          "readTime": 0,
+          "serialNumber": "",
+          "speedByteRead": 0,
+          "speedByteWrite": 0,
+          "speedIORead": 0,
+          "speedIOWrite": 0,
+          "svctm": 0,
+          "util": 0,
+          "weightedIoTime": 0,
+          "writeBytes": 0,
+          "writeCount": 0,
+          "writeSectors": 0,
+          "writeTime": 0
+        }
+      },
+      "partition": [
+        {
+          "device": "C:",
+          "fstype": "NTFS",
+          "mountpoint": "C:",
+          "opts": "rw.compress"
+        }
+      ],
+      "usage": [
+        {
+          "free": 38422781952,
+          "fstype": "",
+          "inodesFree": 0,
+          "inodesTotal": 0,
+          "inodesUsed": 0,
+          "inodesUsedPercent": 0,
+          "path": "C:",
+          "total": 53317988352,
+          "used": 14895206400,
+          "usedPercent": 27.936549859427075
+        }
+      ]
+    },
+    "env": {
+      "crontab": null,
+      "host": "",
+      "route": "===========================================================================\r\nInterface List\r\n 14...52 54 00 fa fb 1c ......Tencent VirtIO Ethernet Adapter\r\n  1...........................Software Loopback Interface 1\r\n 12...00 00 00 00 00 00 00 e0 Microsoft ISATAP Adapter\r\n===========================================================================\r\n\r\nIPv4 Route Table\r\n===========================================================================\r\nActive Routes:\r\nNetwork Destination        Netmask          Gateway       Interface  Metric\r\n          0.0.0.0          0.0.0.0         127.0.0.1         127.0.0.1      5\r\n         10.0.0.0        255.0.0.0         127.0.0.1         127.0.0.1      6\r\n         10.0.0.1    255.255.255.0         On-link          127.0.0.1    261\r\n         127.0.0.1  255.255.255.255         On-link          127.0.0.1    261\r\n       127.0.0.1  255.255.255.255         On-link          127.0.0.1    261\r\n        127.0.0.0        255.0.0.0         On-link         127.0.0.1    306\r\n        127.0.0.1  255.255.255.255         On-link         127.0.0.1    306\r\n  127.255.255.255  255.255.255.255         On-link         127.0.0.1    306\r\n      169.254.0.0    255.255.128.0         127.0.0.1         127.0.0.1      6\r\n       172.16.0.0      255.240.0.0         127.0.0.1         127.0.0.1      6\r\n      192.168.0.0      255.255.0.0         127.0.0.1         127.0.0.1      6\r\n        224.0.0.0        240.0.0.0         On-link         127.0.0.1    306\r\n        224.0.0.0        240.0.0.0         On-link          127.0.0.1    261\r\n  255.255.255.255  255.255.255.255         On-link         127.0.0.1    306\r\n  255.255.255.255  255.255.255.255         On-link          127.0.0.1    261\r\n===========================================================================\r\nPersistent Routes:\r\n  Network Address          Netmask  Gateway Address  Metric\r\n          0.0.0.0          0.0.0.0         127.0.0.1       1\r\n      169.254.0.0    255.255.128.0         127.0.0.1       1\r\n         10.0.0.0        255.0.0.0         127.0.0.1       1\r\n       172.16.0.0      255.240.0.0         127.0.0.1       1\r\n      192.168.0.0      255.255.0.0         127.0.0.1       1\r\n===========================================================================\r\n\r\nIPv6 Route Table\r\n===========================================================================\r\nActive Routes:\r\n If Metric Network Destination      Gateway\r\n  1    306 ::1/128                  On-link\r\n 14    261 fe80::/64                On-link\r\n 14    261 fe80::1de6:cc57:ff6f:3881/128\r\n                                    On-link\r\n  1    306 ff00::/8                 On-link\r\n 14    261 ff00::/8                 On-link\r\n===========================================================================\r\nPersistent Routes:\r\n  None\r\n"
+    },
+    "load": null,
+    "mem": {
+      "meminfo": {
+        "active": 0,
+        "available": 206888960,
+        "buffers": 0,
+        "cached": 0,
+        "dirty": 0,
+        "free": 206888960,
+        "inactive": 0,
+        "total": 1073188864,
+        "used": 866299904,
+        "usedPercent": 80,
+        "wired": 0,
+        "writeback": 0,
+        "writebacktmp": 0
+      },
+      "vmstat": {
+        "free": 0,
+        "sin": 0,
+        "sout": 0,
+        "total": 0,
+        "used": 0,
+        "usedPercent": 0
+      }
+    },
+    "net": {
+      "dev": [
+        {
+          "bytesRecv": 854167039,
+          "bytesSent": 895652643,
+          "dropin": 0,
+          "dropout": 0,
+          "errin": 0,
+          "errout": 0,
+          "fifoin": 0,
+          "fifoout": 0,
+          "name": "Tencent VirtIO Ethernet Adapter",
+          "packetsRecv": 4701658,
+          "packetsSent": 4431803,
+          "speedPacketsRecv": 6,
+          "speedPacketsSent": 6,
+          "speedRecv": 900,
+          "speedSent": 1654
+        }
+      ],
+      "interface": [
+        {
+          "addrs": [
+            {
+              "addr": "fe80::1de6:cc57:ff6f:3881/64"
+            },
+            {
+              "addr": "127.0.0.1/24"
+            }
+          ],
+          "flags": [
+            "up",
+            "broadcast",
+            "multicast"
+          ],
+          "hardwareaddr": "52:54:00:fa:fb:1c",
+          "mtu": 1500,
+          "name": "以太网"
+        },
+        {
+          "addrs": [
+            {
+              "addr": "::1/128"
+            },
+            {
+              "addr": "127.0.0.1/8"
+            }
+          ],
+          "flags": [
+            "up",
+            "loopback",
+            "multicast"
+          ],
+          "hardwareaddr": "",
+          "mtu": -1,
+          "name": "Loopback Pseudo-Interface 1"
+        },
+        {
+          "addrs": [],
+          "flags": [
+            "pointtopoint",
+            "multicast"
+          ],
+          "hardwareaddr": "00:00:00:00:00:00:00:e0",
+          "mtu": 1280,
+          "name": "isatap.{A971AFD4-1FBB-4F19-A29A-2F6D33F5D01B}"
+        }
+      ],
+      "netstat": {
+        "close": 0,
+        "closeWait": 0,
+        "closing": 0,
+        "established": 155,
+        "finWait1": 0,
+        "finWait2": 0,
+        "lastAck": 0,
+        "listen": 31,
+        "synRecv": 0,
+        "syncSent": 0,
+        "timeWait": 12
+      },
+      "protocolstat": {
+        "udp": {
+          "inCsumErrors": 0,
+          "inDatagrams": 0,
+          "inErrors": 0,
+          "noPorts": 0,
+          "outDatagrams": 0,
+          "rcvbufErrors": 0,
+          "sndbufErrors": 0
+        }
+      }
+    },
+    "system": {
+      "docker": {
+        "Client": {
+          "ApiVersion": "",
+          "GoVersion": "",
+          "Version": ""
+        },
+        "Server": {
+          "ApiVersion": "",
+          "GoVersion": "",
+          "Version": ""
+        }
+      },
+      "info": {
+        "bootTime": 1554691828,
+        "hostid": "",
+        "hostname": "10_0_1_9",
+        "kernelVersion": "",
+        "os": "windows",
+        "platform": "Microsoft Windows Server 2012 R2 Datacenter",
+        "platformFamily": "Server",
+        "platformVersion": "6.3.9600 Build 9600",
+        "procs": 51,
+        "systemtype": "64 位",
+        "uptime": 705492,
+        "virtualizationRole": "",
+        "virtualizationSystem": ""
+      }
+    },
+    "timezone": 8,
+    "utctime": "2019-04-16 06:49:26"
+  },
+  "dataid": 1001,
+  "gseindex": 10079,
+  "ip": "127.0.0.1",
+  "type": "basereport"
+}

@@ -1,0 +1,364 @@
+definitions:
+  http.ErrResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  http.PromData:
+    properties:
+      series:
+        items:
+          $ref: '#/definitions/http.TablesItem'
+        type: array
+      status:
+        $ref: '#/definitions/metadata.Status'
+    type: object
+  http.TablesItem:
+    properties:
+      columns:
+        items:
+          type: string
+        type: array
+      group_keys:
+        items:
+          type: string
+        type: array
+      group_values:
+        items:
+          type: string
+        type: array
+      metric_name:
+        type: string
+      name:
+        type: string
+      types:
+        items:
+          type: string
+        type: array
+      values:
+        items:
+          items: { }
+          type: array
+        type: array
+    type: object
+  metadata.Status:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  structured.AggregateMethod:
+    properties:
+      dimensions:
+        description: Dimensions 聚合维度
+        example:
+          - bk_target_ip
+          - bk_target_cloud_id
+        items:
+          type: string
+        type: array
+      method:
+        description: Method 聚合方法
+        example: mean
+        type: string
+      without:
+        description: Without
+        type: boolean
+    type: object
+  structured.ConditionField:
+    properties:
+      field_name:
+        description: DimensionName 过滤字段
+        example: bk_biz_id
+        type: string
+      op:
+        description: Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
+        example: contains
+        type: string
+      value:
+        description: Value 查询值
+        example:
+        - "2"
+        items:
+          type: string
+        type: array
+    type: object
+  structured.Conditions:
+    properties:
+      condition_list:
+        description: ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
+        example:
+        - and
+        items:
+          type: string
+        type: array
+      field_list:
+        description: FieldList 查询条件
+        items:
+          $ref: '#/definitions/structured.ConditionField'
+        type: array
+    type: object
+  structured.Query:
+    properties:
+      conditions:
+        allOf:
+          - $ref: '#/definitions/structured.Conditions'
+        description: Conditions 过滤条件
+      dimensions:
+        description: Dimensions promQL 使用维度
+        example:
+          - bk_target_ip
+          - bk_target_cloud_id
+        items:
+          type: string
+        type: array
+      field_name:
+        description: FieldName 查询指标
+        example: usage
+        type: string
+      function:
+        description: AggregateMethodList 维度聚合函数
+        items:
+          $ref: '#/definitions/structured.AggregateMethod'
+        type: array
+      limit:
+        description: Limit 点数限制数量
+        example: 0
+        type: integer
+      offset:
+        description: Offset 偏移量
+        example: ""
+        type: string
+      offset_forward:
+        description: OffsetForward 偏移方向，默认 false 为向前偏移
+        example: false
+        type: boolean
+      reference_name:
+        description: ReferenceName 别名，用于表达式计算
+        example: a
+        type: string
+      slimit:
+        description: Slimit 维度限制数量
+        example: 0
+        type: integer
+      start_or_end:
+        description: StartOrEnd @-modifier 标记，start or end
+        type: integer
+      table_id:
+        description: TableID 数据实体ID，容器指标可以为空
+        example: system.cpu_summary
+        type: string
+      time_aggregation:
+        allOf:
+          - $ref: '#/definitions/structured.TimeAggregation'
+        description: TimeAggregation 时间聚合方法
+      timestamp:
+        description: Timestamp @-modifier 标记
+        type: integer
+      vector_offset:
+        allOf:
+          - $ref: '#/definitions/time.Duration'
+        description: VectorOffset
+    type: object
+  structured.QueryPromQL:
+    properties:
+      bk_biz_ids:
+        items:
+          type: string
+        type: array
+      end:
+        type: string
+      limit:
+        type: integer
+      max_source_resolution:
+        type: string
+      not_align_influxdb:
+        description: 不与influxdb对齐
+        type: boolean
+      promql:
+        type: string
+      slimit:
+        type: integer
+      start:
+        type: string
+      step:
+        type: string
+    type: object
+  structured.QueryTs:
+    properties:
+      down_sample_range:
+        description: DownSampleRange 降采样：大于Step才能生效，可以为空
+        example: 5m
+        type: string
+      end_time:
+        description: End 结束时间：单位为毫秒的时间戳
+        example: "1657851600"
+        type: string
+      metric_merge:
+        description: MetricMerge 表达式：支持所有PromQL语法
+        example: a
+        type: string
+      query_list:
+        description: QueryList 查询实例
+        items:
+          $ref: '#/definitions/structured.Query'
+        type: array
+      space_uid:
+        description: SpaceUid 空间ID
+        type: string
+      start_time:
+        description: Start 开始时间：单位为毫秒的时间戳
+        example: "1657848000"
+        type: string
+      step:
+        description: Step 步长：最终返回的点数的时间间隔
+        example: 1m
+        type: string
+    type: object
+  structured.TimeAggregation:
+    properties:
+      function:
+        description: Function 时间聚合方法
+        example: avg_over_time
+        type: string
+      window:
+        description: Window 聚合周期
+        example: 60s
+        type: string
+    type: object
+  time.Duration:
+    enum:
+      - -9223372036854775808
+      - 9223372036854775807
+      - 1
+      - 1000
+      - 1000000
+      - 1000000000
+      - 60000000000
+      - 3600000000000
+    type: integer
+    x-enum-varnames:
+      - minDuration
+      - maxDuration
+      - Nanosecond
+      - Microsecond
+      - Millisecond
+      - Second
+      - Minute
+      - Hour
+info:
+  contact: {}
+paths:
+  /query/ts:
+    post:
+      operationId: ts-query-request
+      parameters:
+        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+          description: TraceID
+          in: header
+          name: traceparent
+          type: string
+        - default: username:shamcleren
+          description: 来源
+          in: header
+          name: Bk-Query-Source
+          type: string
+        - default: bkcc__2
+          description: 空间UID
+          in: header
+          name: X-Bk-Scope-Space-Uid
+          type: string
+        - description: json data
+          in: body
+          name: data
+          required: true
+          schema:
+            $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by ts
+  /query/ts/exemplar:
+    post:
+      operationId: ts-query-exemplar-request
+      parameters:
+        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+          description: TraceID
+          in: header
+          name: traceparent
+          type: string
+        - default: username:shamcleren
+          description: 来源
+          in: header
+          name: Bk-Query-Source
+          type: string
+        - default: bkcc__2
+          description: 空间UID
+          in: header
+          name: X-Bk-Scope-Space-Uid
+          type: string
+        - description: json data
+          in: body
+          name: data
+          required: true
+          schema:
+            $ref: '#/definitions/structured.QueryTs'
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by ts exemplar
+  /query/ts/promql:
+    post:
+      operationId: ts-query-request-promql
+      parameters:
+        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+          description: TraceID
+          in: header
+          name: traceparent
+          type: string
+        - default: username:shamcleren
+          description: 来源
+          in: header
+          name: Bk-Query-Source
+          type: string
+        - default: bkcc__2
+          description: 空间UID
+          in: header
+          name: X-Bk-Scope-Space-Uid
+          type: string
+        - description: json data
+          in: body
+          name: data
+          required: true
+          schema:
+            $ref: '#/definitions/structured.QueryPromQL'
+      produces:
+        - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query monitor by promql
+swagger: "2.0"

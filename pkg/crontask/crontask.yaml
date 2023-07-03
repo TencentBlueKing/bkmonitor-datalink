@@ -1,0 +1,54 @@
+service:
+  worker_number: 1
+  listen: 127.0.0.1
+  port: 10211
+broker:
+  type: rabbitmq
+  redis:
+    type: "single"
+    host: "127.0.0.1"
+    port: 6379
+    password: 123456
+    database: 0
+    queue_name: "feeds"
+  rabbitmq:
+    scheme: "amqp"
+    host: "127.0.0.1"
+    port: 5672
+    username: "guest"
+    password: "guest"
+    vhost: "/"
+    exchange: "default"
+    queue_name: "addtask"
+database:
+  type: mysql
+  host: "127.0.0.1"
+  port: 3306
+  user: root
+  password: "123456"
+  db_name: "ee-V3.5.x"
+  charset: utf8
+  max_idle_conns: 10
+  max_open_conns: 100
+  debug_mode: false
+log:
+  filename: "./logs/task.log"
+  max_size: 200
+  max_age: 1
+  max_backups: 5
+  level: "info"
+redis:
+  type: "single"
+  master_name: ""
+  address:
+  - 127.0.0.1:6379
+  username: ""
+  password: 157632
+  database: 0
+  dial_timeout: 10
+  read_timeout: 10
+metric_dimension:
+  metric_key_prefix: "bkmonitor:metrics_"
+  metric_dimension_key_prefix: "bkmonitor:metric_dimensions_"
+  max_metrics_fetch_step: 500
+  time_series_metric_expired_days: 30

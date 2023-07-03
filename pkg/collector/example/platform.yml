@@ -1,0 +1,13 @@
+type: "platform"
+processor:
+  # TokenChecker: 权限校验处理器
+  - name: "token_checker/fixed"
+    config:
+      type: "fixed"
+      fixed_token: "token1"
+      resource_key: "bk.data.token"
+      traces_dataid: 1003   # default: 0
+      metrics_dataid: 1001  # default: 0
+      logs_dataid: 1002     # default: 0
+      biz_id: 2
+      app_name: "apm-test-platform"

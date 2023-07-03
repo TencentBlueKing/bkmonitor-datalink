@@ -1,0 +1,39 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package cmd
+
+import (
+	"github.com/spf13/cobra"
+	"go.uber.org/automaxprocs/maxprocs"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
+)
+
+func init() {
+	maxprocs.Logger(func(s string, i ...interface{}) {})
+}
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "bkmonitor-operator",
+	Short: `bkmonitor-operator cli to manage and deploy the operator program`,
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVarP(
+		&config.CustomConfigFilePath,
+		"", "c", "",
+		"config file (default is $HOME/.bkmonitor-operator.yaml)",
+	)
+}
+
+func Execute() error {
+	return rootCmd.Execute()
+}

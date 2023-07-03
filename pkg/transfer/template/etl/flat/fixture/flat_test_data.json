@@ -1,0 +1,24 @@
+{
+  "bizid": 0,
+  "bk_cloud_id": 0,
+  "cloudid": 0,
+  "bk_agent_id": "010000525400c48bdc1670385834306k",
+  "bk_biz_id": 2,
+  "bk_host_id": 30145,
+  "data": "hello",
+  "group_info": [
+    {
+      "tag": "aaa",
+      "tag1": "aaa1"
+    },
+    {
+      "tag": "bbb",
+      "tag1": "bbb1"
+    }
+  ],
+  "index": 1,
+  "ip": "127.0.0.1",
+  "testD": "testD",
+  "testM": 10086,
+  "timestamp": 1554094763
+}

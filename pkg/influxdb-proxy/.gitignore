@@ -1,0 +1,5 @@
+.idea
+debug.test
+bin/
+.DS_Store
+.vscode

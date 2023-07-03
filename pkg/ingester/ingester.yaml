@@ -1,0 +1,18 @@
+consul:
+  address: 127.0.0.1:8500
+  event_buffer_size: 32  # 缓冲区大小
+  data_id_path: "metadata"
+http:
+  host: 127.0.0.1
+  port: 9004
+  debug: false
+  auth_header: "X-Bk-Fta-Token"
+logging:
+  level: info  # 日志级别
+  output: stdout
+  options:
+    file: ingester.log  # 日志文件路径
+    maxage: 10  # 最多保留天数
+    maxsize: 500   # 单文件最大MB
+    maxbackups: 10
+    compress: true

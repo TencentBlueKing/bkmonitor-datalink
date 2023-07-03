@@ -1,0 +1,8 @@
+# IDE
+*.DS_Store
+.idea/
+.vscode/
+
+bin/
+logs/
+dist/

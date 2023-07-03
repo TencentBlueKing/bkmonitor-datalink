@@ -1,0 +1,68 @@
+type: "subconfig"
+token: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
+
+default:
+  processor:
+    - name: "apdex_calculator/fixed"
+      config:
+        calculator:
+          type: "fixed"
+          apdex_status: "satisfied"
+        rules:
+          - kind: ""
+            metric_name: "bk_apm_duration"
+            destination: "apdex_type_subconfig1"
+
+    - name: "traces_deriver/delta"
+      config:
+        operations:
+          - type: "delta"
+            metric_name: "bk_apm_count"
+            publish_interval: "10s"
+            gc_interval: "1h"
+            max_series: 1000
+            rules:
+              - kind: "SPAN_KIND_SERVER"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"
+
+#    - name: "rate_limiter/token_bucket"
+#      config:
+#        type: token_bucket
+#        qps: 100
+#        burst: 200
+
+service:
+  - id: "Go-Tier-Name"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "tolerating"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig2"
+instance:
+  - id: "golang:Go-Tier-Name:MANDOCHEN-MB0:192.168.1.5:8004"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "frustrated"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig3"

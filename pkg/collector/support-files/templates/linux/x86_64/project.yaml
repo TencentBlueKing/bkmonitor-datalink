@@ -1,0 +1,74 @@
+name: bk-collector
+version: 0.0.1
+description: 腾讯蓝鲸的 APM 服务端组件，负责接收蓝鲸监控的自定义时序指标及自定义事件上报，以及 Prometheus、OpenTelemetry、Jaeger、Zipkin 等主流开源组件的遥测数据
+scenario: 蓝鲸监控，日志检索，应用性能监控等相关的数据. 首次使用插件管理进行操作前，先到相关平台进行设置插件的功能项
+category: official
+config_file: bk-collector.conf
+config_format: yaml
+launch_node: proxy
+auto_launch: 0
+is_binary: 1
+use_db: 0
+config_templates:
+  - plugin_version: "*"
+    name: bk-collector.conf
+    version: 3
+    file_path: etc
+    format: yaml
+    is_main_config: 1
+    source_path: etc/bk-collector-main.conf.tpl
+
+  - plugin_version: "*"
+    name: bk-collector-platform.conf
+    version: 1
+    file_path: etc/bk-collector
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bk-collector-platform.conf.tpl
+
+  - plugin_version: "*"
+    name: bk-collector-application.conf
+    version: 1
+    file_path: etc/bk-collector
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bk-collector-application.conf.tpl
+
+  - plugin_version: "*"
+    name: bk-collector-example
+    version: 1
+    file_path: etc
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bk-collector-example
+
+  - plugin_version: "*"
+    name: bk-collector-report-v2.conf
+    version: 1
+    file_path: etc/bk-collector
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bk-collector-report-v2.conf.tpl
+
+  - plugin_version: "*"
+    name: bkmonitorproxy_ping.conf
+    version: 1
+    file_path: etc/bk-collector
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bkmonitorproxy_ping.conf.tpl
+
+  - plugin_version: "*"
+    name: bkmonitorproxy_report.conf
+    version: 1
+    file_path: etc/bk-collector
+    format: yaml
+    is_main_config: 0
+    source_path: etc/bkmonitorproxy_report.conf.tpl
+
+control:
+  start: "./start.sh bk-collector"
+  stop: "./stop.sh bk-collector"
+  restart: "./restart.sh bk-collector"
+  reload: "./reload.sh bk-collector"
+  version: "./bk-collector -v"

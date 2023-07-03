@@ -1,0 +1,39 @@
+# 此文件为单测使用 请勿修改
+type: "subconfig"
+token: "token1"
+
+default:
+  processor:
+    - name: "apdex_calculator/fixed"
+      config:
+        calculator:
+          type: "fixed"
+          apdex_status: "satisfied"
+        rules:
+          - kind: ""
+            metric_name: "bk_apm_duration"
+            destination: "apdex_type_subconfig1"
+service:
+  - id: "Go-Tier-Name"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "tolerating"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig2"
+instance:
+  - id: "golang:Go-Tier-Name:MANDOCHEN-MB0:127.0.0.1:8004"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "frustrated"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig3"

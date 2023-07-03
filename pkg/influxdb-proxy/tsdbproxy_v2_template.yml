@@ -1,0 +1,49 @@
+# batch_size: 5000
+http:                                # 监听配置
+  listen: 192.168.0.1                 # 监听地址
+  port: 8081                         # 监听端口
+  read_timeout: 30   #读取body限时
+  read_header_timeout: 3  #读取header限时
+kafka:                               # kafka配置
+  address: 192.168.0.1
+  port: 9092
+  topic_prefix: bkmonitor            # kafka topic前缀，实际为${prefix}_${node_name}
+  offset_retention: 72h              # offset保留时间，应长于kafka日志保留时间
+  version: 0.10.2.0                   # kafka版本信息
+consul:
+  prefix: bkmonitor_enterprise_production/metadata/influxdb_info
+  address: 192.168.136.128:8500
+  health:
+    service_name: influxdb_proxy
+    period: 30s
+redis:
+  mode: standalone
+  host: 127.0.0.1
+  port: 6379
+  password:
+  master_name:
+  sentinel_address:
+    - 127.0.0.1:6379
+  sentinel_password:
+  database: 0
+  dial_timeout: 1s
+  read_timeout: 10s
+  service_name: influxdbProxy
+backend:
+  ignore_kafka: false  #开关开启则不使用kafka备份
+  force_backup: true   #开启强制备份，则当backend写入收到inflxudb返回的500以上错误码时，会备份数据
+authorization:
+  enable: false
+  username: test
+  password: test123
+logger:                              # 日志配置
+  formatter:
+    name: text
+  level: debug                       # 日志级别，建议生产环境配置为INFO及以上
+  out:
+    name: file
+    options:
+      file: tsdbproxy_v2.log
+      max_days: 2d         #日志保留时间
+      duration: 4h         #日志分片时间
+      rotate: true

@@ -1,0 +1,23 @@
+# 此文件为单测使用 请勿修改
+type: "report_v2"
+token: "1100002_accesstoken"
+
+default:
+  processor:
+    - name: "token_checker/proxy"
+      config:
+        type: "proxy"
+        proxy_dataid: 1100002
+        proxy_token: "1100002_accesstoken"
+
+    - name: "rate_limiter/token_bucket"
+      config:
+        type: token_bucket
+        qps: 500
+        burst: 1000
+
+    - name: "proxy_validator/common"
+      config:
+        type: "time_series"
+        version: "v2"
+        max_future_time_offset: 3600

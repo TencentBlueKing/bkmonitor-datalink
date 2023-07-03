@@ -1,0 +1,298 @@
+{
+  "bkmonitorbeat": {
+    "address": [
+      "127.0.0.1"
+    ],
+    "hostname": "VM_1_10_centos",
+    "name": "VM_1_10_centos",
+    "version": "1.2.10"
+  },
+  "bizid": 0,
+  "cloudid": 0,
+  "bk_agent_id": "010000525400c48bdc1670385834306k",
+  "bk_biz_id": 2,
+  "bk_host_id": 30145,
+  "data": {
+    "processes": [
+      {
+        "bindip": "",
+        "displayname": "consul-agent",
+        "exists": 1,
+        "listen": [
+          8301,
+          8500,
+          53
+        ],
+        "name": "consul",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_adminserver",
+        "exists": 1,
+        "listen": [
+          32004
+        ],
+        "name": "cmdb_adminserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_objectcontroller",
+        "exists": 1,
+        "listen": [
+          31001
+        ],
+        "name": "cmdb_objectcontroller",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_eventserver",
+        "exists": 1,
+        "listen": [
+          32005
+        ],
+        "name": "cmdb_eventserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_procserver",
+        "exists": 1,
+        "listen": [
+          32003
+        ],
+        "name": "cmdb_procserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "job-java",
+        "exists": 1,
+        "listen": [
+          8444,
+          8008
+        ],
+        "name": "java",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "job.conf",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "redis-server",
+        "exists": 1,
+        "listen": [
+          6379
+        ],
+        "name": "redis-server",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": ":6379",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "127.0.0.1",
+        "displayname": "mytest1_exporter",
+        "exists": 1,
+        "listen": [],
+        "name": "mytest1_exporter",
+        "nonlisten": [
+          9601,
+          9602,
+          9726
+        ],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 0,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_hostserver",
+        "exists": 1,
+        "listen": [
+          32001
+        ],
+        "name": "cmdb_hostserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_auditcontroller",
+        "exists": 1,
+        "listen": [
+          31004
+        ],
+        "name": "cmdb_auditcontroller",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_datacollection",
+        "exists": 1,
+        "listen": [
+          33084
+        ],
+        "name": "cmdb_datacollection",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_proccontroller",
+        "exists": 1,
+        "listen": [
+          31003
+        ],
+        "name": "cmdb_proccontroller",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "zk-java",
+        "exists": 1,
+        "listen": [
+          3888,
+          2181
+        ],
+        "name": "java",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "org.apache.zookeeper.server.quorum.QuorumPeerMain",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_hostcontroller",
+        "exists": 1,
+        "listen": [
+          31002
+        ],
+        "name": "cmdb_hostcontroller",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_toposerver",
+        "exists": 1,
+        "listen": [
+          32002
+        ],
+        "name": "cmdb_toposerver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_apiserver",
+        "exists": 1,
+        "listen": [
+          33031
+        ],
+        "name": "cmdb_apiserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "cmdb_webserver",
+        "exists": 1,
+        "listen": [
+          33083
+        ],
+        "name": "cmdb_webserver",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "mongod",
+        "exists": 1,
+        "listen": [
+          27017
+        ],
+        "name": "mongod",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "",
+        "porthealth": 1,
+        "protocol": "tcp"
+      },
+      {
+        "bindip": "",
+        "displayname": "redis-sentinel",
+        "exists": 1,
+        "listen": [
+          16379
+        ],
+        "name": "redis-server",
+        "nonlisten": [],
+        "notaccuratelisten": [],
+        "paramregex": "sentinel",
+        "porthealth": 1,
+        "protocol": "tcp"
+      }
+    ]
+  },
+  "dataid": 1013,
+  "datetime": "2019-04-01 12:50:38",
+  "gseindex": 61223,
+  "ip": "127.0.0.1",
+  "timezone": 8,
+  "type": "processbeat",
+  "utctime": "2019-04-01 04:50:38"
+}

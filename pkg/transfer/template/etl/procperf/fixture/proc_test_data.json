@@ -1,0 +1,775 @@
+{
+  "bkmonitorbeat": {
+    "address": [
+      "127.0.0.1"
+    ],
+    "hostname": "VM_1_10_centos",
+    "name": "VM_1_10_centos",
+    "version": "1.2.10"
+  },
+  "bizid": 0,
+  "cloudid": 0,
+  "bk_agent_id": "010000525400c48bdc1670385834306k",
+  "bk_biz_id": 2,
+  "bk_host_id": 30145,
+  "data": {
+    "perf": [
+      {
+        "cpu": {
+          "start_time": "2019-02-18T14:51:12.000Z",
+          "total": {
+            "pct": 0.007800,
+            "ticks": 12
+          },
+          "system": {
+            "ticks": 10
+          },
+          "user": {
+            "ticks": 11
+          }
+        },
+        "displayname": "mongod",
+        "exe": "/data/bkee/service/mongodb/bin/mongod",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 181
+        },
+        "io": {
+          "read_bytes": 7360700416,
+          "read_speed": 0.000000,
+          "write_bytes": 14865457152,
+          "write_speed": 5256.531578
+        },
+        "memory": {
+          "rss": {
+            "bytes": 175132672,
+            "pct": 0.010500
+          },
+          "share": 4014080,
+          "size": 1626701824
+        },
+        "name": "mongod",
+        "paramregex": "",
+        "pgid": 4771,
+        "pid": 4772,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-11T11:48:05.000Z",
+          "total": {
+            "pct": 0.014000
+          }
+        },
+        "displayname": "consul-agent",
+        "exe": "/usr/bin/consul",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 22
+        },
+        "io": {
+          "read_bytes": 32594833408,
+          "read_speed": 0.000000,
+          "write_bytes": 168698781696,
+          "write_speed": 273067.424770
+        },
+        "memory": {
+          "rss": {
+            "bytes": 81248256,
+            "pct": 0.004900
+          },
+          "share": 57880576,
+          "size": 184864768
+        },
+        "name": "consul",
+        "paramregex": "",
+        "pgid": 4867,
+        "pid": 4867,
+        "ppid": 4837,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-18T14:51:31.000Z",
+          "total": {
+            "pct": 0.002700
+          }
+        },
+        "displayname": "zk-java",
+        "exe": "/data/bkee/service/java/bin/java",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 38
+        },
+        "io": {
+          "read_bytes": 2576191488,
+          "read_speed": 0.000000,
+          "write_bytes": 39948386304,
+          "write_speed": 13448.640273
+        },
+        "memory": {
+          "rss": {
+            "bytes": 158474240,
+            "pct": 0.009500
+          },
+          "share": 2691072,
+          "size": 7815032832
+        },
+        "name": "java",
+        "paramregex": "org.apache.zookeeper.server.quorum.QuorumPeerMain",
+        "pgid": 5997,
+        "pid": 6162,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:24:30.000Z",
+          "total": {
+            "pct": 0.005200
+          }
+        },
+        "displayname": "job-java",
+        "exe": "/data/bkee/service/java/bin/java",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 77
+        },
+        "io": {
+          "read_bytes": 8387293184,
+          "read_speed": 0.000000,
+          "write_bytes": 12891226112,
+          "write_speed": 1774.949073
+        },
+        "memory": {
+          "rss": {
+            "bytes": 4166598656,
+            "pct": 0.250100
+          },
+          "share": 131072,
+          "size": 8253329408
+        },
+        "name": "java",
+        "paramregex": "job.conf",
+        "pgid": 6034,
+        "pid": 6206,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-18T14:51:45.000Z",
+          "total": {
+            "pct": 0.005300
+          }
+        },
+        "displayname": "redis-server",
+        "exe": "/usr/bin/redis-server",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 149
+        },
+        "io": {
+          "read_bytes": 2819203072,
+          "read_speed": 0.000000,
+          "write_bytes": 8192,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 19648512,
+            "pct": 0.001200
+          },
+          "share": 634880,
+          "size": 190590976
+        },
+        "name": "redis-server",
+        "paramregex": ":6379",
+        "pgid": 7066,
+        "pid": 7066,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-18T14:51:45.000Z",
+          "total": {
+            "pct": 0.001800
+          }
+        },
+        "displayname": "redis-sentinel",
+        "exe": "/usr/bin/redis-server",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 83
+        },
+        "io": {
+          "read_bytes": 2163552256,
+          "read_speed": 0.000000,
+          "write_bytes": 1077248,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 8548352,
+            "pct": 0.000500
+          },
+          "share": 712704,
+          "size": 150745088
+        },
+        "name": "redis-server",
+        "paramregex": "sentinel",
+        "pgid": 7070,
+        "pid": 7070,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-21T06:46:06.000Z",
+          "total": {
+            "pct": 0.000000
+          }
+        },
+        "displayname": "mytest1_exporter",
+        "exe": "/usr/local/gse/external_collector/mytest1_exporter/mytest1_exporter",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 8
+        },
+        "io": {
+          "read_bytes": 2505338880,
+          "read_speed": 0.000000,
+          "write_bytes": 0,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 10113024,
+            "pct": 0.000600
+          },
+          "share": 2060288,
+          "size": 17113088
+        },
+        "name": "mytest1_exporter",
+        "paramregex": "",
+        "pgid": 7458,
+        "pid": 7460,
+        "ppid": 1,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.004200
+          }
+        },
+        "displayname": "cmdb_hostcontroller",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_hostcontroller",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 15
+        },
+        "io": {
+          "read_bytes": 14568337408,
+          "read_speed": 0.000000,
+          "write_bytes": 3014656,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 38199296,
+            "pct": 0.002300
+          },
+          "share": 3731456,
+          "size": 410816512
+        },
+        "name": "cmdb_hostcontroller",
+        "paramregex": "",
+        "pgid": 8929,
+        "pid": 8929,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.001700
+          }
+        },
+        "displayname": "cmdb_hostserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_hostserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 14
+        },
+        "io": {
+          "read_bytes": 14267944960,
+          "read_speed": 0.000000,
+          "write_bytes": 155312128,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 37367808,
+            "pct": 0.002200
+          },
+          "share": 3383296,
+          "size": 476876800
+        },
+        "name": "cmdb_hostserver",
+        "paramregex": "",
+        "pgid": 8930,
+        "pid": 8930,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.001800
+          }
+        },
+        "displayname": "cmdb_toposerver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_toposerver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 16
+        },
+        "io": {
+          "read_bytes": 14256435200,
+          "read_speed": 0.000000,
+          "write_bytes": 4415488,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 44421120,
+            "pct": 0.002700
+          },
+          "share": 3837952,
+          "size": 211881984
+        },
+        "name": "cmdb_toposerver",
+        "paramregex": "",
+        "pgid": 8931,
+        "pid": 8931,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.001500
+          }
+        },
+        "displayname": "cmdb_auditcontroller",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_auditcontroller",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 15
+        },
+        "io": {
+          "read_bytes": 14459097088,
+          "read_speed": 0.000000,
+          "write_bytes": 4280320,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 36372480,
+            "pct": 0.002200
+          },
+          "share": 2580480,
+          "size": 272515072
+        },
+        "name": "cmdb_auditcontroller",
+        "paramregex": "",
+        "pgid": 8935,
+        "pid": 8935,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.002300
+          }
+        },
+        "displayname": "cmdb_apiserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_apiserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 16
+        },
+        "io": {
+          "read_bytes": 14529892352,
+          "read_speed": 0.000000,
+          "write_bytes": 948932608,
+          "write_speed": 409.603670
+        },
+        "memory": {
+          "rss": {
+            "bytes": 47943680,
+            "pct": 0.002900
+          },
+          "share": 3362816,
+          "size": 493924352
+        },
+        "name": "cmdb_apiserver",
+        "paramregex": "",
+        "pgid": 8936,
+        "pid": 8936,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root",
+        "uptime": 4341026
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.001700
+          }
+        },
+        "displayname": "cmdb_datacollection",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_datacollection",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 33
+        },
+        "io": {
+          "read_bytes": 9053741056,
+          "read_speed": 0.000000,
+          "write_bytes": 1519407104,
+          "write_speed": 682.671445
+        },
+        "memory": {
+          "rss": {
+            "bytes": 37629952,
+            "pct": 0.002300
+          },
+          "share": 3256320,
+          "size": 339812352
+        },
+        "name": "cmdb_datacollection",
+        "paramregex": "",
+        "pgid": 8941,
+        "pid": 8941,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.000300
+          }
+        },
+        "displayname": "cmdb_adminserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_adminserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 12
+        },
+        "io": {
+          "read_bytes": 13230706688,
+          "read_speed": 0.000000,
+          "write_bytes": 3710976,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 14614528,
+            "pct": 0.000900
+          },
+          "share": 2236416,
+          "size": 331825152
+        },
+        "name": "cmdb_adminserver",
+        "paramregex": "",
+        "pgid": 8942,
+        "pid": 8942,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-02-27T01:25:00.000Z",
+          "total": {
+            "pct": 0.001500
+          }
+        },
+        "displayname": "cmdb_proccontroller",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_proccontroller",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 14
+        },
+        "io": {
+          "read_bytes": 14398783488,
+          "read_speed": 0.000000,
+          "write_bytes": 12562432,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 38715392,
+            "pct": 0.002300
+          },
+          "share": 3469312,
+          "size": 406814720
+        },
+        "name": "cmdb_proccontroller",
+        "paramregex": "",
+        "pgid": 8952,
+        "pid": 8952,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-23T22:58:43.000Z",
+          "total": {
+            "pct": 0.002200
+          }
+        },
+        "displayname": "cmdb_procserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_procserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 13
+        },
+        "io": {
+          "read_bytes": 7959019520,
+          "read_speed": 0.000000,
+          "write_bytes": 1699840,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 31977472,
+            "pct": 0.001900
+          },
+          "share": 3833856,
+          "size": 405471232
+        },
+        "name": "cmdb_procserver",
+        "paramregex": "",
+        "pgid": 10961,
+        "pid": 10961,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-23T20:13:26.000Z",
+          "total": {
+            "pct": 0.029800
+          }
+        },
+        "displayname": "cmdb_objectcontroller",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_objectcontroller",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 15
+        },
+        "io": {
+          "read_bytes": 11135418368,
+          "read_speed": 0.000000,
+          "write_bytes": 4632576,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 41058304,
+            "pct": 0.002500
+          },
+          "share": 3956736,
+          "size": 333185024
+        },
+        "name": "cmdb_objectcontroller",
+        "paramregex": "",
+        "pgid": 11229,
+        "pid": 11229,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-23T20:13:26.000Z",
+          "total": {
+            "pct": 0.001500
+          }
+        },
+        "displayname": "cmdb_webserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_webserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 13
+        },
+        "io": {
+          "read_bytes": 4060712960,
+          "read_speed": 0.000000,
+          "write_bytes": 3543040,
+          "write_speed": 0.000000
+        },
+        "memory": {
+          "rss": {
+            "bytes": 43462656,
+            "pct": 0.002600
+          },
+          "share": 2007040,
+          "size": 438083584
+        },
+        "name": "cmdb_webserver",
+        "paramregex": "",
+        "pgid": 11230,
+        "pid": 11230,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      },
+      {
+        "cpu": {
+          "start_time": "2019-03-23T20:06:27.000Z",
+          "total": {
+            "pct": 0.002000
+          }
+        },
+        "displayname": "cmdb_eventserver",
+        "exe": "/data/bkee/cmdb/server/bin/cmdb_eventserver",
+        "exists": true,
+        "fd": {
+          "limit": {
+            "hard": 102400,
+            "soft": 102400
+          },
+          "open": 20
+        },
+        "io": {
+          "read_bytes": 12224454656,
+          "read_speed": 0.000000,
+          "write_bytes": 23879680,
+          "write_speed": 273.067960
+        },
+        "memory": {
+          "rss": {
+            "bytes": 34099200,
+            "pct": 0.002000
+          },
+          "share": 3526656,
+          "size": 332111872
+        },
+        "name": "cmdb_eventserver",
+        "paramregex": "",
+        "pgid": 13900,
+        "pid": 13900,
+        "ppid": 8910,
+        "state": "sleeping",
+        "username": "root"
+      }
+    ]
+  },
+  "dataid": 1007,
+  "datetime": "2019-03-25 10:20:38",
+  "gseindex": 40764,
+  "ip": "127.0.0.1",
+  "timezone": 8,
+  "type": "processbeat",
+  "utctime": "2019-03-25 02:20:38"
+}

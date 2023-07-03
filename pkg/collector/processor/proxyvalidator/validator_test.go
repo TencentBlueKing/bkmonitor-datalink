@@ -338,8 +338,8 @@ func TestTimeSeriesFutureTimestamp(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "future timestamp is not allowed"
-	assert.Equal(t, msg, validator.Validate(&pb).Error())
+	msg := "reject future timestamp"
+	assert.Contains(t, validator.Validate(&pb).Error(), msg)
 }
 
 func TestTimeSeriesTimestampEmpty(t *testing.T) {
@@ -609,6 +609,6 @@ func TestEventFutureTimestamp(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "future timestamp is not allowed"
-	assert.Equal(t, msg, validator.Validate(&pb).Error())
+	msg := "reject future timestamp"
+	assert.Contains(t, validator.Validate(&pb).Error(), msg)
 }

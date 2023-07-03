@@ -108,10 +108,15 @@ func (tv *timestampValidator) Validate(objs map[string]interface{}) (float64, er
 		return 0, errors.Errorf("timestamp expected float64 type, got %T", timestampObj)
 	}
 
+	// 上报使用 0 时间戳则使用服务器当前时间
+	if timestamp == 0 {
+		return float64(time.Now().UnixMilli()), nil
+	}
+
 	now := time.Now().Unix()
 	unixTimestamp := timestamp / 1000
 	if int64(unixTimestamp)-now > tv.offset {
-		return 0, errors.New("future timestamp is not allowed")
+		return 0, errors.Errorf("reject future timestamp, dataTs=%v, serverTs=%v, offset=%v(s)", int(unixTimestamp), now, tv.offset)
 	}
 	return timestamp, nil
 }

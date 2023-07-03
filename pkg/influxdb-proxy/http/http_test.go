@@ -47,9 +47,9 @@ func (suite *HttpServiceSuite) SetupSuite() {
 	// 模仿配置文件
 	viper.Set("batch_size", 1)
 	viper.Set("authorization.enable", false)
-	viper.Set("consul.address", "192.168.136.128:8500")
+	viper.Set("consul.address", "127.0.0.1:8500")
 	viper.Set("consul.health.period", "30s")
-	viper.Set("kafka.address", "192.168.136.128")
+	viper.Set("kafka.address", "127.0.0.1")
 	viper.Set("kafka.port", "9092")
 	viper.Set("kafka.topic_prefix", "bkmonitor")
 	viper.Set("kafka.version", "0.10.2.0")

@@ -12,7 +12,7 @@ kafka:                               # kafka配置
   version: 0.10.2.0                   # kafka版本信息
 consul:
   prefix: bkmonitor_enterprise_production/metadata/influxdb_info
-  address: 192.168.136.128:8500
+  address: 127.0.0.1:8500
   health:
     service_name: influxdb_proxy
     period: 30s

@@ -39,8 +39,8 @@ func (t *TestSuite) SetupSuite() {
 	t.ctrl = gomock.NewController(t.T())
 	t.stub = gostub.New()
 	// 模仿配置文件填充viper
-	viper.Set("consul.address", "192.168.136.128:8500")
-	viper.Set("kafka.address", "192.168.136.128")
+	viper.Set("consul.address", "127.0.0.1:8500")
+	viper.Set("kafka.address", "127.0.0.1")
 	viper.Set("kafka.port", "9092")
 	viper.Set("kafka.topic_prefix", "bkmonitor")
 	viper.Set("kafka.version", "0.10.2.0")

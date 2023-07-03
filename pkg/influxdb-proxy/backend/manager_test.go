@@ -91,12 +91,12 @@ func (t *TestSuite) TestManageBackend() {
 	t.stub.StubFunc(&influxdb.NewBackend, proxyBackend, nil, nil)
 
 	// 测试
-	viper.Set("kafka.address", "192.168.136.128")
+	viper.Set("kafka.address", "127.0.0.1")
 	viper.Set("kafka.port", "9092")
 	viper.Set("kafka.topic_prefix", "bkmonitor")
 	viper.Set("kafka.version", "0.10.2.0")
 	var err error
-	err = consul.Init("192.168.136.128:8500", consul.TotalPrefix)
+	err = consul.Init("127.0.0.1:8500", consul.TotalPrefix)
 	t.Nil(err)
 	err = backend.Init(context.Background())
 	t.Nil(err)

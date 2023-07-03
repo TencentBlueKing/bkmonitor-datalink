@@ -207,7 +207,7 @@ func (t *TestSuite) TestCheckDeregister() {
 }
 
 func (t *TestSuite) TestServiceStatus() {
-	client, err := base.NewBasicClient("192.168.136.128:8500")
+	client, err := base.NewBasicClient("127.0.0.1:8500")
 	t.Nil(err)
 	err = client.ServiceAwake("influxdb_proxy")
 	t.Nil(err)

@@ -12,17 +12,17 @@ package shard
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"os"
 	"path/filepath"
 
 	"github.com/influxdata/influxdb/cmd/influx_inspect/buildtsi"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/tsdb"
+	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/instance"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
 type Action interface {

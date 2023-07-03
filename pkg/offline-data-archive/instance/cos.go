@@ -13,8 +13,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"io"
 	"net/http"
 	"os"
@@ -28,8 +26,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pkg/errors"
+	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
 var _ Instance = (*Cos)(nil)

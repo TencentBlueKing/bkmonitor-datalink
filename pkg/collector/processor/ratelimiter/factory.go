@@ -32,14 +32,12 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*rateLimiter, error) {
 	configs := confengine.NewTierConfig()
-	rateLimiters := confengine.NewTierConfig()
 
 	var c ratelimiter.Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
 	configs.SetGlobal(c)
-	rateLimiters.SetGlobal(ratelimiter.New(c))
 
 	for _, custom := range customized {
 		var cfg ratelimiter.Config
@@ -48,7 +46,6 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			continue
 		}
 		configs.Set(custom.Token, custom.Type, custom.ID, cfg)
-		rateLimiters.Set(custom.Token, custom.Type, custom.ID, ratelimiter.New(cfg))
 	}
 
 	return &rateLimiter{
@@ -69,8 +66,6 @@ type rateLimiter struct {
 func (p *rateLimiter) Name() string {
 	return define.ProcessorRateLimiter
 }
-
-func (p *rateLimiter) Clean() {}
 
 func (p *rateLimiter) IsDerived() bool {
 	return false

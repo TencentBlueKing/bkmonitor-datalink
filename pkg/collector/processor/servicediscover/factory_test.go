@@ -69,7 +69,8 @@ processor:
             regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*serviceDiscover)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
@@ -148,6 +149,7 @@ processor:
 
 	assert.Equal(t, define.ProcessorServiceDiscover, factory.Name())
 	assert.False(t, factory.IsDerived())
+	assert.False(t, factory.IsPreCheck())
 }
 
 func TestTraceManualMatched(t *testing.T) {

@@ -27,7 +27,7 @@ type Processor interface {
 	// IsDerived 标识处理器是否属于可派生类型
 	IsDerived() bool
 
-	// IsPreCheck 标识处理器是否处于预处理类型，默认处理器中 tokenchecker，ratelimiter 为预处理类型
+	// IsPreCheck 标识处理器是否处于预处理类型，默认处理器中 tokenchecker/ratelimiter 为预处理类型
 	IsPreCheck() bool
 
 	// Process 方法会就地修改传入的 *define.Record，当且仅当需要衍生出另外的 Record 才会返回 *define.Record 实例
@@ -111,6 +111,8 @@ func (p CommonProcessor) MainConfig() map[string]interface{} {
 func (p CommonProcessor) SubConfigs() []SubConfigProcessor {
 	return p.subConfigs
 }
+
+func (p CommonProcessor) Clean() {}
 
 var nonSchedRecords = define.NewRecordQueue(define.PushModeGuarantee)
 

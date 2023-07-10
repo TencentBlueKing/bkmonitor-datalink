@@ -64,8 +64,6 @@ func (p attributeFilter) Name() string {
 	return define.ProcessorAttributeFilter
 }
 
-func (p attributeFilter) Clean() {}
-
 func (p attributeFilter) IsDerived() bool {
 	return false
 }

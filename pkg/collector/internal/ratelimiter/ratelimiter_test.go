@@ -16,43 +16,90 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRateLimiter(t *testing.T) {
-	rl := NewTokenBucketRateLimiter(5, 10)
-	assert.Equal(t, float32(5), rl.QPS())
+func TestNewRateLimiter(t *testing.T) {
+	t.Run("Noop", func(t *testing.T) {
+		rl := New(Config{})
+		assert.Equal(t, TypeNoop, rl.Type())
+		assert.Equal(t, float32(0), rl.QPS())
+		assert.True(t, rl.TryAccept())
+	})
 
-	rejected := 0
-	for i := 0; i < 100; i++ {
-		if !rl.TryAccept() {
-			rejected++
-		}
-	}
-	assert.Equal(t, 90, rejected)
+	t.Run("TokenBucket", func(t *testing.T) {
+		rl := New(Config{Type: TypeTokenBucket})
+		assert.Equal(t, TypeTokenBucket, rl.Type())
+		assert.True(t, rl.TryAccept())
+	})
+}
 
-	rl = NewTokenBucketRateLimiter(10, 20)
-	rejected = 0
-	for i := 0; i < 50; i++ {
-		if !rl.TryAccept() {
-			rejected++
-		}
-	}
-	assert.Equal(t, 30, rejected)
+func TestTokenBucketRateLimiter(t *testing.T) {
+	t.Run("tokenBucket_5_10", func(t *testing.T) {
+		rl := newTokenBucketRateLimiter(5, 10)
+		assert.Equal(t, float32(5), rl.QPS())
 
-	rl = NewTokenBucketRateLimiter(10, 20)
-	rejected = 0
-	for i := 1; i <= 50; i++ {
-		if i%10 == 0 {
-			time.Sleep(time.Second)
+		rejected := 0
+		for i := 0; i < 100; i++ {
+			if !rl.TryAccept() {
+				rejected++
+			}
 		}
-		if !rl.TryAccept() {
-			rejected++
+		assert.Equal(t, 90, rejected)
+		rl.Stop()
+	})
+
+	t.Run("tokenBucket_10_20", func(t *testing.T) {
+		rl := newTokenBucketRateLimiter(10, 20)
+		rejected := 0
+		for i := 0; i < 50; i++ {
+			if !rl.TryAccept() {
+				rejected++
+			}
 		}
-	}
-	assert.Equal(t, 0, rejected)
-	rl.Stop()
+		assert.Equal(t, 30, rejected)
+		rl.Stop()
+	})
+
+	t.Run("tokenBucket_10_20", func(t *testing.T) {
+		rl := newTokenBucketRateLimiter(10, 20)
+		rejected := 0
+		for i := 1; i <= 50; i++ {
+			if i%10 == 0 {
+				time.Sleep(time.Second)
+			}
+			if !rl.TryAccept() {
+				rejected++
+			}
+		}
+		assert.Equal(t, 0, rejected)
+		rl.Stop()
+	})
+
+	t.Run("tokenBucket_0_0", func(t *testing.T) {
+		rl := newTokenBucketRateLimiter(0, 0)
+		rejected := 0
+		for i := 1; i <= 50; i++ {
+			if !rl.TryAccept() {
+				rejected++
+			}
+		}
+		assert.Equal(t, 0, rejected)
+		rl.Stop()
+	})
+
+	t.Run("tokenBucket_-1_0", func(t *testing.T) {
+		rl := newTokenBucketRateLimiter(-1, 0)
+		rejected := 0
+		for i := 1; i <= 50; i++ {
+			if !rl.TryAccept() {
+				rejected++
+			}
+		}
+		assert.Equal(t, 50, rejected)
+		rl.Stop()
+	})
 }
 
 func TestBasicThrottle(t *testing.T) {
-	r := NewTokenBucketRateLimiter(1, 3)
+	r := newTokenBucketRateLimiter(1, 3)
 	for i := 0; i < 3; i++ {
 		if !r.TryAccept() {
 			t.Error("unexpected false accept")
@@ -64,7 +111,7 @@ func TestBasicThrottle(t *testing.T) {
 }
 
 func TestIncrementThrottle(t *testing.T) {
-	r := NewTokenBucketRateLimiter(1, 1)
+	r := newTokenBucketRateLimiter(1, 1)
 	if !r.TryAccept() {
 		t.Error("unexpected false accept")
 	}
@@ -78,19 +125,4 @@ func TestIncrementThrottle(t *testing.T) {
 	if !r.TryAccept() {
 		t.Error("unexpected false accept")
 	}
-}
-
-func TestNoopRateLimiter(t *testing.T) {
-	rl := NewNoopRateLimiter()
-	assert.Equal(t, TypeNoop, rl.Type())
-	assert.Equal(t, float32(0), rl.QPS())
-	assert.True(t, rl.TryAccept())
-}
-
-func TestNewRateLimiter(t *testing.T) {
-	rl := New(Config{Type: TypeTokenBucket})
-	assert.Equal(t, TypeTokenBucket, rl.Type())
-
-	rl = New(Config{})
-	assert.Equal(t, TypeNoop, rl.Type())
 }

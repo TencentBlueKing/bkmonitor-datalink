@@ -10,7 +10,6 @@
 package generator
 
 import (
-	"context"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -21,9 +20,7 @@ import (
 )
 
 type MetricsGenerator struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	opts   define.MetricsOptions
+	opts define.MetricsOptions
 
 	attributes pcommon.Map
 	resources  pcommon.Map
@@ -32,41 +29,11 @@ type MetricsGenerator struct {
 func NewMetricsGenerator(opts define.MetricsOptions) *MetricsGenerator {
 	attributes := random.AttributeMap(opts.RandomAttributeKeys, opts.DimensionsValueType)
 	resources := random.AttributeMap(opts.RandomResourceKeys, opts.DimensionsValueType)
-	ctx, cancel := context.WithCancel(context.Background())
 	return &MetricsGenerator{
-		ctx:        ctx,
-		cancel:     cancel,
 		attributes: attributes,
 		resources:  resources,
 		opts:       opts,
 	}
-}
-
-func (g *MetricsGenerator) Stop() {
-	g.cancel()
-}
-
-func (g *MetricsGenerator) Ch() chan pmetric.Metrics {
-	ch := make(chan pmetric.Metrics, 128)
-	data := g.Generate()
-	n := 0
-	go func() {
-		defer close(ch)
-		for {
-			select {
-			case <-g.ctx.Done():
-				return
-
-			case ch <- data:
-				n++
-				if n >= g.opts.Iteration {
-					return
-				}
-				time.Sleep(g.opts.Interval)
-			}
-		}
-	}()
-	return ch
 }
 
 func (g *MetricsGenerator) Generate() pmetric.Metrics {

@@ -67,8 +67,6 @@ func (p serviceDiscover) Name() string {
 	return define.ProcessorServiceDiscover
 }
 
-func (p serviceDiscover) Clean() {}
-
 func (p serviceDiscover) IsDerived() bool {
 	return false
 }

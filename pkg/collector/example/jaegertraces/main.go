@@ -56,7 +56,7 @@ func tracerProvider(url string) (*tracesdk.TracerProvider, error) {
 }
 
 func main() {
-	tp, err := tracerProvider("http://localhost:4318/api/traces")
+	tp, err := tracerProvider("http://localhost:4318/jaeger/v1/traces")
 	if err != nil {
 		log.Fatal(err)
 	}

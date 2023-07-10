@@ -15,12 +15,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/cluster"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/cleaner"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tracestore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pingserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -36,6 +38,7 @@ const (
 	configFieldMaxProcs     = "max_procs"
 	configFieldLogging      = "logging"
 	configFieldLabelStorage = "label_storage"
+	configFieldTraceStorage = "trace_storage"
 	configFieldHook         = "hook"
 )
 
@@ -52,6 +55,8 @@ type Controller struct {
 	exporterMgr   *exporter.Exporter
 	proxyMgr      *proxy.Proxy
 	pingserverMgr *pingserver.Pingserver
+	clusterSvr    *cluster.Server
+
 	originalTasks *define.TaskQueue
 	derivedTasks  *define.TaskQueue
 }
@@ -60,18 +65,27 @@ func SetupCoreNum(conf *confengine.Config) {
 	define.SetCoreNum(conf.UnpackIntWithDefault(configFieldMaxProcs, 0))
 }
 
-type LabelStorageConfig struct {
-	Type string `config:"type"`
-	Dir  string `config:"dir"`
+type StorageConfig struct {
+	Type string `config:"type" mapstructure:"type"`
+	Dir  string `config:"dir" mapstructure:"dir"`
 }
 
-// SetupLabelStorage 初始化 Storage
+// SetupLabelStorage 初始化 Label Storage
 func SetupLabelStorage(conf *confengine.Config) {
-	var storConf LabelStorageConfig
+	var storConf StorageConfig
 	if err := conf.UnpackChild(configFieldLabelStorage, &storConf); err != nil {
 		logger.Warnf("unpack label storage config failed, may it lacks of fields: %s, then uses the default config", err)
 	}
 	labelstore.InitStorage(storConf.Dir, storConf.Type)
+}
+
+// SetupTraceStorage 初始化 Trace Storage
+func SetupTraceStorage(conf *confengine.Config) {
+	var storConf StorageConfig
+	if err := conf.UnpackChild(configFieldTraceStorage, &storConf); err != nil {
+		logger.Warnf("unpack trace storage config failed, may it lacks of fields: %s, then uses the default config", err)
+	}
+	tracestore.InitStorage(storConf.Dir, storConf.Type)
 }
 
 // SetupHook 初始化 Hook
@@ -117,6 +131,7 @@ func Setup(conf *confengine.Config) error {
 		return err
 	}
 	SetupLabelStorage(conf)
+	SetupTraceStorage(conf)
 	SetupHook(conf)
 	return nil
 }
@@ -159,6 +174,14 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		}
 	}
 
+	var clusterSvr *cluster.Server
+	if !conf.Disabled(define.ConfigFieldCluster) {
+		clusterSvr, err = cluster.NewServer(conf)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	pipelineMgr, err := pipeline.New(conf)
 	if err != nil {
 		return nil, err
@@ -173,6 +196,7 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 			return nil, err
 		}
 	}
+
 	// 注册 gse output hook 统计发送数据
 	gse.RegisterSendHook(DefaultMetricMonitor.ObserveBeatSentBytes)
 
@@ -185,6 +209,7 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		receiverMgr:   receiverMgr,
 		proxyMgr:      proxyMgr,
 		pingserverMgr: pingserverMgr,
+		clusterSvr:    clusterSvr,
 		exporterMgr:   exporterMgr,
 		pipelineMgr:   pipelineMgr,
 		originalTasks: define.NewTaskQueue(define.PushModeGuarantee),
@@ -250,6 +275,12 @@ func (c *Controller) Start() error {
 		}
 	}
 
+	if c.clusterSvr != nil {
+		if err := c.clusterSvr.Start(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -276,6 +307,10 @@ func (c *Controller) Stop() error {
 
 	if c.pusherMgr != nil {
 		c.pusherMgr.Stop()
+	}
+
+	if c.clusterSvr != nil {
+		c.clusterSvr.Stop()
 	}
 
 	cleanFuncs := cleaner.CleanFuncs()
@@ -366,6 +401,14 @@ func (c *Controller) consumeRecords() {
 			pl := c.pipelineMgr.GetPipeline(record.RecordType)
 			c.submitTasks(c.originalTasks, record, pl)
 
+		case record, ok := <-cluster.Records():
+			if !ok {
+				return
+			}
+			pl := c.pipelineMgr.GetPipeline(record.RecordType)
+			record.Unwrap()
+			c.submitTasks(c.originalTasks, record, pl)
+
 		case <-c.ctx.Done():
 			return
 		}
@@ -396,6 +439,9 @@ loop:
 					token := task.Record().Token
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", task.Record().RecordType, stage, token, err)
+					goto loop
+				}
+				if err == define.ErrEndOfPipeline {
 					goto loop
 				}
 
@@ -457,6 +503,9 @@ loop:
 					token := task.Record().Token
 					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", task.Record().RecordType, stage, token, err)
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
+					goto loop
+				}
+				if err == define.ErrEndOfPipeline {
 					goto loop
 				}
 

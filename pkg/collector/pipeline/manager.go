@@ -95,10 +95,10 @@ func parsePipelines(typ string, conf *confengine.Config, processors map[string]p
 				break
 			}
 
-			// 派生类型的 pipeline 不允许存在 IsDerived 为 true 的 processor
+			// 派生类型的 pipeline 如果允许存在 IsDerived 为 true 的 processor【可能】会有问题
+			// 仅做 warning 提示
 			if derived && p.IsDerived() {
-				logger.Errorf("derived record type do not allow derived processor: %v", p.Name())
-				break
+				logger.Warnf("derived record type do not allow derived processor: %v", p.Name())
 			}
 			instances = append(instances, processor.NewInstance(name, p))
 		}

@@ -63,12 +63,8 @@ func uint64ToBytes(dataID uint64) []byte {
 	return b
 }
 
-func bytesToUint64(b []byte) uint64 {
-	return binary.BigEndian.Uint64(b)
-}
-
 func init() {
-	cleaner.Register("level/storage", CleanStorage)
+	cleaner.Register("leveldb/label_storage", CleanStorage)
 }
 
 type StorageController struct {
@@ -248,7 +244,7 @@ type leveldbStorage struct {
 var _ Storage = (*leveldbStorage)(nil)
 
 func newLeveldbStorage(dir string, dataID int32) (*leveldbStorage, error) {
-	dir = filepath.Join(dir, fmt.Sprintf("%d", dataID))
+	dir = filepath.Join(dir, fmt.Sprintf("label_%d", dataID))
 	_ = os.RemoveAll(dir)             // 清理目录
 	_ = os.MkdirAll(dir, os.ModePerm) // 重建目录
 	logger.Infof("leveldb storage dir: %s", dir)

@@ -34,7 +34,8 @@ processor:
       logs_dataid: 1002
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*tokenChecker)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
@@ -44,6 +45,12 @@ processor:
 
 	assert.Equal(t, define.ProcessorTokenChecker, factory.Name())
 	assert.False(t, factory.IsDerived())
+	assert.True(t, factory.IsPreCheck())
+
+	err = factory.processCommon(&define.Record{
+		RecordType: define.RecordTraces,
+	})
+	assert.NoError(t, err)
 }
 
 func makeTracesGenerator(n int, resources map[string]string) *generator.TracesGenerator {
@@ -75,7 +82,7 @@ func aes256TokenChecker() tokenChecker {
 
 	return tokenChecker{
 		config:  config,
-		decoder: Aes256TokenDecoder(config),
+		decoder: newAes256TokenDecoder(config),
 	}
 }
 

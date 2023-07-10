@@ -24,8 +24,10 @@ type GeneratorOptions struct {
 
 type TracesOptions struct {
 	GeneratorOptions
-	SpanCount int
-	SpanKind  int
+	SpanCount  int
+	SpanKind   int
+	EventCount int
+	LinkCount  int
 }
 
 type MetricsOptions struct {

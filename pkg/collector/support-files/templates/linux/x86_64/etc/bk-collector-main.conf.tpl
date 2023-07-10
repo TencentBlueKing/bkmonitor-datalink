@@ -75,6 +75,12 @@ bk-collector:
     dir: "."
 
 
+  # ============================= TraceStorage ===============================
+  trace_storage:
+    type: "builtin"
+    dir: "."
+
+
   # =============================== SubConfig ================================
   apm:
     patterns:
@@ -100,6 +106,11 @@ bk-collector:
     batch_size: 1024
     labels: []
     metric_relabel_configs:
+
+
+  # ================================ Cluster =================================
+  cluster:
+    disabled: true
 
 
   # ================================= Proxy ==================================

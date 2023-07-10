@@ -41,28 +41,28 @@ func Ready() {
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeJaegerTraces,
-			HandlerFunc:  httpSrv.JaegerTraces,
+			HandlerFunc:  httpSvc.JaegerTraces,
 		},
 	})
 
 	receiver.RegisterGrpcRoute(func(s *grpc.Server) {
-		api_v2.RegisterCollectorServiceServer(s, GrpcSrv{})
+		api_v2.RegisterCollectorServiceServer(s, GrpcService{})
 	})
 }
 
-type HttpSrv struct {
+type HttpService struct {
 	receiver.Publisher
 	receiver.Validator
 }
 
-var httpSrv HttpSrv
+var httpSvc HttpService
 
 var acceptedThriftFormats = map[string]struct{}{
 	"application/x-thrift":                 {},
 	"application/vnd.apache.thrift.binary": {},
 }
 
-func (s HttpSrv) JaegerTraces(w http.ResponseWriter, req *http.Request) {
+func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
@@ -93,12 +93,13 @@ func (s HttpSrv) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 		RecordType:    define.RecordTraces,
 		Data:          traces,
 	}
-	prettyprint.Pretty(define.RecordTraces, traces)
+	prettyprint.Traces(traces)
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
 		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
+		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
 		return
 	}
 
@@ -116,7 +117,7 @@ func decodeThriftHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unsupported content type: %v", contentType)
 	}
 
-	traces, err := ThriftV1Encoder().UnmarshalTraces(bs)
+	traces, err := newThriftV1Encoder().UnmarshalTraces(bs)
 	if err != nil {
 		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unable to process request body: %v", err)
 	}

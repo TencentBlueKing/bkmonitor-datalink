@@ -205,7 +205,7 @@ func TestNewManager(t *testing.T) {
 	})
 
 	// assert processors
-	assert.Equal(t, len(manager.processors), 6)
+	assert.Equal(t, len(manager.processors), 7)
 
 	tokenChecker, ok := manager.processors["token_checker/fixed"]
 	assert.True(t, ok)

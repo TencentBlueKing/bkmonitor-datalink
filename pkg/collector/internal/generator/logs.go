@@ -10,7 +10,6 @@
 package generator
 
 import (
-	"context"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -21,9 +20,7 @@ import (
 )
 
 type LogsGenerator struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	opts   define.LogsOptions
+	opts define.LogsOptions
 
 	attributes pcommon.Map
 	resources  pcommon.Map
@@ -32,41 +29,11 @@ type LogsGenerator struct {
 func NewLogsGenerator(opts define.LogsOptions) *LogsGenerator {
 	attributes := random.AttributeMap(opts.RandomAttributeKeys, opts.DimensionsValueType)
 	resources := random.AttributeMap(opts.RandomResourceKeys, opts.DimensionsValueType)
-	ctx, cancel := context.WithCancel(context.Background())
 	return &LogsGenerator{
-		ctx:        ctx,
-		cancel:     cancel,
 		attributes: attributes,
 		resources:  resources,
 		opts:       opts,
 	}
-}
-
-func (g *LogsGenerator) Stop() {
-	g.cancel()
-}
-
-func (g *LogsGenerator) Ch() chan plog.Logs {
-	ch := make(chan plog.Logs, 128)
-	data := g.Generate()
-	n := 0
-	go func() {
-		defer close(ch)
-		for {
-			select {
-			case <-g.ctx.Done():
-				return
-
-			case ch <- data:
-				n++
-				if n >= g.opts.Iteration {
-					return
-				}
-				time.Sleep(g.opts.Interval)
-			}
-		}
-	}()
-	return ch
 }
 
 func (g *LogsGenerator) Generate() plog.Logs {
@@ -83,8 +50,8 @@ func (g *LogsGenerator) Generate() plog.Logs {
 	now := time.Now()
 	for i := 0; i < g.opts.LogCount; i++ {
 		log := rs.ScopeLogs().AppendEmpty().LogRecords().AppendEmpty()
-		log.SetSpanID(pcommon.NewSpanID(random.SpanID()))
-		log.SetTraceID(pcommon.NewTraceID(random.TraceID()))
+		log.SetSpanID(random.SpanID())
+		log.SetTraceID(random.TraceID())
 		log.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		log.Body().SetStringVal(random.String(g.opts.LogLength))
 		g.attributes.CopyTo(log.Attributes())

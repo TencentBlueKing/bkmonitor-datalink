@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/evaluator"
 )
 
 func TestFactory(t *testing.T) {
@@ -30,14 +31,15 @@ processor:
       sampling_percentage: 100
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*sampler)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
-	var c Config
+	var c evaluator.Config
 	err = mapstructure.Decode(psc[0].Config, &c)
 	assert.NoError(t, err)
-	assert.Equal(t, c, factory.configs.Get("", "", "").(Config))
+	assert.Equal(t, c, factory.configs.Get("", "", "").(evaluator.Config))
 
 	assert.Equal(t, define.ProcessorSampler, factory.Name())
 	assert.False(t, factory.IsDerived())

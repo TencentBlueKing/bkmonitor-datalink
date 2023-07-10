@@ -14,6 +14,7 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -51,7 +52,8 @@ processor:
                 - "attributes.net.host.name"
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*tracesDeriver)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
@@ -63,4 +65,11 @@ processor:
 	assert.Equal(t, define.ProcessorTracesDeriver, factory.Name())
 	assert.True(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
+
+	_, err = factory.Process(&define.Record{
+		RecordType: define.RecordTraces,
+		Data:       ptrace.NewTraces(),
+	})
+	assert.NoError(t, err)
+	factory.Clean()
 }

@@ -61,8 +61,6 @@ func (p metricsFilter) Name() string {
 	return define.ProcessorMetricsFilter
 }
 
-func (p metricsFilter) Clean() {}
-
 func (p metricsFilter) IsDerived() bool {
 	return false
 }

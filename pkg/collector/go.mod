@@ -6,6 +6,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/apache/thrift v0.16.0
+	github.com/buraksezer/consistent v0.10.0
 	github.com/bytedance/sonic v1.9.1
 	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/elastic/beats v7.1.1+incompatible

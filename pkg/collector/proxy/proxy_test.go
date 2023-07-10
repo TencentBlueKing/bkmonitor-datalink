@@ -11,6 +11,7 @@ package proxy
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -22,8 +23,10 @@ import (
 func TestProxy(t *testing.T) {
 	content := `
 proxy:
-  disabled: true
+  disabled: false
   http:
+    port: 60990
+    host: localhost
     middlewares:
       logging
 `
@@ -33,7 +36,14 @@ proxy:
 	proxy, err := New(config)
 	assert.NoError(t, err)
 	assert.NoError(t, proxy.Start())
+	time.Sleep(time.Millisecond * 100)
 	assert.NoError(t, proxy.Stop())
+
+	globalRecords.Push(&define.Record{})
+	select {
+	case <-Records():
+	default:
+	}
 }
 
 func TestValidatePreCheckProcessors(t *testing.T) {

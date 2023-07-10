@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sampler
+package evaluator
 
 import (
 	"testing"
@@ -20,8 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
-func TestRandomSampler_0_Percent(t *testing.T) {
-	sampler := RandomSampler(Config{
+func TestRandomEvaluator_0_Percent(t *testing.T) {
+	evaluator := newRandomEvaluator(Config{
 		Type:               "random",
 		SamplingPercentage: 0,
 	})
@@ -37,12 +37,12 @@ func TestRandomSampler_0_Percent(t *testing.T) {
 	}
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-	sampler.Sample(record)
+	evaluator.Evaluate(record)
 	assert.Equal(t, 0, record.Data.(ptrace.Traces).SpanCount())
 }
 
-func TestRandomSampler_10_Percent(t *testing.T) {
-	sampler := RandomSampler(Config{
+func TestRandomEvaluator_10_Percent(t *testing.T) {
+	evaluator := newRandomEvaluator(Config{
 		Type:               "random",
 		SamplingPercentage: 0.1,
 	})
@@ -58,12 +58,12 @@ func TestRandomSampler_10_Percent(t *testing.T) {
 	}
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-	sampler.Sample(record)
+	evaluator.Evaluate(record)
 	assert.True(t, record.Data.(ptrace.Traces).SpanCount() <= 2)
 }
 
-func TestRandomSamplerPriority(t *testing.T) {
-	sampler := RandomSampler(Config{
+func TestRandomEvaluatorPriority(t *testing.T) {
+	evaluator := newRandomEvaluator(Config{
 		Type:               "random",
 		SamplingPercentage: 0.1,
 	})
@@ -83,7 +83,7 @@ func TestRandomSamplerPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		sampler.Sample(record)
+		evaluator.Evaluate(record)
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 
@@ -98,7 +98,7 @@ func TestRandomSamplerPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		sampler.Sample(record)
+		evaluator.Evaluate(record)
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 
@@ -113,13 +113,13 @@ func TestRandomSamplerPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		sampler.Sample(record)
+		evaluator.Evaluate(record)
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 }
 
-func benchmarkSamplerPercent(b *testing.B, percent float64) {
-	sampler := RandomSampler(Config{
+func benchmarkEvaluatorPercent(b *testing.B, percent float64) {
+	evaluator := newRandomEvaluator(Config{
 		Type:               "random",
 		SamplingPercentage: percent,
 	})
@@ -137,18 +137,17 @@ func benchmarkSamplerPercent(b *testing.B, percent float64) {
 
 	traces := g.Generate()
 	for i := 0; i < b.N; i++ {
-		sampler.Sample(&define.Record{
+		evaluator.Evaluate(&define.Record{
 			RecordType: define.RecordTraces,
 			Data:       traces,
 		})
 	}
-	g.Stop()
 }
 
-func BenchmarkSampler_99_99_Percent(b *testing.B) {
-	benchmarkSamplerPercent(b, 99.99)
+func BenchmarkEvaluator_99_99_Percent(b *testing.B) {
+	benchmarkEvaluatorPercent(b, 99.99)
 }
 
-func BenchmarkSampler_100_Percent(b *testing.B) {
-	benchmarkSamplerPercent(b, 100)
+func BenchmarkEvaluator_100_Percent(b *testing.B) {
+	benchmarkEvaluatorPercent(b, 100)
 }

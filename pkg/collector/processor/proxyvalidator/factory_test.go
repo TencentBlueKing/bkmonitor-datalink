@@ -32,7 +32,8 @@ processor:
         max_future_time_offset: 3600
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*proxyValidator)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 

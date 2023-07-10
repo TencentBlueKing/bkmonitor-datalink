@@ -34,15 +34,15 @@ const (
 func NewTokenDecoder(c Config) TokenDecoder {
 	switch c.Type {
 	case decoderTypeFixed:
-		return FixedTokenDecoder(c)
+		return newFixedTokenDecoder(c)
 	case decoderTypeAcs256:
-		return Aes256TokenDecoder(c)
+		return newAes256TokenDecoder(c)
 	case decoderTypeProxy:
-		return ProxyTokenDecoder(c)
+		return newProxyTokenDecoder(c)
 	}
 
 	// 未指定 token decoder 时使用固定的解析方案（for test）
-	return FixedTokenDecoder(Config{
+	return newFixedTokenDecoder(Config{
 		Type:       decoderTypeFixed,
 		FixedToken: "unspecified-token",
 		AppName:    "unspecified-app",
@@ -55,8 +55,8 @@ type TokenDecoder interface {
 	Decode(s string) (define.Token, error)
 }
 
-// FixedTokenDecoder 根据配置生成固定 Token 用于测试场景
-func FixedTokenDecoder(c Config) TokenDecoder {
+// newFixedTokenDecoder 根据配置生成固定 Token 用于测试场景
+func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
 		token: define.Token{
 			Original:      c.FixedToken,
@@ -86,10 +86,6 @@ func (d fixedTokenDecoder) Decode(string) (define.Token, error) {
 }
 
 // Aes256TokenDecoder 使用 aes256 加盐算法 所有字段均由配置项指定
-func Aes256TokenDecoder(c Config) TokenDecoder {
-	return newAes256TokenDecoder(c)
-}
-
 func newAes256TokenDecoder(c Config) *aes256TokenDecoder {
 	h := sha256.New()
 	h.Write([]byte(c.DecodedKey))
@@ -200,7 +196,7 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 	}, nil
 }
 
-func ProxyTokenDecoder(c Config) TokenDecoder {
+func newProxyTokenDecoder(c Config) proxyTokenDecoder {
 	return proxyTokenDecoder{
 		token:  c.ProxyToken,
 		dataId: c.ProxyDataId,

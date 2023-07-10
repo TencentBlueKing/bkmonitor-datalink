@@ -35,7 +35,11 @@ var resourceKeys = []string{
 // cmd: go test -bench=. -cpu 1,2,4,8,16 -benchmem
 
 func makeTracesGenerator(n int) *generator.TracesGenerator {
-	opts := define.TracesOptions{SpanCount: n}
+	opts := define.TracesOptions{
+		SpanCount:  n,
+		EventCount: n,
+		LinkCount:  n,
+	}
 	opts.RandomAttributeKeys = attributeKeys
 	opts.RandomResourceKeys = resourceKeys
 	return generator.NewTracesGenerator(opts)
@@ -43,11 +47,12 @@ func makeTracesGenerator(n int) *generator.TracesGenerator {
 
 func TestTracesRandom(t *testing.T) {
 	g := makeTracesGenerator(2)
-	data := g.Generate()
+	traces := g.Generate()
+
 	record := define.Record{
 		RecordType:  define.RecordTraces,
 		RequestType: define.RequestHttp,
-		Data:        data,
+		Data:        traces,
 	}
 
 	events := make([]define.Event, 0)

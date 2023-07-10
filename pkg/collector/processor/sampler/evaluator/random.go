@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sampler
+package evaluator
 
 import (
 	"math/rand"
@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 )
 
 type samplingPriority int
@@ -42,23 +43,23 @@ const (
 	percentageScaleFactor = numHashBuckets / 100.0
 )
 
-func RandomSampler(c Config) Sampler {
+func newRandomEvaluator(c Config) Evaluator {
 	rand.Seed(time.Now().UnixNano())
-	return randomSampler{
+	return randomEvaluator{
 		keepAll:            c.SamplingPercentage >= 100.0,
 		hashSeed:           uint32(12345), // 保持固定的 seed 多实例场景下效果才能一致
 		scaledSamplingRate: uint32(c.SamplingPercentage * percentageScaleFactor),
 	}
 }
 
-type randomSampler struct {
+type randomEvaluator struct {
 	keepAll            bool
 	hashSeed           uint32
 	scaledSamplingRate uint32
 }
 
-func (s randomSampler) Sample(record *define.Record) {
-	if s.keepAll {
+func (e randomEvaluator) Evaluate(record *define.Record) {
+	if e.keepAll {
 		return
 	}
 	switch record.RecordType {
@@ -67,45 +68,43 @@ func (s randomSampler) Sample(record *define.Record) {
 		if !ok {
 			return
 		}
-		record.Data = s.processTraces(traces)
+		record.Data = e.processTraces(traces)
 	}
 }
 
-func (s randomSampler) processTraces(pdTraces ptrace.Traces) ptrace.Traces {
-	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		resourceSpans.ScopeSpans().RemoveIf(func(scopeSpans ptrace.ScopeSpans) bool {
-			scopeSpans.Spans().RemoveIf(func(span ptrace.Span) bool {
-				// 如果 StatusCode 是 Err 类型的则必须保留
-				if span.Status().Code() == ptrace.StatusCodeError {
-					return false
-				}
+func (e randomEvaluator) Stop() {}
 
-				sp := s.parseSpanSamplingPriority(span)
-				if sp == doNotSampleSpan {
-					// The OpenTelemetry mentions this as a "hint" we take a stronger
-					// approach and do not sample the span since some may use it to
-					// remove specific spans from traces.
-					return true
-				}
+func (e randomEvaluator) Type() string {
+	return evaluatorTypeRandom
+}
 
-				// If one assumes random trace ids hashing may seems avoidable, however, traces can be coming from sources
-				// with various different criteria to generate trace id and perhaps were already sampled without hashing.
-				// Hashing here prevents bias due to such systems.
-				tidBytes := span.TraceID().Bytes()
-				sampled := sp == mustSampleSpan ||
-					s.hash(tidBytes[:], s.hashSeed)&bitMaskHashBuckets < s.scaledSamplingRate
-				return !sampled
-			})
-			// Filter out empty InstrumentationLibraryMetrics
-			return scopeSpans.Spans().Len() == 0
-		})
-		// Filter out empty ResourceMetrics
-		return resourceSpans.ScopeSpans().Len() == 0
+func (e randomEvaluator) processTraces(pdTraces ptrace.Traces) ptrace.Traces {
+	foreach.SpansRemoveIf(pdTraces.ResourceSpans(), func(span ptrace.Span) bool {
+		// 如果 StatusCode 是 Err 类型的则必须保留
+		if span.Status().Code() == ptrace.StatusCodeError {
+			return false
+		}
+
+		sp := e.parseSpanSamplingPriority(span)
+		if sp == doNotSampleSpan {
+			// The OpenTelemetry mentions this as a "hint" we take a stronger
+			// approach and do not sample the span since some may use it to
+			// remove specific spans from traces.
+			return true
+		}
+
+		// If one assumes random trace ids hashing may seems avoidable, however, traces can be coming from sources
+		// with various different criteria to generate trace id and perhaps were already sampled without hashing.
+		// Hashing here prevents bias due to such systems.
+		tidBytes := span.TraceID().Bytes()
+		sampled := sp == mustSampleSpan ||
+			e.hash(tidBytes[:], e.hashSeed)&bitMaskHashBuckets < e.scaledSamplingRate
+		return !sampled
 	})
 	return pdTraces
 }
 
-func (s randomSampler) parseSpanSamplingPriority(span ptrace.Span) samplingPriority {
+func (e randomEvaluator) parseSpanSamplingPriority(span ptrace.Span) samplingPriority {
 	attribMap := span.Attributes()
 	if attribMap.Len() <= 0 {
 		return deferDecision
@@ -153,7 +152,7 @@ func (s randomSampler) parseSpanSamplingPriority(span ptrace.Span) samplingPrior
 }
 
 // hash is a murmur3 hash function, see http://en.wikipedia.org/wiki/MurmurHash
-func (s randomSampler) hash(key []byte, seed uint32) (hash uint32) {
+func (e randomEvaluator) hash(key []byte, seed uint32) (hash uint32) {
 	const (
 		c1 = 0xcc9e2d51
 		c2 = 0x1b873593

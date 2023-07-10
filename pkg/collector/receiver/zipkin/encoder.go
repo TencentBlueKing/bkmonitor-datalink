@@ -13,73 +13,71 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/zipkinv1"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/zipkin/zipkinv2"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
-// ThriftV1 Encoder
-
-func ThriftV1Encoder() receiver.Encoder {
+func newThriftV1Encoder() thriftV1Encoder {
 	return thriftV1Encoder{tracesEncoder: zipkinv1.NewThriftTracesUnmarshaler()}
 }
 
+// thriftV1Encoder ThriftV1 编码器实现
 type thriftV1Encoder struct {
-	receiver.NoopEncoder
 	tracesEncoder ptrace.Unmarshaler
 }
 
-func (e thriftV1Encoder) Type() string { return "thrift.v1" }
+func (e thriftV1Encoder) Type() string {
+	return "thrift.v1"
+}
 
 func (e thriftV1Encoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	return e.tracesEncoder.UnmarshalTraces(buf)
 }
 
-// JsonV1 Encoder
-
-func JsonV1Encoder() receiver.Encoder {
+func newJsonV1Encoder() jsonV1Encoder {
 	return jsonV1Encoder{tracesEncoder: zipkinv1.NewJSONTracesUnmarshaler(true)}
 }
 
+// jsonV1Encoder JsonV1 编码器实现
 type jsonV1Encoder struct {
-	receiver.NoopEncoder
 	tracesEncoder ptrace.Unmarshaler
 }
 
-func (e jsonV1Encoder) Type() string { return "json.v1" }
+func (e jsonV1Encoder) Type() string {
+	return "json.v1"
+}
 
 func (e jsonV1Encoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	return e.tracesEncoder.UnmarshalTraces(buf)
 }
 
-// PbV2 Encoder
-
-func PbV2Encoder() receiver.Encoder {
+func newPbV2Encoder() pbV2Encoder {
 	return pbV2Encoder{tracesEncoder: zipkinv2.NewProtobufTracesUnmarshaler(false, true)}
 }
 
+// pbV2Encoder PbV2 编码器实现
 type pbV2Encoder struct {
-	receiver.NoopEncoder
 	tracesEncoder ptrace.Unmarshaler
 }
 
-func (e pbV2Encoder) Type() string { return "pb.v2" }
+func (e pbV2Encoder) Type() string {
+	return "pb.v2"
+}
 
 func (e pbV2Encoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	return e.tracesEncoder.UnmarshalTraces(buf)
 }
 
-// JsonV2 Encoder
-
-func JsonV2Encoder() receiver.Encoder {
+func newJsonV2Encoder() jsonV2Encoder {
 	return jsonV2Encoder{tracesEncoder: zipkinv2.NewJSONTracesUnmarshaler(true)}
 }
 
+// JsonV2Encoder JsonV2 编码器实现
 type jsonV2Encoder struct {
-	receiver.NoopEncoder
 	tracesEncoder ptrace.Unmarshaler
 }
 
-func (e jsonV2Encoder) Type() string { return "json.v2" }
+func (e jsonV2Encoder) Type() string {
+	return "json.v2"
+}
 
 func (e jsonV2Encoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	return e.tracesEncoder.UnmarshalTraces(buf)

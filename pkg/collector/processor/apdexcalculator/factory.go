@@ -78,8 +78,6 @@ func (p apdexCalculator) Name() string {
 	return define.ProcessorApdexCalculator
 }
 
-func (p apdexCalculator) Clean() {}
-
 func (p apdexCalculator) IsDerived() bool {
 	return false
 }

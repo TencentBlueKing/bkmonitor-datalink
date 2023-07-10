@@ -13,10 +13,6 @@ import (
 	"net/http"
 	"time"
 
-	"go.opentelemetry.io/collector/pdata/plog"
-	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/pdata/ptrace"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
@@ -47,38 +43,4 @@ func RecordHandleMetrics(mm *metricMonitor, token define.Token, protocol define.
 	mm.ObserveHandledDuration(t, protocol, rtype, token.Original)
 	mm.IncHandledCounter(protocol, rtype, token.Original)
 	DefaultMetricMonitor.SetTokenInfo(token)
-}
-
-// Encoder 负责解析 Traces/Metrics/Logs 数据至 OT 标准数据模型
-type Encoder interface {
-	Type() string
-	UnmarshalTraces(b []byte) (ptrace.Traces, error)
-	UnmarshalMetrics(b []byte) (pmetric.Metrics, error)
-	UnmarshalLogs(b []byte) (plog.Logs, error)
-}
-
-type NoopEncoder struct{}
-
-func (NoopEncoder) UnmarshalTraces(_ []byte) (ptrace.Traces, error) {
-	return ptrace.NewTraces(), nil
-}
-
-func (NoopEncoder) UnmarshalMetrics(_ []byte) (pmetric.Metrics, error) {
-	return pmetric.NewMetrics(), nil
-}
-
-func (NoopEncoder) UnmarshalLogs(_ []byte) (plog.Logs, error) {
-	return plog.NewLogs(), nil
-}
-
-func UnmarshalRecordData(encoder Encoder, rtype define.RecordType, b []byte) (interface{}, error) {
-	switch rtype {
-	case define.RecordTraces:
-		return encoder.UnmarshalTraces(b)
-	case define.RecordMetrics:
-		return encoder.UnmarshalMetrics(b)
-	case define.RecordLogs:
-		return encoder.UnmarshalLogs(b)
-	}
-	return nil, define.ErrUnknownRecordType
 }

@@ -17,18 +17,39 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-// Json Encoder
+// Encoder 负责解析 Traces/Metrics/Logs 数据至 OT 标准数据模型
+type Encoder interface {
+	Type() string
+	UnmarshalTraces(b []byte) (ptrace.Traces, error)
+	UnmarshalMetrics(b []byte) (pmetric.Metrics, error)
+	UnmarshalLogs(b []byte) (plog.Logs, error)
+}
 
-func JsonEncoder() receiver.Encoder {
+func unmarshalRecordData(encoder Encoder, rtype define.RecordType, b []byte) (interface{}, error) {
+	switch rtype {
+	case define.RecordTraces:
+		return encoder.UnmarshalTraces(b)
+	case define.RecordMetrics:
+		return encoder.UnmarshalMetrics(b)
+	case define.RecordLogs:
+		return encoder.UnmarshalLogs(b)
+	}
+	return nil, define.ErrUnknownRecordType
+}
+
+// JsonEncoder Json 编码器实现
+func JsonEncoder() Encoder {
 	return jsonEncoder{}
 }
 
 type jsonEncoder struct{}
 
-func (jsonEncoder) Type() string { return "json" }
+func (jsonEncoder) Type() string {
+	return "json"
+}
 
 func (jsonEncoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	req := ptraceotlp.NewRequest()
@@ -54,15 +75,16 @@ func (jsonEncoder) UnmarshalLogs(buf []byte) (plog.Logs, error) {
 	return req.Logs(), nil
 }
 
-// Pb Encoder
-
-func PbEncoder() receiver.Encoder {
+// PbEncoder Pb 编码器实现
+func PbEncoder() Encoder {
 	return pbEncoder{}
 }
 
 type pbEncoder struct{}
 
-func (pbEncoder) Type() string { return "pb" }
+func (pbEncoder) Type() string {
+	return "pb"
+}
 
 func (pbEncoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	req := ptraceotlp.NewRequest()

@@ -50,8 +50,6 @@ func (p tokenChecker) Name() string {
 	return define.ProcessorTokenChecker
 }
 
-func (p tokenChecker) Clean() {}
-
 func (p tokenChecker) IsDerived() bool {
 	return false
 }

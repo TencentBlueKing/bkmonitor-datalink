@@ -34,7 +34,8 @@ processor:
           - "attributes.http.host"
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, err := newFactory(psc[0].Config, nil)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
 	assert.NoError(t, err)
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
@@ -47,6 +48,7 @@ processor:
 
 	assert.Equal(t, define.ProcessorAttributeFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
+	assert.False(t, factory.IsPreCheck())
 }
 
 const (

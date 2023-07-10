@@ -10,7 +10,6 @@
 package generator
 
 import (
-	"context"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -53,9 +52,7 @@ import (
 */
 
 type TracesGenerator struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	opts   define.TracesOptions
+	opts define.TracesOptions
 
 	attributes pcommon.Map
 	resources  pcommon.Map
@@ -64,41 +61,11 @@ type TracesGenerator struct {
 func NewTracesGenerator(opts define.TracesOptions) *TracesGenerator {
 	attributes := random.AttributeMap(opts.RandomAttributeKeys, opts.DimensionsValueType)
 	resources := random.AttributeMap(opts.RandomResourceKeys, opts.DimensionsValueType)
-	ctx, cancel := context.WithCancel(context.Background())
 	return &TracesGenerator{
-		ctx:        ctx,
-		cancel:     cancel,
 		attributes: attributes,
 		resources:  resources,
 		opts:       opts,
 	}
-}
-
-func (g *TracesGenerator) Stop() {
-	g.cancel()
-}
-
-func (g *TracesGenerator) Ch() chan ptrace.Traces {
-	ch := make(chan ptrace.Traces, 128)
-	data := g.Generate()
-	n := 0
-	go func() {
-		defer close(ch)
-		for {
-			select {
-			case <-g.ctx.Done():
-				return
-
-			case ch <- data:
-				n++
-				if n >= g.opts.Iteration {
-					return
-				}
-				time.Sleep(g.opts.Interval)
-			}
-		}
-	}()
-	return ch
 }
 
 func (g *TracesGenerator) Generate() ptrace.Traces {
@@ -114,8 +81,8 @@ func (g *TracesGenerator) Generate() ptrace.Traces {
 	for i := 0; i < g.opts.SpanCount; i++ {
 		span := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 		span.SetName(random.String(12))
-		span.SetSpanID(pcommon.NewSpanID(random.SpanID()))
-		span.SetTraceID(pcommon.NewTraceID(random.TraceID()))
+		span.SetSpanID(random.SpanID())
+		span.SetTraceID(random.TraceID())
 		span.SetStartTimestamp(pcommon.NewTimestampFromTime(now))
 		span.SetEndTimestamp(pcommon.NewTimestampFromTime(now.Add(time.Second)))
 		span.SetKind(ptrace.SpanKind(g.opts.SpanKind))
@@ -123,6 +90,19 @@ func (g *TracesGenerator) Generate() ptrace.Traces {
 		for k, v := range g.opts.Attributes {
 			span.Attributes().UpsertString(k, v)
 		}
+
+		for j := 0; j < g.opts.EventCount; j++ {
+			event := span.Events().AppendEmpty()
+			event.SetName(random.String(8))
+		}
+		for j := 0; j < g.opts.LinkCount; j++ {
+			link := span.Links().AppendEmpty()
+			link.SetTraceID(random.TraceID())
+		}
 	}
 	return td
+}
+
+func FromJsonToTraces(b []byte) (ptrace.Traces, error) {
+	return ptrace.NewJSONUnmarshaler().UnmarshalTraces(b)
 }

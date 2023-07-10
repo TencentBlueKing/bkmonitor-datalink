@@ -27,12 +27,12 @@ import (
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceJaeger)
 
-type GrpcSrv struct {
+type GrpcService struct {
 	receiver.Publisher
 	receiver.Validator
 }
 
-func (s GrpcSrv) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest) (*api_v2.PostSpansResponse, error) {
+func (s GrpcService) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest) (*api_v2.PostSpansResponse, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
 

@@ -56,9 +56,14 @@ resource_limit:
 
 # bk-collector self-config
 bk-collector:
-  # ================================ Mapper ==================================
-  mapper:
-    type: "mapper"
+  # ============================= LabelStorage ===============================
+  label_storage:
+    type: "builtin"
+    dir: "."
+
+  # ============================= TraceStorage ===============================
+  trace_storage:
+    type: "leveldb"
     dir: "."
 
   # =============================== SubConfig ================================
@@ -105,6 +110,11 @@ bk-collector:
     auto_reload: true
     patterns:
       - "./example/fixtures/pingserver_sub*.yml"
+
+  # ============================== Pingserver ================================
+  cluster:
+    disabled: false
+    address: ":4316"
 
   # =============================== Receiver =================================
   receiver:
@@ -298,11 +308,14 @@ bk-collector:
 
 
     # Sampler: 采样处理器
-    # Random
-    - name: "sampler/random"
+    # StatusCode
+    - name: "sampler/status_code"
       config:
-        type: "random"
-        sampling_percentage: 100 # 上报全部数据
+        type: "status_code"
+        storage_policy: "full"
+        max_spans: 100
+        status_code:
+          - "ERROR"
 
 
     # ServiceDiscover: 服务发现处理器
@@ -385,6 +398,18 @@ bk-collector:
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
+
+    # Forwarder: 数据转发器
+    # Traces
+    - name: "forwarder/traces"
+      config:
+        resolver:
+          identifier: "localhost:4316"
+          type: "static"
+          endpoints:
+          - "localhost:4316"
+          - "localhost:4315"
+
 
     # TracesDeriver: Traces 派生处理器
     # Count
@@ -827,6 +852,8 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        #- "forwarder/traces"
+        - "sampler/status_code"
         - "resource_filter/assemble"
         - "attribute_filter/common"
         - "service_discover/common"
@@ -880,6 +907,21 @@ bk-collector:
       type: "metrics.derived"
       processors:
         - "apdex_calculator/standard"
+
+    - name: "traces_pipeline/derived"
+      type: "traces.derived"
+      processors:
+        - "token_checker/aes256"
+        - "resource_filter/assemble"
+        - "attribute_filter/common"
+        - "service_discover/common"
+        - "traces_deriver/duration"
+        - "traces_deriver/delta"
+        - "traces_deriver/count"
+        - "traces_deriver/min"
+        - "traces_deriver/max"
+        - "traces_deriver/sum"
+        - "traces_deriver/bucket"
 
   # =============================== Exporter =================================
   exporter:

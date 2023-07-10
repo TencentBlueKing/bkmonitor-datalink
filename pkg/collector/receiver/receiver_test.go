@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -71,6 +72,7 @@ func TestReceiver(t *testing.T) {
 	r.ready()
 	assert.NoError(t, r.Start())
 	assert.NoError(t, r.Stop())
+	RecordHandleMetrics(DefaultMetricMonitor, define.Token{}, define.RequestHttp, define.RecordMetrics, 0, time.Now())
 }
 
 func TestPublisher(t *testing.T) {

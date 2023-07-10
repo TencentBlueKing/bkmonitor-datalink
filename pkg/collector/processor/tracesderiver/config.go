@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/accumulator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstrings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/mapstrings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 

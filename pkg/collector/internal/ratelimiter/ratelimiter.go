@@ -52,14 +52,14 @@ type RateLimiter interface {
 func New(c Config) RateLimiter {
 	switch c.Type {
 	case TypeTokenBucket:
-		return NewTokenBucketRateLimiter(c.Qps, c.Burst)
+		return newTokenBucketRateLimiter(c.Qps, c.Burst)
 	default:
-		return NewNoopRateLimiter()
+		return newNoopRateLimiter()
 	}
 }
 
-// NewNoopRateLimiter 返回空限流器实现
-func NewNoopRateLimiter() RateLimiter {
+// newNoopRateLimiter 返回空限流器实现
+func newNoopRateLimiter() RateLimiter {
 	return noopRateLimiter{}
 }
 
@@ -83,11 +83,11 @@ func (noopRateLimiter) QPS() float32 {
 	return 0
 }
 
-// NewTokenBucketRateLimiter 存在三种情况
+// newTokenBucketRateLimiter 存在三种情况
 // 1）qps == 0: 没有 qps 限制
 // 2）qps < 0: 拒绝所有请求
 // 3）qps > 0: 令牌桶限流
-func NewTokenBucketRateLimiter(qps float32, burst int) RateLimiter {
+func newTokenBucketRateLimiter(qps float32, burst int) RateLimiter {
 	limiter := &tokenBucketRateLimiter{}
 	if qps == 0 {
 		limiter.unlimited = true

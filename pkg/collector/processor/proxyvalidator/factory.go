@@ -65,8 +65,6 @@ func (p proxyValidator) Name() string {
 	return define.ProcessorProxyValidator
 }
 
-func (p proxyValidator) Clean() {}
-
 func (p proxyValidator) IsDerived() bool {
 	return false
 }

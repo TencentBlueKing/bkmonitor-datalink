@@ -25,18 +25,26 @@ func TestFixedDecoder(t *testing.T) {
 		logsDataId    int32 = 10012
 	)
 
-	decoder := FixedTokenDecoder(Config{
+	decoder := newFixedTokenDecoder(Config{
 		Type:          "fixed",
 		TracesDataId:  tracesDataId,
 		MetricsDataId: metricsDataId,
 		LogsDataId:    logsDataId,
 	})
+	assert.Equal(t, decoderTypeFixed, decoder.Type())
+	assert.True(t, decoder.Skip())
 
 	token, err := decoder.Decode("")
 	assert.NoError(t, err)
 	assert.Equal(t, token.TracesDataId, tracesDataId)
 	assert.Equal(t, token.MetricsDataId, metricsDataId)
 	assert.Equal(t, token.LogsDataId, logsDataId)
+}
+
+func TestDefaultDecoder(t *testing.T) {
+	decoder := NewTokenDecoder(Config{})
+	assert.Equal(t, decoderTypeFixed, decoder.Type())
+	assert.True(t, decoder.Skip())
 }
 
 var aes256TokenDecoderConfig = Config{
@@ -47,7 +55,10 @@ var aes256TokenDecoderConfig = Config{
 }
 
 func TestAes256Decoder(t *testing.T) {
-	decoder := Aes256TokenDecoder(aes256TokenDecoderConfig)
+	decoder := NewTokenDecoder(aes256TokenDecoderConfig)
+	assert.Equal(t, decoderTypeAcs256, decoder.Type())
+	assert.False(t, decoder.Skip())
+
 	cases := []struct {
 		Input     string
 		Token     define.Token
@@ -90,10 +101,13 @@ func TestAes256Decoder(t *testing.T) {
 }
 
 func TestProxyTokenDecoderEnable(t *testing.T) {
-	decoder := ProxyTokenDecoder(Config{
+	decoder := NewTokenDecoder(Config{
+		Type:        decoderTypeProxy,
 		ProxyDataId: 999,
 		ProxyToken:  "test_proxy_token",
 	})
+	assert.Equal(t, decoderTypeProxy, decoder.Type())
+	assert.False(t, decoder.Skip())
 
 	token, err := decoder.Decode(define.WrapProxyToken(define.Token{
 		Original:    "test_proxy_token",

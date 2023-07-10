@@ -67,8 +67,6 @@ func (p resourceFilter) Name() string {
 	return define.ProcessorResourceFilter
 }
 
-func (p resourceFilter) Clean() {}
-
 func (p resourceFilter) IsDerived() bool {
 	return false
 }

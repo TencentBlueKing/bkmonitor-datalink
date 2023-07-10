@@ -41,10 +41,10 @@ func removeTempDir(logf func(format string, args ...any), dir string) {
 }
 
 func TestBuiltinStorage(t *testing.T) {
-	InitStorage(".", "builtin")
-	defer CleanStorage()
+	sc := NewStorageController(".", TypeBuiltin)
+	defer sc.Clean()
 
-	stor := GetOrCreateStorage(1001)
+	stor := sc.GetOrCreate(1001)
 	testStorage(t, stor)
 	assert.NoError(t, stor.Clean())
 }
@@ -53,10 +53,10 @@ func TestLeveldbStorage(t *testing.T) {
 	dir := makeTempDir(t.Logf)
 	defer removeTempDir(t.Logf, dir)
 
-	InitStorage(dir, TypeLeveldb)
-	defer CleanStorage()
+	sc := NewStorageController(dir, TypeLeveldb)
+	defer sc.Clean()
 
-	stor := GetOrCreateStorage(1001)
+	stor := sc.GetOrCreate(1001)
 	testStorage(t, stor)
 	assert.NoError(t, stor.Clean())
 }
@@ -102,7 +102,7 @@ func benchmarkStorageSetIf(stor Storage) {
 	}
 }
 
-func BenchmarkBuiltinSet(b *testing.B) {
+func BenchmarkBuiltinSetIf(b *testing.B) {
 	storMap := make(map[int]Storage)
 	start := time.Now()
 	wg := sync.WaitGroup{}
@@ -125,7 +125,7 @@ func BenchmarkBuiltinSet(b *testing.B) {
 	b.FailNow()
 }
 
-func BenchmarkLeveldbSet(b *testing.B) {
+func BenchmarkLeveldbSetIf(b *testing.B) {
 	start := time.Now()
 	dir := makeTempDir(b.Logf)
 	defer removeTempDir(b.Logf, dir)

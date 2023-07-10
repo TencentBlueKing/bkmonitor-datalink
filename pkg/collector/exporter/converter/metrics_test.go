@@ -47,8 +47,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := <-g.Ch()
-	g.Stop()
+	m := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
@@ -95,8 +94,7 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := <-g.Ch()
-	g.Stop()
+	m := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
@@ -149,8 +147,7 @@ func TestConvertSummaryMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := <-g.Ch()
-	g.Stop()
+	m := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
@@ -201,8 +198,7 @@ func TestConvertSumMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := <-g.Ch()
-	g.Stop()
+	m := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {

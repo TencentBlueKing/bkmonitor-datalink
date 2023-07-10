@@ -119,7 +119,7 @@ func TestAccumulatorGcOk(t *testing.T) {
 	accumulator := New(&Config{
 		MetricName:      "bk_apm_count",
 		MaxSeries:       10,
-		GcInterval:      2 * time.Second,
+		GcInterval:      1 * time.Second,
 		PublishInterval: 1 * time.Second,
 	}, nil)
 
@@ -132,7 +132,7 @@ func TestAccumulatorGcOk(t *testing.T) {
 			ret := accumulator.Exceeded()
 			assert.Equal(t, 0, ret[1001])
 			assert.Equal(t, 0, ret[1002])
-			time.Sleep(4 * time.Second) // 超过 gcInterval
+			time.Sleep(2 * time.Second) // 超过 gcInterval
 			t.Log(accumulator.Exceeded())
 		}
 	}

@@ -16,4 +16,5 @@ import (
 var (
 	ErrUnknownRecordType = errors.New("bk-collector: unknown record type")
 	ErrSkipEmptyRecord   = errors.New("bk-collector: skip empty record")
+	ErrEndOfPipeline     = errors.New("bk-collector: end of pipeline")
 )

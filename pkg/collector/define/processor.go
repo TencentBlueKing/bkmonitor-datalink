@@ -23,4 +23,5 @@ const (
 	ProcessorServiceDiscover = "service_discover"
 	ProcessorTokenChecker    = "token_checker"
 	ProcessorTracesDeriver   = "traces_deriver"
+	ProcessorForwarder       = "forwarder"
 )

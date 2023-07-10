@@ -16,22 +16,20 @@ import (
 	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
 	jaegertranslator "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
-// Thrift Encoder
-
-func ThriftV1Encoder() receiver.Encoder {
+func newThriftV1Encoder() thriftEncoder {
 	return thriftEncoder{tdSerializer: apachethrift.NewTDeserializer()}
 }
 
+// thriftEncoder ThriftV1 编码器实现
 type thriftEncoder struct {
-	receiver.NoopEncoder
 	tdSerializer *apachethrift.TDeserializer
 }
 
-func (e thriftEncoder) Type() string { return "thrift" }
+func (e thriftEncoder) Type() string {
+	return "thrift"
+}
 
 func (e thriftEncoder) UnmarshalTraces(buf []byte) (ptrace.Traces, error) {
 	batch := &jaeger.Batch{}

@@ -78,6 +78,11 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		}
 		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
+
+		id := c.ToDataID(&define.Record{
+			Token: define.Token{MetricsDataId: 10011},
+		})
+		assert.Equal(t, int32(10011), id)
 	})
 
 	t.Run("convertCounter2", func(t *testing.T) {

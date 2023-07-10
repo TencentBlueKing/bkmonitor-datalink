@@ -7,33 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package sampler
+package evaluator
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+import (
+	"testing"
 
-const (
-	TypeNoop   = "noop"
-	TypeRandom = "random"
+	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/ptrace"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
-func NewSampler(c Config) Sampler {
-	switch c.Type {
-	case TypeRandom:
-		return RandomSampler(c)
+func TestAlwaysEvaluator(t *testing.T) {
+	evaluator := New(Config{})
+
+	g := generator.NewTracesGenerator(define.TracesOptions{
+		SpanCount: 10,
+	})
+
+	traces := g.Generate()
+	record := &define.Record{
+		RecordType: define.RecordTraces,
+		Data:       traces,
 	}
-	return NoopSampler() // TypeNoop
+	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
+	evaluator.Evaluate(record)
+	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 }
-
-type Sampler interface {
-	Sample(record *define.Record)
-}
-
-// NoopSampler
-
-func NoopSampler() Sampler {
-	return noopSampler{}
-}
-
-type noopSampler struct{}
-
-func (noopSampler) Sample(_ *define.Record) {}

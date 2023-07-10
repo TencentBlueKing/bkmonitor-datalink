@@ -29,7 +29,7 @@ const routeV2Push = "/v2/push/"
 
 var globalRecords = define.NewRecordQueue(define.PushModeGuarantee)
 
-// Records 返回 Receiver 全局消息管道
+// Records 返回 Proxy 全局消息管道
 func Records() <-chan *define.Record {
 	return globalRecords.Get()
 }

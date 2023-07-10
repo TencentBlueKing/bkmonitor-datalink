@@ -184,7 +184,7 @@ func HttpPbResponseHandler() receiver.ResponseHandler {
 }
 
 type httpPbResponseHandler struct {
-	encoder receiver.Encoder
+	encoder Encoder
 }
 
 func (h httpPbResponseHandler) ContentType() string {
@@ -204,7 +204,7 @@ func (h httpPbResponseHandler) Response(rtype define.RecordType) ([]byte, error)
 }
 
 func (h httpPbResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
-	return receiver.UnmarshalRecordData(h.encoder, rtype, b)
+	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
 func (h httpPbResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {
@@ -227,7 +227,7 @@ func HttpJsonResponseHandler() receiver.ResponseHandler {
 
 type httpJsonResponseHandler struct {
 	marshaler *jsonpb.Marshaler
-	encoder   receiver.Encoder
+	encoder   Encoder
 }
 
 func (h httpJsonResponseHandler) ContentType() string {
@@ -247,7 +247,7 @@ func (h httpJsonResponseHandler) Response(rtype define.RecordType) ([]byte, erro
 }
 
 func (h httpJsonResponseHandler) Unmarshal(rtype define.RecordType, b []byte) (interface{}, error) {
-	return receiver.UnmarshalRecordData(h.encoder, rtype, b)
+	return unmarshalRecordData(h.encoder, rtype, b)
 }
 
 func (h httpJsonResponseHandler) ErrorStatus(status interface{}) ([]byte, error) {

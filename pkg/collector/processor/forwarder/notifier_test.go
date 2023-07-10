@@ -7,28 +7,45 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package receiver
+package forwarder
 
 import (
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func TestRecordMetrics(t *testing.T) {
-	RecordHandleMetrics(DefaultMetricMonitor, define.Token{}, define.RequestHttp, define.RecordMetrics, 0, time.Now())
-}
+func TestEndpointNotifier(t *testing.T) {
+	logger.SetLoggerLevel("debug")
+	notifier := NewEventNotifier()
 
-func TestNoopEncoder(t *testing.T) {
-	encoder := NoopEncoder{}
-	var err error
-	_, err = encoder.UnmarshalLogs(nil)
-	assert.NoError(t, err)
-	_, err = encoder.UnmarshalMetrics(nil)
-	assert.NoError(t, err)
-	_, err = encoder.UnmarshalTraces(nil)
-	assert.NoError(t, err)
+	events := []Event{
+		{Type: EventTypeAdd, Endpoint: ":1001"},
+		{Type: EventTypeAdd, Endpoint: ":1002"},
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		count := 0
+		for ev := range notifier.Watch() {
+			assert.Equal(t, events[count], ev)
+			count++
+			if count >= 2 {
+				return
+			}
+		}
+	}()
+
+	notifier.Sync([]string{":1001", ":1002"})
+	wg.Wait()
+
+	notifier.Sync([]string{":1001"})
+	ev := <-notifier.Watch()
+	assert.Equal(t, Event{Type: EventTypeDelete, Endpoint: ":1002"}, ev)
+	notifier.Stop()
 }

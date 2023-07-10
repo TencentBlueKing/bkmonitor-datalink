@@ -53,7 +53,7 @@ func FastDimensions(n int) map[string]string {
 }
 
 // TraceID 随机生成 TraceID
-func TraceID() [16]byte {
+func TraceID() pcommon.TraceID {
 	b := make([]byte, 16)
 	rand.Read(b)
 
@@ -61,11 +61,11 @@ func TraceID() [16]byte {
 	for i := 0; i < 16; i++ {
 		ret[i] = b[i]
 	}
-	return ret
+	return pcommon.NewTraceID(ret)
 }
 
 // SpanID 随机生成 SpanID
-func SpanID() [8]byte {
+func SpanID() pcommon.SpanID {
 	b := make([]byte, 8)
 	rand.Read(b)
 
@@ -73,7 +73,7 @@ func SpanID() [8]byte {
 	for i := 0; i < 8; i++ {
 		ret[i] = b[i]
 	}
-	return ret
+	return pcommon.NewSpanID(ret)
 }
 
 // AttributeMap 随机生成指定 key 和类型的 attributeMap

@@ -101,29 +101,21 @@ func (p attributeFilter) fromTokenAction(record *define.Record) {
 
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
-		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for i := 0; i < resourceMetricsSlice.Len(); i++ {
-			scopeMetricsSlice := resourceMetricsSlice.At(i).ScopeMetrics()
-			for j := 0; j < scopeMetricsSlice.Len(); j++ {
-				metrics := scopeMetricsSlice.At(j).Metrics()
-				for k := 0; k < metrics.Len(); k++ {
-					metric := metrics.At(k)
-					switch metric.DataType() {
-					case pmetric.MetricDataTypeGauge:
-						dps := metric.Gauge().DataPoints()
-						for n := 0; n < dps.Len(); n++ {
-							attrs := dps.At(n).Attributes()
-							if config.FromToken.BizId != "" {
-								attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
-							}
-							if config.FromToken.AppName != "" {
-								attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
-							}
-						}
+		foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+			switch metric.DataType() {
+			case pmetric.MetricDataTypeGauge:
+				dps := metric.Gauge().DataPoints()
+				for n := 0; n < dps.Len(); n++ {
+					attrs := dps.At(n).Attributes()
+					if config.FromToken.BizId != "" {
+						attrs.UpsertInt(config.FromToken.BizId, int64(record.Token.BizId))
+					}
+					if config.FromToken.AppName != "" {
+						attrs.UpsertString(config.FromToken.AppName, record.Token.AppName)
 					}
 				}
 			}
-		}
+		})
 	}
 }
 

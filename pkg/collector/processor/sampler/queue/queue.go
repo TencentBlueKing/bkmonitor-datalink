@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// Policy 代表 traces 的存储策略
 type Policy string
 
 func (p Policy) IsFull() bool {
@@ -26,7 +27,10 @@ func (p Policy) IsFull() bool {
 }
 
 const (
+	// PolicyFull 表示存储所有内容 traces 的任何数据
 	PolicyFull Policy = "full"
+
+	// PolicyPost 后采样 即只存储 spanID/traceID
 	PolicyPost Policy = "post"
 )
 
@@ -119,6 +123,10 @@ func New(policy string, maxSpans int) *Queue {
 }
 
 func (q *Queue) Clean() {
+	if !q.policy.IsFull() {
+		return
+	}
+
 	q.mut.Lock()
 	defer q.mut.Unlock()
 

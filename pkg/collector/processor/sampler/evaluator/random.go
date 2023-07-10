@@ -52,8 +52,9 @@ func newRandomEvaluator(c Config) Evaluator {
 	}
 }
 
+// randomEvaluator 随机采样（概率采样）
 type randomEvaluator struct {
-	keepAll            bool
+	keepAll            bool // fastpath 全采样的场景下就无需 hash 计算了
 	hashSeed           uint32
 	scaledSamplingRate uint32
 }

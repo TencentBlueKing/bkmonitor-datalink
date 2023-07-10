@@ -7,23 +7,27 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# ApdexCalculator: apdex 状态计算器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+  # 标准 apdex 计算方式
+  - name: "apdex_calculator/standard"
+    config:
+      calculator:
+        type: "standard"
+	    rules:
+	      - kind: ""
+	        metric_name: "bk_apm_duration"
+	        destination: "apdex_type"
+	        apdex_t: 20 # ms
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
+  # 固定 apdex 状态（测试用途）
+  - name: "apdex_calculator/fixed"
+    config:
+      calculator:
+        type: "fixed"
+        apdex_status: "satisfied"
+*/
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package apdexcalculator

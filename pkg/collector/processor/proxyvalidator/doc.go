@@ -7,23 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# ProxyValidator: proxy 数据校验器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+    - name: "proxy_validator/time_series"
+      config:
+        type: time_series
+        version: v2
+        max_future_time_offset: 3600
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
+    - name: "proxy_validator/event"
+      config:
+        type: event
+        version: v2
+*/
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package proxyvalidator

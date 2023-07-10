@@ -7,23 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# Forwarder: 数据转发器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+   - name: "forwarder/traces"
+     config:
+       resolver:
+         identifier: "localhost:4316" # 本机标识
+         type: "static" # 静态解析器
+         endpoints: # 集群服务端点
+         - "localhost:4316"
+         - "localhost:4315"
+*/
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
-
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package forwarder

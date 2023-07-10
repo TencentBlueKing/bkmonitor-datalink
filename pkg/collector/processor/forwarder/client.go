@@ -111,7 +111,7 @@ type Client struct {
 	stop     chan struct{}
 	mut      sync.RWMutex
 	clients  map[string]grpcClient
-	notReady map[string]struct{}
+	notReady map[string]struct{} // 未就绪的 endpoints
 	resolver Resolver
 	picker   *Picker
 }
@@ -175,12 +175,15 @@ func (c *Client) handleEvent(event Event) {
 
 	switch event.Type {
 	case EventTypeDelete:
+		// 清理 member
 		c.picker.RemoveMember(event.Endpoint)
 		delete(c.notReady, event.Endpoint)
 		client, ok := c.clients[event.Endpoint]
 		if !ok {
 			return
 		}
+
+		// 清理 client
 		delete(c.clients, event.Endpoint)
 		if err := client.close(); err != nil {
 			logger.Errorf("failed to close client, endpoint=%v, err=%v", event.Endpoint, err)

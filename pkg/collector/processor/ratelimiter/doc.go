@@ -7,23 +7,21 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# RateLimiter: 限流器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+  # 令牌桶限流器
+  - name: "rate_limiter/token_bucket"
+    config:
+      type: token_bucket
+      qps: 5
+      burst: 10
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
+  # 不做限制
+  - name: "rate_limiter/noop"
+    config:
+      type: noop
+*/
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package ratelimiter

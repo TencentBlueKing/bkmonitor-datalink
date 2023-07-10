@@ -34,6 +34,7 @@ func Records() <-chan *define.Record {
 	return globalRecords.Get()
 }
 
+// Server 提供一个集群内数据转发的服务
 type Server struct {
 	pb.UnimplementedClusterServer
 	address string

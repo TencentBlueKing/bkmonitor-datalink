@@ -7,23 +7,22 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# MetricsFilter: 指标过滤器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       # Drop Action
+       drop:
+         # metrics: metric name
+         metrics:
+           - "runtime.go.mem.live_objects"
+           - "none.exist.metric"
+       # Replace Action
+       replace:
+         - source: "previous_metric"       # 原字段
+           destination: "current_metric"   # 新字段
+*/
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
-
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package metricsfilter

@@ -30,6 +30,7 @@ var statusMap = map[string]string{
 	"STATUS_CODE_ERROR": "ERROR",
 }
 
+// statusCodeEvaluator 状态码采样
 type statusCodeEvaluator struct {
 	mut         sync.RWMutex
 	traces      map[pcommon.TraceID]int64

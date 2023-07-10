@@ -7,23 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# Sampler: 采样器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+  # 概率采样
+  - name: "sampler/random"
+    config:
+      type: "random"
+      sampling_percentage: 100 # 采样率 [0, 100]
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
+  # 永远采样
+  - name: "sampler/always"
+    config:
+      type: "always"
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
+  - name: "sampler/status_code"
+    config:
+      type: "status_code"
+      # traces 存储策略
+      # full: 表示存储所有数据
+      # post: 只存储 traceID/spanID
+      storage_policy: "full"
+      max_spans: 100 # 每个 traces 最多允许的 spans 数量
+      status_code: # ERROR|OK|UNSET
+      - "ERROR"
+*/
 
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package sampler

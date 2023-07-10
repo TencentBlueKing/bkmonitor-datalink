@@ -7,23 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package evaluator
+/*
+# AttributeFilter: 属性处理器
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-)
+processor:
+   - name: "attribute_filter/common"
+     config:
+       # 将 attributes 部分字段转换为 string 类型
+       as_string:
+         keys:
+           - "attributes.http.host"
+       # 将 token 字段写入到 attribute 里面
+       from_token:
+         biz_id: "bk_biz_id"
+         app_name: "bk_app_name"
+*/
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
-
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+package attributefilter

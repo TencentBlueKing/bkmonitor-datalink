@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
@@ -117,6 +118,21 @@ processor:
 		_, err := checker.Process(r)
 		assert.Equal(t, define.ErrSkipEmptyRecord, err)
 	})
+}
+
+func TestAgentNodeStatusProcess(t *testing.T) {
+	checker := &licenseChecker{}
+	conf := Config{NumNodes: 1, TolerableNumRatio: 1.0}
+	agentStatus, nodeStatus := checker.checkAgentNodeStatus(conf, "token_x1", "instance1")
+	assert.Equal(t, statusAgentNew, agentStatus)
+	assert.Equal(t, statusNodeAccess, nodeStatus)
+
+	cacher := licensecache.GetOrCreateCacher("token_x1")
+	cacher.Set("instance1")
+
+	agentStatus, nodeStatus = checker.checkAgentNodeStatus(conf, "token_x1", "instance2")
+	assert.Equal(t, statusAgentNew, agentStatus)
+	assert.Equal(t, statusNodeExcess, nodeStatus)
 }
 
 func TestCheckLicenseStatus(t *testing.T) {

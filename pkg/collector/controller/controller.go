@@ -352,6 +352,10 @@ func (c *Controller) Reload(conf *confengine.Config) error {
 }
 
 func (c *Controller) submitTasks(q *define.TaskQueue, record *define.Record, pipeline pipeline.Pipeline) {
+	if pipeline == nil {
+		logger.Warnf("no '%s' pipeline found", record.RecordType)
+		return
+	}
 	q.Push(define.NewTask(record, pipeline.Name(), pipeline.SchedProcessors()))
 }
 

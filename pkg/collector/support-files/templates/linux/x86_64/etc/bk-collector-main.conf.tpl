@@ -238,6 +238,9 @@ bk-collector:
     # Proxy
     - name: "token_checker/proxy"
 
+    # LicenseChecker: 验证接入的节点数
+    - name: "license_checker/common"
+
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
 

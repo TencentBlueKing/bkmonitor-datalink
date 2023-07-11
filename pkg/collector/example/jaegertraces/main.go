@@ -47,6 +47,7 @@ func tracerProvider(url string) (*tracesdk.TracerProvider, error) {
 		tracesdk.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String(service),
+			semconv.ServiceInstanceIDKey.String(service),
 			attribute.String("environment", environment),
 			attribute.Int64("ID", id),
 			attribute.String("bk.data.token", token),

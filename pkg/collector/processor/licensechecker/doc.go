@@ -7,22 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+/*
+# LicenseChecker: license 校验器
 
-const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
+processor:
+    - name: "license_checker/common"
+      config:
+        enabled: true
+        expire_time: 4084531651
+        tolerable_expire: 24h
+        number_nodes: 200
+        tolerable_num_ratio: 1.5
+*/
 
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
-)
+package licensechecker

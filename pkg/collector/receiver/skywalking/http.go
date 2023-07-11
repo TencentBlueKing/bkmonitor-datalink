@@ -11,8 +11,10 @@ package skywalking
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -38,7 +40,7 @@ type HttpService struct {
 var httpSvc HttpService
 
 const (
-	tokenKey        = "X-BK-TOKEN"
+	splitKey        = "_"
 	routeV3Segment  = "/v3/segment"  // segment 上报单一 trace
 	routeV3Segments = "/v3/segments" // segments 上报多条 traces
 )
@@ -75,13 +77,24 @@ func Ready() {
 	})
 }
 
+// extractMetadata 提取 token 与 instance
+// HTTP 协议 SDK 实现无法方便设置 Header 因此从 serviceInstance 里面提取 token
+// 分割符号 splitKey
+func extractMetadata(s string) (token, serviceInstance string, err error) {
+	parts := strings.SplitN(s, splitKey, 2) // token 不会携带 splitKey
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("skywalking: invalid metadata '%s'", s)
+	}
+	token, serviceInstance = parts[0], parts[1]
+	return token, serviceInstance, nil
+}
+
 func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	start := time.Now()
 
-	token := req.Header.Get(tokenKey)
 	buf := &bytes.Buffer{}
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
@@ -99,6 +112,14 @@ func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	token, serviceInstance, err := extractMetadata(data.GetServiceInstance())
+	if err != nil {
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		logger.Warnf("failed to extract metadata, ip=%v, error: %s", ip, err)
+		return
+	}
+
+	data.ServiceInstance = serviceInstance
 	traces := EncodeTraces(data, token)
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
@@ -126,7 +147,6 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	start := time.Now()
-	token := req.Header.Get(tokenKey)
 	buf := &bytes.Buffer{}
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
@@ -146,6 +166,13 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 
 	var traceToken define.Token
 	for _, seg := range data {
+		token, serviceInstance, err := extractMetadata(seg.GetServiceInstance())
+		if err != nil {
+			logger.Warnf("failed to extract metadata, ip=%v, error: %s", ip, err)
+			continue
+		}
+
+		seg.ServiceInstance = serviceInstance
 		traces := EncodeTraces(seg, token)
 		r := &define.Record{
 			RequestType:   define.RequestHttp,
@@ -154,7 +181,7 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 			Data:          traces,
 		}
 
-		prettyprint.Pretty(define.RecordTraces, traces)
+		prettyprint.Traces(traces)
 		code, processorName, err := s.Validate(r)
 		if err != nil {
 			receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
@@ -162,11 +189,9 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 			metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
 			return
 		}
-
 		s.Publish(r)
 		traceToken = r.Token
 	}
-
 	receiver.RecordHandleMetrics(metricMonitor, traceToken, define.RequestHttp, define.RecordTraces, buf.Len(), start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
 }

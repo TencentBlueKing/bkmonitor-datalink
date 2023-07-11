@@ -63,15 +63,15 @@ bk-collector:
 
   # ============================= TraceStorage ===============================
   trace_storage:
-    type: "leveldb"
+    type: "builtin"
     dir: "."
 
   # =============================== SubConfig ================================
   apm:
     patterns:
       - "./example/fixtures/report_*.yml"
-      # - "./example/platform.yml"
-      # - "./example/subconfig.yml"
+      - "./example/platform.yml"
+      - "./example/subconfig.yml"
 
   # =============================== Logging ==================================
   logging:
@@ -392,6 +392,9 @@ bk-collector:
         decoded_iv: "bkbkbkbkbkbkbkbk"
         decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
 
+    # LicenseChecker: 验证接入的节点数
+    - name: "license_checker/common"
+      config:
     # TokenChecker: 权限校验处理器
     # Proxy
     - name: "token_checker/proxy"
@@ -852,8 +855,9 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "license_checker/common"
         #- "forwarder/traces"
-        - "sampler/status_code"
+        #- "sampler/status_code"
         - "resource_filter/assemble"
         - "attribute_filter/common"
         - "service_discover/common"

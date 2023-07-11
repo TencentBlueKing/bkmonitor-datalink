@@ -105,6 +105,10 @@ func validatePreCheckProcessors(r *define.Record, getter pipeline.Getter) (defin
 			if _, err := inst.Process(r); err != nil {
 				return define.StatusCodeTooManyRequests, define.ProcessorRateLimiter, err
 			}
+		case define.ProcessorLicenseChecker:
+			if _, err := inst.Process(r); err != nil {
+				return define.StatusBadRequest, define.ProcessorLicenseChecker, err
+			}
 		}
 	}
 	return define.StatusCodeOK, "", nil

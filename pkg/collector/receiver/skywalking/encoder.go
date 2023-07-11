@@ -289,7 +289,6 @@ func swTraceIDToTraceID(traceID string) pcommon.TraceID {
 	if len(traceID) <= 36 { // 36: uuid length (rfc4122)
 		uid, err := uuid.Parse(traceID)
 		if err != nil {
-			// return pcommon.NewTraceIDEmpty()
 			return pcommon.InvalidTraceID()
 		}
 		return pcommon.NewTraceID(uid)

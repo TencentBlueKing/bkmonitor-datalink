@@ -32,6 +32,29 @@ func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
 
+func TestExtractMetadata(t *testing.T) {
+	t.Run("Empty", func(t *testing.T) {
+		token, instance, err := extractMetadata("")
+		assert.Empty(t, token)
+		assert.Empty(t, instance)
+		assert.Equal(t, "skywalking: invalid metadata ''", err.Error())
+	})
+
+	t.Run("Multi_", func(t *testing.T) {
+		token, instance, err := extractMetadata("token1_my_service_instance")
+		assert.Equal(t, "token1", token)
+		assert.Equal(t, "my_service_instance", instance)
+		assert.NoError(t, err)
+	})
+
+	t.Run("2_", func(t *testing.T) {
+		token, instance, err := extractMetadata("token1_my.service.instance")
+		assert.Equal(t, "token1", token)
+		assert.Equal(t, "my.service.instance", instance)
+		assert.NoError(t, err)
+	})
+}
+
 func TestHttpReportSegments(t *testing.T) {
 	segments := []*agent.SegmentObject{mockGrpcTraceSegment(1)}
 	data, err := json.Marshal(segments)
@@ -79,10 +102,7 @@ func TestHttpReportSegmentsFailedPreCheck(t *testing.T) {
 }
 
 func TestHttpReportSegmentsInvalidBody(t *testing.T) {
-	segments := []*agent.SegmentObject{mockGrpcTraceSegment(1)}
-	data, err := json.Marshal(segments)
-	assert.NoError(t, err)
-	data = append(data, []byte("{-}")...)
+	data := []byte("{-}")
 
 	url := "http://127.0.0.1:4318/v3/segments"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
@@ -169,10 +189,7 @@ func TestHttpReportSegmentFailedPreCheck(t *testing.T) {
 }
 
 func TestHttpReportSegmentInvalidBody(t *testing.T) {
-	segment := mockGrpcTraceSegment(1)
-	data, err := json.Marshal(segment)
-	assert.NoError(t, err)
-	data = append(data, []byte("{-}")...)
+	data := []byte("{-}")
 
 	url := "http://127.0.0.1:4318/v3/segment"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
@@ -218,7 +235,7 @@ func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
 		TraceId:         "trace" + seq,
 		TraceSegmentId:  "trace-segment" + seq,
 		Service:         "demo-segmentReportService" + seq,
-		ServiceInstance: "demo-instance" + seq,
+		ServiceInstance: "demo-instance" + seq + "_" + token,
 		IsSizeLimited:   false,
 		Spans: []*agent.SpanObject{
 			{

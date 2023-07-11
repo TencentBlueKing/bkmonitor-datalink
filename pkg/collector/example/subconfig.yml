@@ -3,6 +3,14 @@ token: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran
 
 default:
   processor:
+    - name: "license_checker/common"
+      config:
+        enabled: true
+        expire_time: 4084665444
+        tolerable_expire: 2h
+        number_nodes: 200
+        tolerable_num_ratio: 1.5
+
     - name: "apdex_calculator/fixed"
       config:
         calculator:

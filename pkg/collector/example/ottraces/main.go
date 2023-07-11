@@ -94,6 +94,7 @@ func MustNewResource(token string) *resource.Resource {
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceNameKey.String("traces-demo"),
+			semconv.ServiceInstanceIDKey.String("trace-demo-instance-ID"),
 			semconv.ServiceVersionKey.String("v1.0.0"),
 			attribute.String("environment", "test"),
 			attribute.String("bk.data.token", token),

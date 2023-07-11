@@ -65,6 +65,7 @@ func initTrace(serverInstance string) {
 		serverInstance,
 		go2sky.WithSampler(1),
 		go2sky.WithReporter(exporter),
+		go2sky.WithInstance(serverInstance),
 	)
 	if err != nil {
 		log.Printf("NewTracer Error %s\n", err)

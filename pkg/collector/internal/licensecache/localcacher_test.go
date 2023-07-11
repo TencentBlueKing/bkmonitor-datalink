@@ -7,22 +7,35 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package licensecache
 
-const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
+import (
+	"strconv"
+	"testing"
 
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
+	"github.com/stretchr/testify/assert"
 )
+
+func TestLocalCacher(t *testing.T) {
+	cacher := newLocalCacher()
+	assert.Equal(t, TypeLocalCacher, cacher.Type())
+
+	const n = 10
+	for i := 0; i < n; i++ {
+		cacher.Set(strconv.Itoa(i))
+	}
+	for i := 0; i < n; i++ {
+		assert.True(t, cacher.Exist(strconv.Itoa(i)))
+	}
+	assert.False(t, cacher.Exist("10"))
+
+	expected := make(map[string]struct{})
+	for i := 0; i < n; i++ {
+		expected[strconv.Itoa(i)] = struct{}{}
+	}
+	for _, item := range cacher.Items() {
+		_, ok := expected[item]
+		assert.True(t, ok)
+	}
+	assert.Equal(t, 10, cacher.Count())
+}

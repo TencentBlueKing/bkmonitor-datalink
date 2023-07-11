@@ -20,6 +20,17 @@ default:
             {%- endfor %}
 {%- endif %}
 
+{% if license_config is defined %}
+      # license_config: license 配置
+      - name: "{{ license_config.name }}"
+        config:
+          enabled: {{ license_config.enabled }}
+          expire_time: {{ license_config.expire_time }}
+          tolerable_expire: {{ license_config.tolerable_expire }}
+          number_nodes: {{ license_config.number_nodes }}
+          tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
+{%- endif %}
+
 {% if sampler_config is defined %}
       # Sampler: 采样处理器
       - name: '{{ sampler_config.name }}'

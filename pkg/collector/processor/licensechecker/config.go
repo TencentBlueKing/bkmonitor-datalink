@@ -7,22 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package licensechecker
 
-const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
+import "time"
 
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
-)
+type Config struct {
+	Enabled           bool          `config:"enabled" mapstructure:"enabled"`
+	ExpireTime        int64         `config:"expire_time" mapstructure:"expire_time"`                 // 过期时间(UnixTimestamp)
+	TolerableExpire   time.Duration `config:"tolerable_expire" mapstructure:"tolerable_expire"`       // 证书容忍期限
+	NumNodes          int32         `config:"number_nodes" mapstructure:"number_nodes"`               // 证书节点数
+	TolerableNumRatio float64       `config:"tolerable_num_ratio" mapstructure:"tolerable_num_ratio"` // 容忍节点倍数
+}

@@ -1,4 +1,5 @@
 type: "platform"
+
 processor:
   # TokenChecker: 权限校验处理器
   - name: "token_checker/fixed"

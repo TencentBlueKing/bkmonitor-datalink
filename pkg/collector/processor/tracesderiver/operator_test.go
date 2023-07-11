@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
@@ -30,6 +31,7 @@ func TestOperator(t *testing.T) {
 						Kind:         "SPAN_KIND_CLIENT",
 						PredicateKey: "attributes.http.method",
 						Dimensions: []string{
+							"kind",
 							"span_name",
 							"attributes.http.uri",
 							"resource.service.name",
@@ -64,27 +66,24 @@ func TestOperator(t *testing.T) {
 	derived := operator.Operate(record)
 
 	pdMetrics := derived.Data.(pmetric.Metrics)
-	resourceMetricsSlice := pdMetrics.ResourceMetrics()
+	assert.Equal(t, 1, pdMetrics.MetricCount())
+	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
+		assert.Equal(t, "test_bk_apm_duration", metric.Name())
+		dataPoints := metric.Gauge().DataPoints()
+		for n := 0; n < dataPoints.Len(); n++ {
+			dp := dataPoints.At(n)
+			v, ok := dp.Attributes().Get("http.uri")
+			assert.True(t, ok)
+			assert.Equal(t, "/api/v1/healthz", v.AsString())
+			t.Logf("metric attributes: %+v", dp.Attributes().AsRaw())
 
-	for i := 0; i < resourceMetricsSlice.Len(); i++ {
-		scopeMetricsSlice := resourceMetricsSlice.At(i).ScopeMetrics()
-		for j := 0; j < scopeMetricsSlice.Len(); j++ {
-			metrics := scopeMetricsSlice.At(j).Metrics()
-			for k := 0; k < metrics.Len(); k++ {
-				metric := metrics.At(k)
-				assert.Equal(t, "test_bk_apm_duration", metric.Name())
-				dataPoints := metric.Gauge().DataPoints()
-				for n := 0; n < dataPoints.Len(); n++ {
-					dp := dataPoints.At(n)
-					v, ok := dp.Attributes().Get("http.uri")
-					assert.True(t, ok)
-					assert.Equal(t, "/api/v1/healthz", v.AsString())
+			v, ok = dp.Attributes().Get("service.name")
+			assert.True(t, ok)
+			assert.Equal(t, "echo", v.AsString())
 
-					v, ok = dp.Attributes().Get("service.name")
-					assert.True(t, ok)
-					assert.Equal(t, "echo", v.AsString())
-				}
-			}
+			v, ok = dp.Attributes().Get("kind")
+			assert.True(t, ok)
+			assert.Equal(t, "3", v.StringVal())
 		}
-	}
+	})
 }

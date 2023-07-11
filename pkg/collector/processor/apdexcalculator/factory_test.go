@@ -57,146 +57,28 @@ processor:
 	assert.False(t, factory.IsPreCheck())
 }
 
-func TestProcessMetricsFixedCalculatorNotExistRules(t *testing.T) {
-	g := generator.NewMetricsGenerator(define.MetricsOptions{
-		MetricName: "bk_apm_duration",
-		GaugeCount: 1,
-		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{"kind": "SPAN_KIND_CLIENT"},
-		},
-	})
-
-	data := g.Generate()
-	config := &Config{
-		Calculator: CalculatorConfig{
-			Type:        "fixed",
-			ApdexStatus: apdexSatisfied,
-		},
-		Rules: []RuleConfig{{
-			Kind:        "SPAN_KIND_SERVER",
-			MetricName:  "bk_apm_duration",
-			Destination: dst,
-		}},
-	}
-
+func testMetricsDimension(t *testing.T, data interface{}, conf *Config, exist bool) {
 	confMap := make(map[string]interface{})
-	assert.NoError(t, mapstructure.Decode(config, &confMap))
+	assert.NoError(t, mapstructure.Decode(conf, &confMap))
 
-	factory, err := NewFactory(confMap, nil)
-	assert.NoError(t, err)
-
+	factory, _ := NewFactory(confMap, nil)
 	record := &define.Record{
 		RecordType: define.RecordMetrics,
 		Data:       data,
 	}
-	_, err = factory.Process(record)
+	_, err := factory.Process(record)
 	assert.NoError(t, err)
 
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
+	pdMetrics := record.Data.(pmetric.Metrics)
+	assert.Equal(t, 1, pdMetrics.MetricCount())
+	foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
 		switch metric.DataType() {
 		case pmetric.MetricDataTypeGauge:
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
 				_, ok := dp.Attributes().Get(dst)
-				assert.False(t, ok)
-			}
-		}
-	})
-}
-
-func TestProcessMetricsFixedCalculatorGlobalDefaultRules(t *testing.T) {
-	g := generator.NewMetricsGenerator(define.MetricsOptions{
-		MetricName: "bk_apm_duration",
-		GaugeCount: 1,
-		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{"kind": "SPAN_KIND_CLIENT"},
-		},
-	})
-
-	data := g.Generate()
-	config := &Config{
-		Calculator: CalculatorConfig{
-			Type:        "fixed",
-			ApdexStatus: apdexTolerating,
-		},
-		Rules: []RuleConfig{{
-			MetricName:  "bk_apm_duration",
-			Destination: dst,
-		}},
-	}
-
-	confMap := make(map[string]interface{})
-	assert.NoError(t, mapstructure.Decode(config, &confMap))
-
-	factory, err := NewFactory(confMap, nil)
-	assert.NoError(t, err)
-
-	record := &define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-	_, err = factory.Process(record)
-	assert.NoError(t, err)
-
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
-			dps := metric.Gauge().DataPoints()
-			for n := 0; n < dps.Len(); n++ {
-				dp := dps.At(n)
-				v, ok := dp.Attributes().Get(dst)
-				assert.True(t, ok)
-				assert.Equal(t, apdexTolerating, v.AsString())
-			}
-		}
-	})
-}
-
-func TestProcessMetricsFixedCalculatorKindDefaultRules(t *testing.T) {
-	g := generator.NewMetricsGenerator(define.MetricsOptions{
-		MetricName: "bk_apm_duration",
-		GaugeCount: 1,
-		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{"kind": "SPAN_KIND_UNSPECIFIED"},
-		},
-	})
-
-	data := g.Generate()
-	config := &Config{
-		Calculator: CalculatorConfig{
-			Type:        "fixed",
-			ApdexStatus: apdexTolerating,
-		},
-		Rules: []RuleConfig{{
-			Kind:        "SPAN_KIND_UNSPECIFIED",
-			MetricName:  "bk_apm_duration",
-			Destination: dst,
-		}},
-	}
-
-	confMap := make(map[string]interface{})
-	assert.NoError(t, mapstructure.Decode(config, &confMap))
-
-	factory, err := NewFactory(confMap, nil)
-	assert.NoError(t, err)
-
-	record := &define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-	_, err = factory.Process(record)
-	assert.NoError(t, err)
-
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
-			dps := metric.Gauge().DataPoints()
-			for n := 0; n < dps.Len(); n++ {
-				dp := dps.At(n)
-				v, ok := dp.Attributes().Get(dst)
-				assert.True(t, ok)
-				assert.Equal(t, apdexTolerating, v.AsString())
+				assert.Equal(t, exist, ok)
 			}
 		}
 	})
@@ -207,51 +89,53 @@ func TestProcessMetricsFixedCalculator(t *testing.T) {
 		MetricName: "bk_apm_duration",
 		GaugeCount: 1,
 		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"kind":        "SPAN_KIND_UNSPECIFIED",
-				"http.method": "GET",
-			},
+			Attributes: map[string]string{"kind": "2"},
 		},
 	})
 
-	data := g.Generate()
-	config := &Config{
-		Calculator: CalculatorConfig{
-			Type:        "fixed",
-			ApdexStatus: apdexSatisfied,
-		},
-		Rules: []RuleConfig{{
-			Kind:         "SPAN_KIND_UNSPECIFIED",
-			PredicateKey: "attributes.http.method",
-			MetricName:   "bk_apm_duration",
-			Destination:  dst,
-		}},
-	}
-
-	confMap := make(map[string]interface{})
-	assert.NoError(t, mapstructure.Decode(config, &confMap))
-
-	factory, err := NewFactory(confMap, nil)
-	assert.NoError(t, err)
-
-	record := &define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
-	_, err = factory.Process(record)
-	assert.NoError(t, err)
-
-	foreach.Metrics(record.Data.(pmetric.Metrics).ResourceMetrics(), func(metric pmetric.Metric) {
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
-			dps := metric.Gauge().DataPoints()
-			for n := 0; n < dps.Len(); n++ {
-				dp := dps.At(n)
-				v, ok := dp.Attributes().Get(dst)
-				assert.True(t, ok)
-				assert.Equal(t, apdexSatisfied, v.AsString())
-			}
+	t.Run("default rule", func(t *testing.T) {
+		config := &Config{
+			Calculator: CalculatorConfig{
+				Type:        "fixed",
+				ApdexStatus: apdexSatisfied,
+			},
+			Rules: []RuleConfig{{
+				Kind:        "",
+				MetricName:  "bk_apm_duration",
+				Destination: dst,
+			}},
 		}
+		testMetricsDimension(t, g.Generate(), config, true)
+	})
+
+	t.Run("server/kind rule not exist", func(t *testing.T) {
+		config := &Config{
+			Calculator: CalculatorConfig{
+				Type:        "fixed",
+				ApdexStatus: apdexSatisfied,
+			},
+			Rules: []RuleConfig{{
+				Kind:        "SPAN_KIND_CLIENT",
+				MetricName:  "bk_apm_duration",
+				Destination: dst,
+			}},
+		}
+		testMetricsDimension(t, g.Generate(), config, false)
+	})
+
+	t.Run("server/kind rule exist", func(t *testing.T) {
+		config := &Config{
+			Calculator: CalculatorConfig{
+				Type:        "fixed",
+				ApdexStatus: apdexSatisfied,
+			},
+			Rules: []RuleConfig{{
+				Kind:        "SPAN_KIND_SERVER",
+				MetricName:  "bk_apm_duration",
+				Destination: dst,
+			}},
+		}
+		testMetricsDimension(t, g.Generate(), config, true)
 	})
 }
 

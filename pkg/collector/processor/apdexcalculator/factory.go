@@ -59,13 +59,13 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	}, nil
 }
 
-var SpanKindMap = map[int64]string{
-	0: "SPAN_KIND_UNSPECIFIED",
-	1: "SPAN_KIND_INTERNAL",
-	2: "SPAN_KIND_SERVER",
-	3: "SPAN_KIND_CLIENT",
-	4: "SPAN_KIND_PRODUCER",
-	5: "SPAN_KIND_CONSUMER",
+var SpanKindMap = map[string]string{
+	"0": "SPAN_KIND_UNSPECIFIED",
+	"1": "SPAN_KIND_INTERNAL",
+	"2": "SPAN_KIND_SERVER",
+	"3": "SPAN_KIND_CLIENT",
+	"4": "SPAN_KIND_PRODUCER",
+	"5": "SPAN_KIND_CONSUMER",
 }
 
 type apdexCalculator struct {
@@ -116,7 +116,7 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
 				if v, ok := dp.Attributes().Get(processor.KeyKind); ok {
-					kind = SpanKindMap[v.IntVal()]
+					kind = SpanKindMap[v.StringVal()]
 				}
 
 				predicateKeys := config.GetPredicateKeys(kind)

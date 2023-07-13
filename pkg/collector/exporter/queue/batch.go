@@ -169,6 +169,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	defer resizeTicker.Stop()
 
 	var halfReduce bool
+	var hasFull bool
 
 	for {
 		select {
@@ -178,12 +179,17 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 				total++
 				if total >= dymBatch {
 					sentOut()
+					hasFull = true
 					DefaultMetricMonitor.IncQueueFullCounter(dc.dataID)
 				}
 			}
 
 		case <-resizeTicker.C:
 			if bq.so == nil {
+				continue
+			}
+			// 只在触发 full 的场景下 resize
+			if !hasFull {
 				continue
 			}
 			size := bq.so.Get(dc.dataID)
@@ -200,7 +206,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 				continue
 			}
 
-			// 如果不幸 size 已经 gse 最大限制 那直接拿起 40 米长大刀对半砍（只执行一次）
+			// 如果不幸 size 已经 gse 最大限制 那直接对半砍（只执行一次）
 			if size >= maxBytesLimit && !halfReduce {
 				dymBatch = dymBatch / 2
 				halfReduce = true

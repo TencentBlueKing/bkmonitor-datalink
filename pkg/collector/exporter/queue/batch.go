@@ -92,7 +92,9 @@ func (m *metricMonitor) SetQueueMaxBatch(n int, dataId int32) {
 	queueMaxBatch.WithLabelValues(strconv.Itoa(int(dataId))).Set(float64(n))
 }
 
-const maxBatchBytes = 6 * 1024 * 1024 // 6MB
+const maxBatchBytes = 5 * 1024 * 1024
+
+const maxBytesLimit = 10 * 1024 * 1024 // gse message 大小上限为 10MB
 
 type BatchQueue struct {
 	ctx            context.Context
@@ -166,6 +168,8 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	resizeTicker := time.NewTicker(resizeInterval)
 	defer resizeTicker.Stop()
 
+	var halfReduce bool
+
 	for {
 		select {
 		case events := <-dc.ch:
@@ -188,15 +192,21 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			}
 
 			// 经过多轮调整 batch 最终会靠向 maxBatchBytes（有一定波动范围）
-			// 从数学角度上 属于升得慢 降得快
+			// 逐步调大 batch, factor 为 1.1
 			if int(math.Ceil(float64(size)*1.1)) < maxBatchBytes {
-				dymBatch = int(math.Ceil(float64(dymBatch) * 1.1)) // 逐步调大 batch, factor 为 1.1
+				dymBatch = int(math.Ceil(float64(dymBatch) * 1.1))
 				logger.Debugf("next round(up) batch=%d, dataID=%d", dymBatch, dc.dataID)
-			} else {
-				dymBatch = int(math.Ceil(float64(dymBatch) * 0.9)) // 逐步调小 batch, factor 为 0.9
-				logger.Debugf("next round(down) batch=%d, dataID=%d", dymBatch, dc.dataID)
+				DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
+				continue
 			}
-			DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
+
+			// 如果不幸 size 已经 gse 最大限制 那直接拿起 40 米长大刀对半砍（只执行一次）
+			if size >= maxBytesLimit && !halfReduce {
+				dymBatch = dymBatch / 2
+				halfReduce = true
+				logger.Debugf("next round(half) batch=%d, dataID=%d", dymBatch, dc.dataID)
+				DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
+			}
 
 		case <-flushTicker.C:
 			if len(data) <= 0 {

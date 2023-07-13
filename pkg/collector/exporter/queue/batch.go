@@ -11,7 +11,6 @@ package queue
 
 import (
 	"context"
-	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -92,7 +91,7 @@ func (m *metricMonitor) SetQueueMaxBatch(n int, dataId int32) {
 	queueMaxBatch.WithLabelValues(strconv.Itoa(int(dataId))).Set(float64(n))
 }
 
-const maxBatchBytes = 5 * 1024 * 1024
+const maxBatchBytes = 4 * 1024 * 1024
 
 const maxBytesLimit = 10 * 1024 * 1024 // gse message 大小上限为 10MB
 
@@ -168,8 +167,8 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	resizeTicker := time.NewTicker(resizeInterval)
 	defer resizeTicker.Stop()
 
-	var halfReduce bool
 	var hasFull bool
+	var lastValue int
 
 	for {
 		select {
@@ -192,27 +191,32 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			if !hasFull {
 				continue
 			}
+
 			size := bq.so.Get(dc.dataID)
-			if size <= 0 {
+			if size <= 0 || size == lastValue {
 				continue
 			}
+			lastValue = size // 有变化才操作
 
-			// 经过多轮调整 batch 最终会靠向 maxBatchBytes（有一定波动范围）
-			// 逐步调大 batch, factor 为 1.1
-			if int(math.Ceil(float64(size)*1.1)) < maxBatchBytes {
-				dymBatch = int(math.Ceil(float64(dymBatch) * 1.1))
-				logger.Debugf("next round(up) batch=%d, dataID=%d", dymBatch, dc.dataID)
-				DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
-				continue
-			}
-
-			// 如果不幸 size 已经 gse 最大限制 那直接对半砍（只执行一次）
-			if size >= maxBytesLimit && !halfReduce {
+			// 如果不幸 size 已经 gse 最大限制 那直接对半砍
+			// 理论上不会进入到此逻辑 除非是用户上报的数据平均 size 有了数倍增长
+			// 又由于 size 全局递增 所以如果对半砍之后下一次还出现大于 maxBytesLimit 那就再接着对半砍
+			// 另外一旦进入此逻辑 后续不会再调大 batch
+			if lastValue >= maxBytesLimit {
 				dymBatch = dymBatch / 2
-				halfReduce = true
 				logger.Debugf("next round(half) batch=%d, dataID=%d", dymBatch, dc.dataID)
 				DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
+				continue
 			}
+
+			// 计算出可扩展的空间
+			ratio := int(float64(maxBatchBytes) / (float64(lastValue)))
+			if ratio <= 0 {
+				continue
+			}
+			dymBatch = dymBatch * ratio // 调大 size
+			logger.Debugf("next round(up) batch=%d, dataID=%d", dymBatch, dc.dataID)
+			DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
 
 		case <-flushTicker.C:
 			if len(data) <= 0 {

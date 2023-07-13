@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/sizeobserver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type testEvent struct {
@@ -29,11 +31,17 @@ func (t testEvent) RecordType() define.RecordType {
 }
 
 func TestQueueOut(t *testing.T) {
-	queue := NewBatchQueue(100, 2000, 100, time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    2000,
+		TracesBatchSize:  100,
+		FlushInterval:    time.Second,
+	}
+	queue := NewBatchQueue(conf, nil)
 
-	dataids := []int32{1001, 1002}
+	dataIDs := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
-	for _, id := range dataids {
+	for _, id := range dataIDs {
 		cloned := id
 		wg.Add(1)
 		go func() {
@@ -59,11 +67,17 @@ func TestQueueOut(t *testing.T) {
 }
 
 func TestQueueOutWithDelta(t *testing.T) {
-	queue := NewBatchQueue(100, 100, 100, time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    100,
+		TracesBatchSize:  100,
+		FlushInterval:    time.Second,
+	}
+	queue := NewBatchQueue(conf, nil)
 
-	dataids := []int32{1001, 1002}
+	dataIDs := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
-	for _, id := range dataids {
+	for _, id := range dataIDs {
 		cloned := id
 		wg.Add(1)
 		go func() {
@@ -90,17 +104,22 @@ func TestQueueOutWithDelta(t *testing.T) {
 }
 
 func TestQueueFull(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    1,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf, nil)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
 	cases := map[int32]int32{
 		1001: 1,
 		1002: 2,
 		1003: 3,
 		1004: 4,
 	}
-
-	queue := NewBatchQueue(100, 1, 100, 2*time.Second)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
@@ -133,6 +152,16 @@ func TestQueueFull(t *testing.T) {
 }
 
 func TestQueueFullBatch(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    1,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf, nil)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
 	cases := map[int32]int32{
 		1001: 1,
 		1002: 2,
@@ -140,15 +169,11 @@ func TestQueueFullBatch(t *testing.T) {
 		1004: 4,
 	}
 
-	queue := NewBatchQueue(100, 1, 100, 2*time.Second)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		events := make([]define.Event, 0)
 		for k, v := range cases {
+			events := make([]define.Event, 0)
 			for i := 0; i < 100; i++ {
 				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
 				events = append(events, evt)
@@ -178,6 +203,14 @@ func TestQueueFullBatch(t *testing.T) {
 }
 
 func TestQueueTick(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    101,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf, nil)
+
 	cases := map[int32]int32{
 		1001: 1,
 		1002: 2,
@@ -185,10 +218,8 @@ func TestQueueTick(t *testing.T) {
 		1004: 4,
 	}
 
-	queue := NewBatchQueue(100, 101, 100, time.Second*2)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
@@ -217,6 +248,63 @@ func TestQueueTick(t *testing.T) {
 			if n == 4 {
 				return
 			}
+		}
+	}
+}
+
+func TestQueueResize(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 2,
+		FlushInterval:    time.Minute,
+	}
+	queue := NewBatchQueue(conf, sizeobserver.New())
+	queue.resizeInterval = time.Millisecond * 100
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	logger.SetLoggerLevel(logger.DebugLevelDesc)
+	cases := map[int32]int32{
+		1001: 1,
+		1002: 2,
+		1003: 3,
+		1004: 4,
+	}
+
+	go func() {
+		defer wg.Done()
+		for k, v := range cases {
+			events := make([]define.Event, 0)
+			for i := 0; i < 100; i++ {
+				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
+				events = append(events, evt)
+			}
+			time.Sleep(time.Millisecond * 500)
+			queue.Put(events...)
+		}
+	}()
+
+	go func() {
+		n := 0
+		for range time.Tick(time.Millisecond * 100) {
+			n++
+			if n > 20 {
+				break
+			}
+
+			KB := 1024
+			for k := range cases {
+				queue.so.ObserveSize(k, n*KB)
+			}
+		}
+	}()
+
+	timer := time.NewTicker(time.Second * 3)
+	defer timer.Stop()
+	for {
+		select {
+		case <-queue.Pop():
+		case <-timer.C:
+			return
 		}
 	}
 }

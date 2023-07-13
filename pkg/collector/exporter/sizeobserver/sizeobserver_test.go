@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package utils
+package sizeobserver
 
 import (
 	"testing"
@@ -15,14 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRecover(t *testing.T) {
-	assert.NotPanics(t, func() {
-		defer HandleCrash()
-		panic("SHOULD NOT PANIC")
-	})
+func TestSizeObserver(t *testing.T) {
+	so := New()
 
-	assert.NotPanics(t, func() {
-		defer HandleCrash()
-		panic(0)
-	})
+	assert.Equal(t, 0, so.Get(1001))
+	so.ObserveSize(1001, 10)
+	so.ObserveSize(1001, 11)
+	so.ObserveSize(1001, 9)
+	assert.Equal(t, 11, so.Get(1001))
 }

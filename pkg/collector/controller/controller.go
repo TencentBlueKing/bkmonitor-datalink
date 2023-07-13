@@ -30,7 +30,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -196,9 +195,6 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 			return nil, err
 		}
 	}
-
-	// 注册 gse output hook 统计发送数据
-	gse.RegisterSendHook(DefaultMetricMonitor.ObserveBeatSentBytes)
 
 	return &Controller{
 		ctx:           ctx,

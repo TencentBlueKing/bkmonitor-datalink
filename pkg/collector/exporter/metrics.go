@@ -19,6 +19,23 @@ import (
 )
 
 var (
+	beatSentBytesSize = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: define.MonitoringNamespace,
+			Name:      "beat_sent_bytes_size",
+			Help:      "beat sent body bytes size",
+			Buckets:   define.DefSizeDistribution,
+		},
+	)
+
+	beatSentBytesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: define.MonitoringNamespace,
+			Name:      "beat_sent_bytes_total",
+			Help:      "beat sent body bytes total",
+		},
+	)
+
 	sentDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
@@ -48,6 +65,8 @@ var (
 
 func init() {
 	prometheus.MustRegister(
+		beatSentBytesSize,
+		beatSentBytesTotal,
 		sentTotal,
 		sentDuration,
 		handleEventTotal,
@@ -68,4 +87,9 @@ func (m *metricMonitor) ObserveSentDuration(t time.Time) {
 
 func (m *metricMonitor) AddHandledEventCounter(n int, rtype define.RecordType, dataId int32) {
 	handleEventTotal.WithLabelValues(rtype.S(), strconv.Itoa(int(dataId))).Add(float64(n))
+}
+
+func (m *metricMonitor) ObserveBeatSentBytes(f float64) {
+	beatSentBytesSize.Observe(f)
+	beatSentBytesTotal.Add(f)
 }

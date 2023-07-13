@@ -11,6 +11,7 @@ package queue
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/sizeobserver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -45,9 +48,18 @@ var (
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_queue_pop_batch_size",
 			Help:      "Exporter queue pop batch size",
-			Buckets:   []float64{10, 50, 100, 200, 500, 1000, 2000, 3000, 5000},
+			Buckets:   []float64{50, 100, 200, 500, 1000, 2000, 3000, 5000, 8000, 10000, 20000},
 		},
 		[]string{"record_type", "id"},
+	)
+
+	queueMaxBatch = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: define.MonitoringNamespace,
+			Name:      "exporter_queue_max_batch",
+			Help:      "Exporter queue max batch",
+		},
+		[]string{"id"},
 	)
 )
 
@@ -56,6 +68,7 @@ func init() {
 		queueFullTotal,
 		queueTickTotal,
 		queuePopBatchSize,
+		queueMaxBatch,
 	)
 }
 
@@ -75,30 +88,33 @@ func (m *metricMonitor) ObserveQueuePopBatchSizeDistribution(n int, dataId int32
 	queuePopBatchSize.WithLabelValues(rtype.S(), strconv.Itoa(int(dataId))).Observe(float64(n))
 }
 
-type BatchQueue struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	mut           sync.RWMutex
-	qs            map[int32]chan []define.Event
-	out           chan common.MapStr
-	tracesBatch   int
-	metricsBatch  int
-	logsBatch     int
-	flushInterval time.Duration
+func (m *metricMonitor) SetQueueMaxBatch(n int, dataId int32) {
+	queueMaxBatch.WithLabelValues(strconv.Itoa(int(dataId))).Set(float64(n))
 }
 
-func NewBatchQueue(tracesBatch, metricsBatch, logsBatch int, interval time.Duration) Queue {
+const maxBatchBytes = 6 * 1024 * 1024 // 6MB
+
+type BatchQueue struct {
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	mut            sync.RWMutex
+	qs             map[int32]chan []define.Event
+	out            chan common.MapStr
+	conf           Config
+	so             *sizeobserver.SizeObserver
+	resizeInterval time.Duration
+}
+
+func NewBatchQueue(conf Config, so *sizeobserver.SizeObserver) *BatchQueue {
 	ctx, cancel := context.WithCancel(context.Background())
 	cq := &BatchQueue{
-		ctx:           ctx,
-		cancel:        cancel,
-		qs:            make(map[int32]chan []define.Event),
-		out:           make(chan common.MapStr, define.Concurrency()),
-		tracesBatch:   tracesBatch,
-		metricsBatch:  metricsBatch,
-		logsBatch:     logsBatch,
-		flushInterval: interval,
+		ctx:    ctx,
+		cancel: cancel,
+		qs:     make(map[int32]chan []define.Event),
+		out:    make(chan common.MapStr, define.Concurrency()),
+		conf:   conf,
+		so:     so,
 	}
 
 	return cq
@@ -115,11 +131,13 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	bq.wg.Add(1)
 	defer bq.wg.Done()
 
-	ticker := time.NewTicker(bq.flushInterval)
-	defer ticker.Stop()
+	flushTicker := time.NewTicker(bq.conf.FlushInterval)
+	defer flushTicker.Stop()
+
+	dymBatch := dc.batchSize
 
 	var total int
-	data := make([]common.MapStr, 0, dc.batchSize)
+	data := make([]common.MapStr, 0)
 
 	sentOut := func() {
 		DefaultMetricMonitor.ObserveQueuePopBatchSizeDistribution(len(data), dc.dataID, dc.rtype)
@@ -138,8 +156,15 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 
 		// 状态置零
 		total = 0
-		data = make([]common.MapStr, 0, dc.batchSize)
+		data = make([]common.MapStr, 0)
 	}
+
+	resizeInterval := bq.resizeInterval
+	if bq.resizeInterval <= 0 {
+		resizeInterval = time.Minute
+	}
+	resizeTicker := time.NewTicker(resizeInterval)
+	defer resizeTicker.Stop()
 
 	for {
 		select {
@@ -147,13 +172,33 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 			for _, event := range events {
 				data = append(data, event.Data())
 				total++
-				if total >= dc.batchSize {
+				if total >= dymBatch {
 					sentOut()
 					DefaultMetricMonitor.IncQueueFullCounter(dc.dataID)
 				}
 			}
 
-		case <-ticker.C:
+		case <-resizeTicker.C:
+			if bq.so == nil {
+				continue
+			}
+			size := bq.so.Get(dc.dataID)
+			if size <= 0 {
+				continue
+			}
+
+			// 经过多轮调整 batch 最终会靠向 maxBatchBytes（有一定波动范围）
+			// 从数学角度上 属于升得慢 降得快
+			if int(math.Ceil(float64(size)*1.1)) < maxBatchBytes {
+				dymBatch = int(math.Ceil(float64(dymBatch) * 1.1)) // 逐步调大 batch, factor 为 1.1
+				logger.Debugf("next round(up) batch=%d, dataID=%d", dymBatch, dc.dataID)
+			} else {
+				dymBatch = int(math.Ceil(float64(dymBatch) * 0.9)) // 逐步调小 batch, factor 为 0.9
+				logger.Debugf("next round(down) batch=%d, dataID=%d", dymBatch, dc.dataID)
+			}
+			DefaultMetricMonitor.SetQueueMaxBatch(dymBatch, dc.dataID)
+
+		case <-flushTicker.C:
 			if len(data) <= 0 {
 				continue
 			}
@@ -189,12 +234,12 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 	if !ok {
 		switch rtype {
 		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite:
-			batchSize = bq.metricsBatch
+			batchSize = bq.conf.MetricsBatchSize
 		case define.RecordLogs:
-			batchSize = bq.logsBatch
+			batchSize = bq.conf.LogsBatchSize
 		case define.RecordTraces:
-			batchSize = bq.tracesBatch
-		default: // define.RecordProxy, define.RecordPingserver
+			batchSize = bq.conf.TracesBatchSize
+		default:
 			batchSize = 100
 		}
 

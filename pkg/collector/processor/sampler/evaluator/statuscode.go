@@ -156,11 +156,11 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 }
 
 func (e *statusCodeEvaluator) gc() {
-	d := e.gcInterval
-	if d.Nanoseconds() <= 0 {
-		d = time.Minute
+	gcInterval := e.gcInterval
+	if gcInterval <= 0 {
+		gcInterval = time.Minute
 	}
-	ticker := time.NewTicker(d)
+	ticker := time.NewTicker(gcInterval)
 	defer ticker.Stop()
 
 	delta := int64(e.maxDuration.Seconds())

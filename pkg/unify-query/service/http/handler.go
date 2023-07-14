@@ -187,8 +187,11 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	qrStr, _ := json.Marshal(queryReference)
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
 
+	// 读取vm查询的特性开关
+	vmQuery := queryReference.GetVMFeatureFlag(ctx)
+
 	// 判断是否是直查
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQuery)
 	if ok {
 		if err != nil {
 			log.Errorf(ctx, err.Error())

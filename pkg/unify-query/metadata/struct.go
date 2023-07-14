@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -94,22 +95,11 @@ type Queries struct {
 	directlyResultTable   map[string][]string
 }
 
-func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]string, map[string][]string, error) {
+func (qRef QueryReference) GetVMFeatureFlag(ctx context.Context) bool {
 	var (
-		span      oleltrace.Span
-		metricMap = make(map[string]string)
-		vmRtGroup = make(map[string][]string)
-		user      = GetUser(ctx)
-		err       error
-		ok        bool
-
-		orCondition string
+		span oleltrace.Span
+		user = GetUser(ctx)
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
-	if span != nil {
-		defer span.End()
-	}
-
 	// 特性开关只有指定空间才启用 vm 查询
 	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
 		"name":     user.Name,
@@ -119,6 +109,23 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]s
 
 	vmQuery := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
 	trace.InsertStringIntoSpan("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), vmQuery), span)
+
+	return vmQuery
+}
+func (qRef QueryReference) CheckVmQuery(ctx context.Context, vmQuery bool) (bool, map[string]string, map[string][]string, error) {
+	var (
+		span      oleltrace.Span
+		metricMap = make(map[string]string)
+		vmRtGroup = make(map[string][]string)
+		err       error
+		ok        bool
+
+		orCondition string
+	)
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
+	if span != nil {
+		defer span.End()
+	}
 
 	if !vmQuery {
 		return ok, metricMap, vmRtGroup, err
@@ -156,6 +163,28 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]s
 
 				// 获取 vm 对应的 rt 列表
 				if query.VmRt != "" {
+					// 如果有拆分表默认维度列表中的维度，则按照固定协议拼接vmrt的表名
+					var dimensionFlag uint
+					// 获取聚合方法列表
+					for _, amList := range query.AggregateMethodList {
+						// 获取维度列表
+						for _, amDimension := range amList.Dimensions {
+							// 维度判断（两个维度同时出现才拼接）
+							switch amDimension {
+							case "bk_obj_id":
+								dimensionFlag |= 1
+							case "bk_inst_id":
+								dimensionFlag |= 2
+							}
+							if dimensionFlag == 3 {
+								query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
+								break
+							}
+						}
+						if dimensionFlag == 3 {
+							break
+						}
+					}
 					vmRts[query.VmRt] = struct{}{}
 				}
 			}

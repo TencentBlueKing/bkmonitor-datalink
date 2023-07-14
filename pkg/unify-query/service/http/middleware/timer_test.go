@@ -17,8 +17,8 @@ func TestSingleGetInstance(t *testing.T) {
 			// TODO: Add test cases.
 			{
 				"多次调用singleGetInstance函数",
-				[]string{"192.168.0.1", "192.168.0.2", "192.168.0.3"},
-				"192.168.0.1",
+				[]string{"127.0.0.1", "127.0.0.2", "127.0.0.3"},
+				"127.0.0.1",
 			},
 		}
 

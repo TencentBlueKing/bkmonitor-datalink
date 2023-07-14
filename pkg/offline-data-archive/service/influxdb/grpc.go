@@ -20,12 +20,13 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/storage"
 	"github.com/influxdata/influxdb/tsdb"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
-	remote "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 )
 
 type RpcService struct {
@@ -47,7 +48,7 @@ func NewService(
 	timeout time.Duration,
 	dir string,
 	metric string,
-	getShard func(ctx context.Context, clusterName, tagName, tagValue, db, rp string, start, end int64) ([]*shard.Shard, error),
+	getShard func(ctx context.Context, clusterName, tagRouter, db, rp string, start, end int64) ([]*shard.Shard, error),
 ) (*RpcService, error) {
 	// 如果 metaDir 目录不存在则新建一个
 	metaDir := filepath.Join(dir, "meta")
@@ -85,10 +86,10 @@ func NewService(
 	store.EngineOptions.Config.WALDir = walDir
 	store.EngineOptions.EngineVersion = "tsm1"
 
-	serv := &RpcService{
+	var serv = &RpcService{
 		ctx:    ctx,
 		addr:   address,
-		serv:   grpc.NewServer(),
+		serv:   grpc.NewServer(grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor())),
 		err:    make(chan error),
 		logger: logger,
 		metric: metric,
@@ -128,7 +129,7 @@ func (s *RpcService) Open() error {
 
 // serve serves the handler from the listener.
 func (s *RpcService) serve() {
-	remote.RegisterQueryTimeSeriesServiceServer(s.serv, s.server)
+	remoteRead.RegisterQueryTimeSeriesServiceServer(s.serv, s.server)
 	reflection.Register(s.serv)
 
 	if err := s.serv.Serve(s.ln); err != nil && !strings.Contains(err.Error(), "closed") {

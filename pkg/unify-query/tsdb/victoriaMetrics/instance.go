@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -71,13 +70,6 @@ type Instance struct {
 	Timeout time.Duration
 	Curl    curl.Curl
 }
-
-var (
-	once     sync.Once
-	instance *Instance
-
-	lock = new(sync.Mutex)
-)
 
 var _ tsdb.Instance = (*Instance)(nil)
 
@@ -302,8 +294,7 @@ func (i *Instance) QueryRange(
 
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		v, ok := expand.(map[string][]string)
-		if ok {
+		if v, ok := expand.(map[string][]string); ok {
 			vmRtGroup = v
 		}
 	}

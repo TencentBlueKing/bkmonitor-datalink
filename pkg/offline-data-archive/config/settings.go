@@ -14,8 +14,7 @@ const (
 
 	MoveInstanceNameConfigPath         = "move.instance_name"
 	MoveClusterNameConfigPath          = "move.cluster_name"
-	MoveTagNameConfigPath              = "move.tag_name"
-	MoveTagValueConfigPath             = "move.tag_value"
+	MoveTagRouterConfigPath            = "move.tag_router"
 	MoveSourceDirConfigPath            = "move.source_dir"
 	MoveTargetNameConfigPath           = "move.target_name"
 	MoveTargetDirConfigPath            = "move.target_dir"
@@ -27,18 +26,19 @@ const (
 	MoveInfluxDBUserNameConfigPath     = "move.influxdb.username"
 	MoveInfluxDBPasswordConfigPath     = "move.influxdb.password"
 
-	RebuildFinalNameConfigPath            = "rebuild.final_name"
-	RebuildFinalDirConfigPath             = "rebuild.final_dir"
-	RebuildMaxPoolConfigPath              = "rebuild.max_pool"
-	RebuildIntervalConfigPath             = "rebuild.interval"
-	RebuildDistributedLockExpiration      = "rebuild.distribute_lock.expiration"
-	RebuildDistributedLockRenewalDuration = "rebuild.distribute_lock.renewal_duration"
+	RebuildFinalNameConfigPath                      = "rebuild.final_name"
+	RebuildFinalDirConfigPath                       = "rebuild.final_dir"
+	RebuildMaxPoolConfigPath                        = "rebuild.max_pool"
+	RebuildIntervalConfigPath                       = "rebuild.interval"
+	RebuildDistributedLockExpirationConfigPath      = "rebuild.distribute_lock.expiration"
+	RebuildDistributedLockRenewalDurationConfigPath = "rebuild.distribute_lock.renewal_duration"
 
 	QueryHttpHostConfigPath        = "query.http.host"
 	QueryHttpPortConfigPath        = "query.http.port"
 	QueryHttpReadTimeoutConfigPath = "query.http.read_timeout"
 	QueryHttpMetricConfigPath      = "query.http.metric"
-	QueryHttpDIrConfigPath         = "query.http.dir"
+
+	CommonTempDirConfigPath = "common.temp_dir"
 )
 
 var (

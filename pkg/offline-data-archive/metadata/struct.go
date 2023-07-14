@@ -12,8 +12,7 @@ package metadata
 type Policy struct {
 	ClusterName string `yaml:"cluster_name" json:"cluster_name"`
 	Database    string `yaml:"database" json:"database"`
-	TagName     string `yaml:"tag_name" json:"tag_name"`
-	TagValue    string `yaml:"tag_value" json:"tag_value"`
+	TagRouter   string `yaml:"tag_router" json:"tag_router"`
 	Enable      bool   `yaml:"enable" json:"enable"`
 }
 
@@ -21,8 +20,7 @@ type Shard struct {
 	ClusterName     string `yaml:"cluster_name" json:"cluster_name"`
 	Database        string `yaml:"database" json:"database"`
 	RetentionPolicy string `yaml:"retention_policy" json:"retention_policy"`
-	TagName         string `yaml:"tag_name" json:"tag_name"`
-	TagValue        string `yaml:"tag_value" json:"tag_value"`
+	TagRouter       string `yaml:"tag_router" json:"tag_router"`
 
 	Status string `yaml:"status" json:"status"`
 }

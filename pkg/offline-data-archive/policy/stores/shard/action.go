@@ -21,7 +21,6 @@ import (
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/instance"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
@@ -34,7 +33,7 @@ type Action interface {
 var _ Action = (*BaseAction)(nil)
 
 type BaseAction struct {
-	log log.Logger
+	TempDir string
 }
 
 func (a *BaseAction) Move(ctx context.Context, s *Shard) error {
@@ -52,7 +51,6 @@ func (a *BaseAction) Move(ctx context.Context, s *Shard) error {
 
 	// 如果目标不存在则进行一下操作
 	if !ok {
-		a.log.Infof(ctx, "%s is not exist need move", s.Spec.Target.Path)
 		// 判断来源文件是否存在，不存在则报错
 		_, err = os.Stat(s.Spec.Source.Path)
 		if err != nil {
@@ -117,7 +115,6 @@ func (a *BaseAction) Rebuild(ctx context.Context, s *Shard) error {
 
 	// 如果目标不存在则进行一下操作
 	if !ok {
-		a.log.Infof(ctx, "%s need rebuild", s.Spec.Target.Path)
 		// 判断来源文件是否存在，不存在则报错
 		ok, err := ins.Exist(ctx, s.Spec.Target.Path)
 		if err != nil {
@@ -128,7 +125,7 @@ func (a *BaseAction) Rebuild(ctx context.Context, s *Shard) error {
 		}
 
 		// 下载到临时文件夹进行处理
-		tempPath, err := ins.Download(ctx, s.Spec.Target.Path, "dist/cos_temp")
+		tempPath, err := ins.Download(ctx, s.Spec.Target.Path, a.TempDir)
 		if err != nil {
 			return err
 		}
@@ -146,13 +143,11 @@ func (a *BaseAction) Rebuild(ctx context.Context, s *Shard) error {
 		if err != nil {
 			err = os.Mkdir(walPath, 0755)
 			if err != nil {
-				a.log.Errorf(ctx, "create wal folder error, err:%s", err)
 				return err
 			}
 		}
 
 		// 删除目标路径下的index文件
-		a.log.Infof(ctx, "start rebuild shard, shard key :%s", s.Unique())
 		indexFile := filepath.Join(tempPath, "index")
 		_, err = os.Stat(indexFile)
 		if err == nil {

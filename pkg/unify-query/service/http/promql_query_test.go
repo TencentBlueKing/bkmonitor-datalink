@@ -61,6 +61,11 @@ func TestPromqlQuery_Test(t *testing.T) {
 			data:     `{"promql":"count(container_cpu_system_seconds_total)","start":"1669717380","end":"1669717680","step":"1m"}`,
 			result:   `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":[],"group_values":[],"values":[[1669717380000,35895],[1669717440000,35900],[1669717500000,39424],[1669717560000,41380],[1669717620000,43604],[1669717680000,42659]]}]}`,
 		},
+		"promql": {
+			spaceUid: "bkcc__2",
+			data:     `{"promql":"jvm_memory_bytes_used{} * 100 / on (pod, area) jvm_memory_bytes_max{}","match":"","start":"1689045775","end":"1689046675","step":"60s"}`,
+			result:   ``,
+		},
 	}
 	promql.NewEngine(&promql.Params{
 		Timeout:              2 * time.Hour,

@@ -45,6 +45,11 @@ func setDefaultConfig() {
 
 	// vm 支持 influxdb 的查询配置
 	viper.SetDefault(VmInfluxCompatibleConfigPath, true)
+
+	viper.SetDefault(OfflineDataArchiveAddressConfigPath, "bk-datalink-offline-data-archive:8089")
+	viper.SetDefault(OfflineDataArchiveTimeoutConfigPath, "10m")
+	viper.SetDefault(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
+	viper.SetDefault(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
 }
 
 // initConfig 加载配置
@@ -73,6 +78,11 @@ func initConfig() {
 	VmToken = viper.GetString(VmTokenConfigPath)
 
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
+
+	OfflineDataArchiveAddress = viper.GetString(OfflineDataArchiveAddressConfigPath)
+	OfflineDataArchiveTimeout = viper.GetDuration(OfflineDataArchiveTimeoutConfigPath)
+	OfflineDataArchiveGrpcMaxCallRecvMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath)
+	OfflineDataArchiveGrpcMaxCallSendMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath)
 }
 
 // init 初始化，通过 eventBus 加载配置读取前和读取后操作

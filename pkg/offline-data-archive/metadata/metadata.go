@@ -18,9 +18,11 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
 const (
@@ -34,7 +36,28 @@ const (
 	CurrentMaxShardIdKey = "current_max_shard_id_key"
 )
 
-type Metadata struct {
+type Metadata interface {
+	PublishShard(ctx context.Context, channelValue interface{}) error
+	SubscribeShard(ctx context.Context) <-chan *redis.Message
+	GetShardID(ctx context.Context, sd *shard.Shard) (string, error)
+	GetAllShards(ctx context.Context) map[string]*shard.Shard
+	SetShard(ctx context.Context, k string, sd *shard.Shard) error
+	GetShard(ctx context.Context, k string) (*shard.Shard, error)
+	GetDistributedLock(ctx context.Context, key, val string, expiration time.Duration) (string, error)
+	RenewalLock(ctx context.Context, key string, renewalDuration time.Duration) (bool, error)
+	GetPolicies(ctx context.Context, clusterName, tagRouter string) (map[string]*Policy, error)
+	GetShards(
+		ctx context.Context, clusterName, tagRouter, database string,
+	) (map[string]*shard.Shard, error)
+	GetReadShardsByTimeRange(
+		ctx context.Context, clusterName, tagRouter, database, retentionPolicy string,
+		start int64, end int64,
+	) ([]*shard.Shard, error)
+}
+
+var _ Metadata = (*metadata)(nil)
+
+type metadata struct {
 	log log.Logger
 
 	client redis.UniversalClient
@@ -42,34 +65,34 @@ type Metadata struct {
 	serviceName string
 }
 
-func NewMetadata(client redis.UniversalClient, serviceName string, log log.Logger) *Metadata {
-	return &Metadata{
+func NewMetadata(client redis.UniversalClient, serviceName string, log log.Logger) Metadata {
+	return &metadata{
 		client:      client,
 		serviceName: serviceName,
 		log:         log,
 	}
 }
 
-func (m *Metadata) key(k ...string) string {
+func (m *metadata) key(k ...string) string {
 	return fmt.Sprintf("%s:%s", m.serviceName, strings.Join(k, ":"))
 }
 
-func (m *Metadata) PublishShard(ctx context.Context, channelValue interface{}) error {
+func (m *metadata) PublishShard(ctx context.Context, channelValue interface{}) error {
 	channelKey := m.key(ShardChannel)
 	err := m.client.Publish(ctx, channelKey, channelValue).Err()
 	return err
 }
 
-func (m *Metadata) SubscribeShard(ctx context.Context) <-chan *redis.Message {
+func (m *metadata) SubscribeShard(ctx context.Context) <-chan *redis.Message {
 	channelKey := m.key(ShardChannel)
 	return m.client.Subscribe(ctx, channelKey).Channel()
 }
 
-func (m *Metadata) GetShardID(ctx context.Context, sd *shard.Shard) (string, error) {
+func (m *metadata) GetShardID(ctx context.Context, sd *shard.Shard) (string, error) {
 	return base64.StdEncoding.EncodeToString([]byte(sd.Unique())), nil
 }
 
-func (m *Metadata) GetAllShards(ctx context.Context) map[string]*shard.Shard {
+func (m *metadata) GetAllShards(ctx context.Context) map[string]*shard.Shard {
 	shards := make(map[string]*shard.Shard, 0)
 	pattern := m.key(fmt.Sprintf("%s*", ShardKey))
 	keys := m.client.Keys(ctx, pattern)
@@ -98,8 +121,8 @@ func (m *Metadata) GetAllShards(ctx context.Context) map[string]*shard.Shard {
 	return shards
 }
 
-func (m *Metadata) SetShard(ctx context.Context, k string, sd *shard.Shard) error {
-	key := m.key(ShardKey, sd.Meta.ClusterName, sd.Meta.TagName, sd.Meta.TagValue, sd.Meta.Database)
+func (m *metadata) SetShard(ctx context.Context, k string, sd *shard.Shard) error {
+	key := m.key(ShardKey, sd.Meta.ClusterName, sd.Meta.TagRouter, sd.Meta.Database)
 	res, err := json.Marshal(sd)
 	if err != nil {
 		m.log.Errorf(ctx, "shard marshal error, shard: %s, err: %s", sd.Unique(), err)
@@ -108,20 +131,20 @@ func (m *Metadata) SetShard(ctx context.Context, k string, sd *shard.Shard) erro
 	return m.client.HSet(ctx, key, k, string(res)).Err()
 }
 
-func (m *Metadata) GetShard(ctx context.Context, k string) (*shard.Shard, error) {
+func (m *metadata) GetShard(ctx context.Context, k string) (*shard.Shard, error) {
 	splitK := strings.Split(k, "|")
-	if len(splitK) < 8 {
+	if len(splitK) < 3 {
 		return nil, fmt.Errorf("key format error: %s", k)
 	}
 
-	// 从 key 中拆出 clusterName，tagName，tagValue，database 等值
-	clusterName, tagName, tagValue, database := splitK[0], splitK[1], splitK[2], splitK[3]
-	key := m.key(ShardKey, clusterName, tagName, tagValue, database)
+	// 从 key 中拆出 clusterName，tagRouter，database 等值
+	clusterName, tagRouter, database := splitK[0], splitK[1], splitK[2]
+	key := m.key(ShardKey, clusterName, tagRouter, database)
 	res, err := m.client.HGet(ctx, key, k).Result()
 
 	if err != nil {
-		m.log.Errorf(ctx, "get shard error, key: %s, clusterName: %s, tagName: %s, tagValue:%s, err:%s",
-			k, clusterName, tagName, tagValue, err)
+		m.log.Errorf(ctx, "get shard error, key: %s, clusterName: %s, tagRouter: %s, err:%s",
+			k, clusterName, tagRouter, err)
 		return nil, err
 	}
 
@@ -132,15 +155,15 @@ func (m *Metadata) GetShard(ctx context.Context, k string) (*shard.Shard, error)
 
 	err = json.Unmarshal([]byte(res), sd)
 	if err != nil {
-		m.log.Errorf(ctx, "Unmarshal shard error, key: %s, clusterName: %s, tagName: %s, tagValue:%s, err:%s",
-			k, clusterName, tagName, tagValue, err)
+		m.log.Errorf(ctx, "Unmarshal shard error, key: %s, clusterName: %s, tagRouter: %s, err:%s",
+			k, clusterName, tagRouter, err)
 		return nil, err
 	}
 	return sd, nil
 
 }
 
-func (m *Metadata) GetDistributedLock(ctx context.Context, key, val string, expiration time.Duration) (string, error) {
+func (m *metadata) GetDistributedLock(ctx context.Context, key, val string, expiration time.Duration) (string, error) {
 	var distributedLock string
 	_, err := m.client.SetNX(ctx, key, val, expiration).Result()
 	if err == nil {
@@ -150,7 +173,7 @@ func (m *Metadata) GetDistributedLock(ctx context.Context, key, val string, expi
 }
 
 // RenewalLock 锁续期
-func (m *Metadata) RenewalLock(ctx context.Context, key string, renewalDuration time.Duration) (bool, error) {
+func (m *metadata) RenewalLock(ctx context.Context, key string, renewalDuration time.Duration) (bool, error) {
 
 	// 获取该锁剩余的过去时间
 	ttl, err := m.client.TTL(ctx, key).Result()
@@ -169,8 +192,8 @@ func (m *Metadata) RenewalLock(ctx context.Context, key string, renewalDuration 
 
 }
 
-func (m *Metadata) GetPolicies(ctx context.Context, clusterName, tagName, tagValue string) (map[string]*Policy, error) {
-	key := m.key(PolicyKey, clusterName, tagName, tagValue)
+func (m *metadata) GetPolicies(ctx context.Context, clusterName, tagRouter string) (map[string]*Policy, error) {
+	key := m.key(PolicyKey, clusterName, tagRouter)
 	res, err := m.client.HGetAll(ctx, key).Result()
 	if err != nil {
 		m.log.Errorf(ctx, "redis HGgetAll %s error: %s", key, err.Error())
@@ -178,7 +201,7 @@ func (m *Metadata) GetPolicies(ctx context.Context, clusterName, tagName, tagVal
 	}
 
 	// policies 的 key 为 存储 policies hashmap 的field，例: default:test_api:bk_biz_id:7
-	// 拼接的格式为 clusterName:database:tagName:tagValue
+	// 拼接的格式为 clusterName:database:tagRouter
 	policies := make(map[string]*Policy, len(res))
 	for k, r := range res {
 		policy := &Policy{}
@@ -198,11 +221,11 @@ func (m *Metadata) GetPolicies(ctx context.Context, clusterName, tagName, tagVal
 	return policies, err
 }
 
-func (m *Metadata) GetShards(
-	ctx context.Context, clusterName, tagName, tagValue, database string,
+func (m *metadata) GetShards(
+	ctx context.Context, clusterName, tagRouter, database string,
 ) (map[string]*shard.Shard, error) {
 
-	key := m.key(ShardKey, clusterName, tagName, tagValue, database)
+	key := m.key(ShardKey, clusterName, tagRouter, database)
 	res, err := m.client.HGetAll(ctx, key).Result()
 	if err != nil {
 		m.log.Errorf(ctx, "redis HGgetAll %s error: %s", key, err.Error())
@@ -226,17 +249,41 @@ func (m *Metadata) GetShards(
 	return shards, nil
 }
 
-func (m *Metadata) GetShardsByTimeRange(
-	ctx context.Context, clusterName, tagName, tagValue, database, retentionPolicy string,
+func (m *metadata) GetReadShardsByTimeRange(
+	ctx context.Context, clusterName, tagRouter, database, retentionPolicy string,
 	start int64, end int64,
 ) ([]*shard.Shard, error) {
 	var (
 		shards = make([]*shard.Shard, 0)
+		now    = time.Now()
+		span   oleltrace.Span
 	)
-	key := m.key(ShardKey, clusterName, tagName, tagValue, database)
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-read-shard-by-time-range")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("cluster-name", clusterName, span)
+	trace.InsertStringIntoSpan("retention-policy", retentionPolicy, span)
+	trace.InsertStringIntoSpan("tag-router", tagRouter, span)
+	trace.InsertStringIntoSpan("database", database, span)
+
+	if retentionPolicy == "" {
+		retentionPolicy = "autogen"
+	}
+
+	key := m.key(ShardKey, clusterName, tagRouter, database)
 	res, err := m.client.HGetAll(ctx, key).Result()
 	if err != nil {
-		m.log.Errorf(ctx, "redis HGetAll %s error: %s", key, err.Error())
+		return nil, err
+	}
+
+	trace.InsertStringIntoSpan("hash-key", key, span)
+	trace.InsertIntIntoSpan("hash-num", len(res), span)
+
+	errorMessage := make([]string, 0)
+	if len(res) == 0 {
+		errorMessage = append(errorMessage, fmt.Sprintf("hash key (%s) 's shard is empty", key))
 		return nil, err
 	}
 
@@ -252,28 +299,67 @@ func (m *Metadata) GetShardsByTimeRange(
 				return nil, err
 			}
 
-			// 验证 meta 字段
-			if sd.Meta.ClusterName != clusterName {
-				continue
-			}
-			if sd.Meta.Database != database {
-				continue
-			}
-			if sd.Meta.RetentionPolicy != retentionPolicy {
-				continue
-			}
-			if sd.Meta.TagName != tagName {
-				continue
-			}
-			if sd.Meta.TagValue != tagValue {
-				continue
+			// 通过时间过滤
+			querRangeMatch := false
+
+			if sd.Spec.Start.UnixNano() <= start && start < sd.Spec.End.UnixNano() {
+				m.log.Infof(ctx, "shard %s is add to query for start: %s <= %d < %s", sd.Unique(), sd.Spec.Start.String(), start, sd.Spec.End.String())
+				querRangeMatch = true
+			} else {
+				if sd.Spec.Start.UnixNano() <= end && end < sd.Spec.End.UnixNano() {
+					m.log.Infof(ctx, "shard %s is add to query for end: %s <= %d < %s", sd.Unique(), sd.Spec.Start.String(), end, sd.Spec.End.String())
+					querRangeMatch = true
+				}
 			}
 
-			// 通过时间过滤
-			if sd.Spec.Start.UnixNano() >= start && end < sd.Spec.End.UnixNano() {
-				shards = append(shards, sd)
+			// 只有时间符合的情况下才判断，避免判断过多
+			if querRangeMatch {
+				// 验证 shard 状态是否是完成的
+				if sd.Status.Code != shard.Finish {
+					errorMessage = append(errorMessage, fmt.Sprintf("%s code %d != %d", sd.Unique(), sd.Status.Code, shard.Finish))
+					continue
+				}
+
+				// 验证 meta 字段
+				if sd.Meta.ClusterName != clusterName {
+					errorMessage = append(errorMessage, fmt.Sprintf("%s cluster-name %s != %s", sd.Unique(), sd.Meta.ClusterName, clusterName))
+					continue
+				}
+				if sd.Meta.Database != database {
+					errorMessage = append(errorMessage, fmt.Sprintf("%s database %s != %s", sd.Unique(), sd.Meta.Database, database))
+					continue
+				}
+				if sd.Meta.TagRouter != tagRouter {
+					errorMessage = append(errorMessage, fmt.Sprintf("%s tag-router %s != %s", sd.Unique(), sd.Meta.TagRouter, tagRouter))
+					continue
+				}
+				if sd.Meta.RetentionPolicy != retentionPolicy {
+					errorMessage = append(errorMessage, fmt.Sprintf("%s retention-pilicy %s != %s", sd.Unique(), sd.Meta.RetentionPolicy, retentionPolicy))
+					continue
+				}
+
+				// 判断是否是过期的 shard，只有过期的 shard 才进行查询
+				if sd.Spec.Expired.Unix() > now.Unix() {
+					errorMessage = append(errorMessage, fmt.Sprintf("shard (%s) 's expired（%s） > now（%s）", sd.Unique(), sd.Spec.Expired.String(), now.String()))
+					m.log.Debugf(ctx, "shard %s expired %s is > now %s", sd.Unique(), sd.Spec.Expired.String(), now.String())
+					continue
+				} else {
+					shards = append(shards, sd)
+				}
 			}
 		}
+	} else {
+		err = fmt.Errorf("start time %d must less than end time %d", start, end)
+		return nil, err
+	}
+
+	trace.InsertIntIntoSpan("shard-num", len(shards), span)
+
+	if len(shards) == 0 {
+		err = fmt.Errorf(
+			"shard nums is 0 reason: %s", strings.Join(errorMessage, " | "),
+		)
+		return nil, err
 	}
 
 	return shards, nil

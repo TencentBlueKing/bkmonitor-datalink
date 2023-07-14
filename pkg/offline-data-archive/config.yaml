@@ -1,8 +1,7 @@
 move:
   instance_name:
   cluster_name:
-  tag_name:
-  tag_value:
+  tag_router:
   source_dir:
   target_name: cos
   target_dir:
@@ -31,7 +30,9 @@ query:
     port: 8090
     read_timeout: 5s
     metric: /metric
-    dir: dist/cos_temp/demo
+
+common:
+  temp_dir: dist/cos_temp
 
 logger:
   level: info

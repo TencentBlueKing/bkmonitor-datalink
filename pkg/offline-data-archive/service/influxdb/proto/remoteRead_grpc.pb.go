@@ -2,9 +2,9 @@
 // versions:
 // - protoc-gen-go-grpc v1.1.0
 // - protoc             v4.22.5
-// source: remote.proto
+// source: remoteRead.proto
 
-package remote
+package remoteRead
 
 import (
 	context "context"
@@ -34,7 +34,7 @@ func NewQueryTimeSeriesServiceClient(cc grpc.ClientConnInterface) QueryTimeSerie
 }
 
 func (c *queryTimeSeriesServiceClient) Raw(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (QueryTimeSeriesService_RawClient, error) {
-	stream, err := c.cc.NewStream(ctx, &QueryTimeSeriesService_ServiceDesc.Streams[0], "/remote.QueryTimeSeriesService/Raw", opts...)
+	stream, err := c.cc.NewStream(ctx, &QueryTimeSeriesService_ServiceDesc.Streams[0], "/remoteRead.QueryTimeSeriesService/Raw", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (x *queryTimeSeriesServiceRawServer) Send(m *TimeSeries) error {
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var QueryTimeSeriesService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "remote.QueryTimeSeriesService",
+	ServiceName: "remoteRead.QueryTimeSeriesService",
 	HandlerType: (*QueryTimeSeriesServiceServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
@@ -129,5 +129,5 @@ var QueryTimeSeriesService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "remote.proto",
+	Metadata: "remoteRead.proto",
 }

@@ -88,9 +88,7 @@ func (d *Shard) Run(
 	}
 
 	if action == nil {
-		action = &BaseAction{
-			log: d.Log,
-		}
+		action = &BaseAction{}
 	}
 
 	trace.InsertStringIntoSpan("shard-key", d.Unique(), span)

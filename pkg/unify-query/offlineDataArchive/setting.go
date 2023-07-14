@@ -7,31 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package policy
+package offlineDataArchive
 
-import (
-	"context"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores"
+const (
+	ServiceNameConfigPath = "offline_data_archive.service_name"
 )
 
-type Policies map[string]*Policy
-
-type Policy struct {
-	ctx context.Context
-
-	log log.Logger
-
-	check func() bool
-
-	meta  *Meta
-	store stores.Store
-}
-
-type Meta struct {
-	Name        string
-	ClusterName string
-	Database    string
-	TagRouter   string
-}
+var (
+	ServiceName string
+)

@@ -13,6 +13,7 @@ const (
 	VictoriaMetricsStorageType = "victoria_metrics"
 	InfluxDBStorageType        = "influxdb"
 	PrometheusStorageType      = "prometheus"
+	OfflineDataArchive         = "offline_data_archive"
 )
 
 var typeList = []string{VictoriaMetricsStorageType, InfluxDBStorageType}

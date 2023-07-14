@@ -24,7 +24,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	//"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 )
 
 // Params

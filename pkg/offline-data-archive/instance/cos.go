@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path"
@@ -161,14 +162,18 @@ func (c *Cos) multipartUpload(ctx context.Context, source, target string) error 
 		return fmt.Errorf("open file : " + err.Error())
 	}
 	defer file.Close()
+
 	fileInfo, _ := file.Stat()
 	size := fileInfo.Size()
-	buffer := make([]byte, size)
-	fileType := http.DetectContentType(buffer)
-	file.Read(buffer)
 
-	// size 为0的直接上传处理
-	if size <= c.PartSize {
+	partNum := int(math.Ceil(float64(size) / float64(c.PartSize)))
+
+	var buffer []byte
+
+	// size 小于 partSize 的直接上传处理
+	if size < c.PartSize {
+		buffer = make([]byte, size)
+		file.Read(buffer)
 		res, err := c.Svc().PutObject(&s3.PutObjectInput{
 			Bucket: aws.String(c.Bucket),
 			Key:    aws.String(target),
@@ -181,48 +186,50 @@ func (c *Cos) multipartUpload(ctx context.Context, source, target string) error 
 		return nil
 	}
 
+	c.Log.Infof(ctx, "created multipart upload request, size: %d, partSize: %d, partNum: %d", size, c.PartSize, partNum)
+
+	buffer = make([]byte, c.PartSize)
+	fileType := http.DetectContentType(buffer)
 	// 建立分段上传连接
 	resp, err := c.initMultipartUpload(ctx, target, fileType)
 	if err != nil {
 		return fmt.Errorf("InitMultipartUpload : " + err.Error())
 	}
-	c.Log.Infof(ctx, "created multipart upload request")
 
 	var (
-		curr, partLength int64
-		remaining        = size
-		completedParts   []*s3.CompletedPart
+		completedParts = make([]*s3.CompletedPart, 0, partNum)
 	)
 	partNumber := int64(1)
-	for curr = 0; remaining != 0; curr += partLength {
-		if remaining < c.PartSize {
-			partLength = remaining
-		} else {
-			partLength = c.PartSize
-		}
-		completedPart, err := c.uploadPart(ctx, resp, buffer[curr:curr+partLength], partNumber)
-		if err != nil {
-			c.Log.Errorf(ctx, err.Error())
-			// 终止分段上传能力
-			err1 := c.abortMultipartUpload(ctx, resp)
-			if err1 != nil {
-				c.Log.Errorf(ctx, err1.Error())
+
+	for {
+		switch nr, err1 := file.Read(buffer[:]); true {
+		case nr < 0:
+			c.Log.Errorf(ctx, "cat: error reading: %s\n", err.Error())
+			return err1
+		case nr == 0:
+			completeResponse, err2 := c.completeMultipartUpload(ctx, resp, completedParts)
+			if err2 != nil {
+				return err2
 			}
-			// 保留原上传错误
-			return err
+
+			c.Log.Infof(ctx, "Successfully uploaded file: %s", *completeResponse.Location)
+			return nil
+		case nr > 0:
+			completedPart, err2 := c.uploadPart(ctx, resp, buffer[0:nr], partNumber)
+			if err2 != nil {
+				c.Log.Errorf(ctx, err2.Error())
+				// 终止分段上传能力
+				err3 := c.abortMultipartUpload(ctx, resp)
+				if err3 != nil {
+					c.Log.Errorf(ctx, err3.Error())
+				}
+				// 保留原上传错误
+				return err2
+			}
+			partNumber++
+			completedParts = append(completedParts, completedPart)
 		}
-		remaining -= partLength
-		partNumber++
-		completedParts = append(completedParts, completedPart)
 	}
-
-	completeResponse, err := c.completeMultipartUpload(ctx, resp, completedParts)
-	if err != nil {
-		return err
-	}
-
-	c.Log.Infof(ctx, "Successfully uploaded file: %+v", completeResponse.Location)
-	return nil
 }
 
 // Upload cfs 直接拷贝

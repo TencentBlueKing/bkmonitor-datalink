@@ -187,6 +187,14 @@ func MockSpace(t *testing.T) {
 				},
 			},
 		},
+		"64_bkmonitor_time_series_1573412.__default__": &redis.TsDB{
+			TableID:         "64_bkmonitor_time_series_1573412.__default__",
+			Field:           []string{"jvm_memory_bytes_used", "jvm_memory_bytes_max"},
+			MeasurementType: redis.BkSplitMeasurement,
+			SegmentedEnable: false,
+			BkDataID:        "1234321",
+			Filters:         []redis.Filter{},
+		},
 	}
 
 	ctx := context.Background()
@@ -207,6 +215,12 @@ func MockSpace(t *testing.T) {
 		"2_bkmonitor_time_series_1572904.__default__": &ir.Proxy{
 			StorageID:   "10",
 			Db:          "2_bkmonitor_time_series_1572904",
+			Measurement: "__default__",
+		},
+		"64_bkmonitor_time_series_1573412.__default__": &ir.Proxy{
+			StorageID:   "0",
+			ClusterName: "default",
+			Db:          "64_bkmonitor_time_series_1573412",
 			Measurement: "__default__",
 		},
 	}

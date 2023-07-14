@@ -76,10 +76,11 @@ to quickly create a Cobra application.`,
 		serviceName := viper.GetString(redis.ServiceNameConfigPath)
 		interval := viper.GetDuration(config.RebuildIntervalConfigPath)
 		maxPool := viper.GetInt(config.RebuildMaxPoolConfigPath)
-		distributeLockExpiration := viper.GetDuration(config.RebuildDistributedLockExpiration)
-		distributeLockRenewalDuration := viper.GetDuration(config.RebuildDistributedLockRenewalDuration)
+		distributeLockExpiration := viper.GetDuration(config.RebuildDistributedLockExpirationConfigPath)
+		distributeLockRenewalDuration := viper.GetDuration(config.RebuildDistributedLockRenewalDurationConfigPath)
 		finalName := viper.GetString(config.RebuildFinalNameConfigPath)
 		finalDir := viper.GetString(config.RebuildFinalDirConfigPath)
+		tempDir := viper.GetString(config.CommonTempDirConfigPath)
 
 		md := metadata.NewMetadata(redisCli, serviceName, logger)
 
@@ -127,7 +128,11 @@ to quickly create a Cobra application.`,
 					Path:         finalPath,
 				}
 
-				err = sd.Run(ctx, nil,
+				baseAction := &shard.BaseAction{
+					TempDir: tempDir,
+				}
+
+				err = sd.Run(ctx, baseAction,
 					func(ctx context.Context, key, val string) (string, error) {
 						return md.GetDistributedLock(ctx, key, val, distributeLockExpiration)
 					},

@@ -51,6 +51,7 @@ type Query struct {
 	TagsKey     []string
 
 	// vm 的 rt
+	TableID        string
 	VmRt           string
 	IsSingleMetric bool
 

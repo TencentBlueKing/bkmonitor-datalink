@@ -22,9 +22,12 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
+	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -48,6 +51,10 @@ type QueryTs struct {
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 }
+
+var (
+	md *offlineDataArchiveMetadata.Metadata
+)
 
 func ToTime(startStr, endStr, stepStr string) (time.Time, time.Time, time.Duration, error) {
 	var (
@@ -404,7 +411,38 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 
 		query.IsSingleMetric = tsDB.IsSplit()
-		query.StorageID = storageID
+
+		// 通过过期时间判断是否读取归档模块
+		start, end, _, err := ToTime(q.Start, q.End, q.Step)
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			return nil, err
+		}
+		// tag 路由转换
+		tagRouter, err := influxdb.GetTagRouter(ctx, proxy.TagsKey, whereList.String())
+		if err != nil {
+			return nil, err
+		}
+		// 获取可以查询的 ShardID
+		offlineDataArchiveQuery, odaErr := offlineDataArchive.GetMetaData().GetReadShardsByTimeRange(
+			ctx, clusterName, tagRouter, db, query.RetentionPolicy, start.UnixNano(), end.UnixNano(),
+		)
+
+		trace.InsertStringIntoSpan("offline-data-archive-cluster-name", clusterName, span)
+		trace.InsertStringIntoSpan("offline-data-archive-tag-router", tagRouter, span)
+		trace.InsertStringIntoSpan("offline-data-archive-retention-policy", query.RetentionPolicy, span)
+		trace.InsertStringIntoSpan("offline-data-archive-start", start.String(), span)
+		trace.InsertStringIntoSpan("offline-data-archive-end", end.String(), span)
+		trace.InsertIntIntoSpan("offline-data-archive-shard-num", len(offlineDataArchiveQuery), span)
+		trace.InsertStringIntoSpan("offline-data-archive-error", fmt.Sprintf("%+v", odaErr), span)
+
+		if len(offlineDataArchiveQuery) > 0 {
+			query.StorageID = consul.OfflineDataArchive
+		} else {
+			query.StorageID = storageID
+		}
+
+		query.TableID = tsDB.TableID
 		query.ClusterName = clusterName
 		query.TagsKey = tagKeys
 		query.DB = db
@@ -414,6 +452,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.Condition = whereList.String()
 
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
+
+		trace.InsertStringIntoSpan("query-metric-query", fmt.Sprintf("%+v", query), span)
 	}
 
 	return queryMetric, nil

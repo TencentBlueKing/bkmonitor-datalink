@@ -7,31 +7,36 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package policy
+package offlineDataArchive
 
 import (
-	"context"
+	"sync"
+
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores"
+	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
-type Policies map[string]*Policy
+var (
+	mu sync.Mutex
+	md offlineDataArchiveMetadata.Metadata
+)
 
-type Policy struct {
-	ctx context.Context
-
-	log log.Logger
-
-	check func() bool
-
-	meta  *Meta
-	store stores.Store
+func MockMetaData(m offlineDataArchiveMetadata.Metadata) {
+	mu.Lock()
+	defer mu.Unlock()
+	md = m
 }
 
-type Meta struct {
-	Name        string
-	ClusterName string
-	Database    string
-	TagRouter   string
+func GetMetaData() offlineDataArchiveMetadata.Metadata {
+	mu.Lock()
+	defer mu.Unlock()
+	if md == nil {
+		logger := log.NewLogger()
+		serviceName := viper.GetString(ServiceNameConfigPath)
+		md = offlineDataArchiveMetadata.NewMetadata(redis.Client(), serviceName, logger)
+	}
+	return md
 }

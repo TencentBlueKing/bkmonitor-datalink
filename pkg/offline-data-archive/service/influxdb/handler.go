@@ -20,12 +20,12 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
-	remote "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
 type Server struct {
-	remote.UnimplementedQueryTimeSeriesServiceServer
+	remoteRead.UnimplementedQueryTimeSeriesServiceServer
 	timeout time.Duration
 
 	dataDir string
@@ -34,10 +34,10 @@ type Server struct {
 	ss  *storage.Store
 	log log.Logger
 
-	getShard func(ctx context.Context, clusterName, db, rp, tagName, tagValue string, start, end int64) ([]*shard.Shard, error)
+	getShard func(ctx context.Context, clusterName, db, rp, tagRouter string, start, end int64) ([]*shard.Shard, error)
 }
 
-func (s *Server) Raw(req *remote.ReadRequest, stream remote.QueryTimeSeriesService_RawServer) error {
+func (s *Server) Raw(req *remoteRead.ReadRequest, stream remoteRead.QueryTimeSeriesService_RawServer) error {
 	var (
 		ctx  context.Context
 		span oteltrace.Span
@@ -50,20 +50,18 @@ func (s *Server) Raw(req *remote.ReadRequest, stream remote.QueryTimeSeriesServi
 		defer span.End()
 	}
 
+	s.log.Infof(ctx, "raw request: %+v", req)
+
 	if req.GetRp() == "" {
 		req.Rp = "autogen"
 	}
 
 	shards, err := s.getShard(
-		ctx, req.GetClusterName(), req.GetTagKey(), req.GetTagValue(),
+		ctx, req.GetClusterName(), req.GetTagRouter(),
 		req.GetDb(), req.GetRp(), req.GetStart(), req.GetEnd(),
 	)
 	if err != nil {
 		return err
-	}
-
-	if len(shards) == 0 {
-		return nil
 	}
 
 	rawQuery := &RawQuery{
@@ -118,13 +116,13 @@ func (s *Server) Raw(req *remote.ReadRequest, stream remote.QueryTimeSeriesServi
 			break
 		}
 
-		err = func(stream remote.QueryTimeSeriesService_RawServer) error {
+		err = func(stream remoteRead.QueryTimeSeriesService_RawServer) error {
 			cur := rs.Cursor()
 			if cur == nil {
 				return nil
 			}
 			tags := removeInfluxSystemTags(rs.Tags())
-			series := &remote.TimeSeries{
+			series := &remoteRead.TimeSeries{
 				Labels: modelTagsToLabelPairs(tags),
 			}
 
@@ -148,7 +146,7 @@ func (s *Server) Raw(req *remote.ReadRequest, stream remote.QueryTimeSeriesServi
 
 					for i, ts := range a.Timestamps {
 						pointsNum++
-						series.Samples = append(series.Samples, &remote.Sample{
+						series.Samples = append(series.Samples, &remoteRead.Sample{
 							TimestampMs: ts / int64(time.Millisecond),
 							Value:       a.Values[i],
 						})
@@ -167,7 +165,7 @@ func (s *Server) Raw(req *remote.ReadRequest, stream remote.QueryTimeSeriesServi
 
 					for i, ts := range a.Timestamps {
 						pointsNum++
-						series.Samples = append(series.Samples, &remote.Sample{
+						series.Samples = append(series.Samples, &remoteRead.Sample{
 							TimestampMs: ts / int64(time.Millisecond),
 							Value:       float64(a.Values[i]),
 						})

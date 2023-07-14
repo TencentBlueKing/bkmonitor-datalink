@@ -66,8 +66,8 @@ func setDefault() {
 
 	viper.SetDefault(RebuildMaxPoolConfigPath, 10)
 	viper.SetDefault(RebuildIntervalConfigPath, "1h")
-	viper.SetDefault(RebuildDistributedLockExpiration, "1h")
-	viper.SetDefault(RebuildDistributedLockRenewalDuration, "1m")
+	viper.SetDefault(RebuildDistributedLockExpirationConfigPath, "1h")
+	viper.SetDefault(RebuildDistributedLockRenewalDurationConfigPath, "1m")
 	viper.SetDefault(RebuildFinalNameConfigPath, "cos")
 	viper.SetDefault(RebuildFinalDirConfigPath, "/rebuild")
 
@@ -75,5 +75,6 @@ func setDefault() {
 	viper.SetDefault(QueryHttpPortConfigPath, "8089")
 	viper.SetDefault(QueryHttpReadTimeoutConfigPath, "30s")
 	viper.SetDefault(QueryHttpMetricConfigPath, "/metric")
-	viper.SetDefault(QueryHttpDIrConfigPath, "/data/influxdb")
+
+	viper.SetDefault(CommonTempDirConfigPath, "/data/cos_temp")
 }

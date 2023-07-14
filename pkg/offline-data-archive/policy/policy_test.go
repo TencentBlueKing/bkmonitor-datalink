@@ -44,8 +44,7 @@ func TestPolicy(t *testing.T) {
 	clusterName := "default"
 
 	database := "db"
-	tagName := ""
-	tagValue := ""
+	tagRouter := ""
 
 	targetName := "target_name"
 	targetDir := fmt.Sprintf("%s/target", dir)
@@ -61,12 +60,11 @@ func TestPolicy(t *testing.T) {
 	policyMeta := &Meta{
 		ClusterName: clusterName,
 		Database:    database,
-		TagName:     tagName,
-		TagValue:    tagValue,
+		TagRouter:   tagRouter,
 	}
 
 	store := stores.NewInfluxDB(
-		logger, clusterName, instanceName, tagName, tagValue,
+		logger, clusterName, instanceName, tagRouter,
 		sourceDir, targetName, targetDir, address, username, password,
 	)
 

@@ -201,6 +201,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 			return nil, err
 		}
 
+		query.TableID = tsDB.TableID
 		query.DB = db
 		query.Measurement = measurement
 		query.Field = field
@@ -305,6 +306,7 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 			return nil, err
 		}
 
+		query.TableID = tableInfo.String()
 		query.DB = db
 		query.Measurement = measurement
 		query.Field = field

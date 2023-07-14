@@ -50,7 +50,7 @@ func ConfigInit() error {
 
 	viper.SetDefault(ConfigPathCosThreadPoolSize, 10)
 	viper.SetDefault(ConfigPathCosTimeout, "10m")
-	viper.SetDefault(ConfigPathCosPartSize, 2*1024*1024)
+	viper.SetDefault(ConfigPathCosPartSize, 100*1024*1024)
 	viper.SetDefault(ConfigPathMaxRetries, 3)
 	viper.SetDefault(ConfigPathCosTempDir, "download_temp")
 

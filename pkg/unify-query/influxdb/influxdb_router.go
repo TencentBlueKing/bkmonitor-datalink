@@ -412,7 +412,7 @@ func (r *Router) GetProxyByTableID(tableId, field string, isProxy bool) (*influx
 
 	route := strings.Split(tableId, ".")
 	if len(route) != 2 {
-		return nil, fmt.Errorf("tableid is wrong %s", tableId)
+		return nil, fmt.Errorf("tableid format is wrong %s", tableId)
 	}
 
 	var ckList []string
@@ -436,6 +436,56 @@ func (r *Router) GetProxyByTableID(tableId, field string, isProxy bool) (*influx
 	}
 
 	return nil, fmt.Errorf("influxdb proxy router is empty, with %s %s", tableId, field)
+}
+
+func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (string, error) {
+	if len(tagsKey) == 0 || condition == "" {
+		return "", nil
+	}
+
+	var (
+		span oleltrace.Span
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-tag-values")
+	if span != nil {
+		defer span.End()
+	}
+
+	// 解析 where 中的条件
+	expr, err := influxql.ParseExpr(condition)
+	if err != nil {
+		return "", err
+	}
+	tags := getTags(expr)
+
+	trace.InsertStringIntoSpan("condition", condition, span)
+	trace.InsertStringIntoSpan("condition-tags", fmt.Sprintf("%+v", tags), span)
+
+	// 判断是否有 tagKey
+	var buf bytes.Buffer
+	checkRepeat := make(map[string]bool)
+	count := 0
+
+	for _, key := range tagsKey {
+		for _, tag := range tags {
+			// 获取条件里面路由的key和value
+			if string(tag.Key) == key {
+				// 特殊情况下，会有该维度的重复条件，所以这里进行了去重
+				if _, ok := checkRepeat[key]; !ok {
+					checkRepeat[key] = true
+					if count != 0 {
+						buf.WriteString(DivideSymbol)
+					}
+					count++
+					buf.Write(tag.Key)
+					buf.WriteString(EqualSymbol)
+					buf.Write(tag.Value)
+				}
+			}
+		}
+	}
+	return buf.String(), nil
 }
 
 // getReadHostByTagsKey 判断标签路由信息
@@ -463,42 +513,15 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 
 	trace.InsertStringIntoSpan("all-host-list", fmt.Sprintf("%+v", allHostList), span)
 
-	// 解析 where 中的条件
-	expr, err := influxql.ParseExpr(condition)
-	if err != nil {
-		return nil, err
-	}
-	tags := getTags(expr)
-
-	trace.InsertStringIntoSpan("condition", condition, span)
-	trace.InsertStringIntoSpan("condition-tags", fmt.Sprintf("%+v", tags), span)
-
 	// 判断是否有 tagKey
 	var buf bytes.Buffer
 	buf.WriteString(clusterName + "/" + db + "/" + measurement + "/")
 
-	checkRepeat := make(map[string]bool)
-	count := 0
-
-	for _, key := range tagsKey {
-		for _, tag := range tags {
-			// 获取条件里面路由的key和value
-			if string(tag.Key) == key {
-				// 特殊情况下，会有该维度的重复条件，所以这里进行了去重
-				if _, ok := checkRepeat[key]; !ok {
-					checkRepeat[key] = true
-					if count != 0 {
-						buf.WriteString(DivideSymbol)
-					}
-					count++
-					buf.Write(tag.Key)
-					buf.WriteString(EqualSymbol)
-					buf.Write(tag.Value)
-				}
-			}
-		}
+	tagRouter, err := GetTagRouter(ctx, tagsKey, condition)
+	if err != nil {
+		return nil, err
 	}
-
+	buf.WriteString(tagRouter)
 	trace.InsertStringIntoSpan("check-tag-key", buf.String(), span)
 
 	var (

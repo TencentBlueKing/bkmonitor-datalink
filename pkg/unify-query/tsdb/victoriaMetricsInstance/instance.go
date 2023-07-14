@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -46,10 +45,6 @@ type Instance struct {
 	timeout time.Duration
 	curl    curl.Curl
 }
-
-var (
-	once sync.Once
-)
 
 // NewInstance 初始化查询引擎
 func NewInstance(ctx context.Context, address string, timeout time.Duration, curl curl.Curl) *Instance {

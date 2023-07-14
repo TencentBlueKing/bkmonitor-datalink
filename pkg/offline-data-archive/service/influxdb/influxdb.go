@@ -28,7 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/instance"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
-	remote "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
+	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
 )
 
 const (
@@ -174,13 +174,13 @@ func removeInfluxSystemTags(tags models.Tags) models.Tags {
 }
 
 // modelTagsToLabelPairs converts models.Tags to a slice of Prometheus label pairs
-func modelTagsToLabelPairs(tags models.Tags) []*remote.LabelPair {
-	pairs := make([]*remote.LabelPair, 0, len(tags))
+func modelTagsToLabelPairs(tags models.Tags) []*remoteRead.LabelPair {
+	pairs := make([]*remoteRead.LabelPair, 0, len(tags))
 	for _, t := range tags {
 		if string(t.Value) == "" {
 			continue
 		}
-		pairs = append(pairs, &remote.LabelPair{
+		pairs = append(pairs, &remoteRead.LabelPair{
 			Name:  string(t.Key),
 			Value: string(t.Value),
 		})

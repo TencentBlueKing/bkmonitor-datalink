@@ -393,10 +393,14 @@ func (i *Instance) query(
 		withTag = ""
 		aggField = fmt.Sprintf(`%s("%s")`, newFuncName, query.Field)
 
+		bkTaskIndex := query.TableID
+		if bkTaskIndex == "" {
+			fmt.Sprintf("%s_%s", query.DB, query.Measurement)
+		}
 		expandTag = []prompb.Label{
 			{
 				Name:  BKTaskIndex,
-				Value: fmt.Sprintf("%s_%s", query.DB, query.Measurement),
+				Value: bkTaskIndex,
 			},
 		}
 	} else {
@@ -516,6 +520,9 @@ func (i *Instance) query(
 	result := &prompb.QueryResult{
 		Timeseries: make([]*prompb.TimeSeries, 0, len(series)),
 	}
+
+	trace.InsertStringIntoSpan("expand-tag", fmt.Sprintf("%+v", expandTag), span)
+
 	for _, s := range series {
 		pointNum += len(s.Values)
 

@@ -76,7 +76,7 @@ to quickly create a Cobra application.`,
 		serviceName := viper.GetString(redis.ServiceNameConfigPath)
 		host := viper.GetString(config.QueryHttpHostConfigPath)
 		port := viper.GetInt(config.QueryHttpPortConfigPath)
-		dir := viper.GetString(config.QueryHttpDIrConfigPath)
+		tempDir := viper.GetString(config.CommonTempDirConfigPath)
 		timeout := viper.GetDuration(config.QueryHttpReadTimeoutConfigPath)
 		metric := viper.GetString(config.QueryHttpMetricConfigPath)
 
@@ -84,9 +84,9 @@ to quickly create a Cobra application.`,
 		md := metadata.NewMetadata(redisCli, serviceName, logger)
 		// 启动 http 服务
 		ser, err := influxdb.NewService(
-			serviceCtx, address, logger, timeout, dir, metric,
-			func(ctx context.Context, clusterName, tagKey, tagValue, db, rp string, start, end int64) ([]*shard.Shard, error) {
-				return md.GetShardsByTimeRange(ctx, clusterName, tagKey, tagValue, db, rp, start, end)
+			serviceCtx, address, logger, timeout, tempDir, metric,
+			func(ctx context.Context, clusterName, tagRouter, db, rp string, start, end int64) ([]*shard.Shard, error) {
+				return md.GetReadShardsByTimeRange(ctx, clusterName, tagRouter, db, rp, start, end)
 			},
 		)
 		if err != nil {

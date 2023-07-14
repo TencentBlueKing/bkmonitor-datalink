@@ -77,8 +77,7 @@ to quickly create a Cobra application.`,
 
 		instanceName := viper.GetString(config.MoveInstanceNameConfigPath)
 		clusterName := viper.GetString(config.MoveClusterNameConfigPath)
-		tagName := viper.GetString(config.MoveTagNameConfigPath)
-		tagValue := viper.GetString(config.MoveTagValueConfigPath)
+		tagRouter := viper.GetString(config.MoveTagRouterConfigPath)
 		sourceDir := viper.GetString(config.MoveSourceDirConfigPath)
 		targetName := viper.GetString(config.MoveTargetNameConfigPath)
 		targetDir := viper.GetString(config.MoveTargetDirConfigPath)
@@ -93,7 +92,7 @@ to quickly create a Cobra application.`,
 
 		md := metadata.NewMetadata(redisCli, serviceName, logger)
 		influxdb := stores.NewInfluxDB(
-			logger, clusterName, instanceName, tagName, tagValue,
+			logger, clusterName, instanceName, tagRouter,
 			sourceDir, targetName, targetDir, address, username, password,
 		)
 
@@ -176,8 +175,8 @@ to quickly create a Cobra application.`,
 						defer span.End()
 					}
 
-					logger.Infof(ctx, "move-ticker-run running check %s %s %s\n", instanceName, tagName, tagValue)
-					policies, err := md.GetPolicies(ctx, clusterName, tagName, tagValue)
+					logger.Infof(ctx, "move-ticker-run running check %s %s\n", instanceName, tagRouter)
+					policies, err := md.GetPolicies(ctx, clusterName, tagRouter)
 
 					trace.InsertIntIntoSpan("policies-num", len(policies), span)
 					if err != nil {
@@ -190,13 +189,12 @@ to quickly create a Cobra application.`,
 						meta := &policy.Meta{
 							Name:        instanceName,
 							ClusterName: pv.ClusterName,
-							TagName:     pv.TagName,
-							TagValue:    pv.TagValue,
+							TagRouter:   pv.TagRouter,
 							Database:    pv.Database,
 						}
 
-						logger.Infof(ctx, "check policy %s %s %s %s", pv.ClusterName, pv.TagName, pv.TagValue, pv.Database)
-						mdShards, err := md.GetShards(ctx, pv.ClusterName, pv.TagName, pv.TagValue, pv.Database)
+						logger.Infof(ctx, "check policy %s %s %s %s", pv.ClusterName, pv.TagRouter, pv.Database)
+						mdShards, err := md.GetShards(ctx, pv.ClusterName, pv.TagRouter, pv.Database)
 
 						if err != nil {
 							logger.Errorf(ctx, "get shards error: %s", err.Error())

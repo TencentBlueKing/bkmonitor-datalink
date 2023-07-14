@@ -14,27 +14,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 )
 
 var (
-	source = "cos_test"
-	target = "cos_test"
+	source = "/Users/renjinming/Desktop/cos/1"
+	target = "test/2"
 )
 
 func cosInit() *Cos {
+	viper.Set("logger.level", "debug")
+
 	logger := log.NewLogger()
 	return &Cos{
-		Region:         "",
-		Url:            "",
-		Bucket:         "",
+		Region:         "ap-guangzhou",
+		Url:            "cos-internal.ap-guangzhou.tencentcos.cn",
+		Bucket:         "bkop-1258344700",
 		SecretID:       "",
 		SecretKey:      "",
-		PartSize:       2 * 1024 * 1024,
-		MaxRetries:     1,
-		ThreadPoolSize: 5,
+		PartSize:       10 * 1024 * 1024,
+		MaxRetries:     3,
+		ThreadPoolSize: 10,
 		Timeout:        time.Second * 30,
 		Log:            logger,
 	}

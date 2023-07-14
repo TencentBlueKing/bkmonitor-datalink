@@ -324,10 +324,15 @@ func makeInfluxdbQuery(
 	for i, query := range queries.QueryList {
 		var (
 			// 随机维度值
-			bkTaskValue  = fmt.Sprintf("%s_%s", query.DB, query.Measurement)
+			bkTaskValue  = query.TableID
 			withGroupBy  bool
 			isCountGroup bool
 		)
+
+		// 兼容查询
+		if bkTaskValue == "" {
+			bkTaskValue = fmt.Sprintf("%s%s", query.DB, query.Measurement)
+		}
 
 		trace.InsertStringIntoSpan("query-info-clusterID", query.ClusterID, span)
 		trace.InsertStringIntoSpan("query-info-db", query.DB, span)

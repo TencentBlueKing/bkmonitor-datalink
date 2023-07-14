@@ -41,8 +41,7 @@ type Meta struct {
 	ClusterName     string `json:"cluster_name"`
 	Database        string `json:"database"`
 	RetentionPolicy string `json:"retention_policy"`
-	TagName         string `json:"tag_name"`
-	TagValue        string `json:"tag_value"`
+	TagRouter       string `json:"tag_router"`
 }
 
 type Instance struct {
@@ -53,8 +52,9 @@ type Instance struct {
 }
 
 type Spec struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
+	Start   time.Time `json:"start"`
+	End     time.Time `json:"end"`
+	Expired time.Time `json:"expired"`
 
 	Source Instance `json:"source"`
 	Target Instance `json:"target"`
@@ -77,8 +77,8 @@ type Shard struct {
 
 func (m *Meta) String() string {
 	k := fmt.Sprintf(
-		"%s|%s|%s|%s|%s",
-		m.ClusterName, m.TagName, m.TagValue, m.Database, m.RetentionPolicy,
+		"%s|%s|%s|%s",
+		m.ClusterName, m.TagRouter, m.Database, m.RetentionPolicy,
 	)
 	return k
 }
@@ -110,4 +110,5 @@ type SimpleShard struct {
 	RetentionPolicy string
 	Start           time.Time
 	End             time.Time
+	Expired         time.Time
 }

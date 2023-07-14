@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/offlineDataArchive"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
@@ -147,6 +148,21 @@ func (s *Service) reloadStorage() error {
 		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
 		return err
 	}
+
+	inner.SetStorage(consul.OfflineDataArchive, &inner.Storage{
+		Type: consul.OfflineDataArchive,
+		Instance: &offlineDataArchive.Instance{
+			Ctx:                    s.ctx,
+			Address:                OfflineDataArchiveAddress,
+			Timeout:                OfflineDataArchiveTimeout,
+			MaxLimit:               InfluxDBMaxLimit,
+			MaxSLimit:              InfluxDBMaxSLimit,
+			Toleration:             InfluxDBTolerance,
+			ReadRateLimit:          InfluxDBQueryReadRateLimit,
+			GrpcMaxCallRecvMsgSize: OfflineDataArchiveGrpcMaxCallRecvMsgSize,
+			GrpcMaxCallSendMsgSize: OfflineDataArchiveGrpcMaxCallSendMsgSize,
+		},
+	})
 
 	// 增加全局 vm storage 查询
 	inner.SetStorage(consul.VictoriaMetricsStorageType, &inner.Storage{

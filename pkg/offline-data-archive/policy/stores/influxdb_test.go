@@ -28,14 +28,12 @@ func TestShards(t *testing.T) {
 	clusterName := "default"
 	instanceName := "influxdb"
 	address := ""
-	tagName := "k"
-	tagValue := "v"
+	tagRouter := "k=v"
 
-	ctx := context.Background()
-	logger := log.NewLogger(ctx)
+	logger := log.NewLogger()
 
 	influxDB := NewInfluxDB(
-		logger, clusterName, instanceName, tagName, tagValue,
+		logger, clusterName, instanceName, tagRouter,
 		sourceDir, targeName, targetDir, address, "", "",
 	)
 	shards := influxDB.GetActiveShards(context.TODO(), database, nil)
@@ -55,14 +53,13 @@ func TestGetShards(t *testing.T) {
 	instanceName := "influxdb"
 	database := "test_api"
 	address := ""
-	tagName := "k"
-	tagValue := "v"
+	tagRouter := "k=v"
 
 	ctx := context.Background()
-	logger := log.NewLogger(ctx)
+	logger := log.NewLogger()
 
 	influxDB := NewInfluxDB(
-		logger, clusterName, instanceName, tagName, tagValue,
+		logger, clusterName, instanceName, tagRouter,
 		sourceDir, targeName, targetDir, address, "", "",
 	)
 

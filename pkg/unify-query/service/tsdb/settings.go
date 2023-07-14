@@ -41,6 +41,13 @@ const (
 	VmTokenConfigPath  = "victoria_metrics.token"
 
 	VmInfluxCompatibleConfigPath = "victoria_metrics.influx_compatible"
+
+	// OfflineDataArchive 配置
+	OfflineDataArchiveAddressConfigPath = "offline_data_archive.address"
+	OfflineDataArchiveTimeoutConfigPath = "offline_data_archive.timeout"
+
+	OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath = "offline_data_archive.grpc_max_call_recv_msg_size"
+	OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath = "offline_data_archive.grpc_max_call_send_msg_size"
 )
 
 var (
@@ -74,4 +81,10 @@ var (
 	VmToken  string
 
 	VmInfluxCompatible bool
+
+	OfflineDataArchiveAddress string
+	OfflineDataArchiveTimeout time.Duration
+
+	OfflineDataArchiveGrpcMaxCallRecvMsgSize int
+	OfflineDataArchiveGrpcMaxCallSendMsgSize int
 )

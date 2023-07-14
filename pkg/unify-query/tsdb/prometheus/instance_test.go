@@ -46,7 +46,9 @@ type instance struct {
 	opt  *influxdb.StreamSeriesSetOption
 }
 
-func (i instance) LabelNames(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+var _ tsdb.Instance = (*instance)(nil)
+
+func (i instance) LabelNames(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
@@ -56,12 +58,12 @@ func (i instance) QueryExemplar(ctx context.Context, fields []string, query *met
 	panic("implement me")
 }
 
-func (i instance) LabelValues(ctx context.Context, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i instance) Series(ctx context.Context, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i instance) Series(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }

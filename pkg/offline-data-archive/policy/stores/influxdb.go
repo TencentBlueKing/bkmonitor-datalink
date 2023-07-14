@@ -33,8 +33,7 @@ type InfluxDB struct {
 	targetName string
 	targetDir  string
 
-	tagName  string
-	tagValue string
+	tagRouter string
 
 	address string
 	client  http.Client
@@ -43,7 +42,7 @@ type InfluxDB struct {
 var _ Store = (*InfluxDB)(nil)
 
 func NewInfluxDB(
-	log log.Logger, clusterName, instanceName, tagName, tagValue,
+	log log.Logger, clusterName, instanceName, tagRouter,
 	sourceDir, targetName, targetDir, address, username, password string,
 ) *InfluxDB {
 	// todo address, username, password 通过option传进来
@@ -60,8 +59,7 @@ func NewInfluxDB(
 
 		clusterName:  clusterName,
 		instanceName: instanceName,
-		tagName:      tagName,
-		tagValue:     tagValue,
+		tagRouter:    tagRouter,
 
 		dataDir:    dataDir,
 		targetName: targetName,
@@ -75,44 +73,6 @@ func NewInfluxDB(
 }
 
 func (s *InfluxDB) GetLocalShards(ctx context.Context, database string) ([]shard.SimpleShard, error) {
-	/*
-		获取机器的shards信息，原理是通过show shards命令拿到结果进行解析
-		{
-		    "results": [
-		        {
-		            "statement_id": 0,
-		            "series": [
-		                {
-		                    "name": "test_api",
-		                    "columns": [
-		                        "id",
-		                        "database",
-		                        "retention_policy",
-		                        "shard_group",
-		                        "start_time",
-		                        "end_time",
-		                        "expiry_time",
-		                        "owners"
-		                    ],
-		                    "values": [
-		                        [
-		                            2,
-		                            "test_api",
-		                            "autogen",
-		                            2,
-		                            "2023-03-13T00:00:00Z",
-		                            "2023-03-20T00:00:00Z",
-		                            "",
-		                            ""
-		                        ]
-		                    ]
-		                }
-		            ]
-		        }
-		    ]
-		}
-	*/
-
 	// 获取URL
 	url := fmt.Sprintf("%s/%s", s.address, "query?q=show%20shards")
 
@@ -147,19 +107,6 @@ func (s *InfluxDB) GetLocalShards(ctx context.Context, database string) ([]shard
 			if series.Name == database {
 				// 遍历所有的value
 				for _, values := range series.Values {
-					/*
-						   [
-								  2,  // shard_id
-								  "test_api", // database
-								  "autogen", // rp
-								  2, // sg
-								  "2023-03-13T00:00:00Z", // start
-								  "2023-03-20T00:00:00Z", // end
-								  "", // expired
-								  "" //owners
-							]
-
-					*/
 					// todo 后续要识别返回的有 start 和 end，并直接查询到对应的下标进行取值
 					if len(values) <= 6 {
 						continue
@@ -171,6 +118,11 @@ func (s *InfluxDB) GetLocalShards(ctx context.Context, database string) ([]shard
 						return nil, err
 					}
 					end, err := time.Parse("2006-01-02T15:04:05Z", values[5].(string))
+					if err != nil {
+						s.log.Errorf(ctx, "covert time error, err:%s", err)
+						return nil, err
+					}
+					expired, err := time.Parse("2006-01-02T15:04:05Z", values[6].(string))
 					if err != nil {
 						s.log.Errorf(ctx, "covert time error, err:%s", err)
 						return nil, err
@@ -188,10 +140,11 @@ func (s *InfluxDB) GetLocalShards(ctx context.Context, database string) ([]shard
 						RetentionPolicy: values[2].(string),
 						Start:           start,
 						End:             end,
+						Expired:         expired,
 					}
 
-					s.log.Infof(ctx, "find a simple Shard, shardID: %f, database: %s, rp:%s, start: %s, end:%s",
-						simpleShard.ShardID, simpleShard.Database, simpleShard.RetentionPolicy, simpleShard.Start, simpleShard.End,
+					s.log.Debugf(ctx, "find a simple Shard, shardID: %f, database: %s, rp:%s, start: %s, end:%s",
+						simpleShard.ShardID, simpleShard.Database, simpleShard.RetentionPolicy, simpleShard.Start, simpleShard.End, simpleShard.Expired,
 					)
 
 					simpleShards = append(simpleShards, simpleShard)
@@ -238,8 +191,7 @@ func (s *InfluxDB) GetActiveShards(
 				ClusterName:     s.clusterName,
 				Database:        db,
 				RetentionPolicy: localShard.RetentionPolicy,
-				TagName:         s.tagName,
-				TagValue:        s.tagValue,
+				TagRouter:       s.tagRouter,
 			},
 			Spec: shard.Spec{
 				Source: shard.Instance{
@@ -254,8 +206,9 @@ func (s *InfluxDB) GetActiveShards(
 					ShardID:      sid,
 					Path:         targetPath,
 				},
-				Start: localShard.Start,
-				End:   localShard.End,
+				Start:   localShard.Start,
+				End:     localShard.End,
+				Expired: localShard.Expired,
 			},
 			Status: shard.Status{
 				Code: shard.Move,

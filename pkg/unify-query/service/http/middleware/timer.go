@@ -12,21 +12,49 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/shirou/gopsutil/v3/net"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	//"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
 )
 
 // Params
 type Params struct {
 	SlowQueryThreshold time.Duration
+}
+
+var (
+	once        sync.Once
+	instancedIP string
+)
+
+// get instance ip
+func getInstanceip() (string, error) {
+	interfaceStatList, err := net.Interfaces()
+	if err != nil {
+		log.Errorf(context.TODO(), "failed to get instance ip,error:%v", err)
+		return "", err
+	}
+	addrList := interfaceStatList[len(interfaceStatList)-1]
+	instancedip := addrList.Addrs[len(addrList.Addrs)-1].Addr
+	return instancedip, nil
+}
+
+// get instance ip single pass
+func singleGetInstance() string {
+	once.Do(func() {
+		instancedIP, _ = getInstanceip()
+	})
+	return instancedIP
 }
 
 // Timer 进行请求处理时间记录
@@ -37,6 +65,7 @@ func Timer(p *Params) gin.HandlerFunc {
 			span        oleltrace.Span
 			start       = time.Now()
 			startMem, _ = mem.VirtualMemory()
+			instanceIP  = singleGetInstance()
 		)
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
 
@@ -49,6 +78,7 @@ func Timer(p *Params) gin.HandlerFunc {
 				trace.InsertIntIntoSpan("start-mem-free", int(startMem.Free), span)
 				trace.InsertIntIntoSpan("end-mem-free", int(endMem.Free), span)
 				trace.InsertIntIntoSpan("mem-use", int(startMem.Free-endMem.Free), span)
+				trace.InsertStringIntoSpan("instance-ip", instanceIP, span)
 
 				sub := time.Since(start)
 				metric.RequestSecond(ctx, sub, c.Request.URL.Path)

@@ -84,7 +84,7 @@ func (cc *CacherController) GetOrCreate(k string) Cacher {
 
 func (cc *CacherController) gc() {
 	d := cc.gcInterval
-	if cc.gcInterval <= 0 {
+	if cc.gcInterval.Nanoseconds() <= 0 {
 		d = time.Minute
 	}
 	ticker := time.NewTicker(d)

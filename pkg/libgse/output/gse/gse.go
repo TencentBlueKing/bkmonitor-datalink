@@ -355,9 +355,9 @@ func (c *Output) ReportRaw(dataid int32, data interface{}) error {
 	return nil
 }
 
-var sendHook func(int32, float64)
+var sendHook func(float64)
 
-func RegisterSendHook(f func(int32, float64)) { sendHook = f }
+func RegisterSendHook(f func(float64)) { sendHook = f }
 
 // reportCommonData send common data
 func (c *Output) reportCommonData(dataid int32, data common.MapStr) error {
@@ -369,7 +369,7 @@ func (c *Output) reportCommonData(dataid int32, data common.MapStr) error {
 		return err
 	}
 	if sendHook != nil {
-		sendHook(dataid, float64(len(buf)))
+		sendHook(float64(len(buf)))
 	}
 
 	// new dynamic msg

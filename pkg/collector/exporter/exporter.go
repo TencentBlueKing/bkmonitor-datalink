@@ -19,7 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/converter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/durationmeasurer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/sizeobserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
@@ -64,19 +63,13 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	c.Validate()
 	logger.Infof("exporter config: %+v", c)
 
-	// 注册 gse output hook 统计发送数据
-	so := sizeobserver.New()
-	gse.RegisterSendHook(func(dataID int32, f float64) {
-		DefaultMetricMonitor.ObserveBeatSentBytes(f)
-		so.ObserveSize(dataID, int(f))
-	})
-
+	qc := c.Queue
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Exporter{
 		ctx:       ctx,
 		cancel:    cancel,
 		converter: converter.NewCommonConverter(),
-		queue:     queue.NewBatchQueue(c.Queue, so),
+		queue:     queue.NewBatchQueue(qc.TracesBatchSize, qc.MetricsBatchSize, qc.LogsBatchSize, qc.FlushInterval),
 		cfg:       c,
 		dm:        durationmeasurer.New(ctx, 2*time.Minute),
 	}, nil

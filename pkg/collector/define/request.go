@@ -58,8 +58,8 @@ func MB(n int) float64 {
 var (
 	// DefSizeDistribution 默认的数据量桶分布
 	DefSizeDistribution = []float64{
-		KB(10), KB(100), KB(250), KB(500), MB(1), MB(5), MB(8),
-		MB(10), MB(20), MB(30), MB(50), MB(80), MB(100), MB(150), MB(200),
+		KB(10), KB(100), KB(250), KB(500),
+		MB(1), MB(5), MB(10), MB(20), MB(30), MB(50), MB(80), MB(100), MB(150), MB(200),
 	}
 
 	// DefObserveDuration 默认的时间桶分布

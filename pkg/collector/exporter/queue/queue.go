@@ -29,14 +29,6 @@ type Queue interface {
 	Close()
 }
 
-// Config 不同类型的数据大小不同 因此要允许为每种类型单独设置队列批次
-type Config struct {
-	MetricsBatchSize int           `config:"metrics_batch_size"`
-	LogsBatchSize    int           `config:"logs_batch_size"`
-	TracesBatchSize  int           `config:"traces_batch_size"`
-	FlushInterval    time.Duration `config:"flush_interval"`
-}
-
 // NewEventsMapStr 代表着事件类型数据
 func NewEventsMapStr(dataId int32, data []common.MapStr) common.MapStr {
 	now := time.Now()

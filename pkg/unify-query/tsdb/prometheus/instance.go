@@ -11,6 +11,8 @@ package prometheus
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	oleltrace "go.opentelemetry.io/otel/trace"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -69,6 +71,21 @@ func (i *Instance) QueryRange(
 	ctx context.Context, stmt string,
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
+
+	var (
+		span oleltrace.Span
+		err  error
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "prometheus-query-range")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("query-promql", stmt, span)
+	trace.InsertStringIntoSpan("query-start", start.String(), span)
+	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	trace.InsertStringIntoSpan("query-step", step.String(), span)
 	opt := &promql.QueryOpts{}
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {

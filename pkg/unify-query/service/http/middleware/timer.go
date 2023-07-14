@@ -44,8 +44,10 @@ func getInstanceip() (string, error) {
 		return "", err
 	}
 	addrList := interfaceStatList[len(interfaceStatList)-1]
-	instancedip := addrList.Addrs[len(addrList.Addrs)-1].Addr
-	return instancedip, nil
+	if len(addrList.Addrs) > 0 {
+		return addrList.Addrs[len(addrList.Addrs)-1].Addr, nil
+	}
+	return "", nil
 }
 
 // get instance ip single pass

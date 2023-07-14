@@ -304,11 +304,6 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
 
-	vmRtGroup = map[string][]string{
-		"a": {
-			"test",
-		},
-	}
 	if len(vmRtGroup) == 0 {
 		return promql.Matrix{}, nil
 	}

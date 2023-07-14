@@ -101,6 +101,11 @@ func (qRef QueryReference) GetVMFeatureFlag(ctx context.Context) bool {
 		span oleltrace.Span
 		user = GetUser(ctx)
 	)
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-feature-flag")
+	if span != nil {
+		defer span.End()
+	}
+
 	// 特性开关只有指定空间才启用 vm 查询
 	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
 		"name":     user.Name,

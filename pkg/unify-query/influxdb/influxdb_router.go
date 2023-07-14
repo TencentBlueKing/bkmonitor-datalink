@@ -393,6 +393,7 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 				if v.VmTableId != "" {
 					value = 1
 				}
+
 				metric.ResultTableInfoSet(ctx, value, k, v.BkBizId, v.DataId, v.MeasurementType, v.VmTableId)
 			}
 			r.queryRouterInfo = queryRouterInfo

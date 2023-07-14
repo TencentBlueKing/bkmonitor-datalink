@@ -223,7 +223,9 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	// 读取vm查询的特性开关
+	vmQueryFeatureFlag := queryReference.GetVMFeatureFlag(ctx)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQueryFeatureFlag)
 
 	metricName := ReferenceName
 	if v, mc := metricMap[ReferenceName]; mc {
@@ -292,7 +294,9 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	// 读取vm查询的特性开关
+	vmQueryFeatureFlag := queryReference.GetVMFeatureFlag(ctx)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQueryFeatureFlag)
 
 	metricName := ReferenceName
 	if v, mc := metricMap[ReferenceName]; mc {

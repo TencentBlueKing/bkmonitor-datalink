@@ -157,13 +157,13 @@ func (e *statusCodeEvaluator) processTraces(record *define.Record) {
 
 func (e *statusCodeEvaluator) gc() {
 	d := e.gcInterval
-	if d.Nanoseconds() <= 0 {
+	if d <= 0 {
 		d = time.Minute
 	}
 	ticker := time.NewTicker(d)
 	defer ticker.Stop()
 
-	delta := int64(e.maxDuration.Seconds())
+	maxDuration := int64(e.maxDuration.Seconds())
 	for {
 		select {
 		case <-e.stop:
@@ -173,7 +173,9 @@ func (e *statusCodeEvaluator) gc() {
 			now := time.Now().Unix()
 			e.mut.Lock()
 			for traceID, ts := range e.traces {
-				if now-ts > delta {
+				drop := now-ts > maxDuration
+				logger.Debugf("traceID=%v, now=%v, ts=%v, drop=%v", traceID, now, ts, drop)
+				if drop {
 					delete(e.traces, traceID)
 				}
 			}

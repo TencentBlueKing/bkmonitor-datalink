@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func TestStatusCodeEvaluatorPost(t *testing.T) {
@@ -25,8 +26,10 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 		MaxDuration: time.Second,
 		StatusCode:  []string{"ERROR"},
 	})
-	evaluator.gcInterval = time.Millisecond * 500
+	evaluator.gcInterval = time.Millisecond * 200
 	defer evaluator.Stop()
+
+	logger.SetLoggerLevel(logger.DebugLevelDesc)
 
 	t1 := random.TraceID()
 	t2 := random.TraceID()
@@ -36,18 +39,18 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	rs := traces.ResourceSpans().AppendEmpty()
 	span1 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span1.SetTraceID(t1)
-	span1.Status().SetCode(ptrace.StatusCodeError)
+	span1.Status().SetCode(ptrace.StatusCodeError) // 采样
 
 	span2 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span2.SetTraceID(t2)
-	span2.Status().SetCode(ptrace.StatusCodeOk)
+	span2.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
 
 	evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
 
-	assert.Equal(t, 1, traces.SpanCount()) // drop t2
+	assert.Equal(t, 1, traces.SpanCount())
 	span3 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	assert.Equal(t, t1, span3.TraceID())
 	_, ok := evaluator.traces[span3.TraceID()]
@@ -59,34 +62,34 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 
 	span4 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span4.SetTraceID(t1)
-	span4.Status().SetCode(ptrace.StatusCodeOk) // keep（已经出现过错误）
+	span4.Status().SetCode(ptrace.StatusCodeOk) // 采样（已经出现过错误）
 
 	span5 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span5.SetTraceID(t2)
-	span5.Status().SetCode(ptrace.StatusCodeOk) // drop
+	span5.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
 	evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
 
-	assert.Equal(t, 1, traces.SpanCount()) // drop t2
+	assert.Equal(t, 1, traces.SpanCount())
 	span6 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	assert.Equal(t, t1, span6.TraceID())
 	_, ok = evaluator.traces[span6.TraceID()]
 	assert.True(t, ok)
 
 	// round3
-	time.Sleep(time.Second * 2) // 已经 gc
+	time.Sleep(time.Second * 3) // 已经 gc
 	traces = ptrace.NewTraces()
 	rs = traces.ResourceSpans().AppendEmpty()
 
 	span7 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span7.SetTraceID(t1)
-	span7.Status().SetCode(ptrace.StatusCodeOk) // keep（已经出现过错误）
+	span7.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
 
 	span8 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span8.SetTraceID(t2)
-	span8.Status().SetCode(ptrace.StatusCodeOk) // drop
+	span8.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
 	evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,

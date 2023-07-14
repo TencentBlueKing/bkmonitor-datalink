@@ -20,4 +20,9 @@ func TestRecover(t *testing.T) {
 		defer HandleCrash()
 		panic("SHOULD NOT PANIC")
 	})
+
+	assert.NotPanics(t, func() {
+		defer HandleCrash()
+		panic(0)
+	})
 }

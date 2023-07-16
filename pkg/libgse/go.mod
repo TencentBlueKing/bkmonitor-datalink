@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/containerd/cgroups v1.0.1
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/golang/protobuf v1.5.2

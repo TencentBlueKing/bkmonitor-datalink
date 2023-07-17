@@ -110,7 +110,7 @@ func StartStreamSeriesSet(
 		ctx, cancel := context.WithCancel(ctx)
 		defer func() {
 			if span != nil {
-				sub := time.Now().Sub(start)
+				sub := time.Since(start)
 
 				span.SetAttributes(attribute.Int("query-cost-second", int(sub.Seconds())))
 				span.SetAttributes(attribute.String("query-cost", sub.String()))

@@ -22,7 +22,6 @@ import (
 	bolt "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/kvstore/bbolt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/memcache"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
@@ -87,7 +86,6 @@ func (cache *SpaceCache) Get(ctx context.Context, spaceUid string) (redis.Space,
 func (r *SpaceRouter) Add(ctx context.Context, spaceUid string, space redis.Space) error {
 	v, err := space.MarshalMsg(nil)
 	if err != nil {
-		metric.SpaceDetailParseCountInc(ctx, metric.SpaceActionParse, spaceUid, metric.StatusFailed)
 		log.Errorf(ctx, "parse the space error space: %s, data: %+v, error: %v", spaceUid, space, err)
 		return err
 	}
@@ -121,7 +119,6 @@ func (r *SpaceRouter) Get(ctx context.Context, spaceUid string) redis.Space {
 	}
 	var val redis.Space
 	if _, err := val.UnmarshalMsg(v); err != nil {
-		metric.SpaceDetailParseCountInc(ctx, metric.SpaceActionParse, spaceUid, metric.StatusFailed)
 		log.Errorf(ctx, "parse space: %s, data: %+v, error: %v", spaceUid, v, err)
 		return nil
 	}
@@ -197,15 +194,12 @@ func ReloadSpace(ctx context.Context, spaceUid string) error {
 	space, err := redis.GetSpace(ctx, spaceUid)
 	log.Infof(ctx, "reload space %s => %+v", spaceUid, space)
 	if err != nil {
-		metric.SpaceRequestCountInc(ctx, metric.SpaceActionRefresh, spaceUid, metric.StatusFailed)
 		return err
 	}
 	// 写入 bolt
 	if err := spaceRouter.Add(ctx, spaceUid, space); err != nil {
-		metric.SpaceRequestCountInc(ctx, metric.SpaceActionRefresh, spaceUid, metric.StatusFailed)
 		return err
 	}
-	metric.SpaceRequestCountInc(ctx, metric.SpaceActionRefresh, spaceUid, metric.StatusSuccess)
 	// 重新加载或者publish更新时，删除内存缓存数据
 	cache, cacheErr := InitSpaceCache()
 	if cacheErr == nil {
@@ -227,14 +221,12 @@ func reloadAllSpaces(ctx context.Context, spaceUidList []string) error {
 		// NOTE: allow err
 		space, err := redis.GetSpace(ctx, suid)
 		if err != nil {
-			metric.SpaceRequestCountInc(ctx, metric.SpaceActionRefresh, suid, metric.StatusFailed)
 			log.Warnf(ctx, "get space error, space: %s, %v", suid, err)
 			continue
 		}
 		// marshal space data
 		v, err := space.MarshalMsg(nil)
 		if err != nil {
-			metric.SpaceDetailParseCountInc(ctx, metric.SpaceActionRefresh, suid, metric.StatusFailed)
 			log.Warnf(ctx, "json space error, space: %s, data: %v, %v", suid, space, err)
 			continue
 		}

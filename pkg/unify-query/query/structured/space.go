@@ -16,7 +16,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
@@ -28,7 +27,6 @@ type SpaceFilter struct {
 
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
 func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) {
-	metric.SpaceRequestCountInc(ctx, metric.SpaceActionGet, spaceUid, metric.StatusReceived)
 	spaceRouter, err := influxdb.GetSpaceRouter("", "")
 	if err != nil {
 		log.Errorf(ctx, "get space router error, %v", err)
@@ -38,10 +36,7 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 	if len(space) == 0 {
 		msg := fmt.Sprintf("spaceUid: %s is not exists", spaceUid)
 		metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-		metric.SpaceRequestCountInc(ctx, metric.SpaceActionGet, spaceUid, metric.StatusFailed)
 		log.Warnf(ctx, msg)
-	} else {
-		metric.SpaceRequestCountInc(ctx, metric.SpaceActionGet, spaceUid, metric.StatusSuccess)
 	}
 	return &SpaceFilter{
 		ctx:      ctx,
@@ -51,10 +46,6 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 }
 
 func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error) {
-	// 有 tableID 则通过 tableID 过滤
-	metric.SpaceTableIDFieldRequestCountInc(
-		s.ctx, metric.SpaceActionGet, s.spaceUid, tableID, fieldName, metric.StatusReceived,
-	)
 	filterTsDBs := make([]*redis.TsDB, 0)
 	for tID, tsDB := range s.space {
 		// 如果 tableID 不匹配直接跳过
@@ -99,15 +90,9 @@ func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error)
 			"spaceUid: %s and tableID: %s and fieldName: %s is not exists",
 			s.spaceUid, tableID, fieldName,
 		)
-		metric.SpaceTableIDFieldRequestCountInc(
-			s.ctx, metric.SpaceActionGet, s.spaceUid, tableID, fieldName, metric.StatusFailed,
-		)
 		metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
 		log.Warnf(s.ctx, msg)
 	}
-	metric.SpaceTableIDFieldRequestCountInc(
-		s.ctx, metric.SpaceActionGet, s.spaceUid, tableID, fieldName, metric.StatusSuccess,
-	)
 	return filterTsDBs, nil
 }
 

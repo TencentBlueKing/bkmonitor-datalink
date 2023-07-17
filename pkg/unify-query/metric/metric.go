@@ -20,10 +20,6 @@ import (
 )
 
 const (
-	SpaceActionRefresh = "refresh"
-	SpaceActionGet     = "get"
-	SpaceActionParse   = "parse"
-
 	ActionInfo        = "info"
 	ActionQuery       = "query"
 	ActionLabelValues = "label_values"
@@ -57,31 +53,6 @@ var (
 		[]string{"url"},
 	)
 
-	spaceRequestCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "unify_query",
-			Name:      "space_request_count_total",
-			Help:      "space request handled count",
-		},
-		[]string{"action", "space_uid", "status"},
-	)
-
-	spaceTableIDFieldRequestCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "unify_query",
-			Name:      "space_table_id_field_request_count_total",
-			Help:      "space request handled count",
-		},
-		[]string{"action", "space_uid", "table_id", "metric_name", "status"},
-	)
-	spaceDetailParseCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "unify_query",
-			Name:      "space_detail_parse_count_total",
-			Help:      "space detail parse count",
-		},
-		[]string{"action", "space_uid", "status"},
-	)
 	resultTableInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "unify_query",
@@ -122,24 +93,6 @@ func RequestCountInc(ctx context.Context, params ...string) {
 func RequestSecond(ctx context.Context, duration time.Duration, params ...string) {
 	metric, err := requestHandleSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, err, duration, params...)
-}
-
-// SpaceRequestCountInc 获取空间
-func SpaceRequestCountInc(ctx context.Context, params ...string) {
-	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
-}
-
-// SpaceTableIDFieldRequestCountInc 空间获取指标
-func SpaceTableIDFieldRequestCountInc(ctx context.Context, params ...string) {
-	metric, err := spaceTableIDFieldRequestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
-}
-
-// SpaceDetailParseCountInc parse the space detail metric
-func SpaceDetailParseCountInc(ctx context.Context, params ...string) {
-	metric, err := spaceDetailParseCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
 }
 
 func gaugeSet(
@@ -208,6 +161,5 @@ func observe(
 func init() {
 	prometheus.MustRegister(
 		requestCount, requestHandleSecondHistogram, resultTableInfo, tsdbRequestSecondHistogram,
-		spaceRequestCount, spaceTableIDFieldRequestCount, spaceDetailParseCount,
 	)
 }

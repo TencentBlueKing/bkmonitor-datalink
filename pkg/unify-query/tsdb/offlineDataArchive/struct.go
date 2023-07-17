@@ -11,7 +11,6 @@ package offlineDataArchive
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -34,9 +33,6 @@ type Instance struct {
 
 	GrpcMaxCallRecvMsgSize int
 	GrpcMaxCallSendMsgSize int
-
-	mutex  sync.Mutex
-	client remoteRead.QueryTimeSeriesServiceClient
 }
 
 type StreamSeriesSetOption struct {

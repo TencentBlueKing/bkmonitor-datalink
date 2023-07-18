@@ -16,7 +16,7 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 )
 
-// HashRawConfig : 获取配置hash值
+// HashRawConfig 获取配置hash值
 func HashRawConfig(config common.ConfigNamespace) (string, error) {
 	source := map[string]interface{}{
 		"__name__": config.Name(),

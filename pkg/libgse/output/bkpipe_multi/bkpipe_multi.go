@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
 
-// Output : gse output, for libbeat output
+// Output gse output, for libbeat output
 type Output struct {
 	gse.Output
 	im    outputs.IndexManager

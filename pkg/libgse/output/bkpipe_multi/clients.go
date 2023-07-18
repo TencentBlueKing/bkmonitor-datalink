@@ -31,7 +31,7 @@ type output struct {
 	nextRetryDuration time.Duration
 }
 
-// taskRegistry 任务注册表。key 为任务ID，value 为任务发送配置的计算哈希值
+// taskRegistry  任务注册表。key 为任务ID，value 为任务发送配置的计算哈希值
 var taskRegistry = map[string]string{}
 
 // outputRegistry 发送配置注册表。key 为任务发送配置的计算哈希值，value 为具体配置内容及生成的客户端对象

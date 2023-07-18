@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -49,7 +50,7 @@ func TestHttpTracesPbContent(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -69,7 +70,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -87,7 +88,7 @@ func TestHttpReadFailed(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -114,7 +115,7 @@ func TestHttpTracesPreCheckFailed(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, "", errors.New("MUST ERROR")
 		}},
 	}
@@ -141,7 +142,7 @@ func TestHttpTracesTokenAfterPreCheck(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -167,7 +168,7 @@ func TestHttpMetricsTokenAfterPreCheck(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -194,7 +195,7 @@ func TestHttpLogsTokenAfterPreCheck(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -43,7 +44,7 @@ func TestGrpcTracesFailedPreCheck(t *testing.T) {
 	})
 
 	svc := tracesService{}
-	svc.Validator = receiver.Validator{
+	svc.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 		},
@@ -60,7 +61,7 @@ func TestGrpcMetricsFailedPreCheck(t *testing.T) {
 	})
 
 	svc := metricsService{}
-	svc.Validator = receiver.Validator{
+	svc.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 		},
@@ -78,7 +79,7 @@ func TestGrpcLogsFailedPreCheck(t *testing.T) {
 	})
 
 	svc := logsService{}
-	svc.Validator = receiver.Validator{
+	svc.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 		},
@@ -107,7 +108,7 @@ func TestGrpcTracesTokenAfterPreCheck(t *testing.T) {
 		receiver.Publisher{Func: func(r *define.Record) {
 			token = r.Token
 		}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			record.Token = testToken
 			return define.StatusCodeOK, "", nil
 		}},
@@ -128,7 +129,7 @@ func TestGrpcMetricsTokenAfterPreCheck(t *testing.T) {
 		receiver.Publisher{Func: func(r *define.Record) {
 			token = r.Token
 		}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			record.Token = testToken
 			return define.StatusCodeOK, "", nil
 		}},
@@ -150,7 +151,7 @@ func TestGrpcLogsTokenAfterPreCheck(t *testing.T) {
 		receiver.Publisher{Func: func(r *define.Record) {
 			token = r.Token
 		}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			record.Token = testToken
 			return define.StatusCodeOK, "", nil
 		}},

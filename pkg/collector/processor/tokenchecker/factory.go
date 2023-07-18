@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -29,21 +30,33 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 }
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
+	decoders := confengine.NewTierConfig()
+
 	var c Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
+	decoders.SetGlobal(NewTokenDecoder(c))
+
+	for _, custom := range customized {
+		cfg := &Config{}
+		if err := mapstructure.Decode(custom.Config.Config, cfg); err != nil {
+			logger.Errorf("failed to decode config: %v", err)
+			continue
+		}
+		decoders.Set(custom.Token, custom.Type, custom.ID, NewTokenDecoder(*cfg))
+	}
+
 	return &tokenChecker{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
-		config:          c,
-		decoder:         NewTokenDecoder(c),
+		decoders:        decoders,
 	}, nil
 }
 
 type tokenChecker struct {
 	processor.CommonProcessor
-	config  Config
-	decoder TokenDecoder
+	config   Config
+	decoders *confengine.TierConfig // type: Decoder
 }
 
 func (p tokenChecker) Name() string {
@@ -59,29 +72,33 @@ func (p tokenChecker) IsPreCheck() bool {
 }
 
 func (p tokenChecker) Process(record *define.Record) (*define.Record, error) {
+	decoder := p.decoders.GetByToken(record.Token.Original).(TokenDecoder)
+
 	var err error
 	switch record.RecordType {
 	case define.RecordTraces:
-		err = p.processTraces(record)
+		err = p.processTraces(decoder, record)
 	case define.RecordMetrics:
-		err = p.processMetrics(record)
+		err = p.processMetrics(decoder, record)
 	case define.RecordLogs:
-		err = p.processLogs(record)
-	case define.RecordPushGateway, define.RecordRemoteWrite:
-		err = p.processCommon(record)
+		err = p.processLogs(decoder, record)
+	case define.RecordProxy:
+		err = p.processProxy(decoder, record)
+	default:
+		err = p.processCommon(decoder, record)
 	}
 	return nil, err
 }
 
-func (p tokenChecker) processTraces(record *define.Record) error {
+func (p tokenChecker) processTraces(decoder TokenDecoder, record *define.Record) error {
 	pdTraces, ok := record.Data.(ptrace.Traces)
 	if !ok {
 		return define.ErrUnknownRecordType
 	}
 
 	var err error
-	if p.decoder.Skip() {
-		record.Token, err = p.decoder.Decode("")
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
 		return err
 	}
 
@@ -92,7 +109,7 @@ func (p tokenChecker) processTraces(record *define.Record) error {
 			logger.Debugf("failed to get pdTraces token key '%s'", p.config.ResourceKey)
 			return true
 		}
-		record.Token, err = p.decoder.Decode(v.AsString())
+		record.Token, err = decoder.Decode(v.AsString())
 		if err != nil {
 			errs = append(errs, err)
 			logger.Errorf("failed to parse pdTraces token=%v, err: %v", v.AsString(), err)
@@ -111,15 +128,15 @@ func (p tokenChecker) processTraces(record *define.Record) error {
 	return nil
 }
 
-func (p tokenChecker) processMetrics(record *define.Record) error {
+func (p tokenChecker) processMetrics(decoder TokenDecoder, record *define.Record) error {
 	pdMetrics, ok := record.Data.(pmetric.Metrics)
 	if !ok {
 		return define.ErrUnknownRecordType
 	}
 
 	var err error
-	if p.decoder.Skip() {
-		record.Token, err = p.decoder.Decode("")
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
 		return err
 	}
 
@@ -130,7 +147,7 @@ func (p tokenChecker) processMetrics(record *define.Record) error {
 			logger.Debugf("failed to get pdMetrics token key '%s'", p.config.ResourceKey)
 			return true
 		}
-		record.Token, err = p.decoder.Decode(v.AsString())
+		record.Token, err = decoder.Decode(v.AsString())
 		if err != nil {
 			errs = append(errs, err)
 			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", v.AsString(), err)
@@ -149,15 +166,15 @@ func (p tokenChecker) processMetrics(record *define.Record) error {
 	return nil
 }
 
-func (p tokenChecker) processLogs(record *define.Record) error {
+func (p tokenChecker) processLogs(decoder TokenDecoder, record *define.Record) error {
 	pdLogs, ok := record.Data.(plog.Logs)
 	if !ok {
 		return define.ErrUnknownRecordType
 	}
 
 	var err error
-	if p.decoder.Skip() {
-		record.Token, err = p.decoder.Decode("")
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
 		return err
 	}
 
@@ -168,7 +185,7 @@ func (p tokenChecker) processLogs(record *define.Record) error {
 			logger.Debugf("failed to get pdLogs token key '%s'", p.config.ResourceKey)
 			return true
 		}
-		record.Token, err = p.decoder.Decode(v.AsString())
+		record.Token, err = decoder.Decode(v.AsString())
 		if err != nil {
 			errs = append(errs, err)
 			logger.Errorf("failed to parse pdLogs token=%v, err: %v", v.AsString(), err)
@@ -187,13 +204,19 @@ func (p tokenChecker) processLogs(record *define.Record) error {
 	return nil
 }
 
-func (p tokenChecker) processCommon(record *define.Record) error {
+func (p tokenChecker) processProxy(decoder TokenDecoder, record *define.Record) error {
 	var err error
-	if p.decoder.Skip() {
-		record.Token, err = p.decoder.Decode("")
+	record.Token, err = decoder.Decode(define.WrapProxyToken(record.Token))
+	return err
+}
+
+func (p tokenChecker) processCommon(decoder TokenDecoder, record *define.Record) error {
+	var err error
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
 		return err
 	}
 
-	record.Token, err = p.decoder.Decode(record.Token.Original)
+	record.Token, err = decoder.Decode(record.Token.Original)
 	return err
 }

@@ -218,9 +218,14 @@ func (d proxyTokenDecoder) Skip() bool {
 
 func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
 	token, dataID := define.UnwrapProxyToken(s)
+	logger.Debugf("proxy token=%v, dataID=%d", token, dataID)
+	if token == "" && dataID == 0 {
+		return define.Token{}, errors.New("reject empty token")
+	}
+
 	if token == d.token && dataID == d.dataId {
 		return define.Token{Original: token, ProxyDataId: dataID}, nil
 	}
 
-	return define.Token{}, errors.Errorf("invalid token: %s", token)
+	return define.Token{}, errors.Errorf("reject invalid token: %d/%s", dataID, token)
 }

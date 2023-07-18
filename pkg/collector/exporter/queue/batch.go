@@ -76,29 +76,31 @@ func (m *metricMonitor) ObserveQueuePopBatchSizeDistribution(n int, dataId int32
 }
 
 type BatchQueue struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	mut           sync.RWMutex
-	qs            map[int32]chan []define.Event
-	out           chan common.MapStr
-	tracesBatch   int
-	metricsBatch  int
-	logsBatch     int
-	flushInterval time.Duration
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mut    sync.RWMutex
+	qs     map[int32]chan []define.Event
+	out    chan common.MapStr
+	conf   Config
 }
 
-func NewBatchQueue(tracesBatch, metricsBatch, logsBatch int, interval time.Duration) Queue {
+// Config 不同类型的数据大小不同 因此要允许为每种类型单独设置队列批次
+type Config struct {
+	MetricsBatchSize int           `config:"metrics_batch_size"`
+	LogsBatchSize    int           `config:"logs_batch_size"`
+	TracesBatchSize  int           `config:"traces_batch_size"`
+	FlushInterval    time.Duration `config:"flush_interval"`
+}
+
+func NewBatchQueue(conf Config) Queue {
 	ctx, cancel := context.WithCancel(context.Background())
 	cq := &BatchQueue{
-		ctx:           ctx,
-		cancel:        cancel,
-		qs:            make(map[int32]chan []define.Event),
-		out:           make(chan common.MapStr, define.Concurrency()),
-		tracesBatch:   tracesBatch,
-		metricsBatch:  metricsBatch,
-		logsBatch:     logsBatch,
-		flushInterval: interval,
+		ctx:    ctx,
+		cancel: cancel,
+		qs:     make(map[int32]chan []define.Event),
+		out:    make(chan common.MapStr, define.Concurrency()),
+		conf:   conf,
 	}
 
 	return cq
@@ -115,7 +117,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	bq.wg.Add(1)
 	defer bq.wg.Done()
 
-	ticker := time.NewTicker(bq.flushInterval)
+	ticker := time.NewTicker(bq.conf.FlushInterval)
 	defer ticker.Stop()
 
 	var total int
@@ -189,11 +191,11 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 	if !ok {
 		switch rtype {
 		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite:
-			batchSize = bq.metricsBatch
+			batchSize = bq.conf.MetricsBatchSize
 		case define.RecordLogs:
-			batchSize = bq.logsBatch
+			batchSize = bq.conf.LogsBatchSize
 		case define.RecordTraces:
-			batchSize = bq.tracesBatch
+			batchSize = bq.conf.TracesBatchSize
 		default: // define.RecordProxy, define.RecordPingserver
 			batchSize = 100
 		}

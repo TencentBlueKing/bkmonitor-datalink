@@ -19,13 +19,13 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 )
 
 func TestGrpcPostSpansPreCheck(t *testing.T) {
 	t.Run("Failed", func(t *testing.T) {
 		svc := GrpcService{}
-		svc.Validator = receiver.Validator{
+		svc.Validator = pipeline.Validator{
 			Func: func(record *define.Record) (define.StatusCode, string, error) {
 				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 			},
@@ -38,7 +38,7 @@ func TestGrpcPostSpansPreCheck(t *testing.T) {
 
 	t.Run("Success", func(t *testing.T) {
 		svc := GrpcService{}
-		svc.Validator = receiver.Validator{
+		svc.Validator = pipeline.Validator{
 			Func: func(record *define.Record) (define.StatusCode, string, error) {
 				return define.StatusCodeOK, "", nil
 			},

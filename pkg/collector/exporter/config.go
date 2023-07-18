@@ -9,7 +9,11 @@
 
 package exporter
 
-import "time"
+import (
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
+)
 
 // 不同类型的数据大小不同 所以队列大小要单独调整
 const (
@@ -22,16 +26,8 @@ const (
 )
 
 type Config struct {
-	Queue    QueueConfig    `config:"queue"`
+	Queue    queue.Config   `config:"queue"`
 	SlowSend SlowSendConfig `config:"slow_send"`
-}
-
-// QueueConfig 不同类型的数据大小不同 因此要允许为每种类型单独设置队列批次
-type QueueConfig struct {
-	MetricsBatchSize int           `config:"metrics_batch_size"`
-	LogsBatchSize    int           `config:"logs_batch_size"`
-	TracesBatchSize  int           `config:"traces_batch_size"`
-	FlushInterval    time.Duration `config:"flush_interval"`
 }
 
 type SlowSendConfig struct {

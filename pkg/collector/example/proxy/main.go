@@ -28,6 +28,22 @@ type Request struct {
 	Data        []map[string]interface{} `json:"data"`
 }
 
+func buildInvalidTokenRequest() []byte {
+	bs, _ := json.Marshal(Request{
+		DataID:      10010,
+		AccessToken: "non_exist",
+		Data:        []map[string]interface{}{},
+	})
+	return bs
+}
+
+func buildEmptyTokenRequest() []byte {
+	bs, _ := json.Marshal(Request{
+		Data: []map[string]interface{}{},
+	})
+	return bs
+}
+
 func buildTimeSeriesData() []byte {
 	items := make([]map[string]interface{}, 0, 1)
 	items = append(items, map[string]interface{}{
@@ -90,6 +106,8 @@ func main() {
 		case <-ticker.C:
 			doRequest(buildTimeSeriesData())
 			doRequest(buildEventData())
+			doRequest(buildInvalidTokenRequest())
+			doRequest(buildEmptyTokenRequest())
 		}
 	}
 }

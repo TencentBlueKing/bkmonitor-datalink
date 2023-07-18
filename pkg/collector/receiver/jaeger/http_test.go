@@ -11,7 +11,6 @@ package jaeger
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -39,7 +39,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -57,7 +57,7 @@ func TestHttpReadFailed(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -81,7 +81,7 @@ func TestHttpPreCheck(t *testing.T) {
 		var n int
 		svc := HttpService{
 			receiver.Publisher{Func: func(record *define.Record) { n++ }},
-			receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 				return define.StatusCodeOK, "", nil
 			}},
 		}
@@ -104,8 +104,7 @@ func TestHttpPreCheck(t *testing.T) {
 		var n int
 		svc := HttpService{
 			receiver.Publisher{Func: func(record *define.Record) { n++ }},
-			receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-				fmt.Println("????")
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 				return define.StatusCodeTooManyRequests, "", errors.New("MUST ERROR")
 			}},
 		}

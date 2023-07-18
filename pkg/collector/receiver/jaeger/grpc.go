@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -29,7 +30,7 @@ var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceJaeger)
 
 type GrpcService struct {
 	receiver.Publisher
-	receiver.Validator
+	pipeline.Validator
 }
 
 func (s GrpcService) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest) (*api_v2.PostSpansResponse, error) {

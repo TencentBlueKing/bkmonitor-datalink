@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -41,7 +42,7 @@ var grpcSvc = GrpcService{
 
 type tracesService struct {
 	receiver.Publisher
-	receiver.Validator
+	pipeline.Validator
 }
 
 func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptraceotlp.Response, error) {
@@ -80,7 +81,7 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 
 type metricsService struct {
 	receiver.Publisher
-	receiver.Validator
+	pipeline.Validator
 }
 
 func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pmetricotlp.Response, error) {
@@ -117,7 +118,7 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 
 type logsService struct {
 	receiver.Publisher
-	receiver.Validator
+	pipeline.Validator
 }
 
 func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp.Response, error) {

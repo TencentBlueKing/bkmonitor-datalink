@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -67,7 +68,7 @@ func TestHttpReportSegments(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -90,7 +91,7 @@ func TestHttpReportSegmentsFailedPreCheck(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeTooManyRequests, "", errors.New("too many requests")
 		}},
 	}
@@ -111,7 +112,7 @@ func TestHttpReportSegmentsInvalidBody(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -131,7 +132,7 @@ func TestHttpReportSegmentsReadFailed(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -154,7 +155,7 @@ func TestHttpReportSegment(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -177,7 +178,7 @@ func TestHttpReportSegmentFailedPreCheck(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeTooManyRequests, "", errors.New("too many requests")
 		}},
 	}
@@ -198,7 +199,7 @@ func TestHttpReportSegmentInvalidBody(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -218,7 +219,7 @@ func TestHttpReportSegmentReadFailed(t *testing.T) {
 	n := 0
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}

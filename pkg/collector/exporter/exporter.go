@@ -63,13 +63,12 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	c.Validate()
 	logger.Infof("exporter config: %+v", c)
 
-	qc := c.Queue
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Exporter{
 		ctx:       ctx,
 		cancel:    cancel,
 		converter: converter.NewCommonConverter(),
-		queue:     queue.NewBatchQueue(qc.TracesBatchSize, qc.MetricsBatchSize, qc.LogsBatchSize, qc.FlushInterval),
+		queue:     queue.NewBatchQueue(c.Queue),
 		cfg:       c,
 		dm:        durationmeasurer.New(ctx, 2*time.Minute),
 	}, nil

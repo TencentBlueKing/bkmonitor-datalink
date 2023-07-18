@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/grpcmiddleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/httpmiddleware"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -69,49 +68,6 @@ func (p Publisher) Publish(r *define.Record) {
 // GetComponentConfig 获取组件全局配置项
 func GetComponentConfig() ComponentConfig {
 	return globalConfig.Components
-}
-
-type Validator struct {
-	Func define.PreCheckValidateFunc
-}
-
-func (v Validator) Validate(r *define.Record) (define.StatusCode, string, error) {
-	if v.Func != nil {
-		return v.Func(r)
-	}
-	return validatePreCheckProcessors(r, pipeline.GetDefaultGetter())
-}
-
-func validatePreCheckProcessors(r *define.Record, getter pipeline.Getter) (define.StatusCode, string, error) {
-	if getter == nil {
-		logger.Debug("no pipeline getter found")
-		return define.StatusCodeOK, "", nil
-	}
-
-	pl := getter.GetPipeline(r.RecordType)
-	if pl == nil {
-		return define.StatusBadRequest, "", errors.Errorf("unknown pipeline type %v", r.RecordType)
-	}
-
-	for _, name := range pl.PreCheckProcessors() {
-		inst := getter.GetProcessor(name)
-		switch inst.Name() {
-		case define.ProcessorTokenChecker:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, err
-			}
-
-		case define.ProcessorRateLimiter:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusCodeTooManyRequests, define.ProcessorRateLimiter, err
-			}
-		case define.ProcessorLicenseChecker:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusBadRequest, define.ProcessorLicenseChecker, err
-			}
-		}
-	}
-	return define.StatusCodeOK, "", nil
 }
 
 // New 返回 Receiver 实例

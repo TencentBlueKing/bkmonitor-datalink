@@ -17,7 +17,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestProxy(t *testing.T) {
@@ -44,21 +43,4 @@ proxy:
 	case <-Records():
 	default:
 	}
-}
-
-func TestValidatePreCheckProcessors(t *testing.T) {
-	t.Run("nil pipeline getter", func(t *testing.T) {
-		code, p, err := validatePreCheckProcessors(nil, nil)
-		assert.Equal(t, define.StatusCodeOK, code)
-		assert.Equal(t, "", p)
-		assert.NoError(t, err)
-	})
-
-	t.Run("noop pipeline getter", func(t *testing.T) {
-		r := &define.Record{RecordType: define.RecordTraces}
-		code, p, err := validatePreCheckProcessors(r, testkits.NewNoopPipeline())
-		assert.Equal(t, define.StatusBadRequest, code)
-		assert.Equal(t, "", p)
-		assert.Error(t, err)
-	})
 }

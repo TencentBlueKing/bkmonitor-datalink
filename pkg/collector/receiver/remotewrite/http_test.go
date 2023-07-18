@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -37,7 +38,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -59,7 +60,7 @@ func TestHttpPreCheckFailed(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusBadRequest, "", errors.New("MUST ERROR")
 		}},
 	}
@@ -81,7 +82,7 @@ func TestHttpTokenAfterPreCheck(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}

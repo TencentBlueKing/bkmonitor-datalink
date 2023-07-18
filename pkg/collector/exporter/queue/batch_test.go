@@ -29,7 +29,13 @@ func (t testEvent) RecordType() define.RecordType {
 }
 
 func TestQueueOut(t *testing.T) {
-	queue := NewBatchQueue(100, 2000, 100, time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    2000,
+		TracesBatchSize:  100,
+		FlushInterval:    time.Second,
+	}
+	queue := NewBatchQueue(conf)
 
 	dataids := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
@@ -59,7 +65,13 @@ func TestQueueOut(t *testing.T) {
 }
 
 func TestQueueOutWithDelta(t *testing.T) {
-	queue := NewBatchQueue(100, 100, 100, time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    100,
+		TracesBatchSize:  100,
+		FlushInterval:    time.Second,
+	}
+	queue := NewBatchQueue(conf)
 
 	dataids := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
@@ -97,7 +109,13 @@ func TestQueueFull(t *testing.T) {
 		1004: 4,
 	}
 
-	queue := NewBatchQueue(100, 1, 100, 2*time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    1,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
@@ -140,15 +158,21 @@ func TestQueueFullBatch(t *testing.T) {
 		1004: 4,
 	}
 
-	queue := NewBatchQueue(100, 1, 100, 2*time.Second)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    1,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		events := make([]define.Event, 0)
 		for k, v := range cases {
+			events := make([]define.Event, 0)
 			for i := 0; i < 100; i++ {
 				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
 				events = append(events, evt)
@@ -185,7 +209,13 @@ func TestQueueTick(t *testing.T) {
 		1004: 4,
 	}
 
-	queue := NewBatchQueue(100, 101, 100, time.Second*2)
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    101,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 

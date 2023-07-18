@@ -16,6 +16,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -47,7 +48,8 @@ processor:
 	assert.False(t, factory.IsDerived())
 	assert.True(t, factory.IsPreCheck())
 
-	err = factory.processCommon(&define.Record{
+	decoder := factory.decoders.Get("", "", "").(TokenDecoder)
+	err = factory.processCommon(decoder, &define.Record{
 		RecordType: define.RecordTraces,
 	})
 	assert.NoError(t, err)
@@ -80,9 +82,11 @@ func aes256TokenChecker() tokenChecker {
 		DecodedKey:  "81be7fc6-5476-4934-9417-6d4d593728db",
 	}
 
+	decoders := confengine.NewTierConfig()
+	decoders.SetGlobal(NewTokenDecoder(config))
 	return tokenChecker{
-		config:  config,
-		decoder: newAes256TokenDecoder(config),
+		config:   config,
+		decoders: decoders,
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
@@ -114,7 +115,7 @@ func TestHttpExportMetricsValidateFailed(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusBadRequest, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 		}},
 	}
@@ -132,7 +133,7 @@ func TestHttpExportMetricsNoJob(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -151,7 +152,7 @@ func TestHttpExportMetricsInvalidBody(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -169,7 +170,7 @@ func TestHttpExportMetricsReadFailed(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -187,7 +188,7 @@ func TestHttpExportBase64Metrics(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -205,7 +206,7 @@ func TestHttpExportBase64MetricsFailed(t *testing.T) {
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}
@@ -228,7 +229,7 @@ func TestHttpTokenAfterPreCheck(t *testing.T) {
 	var n int
 	svc := HttpService{
 		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		receiver.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		}},
 	}

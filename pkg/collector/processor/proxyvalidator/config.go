@@ -15,7 +15,7 @@ const (
 )
 
 type Config struct {
-	Type                string `config:"type"`
-	Version             string `config:"version"`
-	MaxFutureTimeOffset int64  `config:"max_future_time_offset"`
+	Type                string `config:"type" mapstructure:"type"`
+	Version             string `config:"version" mapstructure:"version"`
+	MaxFutureTimeOffset int64  `config:"max_future_time_offset" mapstructure:"max_future_time_offset"`
 }

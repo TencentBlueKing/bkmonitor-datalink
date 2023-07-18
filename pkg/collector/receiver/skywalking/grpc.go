@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -49,7 +50,7 @@ func getTokenFromContext(ctx context.Context) (string, error) {
 
 type TraceSegmentReportService struct {
 	receiver.Publisher
-	receiver.Validator
+	pipeline.Validator
 	segment.UnimplementedTraceSegmentReportServiceServer
 }
 

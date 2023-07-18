@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 )
 
 const (
@@ -32,7 +32,7 @@ func TestTracesFailedPreCheck(t *testing.T) {
 	segment := mockGrpcTraceSegment(1)
 
 	svc := TraceSegmentReportService{}
-	svc.Validator = receiver.Validator{
+	svc.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
 		},

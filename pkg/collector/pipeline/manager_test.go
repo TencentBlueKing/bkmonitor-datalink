@@ -259,3 +259,12 @@ func TestNewManager(t *testing.T) {
 	pushGatewayPipeline := manager.GetPipeline(define.RecordPushGateway)
 	assert.Equal(t, []string{"token_checker/fixed"}, pushGatewayPipeline.AllProcessors())
 }
+
+func TestValidatePreCheckProcessors(t *testing.T) {
+	t.Run("nil pipeline getter", func(t *testing.T) {
+		code, p, err := validatePreCheckProcessors(nil, nil)
+		assert.Equal(t, define.StatusCodeOK, code)
+		assert.Equal(t, "", p)
+		assert.NoError(t, err)
+	})
+}

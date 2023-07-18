@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 )
 
 func TestV2Push(t *testing.T) {
@@ -50,7 +51,7 @@ proxy:
     }]
 }
 `
-	proxy.Validator = Validator{
+	proxy.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		},
@@ -75,7 +76,7 @@ proxy:
 
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
-	proxy.Validator = Validator{
+	proxy.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		},
@@ -100,7 +101,7 @@ proxy:
 
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
-	proxy.Validator = Validator{
+	proxy.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		},
@@ -125,7 +126,7 @@ proxy:
 
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
-	proxy.Validator = Validator{
+	proxy.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeUnauthorized, "", errors.New("MUST ERROR")
 		},
@@ -149,7 +150,7 @@ proxy:
 
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
-	proxy.Validator = Validator{
+	proxy.Validator = pipeline.Validator{
 		Func: func(record *define.Record) (define.StatusCode, string, error) {
 			return define.StatusCodeOK, "", nil
 		},

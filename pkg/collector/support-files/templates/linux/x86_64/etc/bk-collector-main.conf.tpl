@@ -237,6 +237,8 @@ bk-collector:
     # TokenChecker: 权限校验处理器
     # Proxy
     - name: "token_checker/proxy"
+      config:
+        type: "proxy"
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
@@ -1557,7 +1559,7 @@ bk-collector:
       # 慢发送阈值 p99
       threshold: 3s
     queue:
-      metrics_batch_size: 4000
-      traces_batch_size: 1000
-      logs_batch_size: 500
+      metrics_batch_size: 3000
+      traces_batch_size: 500
+      logs_batch_size: 200
       flush_interval: 3s

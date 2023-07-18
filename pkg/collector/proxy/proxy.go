@@ -35,7 +35,7 @@ func Records() <-chan *define.Record {
 }
 
 type Proxy struct {
-	Validator
+	pipeline.Validator
 	httpSrv        *http.Server
 	config         *Config
 	consulInstance *consul.Instance
@@ -173,48 +173,4 @@ func (p *Proxy) Stop() error {
 	}
 
 	return err
-}
-
-type Validator struct {
-	Func define.PreCheckValidateFunc
-}
-
-func (v Validator) Validate(r *define.Record) (define.StatusCode, string, error) {
-	if v.Func != nil {
-		return v.Func(r)
-	}
-	return validatePreCheckProcessors(r, pipeline.GetDefaultGetter())
-}
-
-func validatePreCheckProcessors(r *define.Record, getter pipeline.Getter) (define.StatusCode, string, error) {
-	if getter == nil {
-		logger.Debug("no pipeline getter found")
-		return define.StatusCodeOK, "", nil
-	}
-
-	pl := getter.GetPipeline(r.RecordType)
-	if pl == nil {
-		return define.StatusBadRequest, "", errors.Errorf("unknown pipeline type %v", r.RecordType)
-	}
-
-	for _, name := range pl.PreCheckProcessors() {
-		inst := getter.GetProcessor(name)
-		switch inst.Name() {
-		case define.ProcessorTokenChecker:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, err
-			}
-
-		case define.ProcessorRateLimiter:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusCodeTooManyRequests, define.ProcessorRateLimiter, err
-			}
-
-		case define.ProcessorProxyValidator:
-			if _, err := inst.Process(r); err != nil {
-				return define.StatusBadRequest, define.ProcessorProxyValidator, err
-			}
-		}
-	}
-	return define.StatusCodeOK, "", nil
 }

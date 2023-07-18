@@ -360,37 +360,9 @@ bk-collector:
             rule:
               regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
 
-
-    # TokenChecker: 权限校验处理器
-    # Fixed
-    - name: "token_checker/fixed"
-      config:
-        type: "fixed"
-        fixed_token: "token1"
-        resource_key: "bk.data.token"
-        traces_dataid: 1000   # default: 0
-        metrics_dataid: 1001  # default: 0
-        logs_dataid: 1002     # default: 0
-        biz_id: 2
-        app_name: "apm-test"
-
-    # TokenChecker: 权限校验处理器
-    # Random
-    - name: "token_checker/random"
-      config:
-        type: "random"
-        resource_key: "bk.data.token"
-        max: 2000 # default: max.int32
-
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
-      config:
-        type: "aes256"
-        resource_key: "bk.data.token"
-        salt: "bk" # 加盐解密标识
-        decoded_iv: "bkbkbkbkbkbkbkbk"
-        decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"

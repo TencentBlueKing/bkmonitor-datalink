@@ -2,13 +2,10 @@ type: "platform"
 
 processor:
   # TokenChecker: 权限校验处理器
-  - name: "token_checker/fixed"
+  - name: "token_checker/aes256"
     config:
-      type: "fixed"
-      fixed_token: "token1"
+      type: "aes256"
       resource_key: "bk.data.token"
-      traces_dataid: 1003   # default: 0
-      metrics_dataid: 1001  # default: 0
-      logs_dataid: 1002     # default: 0
-      biz_id: 2
-      app_name: "apm-test-platform"
+      salt: "bk" # 加盐解密标识
+      decoded_iv: "bkbkbkbkbkbkbkbk"
+      decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"

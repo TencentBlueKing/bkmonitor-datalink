@@ -31,12 +31,14 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*tokenChecker, error) {
 	decoders := confengine.NewTierConfig()
+	configs := confengine.NewTierConfig()
 
 	var c Config
 	if err := mapstructure.Decode(conf, &c); err != nil {
 		return nil, err
 	}
 	decoders.SetGlobal(NewTokenDecoder(c))
+	configs.SetGlobal(c)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -45,18 +47,20 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			continue
 		}
 		decoders.Set(custom.Token, custom.Type, custom.ID, NewTokenDecoder(*cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
 
 	return &tokenChecker{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		decoders:        decoders,
+		configs:         configs,
 	}, nil
 }
 
 type tokenChecker struct {
 	processor.CommonProcessor
-	config   Config
 	decoders *confengine.TierConfig // type: Decoder
+	configs  *confengine.TierConfig // type: Config
 }
 
 func (p tokenChecker) Name() string {
@@ -73,15 +77,16 @@ func (p tokenChecker) IsPreCheck() bool {
 
 func (p tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	decoder := p.decoders.GetByToken(record.Token.Original).(TokenDecoder)
+	config := p.configs.GetByToken(record.Token.Original).(Config)
 
 	var err error
 	switch record.RecordType {
 	case define.RecordTraces:
-		err = p.processTraces(decoder, record)
+		err = p.processTraces(decoder, config, record)
 	case define.RecordMetrics:
-		err = p.processMetrics(decoder, record)
+		err = p.processMetrics(decoder, config, record)
 	case define.RecordLogs:
-		err = p.processLogs(decoder, record)
+		err = p.processLogs(decoder, config, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
 	default:
@@ -90,7 +95,7 @@ func (p tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	return nil, err
 }
 
-func (p tokenChecker) processTraces(decoder TokenDecoder, record *define.Record) error {
+func (p tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
 	pdTraces, ok := record.Data.(ptrace.Traces)
 	if !ok {
 		return define.ErrUnknownRecordType
@@ -104,9 +109,9 @@ func (p tokenChecker) processTraces(decoder TokenDecoder, record *define.Record)
 
 	var errs []error
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		v, ok := resourceSpans.Resource().Attributes().Get(p.config.ResourceKey)
+		v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
 		if !ok {
-			logger.Debugf("failed to get pdTraces token key '%s'", p.config.ResourceKey)
+			logger.Debugf("failed to get pdTraces token key '%s'", config.ResourceKey)
 			return true
 		}
 		record.Token, err = decoder.Decode(v.AsString())
@@ -128,7 +133,7 @@ func (p tokenChecker) processTraces(decoder TokenDecoder, record *define.Record)
 	return nil
 }
 
-func (p tokenChecker) processMetrics(decoder TokenDecoder, record *define.Record) error {
+func (p tokenChecker) processMetrics(decoder TokenDecoder, config Config, record *define.Record) error {
 	pdMetrics, ok := record.Data.(pmetric.Metrics)
 	if !ok {
 		return define.ErrUnknownRecordType
@@ -142,9 +147,9 @@ func (p tokenChecker) processMetrics(decoder TokenDecoder, record *define.Record
 
 	var errs []error
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		v, ok := resourceMetrics.Resource().Attributes().Get(p.config.ResourceKey)
+		v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
 		if !ok {
-			logger.Debugf("failed to get pdMetrics token key '%s'", p.config.ResourceKey)
+			logger.Debugf("failed to get pdMetrics token key '%s'", config.ResourceKey)
 			return true
 		}
 		record.Token, err = decoder.Decode(v.AsString())
@@ -166,7 +171,7 @@ func (p tokenChecker) processMetrics(decoder TokenDecoder, record *define.Record
 	return nil
 }
 
-func (p tokenChecker) processLogs(decoder TokenDecoder, record *define.Record) error {
+func (p tokenChecker) processLogs(decoder TokenDecoder, config Config, record *define.Record) error {
 	pdLogs, ok := record.Data.(plog.Logs)
 	if !ok {
 		return define.ErrUnknownRecordType
@@ -180,9 +185,9 @@ func (p tokenChecker) processLogs(decoder TokenDecoder, record *define.Record) e
 
 	var errs []error
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		v, ok := resourceLogs.Resource().Attributes().Get(p.config.ResourceKey)
+		v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
 		if !ok {
-			logger.Debugf("failed to get pdLogs token key '%s'", p.config.ResourceKey)
+			logger.Debugf("failed to get pdLogs token key '%s'", config.ResourceKey)
 			return true
 		}
 		record.Token, err = decoder.Decode(v.AsString())

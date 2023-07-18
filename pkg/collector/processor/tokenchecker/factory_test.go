@@ -84,9 +84,12 @@ func aes256TokenChecker() tokenChecker {
 
 	decoders := confengine.NewTierConfig()
 	decoders.SetGlobal(NewTokenDecoder(config))
+
+	configs := confengine.NewTierConfig()
+	configs.SetGlobal(config)
 	return tokenChecker{
-		config:   config,
 		decoders: decoders,
+		configs:  configs,
 	}
 }
 

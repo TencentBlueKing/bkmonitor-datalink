@@ -100,22 +100,53 @@ func TestAes256Decoder(t *testing.T) {
 	}
 }
 
-func TestProxyTokenDecoderEnable(t *testing.T) {
-	decoder := NewTokenDecoder(Config{
-		Type:        decoderTypeProxy,
-		ProxyDataId: 999,
-		ProxyToken:  "test_proxy_token",
-	})
-	assert.Equal(t, decoderTypeProxy, decoder.Type())
-	assert.False(t, decoder.Skip())
+func TestProxyTokenDecoder(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type:        decoderTypeProxy,
+			ProxyDataId: 999,
+			ProxyToken:  "test_proxy_token",
+		})
+		assert.Equal(t, decoderTypeProxy, decoder.Type())
+		assert.False(t, decoder.Skip())
 
-	token, err := decoder.Decode(define.WrapProxyToken(define.Token{
-		Original:    "test_proxy_token",
-		ProxyDataId: 999,
-	}))
-	assert.NoError(t, err)
-	assert.Equal(t, int32(999), token.ProxyDataId)
-	assert.Equal(t, "test_proxy_token", token.Original)
+		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+			Original:    "test_proxy_token",
+			ProxyDataId: 999,
+		}))
+		assert.NoError(t, err)
+		assert.Equal(t, int32(999), token.ProxyDataId)
+		assert.Equal(t, "test_proxy_token", token.Original)
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type:        decoderTypeProxy,
+			ProxyDataId: 999,
+			ProxyToken:  "test_proxy_token",
+		})
+
+		token, err := decoder.Decode(define.WrapProxyToken(define.Token{}))
+		assert.Equal(t, "reject empty token", err.Error())
+		assert.Equal(t, int32(0), token.ProxyDataId)
+		assert.Equal(t, "", token.Original)
+	})
+
+	t.Run("Invalid", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type:        decoderTypeProxy,
+			ProxyDataId: 999,
+			ProxyToken:  "test_proxy_token",
+		})
+
+		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+			Original:    "invalid",
+			ProxyDataId: 999,
+		}))
+		assert.Equal(t, "reject invalid token: 999/invalid", err.Error())
+		assert.Equal(t, int32(0), token.ProxyDataId)
+		assert.Equal(t, "", token.Original)
+	})
 }
 
 func BenchmarkAes256Decoder(b *testing.B) {

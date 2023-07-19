@@ -273,8 +273,7 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 	info, _ := c.aif.Fetch()
 	if info.IsEmpty() {
 		MetricGseAgentInfoFailed.Add(1)
-		// TODO: remove comment
-		//return data, fmt.Errorf("agent info is empty")
+		return data, fmt.Errorf("agent info is empty")
 	}
 
 	if isStandardFormat {

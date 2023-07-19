@@ -38,10 +38,15 @@ var taskRegistry = map[string]string{}
 // outputRegistry 发送配置注册表。key 为任务发送配置的计算哈希值，value 为具体配置内容及生成的客户端对象
 var outputRegistry = map[string]*output{}
 
+var registerMutex sync.Mutex
 var loadMutex sync.Mutex
 
 // RegisterTaskOutput 按任务ID注册发送配置
 func RegisterTaskOutput(taskID string, config common.ConfigNamespace) error {
+
+	registerMutex.Lock()
+	defer registerMutex.Unlock()
+
 	configHash, err := HashRawConfig(config)
 	if err != nil {
 		return err

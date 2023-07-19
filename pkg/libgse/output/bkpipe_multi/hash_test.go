@@ -10,9 +10,10 @@
 package bkpipe_multi
 
 import (
+	"testing"
+
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func makeConfigNamespace(t *testing.T, yaml string) common.ConfigNamespace {

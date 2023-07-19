@@ -38,14 +38,13 @@ var taskRegistry = map[string]string{}
 // outputRegistry 发送配置注册表。key 为任务发送配置的计算哈希值，value 为具体配置内容及生成的客户端对象
 var outputRegistry = map[string]*output{}
 
-var registerMutex sync.Mutex
-var loadMutex sync.Mutex
+var mutex sync.RWMutex
 
 // RegisterTaskOutput 按任务ID注册发送配置
 func RegisterTaskOutput(taskID string, config common.ConfigNamespace) error {
 
-	registerMutex.Lock()
-	defer registerMutex.Unlock()
+	mutex.Lock()
+	defer mutex.Unlock()
 
 	configHash, err := HashRawConfig(config)
 	if err != nil {
@@ -86,8 +85,8 @@ func LoadOutputClient(
 	stats outputs.Observer,
 ) (outputs.Client, error) {
 
-	loadMutex.Lock()
-	defer loadMutex.Unlock()
+	mutex.Lock()
+	defer mutex.Unlock()
 
 	out, ok := outputRegistry[configHash]
 
@@ -143,6 +142,10 @@ func SetEventTaskID(event beat.Event, taskID string) beat.Event {
 
 // GroupEventsByOutput 根据事件中的任务ID，按发送端类型进行分组
 func GroupEventsByOutput(events []beat.Event) map[string][]beat.Event {
+
+	mutex.RLock()
+	defer mutex.RUnlock()
+
 	groups := make(map[string][]beat.Event)
 
 	for i := range events {
@@ -173,6 +176,10 @@ func GroupEventsByOutput(events []beat.Event) map[string][]beat.Event {
 
 // CloseOutputClients 关闭所有已初始化的 Output 客户端连接
 func CloseOutputClients() {
+
+	mutex.RLock()
+	defer mutex.RUnlock()
+
 	for _, out := range outputRegistry {
 		if out.client == nil {
 			continue

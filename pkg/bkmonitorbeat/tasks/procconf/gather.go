@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -302,6 +303,11 @@ func (g *Gather) convertPorts(s string) []uint16 {
 	for k := range ports {
 		ret = append(ret, k)
 	}
+
+	// 排序 避免 hash 发生变化
+	sort.Slice(ret, func(i, j int) bool {
+		return ret[i] < ret[j]
+	})
 	return ret
 }
 

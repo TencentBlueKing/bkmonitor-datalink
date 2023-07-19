@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/containerd/cgroups v1.0.1
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/golang/protobuf v1.5.2
@@ -16,7 +17,7 @@ require (
 	github.com/prometheus/common v0.37.0
 	github.com/prometheus/prometheus v0.37.0
 	github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc
-	github.com/stretchr/testify v1.8.0
+	github.com/stretchr/testify v1.8.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -62,12 +63,12 @@ require (
 	github.com/rcrowley/go-metrics v0.0.0-20200313005456-10cdbea86bc0 // indirect
 	github.com/spf13/cobra v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	go.uber.org/atomic v1.9.0 // indirect
-	go.uber.org/multierr v1.6.0 // indirect
-	go.uber.org/zap v1.17.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.0.0-20220511200225-c6db032c6c88 // indirect
 	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e // indirect
-	golang.org/x/sys v0.0.0-20220627191245-f75cf1eec38b // indirect
+	golang.org/x/sys v0.7.0 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect

@@ -33,22 +33,22 @@ import (
 const maxSyncAgentInfoTimeout = 10 // unit: second
 
 var (
-	metricGseTaskPublishTotal  = "gse_publish_total"  // 按任务计算发送次数
-	metricGseTaskPublishFailed = "gse_publish_failed" // 按任务计算发送失败次数
+	MetricGseTaskPublishTotal  = "gse_publish_total"  // 按任务计算发送次数
+	MetricGseTaskPublishFailed = "gse_publish_failed" // 按任务计算发送失败次数
 )
 
 var (
-	metricGseAgentInfoFailed = monitoring.NewInt("gse_agent_info_failed") // 获取Agent失败次数
-	metricGseSendTotal       = monitoring.NewInt("gse_send_total")        // 发送给gse client的事件数
+	MetricGseAgentInfoFailed = monitoring.NewInt("gse_agent_info_failed") // 获取Agent失败次数
+	MetricGseSendTotal       = monitoring.NewInt("gse_send_total")        // 发送给gse client的事件数
 
-	metricGsePublishReceived = monitoring.NewInt("gse_publish_received") // publish：接收事件数
-	metricGsePublishDropped  = monitoring.NewInt("gse_publish_dropped")  // publish：丢失的事件数（缺少dataid）
-	metricGsePublishTotal    = monitoring.NewInt("gse_publish_total")    // publish：发送事件数
-	metricGsePublishFailed   = monitoring.NewInt("gse_publish_failed")   // publish：发送失败数
+	MetricGsePublishReceived = monitoring.NewInt("gse_publish_received") // publish：接收事件数
+	MetricGsePublishDropped  = monitoring.NewInt("gse_publish_dropped")  // publish：丢失的事件数（缺少dataid）
+	MetricGsePublishTotal    = monitoring.NewInt("gse_publish_total")    // publish：发送事件数
+	MetricGsePublishFailed   = monitoring.NewInt("gse_publish_failed")   // publish：发送失败数
 
-	metricGseReportReceived  = monitoring.NewInt("gse_report_received")   // report：接收事件数
-	metricGseReportSendTotal = monitoring.NewInt("gse_report_send_total") // report：发送事件数
-	metricGseReportFailed    = monitoring.NewInt("gse_report_failed")     // report：发送失败数
+	MetricGseReportReceived  = monitoring.NewInt("gse_report_received")   // report：接收事件数
+	MetricGseReportSendTotal = monitoring.NewInt("gse_report_send_total") // report：发送事件数
+	MetricGseReportFailed    = monitoring.NewInt("gse_report_failed")     // report：发送失败数
 )
 
 func init() {
@@ -194,16 +194,16 @@ func (c *Output) Publish(batch publisher.Batch) error {
 	events := batch.Events()
 	for i := range events {
 		if events[i].Content.Fields == nil {
-			metricGsePublishDropped.Add(1)
+			MetricGsePublishDropped.Add(1)
 			continue
 		}
-		metricGsePublishReceived.Add(1)
+		MetricGsePublishReceived.Add(1)
 		err := c.PublishEvent(&events[i])
 		if err != nil {
 			logp.Err("publish event failed: %v", err)
-			metricGsePublishFailed.Add(1)
+			MetricGsePublishFailed.Add(1)
 		} else {
-			metricGsePublishTotal.Add(1)
+			MetricGsePublishTotal.Add(1)
 		}
 	}
 
@@ -229,7 +229,7 @@ func (c *Output) PublishEvent(event *publisher.Event) error {
 		return fmt.Errorf("event lost dataid")
 	}
 
-	dataid := c.getdataid(val)
+	dataid := c.GetDataID(val)
 	if dataid <= 0 {
 		return fmt.Errorf("dataid %d <= 0", dataid)
 	}
@@ -238,11 +238,13 @@ func (c *Output) PublishEvent(event *publisher.Event) error {
 		data.Put("@meta", content.Meta)
 	}
 
-	if err := c.publishEventAttachInfo(dataid, data); err != nil {
+	data, err = c.AddEventAttachInfo(dataid, data)
+
+	if err != nil {
 		return err
 	}
 
-	return nil
+	return c.ReportCommonData(dataid, data)
 }
 
 // Close : close gse out put
@@ -254,7 +256,7 @@ func (c *Output) Close() error {
 
 // publishEventAttachInfo attach agentinfo and gseindex
 // will add bizid, cloudid, ip, gseindex
-func (c *Output) publishEventAttachInfo(dataid int32, data common.MapStr) error {
+func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.MapStr, error) {
 	// 是否兼容原采集器输出
 	isStandardFormat := true
 	if _, ok := data["_time_"]; ok {
@@ -270,8 +272,8 @@ func (c *Output) publishEventAttachInfo(dataid int32, data common.MapStr) error 
 	// add bizid, cloudid, ip
 	info, _ := c.aif.Fetch()
 	if info.IsEmpty() {
-		metricGseAgentInfoFailed.Add(1)
-		return fmt.Errorf("agent info is empty")
+		MetricGseAgentInfoFailed.Add(1)
+		return data, fmt.Errorf("agent info is empty")
 	}
 
 	if isStandardFormat {
@@ -297,7 +299,7 @@ func (c *Output) publishEventAttachInfo(dataid int32, data common.MapStr) error 
 		data.Delete("time")
 	}
 
-	return c.reportCommonData(dataid, data)
+	return data, nil
 }
 
 func getGseIndex(dataid int32) uint64 {
@@ -319,13 +321,13 @@ func (c *Output) Report(dataid int32, data common.MapStr) error {
 	if dataid <= 0 {
 		return fmt.Errorf("dataid %d <= 0", dataid)
 	}
-	metricGseReportReceived.Add(1)
-	err := c.reportCommonData(dataid, data)
+	MetricGseReportReceived.Add(1)
+	err := c.ReportCommonData(dataid, data)
 	if err != nil {
-		metricGseReportFailed.Add(1)
+		MetricGseReportFailed.Add(1)
 		return err
 	}
-	metricGseReportSendTotal.Add(1)
+	MetricGseReportSendTotal.Add(1)
 	return nil
 }
 
@@ -359,12 +361,12 @@ var sendHook func(int32, float64)
 
 func RegisterSendHook(f func(int32, float64)) { sendHook = f }
 
-// reportCommonData send common data
-func (c *Output) reportCommonData(dataid int32, data common.MapStr) error {
+// ReportCommonData send common data
+func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
 	// change data to json format
 	buf, err := MarshalFunc(data)
 	if err != nil {
-		monitoring.NewIntWithDataID(int(dataid), metricGseTaskPublishFailed).Add(1)
+		monitoring.NewIntWithDataID(int(dataid), MetricGseTaskPublishFailed).Add(1)
 		logp.Err("json marshal failed, content: %+v, err: %+v", data, err)
 		return err
 	}
@@ -379,13 +381,13 @@ func (c *Output) reportCommonData(dataid int32, data common.MapStr) error {
 	c.cli.Send(msg)
 
 	// 发包计数
-	metricGseSendTotal.Add(1)
-	monitoring.NewIntWithDataID(int(dataid), metricGseTaskPublishTotal).Add(1)
+	MetricGseSendTotal.Add(1)
+	monitoring.NewIntWithDataID(int(dataid), MetricGseTaskPublishTotal).Add(1)
 
 	return nil
 }
 
-func (c *Output) getdataid(dataID interface{}) int32 {
+func (c *Output) GetDataID(dataID interface{}) int32 {
 	switch dataID.(type) {
 	case int, int8, int16, int32, int64:
 		return int32(reflect.ValueOf(dataID).Int())

@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/bkpipe"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/bkpipe_multi"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/processor/actions"
 )

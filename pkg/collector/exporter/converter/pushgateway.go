@@ -34,8 +34,8 @@ var PushGatewayConverter EventConverter = pushGatewayConverter{}
 
 type pushGatewayConverter struct{}
 
-func (c pushGatewayConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
-	return pushGatewayEvent{define.NewCommonEvent(dataId, data)}
+func (c pushGatewayConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return pushGatewayEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c pushGatewayConverter) ToDataID(record *define.Record) int32 {
@@ -46,7 +46,8 @@ func (c pushGatewayConverter) Convert(record *define.Record, f define.GatherFunc
 	data := record.Data.(*define.PushGatewayData)
 	dataId := c.ToDataID(record)
 	now := time.Now().UnixMilli()
-	c.publishEventsFromMetricFamily(data, dataId, now, f)
+
+	c.publishEventsFromMetricFamily(record.Token, data, dataId, now, f)
 }
 
 type promMapper struct {
@@ -118,7 +119,7 @@ func getTimestamp(now int64, t *int64) int64 {
 	return now
 }
 
-func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatewayData, dataId int32, now int64, f define.GatherFunc) {
+func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, pd *define.PushGatewayData, dataId int32, now int64, f define.GatherFunc) {
 	// instance 维度会被当做 target 处理 默认值为 unknown
 	target := pd.Labels["instance"]
 	if target == "" {
@@ -154,7 +155,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 				Dimensions: utils.MergeMap(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			}
-			events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 		}
 
 		// 处理 Gauge 类型数据
@@ -173,7 +174,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMap(lbs, pd.Labels),
 			}
-			events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 		}
 
 		// 处理 Summary 类型数据
@@ -193,7 +194,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMap(lbs, pd.Labels),
 			}
-			events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 
 			for _, quantile := range summary.GetQuantile() {
 				if !utils.IsValidFloat64(quantile.GetValue()) {
@@ -212,7 +213,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
 					Dimensions: utils.MergeMap(lbs, quantileLabels, pd.Labels),
 				}
-				events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 			}
 		}
 
@@ -233,7 +234,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMap(lbs, pd.Labels),
 			}
-			events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 
 			infSeen := false
 			for _, bucket := range histogram.GetBucket() {
@@ -257,7 +258,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 					Dimensions: utils.MergeMap(lbs, bucketLabels, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				}
-				events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 			}
 			// 仅 expfmt.FmtText 格式支持 inf
 			// 其他格式需要自行检查
@@ -272,7 +273,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
 					Dimensions: utils.MergeMap(lbs, bucketLabels, pd.Labels),
 				}
-				events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 			}
 		}
 
@@ -292,7 +293,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(pd *define.PushGatew
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
 				Dimensions: utils.MergeMap(lbs, pd.Labels),
 			}
-			events = append(events, c.ToEvent(dataId, m.AsMapStr()))
+			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 		}
 	}
 	if len(events) > 0 {

@@ -35,7 +35,7 @@ func TestConvert(t *testing.T) {
 		events = append(events, evts...)
 	}
 
-	RemoteWriteConverter.Convert(&define.Record{
+	NewCommonConverter().Convert(&define.Record{
 		RecordType:  define.RecordRemoteWrite,
 		RequestType: define.RequestHttp,
 		Data:        &define.RemoteWriteData{Timeseries: wr.Timeseries},

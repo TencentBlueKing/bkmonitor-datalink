@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -76,31 +77,33 @@ func (m *metricMonitor) ObserveQueuePopBatchSizeDistribution(n int, dataId int32
 }
 
 type BatchQueue struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mut    sync.RWMutex
-	qs     map[int32]chan []define.Event
-	out    chan common.MapStr
-	conf   Config
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	mut     sync.RWMutex
+	qs      map[int32]chan []define.Event
+	out     chan common.MapStr
+	conf    Config
+	getSize func(string) Config
 }
 
 // Config 不同类型的数据大小不同 因此要允许为每种类型单独设置队列批次
 type Config struct {
-	MetricsBatchSize int           `config:"metrics_batch_size"`
-	LogsBatchSize    int           `config:"logs_batch_size"`
-	TracesBatchSize  int           `config:"traces_batch_size"`
-	FlushInterval    time.Duration `config:"flush_interval"`
+	MetricsBatchSize int           `config:"metrics_batch_size" mapstructure:"metrics_batch_size"`
+	LogsBatchSize    int           `config:"logs_batch_size" mapstructure:"logs_batch_size"`
+	TracesBatchSize  int           `config:"traces_batch_size" mapstructure:"traces_batch_size"`
+	FlushInterval    time.Duration `config:"flush_interval" mapstructure:"flush_interval"`
 }
 
-func NewBatchQueue(conf Config) Queue {
+func NewBatchQueue(conf Config, fn func(string) Config) Queue {
 	ctx, cancel := context.WithCancel(context.Background())
 	cq := &BatchQueue{
-		ctx:    ctx,
-		cancel: cancel,
-		qs:     make(map[int32]chan []define.Event),
-		out:    make(chan common.MapStr, define.Concurrency()),
-		conf:   conf,
+		ctx:     ctx,
+		cancel:  cancel,
+		qs:      make(map[int32]chan []define.Event),
+		out:     make(chan common.MapStr, define.Concurrency()),
+		conf:    conf,
+		getSize: fn,
 	}
 
 	return cq
@@ -113,6 +116,31 @@ type DataIDChan struct {
 	ch        chan []define.Event
 }
 
+func (bq *BatchQueue) resize(rtype define.RecordType, token string, backup int) int {
+	v := bq.getSize(token)
+	batchSize := backup
+
+	switch rtype {
+	case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite:
+		if v.MetricsBatchSize > 0 {
+			batchSize = v.MetricsBatchSize
+			logger.Infof("resize metrics batch, token=%s, size=%d", token, batchSize)
+		}
+	case define.RecordLogs:
+		if v.LogsBatchSize > 0 {
+			batchSize = v.LogsBatchSize
+			logger.Infof("resize logs batch, token=%s, size=%d", token, batchSize)
+		}
+	case define.RecordTraces:
+		if v.TracesBatchSize > 0 {
+			batchSize = v.TracesBatchSize
+			logger.Infof("resize traces batch, token=%s, size=%d", token, batchSize)
+		}
+	}
+
+	return batchSize
+}
+
 func (bq *BatchQueue) compact(dc DataIDChan) {
 	bq.wg.Add(1)
 	defer bq.wg.Done()
@@ -120,8 +148,10 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 	ticker := time.NewTicker(bq.conf.FlushInterval)
 	defer ticker.Stop()
 
+	dynamicBatch := dc.batchSize
+
 	var total int
-	data := make([]common.MapStr, 0, dc.batchSize)
+	data := make([]common.MapStr, 0, dynamicBatch)
 
 	sentOut := func() {
 		DefaultMetricMonitor.ObserveQueuePopBatchSizeDistribution(len(data), dc.dataID, dc.rtype)
@@ -140,7 +170,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 
 		// 状态置零
 		total = 0
-		data = make([]common.MapStr, 0, dc.batchSize)
+		data = make([]common.MapStr, 0, dynamicBatch)
 	}
 
 	for {
@@ -148,8 +178,11 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 		case events := <-dc.ch:
 			for _, event := range events {
 				data = append(data, event.Data())
+
 				total++
-				if total >= dc.batchSize {
+				if total >= dynamicBatch {
+					// full 时判断是否需要调整 batch size
+					dynamicBatch = bq.resize(dc.rtype, event.Token().Original, dynamicBatch)
 					sentOut()
 					DefaultMetricMonitor.IncQueueFullCounter(dc.dataID)
 				}

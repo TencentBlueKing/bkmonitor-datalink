@@ -344,6 +344,10 @@ func (c *Controller) Reload(conf *confengine.Config) error {
 		}
 	}
 
+	if c.exporterMgr != nil {
+		c.exporterMgr.Reload(conf)
+	}
+
 	since := time.Since(t0)
 	logger.Infof("reload finished, take: %v", since)
 	DefaultMetricMonitor.IncReloadSuccessCounter()

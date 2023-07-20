@@ -29,8 +29,8 @@ var RemoteWriteConverter EventConverter = remoteWriteConverter{}
 
 type remoteWriteConverter struct{}
 
-func (c remoteWriteConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
-	return remoteWriteEvent{define.NewCommonEvent(dataId, data)}
+func (c remoteWriteConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return remoteWriteEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c remoteWriteConverter) ToDataID(record *define.Record) int32 {
@@ -62,7 +62,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 				Timestamp:  sample.GetTimestampMs(),
 				Dimensions: utils.CloneMap(dims),
 			}
-			events = append(events, c.ToEvent(dataId, pm.AsMapStr()))
+			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
 		}
 	}
 	if len(events) > 0 {

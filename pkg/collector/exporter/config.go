@@ -12,6 +12,8 @@ package exporter
 import (
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
 )
 
@@ -55,4 +57,34 @@ func (c *Config) Validate() {
 	if c.SlowSend.CheckInterval <= 0 {
 		c.SlowSend.CheckInterval = defaultSlowSendCheckInterval
 	}
+}
+
+type SubConfig struct {
+	Type     string `config:"type"`
+	Token    string `config:"token"`
+	Exporter Config `config:"exporter"`
+}
+
+// LoadConfigFrom 允许加载 exporter 子配置
+func LoadConfigFrom(conf *confengine.Config) map[string]queue.Config {
+	var apmConf define.ApmConfig
+	var err error
+	batches := make(map[string]queue.Config)
+
+	if err = conf.UnpackChild(define.ConfigFieldApmConfig, &apmConf); err != nil {
+		return batches
+	}
+
+	subConfigs := confengine.LoadConfigPatterns(apmConf.Patterns)
+	for _, subConf := range subConfigs {
+		var sub SubConfig
+		if err := subConf.Unpack(&sub); err != nil {
+			continue
+		}
+		if sub.Type != define.ConfigTypeSubConfig {
+			continue
+		}
+		batches[sub.Token] = sub.Exporter.Queue
+	}
+	return batches
 }

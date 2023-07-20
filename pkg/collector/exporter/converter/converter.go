@@ -63,7 +63,7 @@ type Converter interface {
 
 type EventConverter interface {
 	Converter
-	ToEvent(int32, common.MapStr) define.Event
+	ToEvent(define.Token, int32, common.MapStr) define.Event
 	ToDataID(*define.Record) int32
 }
 

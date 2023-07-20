@@ -17,18 +17,30 @@ type Event interface {
 	DataId() int32
 	Data() common.MapStr
 	RecordType() RecordType
+	Token() Token
 }
 
 type CommonEvent struct {
 	dataId int32
+	token  Token
 	data   common.MapStr
 }
 
-func (e CommonEvent) DataId() int32       { return e.dataId }
-func (e CommonEvent) Data() common.MapStr { return e.data }
+func (e CommonEvent) DataId() int32 {
+	return e.dataId
+}
 
-func NewCommonEvent(dataId int32, data common.MapStr) CommonEvent {
+func (e CommonEvent) Data() common.MapStr {
+	return e.data
+}
+
+func (e CommonEvent) Token() Token {
+	return e.token
+}
+
+func NewCommonEvent(token Token, dataId int32, data common.MapStr) CommonEvent {
 	return CommonEvent{
+		token:  token,
 		dataId: dataId,
 		data:   data,
 	}

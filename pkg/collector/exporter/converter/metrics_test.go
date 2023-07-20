@@ -56,7 +56,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 
 	assert.Len(t, events, 0)
 	m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0).SetTimestamp(0)
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
+	NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
 
 	event := events[0]
 	event.Data()
@@ -106,6 +106,7 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	point := m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Histogram().DataPoints().At(0)
 	point.SetTimestamp(0)
 	point.SetMExplicitBounds([]float64{1, 2, 3, 4})
+	point.SetMBucketCounts([]uint64{4, 3, 2, 1})
 	point.SetSum(10)
 	point.SetCount(1)
 

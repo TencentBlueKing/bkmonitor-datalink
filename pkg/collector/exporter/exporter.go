@@ -39,6 +39,7 @@ type Exporter struct {
 	queue     queue.Queue
 	cfg       *Config
 	dm        *durationmeasurer.DurationMeasurer
+	batches   map[string]queue.Config // 无并发读写 无需锁保护
 }
 
 var globalRecords = define.NewRecordQueue(define.PushModeGuarantee)
@@ -64,14 +65,18 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	logger.Infof("exporter config: %+v", c)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Exporter{
+	exp := &Exporter{
 		ctx:       ctx,
 		cancel:    cancel,
 		converter: converter.NewCommonConverter(),
-		queue:     queue.NewBatchQueue(c.Queue),
 		cfg:       c,
 		dm:        durationmeasurer.New(ctx, 2*time.Minute),
-	}, nil
+		batches:   LoadConfigFrom(conf),
+	}
+	exp.queue = queue.NewBatchQueue(c.Queue, func(s string) queue.Config {
+		return exp.batches[s]
+	})
+	return exp, nil
 }
 
 func (e *Exporter) Start() error {
@@ -84,6 +89,10 @@ func (e *Exporter) Start() error {
 	}
 	go wait.Until(e.ctx, e.checkIfSlowSend)
 	return nil
+}
+
+func (e *Exporter) Reload(conf *confengine.Config) {
+	e.batches = LoadConfigFrom(conf)
 }
 
 // checkIfSlowSend 检查是否存在慢发送的情况 如果存在的话就执行 hook 逻辑

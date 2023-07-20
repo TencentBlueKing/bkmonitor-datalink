@@ -38,7 +38,7 @@ func init() {
 	mustRegisterHttpGetRoute(statsSource, "/metrics", func(w http.ResponseWriter, r *http.Request) {
 		promhttp.Handler().ServeHTTP(w, r)
 	})
-	mustRegisterHttpPostRoute(statsSource, "/ping", func(w http.ResponseWriter, r *http.Request) {
+	mustRegisterHttpGetRoute(statsSource, "/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("pong"))
 	})
 

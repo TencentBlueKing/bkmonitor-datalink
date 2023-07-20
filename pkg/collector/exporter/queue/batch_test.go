@@ -35,17 +35,21 @@ func TestQueueOut(t *testing.T) {
 		TracesBatchSize:  100,
 		FlushInterval:    time.Second,
 	}
-	queue := NewBatchQueue(conf)
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
 
-	dataids := []int32{1001, 1002}
+	dataIDs := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
-	for _, id := range dataids {
+	for _, id := range dataIDs {
 		cloned := id
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 10000; i++ {
-				queue.Put(&testEvent{define.NewCommonEvent(cloned, common.MapStr{"count": i})})
+				queue.Put(&testEvent{
+					CommonEvent: define.NewCommonEvent(define.Token{}, cloned, common.MapStr{"count": i}),
+				})
 			}
 		}()
 	}
@@ -71,18 +75,22 @@ func TestQueueOutWithDelta(t *testing.T) {
 		TracesBatchSize:  100,
 		FlushInterval:    time.Second,
 	}
-	queue := NewBatchQueue(conf)
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
 
-	dataids := []int32{1001, 1002}
+	dataIDs := []int32{1001, 1002}
 	wg := sync.WaitGroup{}
-	for _, id := range dataids {
+	for _, id := range dataIDs {
 		cloned := id
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
 				time.Sleep(time.Millisecond)
-				queue.Put(&testEvent{define.NewCommonEvent(cloned, common.MapStr{"count": i})})
+				queue.Put(&testEvent{
+					CommonEvent: define.NewCommonEvent(define.Token{}, cloned, common.MapStr{"count": i}),
+				})
 			}
 		}()
 	}
@@ -102,30 +110,32 @@ func TestQueueOutWithDelta(t *testing.T) {
 }
 
 func TestQueueFull(t *testing.T) {
-	cases := map[int32]int32{
-		1001: 1,
-		1002: 2,
-		1003: 3,
-		1004: 4,
-	}
-
 	conf := Config{
 		MetricsBatchSize: 100,
 		LogsBatchSize:    1,
 		TracesBatchSize:  100,
 		FlushInterval:    2 * time.Second,
 	}
-	queue := NewBatchQueue(conf)
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
+	cases := map[int32]int32{
+		1001: 1,
+		1002: 2,
+		1003: 3,
+		1004: 4,
+	}
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			for k, v := range cases {
-				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
-				queue.Put(evt)
+				queue.Put(&testEvent{
+					CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v}),
+				})
 			}
 		}
 		done <- struct{}{}
@@ -151,30 +161,31 @@ func TestQueueFull(t *testing.T) {
 }
 
 func TestQueueFullBatch(t *testing.T) {
-	cases := map[int32]int32{
-		1001: 1,
-		1002: 2,
-		1003: 3,
-		1004: 4,
-	}
-
 	conf := Config{
 		MetricsBatchSize: 100,
 		LogsBatchSize:    1,
 		TracesBatchSize:  100,
 		FlushInterval:    2 * time.Second,
 	}
-	queue := NewBatchQueue(conf)
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 
+	cases := map[int32]int32{
+		1001: 1,
+		1002: 2,
+		1003: 3,
+		1004: 4,
+	}
 	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
 		for k, v := range cases {
 			events := make([]define.Event, 0)
 			for i := 0; i < 100; i++ {
-				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
+				evt := &testEvent{CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v})}
 				events = append(events, evt)
 			}
 			queue.Put(events...)
@@ -202,6 +213,18 @@ func TestQueueFullBatch(t *testing.T) {
 }
 
 func TestQueueTick(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    101,
+		TracesBatchSize:  100,
+		FlushInterval:    2 * time.Second,
+	}
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
 	cases := map[int32]int32{
 		1001: 1,
 		1002: 2,
@@ -209,22 +232,13 @@ func TestQueueTick(t *testing.T) {
 		1004: 4,
 	}
 
-	conf := Config{
-		MetricsBatchSize: 100,
-		LogsBatchSize:    101,
-		TracesBatchSize:  100,
-		FlushInterval:    2 * time.Second,
-	}
-	queue := NewBatchQueue(conf)
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			for k, v := range cases {
-				evt := &testEvent{define.NewCommonEvent(k, common.MapStr{"count": v})}
-				queue.Put(evt)
+				queue.Put(&testEvent{
+					CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v}),
+				})
 			}
 		}
 	}()
@@ -245,6 +259,48 @@ func TestQueueTick(t *testing.T) {
 
 			n++
 			if n == 4 {
+				return
+			}
+		}
+	}
+}
+
+func TestQueueResize(t *testing.T) {
+	conf := Config{
+		MetricsBatchSize: 100,
+		LogsBatchSize:    200,
+		TracesBatchSize:  200,
+		FlushInterval:    time.Minute, // 保证测试运行期间不会触发
+	}
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{
+			MetricsBatchSize: 10,
+		}
+	})
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 120; i++ {
+			queue.Put(&testEvent{
+				CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": i}),
+			})
+		}
+	}()
+
+	n := 0
+	for {
+		select {
+		case e := <-queue.Pop():
+			_, err := e.GetValue("data")
+			assert.NoError(t, err)
+
+			dataID, err := e.GetValue("dataid")
+			assert.NoError(t, err)
+			assert.Equal(t, int32(1001), dataID.(int32))
+			n++
+			if n == 3 {
 				return
 			}
 		}

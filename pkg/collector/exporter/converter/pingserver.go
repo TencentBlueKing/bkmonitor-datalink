@@ -49,8 +49,8 @@ var PingserverConverter EventConverter = pingserverConverter{}
 
 type pingserverConverter struct{}
 
-func (c pingserverConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
-	return pingserverEvent{define.NewCommonEvent(dataId, data)}
+func (c pingserverConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return pingserverEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c pingserverConverter) ToDataID(_ *define.Record) int32 {
@@ -64,5 +64,5 @@ func (c pingserverConverter) Convert(record *define.Record, f define.GatherFunc)
 	}
 
 	pm := pingserverMapper{pd: pd}
-	f(c.ToEvent(int32(pd.DataId), pm.AsMapStr()))
+	f(c.ToEvent(record.Token, int32(pd.DataId), pm.AsMapStr()))
 }

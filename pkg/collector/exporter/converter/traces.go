@@ -30,9 +30,9 @@ var TracesConverter EventConverter = tracesConverter{}
 
 type tracesConverter struct{}
 
-func (c tracesConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
+func (c tracesConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	logger.Debugf("convert otlp data, dataid=%v, traces: %+v", dataId, data)
-	return tracesEvent{define.NewCommonEvent(dataId, data)}
+	return tracesEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c tracesConverter) ToDataID(record *define.Record) int32 {
@@ -60,7 +60,7 @@ func (c tracesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			for k := 0; k < spans.Len(); k++ {
 				content, kind := c.Extract(record.RequestClient.IP, spans.At(k), resources)
 				DefaultMetricMonitor.IncConverterSpanKindCounter(dataId, kind)
-				events = append(events, c.ToEvent(dataId, content))
+				events = append(events, c.ToEvent(record.Token, dataId, content))
 			}
 		}
 		if len(events) > 0 {

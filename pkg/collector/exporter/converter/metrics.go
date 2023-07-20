@@ -34,9 +34,9 @@ var MetricsConverter EventConverter = metricsConverter{}
 
 type metricsConverter struct{}
 
-func (c metricsConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
+func (c metricsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	logger.Debugf("convert otlp data, dataid=%v, metrics: %+v", dataId, data)
-	return metricsEvent{define.NewCommonEvent(dataId, data)}
+	return metricsEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c metricsConverter) ToDataID(record *define.Record) int32 {
@@ -63,7 +63,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			metrics := scopeMetricsSlice.At(j).Metrics()
 			for k := 0; k < metrics.Len(); k++ {
 				for _, dp := range c.Extract(dataId, metrics.At(k), resources) {
-					events = append(events, c.ToEvent(dataId, dp))
+					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}
 		}

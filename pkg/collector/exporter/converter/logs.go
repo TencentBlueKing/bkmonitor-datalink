@@ -30,9 +30,9 @@ var LogsConverter EventConverter = logsConverter{}
 
 type logsConverter struct{}
 
-func (c logsConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
+func (c logsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
 	logger.Debugf("convert otlp data, dataid=%v, logs: %+v", dataId, data)
-	return logsEvent{define.NewCommonEvent(dataId, data)}
+	return logsEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c logsConverter) ToDataID(record *define.Record) int32 {
@@ -64,7 +64,7 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 					logger.Warnf("failed to extract content: %v", err)
 					continue
 				}
-				events = append(events, c.ToEvent(dataId, content))
+				events = append(events, c.ToEvent(record.Token, dataId, content))
 			}
 		}
 		if len(events) > 0 {

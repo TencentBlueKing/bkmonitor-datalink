@@ -42,7 +42,7 @@ func TestLogsRandom(t *testing.T) {
 		events = append(events, evts...)
 	}
 
-	LogsConverter.Convert(&record, gather)
+	NewCommonConverter().Convert(&record, gather)
 	assert.Len(t, events, 2)
 }
 

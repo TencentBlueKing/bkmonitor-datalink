@@ -50,8 +50,8 @@ var ProxyConverter EventConverter = proxyConverter{}
 
 type proxyConverter struct{}
 
-func (c proxyConverter) ToEvent(dataId int32, data common.MapStr) define.Event {
-	return proxyEvent{define.NewCommonEvent(dataId, data)}
+func (c proxyConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return proxyEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
 func (c proxyConverter) ToDataID(_ *define.Record) int32 {
@@ -65,5 +65,5 @@ func (c proxyConverter) Convert(record *define.Record, f define.GatherFunc) {
 	}
 
 	pm := proxyMapper{pd: pd}
-	f(c.ToEvent(int32(pd.DataId), pm.AsMapStr()))
+	f(c.ToEvent(record.Token, int32(pd.DataId), pm.AsMapStr()))
 }

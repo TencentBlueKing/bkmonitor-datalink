@@ -26,7 +26,7 @@ func TestConvertProxyData(t *testing.T) {
 	}
 
 	events := make([]define.Event, 0)
-	ProxyConverter.Convert(&define.Record{
+	NewCommonConverter().Convert(&define.Record{
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {

@@ -61,7 +61,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds": float64(10),
 					},
@@ -76,7 +76,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 
 		id := c.ToDataID(&define.Record{
@@ -123,7 +123,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_with_exemplar": float64(10),
 					},
@@ -144,7 +144,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 
@@ -174,7 +174,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds": float64(10),
 					},
@@ -189,7 +189,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 
@@ -228,7 +228,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_count": uint64(10),
 						"http_request_duration_microseconds_sum":   float64(10),
@@ -237,7 +237,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 					"target":    "unknown",
 					"dimension": map[string]string{},
 				}),
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_bucket": uint64(10),
 					},
@@ -253,7 +253,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 						"bk_trace_value":     float64(10001),
 					},
 				}),
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_bucket": uint64(10),
 					},
@@ -270,7 +270,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 
@@ -297,7 +297,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_with_exemplar_count": uint64(10),
 						"http_request_duration_microseconds_with_exemplar_sum":   float64(10),
@@ -306,7 +306,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 					"target":    "unknown",
 					"dimension": map[string]string{},
 				}),
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_with_exemplar_bucket": uint64(10),
 					},
@@ -316,7 +316,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 					"target":    "unknown",
 					"timestamp": fakeTs,
 				}),
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_with_exemplar_bucket": uint64(10),
 					},
@@ -333,7 +333,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 
@@ -362,7 +362,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds": float64(10),
 					},
@@ -377,7 +377,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 
@@ -413,7 +413,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				},
 			},
 			Event: []define.Event{
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds_count": uint64(10),
 						"http_request_duration_microseconds_sum":   float64(10),
@@ -422,7 +422,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 					"dimension": labels,
 					"timestamp": fakeTs,
 				}),
-				c.ToEvent(0, common.MapStr{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
 						"http_request_duration_microseconds": float64(10),
 					},
@@ -440,7 +440,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		gather := func(evts ...define.Event) {
 			events = append(events, evts...)
 		}
-		c.publishEventsFromMetricFamily(&define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
 	})
 }

@@ -227,7 +227,61 @@ bk-collector:
         from_token:
           biz_id: "bk_biz_id"
           app_name: "bk_app_name"
+        assemble:
+          - destination: "api_name"
+            predicate_key: "attributes.http.scheme"  # HTTP
+            rules:
+              - kind: "SPAN_KIND_CLIENT"
+                keys:
+                  - "attributes.http.method"
+                  - "attributes.http.host"
+                  - "attributes.http.target"
+                separator: ":"
+              - kind: "SPAN_KIND_SERVER"
+                keys:
+                  - "attributes.http.method"
+                  - "attributes.http.route"
+                separator: ":"
 
+          - destination: "api_name"
+            predicate_key: "attributes.rpc.system"  # RPC
+            rules:
+              - kind: ""
+                keys:
+                  - "attributes.rpc.method"
+                separator: ":"
+
+          - destination: "api_name"
+            predicate_key: "attributes.db.system"  # DataBase
+            rules:
+              - kind: ""
+                first_upper:
+                  - "attributes.db.system"
+                keys:
+                  - "attributes.db.system"
+                  - "attributes.db.operation"
+                  - "attributes.db.name"
+                separator: ":"
+
+          - destination: "api_name"
+            predicate_key: "attributes.messaging.system"  # Messaging
+            rules:
+              - kind: "SPAN_KIND_PRODUCER"
+                first_upper:
+                  - "attributes.messaging.system"
+                keys:
+                  - "attributes.messaging.system"
+                  - "const.producer"
+                  - "attributes.topic"
+                separator: ":"
+              - kind: "SPAN_KIND_CONSUMER"
+                first_upper:
+                  - "attributes.messaging.system"
+                keys:
+                  - "attributes.messaging.system"
+                  - "const.consumer"
+                  - "attributes.topic"
+                separator: ":"
 
     # MetricsFilter: 指标过滤处理器
     # Drop
@@ -385,8 +439,8 @@ bk-collector:
           identifier: "localhost:4316"
           type: "static"
           endpoints:
-          - "localhost:4316"
-          - "localhost:4315"
+            - "localhost:4316"
+            - "localhost:4315"
 
 
     # TracesDeriver: Traces 派生处理器
@@ -588,7 +642,7 @@ bk-collector:
             metric_name: "bk_apm_duration_bucket"
             publish_interval: "10s"
             gc_interval: "1h"
-            buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+            buckets: [ 0.01, 0.05, 0.1, 0.5, 1, 2, 5 ]
             max_series: 1000
             rules:
               - kind: "SPAN_KIND_SERVER"

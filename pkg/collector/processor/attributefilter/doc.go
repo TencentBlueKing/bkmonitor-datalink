@@ -8,7 +8,7 @@
 // specific language governing permissions and limitations under the License.
 
 /*
-# AttributeFilter: 属性处理器
+# AttributeFilter: 属性处理器 支持 as_string/from_token/assemble
 
 processor:
    - name: "attribute_filter/common"
@@ -18,9 +18,30 @@ processor:
          keys:
            - "attributes.http.host"
        # 将 token 字段写入到 attribute 里面
+
        from_token:
          biz_id: "bk_biz_id"
          app_name: "bk_app_name"
+
+       # 拼接 span 属性，插入到 attributes 中
+       assemble:
+         - destination: "api_name"                     # 期望插入的字段
+           predicate_key: "attributes.http.scheme"     # 需要匹配到的 attributes 中的字段
+             rules:
+              - kind: "SPAN_KIND_CLIENT"               # 所需 Kind 的条件
+                first_upper:
+                  - "attributes.http.method"           # 需要大写的属性
+                keys:                                  # 拼接的key
+                  - "attributes.http.method"
+                  - "attributes.http.host"
+                  - "attributes.http.target"
+                  - "const.consumer"                   # 支持常量
+                separator: ":"                         # 拼接符号
+              - kind: "SPAN_KIND_SERVER"
+                keys:
+                  - "attributes.http.method"
+                  - "attributes.http.route"
+                separator: ":"
 */
 
 package attributefilter

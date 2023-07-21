@@ -10,9 +10,12 @@
 package attributefilter
 
 import (
+	"strings"
+
 	"github.com/mitchellh/mapstructure"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"k8s.io/utils/strings/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -79,6 +82,9 @@ func (p attributeFilter) Process(record *define.Record) (*define.Record, error) 
 	}
 	if config.FromToken.BizId != "" || config.FromToken.AppName != "" {
 		p.fromTokenAction(record)
+	}
+	if len(config.Assemble) > 0 {
+		p.assembleAction(record)
 	}
 	return nil, nil
 }
@@ -149,4 +155,74 @@ func (p attributeFilter) asStringAction(record *define.Record) {
 			}
 		}
 	}
+}
+
+const unknownVal = "Unknown"
+
+func (p attributeFilter) assembleAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		actions := p.configs.GetByToken(record.Token.Original).(Config).Assemble
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+			for _, action := range actions {
+				if !processAssembleAction(span, action) {
+					if _, ok := span.Attributes().Get(action.Destination); !ok {
+						span.Attributes().UpsertString(action.Destination, unknownVal)
+					}
+				}
+			}
+		})
+	}
+}
+
+func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
+	attrs := span.Attributes()
+	if _, ok := attrs.Get(action.PredicateKey); !ok {
+		// 没有匹配的情况下直接返回，进入下一个循环
+		return false
+	}
+
+	spanKind := span.Kind().String()
+	for _, rule := range action.Rules {
+		// 匹配规则中不要求 Kind 类型或 Kind 类型符合要求的时候进行操作
+		if rule.Kind == "" || spanKind == rule.Kind {
+			fields := make([]string, 0, len(rule.Keys))
+			for _, key := range rule.Keys {
+				d := unknownVal
+
+				// 常量不需要判断是否存在
+				if strings.HasPrefix(key, constPrefix) {
+					d = key[len(constPrefix):]
+					fields = append(fields, d)
+					continue
+				}
+
+				// 处理 attributes 属性 支持首字母大写
+				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
+					if slices.Contains(rule.FirstUpper, key) {
+						d = firstUpper(v.AsString())
+					} else {
+						d = v.AsString()
+					}
+				}
+				fields = append(fields, d)
+			}
+			// 匹配到直接插入返回，不再进行后续 rule 匹配
+			span.Attributes().UpsertString(action.Destination, strings.Join(fields, rule.Separator))
+			return true
+		}
+	}
+
+	// Kind 条件不匹配直接返回，进入下一个循环
+	return false
+}
+
+// firstUpper 首字母大写
+func firstUpper(s string) string {
+	if s == "" {
+		return unknownVal
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

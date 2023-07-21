@@ -66,6 +66,13 @@ func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
 	return generator.NewTracesGenerator(opts)
 }
 
+func makeTraceAttributeGenerator(n int, attr map[string]string) *generator.TracesGenerator {
+	opts := define.TracesOptions{SpanKind: n}
+	opts.SpanCount = 1
+	opts.Attributes = attr
+	return generator.NewTracesGenerator(opts)
+}
+
 func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
 	opts := define.MetricsOptions{GaugeCount: n}
 	opts.RandomResourceKeys = []string{
@@ -204,7 +211,219 @@ func TestMetricsFromTokenAction(t *testing.T) {
 
 	filter := &attributeFilter{configs: configs}
 	filter.fromTokenAction(&record)
-	val, ok := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0).Attributes().Get("bk_biz_id")
+
+	point := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0)
+	val, ok := point.Attributes().Get("bk_biz_id")
 	assert.True(t, ok)
 	assert.Equal(t, val.AsString(), "10086")
+}
+
+func TestTraceAssembleAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      assemble:
+        - destination: "api_name"
+          predicate_key: "attributes.http.scheme"
+          rules:
+            - kind: "SPAN_KIND_CLIENT"
+              keys:
+                - "attributes.http.method"
+                - "attributes.http.host"
+                - "attributes.http.target"
+              separator: ":"
+            - kind: "SPAN_KIND_SERVER"
+              first_upper:
+                - "attributes.http.method"
+              keys:
+                - "attributes.http.method"
+                - "attributes.http.route"
+              separator: ":"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"http.scheme": "HTTP",
+		"http.method": "gET",
+		"http.route":  "testRoute",
+	}
+	g := makeTraceAttributeGenerator(2, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok := attrs.Get("api_name")
+	assert.True(t, ok)
+	assert.Equal(t, "GET:testRoute", v.AsString())
+}
+
+func TestTraceAssembleWithoutKind(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      assemble:
+        - destination: "api_name"
+          predicate_key: "attributes.rpc.system"
+          rules:
+            - kind: ""
+              first_upper:
+                - "attributes.rpc.method"
+              keys:
+                - "attributes.rpc.method"
+                - "const.TestConstCondition"
+              separator: ":"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"rpc.system": "PRC",
+		"rpc.method": "rpcMethod",
+	}
+	g := makeTraceAttributeGenerator(2, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok := attrs.Get("api_name")
+	assert.True(t, ok)
+	assert.Equal(t, "RpcMethod:TestConstCondition", v.AsString())
+}
+
+func TestTraceAssembleWithUnknown(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      assemble:
+        - destination: "api_name"
+          predicate_key: "attributes.rpc.system"
+          rules:
+            - kind: ""
+              first_upper:
+                - "attributes.rpc.method"
+              keys:
+                - "attributes.rpc.method"
+                - "const.TestConstCondition"
+              separator: ":"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"rpc.system": "PRC",
+	}
+	g := makeTraceAttributeGenerator(2, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok := attrs.Get("api_name")
+	assert.True(t, ok)
+	assert.Equal(t, "Unknown:TestConstCondition", v.AsString())
+}
+
+func TestTraceAssembleWithoutPredicate(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      assemble:
+        - destination: "api_name"
+          predicate_key: "attributes.rpc.system"
+          rules:
+            - kind: ""
+              first_upper:
+                - "attributes.rpc.method"
+              keys:
+                - "attributes.rpc.method"
+                - "const.TestConstCondition"
+              separator: ":"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+	m := map[string]string{
+		"http.scheme": "HTTP",
+	}
+	g := makeTraceAttributeGenerator(2, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok := attrs.Get("api_name")
+	assert.True(t, ok)
+	assert.Equal(t, "Unknown", v.AsString())
+}
+
+func TestTraceAssembleWithNullValue(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      assemble:
+        - destination: "api_name"
+          predicate_key: "attributes.rpc.system"
+          rules:
+            - kind: ""
+              first_upper:
+                - "attributes.rpc.method"
+              keys:
+                - "attributes.rpc.method"
+                - "const.TestConstCondition"
+                - "attributes.rpc.target"
+              separator: ":"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+	m := map[string]string{
+		"rpc.system": "rpc",
+		"rpc.method": "rpcMethod",
+		"rpc.target": "",
+	}
+	g := makeTraceAttributeGenerator(2, m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok := attrs.Get("api_name")
+	assert.True(t, ok)
+	assert.Equal(t, "RpcMethod:TestConstCondition:Unknown", v.AsString())
 }

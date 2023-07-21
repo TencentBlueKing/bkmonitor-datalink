@@ -27,6 +27,31 @@ processor:
       tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
 {%- endif %}
 
+{% if api_name_config is defined %}
+  - name: "{{ api_name_config.name }}"
+    config:
+      assemble:
+        {%- for config in api_name_config.assemble %}
+        - destination: "{{ config.destination }}"
+          predicate_key: "{{ config.predicate_key }}"
+          rules:
+            {%- for rule in config.rules %}
+            - kind: "{{ rule.kind }}"
+              separator: "{{ rule.separator }}"
+              {%- if rule.get("first_upper") %}
+              first_upper:
+                {%- for key in rule.get("first_upper", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+              {%- endif %}
+              keys:
+                {%- for key in rule.get("keys", []) %}
+                - "{{ key }}"
+                {%- endfor %}
+            {%- endfor %}
+        {%- endfor %}
+{%- endif %}
+
 {% if sampler_config is defined %}
   # Sampler: 采样处理器
   - name: "{{ sampler_config.name }}"

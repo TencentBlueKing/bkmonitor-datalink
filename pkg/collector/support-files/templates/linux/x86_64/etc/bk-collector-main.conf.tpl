@@ -1559,7 +1559,7 @@ bk-collector:
       # 慢发送阈值 p99
       threshold: 3s
     queue:
-      metrics_batch_size: 4000
+      metrics_batch_size: 5000
       traces_batch_size: 600
       logs_batch_size: 100
       flush_interval: 3s

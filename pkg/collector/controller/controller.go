@@ -525,6 +525,9 @@ loop:
 			}
 
 			token := task.Record().Token
+			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
+
+			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
 			logger.Debugf("derived handle record: %+v, token: %+v", task.Record().RecordType, token)
 
@@ -532,8 +535,8 @@ loop:
 			if task.StageCount() == 0 {
 				continue
 			}
+			DefaultMetricMonitor.ObserveExportedDuration(t0, task.PipelineName(), rtype, token.GetDataID(rtype))
 			DefaultMetricMonitor.IncHandledCounter(task.PipelineName(), rtype, token.GetDataID(rtype), token.Original)
-			DefaultMetricMonitor.ObserveHandledDuration(start, task.PipelineName(), rtype, token.GetDataID(rtype))
 
 		case <-c.ctx.Done():
 			return

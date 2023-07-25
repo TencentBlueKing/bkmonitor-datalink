@@ -14,8 +14,23 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+var hookTriggerTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "hook_trigger_total",
+		Help:      "Hook trigger total",
+	},
+)
+
+func init() {
+	prometheus.MustRegister(hookTriggerTotal)
+}
 
 var mgr Manager
 
@@ -51,6 +66,7 @@ type Manager struct {
 }
 
 func (m Manager) OnFailureHook() {
+	hookTriggerTotal.Add(1)
 	se := NewScriptExecutor(m.cfg.OnFailure.Scripts, m.cfg.OnFailure.Timeout)
 	for _, ret := range se.Execute() {
 		logger.Infof("execute command=[%s], err=%v", ret.Script, ret.Err)

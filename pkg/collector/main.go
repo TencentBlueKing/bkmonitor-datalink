@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	libbeat "github.com/elastic/beats/libbeat/beat"
 	"github.com/elastic/beats/libbeat/cmd/instance"
@@ -57,18 +58,24 @@ func main() {
 	}
 	defer utils.HandleCrash()
 
+	// 收敛 reload 行为 避免频繁 reload 导致 CPU 拉高
+	duration := time.Second * 10
+	timer := time.NewTimer(duration)
+	timer.Stop()
+
 	for {
 		select {
-		case <-beat.ReloadChan:
-			// 重载信号
+		case <-beat.ReloadChan: // 重载信号
+			timer.Reset(duration)
+
+		case <-timer.C:
 			if conf := beat.GetConfig(); conf != nil {
 				if err := collector.Reload(confengine.New(conf)); err != nil {
 					fmt.Fprint(os.Stderr, "failed to reload controller")
 				}
 			}
 
-		case <-beat.Done:
-			// 结束信号
+		case <-beat.Done: // 结束信号
 			if err := collector.Stop(); err != nil {
 				fmt.Fprint(os.Stderr, "failed to stop controller")
 			}

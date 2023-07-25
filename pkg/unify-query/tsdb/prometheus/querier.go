@@ -56,8 +56,6 @@ type Querier struct {
 	max        time.Time
 	maxRouting int
 	timeout    time.Duration
-
-	headers map[string]string
 }
 
 // checkCtxDone
@@ -223,9 +221,10 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	// 读取vm查询的特性开关
-	vmQueryFeatureFlag := queryReference.GetVMFeatureFlag(ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQueryFeatureFlag)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+	}
 
 	metricName := ReferenceName
 	if v, mc := metricMap[ReferenceName]; mc {
@@ -294,9 +293,10 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	// 读取vm查询的特性开关
-	vmQueryFeatureFlag := queryReference.GetVMFeatureFlag(ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQueryFeatureFlag)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+	}
 
 	metricName := ReferenceName
 	if v, mc := metricMap[ReferenceName]; mc {

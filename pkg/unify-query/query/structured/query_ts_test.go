@@ -31,52 +31,42 @@ type m struct {
 }
 
 func (m *m) PublishShard(ctx context.Context, channelValue interface{}) error {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) SubscribeShard(ctx context.Context) <-chan *goRedis.Message {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetShardID(ctx context.Context, sd *shard.Shard) (string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetAllShards(ctx context.Context) map[string]*shard.Shard {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) SetShard(ctx context.Context, k string, sd *shard.Shard) error {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetShard(ctx context.Context, k string) (*shard.Shard, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetDistributedLock(ctx context.Context, key, val string, expiration time.Duration) (string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) RenewalLock(ctx context.Context, key string, renewalDuration time.Duration) (bool, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetPolicies(ctx context.Context, clusterName, tagRouter string) (map[string]*metadata.Policy, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (m *m) GetShards(ctx context.Context, clusterName, tagRouter, database string) (map[string]*shard.Shard, error) {
-	//TODO implement me
 	panic("implement me")
 }
 

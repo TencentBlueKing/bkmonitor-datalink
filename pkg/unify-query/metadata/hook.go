@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	cache "github.com/patrickmn/go-cache"
@@ -20,6 +21,7 @@ import (
 )
 
 var (
+	mu sync.Mutex
 	md *metaData
 )
 
@@ -29,8 +31,10 @@ func setDefaultConfig() {
 	viper.SetDefault(CleanupIntervalPath, time.Minute*5)
 }
 
-// initMetadata
-func initMetadata() {
+// InitMetadata 初始化
+func InitMetadata() {
+	mu.Lock()
+	defer mu.Unlock()
 	md = &metaData{
 		c: cache.New(
 			viper.GetDuration(DefaultExpirationPath),
@@ -48,7 +52,7 @@ func init() {
 		)
 	}
 
-	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPostParse, initMetadata); err != nil {
+	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPostParse, InitMetadata); err != nil {
 		fmt.Printf(
 			"failed to subscribe event->[%s] for log module for default config, maybe log module won't working.",
 			eventbus.EventSignalConfigPreParse,

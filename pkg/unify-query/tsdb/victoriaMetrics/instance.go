@@ -176,9 +176,7 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	}
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {
-		for _, v := range d.Data {
-			series = append(series, v)
-		}
+		series = append(series, d.Data...)
 	}
 
 	return series, nil
@@ -663,7 +661,6 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
 	panic("implement me")
 }
 

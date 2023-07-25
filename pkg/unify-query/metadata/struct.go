@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,6 +22,10 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+)
+
+const (
+	StaticField = "value"
 )
 
 // AggrMethod 聚合方法
@@ -96,12 +101,16 @@ type Queries struct {
 	directlyResultTable   map[string][]string
 }
 
-func (qRef QueryReference) GetVMFeatureFlag(ctx context.Context) bool {
+func (qRef QueryReference) GetDruidQueryFeatureFlag(ctx context.Context) bool {
+	return true
+}
+
+func (qRef QueryReference) GetVMQueryFeatureFlag(ctx context.Context) bool {
 	var (
 		span oleltrace.Span
 		user = GetUser(ctx)
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-feature-flag")
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-feature-flag")
 	if span != nil {
 		defer span.End()
 	}
@@ -113,12 +122,59 @@ func (qRef QueryReference) GetVMFeatureFlag(ctx context.Context) bool {
 		"spaceUid": user.SpaceUid,
 	})
 
-	vmQuery := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	trace.InsertStringIntoSpan("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), vmQuery), span)
+	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
+	trace.InsertStringIntoSpan("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 
-	return vmQuery
+	return status
 }
-func (qRef QueryReference) CheckVmQuery(ctx context.Context, vmQuery bool) (bool, map[string]string, map[string][]string, error) {
+
+// CheckDruidCheck 判断是否是查询 druid 数据
+func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
+	// 判断是否打开 druid-query 特性开关
+	if !qRef.GetDruidQueryFeatureFlag(ctx) {
+		return false
+	}
+
+	druidCheckStatus := false
+	for _, reference := range qRef {
+		if len(reference.QueryList) > 0 {
+			for _, query := range reference.QueryList {
+				// 获取聚合方法列表
+				for _, amList := range query.AggregateMethodList {
+					// 获取维度列表
+					var dimensionFlag uint
+					for _, amDimension := range amList.Dimensions {
+						// 维度判断（两个维度同时出现才拼接）
+						switch amDimension {
+						case "bk_obj_id":
+							dimensionFlag |= 1
+						case "bk_inst_id":
+							dimensionFlag |= 2
+						}
+					}
+
+					if dimensionFlag == 3 {
+						// 如果非单指标单表需要进行替换，使用单指标单表类型处理
+						if !query.IsSingleMetric {
+							query.IsSingleMetric = true
+							query.Measurement = query.Field
+							query.Field = StaticField
+						}
+						// 替换 vmrt 的值
+						query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
+						druidCheckStatus = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return druidCheckStatus
+}
+
+// CheckVmQuery 判断是否是查询 vm 数据
+func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]string, map[string][]string, error) {
 	var (
 		span      oleltrace.Span
 		metricMap = make(map[string]string)
@@ -133,12 +189,16 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context, vmQuery bool) (bool
 		defer span.End()
 	}
 
-	if !vmQuery {
+	vmQueryFeatureFlag := qRef.GetVMQueryFeatureFlag(ctx)
+	druidQueryStatus := qRef.CheckDruidCheck(ctx)
+
+	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
+	if !vmQueryFeatureFlag && !druidQueryStatus {
 		return ok, metricMap, vmRtGroup, err
 	}
 
 	for referenceName, reference := range qRef {
-		if len(reference.QueryList) > 0 {
+		if 0 < len(reference.QueryList) {
 			var (
 				metricName string
 				vmRts      = make(map[string]struct{})
@@ -169,28 +229,6 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context, vmQuery bool) (bool
 
 				// 获取 vm 对应的 rt 列表
 				if query.VmRt != "" {
-					// 如果有拆分表默认维度列表中的维度，则按照固定协议拼接vmrt的表名
-					var dimensionFlag uint
-					// 获取聚合方法列表
-					for _, amList := range query.AggregateMethodList {
-						// 获取维度列表
-						for _, amDimension := range amList.Dimensions {
-							// 维度判断（两个维度同时出现才拼接）
-							switch amDimension {
-							case "bk_obj_id":
-								dimensionFlag |= 1
-							case "bk_inst_id":
-								dimensionFlag |= 2
-							}
-							if dimensionFlag == 3 {
-								query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
-								break
-							}
-						}
-						if dimensionFlag == 3 {
-							break
-						}
-					}
 					vmRts[query.VmRt] = struct{}{}
 				}
 			}
@@ -200,10 +238,14 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context, vmQuery bool) (bool
 				break
 			}
 
-			vmRtGroup[metricName] = make([]string, 0, len(vmRts))
+			if vmRtGroup[metricName] == nil {
+				vmRtGroup[metricName] = make([]string, 0)
+			}
 			for k := range vmRts {
 				vmRtGroup[metricName] = append(vmRtGroup[metricName], k)
 			}
+
+			sort.Strings(vmRtGroup[metricName])
 		}
 	}
 

@@ -163,7 +163,6 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
-	startAnaylize = time.Now()
 
 	user := metadata.GetUser(ctx)
 	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
@@ -395,7 +394,7 @@ func (i *Instance) query(
 
 		bkTaskIndex := query.TableID
 		if bkTaskIndex == "" {
-			fmt.Sprintf("%s_%s", query.DB, query.Measurement)
+			bkTaskIndex = fmt.Sprintf("%s_%s", query.DB, query.Measurement)
 		}
 		expandTag = []prompb.Label{
 			{
@@ -618,7 +617,7 @@ func (i *Instance) grpcStream(
 	}
 
 	filterRequest, _ := json.Marshal(req)
-	trace.InsertStringIntoSpan("query-filter-request", fmt.Sprintf("%s", filterRequest), span)
+	trace.InsertStringIntoSpan("query-filter-request", string(filterRequest), span)
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {

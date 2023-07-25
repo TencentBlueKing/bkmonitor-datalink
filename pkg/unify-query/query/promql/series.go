@@ -211,12 +211,10 @@ func (i *InfluxdbSeriesIterator) Seek(t int64) chunkenc.ValueType { // nolint:go
 }
 
 func (i *InfluxdbSeriesIterator) AtHistogram() (int64, *histogram.Histogram) {
-	//TODO implement me
 	panic("promql series implement me AtHistogram")
 }
 
 func (i *InfluxdbSeriesIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
-	//TODO implement me
 	panic("promql series implement me AtFloatHistogram")
 }
 

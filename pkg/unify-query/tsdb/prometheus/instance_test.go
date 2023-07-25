@@ -49,22 +49,18 @@ type instance struct {
 var _ tsdb.Instance = (*instance)(nil)
 
 func (i instance) LabelNames(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i instance) Series(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	//TODO implement me
 	panic("implement me")
 }
 

@@ -24,6 +24,7 @@ import (
 
 	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -237,6 +238,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		metricName    = q.FieldName
 		tableID       = q.TableID
 		span          oleltrace.Span
+		user          = metadata.GetUser(ctx)
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-metric")
@@ -334,6 +336,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		tagKeys := proxy.TagsKey
 		vmRt := proxy.VmRt
 
+		// 通过特性开关判断是否需要开启 druid 查询功能
+		ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+			"name":     user.Name,
+			"source":   user.Source,
+			"spaceUid": user.SpaceUid,
+		})
+		druidQuery := featureFlag.BoolVariation(ctx, ffUser, "durid-query", false)
+		if druidQuery {
+			// 业务逻辑
+
+			tsDB.MeasurementType = redis.BkSplitMeasurement
+			vmRt = "_cmdb"
+		}
+
 		if q.Offset != "" {
 			dTmp, err := model.ParseDuration(q.Offset)
 			if err != nil {
@@ -344,6 +360,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 		switch tsDB.MeasurementType {
 		case redis.BKTraditionalMeasurement:
+			// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
 			field = metricName
 		// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 		case redis.BkExporter:
@@ -359,6 +376,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			field = metricName
 		// 单指标单表，指标名为表名，值为指定字段 value
 		case redis.BkSplitMeasurement:
+			// measurement: usage, field: value  => usage_value
 			measurement = metricName
 			field = promql.StaticField
 		default:

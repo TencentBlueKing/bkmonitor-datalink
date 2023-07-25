@@ -7,49 +7,27 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package featureFlag
 
 import (
 	"context"
-	"strings"
+
+	ffclient "github.com/thomaspoignant/go-feature-flag"
 )
 
-// User
-type User struct {
-	Key      string
-	Source   string
-	Name     string
-	Role     string
-	SpaceUid string
+type mockRetriever struct {
+	flags string
 }
 
-// SetUser
-func SetUser(ctx context.Context, key, spaceUid string) {
-	if md != nil {
-		user := &User{
-			Key:      key,
-			SpaceUid: spaceUid,
-		}
-		arr := strings.Split(key, ":")
-		if len(arr) > 0 {
-			user.Source = arr[0]
-			if len(arr) > 1 {
-				user.Name = arr[1]
-			}
-		}
-		md.set(ctx, UserKey, user)
-	}
+func (m mockRetriever) Retrieve(ctx context.Context) ([]byte, error) {
+	return []byte(m.flags), nil
 }
 
-// GetUser
-func GetUser(ctx context.Context) *User {
-	if md != nil {
-		r, ok := md.get(ctx, UserKey)
-		if ok {
-			if v, ok := r.(*User); ok {
-				return v
-			}
-		}
-	}
-	return &User{}
+func MockFeatureFlag(ctx context.Context, flags string) error {
+	ffclient.Close()
+	return ffclient.Init(ffclient.Config{
+		Context:    ctx,
+		FileFormat: "json",
+		Retriever:  &mockRetriever{flags: flags},
+	})
 }

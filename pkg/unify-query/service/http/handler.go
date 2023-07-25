@@ -23,7 +23,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -187,11 +186,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	qrStr, _ := json.Marshal(queryReference)
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
 
-	// 读取vm查询的特性开关
-	vmQueryFeatureFlag := queryReference.GetVMFeatureFlag(ctx)
-
 	// 判断是否是直查
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx, vmQueryFeatureFlag)
+	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
 	if ok {
 		if err != nil {
 			log.Errorf(ctx, err.Error())
@@ -384,18 +380,6 @@ func HandlerQueryTs(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	rawQuery := featureFlag.BoolVariation(ctx, ffUser, "new-query", false)
-	vmQuery := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	if !rawQuery && !vmQuery {
-		HandleTSQueryRequest(c)
-		return
-	}
 
 	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 
@@ -461,20 +445,6 @@ func HandlerQueryPromQL(c *gin.Context) {
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-promql")
 	if span != nil {
 		defer span.End()
-	}
-
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	rawQuery := featureFlag.BoolVariation(ctx, ffUser, "new-query", false)
-	vmQuery := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-
-	if !rawQuery && !vmQuery {
-		HandleTsQueryPromQLDataRequest(c)
-		return
 	}
 
 	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusReceived)

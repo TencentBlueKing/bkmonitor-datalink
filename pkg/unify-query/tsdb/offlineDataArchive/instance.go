@@ -141,7 +141,7 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	}
 
 	filterRequest, _ := json.Marshal(req)
-	trace.InsertStringIntoSpan("query-filter-request", fmt.Sprintf("%s", filterRequest), span)
+	trace.InsertStringIntoSpan("query-filter-request", string(filterRequest), span)
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
@@ -162,32 +162,26 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 }
 
 func (i Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i Instance) Query(ctx context.Context, promql string, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
 	panic("implement me")
 }
 
 func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	//TODO implement me
 	panic("implement me")
 }
 

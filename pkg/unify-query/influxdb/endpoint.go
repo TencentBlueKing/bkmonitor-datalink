@@ -176,7 +176,6 @@ func (e *endpointSet) Close() {
 
 type endpointRef struct {
 	ctx context.Context
-	mtx sync.RWMutex
 
 	cc *grpc.ClientConn
 

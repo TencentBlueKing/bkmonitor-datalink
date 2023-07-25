@@ -38,10 +38,6 @@ var (
 	_ chunkenc.Iterator = (*seriesIterator)(nil)
 )
 
-type directSender interface {
-	send(response *remoteRead.TimeSeries)
-}
-
 type streamSeriesSet struct {
 	ctx context.Context
 
@@ -50,16 +46,12 @@ type streamSeriesSet struct {
 
 	limiter *rate.Limiter
 
-	warnCh directSender
-
 	currSeries *remoteRead.TimeSeries
 	recvCh     chan *remoteRead.TimeSeries
 
 	errMtx sync.Mutex
 	err    error
 	warns  storage.Warnings
-
-	labels labels.Labels
 
 	timeout time.Duration
 }
@@ -270,12 +262,10 @@ type seriesIterator struct {
 }
 
 func (it *seriesIterator) AtHistogram() (int64, *histogram.Histogram) {
-	//TODO implement me
 	panic("tsdb series set implement me AtHistogram")
 }
 
 func (it *seriesIterator) AtFloatHistogram() (int64, *histogram.FloatHistogram) {
-	//TODO implement me
 	panic("tsdb series set implement me AtFloatHistogram")
 }
 

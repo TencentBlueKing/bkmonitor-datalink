@@ -44,8 +44,6 @@ type Instance struct {
 	accept         string
 	acceptEncoding string
 
-	sortSeries bool
-
 	maxLimit  int
 	maxSLimit int
 	tolerance int

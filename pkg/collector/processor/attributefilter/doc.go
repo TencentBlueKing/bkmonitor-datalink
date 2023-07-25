@@ -17,8 +17,13 @@ processor:
        as_string:
          keys:
            - "attributes.http.host"
-       # 将 token 字段写入到 attribute 里面
+      # 将 attributes 部分字段转换为 int 类型
 
+       as_int:
+         keys:
+           - "attributes.http.status_code"
+
+       # 将 token 字段写入到 attribute 里面
        from_token:
          biz_id: "bk_biz_id"
          app_name: "bk_app_name"

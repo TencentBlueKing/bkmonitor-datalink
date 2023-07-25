@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -37,6 +38,8 @@ import (
 	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 	common "skywalking.apache.org/repo/goapi/collect/common/v3"
 	agentV3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 )
 
 const (
@@ -52,6 +55,11 @@ const (
 	AttributeNetworkAddressUsedAtPeer  = "network.AddressUsedAtPeer"
 	AttributeDataToken                 = "bk.data.token"
 )
+
+var ignoreLocalIps = map[string]struct{}{
+	"localhost": {},
+	"127.0.0.1": {},
+}
 
 var otSpanTagsMapping = map[string]string{
 	"url":         conventions.AttributeHTTPURL,
@@ -84,7 +92,31 @@ func EncodeTraces(segment *agentV3.SegmentObject, token string) ptrace.Traces {
 	il := resourceSpan.ScopeSpans().AppendEmpty()
 	swSpansToSpanSlice(segment.GetTraceId(), segment.GetTraceSegmentId(), swSpans, il.Spans())
 
+	serviceInstanceId := segment.GetServiceInstance()
+	foreach.Spans(traceData.ResourceSpans(), func(span ptrace.Span) {
+		attrs := span.Attributes()
+		v, ok := attrs.Get(conventions.AttributeNetHostIP)
+		if !ok {
+			swTransformIP(serviceInstanceId, attrs)
+		} else {
+			ip := strings.ToLower(v.AsString())
+			if _, ok = ignoreLocalIps[ip]; ok {
+				swTransformIP(serviceInstanceId, attrs)
+			}
+		}
+	})
+
 	return traceData
+}
+
+// swTransformIP 转化 serviceInstanceId 中的 ip 字段插入 attribute 中
+// serviceInstanceId 样例 70d59292f06b4245b50654f7bba0604e@10.10.25.163
+func swTransformIP(instanceId string, attrs pcommon.Map) {
+	s := strings.Split(instanceId, "@")
+	// 如果裁剪出则插入字段，否则不做任何操作
+	if len(s) >= 2 {
+		attrs.UpsertString(conventions.AttributeNetHostIP, s[1])
+	}
 }
 
 func swTagsToInternalResource(span *agentV3.SpanObject, dest pcommon.Resource) {

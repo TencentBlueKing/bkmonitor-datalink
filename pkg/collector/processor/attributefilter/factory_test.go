@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -66,10 +67,13 @@ func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
 	return generator.NewTracesGenerator(opts)
 }
 
-func makeTraceAttributeGenerator(n int, attr map[string]string) *generator.TracesGenerator {
+func makeTracesAttributesGenerator(n int, attrs map[string]string) *generator.TracesGenerator {
 	opts := define.TracesOptions{SpanKind: n}
 	opts.SpanCount = 1
-	opts.Attributes = attr
+	opts.Attributes = attrs
+	opts.Resources = map[string]string{
+		"http.status_code": "200",
+	}
 	return generator.NewTracesGenerator(opts)
 }
 
@@ -184,7 +188,10 @@ func TestTracesFromTokenAction(t *testing.T) {
 
 	filter := &attributeFilter{configs: configs}
 	filter.fromTokenAction(&record)
-	val, ok := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes().Get("bk_biz_id")
+
+	traces := record.Data.(ptrace.Traces)
+	attrs := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
+	val, ok := attrs.Get("bk_biz_id")
 	assert.True(t, ok)
 	assert.Equal(t, val.AsString(), "10086")
 }
@@ -212,7 +219,8 @@ func TestMetricsFromTokenAction(t *testing.T) {
 	filter := &attributeFilter{configs: configs}
 	filter.fromTokenAction(&record)
 
-	point := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0)
+	metrics := record.Data.(pmetric.Metrics)
+	point := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0)
 	val, ok := point.Attributes().Get("bk_biz_id")
 	assert.True(t, ok)
 	assert.Equal(t, val.AsString(), "10086")
@@ -251,7 +259,7 @@ processor:
 		"http.method": "gET",
 		"http.route":  "testRoute",
 	}
-	g := makeTraceAttributeGenerator(2, m)
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindServer), m)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -259,6 +267,7 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok := attrs.Get("api_name")
@@ -292,7 +301,7 @@ processor:
 		"rpc.system": "PRC",
 		"rpc.method": "rpcMethod",
 	}
-	g := makeTraceAttributeGenerator(2, m)
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -300,6 +309,7 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok := attrs.Get("api_name")
@@ -332,7 +342,7 @@ processor:
 	m := map[string]string{
 		"rpc.system": "PRC",
 	}
-	g := makeTraceAttributeGenerator(2, m)
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -340,6 +350,7 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok := attrs.Get("api_name")
@@ -368,10 +379,11 @@ processor:
 	obj, err := NewFactory(psc[0].Config, nil)
 	factory := obj.(*attributeFilter)
 	assert.NoError(t, err)
+
 	m := map[string]string{
 		"http.scheme": "HTTP",
 	}
-	g := makeTraceAttributeGenerator(2, m)
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -379,6 +391,7 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok := attrs.Get("api_name")
@@ -408,12 +421,13 @@ processor:
 	obj, err := NewFactory(psc[0].Config, nil)
 	factory := obj.(*attributeFilter)
 	assert.NoError(t, err)
+
 	m := map[string]string{
 		"rpc.system": "rpc",
 		"rpc.method": "rpcMethod",
 		"rpc.target": "",
 	}
-	g := makeTraceAttributeGenerator(2, m)
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -421,9 +435,49 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok := attrs.Get("api_name")
 	assert.True(t, ok)
 	assert.Equal(t, "RpcMethod:TestConstCondition:Unknown", v.AsString())
+}
+
+func TestTraceAsIntAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      as_int:
+        keys:
+          - "attributes.http.status_code"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"http.status_code": "200",
+	}
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	resourceAttr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	v, ok := resourceAttr.Get(conventions.AttributeHTTPStatusCode)
+	assert.True(t, ok)
+	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
+	assert.Equal(t, "200", v.AsString())
+
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+	v, ok = attrs.Get(conventions.AttributeHTTPStatusCode)
+	assert.True(t, ok)
+	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
+	assert.Equal(t, "200", v.AsString())
 }

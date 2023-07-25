@@ -10,9 +10,11 @@
 package attributefilter
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/mitchellh/mapstructure"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"k8s.io/utils/strings/slices"
@@ -80,6 +82,9 @@ func (p attributeFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.AsString.Keys) > 0 {
 		p.asStringAction(record)
 	}
+	if len(config.AsInt.Keys) > 0 {
+		p.asIntAction(record)
+	}
 	if config.FromToken.BizId != "" || config.FromToken.AppName != "" {
 		p.fromTokenAction(record)
 	}
@@ -145,11 +150,49 @@ func (p attributeFilter) asStringAction(record *define.Record) {
 					for k := 0; k < spans.Len(); k++ {
 						span := spans.At(k)
 						attributes = span.Attributes()
-						v, ok := attributes.Get(key)
-						if !ok {
-							continue
+						if v, ok := attributes.Get(key); ok {
+							attributes.UpsertString(key, v.AsString())
 						}
-						attributes.UpsertString(key, v.AsString())
+					}
+				}
+			}
+		}
+	}
+}
+
+func processAsIntAction(attributes pcommon.Map, key string) {
+	v, ok := attributes.Get(key)
+	if !ok {
+		return
+	}
+
+	i, err := strconv.ParseInt(v.AsString(), 10, 64)
+	if err != nil {
+		logger.Debugf("parse attribute key '%s' as int failed, error: %s", key, err)
+		return
+	}
+	attributes.UpsertInt(key, i)
+}
+
+func (p attributeFilter) asIntAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		for _, key := range p.configs.GetByToken(record.Token.Original).(Config).AsInt.Keys {
+			for i := 0; i < resourceSpansSlice.Len(); i++ {
+				resourceSpans := resourceSpansSlice.At(i)
+
+				attributes := resourceSpans.Resource().Attributes()
+				processAsIntAction(attributes, key)
+
+				scopeSpansSlice := resourceSpans.ScopeSpans()
+				for j := 0; j < scopeSpansSlice.Len(); j++ {
+					spans := scopeSpansSlice.At(j).Spans()
+					for k := 0; k < spans.Len(); k++ {
+						span := spans.At(k)
+						attributes := span.Attributes()
+						processAsIntAction(attributes, key)
 					}
 				}
 			}

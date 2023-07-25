@@ -27,11 +27,17 @@ processor:
       tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
 {%- endif %}
 
-{% if api_name_config is defined %}
-  - name: "{{ api_name_config.name }}"
+{% if attribute_config is defined %}
+  # attribute_config: attribute 属性配置
+  - name: "{{ attribute_config.name }}"
     config:
+      as_int:
+        keys:
+          {%- for key in attribute_config.as_int%}
+          - "{{ key }}"
+          {%- endfor %}
       assemble:
-        {%- for config in api_name_config.assemble %}
+        {%- for config in attribute_config.assemble %}
         - destination: "{{ config.destination }}"
           predicate_key: "{{ config.predicate_key }}"
           rules:

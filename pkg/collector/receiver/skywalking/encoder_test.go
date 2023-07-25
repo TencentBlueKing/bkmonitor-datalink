@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 	agentV3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 )
 
@@ -324,4 +325,20 @@ func generateTracesOneEmptyResourceSpans() ptrace.Span {
 	il := resourceSpan.ScopeSpans().AppendEmpty()
 	il.Spans().AppendEmpty()
 	return il.Spans().At(0)
+}
+
+func TestSwTransformIP(t *testing.T) {
+	serviceInstanceID := "TestServiceInstanceID@127.0.1.2"
+	m := ptrace.NewSpan().Attributes()
+	swTransformIP(serviceInstanceID, m)
+	v, ok := m.Get(conventions.AttributeNetHostIP)
+	assert.True(t, ok)
+	assert.Equal(t, v.Type(), pcommon.ValueTypeString)
+	assert.Equal(t, v.AsString(), "127.0.1.2")
+
+	m.Clear()
+	serviceInstanceID = "TestServiceInstanceID2"
+	swTransformIP(serviceInstanceID, m)
+	_, ok = m.Get(conventions.AttributeNetHostIP)
+	assert.False(t, ok)
 }

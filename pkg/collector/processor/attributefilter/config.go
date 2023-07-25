@@ -13,11 +13,16 @@ import "strings"
 
 type Config struct {
 	AsString  AsStringAction   `config:"as_string" mapstructure:"as_string"`
+	AsInt     AsIntAction      `config:"as_int" mapstructure:"as_int"`
 	FromToken FromTokenAction  `config:"from_token" mapstructure:"from_token"`
 	Assemble  []AssembleAction `config:"assemble" mapstructure:"assemble"`
 }
 
 type AsStringAction struct {
+	Keys []string `config:"keys" mapstructure:"keys"`
+}
+
+type AsIntAction struct {
 	Keys []string `config:"keys" mapstructure:"keys"`
 }
 
@@ -65,6 +70,7 @@ func (c *Config) cleanAttributesPrefix(s string) string {
 
 func (c *Config) Clean() {
 	c.AsString.Keys = c.cleanAttributesPrefixes(c.AsString.Keys)
+	c.AsInt.Keys = c.cleanAttributesPrefixes(c.AsInt.Keys)
 	for i := 0; i < len(c.Assemble); i++ {
 		match := c.Assemble[i].PredicateKey
 		c.Assemble[i].PredicateKey = c.cleanAttributesPrefix(match)

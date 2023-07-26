@@ -68,6 +68,7 @@ func baseInit(beatName string, version string) (*Config, error) {
 	flag.Parse()
 
 	gse.GseCheck = *gseCheck
+	gse.IsContainerMode = *isContainerMode
 
 	// Print version
 	versionFlag := flag.Lookup("v")

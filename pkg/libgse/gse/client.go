@@ -74,6 +74,7 @@ var (
 	metricGseAgentReceived      = monitoring.NewInt("gse_agent_received")
 	metricGseAgentReceiveFailed = monitoring.NewInt("gse_agent_receive_failed")
 	GseCheck                    = false
+	IsContainerMode             = false
 )
 
 // GseClient : gse client
@@ -327,6 +328,15 @@ func (c *GseClient) connect() error {
 			logp.Info("gse client socket connected")
 			return nil
 		}
+
+		// 针对不同 error 需要单独处理
+		// 如果 socket 文件不存在 那就不用尝试了（容器模式下）直接退出
+		if strings.Contains(err.Error(), "no such file or directory") && IsContainerMode {
+			logp.Err("no socket found, exit program")
+			time.Sleep(3 * time.Second) // 避免频繁重启
+			os.Exit(1)
+		}
+
 		metricGseClientConnectRetry.Add(1)
 		logp.Err("try %d times", c.cfg.RetryTimes-retry)
 		time.Sleep(intervalTime)
@@ -346,7 +356,7 @@ func (c *GseClient) reconnect() {
 
 	err := c.connect()
 	if err != nil {
-		logp.Err("connect failed, program quit %v", err)
+		logp.Err("connect failed, %v", err)
 		return
 	}
 }

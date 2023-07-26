@@ -2,6 +2,21 @@ type: 'subconfig'
 token: '{{ bk_data_token }}'
 bk_biz_id: {{ bk_biz_id }}
 bk_app_name: {{ bk_app_name }}
+
+{% if queue_config is defined %}
+exporter:
+  queue:
+    {% if queue_config.logs_batch_size is defined %}
+    logs_batch_size: {{ queue_config.logs_batch_size }}
+    {%- endif %}
+    {% if queue_config.metrics_batch_size is defined %}
+    metrics_batch_size: {{ queue_config.metrics_batch_size }}
+    {%- endif %}
+    {% if queue_config.traces_batch_size is defined %}
+    traces_batch_size: {{ queue_config.traces_batch_size }}
+    {%- endif %}
+{%- endif %}
+
 default:
   processor:
 {% if apdex_config is defined %}

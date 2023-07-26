@@ -692,6 +692,11 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 			proxyURL = *endpoint.ProxyURL
 		}
 
+		var safeTlsConfig promv1.SafeTLSConfig
+		tlsConfig := endpoint.TLSConfig.DeepCopy()
+		if tlsConfig != nil {
+			safeTlsConfig = tlsConfig.SafeTLSConfig
+		}
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.workloadController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
 				Client:               c.client,
@@ -704,6 +709,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				Scheme:               endpoint.Scheme,
 				BasicAuth:            endpoint.BasicAuth.DeepCopy(),
 				BearerTokenSecret:    endpoint.BearerTokenSecret.DeepCopy(),
+				TLSConfig:            &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
 				Period:               string(endpoint.Interval),
 				Timeout:              string(endpoint.ScrapeTimeout),
 				ProxyURL:             proxyURL,

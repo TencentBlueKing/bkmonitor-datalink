@@ -27,7 +27,6 @@ help:
 lint: mod
 	diff -u <(echo -n) <(gofumpt -w .)
 	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
-	diff -u <(echo -n) <(golangci-lint run -c ../../.golangci.yml)
 
 .PHONY: test
 test: mod

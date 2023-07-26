@@ -12,6 +12,7 @@ package influxdb
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -303,40 +304,47 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 		}
 	}
 
+	var s []byte
 	res += fmt.Sprintln("clusterInfo")
 	for k, v := range r.clusterInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 
 	res += fmt.Sprintln("----------------------------------------")
 
 	res += fmt.Sprintln("hostInfo")
 	for k, v := range r.hostInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
 	res += fmt.Sprintln("tagInfo")
 	for k, v := range r.tagInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
 	res += fmt.Sprintln("proxyInfo")
 	for k, v := range r.proxyInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
 	res += fmt.Sprintln("queryRouterInfo")
 	for k, v := range r.queryRouterInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
 	res += fmt.Sprintln("hostStatusInfo")
 	for k, v := range r.hostStatusInfo {
-		res += fmt.Sprintf("%s => %+v\n", k, v)
+		s, _ = json.Marshal(v)
+		res += fmt.Sprintf("%s => %s\n", k, s)
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
@@ -394,7 +402,10 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 					value = 1
 				}
 
-				metric.ResultTableInfoSet(ctx, value, k, v.BkBizId, v.DataId, v.MeasurementType, v.VmTableId)
+				metric.ResultTableInfoSet(
+					ctx, value, k, v.BkBizId, v.DataId, v.MeasurementType, v.VmTableId,
+					v.BcsClusterId, fmt.Sprintf("%v", v.IsInfluxdbDisabled),
+				)
 			}
 			r.queryRouterInfo = queryRouterInfo
 		}

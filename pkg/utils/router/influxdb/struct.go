@@ -76,8 +76,10 @@ type Proxy struct {
 type QueryRouterInfo map[string]*QueryRouter
 
 type QueryRouter struct {
-	BkBizId         string `json:"bk_biz_id"`
-	DataId          string `json:"data_id"`
-	MeasurementType string `json:"measurement_type"`
-	VmTableId       string `json:"vm_table_id"`
+	BkBizId            string `json:"bk_biz_id"`
+	DataId             string `json:"data_id"`
+	MeasurementType    string `json:"measurement_type"`
+	VmTableId          string `json:"vm_table_id"`
+	BcsClusterId       string `json:"bcs_cluster_id"`
+	IsInfluxdbDisabled bool   `json:"is_influxdb_disabled"`
 }

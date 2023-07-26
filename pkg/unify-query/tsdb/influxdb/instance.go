@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb/prometheus/remote"
@@ -62,8 +61,6 @@ var (
 	ErrorsNotDownSampled = errors.New("not downsampled")
 
 	MapGrpcConn = make(map[string]*grpc.ClientConn)
-
-	connLock sync.Mutex
 )
 
 // NewInstance 初始化引擎

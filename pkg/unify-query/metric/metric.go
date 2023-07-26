@@ -60,10 +60,20 @@ var (
 		},
 		[]string{
 			"rt_table_id", "rt_bk_biz_id", "rt_data_id",
-			"rt_measurement_type", "vm_table_id",
+			"rt_measurement_type", "vm_table_id", "bcs_cluster_id", "is_influxdb_disabled",
 		},
 	)
-	tsdbRequestSecondHistogram = prometheus.NewHistogramVec(
+
+	tsDBAndTableIDRequestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_table_id_request_count_total",
+			Help:      "request handled count",
+		},
+		[]string{"space_uid", "table_id", "tsdb_type", "query_type"},
+	)
+
+	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
 			Name:      "tsdb_request_seconds",
@@ -74,8 +84,13 @@ var (
 	)
 )
 
+func TsDBAndTableIDRequestCountInc(ctx context.Context, params ...string) {
+	metric, err := tsDBAndTableIDRequestCount.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric, err, params...)
+}
+
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, err := tsdbRequestSecondHistogram.GetMetricWithLabelValues(params...)
+	metric, err := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, err, duration, params...)
 }
 
@@ -160,6 +175,6 @@ func observe(
 // init
 func init() {
 	prometheus.MustRegister(
-		requestCount, requestHandleSecondHistogram, resultTableInfo, tsdbRequestSecondHistogram,
+		requestCount, requestHandleSecondHistogram, resultTableInfo, tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram,
 	)
 }

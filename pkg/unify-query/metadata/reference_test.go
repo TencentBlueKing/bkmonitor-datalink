@@ -127,38 +127,6 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
-			name:     "测试单一查询未开启 druid-query 特性开关",
-			spaceUid: "test",
-			ref: QueryReference{
-				refNameA: &QueryMetric{
-					QueryList: []*Query{
-						{
-							DB:             "system",
-							Measurement:    "cpu_detail",
-							Field:          "usage",
-							IsSingleMetric: false,
-							VmRt:           "100147_ieod_system_net_raw",
-							AggregateMethodList: []AggrMethod{
-								{
-									Name: "sum",
-									Dimensions: []string{
-										"bk_obj_id",
-										"bk_inst_id",
-									},
-								},
-							},
-						},
-					},
-					ReferenceName: refNameA,
-				},
-			},
-			expected: checkExpected{
-				ok:        false,
-				metricMap: map[string]string{},
-				vmRtGroup: map[string][]string{},
-			},
-		},
-		{
 			name:     "测试单一查询开启 druid-query 特性开关，但不符合查询判断",
 			spaceUid: "test",
 			ref: QueryReference{
@@ -267,7 +235,6 @@ func TestCheckVmQuery(t *testing.T) {
 									Name: "sum",
 									Dimensions: []string{
 										"bk_obj_id",
-										"bk_inst_id",
 									},
 								},
 							},
@@ -283,7 +250,6 @@ func TestCheckVmQuery(t *testing.T) {
 									Name: "sum",
 									Dimensions: []string{
 										"bk_obj_id",
-										"bk_inst_id",
 									},
 								},
 							},
@@ -315,7 +281,6 @@ func TestCheckVmQuery(t *testing.T) {
 									Name: "sum",
 									Dimensions: []string{
 										"bk_obj_id",
-										"bk_inst_id",
 									},
 								},
 							},
@@ -331,7 +296,6 @@ func TestCheckVmQuery(t *testing.T) {
 									Name: "sum",
 									Dimensions: []string{
 										"bk_obj_id",
-										"bk_inst_id",
 									},
 								},
 							},

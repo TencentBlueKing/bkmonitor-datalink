@@ -22,9 +22,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
-	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -52,10 +50,6 @@ type QueryTs struct {
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 }
-
-var (
-	md *offlineDataArchiveMetadata.Metadata
-)
 
 func ToTime(startStr, endStr, stepStr string) (time.Time, time.Time, time.Duration, error) {
 	var (
@@ -238,7 +232,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		metricName    = q.FieldName
 		tableID       = q.TableID
 		span          oleltrace.Span
-		user          = metadata.GetUser(ctx)
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-metric")
@@ -335,20 +328,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		clusterName := proxy.ClusterName
 		tagKeys := proxy.TagsKey
 		vmRt := proxy.VmRt
-
-		// 通过特性开关判断是否需要开启 druid 查询功能
-		ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-			"name":     user.Name,
-			"source":   user.Source,
-			"spaceUid": user.SpaceUid,
-		})
-		druidQuery := featureFlag.BoolVariation(ctx, ffUser, "durid-query", false)
-		if druidQuery {
-			// 业务逻辑
-
-			tsDB.MeasurementType = redis.BkSplitMeasurement
-			vmRt = "_cmdb"
-		}
 
 		if q.Offset != "" {
 			dTmp, err := model.ParseDuration(q.Offset)

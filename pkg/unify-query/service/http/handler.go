@@ -149,6 +149,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		ok        bool
 
 		res interface{}
+
+		user = metadata.GetUser(ctx)
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts")
@@ -207,6 +209,14 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
 			log.Errorf(ctx, err.Error())
 			return nil, err
+		}
+
+		for _, ref := range queryReference {
+			for _, qry := range ref.QueryList {
+				metric.TsDBAndTableIDRequestCountInc(
+					ctx, user.SpaceUid, qry.TableID, instance.GetInstanceType(), "query_ts",
+				)
+			}
 		}
 	} else {
 		err = metadata.SetQueryReference(ctx, queryReference)

@@ -137,3 +137,11 @@ func LoadConfigContent(content string) (*Config, error) {
 	}
 	return New((*beat.Config)(config)), err
 }
+
+func MustLoadConfigContent(content string) *Config {
+	config, err := LoadConfigContent(content)
+	if err != nil {
+		panic(err)
+	}
+	return config
+}

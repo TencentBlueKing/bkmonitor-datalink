@@ -52,7 +52,7 @@ processor:
   - name: "sampler/noop"
     config:
 `
-	config, _ := confengine.LoadConfigContent(content)
+	config := confengine.MustLoadConfigContent(content)
 	var psc []processor.ProcessorConfig
 	_ = config.UnpackChild("processor", &psc)
 

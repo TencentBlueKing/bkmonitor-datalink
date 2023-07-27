@@ -7,38 +7,41 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package proxy
+package pingserver
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestProxy(t *testing.T) {
+func TestPingServer(t *testing.T) {
 	content := `
-proxy:
+pingserver:
   disabled: false
-  http:
-    port: 60990
-    host: localhost
-    middlewares:
-      logging
+  auto_reload: true
+  patterns:
+    - "../example/fixtures/pingserver_sub*.yml"
 `
-	config := confengine.MustLoadConfigContent(content)
-	proxy, err := New(config)
+	conf := confengine.MustLoadConfigContent(content)
+	ps, err := New(conf)
 	assert.NoError(t, err)
-	assert.NoError(t, proxy.Start())
-	time.Sleep(time.Millisecond * 100)
-	assert.NoError(t, proxy.Stop())
 
-	globalRecords.Push(&define.Record{})
-	select {
-	case <-Records():
-	default:
-	}
+	assert.Len(t, ps.config.Sub.Addrs(), 2)
+
+	reloadContent := `
+pingserver:
+  disabled: false
+  auto_reload: true
+  patterns:
+    - "../example/fixtures/pingserver_reload*.bak"
+`
+	assert.NoError(t, ps.Start())
+
+	err = ps.Reload(confengine.MustLoadConfigContent(reloadContent))
+	assert.NoError(t, err)
+	assert.Len(t, ps.config.Sub.Addrs(), 1)
+	ps.Stop()
 }

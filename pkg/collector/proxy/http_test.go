@@ -29,9 +29,7 @@ func TestV2Push(t *testing.T) {
 proxy:
   disabled: false
 `
-	config, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(content)
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
 
@@ -71,9 +69,7 @@ func TestV2EmptyPush(t *testing.T) {
 proxy:
   disabled: false
 `
-	config, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(content)
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
 	proxy.Validator = pipeline.Validator{
@@ -96,9 +92,7 @@ func TestV2InvalidJsonPush(t *testing.T) {
 proxy:
   disabled: false
 `
-	config, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(content)
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
 	proxy.Validator = pipeline.Validator{
@@ -121,9 +115,7 @@ func TestV2PreCheckFailed(t *testing.T) {
 proxy:
   disabled: false
 `
-	config, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(content)
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
 	proxy.Validator = pipeline.Validator{
@@ -145,9 +137,7 @@ func TestV2ReadFailed(t *testing.T) {
 proxy:
   disabled: false
 `
-	config, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(content)
 	proxy, err := newProxy(config)
 	assert.NoError(t, err)
 	proxy.Validator = pipeline.Validator{

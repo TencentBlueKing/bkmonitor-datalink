@@ -50,8 +50,7 @@ proxy:
     output: file
     path: /path/to/config
 `
-	config, err := LoadConfigContent(content)
-	assert.NoError(t, err)
+	config := MustLoadConfigContent(content)
 	assert.True(t, config.Has("proxy"))
 
 	cfg := config.MustChild("proxy")

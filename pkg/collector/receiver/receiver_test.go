@@ -62,9 +62,7 @@ func TestReceiver(t *testing.T) {
         enabled: false
 `
 
-	config, err := confengine.LoadConfigContent(configContent)
-	assert.NoError(t, err)
-
+	config := confengine.MustLoadConfigContent(configContent)
 	r, err := New(config)
 	assert.NoError(t, err)
 

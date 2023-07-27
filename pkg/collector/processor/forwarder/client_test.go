@@ -43,9 +43,7 @@ cluster:
   disabled: false
   address: localhost:65101
 `
-	conf, err := confengine.LoadConfigContent(content)
-	assert.NoError(t, err)
-
+	conf := confengine.MustLoadConfigContent(content)
 	server, err := cluster.NewServer(conf)
 	assert.NoError(t, err)
 	assert.NoError(t, server.Start())
@@ -96,7 +94,7 @@ cluster:
   disabled: false
   address: localhost:65101
 `
-		conf, _ := confengine.LoadConfigContent(content)
+		conf := confengine.MustLoadConfigContent(content)
 		server, _ := cluster.NewServer(conf)
 		assert.NoError(t, server.Start())
 		<-sig

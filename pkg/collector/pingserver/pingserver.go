@@ -106,8 +106,11 @@ func (ps *Pingserver) start() {
 
 func (ps *Pingserver) doPing(t time.Time) {
 	timestamp := t.UnixMilli()
-	ps.batchPing(ps.config.Sub.Addrs(), timestamp)
+
+	addrs := ps.config.Sub.Addrs()
+	ps.batchPing(addrs, timestamp)
 	ps.round++
+	logger.Debugf("ping addrs count=%d, round=%d", len(addrs), ps.round)
 
 	DefaultMetricMonitor.IncPingCounter(ps.config.Sub.DataId)
 	DefaultMetricMonitor.ObservePingDuration(time.Now(), ps.config.Sub.DataId)
@@ -122,14 +125,15 @@ func (ps *Pingserver) Stop() {
 }
 
 func (ps *Pingserver) Reload(conf *confengine.Config) error {
-	ps, err := newPingserver(conf)
+	newPs, err := newPingserver(conf)
 	if err != nil {
 		return err
 	}
 
 	if ps.notifier != nil {
-		ps.notifier.SetPattern(ps.patterns...)
+		ps.notifier.SetPattern(newPs.patterns...)
 	}
+	ps.config = newPs.config
 
 	return nil
 }

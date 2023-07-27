@@ -56,7 +56,7 @@ processor:
       qps: 5
       burst: 10
 `
-	config, _ := confengine.LoadConfigContent(content)
+	config := confengine.MustLoadConfigContent(content)
 	var psc []processor.ProcessorConfig
 	_ = config.UnpackChild("processor", &psc)
 
@@ -74,7 +74,7 @@ processor:
       type: token_bucket
       qps: -1
 `
-	config, _ := confengine.LoadConfigContent(content)
+	config := confengine.MustLoadConfigContent(content)
 	var psc []processor.ProcessorConfig
 	_ = config.UnpackChild("processor", &psc)
 

@@ -55,7 +55,7 @@ processor:
         type: time_series
         version: v2
 `
-	config, _ := confengine.LoadConfigContent(content)
+	config := confengine.MustLoadConfigContent(content)
 	var psc []processor.ProcessorConfig
 	_ = config.UnpackChild("processor", &psc)
 

@@ -20,11 +20,11 @@ import (
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/influxdata/influxdb/prometheus/remote"
-	"github.com/influxdata/influxql"
 	oleltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -465,11 +465,10 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 	}
 
 	// 解析 where 中的条件
-	expr, err := influxql.ParseExpr(condition)
+	tags, err := metadata.ParseCondition(condition)
 	if err != nil {
 		return "", err
 	}
-	tags := getTags(expr)
 
 	trace.InsertStringIntoSpan("condition", condition, span)
 	trace.InsertStringIntoSpan("condition-tags", fmt.Sprintf("%+v", tags), span)
@@ -575,59 +574,4 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 	}
 
 	return hostList, nil
-}
-
-// Tag represents a single key/value tag pair.
-type Tag struct {
-	Key   []byte
-	Value []byte
-}
-
-type Tags []Tag
-
-func getTags(expr influxql.Expr) Tags {
-	var result Tags
-	var name *influxql.VarRef
-	var value string
-	var ok bool
-loop:
-	switch expr.(type) {
-	case *influxql.ParenExpr:
-		parenExpr := expr.(*influxql.ParenExpr)
-		result = append(result, getTags(parenExpr.Expr)...)
-	case *influxql.BinaryExpr:
-		binaryExpr := expr.(*influxql.BinaryExpr)
-		// 如果不是等号的操作，则需要继续递归左方和右方的所有内容
-		if binaryExpr.Op != influxql.EQ {
-			result = append(result, getTags(binaryExpr.LHS)...)
-			result = append(result, getTags(binaryExpr.RHS)...)
-			break
-		}
-
-		// 否则，此时是等号的操作，需要考虑将左方放入到维度中
-		if name, ok = binaryExpr.LHS.(*influxql.VarRef); !ok {
-			// 如果装换失败了，表示这个表达式不是简单的 A=B，对于我们的维度解析没有任何意义，放过它好了
-			break
-		}
-
-		switch tempExpr := binaryExpr.RHS.(type) {
-		// 右方表达式只能是：整形、字符串或者数字，否则不认
-		// 太复杂的，我们二期见
-		case *influxql.IntegerLiteral:
-			value = fmt.Sprintf("%d", tempExpr.Val)
-		case *influxql.NumberLiteral:
-			value = fmt.Sprintf("%f", tempExpr.Val)
-		case *influxql.StringLiteral:
-			value = tempExpr.Val
-		default:
-			break loop
-		}
-
-		result = append(result, Tag{
-			Key:   []byte(name.Val),
-			Value: []byte(value),
-		})
-	}
-
-	return result
 }

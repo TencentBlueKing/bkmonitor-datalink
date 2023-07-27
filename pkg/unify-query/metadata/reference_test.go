@@ -127,6 +127,37 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
+			name:     "测试单一查询 conditions 符合 druid-query 条件",
+			spaceUid: "druid-query",
+			ref: QueryReference{
+				refNameA: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:                  "system",
+							Measurement:         "cpu_detail",
+							Field:               "usage",
+							IsSingleMetric:      false,
+							VmRt:                "100147_ieod_system_net_raw",
+							Condition:           "(bk_inst_id='test' and bk_obj_id='demo') and bk_biz_id='test'",
+							AggregateMethodList: []AggrMethod{},
+						},
+					},
+					ReferenceName: refNameA,
+				},
+			},
+			expected: checkExpected{
+				ok: true,
+				metricMap: map[string]string{
+					refNameA: "usage_value",
+				},
+				vmRtGroup: map[string][]string{
+					"usage_value": {
+						"100147_ieod_system_net_cmdb",
+					},
+				},
+			},
+		},
+		{
 			name:     "测试单一查询开启 druid-query 特性开关，但不符合查询判断",
 			spaceUid: "test",
 			ref: QueryReference{
@@ -164,7 +195,7 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
-			name:     "测试多个符合 druid-query 的查询",
+			name:     "测试多个符合 druid-query 的查询 - 2",
 			spaceUid: "druid-query",
 			ref: QueryReference{
 				refNameA: &QueryMetric{
@@ -191,13 +222,11 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
+							Condition:      "bk_obj_id = '1' and bk_inst_id = '2'",
 							AggregateMethodList: []AggrMethod{
 								{
-									Name: "sum",
-									Dimensions: []string{
-										"bk_obj_id",
-										"bk_inst_id",
-									},
+									Name:       "sum",
+									Dimensions: []string{},
 								},
 							},
 						},

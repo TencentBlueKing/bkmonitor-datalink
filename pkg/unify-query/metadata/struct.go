@@ -144,33 +144,44 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 					continue
 				}
 
-				// 获取聚合方法列表
-				for _, amList := range query.AggregateMethodList {
-					// 获取维度列表
-					var dimensionFlag uint
-					for _, amDimension := range amList.Dimensions {
-						// 维度判断（两个维度同时出现才拼接）
-						switch amDimension {
-						case "bk_obj_id":
-							dimensionFlag |= 1
-						case "bk_inst_id":
-							dimensionFlag |= 2
-						}
-					}
+				druidDimsStatus := map[string]uint{
+					"bk_obj_id":  1,
+					"bk_inst_id": 2,
+				}
 
-					// 判断只有配置了 vmRt 才进行 vm 查询
-					if dimensionFlag == 3 {
-						// 如果非单指标单表需要进行替换，使用单指标单表类型处理
-						if !query.IsSingleMetric {
-							query.IsSingleMetric = true
-							query.Measurement = query.Field
-							query.Field = StaticField
-						}
-						// 替换 vmrt 的值
-						query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
-						druidCheckStatus = true
-						break
+				tags, _ := ParseCondition(query.Condition)
+
+				var checkTag uint
+				for _, tag := range tags {
+					if v, ok := druidDimsStatus[string(tag.Key)]; ok {
+						checkTag |= v
 					}
+				}
+
+				var checkMethod uint
+				if checkTag != 3 {
+					for _, amList := range query.AggregateMethodList {
+						for _, amDimension := range amList.Dimensions {
+							if v, ok := druidDimsStatus[amDimension]; ok {
+								checkMethod |= v
+							}
+						}
+
+						if checkMethod == 3 {
+							break
+						}
+					}
+				}
+
+				if checkTag == 3 || checkMethod == 3 {
+					if !query.IsSingleMetric {
+						query.IsSingleMetric = true
+						query.Measurement = query.Field
+						query.Field = StaticField
+					}
+					// 替换 vmrt 的值
+					query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
+					druidCheckStatus = true
 				}
 			}
 		}

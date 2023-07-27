@@ -139,6 +139,11 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
 			for _, query := range reference.QueryList {
+				// 如果 vmRT 为空，则不进行判断
+				if query.VmRt == "" {
+					continue
+				}
+
 				// 获取聚合方法列表
 				for _, amList := range query.AggregateMethodList {
 					// 获取维度列表
@@ -153,6 +158,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 						}
 					}
 
+					// 判断只有配置了 vmRt 才进行 vm 查询
 					if dimensionFlag == 3 {
 						// 如果非单指标单表需要进行替换，使用单指标单表类型处理
 						if !query.IsSingleMetric {

@@ -88,12 +88,19 @@ func NewFilterProcessor(ctx context.Context, name string) *FilterProcessor {
 
 func (p *FilterProcessor) rejectField(s string) bool {
 	field := p.metrics[s]
-	// 确定 disabled 的 field 直接丢弃
-	if field != nil && field.Disabled {
-		return true
+
+	// field 存在分两种情况
+	if field != nil {
+		// 1) 确定 disabled 的 field 直接丢弃
+		if field.Disabled {
+			return true
+		}
+
+		// 2) field 存在且非 disabled 需要保留
+		return false
 	}
 
-	// 其余分两种情况
+	// field 不存在也分两种情况
 	// 1) field 不存在 没开启黑名单模式（丢弃）
 	// 2) field 不存在 开启黑名单模式（放行）
 	return !p.enableBlackList
@@ -183,12 +190,19 @@ func NewProcessor(ctx context.Context, name string) (*Processor, error) {
 
 func (p *Processor) rejectField(s string) bool {
 	field := p.metrics[s]
-	// 确定 disabled 的 field 直接丢弃
-	if field != nil && field.Disabled {
-		return true
+
+	// field 存在分两种情况
+	if field != nil {
+		// 1) 确定 disabled 的 field 直接丢弃
+		if field.Disabled {
+			return true
+		}
+
+		// 2) field 存在且非 disabled 需要保留
+		return false
 	}
 
-	// 其余分两种情况
+	// field 不存在也分两种情况
 	// 1) field 不存在 没开启黑名单模式（丢弃）
 	// 2) field 不存在 开启黑名单模式（放行）
 	return !p.enableBlackList

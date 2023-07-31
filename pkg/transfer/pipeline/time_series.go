@@ -45,6 +45,9 @@ func (b *TSConfigBuilder) GetStandardPrepareProcessors(pipe *config.PipelineConf
 	if rt.SchemaType == config.ResultTableSchemaTypeFree && rtOption.GetOrDefault(config.ResultTableOptSchemaDiscovery, false) == true {
 		processors = append(processors, "sampling_reporter")
 	}
+	if rtOption.GetOrDefault(config.ResultTableOptEnableBlackList, false) == true {
+		processors = append(processors, "metrics_reporter")
+	}
 
 	return processors
 }

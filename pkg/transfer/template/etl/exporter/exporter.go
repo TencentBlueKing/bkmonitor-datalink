@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 // PrometheusCollectorMetric :
@@ -55,8 +56,9 @@ type filterRecord struct {
 type FilterProcessor struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
-	store   define.Store
-	metrics map[string]*config.MetaFieldConfig
+	store           define.Store
+	metrics         map[string]*config.MetaFieldConfig
+	enableBlackList bool
 }
 
 // NewFilterProcessor :
@@ -69,6 +71,9 @@ func NewFilterProcessor(ctx context.Context, name string) *FilterProcessor {
 		store:             define.StoreFromContext(ctx),
 	}
 
+	rtConfig := config.ResultTableConfigFromContext(ctx)
+	rtOpt := utils.NewMapHelper(rtConfig.Option)
+	p.enableBlackList, _ = rtOpt.GetBool(config.ResultTableOptEnableBlackList)
 	for _, rt := range pipe.ResultTableList {
 		logging.PanicIf(rt.VisitFieldByTag(func(field *config.MetaFieldConfig) error {
 			if field.IsConfigByUser {
@@ -79,6 +84,19 @@ func NewFilterProcessor(ctx context.Context, name string) *FilterProcessor {
 	}
 
 	return p
+}
+
+func (p *FilterProcessor) rejectField(s string) bool {
+	field := p.metrics[s]
+	// 确定 disabled 的 field 直接丢弃
+	if field != nil && field.Disabled {
+		return true
+	}
+
+	// 其余分两种情况
+	// 1) field 不存在 没开启黑名单模式（丢弃）
+	// 2) field 不存在 开启黑名单模式（放行）
+	return !p.enableBlackList
 }
 
 // Process : process json data
@@ -97,8 +115,7 @@ func (p *FilterProcessor) Process(d define.Payload, outputChan chan<- define.Pay
 	n := 0
 	for _, metric := range data.Prometheus.Collector.Metrics {
 		key := metric.Key
-		_, ok := p.metrics[key]
-		if !ok {
+		if p.rejectField(key) {
 			continue
 		}
 
@@ -134,7 +151,8 @@ func (p *FilterProcessor) Process(d define.Payload, outputChan chan<- define.Pay
 type Processor struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
-	metrics map[string]*config.MetaFieldConfig
+	metrics         map[string]*config.MetaFieldConfig
+	enableBlackList bool
 }
 
 // NewProcessor :
@@ -147,6 +165,9 @@ func NewProcessor(ctx context.Context, name string) (*Processor, error) {
 		metrics:           map[string]*config.MetaFieldConfig{},
 	}
 
+	rtConfig := config.ResultTableConfigFromContext(ctx)
+	rtOpt := utils.NewMapHelper(rtConfig.Option)
+	p.enableBlackList, _ = rtOpt.GetBool(config.ResultTableOptEnableBlackList)
 	err := rt.VisitFieldByTag(func(f *config.MetaFieldConfig) error {
 		if f.IsConfigByUser {
 			p.metrics[f.FieldName] = f
@@ -158,6 +179,19 @@ func NewProcessor(ctx context.Context, name string) (*Processor, error) {
 	}
 
 	return p, nil
+}
+
+func (p *Processor) rejectField(s string) bool {
+	field := p.metrics[s]
+	// 确定 disabled 的 field 直接丢弃
+	if field != nil && field.Disabled {
+		return true
+	}
+
+	// 其余分两种情况
+	// 1) field 不存在 没开启黑名单模式（丢弃）
+	// 2) field 不存在 开启黑名单模式（放行）
+	return !p.enableBlackList
 }
 
 // Process : process json data
@@ -174,11 +208,11 @@ func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, 
 		return
 	}
 
-	_, ok := p.metrics[record.Key]
-	if !ok {
-		// fan out 副作用
+	if p.rejectField(record.Key) {
+		p.CounterSkip.Inc()
 		return
 	}
+
 	data := &define.GroupETLRecord{
 		ETLRecord: &define.ETLRecord{
 			Time:       &record.Timestamp,

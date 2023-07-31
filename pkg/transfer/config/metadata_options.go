@@ -176,6 +176,8 @@ const (
 	// 自定义时序类
 	// 如果为true，则所有指标存储于以自己指标名命名的measurement里,否则存储于rt表配置的路径里
 	ResultTableOptIsSplitMeasurement = "is_split_measurement"
+	// exporter 类型是否开启黑名单功能
+	ResultTableOptEnableBlackList = "enable_field_black_list"
 
 	// ResultTableOptMustIncludeDimensions 指标中必须拥有指定的所有维度 否则将丢弃
 	ResultTableOptMustIncludeDimensions = "must_include_dimensions"

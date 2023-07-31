@@ -100,6 +100,7 @@ type MetaFieldConfig struct {
 	FieldName      string                  `mapstructure:"field_name" json:"field_name"`
 	AliasName      string                  `mapstructure:"alias_name" json:"alias_name"`
 	DefaultValue   interface{}             `mapstructure:"default_value" json:"default_value"`
+	Disabled       bool                    `mapstructure:"is_disabled" json:"is_disabled"`
 }
 
 func (c *MetaFieldConfig) Clean() error {

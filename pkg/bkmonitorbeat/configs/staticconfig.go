@@ -23,9 +23,10 @@ const (
 
 // StaticTaskConfig :
 type StaticTaskConfig struct {
-	BaseTaskParam `config:"_,inline"`
-	CheckPeriod   time.Duration `config:"check_period"`
-	ReportPeriod  time.Duration `config:"report_period"`
+	BaseTaskParam         `config:"_,inline"`
+	CheckPeriod           time.Duration `config:"check_period"`
+	ReportPeriod          time.Duration `config:"report_period"`
+	VirtualIfaceWhitelist []string      `config:"virtual_iface_whitelist"`
 }
 
 // InitIdent :

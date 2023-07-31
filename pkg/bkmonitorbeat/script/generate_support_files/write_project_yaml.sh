@@ -105,6 +105,18 @@ control:
 EOF
   elif [ "$system" = "windows" ] ;then
     cat <<EOF >> "$path"
+  - plugin_version: "*"
+    name: bkmonitorbeat_snmptrap.conf
+    version: 1
+    file_path: etc/bkmonitorbeat
+    format: yaml
+    source_path: etc/bkmonitorbeat_snmptrap.conf.tpl
+  - plugin_version: "*"
+    name: bkmonitorbeat_prometheus_remote.conf
+    version: 1
+    file_path: etc/bkmonitorbeat
+    format: yaml
+    source_path: etc/bkmonitorbeat_prometheus_remote.conf.tpl
 control:
   start: "start.bat bkmonitorbeat"
   stop: "stop.bat bkmonitorbeat"

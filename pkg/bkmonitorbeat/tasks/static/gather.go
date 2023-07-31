@@ -81,7 +81,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 func (g *Gather) getData() (*Report, error) {
 	logger.Debugf("start collect report data")
 
-	return GetData(g.ctx)
+	cfg, ok := g.TaskConfig.(*configs.StaticTaskConfig)
+	if ok {
+		return GetData(g.ctx, cfg)
+	}
+	return GetData(g.ctx, nil)
 }
 
 // updateReportData 成功上报数据后，存储更新最后一次上报的数据

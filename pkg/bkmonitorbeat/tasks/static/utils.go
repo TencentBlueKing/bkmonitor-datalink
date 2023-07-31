@@ -20,6 +20,7 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring/report/bkpipe"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -132,7 +133,7 @@ type System struct {
 }
 
 // GetData 采集全部静态数据
-var GetData = func(ctx context.Context) (*Report, error) {
+var GetData = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Report, error) {
 	cpu, err := GetCPUStatus(ctx)
 	if err != nil {
 		logger.Errorf("failed to get cpu status: %v", err)
@@ -148,7 +149,7 @@ var GetData = func(ctx context.Context) (*Report, error) {
 		logger.Errorf("failed to get disk status: %v", err)
 	}
 
-	net, err := GetNetStatus(ctx)
+	net, err := GetNetStatus(ctx, cfg)
 	if err != nil {
 		logger.Errorf("failed to get net status: %v", err)
 	}
@@ -188,7 +189,7 @@ var GetMemoryStatus = func(ctx context.Context) (*Memory, error) {
 }
 
 // GetNetStatus :
-var GetNetStatus = func(ctx context.Context) (*Net, error) {
+var GetNetStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Net, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
@@ -199,12 +200,22 @@ var GetNetStatus = func(ctx context.Context) (*Net, error) {
 		return nil, err
 	}
 
+	whiteList := make(map[string]struct{})
+	if cfg != nil && len(cfg.VirtualIfaceWhitelist) > 0 {
+		for _, iface := range cfg.VirtualIfaceWhitelist {
+			whiteList[iface] = struct{}{}
+		}
+	}
+
 	items := make([]Interface, 0, len(interfaces))
 	for _, inter := range interfaces {
-		// 排除虚拟网卡
+		// 排除虚拟网卡（有额外白名单机制）
 		if virtualInterfaces.Exist(inter.Name) {
-			continue
+			if _, ok := whiteList[inter.Name]; !ok {
+				continue
+			}
 		}
+
 		addrs, err := inter.Addrs()
 		if err != nil {
 			logger.Warnf("failed to get net addr info for: %s", err)

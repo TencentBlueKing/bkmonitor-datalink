@@ -25,5 +25,4 @@ const (
 	ProcessorTracesDeriver   = "traces_deriver"
 	ProcessorLicenseChecker  = "license_checker"
 	ProcessorForwarder       = "forwarder"
-	ProcessorDbFilter        = "db_filter"
 )

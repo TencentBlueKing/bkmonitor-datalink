@@ -12,6 +12,7 @@ package licensechecker
 import (
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
@@ -19,7 +20,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -56,14 +56,22 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	configs := confengine.NewTierConfig()
 
 	var c Config
-	if err := mapstructure.Decode(conf, &c); err != nil {
+	decoder, _ := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:     &c,
+		DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
+	})
+	if err := decoder.Decode(conf); err != nil {
 		return nil, err
 	}
 	configs.SetGlobal(c)
 
 	for _, custom := range customized {
 		var cfg Config
-		if err := mapstructure.Decode(custom.Config.Config, &cfg); err != nil {
+		decoder, _ := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+			Result:     &cfg,
+			DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
+		})
+		if err := decoder.Decode(custom.Config.Config); err != nil {
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}

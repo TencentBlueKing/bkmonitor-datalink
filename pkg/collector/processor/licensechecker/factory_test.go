@@ -12,13 +12,13 @@ package licensechecker
 import (
 	"testing"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/licensecache"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
@@ -41,7 +41,11 @@ processor:
 	assert.Equal(t, psc[0].Config, factory.MainConfig())
 
 	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
+	decoder, _ := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:     &c,
+		DecodeHook: mapstructure.StringToTimeDurationHookFunc(),
+	})
+	err = decoder.Decode(psc[0].Config)
 	assert.NoError(t, err)
 	assert.Equal(t, c, factory.config.Get("", "", "").(Config))
 

@@ -7,23 +7,36 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package mapstructure
 
-const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
+import (
+	"testing"
+	"time"
 
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
-	ProcessorDbFilter        = "db_filter"
+	"github.com/stretchr/testify/assert"
 )
+
+func TestDecode(t *testing.T) {
+	input := map[string]interface{}{
+		"int":      1,
+		"float64":  1.0,
+		"string":   "foo",
+		"duration": "10s",
+	}
+
+	type Output struct {
+		Int      int           `mapstructure:"int"`
+		Float    float64       `mapstructure:"float64"`
+		String   string        `mapstructure:"string"`
+		Duration time.Duration `mapstructure:"duration"`
+	}
+
+	var output Output
+	assert.NoError(t, Decode(input, &output))
+	assert.Equal(t, Output{
+		Int:      1,
+		Float:    1.0,
+		String:   "foo",
+		Duration: time.Second * 10,
+	}, output)
+}

@@ -7,23 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+/*
+# DbFilter: db 数据处理器
 
-const (
-	ResourceKeyPrefix  = "resource."
-	AttributeKeyPrefix = "attributes."
+processor:
+  # 慢查询处理
+  - name: "db_filter/common"
+    config:
+      slow_query:
+      - match: "mysql"
+        threshold: 1s
+      - match: "redis"
+        threshold: 2s
+      - match: ""
+        threshold: 3s
+*/
 
-	ProcessorApdexCalculator = "apdex_calculator"
-	ProcessorAttributeFilter = "attribute_filter"
-	ProcessorMetricsFilter   = "metrics_filter"
-	ProcessorProxyValidator  = "proxy_validator"
-	ProcessorRateLimiter     = "rate_limiter"
-	ProcessorResourceFilter  = "resource_filter"
-	ProcessorSampler         = "sampler"
-	ProcessorServiceDiscover = "service_discover"
-	ProcessorTokenChecker    = "token_checker"
-	ProcessorTracesDeriver   = "traces_deriver"
-	ProcessorLicenseChecker  = "license_checker"
-	ProcessorForwarder       = "forwarder"
-	ProcessorDbFilter        = "db_filter"
-)
+package dbfilter

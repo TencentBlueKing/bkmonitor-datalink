@@ -7,33 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package forwarder
+package dbfilter
 
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func init() {
-	processor.Register(define.ProcessorForwarder, NewFactory)
+	processor.Register(define.ProcessorDbFilter, NewFactory)
 }
 
 func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*forwarder, error) {
-	clients := confengine.NewTierConfig()
+func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*dbFilter, error) {
+	configs := confengine.NewTierConfig()
+
 	c := &Config{}
 	if err := mapstructure.Decode(conf, c); err != nil {
 		return nil, err
 	}
-	clients.SetGlobal(NewClient(*c))
+	c.Setup()
+	configs.SetGlobal(*c)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -41,51 +45,69 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		clients.Set(custom.Token, custom.Type, custom.ID, *cfg)
+		cfg.Setup()
+		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
 
-	return &forwarder{
+	return &dbFilter{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
-		clients:         clients,
+		configs:         configs,
 	}, nil
 }
 
-type forwarder struct {
+const slowFlagAttribute = "is_slow"
+
+const (
+	flagNotSlowQuery = iota
+	flagSlowQuery
+)
+
+type dbFilter struct {
 	processor.CommonProcessor
-	clients *confengine.TierConfig // type: *Client
+	configs *confengine.TierConfig // type: Config
 }
 
-func (p forwarder) Name() string {
-	return define.ProcessorForwarder
+func (p dbFilter) Name() string {
+	return define.ProcessorDbFilter
 }
 
-func (p forwarder) Clean() {
-	for _, obj := range p.clients.All() {
-		if err := obj.(*Client).Stop(); err != nil {
-			logger.Errorf("failed to stop client, err: %v", err)
-		}
+func (p dbFilter) IsDerived() bool {
+	return false
+}
+
+func (p dbFilter) IsPreCheck() bool {
+	return false
+}
+
+func (p dbFilter) Process(record *define.Record) (*define.Record, error) {
+	config := p.configs.GetByToken(record.Token.Original).(Config)
+	if len(config.SlowQueryRules) > 0 {
+		p.processSlowQuery(record, config)
 	}
+	return nil, nil
 }
 
-func (p forwarder) IsDerived() bool {
-	return false
-}
-
-func (p forwarder) IsPreCheck() bool {
-	return false
-}
-
-func (p forwarder) Process(record *define.Record) (*define.Record, error) {
-	var err error
-	client := p.clients.GetByToken(record.Token.Original).(*Client)
+func (p dbFilter) processSlowQuery(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		err = client.ForwardTraces(pdTraces)
-	}
+		foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+			attrs := span.Attributes()
+			dbSystem, ok := attrs.Get(conventions.AttributeDBSystem)
+			if !ok {
+				return
+			}
+			threshold, ok := config.GetSlowQueryConf(dbSystem.AsString())
+			if !ok {
+				return
+			}
 
-	if err != nil {
-		return nil, err
+			duration := int64(span.EndTimestamp() - span.StartTimestamp())
+			if duration > threshold.Nanoseconds() {
+				attrs.UpsertInt(slowFlagAttribute, flagSlowQuery)
+			} else {
+				attrs.UpsertInt(slowFlagAttribute, flagNotSlowQuery)
+			}
+		})
 	}
-	return nil, define.ErrEndOfPipeline
 }

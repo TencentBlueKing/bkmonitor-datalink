@@ -286,6 +286,11 @@ bk-collector:
                   - "attributes.topic"
                 separator: ":"
 
+    # Attribute_filter 应用层级的配置
+    - name: "attribute_filter/app"
+      config:
+
+
     # MetricsFilter: 指标过滤处理器
     # Drop
     - name: "metrics_filter/drop"
@@ -892,6 +897,7 @@ bk-collector:
         #- "sampler/status_code"
         - "resource_filter/assemble"
         - "attribute_filter/common"
+        - "attribute_filter/app"
         - "service_discover/common"
         - "traces_deriver/duration"
         - "traces_deriver/delta"

@@ -17,6 +17,39 @@ default:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 
+    # attribute_config: attribute 属性配置
+    - name: "attribute_filter/app"
+      config:
+        cut:
+          - predicate_key: "attributes.db.system"
+            max_length: 1024
+            match:
+              - "mysql"
+              - "postgresql"
+              - "elasticsearch"
+            keys:
+              - "attributes.db.statement"
+          - predicate_key: "attributes.db.system"
+            max_length: 512
+            match:
+              - "redis"
+              - "mangodb"
+            keys:
+              - "attributes.db.statement"
+        drop:
+          - predicate_key: "attributes.db.system"
+            match:
+              - "mysql"
+              - "postgresql"
+              - "elasticsearch"
+            keys:
+              - "attributes.db.statement"
+          - predicate_key: "attributes.db.system"
+            match:
+              - "redis"
+              - "mangodb"
+            keys:
+
     - name: "apdex_calculator/fixed"
       config:
         calculator:

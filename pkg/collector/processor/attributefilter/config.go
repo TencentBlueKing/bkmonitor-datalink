@@ -9,21 +9,49 @@
 
 package attributefilter
 
-import "strings"
+import (
+	"strings"
+)
 
 type Config struct {
 	AsString  AsStringAction   `config:"as_string" mapstructure:"as_string"`
 	AsInt     AsIntAction      `config:"as_int" mapstructure:"as_int"`
 	FromToken FromTokenAction  `config:"from_token" mapstructure:"from_token"`
 	Assemble  []AssembleAction `config:"assemble" mapstructure:"assemble"`
+	Drop      []DropAction     `config:"drop" mapstructure:"drop"`
+	Cut       []CutAction      `config:"cut" mapstructure:"cut"`
+}
+
+func (c *Config) Clean() {
+	c.AsString.Clean()
+	c.AsInt.Clean()
+	for i := 0; i < len(c.Assemble); i++ {
+		c.Assemble[i].Clean()
+	}
+
+	for i := 0; i < len(c.Drop); i++ {
+		c.Drop[i].Clean()
+	}
+
+	for i := 0; i < len(c.Cut); i++ {
+		c.Cut[i].Clean()
+	}
 }
 
 type AsStringAction struct {
 	Keys []string `config:"keys" mapstructure:"keys"`
 }
 
+func (c *AsStringAction) Clean() {
+	c.Keys = cleanAttributesPrefixes(c.Keys)
+}
+
 type AsIntAction struct {
 	Keys []string `config:"keys" mapstructure:"keys"`
+}
+
+func (c *AsIntAction) Clean() {
+	c.Keys = cleanAttributesPrefixes(c.Keys)
 }
 
 type FromTokenAction struct {
@@ -31,17 +59,75 @@ type FromTokenAction struct {
 	AppName string `config:"app_name" mapstructure:"app_name"`
 }
 
-type AssembleAction struct {
-	Destination  string `config:"destination" mapstructure:"destination"`     // 需要插入的字段
-	PredicateKey string `config:"predicate_key" mapstructure:"predicate_key"` // 需要匹配的字段
-	Rules        []Rule `config:"rules" mapstructure:"rules"`
-}
-
-type Rule struct {
+type AssembleRule struct {
 	Kind       string   `config:"kind" mapstructure:"kind"`               // 所需 kind 的类型，不需要则为空
 	Keys       []string `config:"keys" mapstructure:"keys"`               // 所需获取的源字段
 	Separator  string   `config:"separator" mapstructure:"separator"`     // 分隔符
 	FirstUpper []string `config:"first_upper" mapstructure:"first_upper"` // 需要首字母大写的属性
+
+	upper map[string]struct{}
+}
+
+func (c *AssembleRule) Clean() {
+	c.Keys = cleanAttributesPrefixes(c.Keys)
+	c.FirstUpper = cleanAttributesPrefixes(c.FirstUpper)
+
+	c.upper = make(map[string]struct{})
+	for _, s := range c.FirstUpper {
+		c.upper[s] = struct{}{}
+	}
+}
+
+type AssembleAction struct {
+	Destination  string         `config:"destination" mapstructure:"destination"`     // 需要插入的字段
+	PredicateKey string         `config:"predicate_key" mapstructure:"predicate_key"` // 需要匹配的字段
+	Rules        []AssembleRule `config:"rules" mapstructure:"rules"`
+}
+
+func (c *AssembleAction) Clean() {
+	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
+	for i := 0; i < len(c.Rules); i++ {
+		c.Rules[i].Clean()
+	}
+}
+
+type DropAction struct {
+	PredicateKey string   `config:"predicate_key" mapstructure:"predicate_key"`
+	Match        []string `config:"match" mapstructure:"match"`
+	Keys         []string `config:"keys" mapstructure:"keys"`
+
+	match map[string]struct{}
+}
+
+func (c *DropAction) Clean() {
+	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
+	c.Match = cleanAttributesPrefixes(c.Match)
+	c.Keys = cleanAttributesPrefixes(c.Keys)
+
+	c.match = make(map[string]struct{})
+	for _, s := range c.Match {
+		c.match[s] = struct{}{}
+	}
+}
+
+type CutAction struct {
+	PredicateKey string   `config:"predicate_key" mapstructure:"predicate_key"`
+	Match        []string `config:"match" mapstructure:"match"`
+	MaxLength    int      `config:"max_length" mapstructure:"max_length"`
+	Keys         []string `config:"keys" mapstructure:"keys"`
+
+	match map[string]struct{}
+}
+
+func (c *CutAction) Clean() {
+	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
+	c.Match = cleanAttributesPrefixes(c.Match)
+	c.Keys = cleanAttributesPrefixes(c.Keys)
+
+	c.match = make(map[string]struct{})
+	for _, s := range c.Match {
+		c.match[s] = struct{}{}
+	}
 }
 
 const (
@@ -49,7 +135,7 @@ const (
 	constPrefix = "const."
 )
 
-func (c *Config) cleanAttributesPrefixes(keys []string) []string {
+func cleanAttributesPrefixes(keys []string) []string {
 	var ret []string
 	for _, key := range keys {
 		if strings.HasPrefix(key, attrPrefix) {
@@ -61,24 +147,9 @@ func (c *Config) cleanAttributesPrefixes(keys []string) []string {
 	return ret
 }
 
-func (c *Config) cleanAttributesPrefix(s string) string {
+func cleanAttributesPrefix(s string) string {
 	if !strings.HasPrefix(s, attrPrefix) {
 		return s
 	}
 	return s[len(attrPrefix):]
-}
-
-func (c *Config) Clean() {
-	c.AsString.Keys = c.cleanAttributesPrefixes(c.AsString.Keys)
-	c.AsInt.Keys = c.cleanAttributesPrefixes(c.AsInt.Keys)
-	for i := 0; i < len(c.Assemble); i++ {
-		match := c.Assemble[i].PredicateKey
-		c.Assemble[i].PredicateKey = c.cleanAttributesPrefix(match)
-		for j := 0; j < len(c.Assemble[i].Rules); j++ {
-			keys := c.Assemble[i].Rules[j].Keys
-			upper := c.Assemble[i].Rules[j].FirstUpper
-			c.Assemble[i].Rules[j].Keys = c.cleanAttributesPrefixes(keys)
-			c.Assemble[i].Rules[j].FirstUpper = c.cleanAttributesPrefixes(upper)
-		}
-	}
 }

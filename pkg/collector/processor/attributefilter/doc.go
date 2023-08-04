@@ -8,7 +8,7 @@
 // specific language governing permissions and limitations under the License.
 
 /*
-# AttributeFilter: 属性处理器 支持 as_string/from_token/assemble
+# AttributeFilter: 属性处理器 支持 as_string/as_int/from_token/assemble/cut/drop
 
 processor:
    - name: "attribute_filter/common"
@@ -17,8 +17,8 @@ processor:
        as_string:
          keys:
            - "attributes.http.host"
-      # 将 attributes 部分字段转换为 int 类型
 
+      # 将 attributes 部分字段转换为 int 类型
        as_int:
          keys:
            - "attributes.http.status_code"
@@ -47,6 +47,25 @@ processor:
                   - "attributes.http.method"
                   - "attributes.http.route"
                 separator: ":"
+
+        # 根据最大允许长度 裁剪字段
+        cut:
+          - predicate_key: "attributes.db.system"   # 需要预先匹配的 Key
+            match:                                  # 预先匹配的 Key 的值限制的条件，属于 match 中的那种元素 无 match 条件也可
+              - "mysql"
+              - "postgresql"
+            max_length: 512                         # 需要截断的 key 的值的长度
+            keys:                                   # 所需要截断的 key
+              - "attributes.db.statement"
+
+        # 丢弃符合规则的 attributes
+        drop:
+          - predicate_key: "attributes.db.system"   # 需要预先匹配的 Key
+            match:                                  # 限制预先匹配的 key 的值 不符合条件则不进行后续操作 无 match 条件也可
+              - "mysql"
+              - "postgresql"
+            keys:                                   # 需要移除的key
+              - "attributes.db.parameters"
 */
 
 package attributefilter

@@ -26,6 +26,7 @@ package skywalking
 import (
 	"bytes"
 	"encoding/hex"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -44,7 +45,6 @@ import (
 
 const (
 	AttributeRefType                   = "refType"
-	AttributeParentService             = "parent.service"
 	AttributeParentInstance            = "parent.service.instance"
 	AttributeParentEndpoint            = "parent.endpoint"
 	AttributeSkywalkingSpanID          = "sw8.span_id"
@@ -54,6 +54,8 @@ const (
 	AttributeSkywalkingParentSegmentID = "sw8.parent_segment_id"
 	AttributeNetworkAddressUsedAtPeer  = "network.AddressUsedAtPeer"
 	AttributeDataToken                 = "bk.data.token"
+	AttributeSkywalkingSpanLayer       = "sw8.span_layer"
+	AttributeSkywalkingComponentID     = "sw8.component_id"
 )
 
 var ignoreLocalIps = map[string]struct{}{
@@ -62,11 +64,17 @@ var ignoreLocalIps = map[string]struct{}{
 }
 
 var otSpanTagsMapping = map[string]string{
+	// HTTP
 	"url":         conventions.AttributeHTTPURL,
 	"status_code": conventions.AttributeHTTPStatusCode,
-	"db.type":     conventions.AttributeDBSystem,
+
+	// DB
 	"db.instance": conventions.AttributeDBName,
-	"mq.broker":   conventions.AttributeNetPeerName,
+	"db.type":     conventions.AttributeDBSystem,
+
+	// MQ
+	"mq.broker": conventions.AttributeNetPeerName,
+	"mq.topic":  conventions.AttributeMessagingDestinationKindTopic,
 }
 
 func EncodeTraces(segment *agentV3.SegmentObject, token string) ptrace.Traces {
@@ -79,10 +87,6 @@ func EncodeTraces(segment *agentV3.SegmentObject, token string) ptrace.Traces {
 
 	resourceSpan := traceData.ResourceSpans().AppendEmpty()
 	rs := resourceSpan.Resource()
-
-	for _, span := range swSpans {
-		swTagsToInternalResource(span, rs)
-	}
 
 	rs.Attributes().InsertString(conventions.AttributeServiceName, segment.GetService())
 	rs.Attributes().InsertString(conventions.AttributeServiceInstanceID, segment.GetServiceInstance())
@@ -119,27 +123,6 @@ func swTransformIP(instanceId string, attrs pcommon.Map) {
 	}
 }
 
-func swTagsToInternalResource(span *agentV3.SpanObject, dest pcommon.Resource) {
-	if span == nil {
-		return
-	}
-
-	attrs := dest.Attributes()
-	attrs.Clear()
-
-	tags := span.Tags
-	if tags == nil {
-		return
-	}
-
-	for _, tag := range tags {
-		otKey, ok := otSpanTagsMapping[tag.Key]
-		if ok {
-			attrs.InsertString(otKey, tag.Value)
-		}
-	}
-}
-
 func swSpansToSpanSlice(traceID string, segmentID string, spans []*agentV3.SpanObject, dest ptrace.SpanSlice) {
 	if len(spans) == 0 {
 		return
@@ -160,9 +143,23 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	// so use segmentId to convert to an unique otel-span
 	dest.SetSpanID(segmentIDToSpanID(segmentID, uint32(span.GetSpanId())))
 
-	// parent spanid = -1, means(root span) no parent span in skywalking,so just make otlp's parent span id empty.
+	// 获取 ref parentSpanID + ref SegmentID
+	refParentSpanID := -1
+	refSegmentID := ""
+	for _, ref := range span.Refs {
+		if ref.TraceId == traceID {
+			refParentSpanID = int(ref.ParentSpanId)
+			refSegmentID = ref.ParentTraceSegmentId
+			break
+		}
+	}
+	// 补全特殊情况，当无法直接获取父 span_id 的时候，尝试从 link 里面获取
 	if span.ParentSpanId != -1 {
 		dest.SetParentSpanID(segmentIDToSpanID(segmentID, uint32(span.GetParentSpanId())))
+	} else {
+		if refParentSpanID != -1 {
+			dest.SetParentSpanID(segmentIDToSpanID(refSegmentID, uint32(refParentSpanID)))
+		}
 	}
 
 	dest.SetName(span.OperationName)
@@ -172,6 +169,11 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	attrs := dest.Attributes()
 	attrs.EnsureCapacity(len(span.Tags))
 	swKvPairsToInternalAttributes(span.Tags, attrs)
+	swTagsToAttributesByRule(attrs, span)
+
+	attrs.UpsertString(AttributeSkywalkingSpanLayer, span.SpanLayer.String())
+	attrs.UpsertInt(AttributeSkywalkingComponentID, int64(span.GetComponentId()))
+
 	// drop the attributes slice if all of them were replaced during translation
 	if attrs.Len() == 0 {
 		attrs.Clear()
@@ -203,6 +205,81 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	swReferencesToSpanLinks(span.Refs, dest.Links())
 }
 
+// swTagsToAttributesByRule 对于 attributes 中的特定属性进行兜底策略判断
+func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
+	switch span.SpanLayer {
+	case agentV3.SpanLayer_Http:
+		spanType := span.GetSpanType()
+		// attributes.http.route: spanOperationName 样例 /api/leader/list/
+		if spanType == agentV3.SpanType_Entry {
+			if _, ok := dest.Get(conventions.AttributeHTTPRoute); !ok {
+				if route := span.GetOperationName(); route != "" {
+					dest.UpsertString(conventions.AttributeHTTPRoute, route)
+				}
+			}
+		}
+
+		// 获取 urlObj
+		var urlObj *url.URL
+		if u, ok := dest.Get(conventions.AttributeHTTPURL); ok {
+			if u.StringVal() != "" {
+				if v, err := url.Parse(u.StringVal()); err == nil {
+					urlObj = v
+				}
+			}
+		}
+
+		if urlObj != nil {
+			// attributes.http.scheme
+			if _, ok := dest.Get(conventions.AttributeHTTPScheme); !ok {
+				dest.InsertString(conventions.AttributeHTTPScheme, urlObj.Scheme)
+			}
+			// attribute.http.target / attribute.http.host
+			if spanType == agentV3.SpanType_Exit {
+				if _, ok := dest.Get(conventions.AttributeHTTPTarget); !ok {
+					dest.InsertString(conventions.AttributeHTTPTarget, urlObj.Path)
+				}
+				if _, ok := dest.Get(conventions.AttributeHTTPHost); !ok {
+					dest.InsertString(conventions.AttributeHTTPHost, urlObj.Host)
+				}
+			}
+		}
+
+	case agentV3.SpanLayer_RPCFramework:
+		// attributes.rpc.method
+		if _, ok := dest.Get(conventions.AttributeRPCMethod); !ok {
+			if rpcMethod := span.GetOperationName(); rpcMethod != "" {
+				dest.UpsertString(conventions.AttributeRPCMethod, rpcMethod)
+			}
+		}
+
+	case agentV3.SpanLayer_Database, agentV3.SpanLayer_Cache:
+		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
+		if _, ok := dest.Get(conventions.AttributeDBSystem); !ok {
+			if opName := span.GetOperationName(); opName != "" {
+				splitSpanName := strings.Split(opName, "/")
+				dest.InsertString(conventions.AttributeDBSystem, splitSpanName[0])
+			}
+		}
+		// attributes.db.operation
+		if _, ok := dest.Get(conventions.AttributeDBOperation); !ok {
+			if v, ok := dest.Get(conventions.AttributeDBStatement); ok && v.StringVal() != "" {
+				splitStatement := strings.Split(v.StringVal(), " ")
+				dest.InsertString(conventions.AttributeDBOperation, splitStatement[0])
+			}
+		}
+
+	case agentV3.SpanLayer_MQ:
+		// attributes.messaging.system
+		if _, ok := dest.Get(conventions.AttributeMessagingSystem); !ok {
+			if opName := span.GetOperationName(); opName != "" {
+				splitOpName := strings.Split(opName, "/")
+				dest.InsertString(conventions.AttributeMessagingSystem, splitOpName[0])
+			}
+		}
+	}
+}
+
 func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanLinkSlice) {
 	if len(refs) == 0 {
 		return
@@ -217,10 +294,6 @@ func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanL
 		// link.TraceState().FromRaw("")
 		link.SetTraceState("")
 		kvParis := []*common.KeyStringValuePair{
-			{
-				Key:   AttributeParentService,
-				Value: ref.ParentService,
-			},
 			{
 				Key:   AttributeParentInstance,
 				Value: ref.ParentServiceInstance,
@@ -304,7 +377,12 @@ func swKvPairsToInternalAttributes(pairs []*common.KeyStringValuePair, dest pcom
 	}
 
 	for _, pair := range pairs {
-		dest.InsertString(pair.Key, pair.Value)
+		// OT 数据格式转换的时候将所有数据都插入 Resource 维度
+		if v, ok := otSpanTagsMapping[pair.Key]; ok {
+			dest.InsertString(v, pair.Value)
+		} else {
+			dest.InsertString(pair.Key, pair.Value)
+		}
 	}
 }
 

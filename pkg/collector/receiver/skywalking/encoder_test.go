@@ -26,11 +26,13 @@ package skywalking
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	common "skywalking.apache.org/repo/goapi/collect/common/v3"
 	agentV3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 )
 
@@ -341,4 +343,117 @@ func TestSwTransformIP(t *testing.T) {
 	swTransformIP(serviceInstanceID, m)
 	_, ok = m.Get(conventions.AttributeNetHostIP)
 	assert.False(t, ok)
+}
+
+func mockSwSpanWithAttr(opName string, SpanType agentV3.SpanType, SpanLayer agentV3.SpanLayer) *agentV3.SpanObject {
+	// opName: span.OperationName 对于不同的 SpanLayer 级别有不同格式的 opName 格式 HttpLayer：/api/user/list 类型
+	// DatabaseLayer：Mysql/mysqlClient/Execute
+	span := &agentV3.SpanObject{
+		SpanId:        1,
+		ParentSpanId:  0,
+		StartTime:     time.Now().Unix(),
+		EndTime:       time.Now().Unix() + 10,
+		OperationName: opName,
+		SpanType:      SpanType,
+		SpanLayer:     SpanLayer,
+		ComponentId:   1,
+		IsError:       false,
+		SkipAnalysis:  false,
+		Tags:          []*common.KeyStringValuePair{},
+		Logs:          []*agentV3.Log{},
+		Refs:          []*agentV3.SegmentReference{},
+	}
+	return span
+}
+
+func TestSwTagsToAttributesByRule(t *testing.T) {
+	t.Run("SpanLayer_Http/SpanType_Entry", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeHTTPScheme)
+		assert.True(t, ok)
+		assert.Equal(t, "https", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeHTTPRoute)
+		assert.True(t, ok)
+		assert.Equal(t, opName, v.StringVal())
+	})
+
+	t.Run("SpanLayer_Http/SpanType_Exit", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Exit, agentV3.SpanLayer_Http)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeHTTPTarget)
+		assert.True(t, ok)
+		assert.Equal(t, "/apitest/user/list", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeHTTPHost)
+		assert.True(t, ok)
+		assert.Equal(t, "www.test.com", v.StringVal())
+	})
+
+	t.Run("SpanLayer_RPCFramework", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "rpcMethod"
+		// SpanLayer_RPCFramework 情况下 SpanType 类型不会影响测试效果
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_RPCFramework)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeRPCMethod)
+		assert.True(t, ok)
+		assert.Equal(t, opName, v.StringVal())
+	})
+
+	t.Run("SpanLayer_MQ", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "messagingTestSystem/TestopName"
+		// SpanLayer_MQ 情况下 SpanType 类型不会影响测试效果
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_MQ)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeMessagingSystem)
+		assert.True(t, ok)
+		assert.Equal(t, "messagingTestSystem", v.StringVal())
+	})
+
+	t.Run("SpanLayer_Database", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "Mysql/MysqlClient/execute"
+		dbStatement := "SELECT data_id FROM TABLE WHERE XXXX"
+		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Database)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeDBSystem)
+		assert.True(t, ok)
+		assert.Equal(t, "Mysql", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeDBOperation)
+		assert.True(t, ok)
+		assert.Equal(t, "SELECT", v.StringVal())
+	})
+
+	t.Run("SpanLayer_Cache", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "Redis/MysqlClient/execute"
+		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
+		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Cache)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeDBSystem)
+		assert.True(t, ok)
+		assert.Equal(t, "Redis", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeDBOperation)
+		assert.True(t, ok)
+		assert.Equal(t, "SET", v.StringVal())
+	})
 }

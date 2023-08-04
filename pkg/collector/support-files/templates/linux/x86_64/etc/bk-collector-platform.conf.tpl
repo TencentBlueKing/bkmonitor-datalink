@@ -56,6 +56,31 @@ processor:
                 {%- endfor %}
             {%- endfor %}
         {%- endfor %}
+      cut:
+        {%- for config in attribute_config.cut %}
+        - predicate_key: "{{ config.predicate_key }}"
+          max_length: {{ config.max_length }}
+          match:
+            {%- for value in config.get("match", []) %}
+            - "{{ value }}"
+            {%- endfor %}
+          keys:
+            {%- for key in config.get("keys", []) %}
+            - "{{ key }}"
+            {%- endfor%}
+        {%- endfor %}
+      drop:
+        {%- for config in attribute_config.drop %}
+        - predicate_key: "{{ config.predicate_key }}"
+          match:
+            {%- for value in config.get("match", []) %}
+            - "{{ value }}"
+            {%- endfor %}
+          keys:
+            {%- for key in config.get("keys", []) %}
+            - "{{ key }}"
+            {%- endfor%}
+        {%- endfor %}
 {%- endif %}
 
 {% if sampler_config is defined %}

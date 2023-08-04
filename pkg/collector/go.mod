@@ -40,7 +40,6 @@ require (
 	google.golang.org/grpc v1.47.0
 	google.golang.org/protobuf v1.29.0
 	k8s.io/client-go v0.24.2
-	k8s.io/utils v0.0.0-20220210201930-3a6ce19ff2f9
 	lukechampine.com/frand v1.4.2
 	skywalking.apache.org/repo/goapi v0.0.0-20230314034821-0c5a44bb767a
 )
@@ -134,6 +133,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
+	k8s.io/utils v0.0.0-20220210201930-3a6ce19ff2f9 // indirect
 )
 
 replace github.com/elastic/beats v7.1.1+incompatible => github.com/TencentBlueKing/beats v7.1.15-bk+incompatible

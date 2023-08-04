@@ -17,7 +17,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"k8s.io/utils/strings/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -82,15 +81,27 @@ func (p attributeFilter) Process(record *define.Record) (*define.Record, error) 
 	if len(config.AsString.Keys) > 0 {
 		p.asStringAction(record)
 	}
+
 	if len(config.AsInt.Keys) > 0 {
 		p.asIntAction(record)
 	}
+
 	if config.FromToken.BizId != "" || config.FromToken.AppName != "" {
 		p.fromTokenAction(record)
 	}
+
 	if len(config.Assemble) > 0 {
 		p.assembleAction(record)
 	}
+
+	if len(config.Drop) > 0 {
+		p.dropAction(record)
+	}
+
+	if len(config.Cut) > 0 {
+		p.cutAction(record)
+	}
+
 	return nil, nil
 }
 
@@ -244,7 +255,7 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 
 				// 处理 attributes 属性 支持首字母大写
 				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
-					if slices.Contains(rule.FirstUpper, key) {
+					if _, exist := rule.upper[key]; exist {
 						d = firstUpper(v.AsString())
 					} else {
 						d = v.AsString()
@@ -268,4 +279,66 @@ func firstUpper(s string) string {
 		return unknownVal
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func (p attributeFilter) dropAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		actions := p.configs.GetByToken(record.Token.Original).(Config).Drop
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+			for _, action := range actions {
+				v, ok := span.Attributes().Get(action.PredicateKey)
+				if !ok {
+					continue
+				}
+
+				// 取到 key，但是判定条件不符合的时候
+				_, ok = action.match[v.AsString()]
+				if len(action.Match) > 0 && !ok {
+					continue
+				}
+				for _, k := range action.Keys {
+					span.Attributes().Remove(k)
+				}
+			}
+		})
+	}
+}
+
+func (p attributeFilter) cutAction(record *define.Record) {
+	switch record.RecordType {
+	case define.RecordTraces:
+		actions := p.configs.GetByToken(record.Token.Original).(Config).Cut
+		pdTraces := record.Data.(ptrace.Traces)
+		resourceSpansSlice := pdTraces.ResourceSpans()
+		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
+			for _, action := range actions {
+				v, ok := span.Attributes().Get(action.PredicateKey)
+				if !ok {
+					continue
+				}
+
+				// 不符合匹配条件的时候跳过
+				_, ok = action.match[v.AsString()]
+				if len(action.Match) > 0 && !ok {
+					continue
+				}
+
+				// preKey 取值 ok 并且 无匹配条件 或 匹配条件符合的情况下
+				for _, k := range action.Keys {
+					// 无法获取到 key 的值 则跳过
+					if v, ok = span.Attributes().Get(k); !ok {
+						continue
+					}
+					// 对于长度超出的情况，进行裁剪
+					value := v.AsString()
+					if len(value) > action.MaxLength {
+						span.Attributes().UpsertString(k, value[:action.MaxLength])
+					}
+				}
+			}
+		})
+	}
 }

@@ -481,3 +481,274 @@ processor:
 	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
 	assert.Equal(t, "200", v.AsString())
 }
+
+func TestTraceDropAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      drop:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+            - "elasticsearch"
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "mysql",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	_, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.False(t, ok)
+
+	_, ok = attrs.Get("db.parameters")
+	assert.False(t, ok)
+}
+
+func TestTraceDropActionWithUnmatchedPreKey(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      drop:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+            - "elasticsearch"
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	v, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.True(t, ok)
+	assert.Equal(t, "testDbStatement", v.AsString())
+
+	v, ok = attrs.Get("db.parameters")
+	assert.True(t, ok)
+	assert.Equal(t, "testDbParameters", v.AsString())
+}
+
+func TestTraceDropActionWithoutMatch(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      drop:
+        - predicate_key: "attributes.db.system"
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "elasticsearch",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	_, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.False(t, ok)
+
+	_, ok = attrs.Get("db.parameters")
+	assert.False(t, ok)
+}
+
+func TestTraceCutAction(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      cut:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+          max_length: 10
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "postgresql",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	const maxLen = 10
+
+	v, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.True(t, ok)
+	assert.Equal(t, maxLen, len(v.AsString()))
+	assert.Equal(t, "testDbStatement"[:maxLen], v.AsString())
+
+	v, ok = attrs.Get("db.parameters")
+	assert.True(t, ok)
+	assert.Equal(t, maxLen, len(v.AsString()))
+	assert.Equal(t, "testDbParameters"[:maxLen], v.AsString())
+}
+
+func TestTraceCutActionWithUnmatchedPreKey(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      cut:
+        - predicate_key: "attributes.db.system"
+          match:
+            - "mysql"
+            - "postgresql"
+          max_length: 10
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	v, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.True(t, ok)
+	assert.Equal(t, "testDbStatement", v.AsString())
+
+	v, ok = attrs.Get("db.parameters")
+	assert.True(t, ok)
+	assert.Equal(t, "testDbParameters", v.AsString())
+}
+
+func TestTraceCutActionWithoutMatch(t *testing.T) {
+	content := `
+processor:
+  - name: "attribute_filter/common"
+    config:
+      cut:
+        - predicate_key: "attributes.db.system"
+          max_length: 10
+          keys:
+            - "attributes.db.parameters"
+            - "attributes.db.statement"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*attributeFilter)
+	assert.NoError(t, err)
+
+	m := map[string]string{
+		"db.system":     "elasticsearch",
+		"db.parameters": "testDbParameters",
+		"db.statement":  "testDbStatement",
+	}
+
+	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
+	data := g.Generate()
+	record := define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(&record)
+	assert.NoError(t, err)
+	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	attrs := span.Attributes()
+
+	const maxLen = 10
+
+	v, ok := attrs.Get(conventions.AttributeDBStatement)
+	assert.True(t, ok)
+	assert.Equal(t, maxLen, len(v.AsString()))
+	assert.Equal(t, "testDbStatement"[:maxLen], v.AsString())
+
+	v, ok = attrs.Get("db.parameters")
+	assert.True(t, ok)
+	assert.Equal(t, maxLen, len(v.AsString()))
+	assert.Equal(t, "testDbParameters"[:maxLen], v.AsString())
+}

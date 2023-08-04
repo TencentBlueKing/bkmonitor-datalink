@@ -11,7 +11,11 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +51,84 @@ var (
 		return c, c.Validate()
 	}
 )
+
+const (
+	sslVerify                 = "is_ssl_verify"
+	sslInsecureSkipVerify     = "ssl_insecure_skip_verify"
+	sslCertificateAuthorities = "ssl_certificate_authorities"
+	sslCertificate            = "ssl_certificate"
+	sslCertificateKey         = "ssl_certificate_key"
+
+	prefixBase64 = "base64://"
+)
+
+func decodeSslContent(s string) ([]byte, error) {
+	if strings.HasPrefix(s, prefixBase64) {
+		return base64.StdEncoding.DecodeString(s[len(prefixBase64):])
+	}
+	return []byte(s), nil
+}
+
+func buildTlsConfig(ctx context.Context) (*tls.Config, bool) {
+	mqConf := config.MQConfigFromContext(ctx)
+	if mqConf == nil {
+		return nil, false
+	}
+	conf := utils.NewMapHelper(mqConf.ClusterConfig)
+
+	// 判断是否需要 ssl 校验
+	verify, _ := conf.GetBool(sslVerify)
+	if !verify {
+		return nil, false
+	}
+
+	caContent, _ := conf.GetString(sslCertificateAuthorities)
+	certContent, _ := conf.GetString(sslCertificate)
+	certKeyContent, _ := conf.GetString(sslCertificateKey)
+
+	ca, err := decodeSslContent(caContent)
+	if err != nil {
+		logging.Errorf("failed to decode ssl ca, err: %v", err)
+		return nil, false
+	}
+
+	cert, err := decodeSslContent(certContent)
+	if err != nil {
+		logging.Errorf("failed to decode ssl cert, err: %v", err)
+		return nil, false
+	}
+
+	certKey, err := decodeSslContent(certKeyContent)
+	if err != nil {
+		logging.Errorf("failed to decode ssl cert key, err: %v", err)
+		return nil, false
+	}
+
+	// cert / certkey 不能同时为空
+	var cas []tls.Certificate
+	if len(cert) > 0 || len(certKey) > 0 {
+		certPair, err := tls.X509KeyPair(cert, certKey)
+		if err != nil {
+			logging.Errorf("make ssl cert pair failed, err: %v", err)
+			return nil, false
+		}
+		cas = append(cas, certPair)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if len(ca) > 0 {
+		rootCAs.AppendCertsFromPEM(ca)
+	}
+
+	insecureSkipVerify, _ := conf.GetBool(sslInsecureSkipVerify)
+	tlsConfig := &tls.Config{
+		RootCAs:            rootCAs,
+		Certificates:       cas,
+		InsecureSkipVerify: insecureSkipVerify,
+	}
+
+	return tlsConfig, true
+}
 
 // Frontend :
 type Frontend struct {
@@ -277,6 +359,14 @@ func (f *Frontend) init() error {
 	if err != nil {
 		logging.Warnf("kafka may not establish connection %v: password", define.ErrGetAuth)
 	}
+
+	// 能够正确解析出 tls 则配置上
+	tlsConfig, ok := buildTlsConfig(f.ctx)
+	if ok {
+		c.Net.TLS.Enable = true
+		c.Net.TLS.Config = tlsConfig
+	}
+
 	if userName != "" || passWord != "" && err == nil {
 		c.Net.SASL.User = userName
 		c.Net.SASL.Password = passWord

@@ -12,10 +12,12 @@ package structured
 import "github.com/pkg/errors"
 
 var (
+	ErrWrongTableIDFormat = errors.New("wrong table id format > 2")
+	ErrEmptyTableID       = errors.New("empty table id")
+	ErrNotExistTableID    = errors.New("table id is not exist")
+
 	ErrFieldAndConditionListNotMatch = errors.New("field list and condition list is not match")
 	ErrUnknownConditionOperator      = errors.New("unknown condition operator")
-	ErrWrongTableIDFormat            = errors.New("wrong table id format")
-	ErrEmptyTableID                  = errors.New("empty table id and empty data_id_list")
 	ErrNotAllowedReferenceNameFormat = errors.New("wrong reference name format,which start with _")
 	ErrAggMethodNotFound             = errors.New("cannot found aggregate method")
 	ErrExprNotAllow                  = errors.New("expr not allow")

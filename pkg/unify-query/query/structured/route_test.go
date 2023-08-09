@@ -24,20 +24,44 @@ type tableDrivenCase map[string]struct {
 
 // TestMakeRouteFromTableID
 func TestMakeRouteFromTableID(t *testing.T) {
-	testCases := tableDrivenCase{
-		"empty": {"", "", false},
-		"miss":  {"usage", "", false},
-		"valid": {"system.cpu_summary", "bkmonitor:system:cpu_summary:", true},
+	testCases := map[string]struct {
+		tableID string
+		route   *Route
+		err     error
+	}{
+		"empty table id": {
+			"", &Route{}, ErrEmptyTableID,
+		},
+		"valid table id": {
+			"system.cpu_summary",
+			&Route{
+				dataSource:  dataSrc,
+				db:          "system",
+				measurement: "cpu_summary",
+			},
+			nil,
+		},
+		"two stage": {
+			"cpu_summary", &Route{
+				dataSource: dataSrc,
+				db:         "cpu_summary",
+			}, nil,
+		},
+		"wrong table id": {
+			"system.cpu_detail.usage", &Route{
+				dataSource: dataSrc,
+				db:         "cpu_summary",
+			}, ErrWrongTableIDFormat,
+		},
 	}
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			route, err := MakeRouteFromTableID(testCase.input)
-			if testCase.ok {
-				assert.Nil(t, err)
-				assert.Equal(t, testCase.want, route.RealMetricName())
+			route, err := MakeRouteFromTableID(testCase.tableID)
+			if err != nil {
+				assert.Equal(t, testCase.err, err)
 			} else {
-				assert.Error(t, err)
+				assert.Equal(t, testCase.route, route)
 			}
 		})
 	}
@@ -45,22 +69,80 @@ func TestMakeRouteFromTableID(t *testing.T) {
 
 // TestMakeRouteFromMetricName
 func TestMakeRouteFromMetricName(t *testing.T) {
-	testCases := tableDrivenCase{
-		"empty":               {"", "", false},
-		"only metric name":    {"usage", "bkmonitor:::usage", true},
-		"contain metric":      {":usage", "bkmonitor:::usage", true},
-		"contain metric2":     {"cpu_summary:usage", "cpu_summary:::usage", true},
-		"not contain metric2": {"cpu_summary:", "", false},
+	testCases := map[string]struct {
+		metricName string
+		route      *Route
+		err        error
+	}{
+		"empty": {
+			"", &Route{}, ErrMetricMissing,
+		},
+		"single metric": {
+			"usage", &Route{
+				dataSource: dataSrc,
+				metricName: "usage",
+			}, nil,
+		},
+		"two stage": {
+			"cpu_summary:usage", &Route{
+				dataSource: dataSrc,
+				db:         "cpu_summary",
+				metricName: "usage",
+			}, nil,
+		},
+		"two stage with all": {
+			"cpu_summary:__default__", &Route{
+				dataSource: dataSrc,
+				db:         "cpu_summary",
+				metricName: "__default__",
+			}, nil,
+		},
+		"two stage with data source": {
+			"bkmonitor:cpu_summary:usage", &Route{
+				dataSource: dataSrc,
+				db:         "cpu_summary",
+				metricName: "usage",
+			}, nil,
+		},
+		"table id + metric": {
+			"system:cpu_summary:usage", &Route{
+				dataSource:  dataSrc,
+				db:          "system",
+				measurement: "cpu_summary",
+				metricName:  "usage",
+			}, nil,
+		},
+		"bkmonitor + table id + metric": {
+			"bkmonitor:system:cpu_summary:usage", &Route{
+				dataSource:  dataSrc,
+				db:          "system",
+				measurement: "cpu_summary",
+				metricName:  "usage",
+			}, nil,
+		},
+		"bkbase + table id + metric": {
+			"bkbase:system:cpu_summary:usage", &Route{
+				dataSource:  "bkbase",
+				db:          "system",
+				measurement: "cpu_summary",
+				metricName:  "usage",
+			}, nil,
+		},
+		"bkbase +  metric": {
+			"bkbase:::usage", &Route{
+				dataSource: "bkbase",
+				metricName: "usage",
+			}, nil,
+		},
 	}
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			route, err := MakeRouteFromMetricName(testCase.input)
-			if testCase.ok {
-				assert.Nil(t, err)
-				assert.Equal(t, testCase.want, route.RealMetricName())
+			route, err := MakeRouteFromMetricName(testCase.metricName)
+			if err != nil {
+				assert.Equal(t, testCase.err, err)
 			} else {
-				assert.Error(t, err)
+				assert.Equal(t, testCase.route, route)
 			}
 		})
 	}
@@ -68,11 +150,6 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 
 // TestMakeRouteFromLabelMatch
 func TestMakeRouteFromLabelMatch(t *testing.T) {
-	type tableDrivenCase map[string]struct {
-		input []*labels.Matcher
-		want  string
-		ok    bool
-	}
 
 	miss := []*labels.Matcher{}
 	miss = append(miss, labels.MustNewMatcher(labels.MatchEqual, "__name__", "usage"))
@@ -82,7 +159,11 @@ func TestMakeRouteFromLabelMatch(t *testing.T) {
 	valid = append(valid, labels.MustNewMatcher(labels.MatchEqual, "bk_database", "system"))
 	valid = append(valid, labels.MustNewMatcher(labels.MatchEqual, "bk_measurement", "cpu_summary"))
 
-	testCases := tableDrivenCase{
+	testCases := map[string]struct {
+		input []*labels.Matcher
+		want  string
+		ok    bool
+	}{
 		"empty": {[]*labels.Matcher{}, "", false},
 		"miss":  {miss, "", false},
 		"valid": {valid, "bkmonitor:system:cpu_summary:usage", true},

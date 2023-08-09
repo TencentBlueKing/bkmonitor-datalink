@@ -133,6 +133,7 @@ func MockTrace() context.Context {
 
 func MockTsDB(t *testing.T) {
 	mockCurl := curl.NewMockCurl(map[string]string{
+		`http://127.0.0.1:80/query?db=2_bkmonitor_time_series_1582626&q=select+count%28%22value%22%29+as+_value%2C+time+as+_time+from+container_cpu_system_seconds_total+where+time+%3E+1669717379999000000+and+time+%3C+1669717739999000000+and+bcs_cluster_id%3D%27BCS-K8S-40949%27++group+by+time%281m0s%29`:                                                                                                                                                                          ``,
 		`http://127.0.0.1/api/query_range?end=1669717680&query=count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                                                                                                                                                                   `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"35895"],[1669717440,"35900"],[1669717500,"39424"],[1669717560,"41380"],[1669717620,"43604"],[1669717680,"42659"]]}]}}`,
 		`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29+%2B+count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                     `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"70639"],[1669717440,"74007"],[1669717500,"79092"],[1669717560,"83808"],[1669717620,"85899"],[1669717680,"85261"]]}]}}`,
 		`http://127.0.0.1/api/query_range?end=1669717680&query=sum+by%28pod_name%29+%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cpod_name%3D~%22actor.%2A%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                                       `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod_name":"actor-train-train-11291730-bot-1f42-0"},"values":[[1669717380,"2"],[1669717560,"2"],[1669717620,"2"],[1669717680,"2"]]}]}}`,
@@ -209,12 +210,12 @@ func MockSpace(t *testing.T) {
 			Measurement: "cpu_summary",
 		},
 		"2_bkmonitor_time_series_1582626.__default__": &ir.Proxy{
-			StorageID:   "10",
+			StorageID:   "0",
 			Db:          "2_bkmonitor_time_series_1582626",
 			Measurement: "__default__",
 		},
 		"2_bkmonitor_time_series_1572904.__default__": &ir.Proxy{
-			StorageID:   "10",
+			StorageID:   "0",
 			Db:          "2_bkmonitor_time_series_1572904",
 			Measurement: "__default__",
 		},

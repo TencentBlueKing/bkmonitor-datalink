@@ -10,6 +10,7 @@
 package decoder
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
@@ -17,12 +18,13 @@ import (
 
 // TestMSGPack
 func TestMSGPack(t *testing.T) {
+	ctx := context.Background()
 	data, err := os.Open("testfile/msgData")
 	if err != nil {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/x-msgpack")
-	resp, err := dec.Decode(data)
+	resp, err := dec.Decode(ctx, data)
 	if err != nil {
 		panic(err)
 	}
@@ -34,12 +36,13 @@ func TestMSGPack(t *testing.T) {
 
 // TestJSON
 func TestJSON(t *testing.T) {
+	ctx := context.Background()
 	data, err := os.Open("testfile/jsonData.json")
 	if err != nil {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/json")
-	resp, err := dec.Decode(data)
+	resp, err := dec.Decode(ctx, data)
 	if err != nil {
 		panic(err)
 	}

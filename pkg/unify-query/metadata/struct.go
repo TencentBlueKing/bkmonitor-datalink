@@ -144,36 +144,31 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 					continue
 				}
 
-				druidDimsStatus := map[string]uint{
-					"bk_obj_id":  1,
-					"bk_inst_id": 2,
+				druidDimsStatus := map[string]struct{}{
+					"bk_obj_id":  {},
+					"bk_inst_id": {},
 				}
 
 				tags, _ := ParseCondition(query.Condition)
 
-				var checkTag uint
 				for _, tag := range tags {
-					if v, ok := druidDimsStatus[string(tag.Key)]; ok {
-						checkTag |= v
+					if _, ok := druidDimsStatus[string(tag.Key)]; ok {
+						druidCheckStatus = true
 					}
 				}
 
-				var checkMethod uint
-				if checkTag != 3 {
+				if !druidCheckStatus {
 					for _, amList := range query.AggregateMethodList {
 						for _, amDimension := range amList.Dimensions {
-							if v, ok := druidDimsStatus[amDimension]; ok {
-								checkMethod |= v
+							if _, ok := druidDimsStatus[amDimension]; ok {
+								druidCheckStatus = true
+								break
 							}
-						}
-
-						if checkMethod == 3 {
-							break
 						}
 					}
 				}
 
-				if checkTag == 3 || checkMethod == 3 {
+				if druidCheckStatus {
 					if !query.IsSingleMetric {
 						query.IsSingleMetric = true
 						query.Measurement = query.Field
@@ -181,7 +176,6 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 					}
 					// 替换 vmrt 的值
 					query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
-					druidCheckStatus = true
 				}
 			}
 		}

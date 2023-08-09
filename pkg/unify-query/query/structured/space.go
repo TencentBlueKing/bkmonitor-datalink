@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -23,6 +24,8 @@ type SpaceFilter struct {
 	ctx      context.Context
 	spaceUid string
 	space    redis.Space
+
+	mux sync.Mutex
 }
 
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
@@ -46,35 +49,42 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 }
 
 func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error) {
-	filterTsDBs := make([]*redis.TsDB, 0)
-	for tID, tsDB := range s.space {
-		// 如果 tableID 不匹配直接跳过
-		if tableID != "" {
-			if tID != tableID {
-				continue
-			}
-		} else {
-			// 如果 tableID 都是空，则只取单指标单表数据
-			if !tsDB.IsSplit() {
-				continue
-			}
-		}
+	// 判断 tableID 使用几段式
+	router, _ := MakeRouteFromTableID(tableID)
+	s.mux.Lock()
+	defer s.mux.Unlock()
 
-		var inField bool
-		if fieldName != "" {
-			// 判断字段是否在路由表信息里面
-			for _, f := range tsDB.Field {
-				if fieldName == f {
-					inField = true
-					break
+	filterTsDBs := make([]*redis.TsDB, 0)
+	// 判断如果 tableID 完整的情况下，则直接取对应的 tsDB
+	if router.DB() != "" && router.Measurement() != "" {
+		if v, ok := s.space[tableID]; ok {
+			for _, f := range v.Field {
+				if f == fieldName {
+					filterTsDBs = append(filterTsDBs, v)
 				}
 			}
 		} else {
-			inField = true
+			return nil, ErrNotExistTableID
 		}
-
-		if inField {
-			filterTsDBs = append(filterTsDBs, tsDB)
+	} else if router.DB() != "" {
+		// 遍历该空间下所有的 space，如果 dataLabel 符合 db 则加入到 tsDB 列表里面
+		for _, v := range s.space {
+			// 可能会存在重复的 dataLabel
+			if router.DB() == v.DataLabel {
+				for _, f := range v.Field {
+					if f == fieldName {
+						filterTsDBs = append(filterTsDBs, v)
+					}
+				}
+			}
+		}
+	} else {
+		for _, v := range s.space {
+			for _, f := range v.Field {
+				if f == fieldName {
+					filterTsDBs = append(filterTsDBs, v)
+				}
+			}
 		}
 	}
 

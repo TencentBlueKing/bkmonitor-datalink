@@ -83,7 +83,7 @@ func TestCheckVmQuery(t *testing.T) {
 		expected checkExpected
 	}{
 		{
-			name:     "测试单一查询符合 druid-query 条件",
+			name:     "测试单一查询符合 druid-query 双维度条件",
 			spaceUid: "druid-query",
 			ref: QueryReference{
 				refNameA: &QueryMetric{
@@ -127,7 +127,7 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
-			name:     "测试单一查询 conditions 符合 druid-query 条件",
+			name:     "测试单一查询 conditions 符合 druid-query 双维度条件",
 			spaceUid: "druid-query",
 			ref: QueryReference{
 				refNameA: &QueryMetric{
@@ -158,7 +158,7 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
-			name:     "测试单一查询开启 druid-query 特性开关，但不符合查询判断",
+			name:     "测试单一查询开启 druid-query 特性开关，单维度",
 			spaceUid: "test",
 			ref: QueryReference{
 				refNameA: &QueryMetric{
@@ -189,9 +189,15 @@ func TestCheckVmQuery(t *testing.T) {
 				},
 			},
 			expected: checkExpected{
-				ok:        false,
-				metricMap: map[string]string{},
-				vmRtGroup: map[string][]string{},
+				ok: true,
+				metricMap: map[string]string{
+					refNameA: "usage_value",
+				},
+				vmRtGroup: map[string][]string{
+					"usage_value": {
+						"100147_ieod_system_net_cmdb",
+					},
+				},
 			},
 		},
 		{
@@ -288,9 +294,16 @@ func TestCheckVmQuery(t *testing.T) {
 				},
 			},
 			expected: checkExpected{
-				ok:        false,
-				metricMap: map[string]string{},
-				vmRtGroup: map[string][]string{},
+				ok: true,
+				metricMap: map[string]string{
+					"a": "usage_value",
+				},
+				vmRtGroup: map[string][]string{
+					"usage_value": {
+						"100147_ieod_system_detail_cmdb",
+						"100147_ieod_system_summary_cmdb",
+					},
+				},
 			},
 		},
 		{
@@ -496,10 +509,8 @@ func TestCheckVmQuery(t *testing.T) {
 							VmRt:           "100147_ieod_system_detail_raw",
 							AggregateMethodList: []AggrMethod{
 								{
-									Name: "sum",
-									Dimensions: []string{
-										"bk_obj_id",
-									},
+									Name:       "sum",
+									Dimensions: []string{},
 								},
 							},
 						},

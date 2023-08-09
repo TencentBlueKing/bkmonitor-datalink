@@ -387,6 +387,12 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "SegmentedEnable")
 				return
 			}
+		case "DataLabel":
+			z.DataLabel, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "DataLabel")
+				return
+			}
 		default:
 			err = dc.Skip()
 			if err != nil {
@@ -400,9 +406,9 @@ func (z *TsDB) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *TsDB) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 7
+	// map header, size 8
 	// write "Type"
-	err = en.Append(0x87, 0xa4, 0x54, 0x79, 0x70, 0x65)
+	err = en.Append(0x88, 0xa4, 0x54, 0x79, 0x70, 0x65)
 	if err != nil {
 		return
 	}
@@ -497,15 +503,25 @@ func (z *TsDB) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "SegmentedEnable")
 		return
 	}
+	// write "DataLabel"
+	err = en.Append(0xa9, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x61, 0x62, 0x65, 0x6c)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.DataLabel)
+	if err != nil {
+		err = msgp.WrapError(err, "DataLabel")
+		return
+	}
 	return
 }
 
 // MarshalMsg implements msgp.Marshaler
 func (z *TsDB) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 7
+	// map header, size 8
 	// string "Type"
-	o = append(o, 0x87, 0xa4, 0x54, 0x79, 0x70, 0x65)
+	o = append(o, 0x88, 0xa4, 0x54, 0x79, 0x70, 0x65)
 	o = msgp.AppendString(o, z.Type)
 	// string "TableID"
 	o = append(o, 0xa7, 0x54, 0x61, 0x62, 0x6c, 0x65, 0x49, 0x44)
@@ -535,6 +551,9 @@ func (z *TsDB) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "SegmentedEnable"
 	o = append(o, 0xaf, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x65, 0x64, 0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65)
 	o = msgp.AppendBool(o, z.SegmentedEnable)
+	// string "DataLabel"
+	o = append(o, 0xa9, 0x44, 0x61, 0x74, 0x61, 0x4c, 0x61, 0x62, 0x65, 0x6c)
+	o = msgp.AppendString(o, z.DataLabel)
 	return
 }
 
@@ -648,6 +667,12 @@ func (z *TsDB) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "SegmentedEnable")
 				return
 			}
+		case "DataLabel":
+			z.DataLabel, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "DataLabel")
+				return
+			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
@@ -676,6 +701,6 @@ func (z *TsDB) Msgsize() (s int) {
 			}
 		}
 	}
-	s += 16 + msgp.BoolSize
+	s += 16 + msgp.BoolSize + 10 + msgp.StringPrefixSize + len(z.DataLabel)
 	return
 }

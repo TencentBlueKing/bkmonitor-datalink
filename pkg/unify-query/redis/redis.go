@@ -40,7 +40,11 @@ func Close() {
 }
 
 func Client() goRedis.UniversalClient {
-	return globalInstance.client
+	var client goRedis.UniversalClient
+	if globalInstance != nil {
+		client = globalInstance.client
+	}
+	return client
 }
 
 func SetInstance(ctx context.Context, serviceName string, options *goRedis.UniversalOptions) error {

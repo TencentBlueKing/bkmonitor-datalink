@@ -34,6 +34,7 @@ type TsDB struct {
 	BkDataID        string   `json:"bk_data_id,omitempty"`
 	Filters         []Filter `json:"filters"`
 	SegmentedEnable bool     `json:"segmented_enable,omitempty"`
+	DataLabel       string   `json:"data_label,omitempty"`
 }
 
 func (z *TsDB) IsSplit() bool {
@@ -42,9 +43,9 @@ func (z *TsDB) IsSplit() bool {
 
 func (z *TsDB) String() string {
 	return fmt.Sprintf(
-		"type:%s,tableID:%v,field:%s,"+
+		"type:%s,dataLabel:%v,tableID:%v,field:%s,"+
 			"measurementType:%s,segmentedEnable:%v,bk_data_id:%s,filter:%+v",
-		z.Type, z.TableID, z.Field,
+		z.Type, z.DataLabel, z.TableID, z.Field,
 		z.MeasurementType, z.SegmentedEnable, z.BkDataID, z.Filters,
 	)
 }

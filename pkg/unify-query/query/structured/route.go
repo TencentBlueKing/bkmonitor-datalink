@@ -65,40 +65,59 @@ func (r *Route) SetMetricName(name string) {
 
 // TableID 返回当前路由的 table_id
 func (r *Route) TableID() TableID {
-	if r.db != "" && r.measurement != "" {
-		return TableID(fmt.Sprintf("%s.%s", r.db, r.measurement))
+	table := r.DB()
+	if r.Measurement() != "" {
+		table = fmt.Sprintf("%s.%s", table, r.Measurement())
 	}
-
-	return TableID("")
+	return TableID(table)
 }
 
-// RealMetricName 这里替换成真正对外的指标名称
+// RealMetricName 这里替换成真正对外的指标名称，需要支持指标二段式
 // 拼装规则 {dataSource}:{db}:{measurement}:{metricName}
 func (r *Route) RealMetricName() string {
-	// dataSource 默认设置为 dataSrc
-	var ds string
-	if r.dataSource == "" {
-		ds = dataSrc
+	metricList := make([]string, 0)
+
+	// 拼接前缀
+	if r.DataSource() != "" {
+		metricList = append(metricList, r.DataSource())
 	} else {
-		ds = r.dataSource
+		metricList = append(metricList, dataSrc)
 	}
 
-	return fmt.Sprintf("%s:%s:%s:%s", ds, r.db, r.measurement, r.metricName)
+	if r.DB() != "" {
+		metricList = append(metricList, r.DB())
+	}
+
+	if r.Measurement() != "" {
+		metricList = append(metricList, r.Measurement())
+	}
+
+	if r.MetricName() != "" {
+		metricList = append(metricList, r.MetricName())
+	}
+
+	return strings.Join(metricList, ":")
 }
 
 // MakeRouteFromTableID table 转换为路由表, 格式规范 {DB}.{Measurement}
 func MakeRouteFromTableID(tableID string) (*Route, error) {
 	if tableID == "" {
-		return nil, ErrEmptyTableID
+		return &Route{}, ErrEmptyTableID
 	}
+
 	tableInfo := strings.Split(tableID, ".")
-	if len(tableInfo) != 2 {
-		return nil, ErrWrongTableIDFormat
+
+	if len(tableInfo) > 2 {
+		return &Route{}, ErrWrongTableIDFormat
 	}
 
 	route := &Route{
-		db:          tableInfo[0],
-		measurement: tableInfo[1],
+		dataSource: dataSrc,
+		db:         tableInfo[0],
+	}
+
+	if len(tableInfo) == 2 {
+		route.measurement = tableInfo[1]
 	}
 	return route, nil
 }
@@ -132,7 +151,7 @@ func MakeRouteFromMetricName(name string) (*Route, error) {
 	sn := strings.Split(name, ":")
 	metricName := sn[len(sn)-1]
 	if metricName == "" {
-		return nil, errors.New("wrong metric name format")
+		return nil, ErrMetricMissing
 	}
 
 	// 如果第一位不是 bkmonitor 则需要补为 bkmonitor
@@ -153,6 +172,13 @@ func MakeRouteFromMetricName(name string) (*Route, error) {
 			db:          split[1],
 			measurement: split[2],
 			metricName:  split[3],
+		}, nil
+	case 3:
+		return &Route{
+			dataSource:  split[0],
+			db:          split[1],
+			measurement: "",
+			metricName:  split[2],
 		}, nil
 	case 2:
 		// 第二种格式

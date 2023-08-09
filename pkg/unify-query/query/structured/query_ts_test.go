@@ -11,16 +11,18 @@ package structured
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
+	omd "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -62,7 +64,7 @@ func (m *m) RenewalLock(ctx context.Context, key string, renewalDuration time.Du
 	panic("implement me")
 }
 
-func (m *m) GetPolicies(ctx context.Context, clusterName, tagRouter string) (map[string]*metadata.Policy, error) {
+func (m *m) GetPolicies(ctx context.Context, clusterName, tagRouter string) (map[string]*omd.Policy, error) {
 	panic("implement me")
 }
 
@@ -105,6 +107,127 @@ func (m *m) GetReadShardsByTimeRange(ctx context.Context, clusterName, tagRouter
 }
 
 func TestQueryToMetric(t *testing.T) {
+	spaceUid := "test_two_stage"
+	db := "push_gateway_unify_query"
+	measurement := "group"
+	tableID := fmt.Sprintf("%s.%s", db, measurement)
+	field := "unify_query_request_handler_total"
+	dataLabel := "unify_query"
+	storageID := "2"
+	clusterName := "demo"
+
+	ctx := context.Background()
+	mock.SetRedisClient(ctx, "test")
+
+	mock.SetSpaceAndProxyMockData(
+		ctx, spaceUid, &redis.TsDB{
+			TableID:         tableID,
+			Field:           []string{field},
+			MeasurementType: redis.BKTraditionalMeasurement,
+			DataLabel:       dataLabel,
+		}, &ir.Proxy{
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageID:       storageID,
+			ClusterName:     clusterName,
+			Db:              db,
+			Measurement:     measurement,
+		},
+	)
+
+	var testCases = map[string]struct {
+		query  *Query
+		metric *md.QueryMetric
+	}{
+		"test table id query": {
+			query: &Query{
+				TableID:       tableID,
+				FieldName:     field,
+				ReferenceName: "a",
+				Start:         "0",
+				End:           "300",
+				Step:          "1m",
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					&md.Query{
+						TableID:     tableID,
+						DB:          db,
+						Measurement: measurement,
+						StorageID:   storageID,
+						ClusterName: clusterName,
+						Field:       field,
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    field,
+				IsCount:       false,
+			},
+		},
+		"test  metric query": {
+			query: &Query{
+				FieldName:     field,
+				ReferenceName: "a",
+				Start:         "0",
+				End:           "300",
+				Step:          "1m",
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					&md.Query{
+						TableID:     tableID,
+						DB:          db,
+						Measurement: measurement,
+						StorageID:   storageID,
+						ClusterName: clusterName,
+						Field:       field,
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    field,
+				IsCount:       false,
+			},
+		},
+		"test two stage metric query": {
+			query: &Query{
+				TableID:       dataLabel,
+				FieldName:     field,
+				ReferenceName: "a",
+				Start:         "0",
+				End:           "300",
+				Step:          "1m",
+			},
+			metric: &md.QueryMetric{
+				QueryList: md.QueryList{
+					&md.Query{
+						TableID:     tableID,
+						DB:          db,
+						Measurement: measurement,
+						StorageID:   storageID,
+						ClusterName: clusterName,
+						Field:       field,
+					},
+				},
+				ReferenceName: "a",
+				MetricName:    field,
+				IsCount:       false,
+			},
+		},
+	}
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			ctx = context.Background()
+			metric, err := c.query.ToQueryMetric(ctx, spaceUid)
+			assert.Nil(t, err)
+			assert.Equal(t, 1, len(c.metric.QueryList))
+			if err == nil {
+				assert.Equal(t, c.metric.QueryList[0].TableID, metric.QueryList[0].TableID)
+				assert.Equal(t, c.metric.QueryList[0].Field, metric.QueryList[0].Field)
+			}
+		})
+	}
+}
+
+func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 	ctx := context.Background()
 
 	mock.SetRedisClient(ctx, "")

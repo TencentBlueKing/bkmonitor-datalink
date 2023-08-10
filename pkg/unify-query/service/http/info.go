@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -306,7 +307,13 @@ func HandleFeatureFlag(c *gin.Context) {
 	ctx := c.Request.Context()
 	res := ""
 	refresh := c.Query("r")
+
 	if refresh != "" {
+		err := metadata.GetQueryRouter().PublishVmQuery(ctx)
+		if err != nil {
+			res += fmt.Sprintf("publish vm query error: %s\n", err.Error())
+		}
+
 		res += "refresh feature flag\n"
 		path := consul.GetFeatureFlagsPath()
 		res += fmt.Sprintf("consul feature flags path: %s\n", path)
@@ -324,6 +331,9 @@ func HandleFeatureFlag(c *gin.Context) {
 		}
 		res += fmt.Sprintln("-------------------------------")
 	}
+
+	res += metadata.GetQueryRouter().Print() + "\n"
+	res += fmt.Sprintln("-------------------------------")
 
 	res += featureFlag.Print() + "\n"
 	res += fmt.Sprintln("-----------------------------------")

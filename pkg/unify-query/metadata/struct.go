@@ -110,9 +110,16 @@ func (qRef QueryReference) GetVMQueryFeatureFlag(ctx context.Context) bool {
 		span oleltrace.Span
 		user = GetUser(ctx)
 	)
+
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-feature-flag")
 	if span != nil {
 		defer span.End()
+	}
+
+	// 增加配置的特性开关
+	if GetQueryRouter().CheckVmQuery(ctx, user.SpaceUid) {
+		trace.InsertStringIntoSpan("vm-query-space-uid", "true", span)
+		return true
 	}
 
 	// 特性开关只有指定空间才启用 vm 查询

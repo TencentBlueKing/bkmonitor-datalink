@@ -80,9 +80,12 @@ func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error)
 		}
 	} else {
 		for _, v := range s.space {
-			for _, f := range v.Field {
-				if f == fieldName {
-					filterTsDBs = append(filterTsDBs, v)
+			// 如果不指定 tableID 或者 dataLabel，则只获取单指标单表的 tsdb
+			if v.IsSplit() {
+				for _, f := range v.Field {
+					if f == fieldName {
+						filterTsDBs = append(filterTsDBs, v)
+					}
 				}
 			}
 		}

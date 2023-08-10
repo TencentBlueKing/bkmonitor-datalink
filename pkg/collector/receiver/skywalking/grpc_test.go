@@ -22,12 +22,11 @@ import (
 )
 
 const (
-	key   = "authentication"
 	token = "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
 )
 
 func TestTracesFailedPreCheck(t *testing.T) {
-	md := metadata.Pairs(key, token)
+	md := metadata.Pairs(authKey, token)
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 	segment := mockGrpcTraceSegment(1)
 
@@ -38,6 +37,55 @@ func TestTracesFailedPreCheck(t *testing.T) {
 		},
 	}
 	svc.consumeTraces(ctx, segment)
+}
+
+func mockContextByMetaDataMap(m map[string]string) context.Context {
+	md := metadata.New(m)
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	return ctx
+}
+
+func TestGetInfoFromMetadata(t *testing.T) {
+	m := map[string]string{
+		authKey:         token,
+		userAgentKey:    "grpc-java",
+		agentVersionKey: "testVersion",
+	}
+	ctx := mockContextByMetaDataMap(m)
+	md := getMetaDataFromContext(ctx)
+	assert.NotNil(t, md)
+
+	t.Run("TokenWithNilMD", func(t *testing.T) {
+		s, err := getTokenFromMetadata(nil)
+		assert.NotNil(t, err)
+		assert.Equal(t, "", s)
+	})
+
+	t.Run("Token", func(t *testing.T) {
+		s, err := getTokenFromMetadata(md)
+		assert.Nil(t, err)
+		assert.Equal(t, token, s)
+	})
+
+	t.Run("AgentLanguageWithNilMD", func(t *testing.T) {
+		lang := getAgentLanguageFromMetadata(nil)
+		assert.Equal(t, "unknown", lang)
+	})
+
+	t.Run("AgentLanguage", func(t *testing.T) {
+		lang := getAgentLanguageFromMetadata(md)
+		assert.Equal(t, "java", lang)
+	})
+
+	t.Run("AgentVersionWithNilMD", func(t *testing.T) {
+		version := getAgentVersionFromMetadata(nil)
+		assert.Equal(t, "unknown", version)
+	})
+
+	t.Run("AgentVersion", func(t *testing.T) {
+		version := getAgentVersionFromMetadata(md)
+		assert.Equal(t, "testVersion", version)
+	})
 }
 
 func TestEmptyImpl(t *testing.T) {

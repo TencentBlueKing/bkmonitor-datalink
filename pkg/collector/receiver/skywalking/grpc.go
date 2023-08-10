@@ -13,8 +13,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
+	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 	"google.golang.org/grpc/metadata"
 	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
 	common "skywalking.apache.org/repo/goapi/collect/common/v3"
@@ -32,20 +34,64 @@ import (
 )
 
 const (
-	authKey = "authentication"
+	authKey         = "authentication"
+	userAgentKey    = "user-agent"
+	agentVersionKey = "agent-version"
 )
 
-func getTokenFromContext(ctx context.Context) (string, error) {
-	meta, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
+// getMetaDataFromContext 提取 metadata 信息
+func getMetaDataFromContext(ctx context.Context) metadata.MD {
+	if meta, ok := metadata.FromIncomingContext(ctx); ok {
+		return meta
+	}
+	return nil
+}
+
+// getTokenFromMetadata 从 metadata 中获取 Token
+func getTokenFromMetadata(md metadata.MD) (string, error) {
+	if md == nil {
 		return "", errors.New("no metadata found in request")
 	}
 
-	authentication, ok := meta[authKey]
+	authentication, ok := md[authKey]
 	if !ok || len(authentication) <= 0 {
 		return "", errors.New("no authentication found in metadata")
 	}
 	return authentication[0], nil
+}
+
+// getAgentLanguageFromMetadata 从 metadata 中获取探针语言类型
+func getAgentLanguageFromMetadata(md metadata.MD) string {
+	language := "unknown"
+	if md == nil {
+		return language
+	}
+
+	userAgent := md.Get(userAgentKey)
+	if len(userAgent) == 0 {
+		return language
+	}
+	if strings.HasPrefix(userAgent[0], "grpc-java") {
+		return "java"
+	}
+	if strings.HasPrefix(userAgent[0], "grpc-python") {
+		return "python"
+	}
+	return language
+}
+
+// getAgentVersionFromMetadata 从 metadata 中获取探针版本
+func getAgentVersionFromMetadata(md metadata.MD) string {
+	version := "unknown"
+	if md == nil {
+		return version
+	}
+
+	agentVersion := md.Get(agentVersionKey)
+	if len(agentVersion) == 0 {
+		return version
+	}
+	return agentVersion[0]
 }
 
 type TraceSegmentReportService struct {
@@ -74,15 +120,22 @@ func (s *TraceSegmentReportService) Collect(stream segment.TraceSegmentReportSer
 }
 
 func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *segment.SegmentObject) {
+	md := getMetaDataFromContext(ctx)
 	ip := utils.GetGrpcIpFromContext(ctx)
-	token, err := getTokenFromContext(ctx)
+	token, err := getTokenFromMetadata(md)
 	if err != nil {
 		logger.Warnf("failed to get token from context, ip=%v, error %s", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordTraces)
 		return
 	}
 
-	traces := EncodeTraces(segment, token)
+	// 构造 extraAttrs 对 skywalking 转 ot 的数据进行额外内容补充
+	extraAttrs := make(map[string]string)
+	extraAttrs[conventions.AttributeTelemetrySDKVersion] = getAgentVersionFromMetadata(md)
+	extraAttrs[conventions.AttributeTelemetrySDKLanguage] = getAgentLanguageFromMetadata(md)
+	extraAttrs[conventions.AttributeTelemetrySDKName] = "SkyWalking"
+
+	traces := EncodeTraces(segment, token, extraAttrs)
 	start := time.Now()
 	r := &define.Record{
 		RequestType:   define.RequestGrpc,

@@ -121,7 +121,7 @@ func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 	}
 
 	data.ServiceInstance = serviceInstance
-	traces := EncodeTraces(data, token)
+	traces := EncodeTraces(data, token, nil)
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
@@ -174,7 +174,7 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 		}
 
 		seg.ServiceInstance = serviceInstance
-		traces := EncodeTraces(seg, token)
+		traces := EncodeTraces(seg, token, nil)
 		r := &define.Record{
 			RequestType:   define.RequestHttp,
 			RequestClient: define.RequestClient{IP: ip},

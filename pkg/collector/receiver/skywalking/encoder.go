@@ -77,7 +77,7 @@ var otSpanTagsMapping = map[string]string{
 	"mq.topic":  conventions.AttributeMessagingDestinationKindTopic,
 }
 
-func EncodeTraces(segment *agentV3.SegmentObject, token string) ptrace.Traces {
+func EncodeTraces(segment *agentV3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
 	traceData := ptrace.NewTraces()
 
 	swSpans := segment.Spans
@@ -92,6 +92,11 @@ func EncodeTraces(segment *agentV3.SegmentObject, token string) ptrace.Traces {
 	rs.Attributes().InsertString(conventions.AttributeServiceInstanceID, segment.GetServiceInstance())
 	rs.Attributes().InsertString(AttributeSkywalkingTraceID, segment.GetTraceId())
 	rs.Attributes().InsertString(AttributeDataToken, token)
+
+	// 补充数据字段内容 agentLanguage agentType agentVersion
+	for k, v := range extraAttrs {
+		rs.Attributes().InsertString(k, v)
+	}
 
 	il := resourceSpan.ScopeSpans().AppendEmpty()
 	swSpansToSpanSlice(segment.GetTraceId(), segment.GetTraceSegmentId(), swSpans, il.Spans())

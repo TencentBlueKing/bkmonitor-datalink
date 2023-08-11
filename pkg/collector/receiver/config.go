@@ -11,6 +11,9 @@ package receiver
 
 import (
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 type ComponentConfig struct {
@@ -64,4 +67,43 @@ type GrpcServerConfig struct {
 	Endpoint    string   `config:"endpoint"`
 	Middlewares []string `config:"middlewares"`
 	Transport   string   `config:"transport"`
+}
+
+type SubConfig struct {
+	Type           string                 `config:"type"`
+	Token          string                 `config:"token"`
+	SkywalkingConf map[string]interface{} `config:"skywalking_agent"`
+}
+
+type SwConf struct {
+	Sn      string   `mapstructure:"sn"`
+	SwRules []SwRule `mapstructure:"rules"`
+}
+
+type SwRule struct {
+	Type    string `mapstructure:"type"`
+	Enabled bool   `mapstructure:"enabled"`
+	Target  string `mapstructure:"target"`
+	Field   string `mapstructure:"field"`
+}
+
+// LoadConfigFrom 允许 receiver 加载 skywalking 应用层级自定义参数下发配置
+func LoadConfigFrom(conf *confengine.Config) map[string]SubConfig {
+	var apmConf define.ApmConfig
+	batches := make(map[string]SubConfig)
+	if err := conf.UnpackChild(define.ConfigFieldApmConfig, &apmConf); err != nil {
+		return batches
+	}
+	subConfig := confengine.LoadConfigPatterns(apmConf.Patterns)
+	for _, subConf := range subConfig {
+		var sub SubConfig
+		if err := subConf.Unpack(&sub); err != nil {
+			continue
+		}
+		if sub.Type != define.ConfigTypeSubConfig {
+			continue
+		}
+		batches[sub.Token] = sub
+	}
+	return batches
 }

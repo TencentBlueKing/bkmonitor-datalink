@@ -50,6 +50,7 @@ processor:
 
 	assert.Equal(t, define.ProcessorResourceFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
+	assert.False(t, factory.IsPreCheck())
 }
 
 const (

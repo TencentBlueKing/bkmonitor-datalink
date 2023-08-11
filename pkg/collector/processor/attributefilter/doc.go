@@ -32,7 +32,7 @@ processor:
        assemble:
          - destination: "api_name"                     # 期望插入的字段
            predicate_key: "attributes.http.scheme"     # 需要匹配到的 attributes 中的字段
-             rules:
+           rules:
               - kind: "SPAN_KIND_CLIENT"               # 所需 Kind 的条件
                 first_upper:
                   - "attributes.http.method"           # 需要大写的属性

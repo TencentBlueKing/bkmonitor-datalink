@@ -78,27 +78,27 @@ func (p resourceFilter) IsPreCheck() bool {
 func (p resourceFilter) Process(record *define.Record) (*define.Record, error) {
 	config := p.configs.GetByToken(record.Token.Original).(Config)
 	if len(config.Replace) > 0 {
-		p.replaceAction(record)
+		p.replaceAction(record, config)
 	}
 	if len(config.Add) > 0 {
-		p.addAction(record)
+		p.addAction(record, config)
 	}
 	if len(config.Assemble) > 0 {
-		p.assembleAction(record)
+		p.assembleAction(record, config)
 	}
 	if len(config.Drop.Keys) > 0 {
-		p.dropAction(record)
+		p.dropAction(record, config)
 	}
 	return nil, nil
 }
 
 // assembleAction 组合维度
-func (p resourceFilter) assembleAction(record *define.Record) {
+func (p resourceFilter) assembleAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Assemble {
+		for _, action := range config.Assemble {
 			for i := 0; i < resourceSpansSlice.Len(); i++ {
 				resourceSpans := resourceSpansSlice.At(i)
 				attributes := resourceSpans.Resource().Attributes()
@@ -119,12 +119,12 @@ func (p resourceFilter) assembleAction(record *define.Record) {
 }
 
 // addAction 新增维度
-func (p resourceFilter) addAction(record *define.Record) {
+func (p resourceFilter) addAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Add {
+		for _, action := range config.Add {
 			for i := 0; i < resourceSpansSlice.Len(); i++ {
 				resourceSpans := resourceSpansSlice.At(i)
 				resourceSpans.Resource().Attributes().UpsertString(action.Label, action.Value)
@@ -154,13 +154,13 @@ func (p resourceFilter) addAction(record *define.Record) {
 }
 
 // dropAction 丢弃维度
-func (p resourceFilter) dropAction(record *define.Record) {
+func (p resourceFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		// 只对 drop action 清洗到 span 维度
-		for _, dimension := range p.configs.GetByToken(record.Token.Original).(Config).Drop.Keys {
+		for _, dimension := range config.Drop.Keys {
 			for i := 0; i < resourceSpansSlice.Len(); i++ {
 				resourceSpans := resourceSpansSlice.At(i)
 				resourceSpans.Resource().Attributes().Remove(dimension)
@@ -197,12 +197,12 @@ func (p resourceFilter) dropAction(record *define.Record) {
 }
 
 // replaceAction 替换维度
-func (p resourceFilter) replaceAction(record *define.Record) {
+func (p resourceFilter) replaceAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Replace {
+		for _, action := range config.Replace {
 			for i := 0; i < resourceSpansSlice.Len(); i++ {
 				resourceSpans := resourceSpansSlice.At(i)
 				v, ok := resourceSpans.Resource().Attributes().Get(action.Source)

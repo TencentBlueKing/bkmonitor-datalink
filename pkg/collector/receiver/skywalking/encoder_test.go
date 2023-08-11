@@ -24,7 +24,6 @@
 package skywalking
 
 import (
-	"strconv"
 	"testing"
 	"time"
 
@@ -162,14 +161,19 @@ func TestSwLogsToSpanEvents(t *testing.T) {
 			dest:   generateTracesOneEmptyResourceSpans(),
 		},
 	}
-	for index, test := range tests {
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			seq := strconv.Itoa(index)
 			swLogsToSpanEvents(test.swSpan.GetSpans()[0].Logs, test.dest.Events())
 			assert.Equal(t, 1, test.dest.Events().Len())
 			assert.Equal(t, "logs", test.dest.Events().At(0).Name())
-			logValue, _ := test.dest.Events().At(0).Attributes().Get("log-key" + seq)
-			assert.Equal(t, "log-value"+seq, logValue.AsString())
+			attr := test.dest.Events().At(0).Attributes()
+			assert.Equal(t, 3, len(attr.AsRaw()))
+			v, _ := attr.Get(conventions.AttributeExceptionType)
+			assert.Equal(t, "TestErrorKind", v.StringVal())
+			v, _ = attr.Get(conventions.AttributeExceptionMessage)
+			assert.Equal(t, "TestMessage", v.StringVal())
+			v, _ = attr.Get(conventions.AttributeExceptionStacktrace)
+			assert.Equal(t, "TestStack", v.StringVal())
 		})
 	}
 }

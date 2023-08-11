@@ -72,18 +72,18 @@ func (p metricsFilter) IsPreCheck() bool {
 func (p metricsFilter) Process(record *define.Record) (*define.Record, error) {
 	config := p.configs.GetByToken(record.Token.Original).(Config)
 	if len(config.Drop.Metrics) > 0 {
-		p.dropAction(record)
+		p.dropAction(record, config)
 	}
 	if len(config.Replace) > 0 {
-		p.replaceAction(record)
+		p.replaceAction(record, config)
 	}
 	return nil, nil
 }
 
-func (p metricsFilter) dropAction(record *define.Record) {
+func (p metricsFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordMetrics:
-		for _, name := range p.configs.GetByToken(record.Token.Original).(Config).Drop.Metrics {
+		for _, name := range config.Drop.Metrics {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
 				resourceMetrics.ScopeMetrics().RemoveIf(func(scopeMetrics pmetric.ScopeMetrics) bool {
@@ -98,10 +98,10 @@ func (p metricsFilter) dropAction(record *define.Record) {
 	}
 }
 
-func (p metricsFilter) replaceAction(record *define.Record) {
+func (p metricsFilter) replaceAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordMetrics:
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Replace {
+		for _, action := range config.Replace {
 			pdMetrics := record.Data.(pmetric.Metrics)
 			foreach.Metrics(pdMetrics.ResourceMetrics(), func(metric pmetric.Metric) {
 				if metric.Name() == action.Source {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/elastic/beats/libbeat/outputs/transport"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
@@ -39,8 +40,9 @@ type Receiver struct {
 }
 
 var (
-	globalRecords = define.NewRecordQueue(define.PushModeGuarantee)
-	globalConfig  Config
+	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
+	globalConfig           Config
+	globalSkywalkingConfig map[string]SubConfig
 )
 
 // Records 返回 Receiver 全局消息管道
@@ -70,6 +72,33 @@ func GetComponentConfig() ComponentConfig {
 	return globalConfig.Components
 }
 
+func fetchSkywalkingConfByToken(token string) SwConf {
+	v, ok := globalSkywalkingConfig[token]
+	if !ok {
+		return SwConf{}
+	}
+
+	// 解析 skywalking 应用层级下发的配置
+	var conf SwConf
+	err := mapstructure.Decode(v.SkywalkingConf, &conf)
+	if err != nil {
+		logger.Warnf("failed to parse skywalking agent config: %v", err)
+		return SwConf{}
+	}
+	return conf
+}
+
+type SkywalkingConfigFetcher struct {
+	Func func(s string) SwConf
+}
+
+func (f SkywalkingConfigFetcher) Fetch(s string) SwConf {
+	if f.Func != nil {
+		return f.Func(s)
+	}
+	return fetchSkywalkingConfByToken(s)
+}
+
 // New 返回 Receiver 实例
 func New(conf *confengine.Config) (*Receiver, error) {
 	var c Config
@@ -90,6 +119,7 @@ func New(conf *confengine.Config) (*Receiver, error) {
 
 	// 全局状态记录
 	globalConfig = c
+	globalSkywalkingConfig = LoadConfigFrom(conf)
 
 	return &Receiver{
 		config:  c,
@@ -131,6 +161,10 @@ func (r *Receiver) ready() {
 			}
 		}
 	}
+}
+
+func (r *Receiver) Reload(conf *confengine.Config) {
+	globalSkywalkingConfig = LoadConfigFrom(conf)
 }
 
 func (r *Receiver) startHttpServer() error {

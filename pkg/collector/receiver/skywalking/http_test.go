@@ -262,8 +262,20 @@ func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
 						Time: time.Now().Unix(),
 						Data: []*common.KeyStringValuePair{
 							{
-								Key:   "log-key" + seq,
-								Value: "log-value" + seq,
+								Key:   "error.kind",
+								Value: "TestErrorKind",
+							},
+							{
+								Key:   "message",
+								Value: "TestMessage",
+							},
+							{
+								Key:   "stack",
+								Value: "TestStack",
+							},
+							{
+								Key:   "OtherInfo",
+								Value: "OtherInfoValue",
 							},
 						},
 					},

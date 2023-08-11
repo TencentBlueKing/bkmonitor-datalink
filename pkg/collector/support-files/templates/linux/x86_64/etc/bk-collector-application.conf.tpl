@@ -3,6 +3,18 @@ token: '{{ bk_data_token }}'
 bk_biz_id: {{ bk_biz_id }}
 bk_app_name: {{ bk_app_name }}
 
+{% if sdk_config is defined %}
+skywalking_agent:
+  sn: "{{ sdk_config.sn }}"
+  rules:
+    {%- for rule in sdk_config.rules %}
+    - type: "{{ rule.type }}"
+      enabled: {{ rule.enabled }}
+      target: "{{ rule.target }}"
+      field: "{{ rule.field }}"
+    {%- endfor %}
+{%- endif %}
+
 {% if queue_config is defined %}
 exporter:
   queue:
@@ -44,6 +56,28 @@ default:
           tolerable_expire: {{ license_config.tolerable_expire }}
           number_nodes: {{ license_config.number_nodes }}
           tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
+{%- endif %}
+
+
+{% if sdk_config_scope is defined %}
+      # sdk config scope
+      - name: "{{ sdk_config_scope.name }}"
+        config:
+          add_attributes:
+            - rules:
+                {%- for rule in sdk_config_scope.rules %}
+                - type: "{{ rule.type }}"
+                  enabled: {{ rule.enabled }}
+                  target: "{{ rule.target }}"
+                  field: "{{ rule.field }}"
+                  prefix: "{{ rule.prefix }}"
+                  filters:
+                    {%- for filter in rule.get("filters", []) %}
+                    - field: "{{ filter.field }}"
+                      value: "{{ filter.value }}"
+                      type: "{{ filter.type }}"
+                    {%- endfor%}
+                {%- endfor %}
 {%- endif %}
 
 {% if attribute_config is defined %}

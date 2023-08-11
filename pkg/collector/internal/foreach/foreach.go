@@ -10,6 +10,7 @@
 package foreach
 
 import (
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -22,6 +23,20 @@ func Spans(resourceSpansSlice ptrace.ResourceSpansSlice, f func(span ptrace.Span
 			spans := scopeSpansSlice.At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
 				f(spans.At(k))
+			}
+		}
+	}
+}
+
+func SpansWithResource(resourceSpansSlice ptrace.ResourceSpansSlice, f func(resource pcommon.Resource, span ptrace.Span)) {
+	for i := 0; i < resourceSpansSlice.Len(); i++ {
+		resourceSpans := resourceSpansSlice.At(i)
+		resource := resourceSpans.Resource()
+		scopeSpansSlice := resourceSpans.ScopeSpans()
+		for j := 0; j < scopeSpansSlice.Len(); j++ {
+			spans := scopeSpansSlice.At(j).Spans()
+			for k := 0; k < spans.Len(); k++ {
+				f(resource, spans.At(k))
 			}
 		}
 	}

@@ -290,6 +290,10 @@ bk-collector:
     - name: "attribute_filter/app"
       config:
 
+    # Probe_filter 探针采集过滤器
+    - name: "probe_filter/common"
+      config:
+
 
     # MetricsFilter: 指标过滤处理器
     # Drop
@@ -898,6 +902,7 @@ bk-collector:
         - "resource_filter/assemble"
         - "attribute_filter/common"
         - "attribute_filter/app"
+        - "probe_filter/common"
         - "service_discover/common"
         - "traces_deriver/duration"
         - "traces_deriver/delta"

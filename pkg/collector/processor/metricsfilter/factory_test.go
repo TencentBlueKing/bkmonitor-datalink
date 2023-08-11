@@ -45,6 +45,7 @@ processor:
 
 	assert.Equal(t, define.ProcessorMetricsFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
+	assert.False(t, factory.IsPreCheck())
 }
 
 func makeMetricsGenerator(n int) *generator.MetricsGenerator {

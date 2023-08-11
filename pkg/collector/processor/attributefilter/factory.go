@@ -79,35 +79,28 @@ func (p attributeFilter) IsPreCheck() bool {
 func (p attributeFilter) Process(record *define.Record) (*define.Record, error) {
 	config := p.configs.GetByToken(record.Token.Original).(Config)
 	if len(config.AsString.Keys) > 0 {
-		p.asStringAction(record)
+		p.asStringAction(record, config)
 	}
-
 	if len(config.AsInt.Keys) > 0 {
-		p.asIntAction(record)
+		p.asIntAction(record, config)
 	}
-
 	if config.FromToken.BizId != "" || config.FromToken.AppName != "" {
-		p.fromTokenAction(record)
+		p.fromTokenAction(record, config)
 	}
-
 	if len(config.Assemble) > 0 {
-		p.assembleAction(record)
+		p.assembleAction(record, config)
 	}
-
 	if len(config.Drop) > 0 {
-		p.dropAction(record)
+		p.dropAction(record, config)
 	}
-
 	if len(config.Cut) > 0 {
-		p.cutAction(record)
+		p.cutAction(record, config)
 	}
 
 	return nil, nil
 }
 
-func (p attributeFilter) fromTokenAction(record *define.Record) {
-	config := p.configs.GetByToken(record.Token.Original).(Config)
-
+func (p attributeFilter) fromTokenAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
@@ -141,33 +134,23 @@ func (p attributeFilter) fromTokenAction(record *define.Record) {
 	}
 }
 
-func (p attributeFilter) asStringAction(record *define.Record) {
+func (p attributeFilter) asStringAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, key := range p.configs.GetByToken(record.Token.Original).(Config).AsString.Keys {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
+		foreach.SpansWithResource(pdTraces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+			for _, key := range config.AsString.Keys {
+				rsAttrs := resource.Attributes()
+				if v, ok := rsAttrs.Get(key); ok {
+					rsAttrs.UpsertString(key, v.AsString())
+				}
 
-				attributes := resourceSpans.Resource().Attributes()
+				attributes := span.Attributes()
 				if v, ok := attributes.Get(key); ok {
 					attributes.UpsertString(key, v.AsString())
 				}
-
-				scopeSpansSlice := resourceSpans.ScopeSpans()
-				for j := 0; j < scopeSpansSlice.Len(); j++ {
-					spans := scopeSpansSlice.At(j).Spans()
-					for k := 0; k < spans.Len(); k++ {
-						span := spans.At(k)
-						attributes = span.Attributes()
-						if v, ok := attributes.Get(key); ok {
-							attributes.UpsertString(key, v.AsString())
-						}
-					}
-				}
 			}
-		}
+		})
 	}
 }
 
@@ -185,42 +168,28 @@ func processAsIntAction(attributes pcommon.Map, key string) {
 	attributes.UpsertInt(key, i)
 }
 
-func (p attributeFilter) asIntAction(record *define.Record) {
+func (p attributeFilter) asIntAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		resourceSpansSlice := pdTraces.ResourceSpans()
-		for _, key := range p.configs.GetByToken(record.Token.Original).(Config).AsInt.Keys {
-			for i := 0; i < resourceSpansSlice.Len(); i++ {
-				resourceSpans := resourceSpansSlice.At(i)
-
-				attributes := resourceSpans.Resource().Attributes()
-				processAsIntAction(attributes, key)
-
-				scopeSpansSlice := resourceSpans.ScopeSpans()
-				for j := 0; j < scopeSpansSlice.Len(); j++ {
-					spans := scopeSpansSlice.At(j).Spans()
-					for k := 0; k < spans.Len(); k++ {
-						span := spans.At(k)
-						attributes := span.Attributes()
-						processAsIntAction(attributes, key)
-					}
-				}
+		foreach.SpansWithResource(pdTraces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+			for _, key := range config.AsInt.Keys {
+				processAsIntAction(resource.Attributes(), key)
+				processAsIntAction(span.Attributes(), key)
 			}
-		}
+		})
 	}
 }
 
 const unknownVal = "Unknown"
 
-func (p attributeFilter) assembleAction(record *define.Record) {
+func (p attributeFilter) assembleAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		actions := p.configs.GetByToken(record.Token.Original).(Config).Assemble
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
-			for _, action := range actions {
+			for _, action := range config.Assemble {
 				if !processAssembleAction(span, action) {
 					if _, ok := span.Attributes().Get(action.Destination); !ok {
 						span.Attributes().UpsertString(action.Destination, unknownVal)
@@ -281,14 +250,13 @@ func firstUpper(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-func (p attributeFilter) dropAction(record *define.Record) {
+func (p attributeFilter) dropAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		actions := p.configs.GetByToken(record.Token.Original).(Config).Drop
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
-			for _, action := range actions {
+			for _, action := range config.Drop {
 				v, ok := span.Attributes().Get(action.PredicateKey)
 				if !ok {
 					continue
@@ -307,14 +275,13 @@ func (p attributeFilter) dropAction(record *define.Record) {
 	}
 }
 
-func (p attributeFilter) cutAction(record *define.Record) {
+func (p attributeFilter) cutAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
-		actions := p.configs.GetByToken(record.Token.Original).(Config).Cut
 		pdTraces := record.Data.(ptrace.Traces)
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
-			for _, action := range actions {
+			for _, action := range config.Cut {
 				v, ok := span.Attributes().Get(action.PredicateKey)
 				if !ok {
 					continue

@@ -187,7 +187,7 @@ func TestTracesFromTokenAction(t *testing.T) {
 	})
 
 	filter := &attributeFilter{configs: configs}
-	filter.fromTokenAction(&record)
+	filter.fromTokenAction(&record, configs.GetByToken("").(Config))
 
 	traces := record.Data.(ptrace.Traces)
 	attrs := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
@@ -217,7 +217,7 @@ func TestMetricsFromTokenAction(t *testing.T) {
 	})
 
 	filter := &attributeFilter{configs: configs}
-	filter.fromTokenAction(&record)
+	filter.fromTokenAction(&record, configs.GetByToken("").(Config))
 
 	metrics := record.Data.(pmetric.Metrics)
 	point := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0)
@@ -472,14 +472,14 @@ processor:
 	v, ok := resourceAttr.Get(conventions.AttributeHTTPStatusCode)
 	assert.True(t, ok)
 	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
-	assert.Equal(t, "200", v.AsString())
+	assert.Equal(t, int64(200), v.IntVal())
 
 	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	attrs := span.Attributes()
 	v, ok = attrs.Get(conventions.AttributeHTTPStatusCode)
 	assert.True(t, ok)
 	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
-	assert.Equal(t, "200", v.AsString())
+	assert.Equal(t, int64(200), v.IntVal())
 }
 
 func TestTraceDropAction(t *testing.T) {

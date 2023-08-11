@@ -1,6 +1,24 @@
 type: "subconfig"
 token: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
 
+skywalking_agent:
+  sn: "e6ab1e4085c1e27a786ec55f968d044095d79dc7"
+  rules:
+    - type: "Http"
+      enabled: true
+      target: "cookie"   # cookie 类型配置下发
+      field: "language"
+
+    - type: "Http"
+      enabled: true
+      target: "header"   # header 类型配置下发
+      field: "Accept"
+
+    - type: "Http"
+      enabled: true
+      target: "query_parameter"   # query_parameter 类型配置下发 skywalking 探针可忽略此配置
+      field: "from"
+
 exporter:
   queue:
     logs_batch_size: 2
@@ -16,6 +34,46 @@ default:
         tolerable_expire: 2h
         number_nodes: 200
         tolerable_num_ratio: 1.5
+    - name: "probe_filter/common"
+      config:
+        add_attributes:
+          - rules:
+              - type: "Http"
+                enabled: true
+                target: "cookie"
+                field: "language"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
+              - type: "Http"
+                enabled: true
+                target: "header"
+                field: "Accept"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
+              - type: "Http"
+                enabled: true
+                target: "query_parameter"
+                field: "from"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
 
     # attribute_config: attribute 属性配置
     - name: "attribute_filter/app"

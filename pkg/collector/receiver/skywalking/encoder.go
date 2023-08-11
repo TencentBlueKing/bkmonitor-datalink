@@ -77,6 +77,12 @@ var otSpanTagsMapping = map[string]string{
 	"mq.topic":  conventions.AttributeMessagingDestinationKindTopic,
 }
 
+var otSpanEventsMapping = map[string]string{
+	"error.kind": conventions.AttributeExceptionType,
+	"message":    conventions.AttributeExceptionMessage,
+	"stack":      conventions.AttributeExceptionStacktrace,
+}
+
 func EncodeTraces(segment *agentV3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
 	traceData := ptrace.NewTraces()
 
@@ -215,11 +221,12 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 	switch span.SpanLayer {
 	case agentV3.SpanLayer_Http:
 		spanType := span.GetSpanType()
-		// attributes.http.route: spanOperationName 样例 /api/leader/list/
+		// attributes.http.route: spanOperationName 样例 java: GET:/api/leader/list/ python: /api/leader/list/
 		if spanType == agentV3.SpanType_Entry {
 			if _, ok := dest.Get(conventions.AttributeHTTPRoute); !ok {
-				if route := span.GetOperationName(); route != "" {
-					dest.UpsertString(conventions.AttributeHTTPRoute, route)
+				if opName := span.GetOperationName(); opName != "" {
+					opNameSplit := strings.Split(opName, ":")
+					dest.UpsertString(conventions.AttributeHTTPRoute, opNameSplit[len(opNameSplit)-1])
 				}
 			}
 		}
@@ -262,15 +269,21 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
 		if _, ok := dest.Get(conventions.AttributeDBSystem); !ok {
 			if opName := span.GetOperationName(); opName != "" {
-				splitSpanName := strings.Split(opName, "/")
-				dest.InsertString(conventions.AttributeDBSystem, splitSpanName[0])
+				opNameSplit := strings.Split(opName, "/")
+				dest.InsertString(conventions.AttributeDBSystem, opNameSplit[0])
 			}
 		}
 		// attributes.db.operation
 		if _, ok := dest.Get(conventions.AttributeDBOperation); !ok {
 			if v, ok := dest.Get(conventions.AttributeDBStatement); ok && v.StringVal() != "" {
-				splitStatement := strings.Split(v.StringVal(), " ")
-				dest.InsertString(conventions.AttributeDBOperation, splitStatement[0])
+				statementSplit := strings.Split(v.StringVal(), " ")
+				dest.InsertString(conventions.AttributeDBOperation, statementSplit[0])
+			} else {
+				// spanOperationName 样例 Mysql/JDBI/Connection/commit
+				if opName := span.GetOperationName(); opName != "" {
+					opNameSplit := strings.Split(opName, "/")
+					dest.InsertString(conventions.AttributeDBOperation, opNameSplit[len(opNameSplit)-1])
+				}
 			}
 		}
 
@@ -278,8 +291,8 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 		// attributes.messaging.system
 		if _, ok := dest.Get(conventions.AttributeMessagingSystem); !ok {
 			if opName := span.GetOperationName(); opName != "" {
-				splitOpName := strings.Split(opName, "/")
-				dest.InsertString(conventions.AttributeMessagingSystem, splitOpName[0])
+				opNameSplit := strings.Split(opName, "/")
+				dest.InsertString(conventions.AttributeMessagingSystem, opNameSplit[0])
 			}
 		}
 	}
@@ -372,7 +385,15 @@ func swLogsToSpanEvents(logs []*agentV3.Log, dest ptrace.SpanEventSlice) {
 		attrs := event.Attributes()
 		attrs.Clear()
 		attrs.EnsureCapacity(len(log.GetData()))
-		swKvPairsToInternalAttributes(log.GetData(), attrs)
+		swTagsToEventsAttributes(log.GetData(), attrs)
+	}
+}
+
+func swTagsToEventsAttributes(tags []*common.KeyStringValuePair, dest pcommon.Map) {
+	for _, tag := range tags {
+		if v, ok := otSpanEventsMapping[tag.Key]; ok {
+			dest.UpsertString(v, tag.Value)
+		}
 	}
 }
 

@@ -12,6 +12,7 @@ package skywalking
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -156,15 +157,86 @@ func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestGrpc, define.RecordTraces, 0, start)
 }
 
-// 以下为 grpc-service 空实现 避免报错
-
 type ConfigurationDiscoveryService struct {
+	receiver.SkywalkingConfigFetcher
 	conf.UnimplementedConfigurationDiscoveryServiceServer
 }
 
-func (s *ConfigurationDiscoveryService) FetchConfigurations(tx context.Context, req *conf.ConfigurationSyncRequest) (*common.Commands, error) {
-	return &common.Commands{}, nil
+func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context, req *conf.ConfigurationSyncRequest) (*common.Commands, error) {
+	defer utils.HandleCrash()
+
+	md := getMetaDataFromContext(ctx)
+	if md == nil {
+		return &common.Commands{}, errors.New("no metadata found in request")
+	}
+	token, err := getTokenFromMetadata(md)
+	if err != nil {
+		return &common.Commands{}, err
+	}
+
+	// SN 长度为 0 的时候直接结束，不继续执行后续代码逻辑
+	swConf := s.Fetch(token)
+	if len(swConf.Sn) == 0 {
+		err = fmt.Errorf("empty SN number, service=%s", req.GetService())
+		logger.Warn(err)
+		return &common.Commands{}, err
+	}
+
+	// 构建标识
+	args := []*common.KeyStringValuePair{
+		{Key: "SerialNumber", Value: swConf.Sn},
+		{Key: "UUID", Value: swConf.Sn},
+	}
+
+	agentLanguage := getAgentLanguageFromMetadata(md)
+	if customKV := s.createCustomParam(agentLanguage, swConf); customKV != nil {
+		args = append(args, customKV)
+	}
+
+	// 构建下发配置
+	var cmds []*common.Command
+	cmds = append(cmds, &common.Command{
+		Command: "ConfigurationDiscoveryCommand",
+		Args:    args,
+	})
+
+	return &common.Commands{Commands: cmds}, nil
 }
+
+// createCustomParam 构造自定义参数下发配置
+func (s *ConfigurationDiscoveryService) createCustomParam(language string, swConf receiver.SwConf) *common.KeyStringValuePair {
+	var values []string
+	for _, rule := range swConf.SwRules {
+		if !rule.Enabled {
+			continue
+		}
+
+		switch rule.Target {
+		case "cookie":
+			values = append(values, "Cookie")
+		case "query_parameter": // 不做处理
+		default:
+			values = append(values, rule.Field)
+		}
+	}
+
+	// 不同语言所对应的 key 也不同
+	mapping := map[string]string{
+		"java":   "plugin.http.include_http_headers",
+		"python": "collect_http_headers",
+	}
+
+	if v, ok := mapping[language]; ok {
+		return &common.KeyStringValuePair{
+			Key:   v,
+			Value: strings.Join(values, ","),
+		}
+	}
+
+	return nil
+}
+
+// 以下为 grpc-service 空实现 避免报错
 
 type EventService struct {
 	event.UnimplementedEventServiceServer

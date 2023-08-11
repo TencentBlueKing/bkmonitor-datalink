@@ -16,9 +16,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/metadata"
+	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
+	v3 "skywalking.apache.org/repo/goapi/collect/common/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 const (
@@ -88,13 +91,99 @@ func TestGetInfoFromMetadata(t *testing.T) {
 	})
 }
 
-func TestEmptyImpl(t *testing.T) {
-	t.Run("ConfigurationDiscoveryService", func(t *testing.T) {
-		svc := &ConfigurationDiscoveryService{}
-		_, err := svc.FetchConfigurations(nil, nil)
-		assert.NoError(t, err)
-	})
+func TestFetchConfigurations(t *testing.T) {
+	m := map[string]string{
+		authKey:         token,
+		userAgentKey:    "grpc-java",
+		agentVersionKey: "testVersion",
+	}
+	// 构造数据
+	ctx := mockContextByMetaDataMap(m)
+	req := &conf.ConfigurationSyncRequest{
+		Service: "TestService",
+	}
 
+	configs := receiver.SwConf{
+		Sn: "TestSnNumber",
+		SwRules: []receiver.SwRule{
+			{
+				Type:    "Http",
+				Enabled: true,
+				Target:  "header",
+				Field:   "Accept",
+			},
+			{
+				Type:    "Http",
+				Enabled: true,
+				Target:  "cookie",
+				Field:   "language",
+			},
+			{
+				Type:    "Http",
+				Enabled: false,
+				Target:  "header",
+				Field:   "Accept",
+			},
+			{
+				Type:    "Http",
+				Enabled: true,
+				Target:  "query_parameter",
+				Field:   "from",
+			},
+		},
+	}
+
+	svc := &ConfigurationDiscoveryService{}
+	svc.SkywalkingConfigFetcher = receiver.SkywalkingConfigFetcher{Func: func(s string) receiver.SwConf {
+		return configs
+	}}
+
+	cmds, err := svc.FetchConfigurations(ctx, req)
+	assert.Nil(t, err)
+	assert.Len(t, cmds.Commands, 1)
+
+	expectedCmd := v3.Command{
+		Command: "ConfigurationDiscoveryCommand",
+		Args: []*v3.KeyStringValuePair{
+			{Key: "SerialNumber", Value: "TestSnNumber"},
+			{Key: "UUID", Value: "TestSnNumber"},
+			{Key: "plugin.http.include_http_headers", Value: "Accept,Cookie"},
+		},
+	}
+
+	index := 0
+	for _, cmd := range cmds.Commands {
+		assert.Equal(t, expectedCmd.Command, cmd.Command)
+		for _, kv := range cmd.Args {
+			arg := expectedCmd.Args[index]
+			assert.Equal(t, arg.Key, kv.Key)
+			assert.Equal(t, arg.Value, kv.Value)
+			index++
+		}
+	}
+	assert.Equal(t, 3, index)
+}
+
+func TestFetchConfigurationsNilSn(t *testing.T) {
+	m := map[string]string{
+		authKey:         token,
+		userAgentKey:    "grpc-java",
+		agentVersionKey: "testVersion",
+	}
+	// 构造数据
+	ctx := mockContextByMetaDataMap(m)
+	req := &conf.ConfigurationSyncRequest{
+		Service: "TestService",
+	}
+
+	svc := &ConfigurationDiscoveryService{}
+
+	cmds, err := svc.FetchConfigurations(ctx, req)
+	assert.Error(t, err)
+	assert.Len(t, cmds.GetCommands(), 0)
+}
+
+func TestEmptyImpl(t *testing.T) {
 	t.Run("EventService", func(t *testing.T) {
 		svc := &EventService{}
 		err := svc.Collect(nil)

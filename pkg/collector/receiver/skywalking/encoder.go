@@ -44,21 +44,22 @@ import (
 )
 
 const (
-	AttributeRefType                   = "refType"
-	AttributeParentInstance            = "parent.service.instance"
-	AttributeParentEndpoint            = "parent.endpoint"
-	AttributeSkywalkingSpanID          = "sw8.span_id"
-	AttributeSkywalkingTraceID         = "sw8.trace_id"
-	AttributeSkywalkingSegmentID       = "sw8.segment_id"
-	AttributeSkywalkingParentSpanID    = "sw8.parent_span_id"
-	AttributeSkywalkingParentSegmentID = "sw8.parent_segment_id"
-	AttributeNetworkAddressUsedAtPeer  = "network.AddressUsedAtPeer"
-	AttributeDataToken                 = "bk.data.token"
-	AttributeSkywalkingSpanLayer       = "sw8.span_layer"
-	AttributeSkywalkingComponentID     = "sw8.component_id"
+	attributeRefType                  = "refType"
+	attributeParentInstance           = "parent.service.instance"
+	attributeParentEndpoint           = "parent.endpoint"
+	attributeNetworkAddressUsedAtPeer = "network.AddressUsedAtPeer"
+	attributeDataToken                = "bk.data.token"
+
+	attributeSkywalkingSpanID          = "sw8.span_id"
+	attributeSkywalkingTraceID         = "sw8.trace_id"
+	attributeSkywalkingSegmentID       = "sw8.segment_id"
+	attributeSkywalkingParentSpanID    = "sw8.parent_span_id"
+	attributeSkywalkingParentSegmentID = "sw8.parent_segment_id"
+	attributeSkywalkingSpanLayer       = "sw8.span_layer"
+	attributeSkywalkingComponentID     = "sw8.component_id"
 )
 
-var ignoreLocalIps = map[string]struct{}{
+var rewriteIps = map[string]struct{}{
 	"localhost": {},
 	"127.0.0.1": {},
 }
@@ -92,16 +93,15 @@ func EncodeTraces(segment *agentV3.SegmentObject, token string, extraAttrs map[s
 	}
 
 	resourceSpan := traceData.ResourceSpans().AppendEmpty()
-	rs := resourceSpan.Resource()
-
-	rs.Attributes().InsertString(conventions.AttributeServiceName, segment.GetService())
-	rs.Attributes().InsertString(conventions.AttributeServiceInstanceID, segment.GetServiceInstance())
-	rs.Attributes().InsertString(AttributeSkywalkingTraceID, segment.GetTraceId())
-	rs.Attributes().InsertString(AttributeDataToken, token)
+	rsAttrs := resourceSpan.Resource().Attributes()
+	rsAttrs.InsertString(conventions.AttributeServiceName, segment.GetService())
+	rsAttrs.InsertString(conventions.AttributeServiceInstanceID, segment.GetServiceInstance())
+	rsAttrs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
+	rsAttrs.InsertString(attributeDataToken, token)
 
 	// 补充数据字段内容 agentLanguage agentType agentVersion
 	for k, v := range extraAttrs {
-		rs.Attributes().InsertString(k, v)
+		rsAttrs.InsertString(k, v)
 	}
 
 	il := resourceSpan.ScopeSpans().AppendEmpty()
@@ -115,7 +115,7 @@ func EncodeTraces(segment *agentV3.SegmentObject, token string, extraAttrs map[s
 			swTransformIP(serviceInstanceId, attrs)
 		} else {
 			ip := strings.ToLower(v.AsString())
-			if _, ok = ignoreLocalIps[ip]; ok {
+			if _, ok = rewriteIps[ip]; ok {
 				swTransformIP(serviceInstanceId, attrs)
 			}
 		}
@@ -182,15 +182,15 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	swKvPairsToInternalAttributes(span.Tags, attrs)
 	swTagsToAttributesByRule(attrs, span)
 
-	attrs.UpsertString(AttributeSkywalkingSpanLayer, span.SpanLayer.String())
-	attrs.UpsertInt(AttributeSkywalkingComponentID, int64(span.GetComponentId()))
+	attrs.UpsertString(attributeSkywalkingSpanLayer, span.SpanLayer.String())
+	attrs.UpsertInt(attributeSkywalkingComponentID, int64(span.GetComponentId()))
 
 	// drop the attributes slice if all of them were replaced during translation
 	if attrs.Len() == 0 {
 		attrs.Clear()
 	}
 
-	attrs.InsertString(AttributeSkywalkingSegmentID, segmentID)
+	attrs.InsertString(attributeSkywalkingSegmentID, segmentID)
 	setSwSpanIDToAttributes(span, attrs)
 	setInternalSpanStatus(span, dest.Status())
 
@@ -221,7 +221,9 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 	switch span.SpanLayer {
 	case agentV3.SpanLayer_Http:
 		spanType := span.GetSpanType()
-		// attributes.http.route: spanOperationName 样例 java: GET:/api/leader/list/ python: /api/leader/list/
+		// attributes.http.route: spanOperationName 样例
+		// - java: GET:/api/leader/list/
+		// - python: /api/leader/list/
 		if spanType == agentV3.SpanType_Entry {
 			if _, ok := dest.Get(conventions.AttributeHTTPRoute); !ok {
 				if opName := span.GetOperationName(); opName != "" {
@@ -313,31 +315,31 @@ func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanL
 		link.SetTraceState("")
 		kvParis := []*common.KeyStringValuePair{
 			{
-				Key:   AttributeParentInstance,
+				Key:   attributeParentInstance,
 				Value: ref.ParentServiceInstance,
 			},
 			{
-				Key:   AttributeParentEndpoint,
+				Key:   attributeParentEndpoint,
 				Value: ref.ParentEndpoint,
 			},
 			{
-				Key:   AttributeNetworkAddressUsedAtPeer,
+				Key:   attributeNetworkAddressUsedAtPeer,
 				Value: ref.NetworkAddressUsedAtPeer,
 			},
 			{
-				Key:   AttributeRefType,
+				Key:   attributeRefType,
 				Value: ref.RefType.String(),
 			},
 			{
-				Key:   AttributeSkywalkingTraceID,
+				Key:   attributeSkywalkingTraceID,
 				Value: ref.TraceId,
 			},
 			{
-				Key:   AttributeSkywalkingParentSegmentID,
+				Key:   attributeSkywalkingParentSegmentID,
 				Value: ref.ParentTraceSegmentId,
 			},
 			{
-				Key:   AttributeSkywalkingParentSpanID,
+				Key:   attributeSkywalkingParentSpanID,
 				Value: strconv.Itoa(int(ref.ParentSpanId)),
 			},
 		}
@@ -356,9 +358,9 @@ func setInternalSpanStatus(span *agentV3.SpanObject, dest ptrace.SpanStatus) {
 }
 
 func setSwSpanIDToAttributes(span *agentV3.SpanObject, dest pcommon.Map) {
-	dest.InsertInt(AttributeSkywalkingSpanID, int64(span.GetSpanId()))
+	dest.InsertInt(attributeSkywalkingSpanID, int64(span.GetSpanId()))
 	if span.ParentSpanId != -1 {
-		dest.InsertInt(AttributeSkywalkingParentSpanID, int64(span.GetParentSpanId()))
+		dest.InsertInt(attributeSkywalkingParentSpanID, int64(span.GetParentSpanId()))
 	}
 }
 

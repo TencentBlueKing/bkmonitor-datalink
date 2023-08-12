@@ -226,7 +226,7 @@ func newEventValidator(config Config) Validator {
 func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 	objs, ok := pd.Data.([]interface{})
 	if !ok {
-		return errors.Errorf("event data expected []interface{}, got %T", pd.DataId)
+		return errors.Errorf("event data expected []interface{}, got %T", objs)
 	}
 	if len(objs) <= 0 {
 		return errors.New("event data cannot be empty")

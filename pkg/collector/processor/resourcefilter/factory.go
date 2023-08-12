@@ -134,7 +134,7 @@ func (p resourceFilter) addAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Add {
+		for _, action := range config.Add {
 			for i := 0; i < resourceMetricsSlice.Len(); i++ {
 				resourceMetrics := resourceMetricsSlice.At(i)
 				resourceMetrics.Resource().Attributes().UpsertString(action.Label, action.Value)
@@ -144,7 +144,7 @@ func (p resourceFilter) addAction(record *define.Record, config Config) {
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Add {
+		for _, action := range config.Add {
 			for i := 0; i < resourceLogsSlice.Len(); i++ {
 				resourceLogs := resourceLogsSlice.At(i)
 				resourceLogs.Resource().Attributes().UpsertString(action.Label, action.Value)
@@ -177,7 +177,7 @@ func (p resourceFilter) dropAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, dimension := range p.configs.GetByToken(record.Token.Original).(Config).Drop.Keys {
+		for _, dimension := range config.Drop.Keys {
 			for i := 0; i < resourceMetricsSlice.Len(); i++ {
 				resourceMetrics := resourceMetricsSlice.At(i)
 				resourceMetrics.Resource().Attributes().Remove(dimension)
@@ -187,7 +187,7 @@ func (p resourceFilter) dropAction(record *define.Record, config Config) {
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, dimension := range p.configs.GetByToken(record.Token.Original).(Config).Drop.Keys {
+		for _, dimension := range config.Drop.Keys {
 			for i := 0; i < resourceLogsSlice.Len(); i++ {
 				resourceLogs := resourceLogsSlice.At(i)
 				resourceLogs.Resource().Attributes().Remove(dimension)
@@ -217,7 +217,7 @@ func (p resourceFilter) replaceAction(record *define.Record, config Config) {
 	case define.RecordMetrics:
 		pdMetrics := record.Data.(pmetric.Metrics)
 		resourceMetricsSlice := pdMetrics.ResourceMetrics()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Replace {
+		for _, action := range config.Replace {
 			for i := 0; i < resourceMetricsSlice.Len(); i++ {
 				resourceMetrics := resourceMetricsSlice.At(i)
 				v, ok := resourceMetrics.Resource().Attributes().Get(action.Source)
@@ -234,7 +234,7 @@ func (p resourceFilter) replaceAction(record *define.Record, config Config) {
 	case define.RecordLogs:
 		pdLogs := record.Data.(plog.Logs)
 		resourceLogsSlice := pdLogs.ResourceLogs()
-		for _, action := range p.configs.GetByToken(record.Token.Original).(Config).Replace {
+		for _, action := range config.Replace {
 			for i := 0; i < resourceLogsSlice.Len(); i++ {
 				resourceLogs := resourceLogsSlice.At(i)
 				v, ok := resourceLogs.Resource().Attributes().Get(action.Source)

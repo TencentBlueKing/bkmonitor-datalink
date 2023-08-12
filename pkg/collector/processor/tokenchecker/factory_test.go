@@ -49,9 +49,7 @@ processor:
 	assert.True(t, factory.IsPreCheck())
 
 	decoder := factory.decoders.Get("", "", "").(TokenDecoder)
-	err = factory.processCommon(decoder, &define.Record{
-		RecordType: define.RecordTraces,
-	})
+	err = factory.processCommon(decoder, &define.Record{RecordType: define.RecordTraces})
 	assert.NoError(t, err)
 }
 
@@ -93,125 +91,186 @@ func aes256TokenChecker() tokenChecker {
 	}
 }
 
-func TestTracesAes256IncorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
-	}
-	g := makeTracesGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
+func skipTokenChecker() tokenChecker {
+	config := Config{
+		Type: "fixed",
 	}
 
-	_, err := checker.Process(&record)
-	assert.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	decoders := confengine.NewTierConfig()
+	decoders.SetGlobal(NewTokenDecoder(config))
+
+	configs := confengine.NewTierConfig()
+	configs.SetGlobal(config)
+	return tokenChecker{
+		decoders: decoders,
+		configs:  configs,
+	}
 }
 
-func TestMetricsAes256IncorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
-	}
-	g := makeMetricsGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
+func TestTracesAes256Token(t *testing.T) {
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
+		}
+		g := makeTracesGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
 
-	_, err := checker.Process(&record)
-	assert.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	})
+
+	t.Run("Skip", func(t *testing.T) {
+		checker := skipTokenChecker()
+		g := makeTracesGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+		}
+		g := makeTracesGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
 }
 
-func TestLogsAes256IncorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
-	}
-	g := makeLogsGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordLogs,
-		Data:       data,
-	}
+func TestMetricsAes256Token(t *testing.T) {
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
+		}
+		g := makeMetricsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
 
-	_, err := checker.Process(&record)
-	assert.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	})
+
+	t.Run("Skip", func(t *testing.T) {
+		checker := skipTokenChecker()
+		g := makeMetricsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+		}
+		g := makeMetricsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
 }
 
-func TestTracesAes256CorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-	}
-	g := makeTracesGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
+func TestLogsAes256Token(t *testing.T) {
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx",
+		}
+		g := makeLogsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
 
-	_, err := checker.Process(&record)
-	assert.NoError(t, err)
-	assert.Equal(t, define.Token{
-		Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-		MetricsDataId: 1002,
-		TracesDataId:  1001,
-		LogsDataId:    1003,
-		BizId:         2,
-		AppName:       "oneapm-appname",
-	}, record.Token)
-}
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	})
 
-func TestMetricsAes256CorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-	}
-	g := makeMetricsGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordMetrics,
-		Data:       data,
-	}
+	t.Run("Skip", func(t *testing.T) {
+		checker := skipTokenChecker()
+		g := makeLogsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
 
-	_, err := checker.Process(&record)
-	assert.NoError(t, err)
-	assert.Equal(t, define.Token{
-		Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-		MetricsDataId: 1002,
-		TracesDataId:  1001,
-		LogsDataId:    1003,
-		BizId:         2,
-		AppName:       "oneapm-appname",
-	}, record.Token)
-}
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+	})
 
-func TestLogsAes256CorrectToken(t *testing.T) {
-	checker := aes256TokenChecker()
-	resources := map[string]string{
-		"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-	}
-	g := makeLogsGenerator(1, resources)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordLogs,
-		Data:       data,
-	}
+	t.Run("Success", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+		}
+		g := makeLogsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+		}
 
-	_, err := checker.Process(&record)
-	assert.NoError(t, err)
-	assert.Equal(t, define.Token{
-		Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
-		MetricsDataId: 1002,
-		TracesDataId:  1001,
-		LogsDataId:    1003,
-		BizId:         2,
-		AppName:       "oneapm-appname",
-	}, record.Token)
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
 }

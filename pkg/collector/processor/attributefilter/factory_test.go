@@ -451,6 +451,7 @@ processor:
       as_int:
         keys:
           - "attributes.http.status_code"
+          - "attributes.http.scheme"
 `
 	psc := testkits.MustLoadProcessorConfigs(content)
 	obj, err := NewFactory(psc[0].Config, nil)
@@ -459,6 +460,7 @@ processor:
 
 	m := map[string]string{
 		"http.status_code": "200",
+		"http.scheme":      "https",
 	}
 	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
 	data := g.Generate()
@@ -480,6 +482,11 @@ processor:
 	assert.True(t, ok)
 	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
 	assert.Equal(t, int64(200), v.IntVal())
+
+	v, ok = attrs.Get(conventions.AttributeHTTPScheme)
+	assert.True(t, ok)
+	assert.Equal(t, pcommon.ValueTypeString, v.Type())
+	assert.Equal(t, "https", v.StringVal()) //
 }
 
 func TestTraceDropAction(t *testing.T) {

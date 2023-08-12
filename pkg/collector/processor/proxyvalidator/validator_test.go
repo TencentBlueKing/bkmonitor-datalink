@@ -501,6 +501,79 @@ func TestEventMissingEventContent(t *testing.T) {
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
+func TestEventMissingEventNameField(t *testing.T) {
+	content := `
+{
+   "data_id": 1100001,
+   "access_token": "1100001_accesstoken",
+   "data": [{
+       "target": "target",
+       "dimension": {
+           "module": "db",
+           "location": "guangdong"
+       },
+       "timestamp": 1673429359843
+   }]
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeEvent,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "event_name missing"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
+func TestEventDataType(t *testing.T) {
+	content := `
+{
+   "data_id": 1100001,
+   "access_token": "1100001_accesstoken",
+   "data": {
+       "target": "target",
+       "event_name": "bar",
+       "event": "name",
+       "dimension": {
+           "module": "db",
+           "location": "guangdong"
+       },
+       "timestamp": 1673429359843
+   }
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeEvent,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "event data expected []interface{}, got []interface {}"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
+func TestEventNilEvent(t *testing.T) {
+	content := `
+{
+   "data_id": 1100001,
+   "access_token": "1100001_accesstoken",
+   "data": []
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeEvent,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "event data cannot be empty"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
 func TestEventEventType(t *testing.T) {
 	content := `
 {
@@ -554,6 +627,34 @@ func TestEventEventNameType(t *testing.T) {
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
 	msg := "eventName expected string type, got float64"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
+func TestEventEventTargetType(t *testing.T) {
+	content := `
+{
+   "data_id": 1100001,
+   "access_token": "1100001_accesstoken",
+   "data": [{
+       "target": 10,
+       "event_name": "name",
+       "event": "",
+       "dimension": {
+           "module": "db",
+           "location": "guangdong"
+       },
+       "timestamp": 1673429359843
+   }]
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeEvent,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "target expected string type, got float64"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 

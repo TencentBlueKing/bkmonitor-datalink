@@ -1553,7 +1553,7 @@ bk-collector:
   exporter:
     slow_send:
       # 是否开启慢发送检查
-      enabled: true
+      enabled: false
       # 慢发送检查周期
       check_interval: 30m
       # 慢发送阈值 p99

@@ -65,3 +65,17 @@ func Metrics(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(metric pm
 		}
 	}
 }
+
+func MetricsWithResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(resource pcommon.Resource, metric pmetric.Metric)) {
+	for i := 0; i < resourceMetricsSlice.Len(); i++ {
+		scopeMetrics := resourceMetricsSlice.At(i)
+		resource := scopeMetrics.Resource()
+		scopeMetricsSlice := scopeMetrics.ScopeMetrics()
+		for j := 0; j < scopeMetricsSlice.Len(); j++ {
+			metrics := scopeMetricsSlice.At(j).Metrics()
+			for k := 0; k < metrics.Len(); k++ {
+				f(resource, metrics.At(k))
+			}
+		}
+	}
+}

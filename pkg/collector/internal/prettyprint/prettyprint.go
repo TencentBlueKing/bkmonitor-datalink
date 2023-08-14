@@ -12,9 +12,12 @@ package prettyprint
 import (
 	"runtime"
 
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -29,30 +32,35 @@ func Pretty(rtype define.RecordType, data interface{}) {
 		if traces, ok := data.(ptrace.Traces); ok {
 			Traces(traces)
 		}
+	case define.RecordMetrics:
+		if metrics, ok := data.(pmetric.Metrics); ok {
+			Metrics(metrics)
+		}
 	}
 }
 
 func Traces(traces ptrace.Traces) {
-	resourceSpansSlice := traces.ResourceSpans()
-	for i := 0; i < resourceSpansSlice.Len(); i++ {
-		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
-		resources := resourceSpansSlice.At(i).Resource().Attributes()
-		for j := 0; j < scopeSpansSlice.Len(); j++ {
-			spans := scopeSpansSlice.At(j).Spans()
-			for k := 0; k < spans.Len(); k++ {
-				span := spans.At(k)
-				logger.Debugf("Tracing: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
-					resources.AsRaw(),
-					span.TraceID().HexString(),
-					span.SpanID().HexString(),
-					span.Name(),
-					span.Kind().String(),
-					span.Status().Code().String(),
-					span.Attributes().AsRaw(),
-				)
-			}
-		}
-	}
+	foreach.SpansWithResource(traces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+		logger.Debugf("Pretty/Tracing: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
+			resource.Attributes().AsRaw(),
+			span.TraceID().HexString(),
+			span.SpanID().HexString(),
+			span.Name(),
+			span.Kind().String(),
+			span.Status().Code().String(),
+			span.Attributes().AsRaw(),
+		)
+	})
+}
+
+func Metrics(metrics pmetric.Metrics) {
+	foreach.MetricsWithResource(metrics.ResourceMetrics(), func(resource pcommon.Resource, metric pmetric.Metric) {
+		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s",
+			resource.Attributes().AsRaw(),
+			metric.Name(),
+			metric.DataType().String(),
+		)
+	})
 }
 
 func bToMb(b uint64) uint64 {

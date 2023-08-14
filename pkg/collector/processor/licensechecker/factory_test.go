@@ -63,6 +63,11 @@ func makeLicenseChecker(content string) *licenseChecker {
 	return obj.(*licenseChecker)
 }
 
+func loadConfig(content string) Config {
+	lc := makeLicenseChecker(content)
+	return lc.config.GetByToken("").(Config)
+}
+
 func TestLicenseCheckerProcess(t *testing.T) {
 	content := `
 processor:
@@ -74,7 +79,7 @@ processor:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 `
-	checker := makeLicenseChecker(content)
+	processor := makeLicenseChecker(content)
 	t.Run("Success", func(t *testing.T) {
 		g := generator.NewTracesGenerator(define.TracesOptions{
 			GeneratorOptions: define.GeneratorOptions{
@@ -91,7 +96,7 @@ processor:
 				RecordType:  define.RecordTraces,
 				Data:        g.Generate(),
 			}
-			_, err := checker.Process(r)
+			_, err := processor.Process(r)
 			assert.NoError(t, err)
 		}
 	})
@@ -105,7 +110,7 @@ processor:
 			RecordType:  define.RecordTraces,
 			Data:        g.Generate(),
 		}
-		_, err := checker.Process(r)
+		_, err := processor.Process(r)
 		assert.Equal(t, "service.instance.id attribute not found", err.Error())
 	})
 
@@ -115,22 +120,24 @@ processor:
 			RecordType:  define.RecordTraces,
 			Data:        ptrace.NewTraces(),
 		}
-		_, err := checker.Process(r)
+		_, err := processor.Process(r)
 		assert.Equal(t, define.ErrSkipEmptyRecord, err)
 	})
 }
 
 func TestAgentNodeStatusProcess(t *testing.T) {
-	checker := &licenseChecker{}
-	conf := Config{NumNodes: 1, TolerableNumRatio: 1.0}
-	agentStatus, nodeStatus := checker.checkAgentNodeStatus(conf, "token_x1", "instance1")
+	config := Config{
+		NumNodes:          1,
+		TolerableNumRatio: 1.0,
+	}
+	agentStatus, nodeStatus := checkAgentNodeStatus(config, "token_x1", "instance1")
 	assert.Equal(t, statusAgentNew, agentStatus)
 	assert.Equal(t, statusNodeAccess, nodeStatus)
 
 	cacher := licensecache.GetOrCreateCacher("token_x1")
 	cacher.Set("instance1")
 
-	agentStatus, nodeStatus = checker.checkAgentNodeStatus(conf, "token_x1", "instance2")
+	agentStatus, nodeStatus = checkAgentNodeStatus(config, "token_x1", "instance2")
 	assert.Equal(t, statusAgentNew, agentStatus)
 	assert.Equal(t, statusNodeExcess, nodeStatus)
 }
@@ -147,9 +154,7 @@ processor:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 `
-		checker := makeLicenseChecker(content)
-		conf := checker.config.GetByToken("").(Config)
-		status := checker.checkLicenseStatus(conf)
+		status := checkLicenseStatus(loadConfig(content))
 		assert.Equal(t, statusLicenseAccess, status)
 	})
 
@@ -164,9 +169,7 @@ processor:
        number_nodes: 200
        tolerable_num_ratio: 1.5
 `
-		checker := makeLicenseChecker(content)
-		conf := checker.config.GetByToken("").(Config)
-		status := checker.checkLicenseStatus(conf)
+		status := checkLicenseStatus(loadConfig(content))
 		assert.Equal(t, statusLicenseTolerable, status)
 	})
 
@@ -181,20 +184,18 @@ processor:
        number_nodes: 200
        tolerable_num_ratio: 1.5
 `
-		checker := makeLicenseChecker(content)
-		conf := checker.config.GetByToken("").(Config)
-		status := checker.checkLicenseStatus(conf)
+		status := checkLicenseStatus(loadConfig(content))
 		assert.Equal(t, statusLicenseExpire, status)
 	})
 }
 
-func TestJudgeByStatus(t *testing.T) {
+func TestProcessLicenseStatus(t *testing.T) {
 	type Case struct {
 		agentStatus   Status
 		licenseStatus Status
 		nodeStatus    Status
-		exceptedRes   bool
-		exceptedErr   error
+		pass          bool
+		err           error
 	}
 
 	cases := []Case{
@@ -202,89 +203,96 @@ func TestJudgeByStatus(t *testing.T) {
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseAccess,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   true,
-			exceptedErr:   nil,
+			pass:          true,
+			err:           nil,
 		},
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseTolerable,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   true,
-			exceptedErr:   errLicenseTolerable,
+			pass:          true,
+			err:           errLicenseTolerable,
 		},
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseTolerable,
 			nodeStatus:    statusNodeExcess,
-			exceptedRes:   true,
-			exceptedErr:   errLicenseTolerableNodeExcess,
+			pass:          true,
+			err:           errLicenseTolerableNodeExcess,
 		},
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseExpire,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseExpired,
+			pass:          false,
+			err:           errLicenseExpired,
 		},
 		{
 			agentStatus:   statusAgentOld,
 			licenseStatus: statusLicenseExpire,
 			nodeStatus:    statusNodeExcess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseExpired,
+			pass:          false,
+			err:           errLicenseExpired,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseAccess,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   true,
-			exceptedErr:   nil,
+			pass:          true,
+			err:           nil,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseAccess,
 			nodeStatus:    statusNodeExcess,
-			exceptedRes:   false,
-			exceptedErr:   errNodeExcess,
+			pass:          false,
+			err:           errNodeExcess,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseTolerable,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseTolerable,
+			pass:          false,
+			err:           errLicenseTolerable,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseTolerable,
 			nodeStatus:    statusNodeExcess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseTolerableNodeExcess,
+			pass:          false,
+			err:           errLicenseTolerableNodeExcess,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseExpire,
 			nodeStatus:    statusNodeAccess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseExpired,
+			pass:          false,
+			err:           errLicenseExpired,
 		},
 		{
 			agentStatus:   statusAgentNew,
 			licenseStatus: statusLicenseExpire,
 			nodeStatus:    statusNodeExcess,
-			exceptedRes:   false,
-			exceptedErr:   errLicenseExpired,
+			pass:          false,
+			err:           errLicenseExpired,
 		},
 	}
 
-	checker := &licenseChecker{}
 	for _, v := range cases {
-		res, err := checker.judgeByStatus(v.agentStatus, v.nodeStatus, v.licenseStatus)
-		assert.Equal(t, v.exceptedErr, err)
-		assert.Equal(t, v.exceptedRes, res)
+		pass, err := processLicenseStatus(statusInfo{
+			agent:   v.agentStatus,
+			node:    v.nodeStatus,
+			license: v.licenseStatus,
+		})
+		assert.Equal(t, v.err, err)
+		assert.Equal(t, v.pass, pass)
 	}
 
-	res, err := checker.judgeByStatus(statusUnspecified, statusUnspecified, statusUnspecified)
-	assert.Equal(t, false, res)
+	pass, err := processLicenseStatus(statusInfo{
+		agent:   statusUnspecified,
+		node:    statusUnspecified,
+		license: statusUnspecified,
+	})
+	assert.False(t, pass)
 	assert.Equal(t, define.ErrUnknownRecordType, err)
 }

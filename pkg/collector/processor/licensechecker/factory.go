@@ -38,10 +38,10 @@ const (
 )
 
 var (
-	errLicenseExpired             = errors.New("license: license expired, reject all agents")
-	errLicenseTolerable           = errors.New("license: license in tolerable stage, reject new agents")
-	errNodeExcess                 = errors.New("license: agents excess, reject new agents")
-	errLicenseTolerableNodeExcess = errors.New("license: license in tolerable stage and node excess, reject new agents")
+	errLicenseExpired             = errors.New("license expired, reject all agents")
+	errLicenseTolerable           = errors.New("license tolerable, reject new agents")
+	errLicenseTolerableNodeExcess = errors.New("license tolerable and node excess, reject new agents")
+	errNodeExcess                 = errors.New("license agents excess, reject new agents")
 )
 
 func init() {
@@ -110,10 +110,11 @@ func (p licenseChecker) Process(record *define.Record) (*define.Record, error) {
 }
 
 func (p licenseChecker) processTraces(record *define.Record) (*define.Record, error) {
-	pdTraces, ok := record.Data.(ptrace.Traces)
+	pdTraces := record.Data.(ptrace.Traces)
 	if pdTraces.ResourceSpans().Len() == 0 {
 		return nil, define.ErrSkipEmptyRecord
 	}
+
 	token := record.Token.Original
 	conf := p.config.GetByToken(token).(Config)
 
@@ -124,68 +125,21 @@ func (p licenseChecker) processTraces(record *define.Record) (*define.Record, er
 
 	// 单次 traces 数据都是同一个 AttributeServiceInstanceID
 	attributes := pdTraces.ResourceSpans().At(0).Resource().Attributes()
-	instance, ok := attributes.Get(conventions.AttributeServiceInstanceID)
+	val, ok := attributes.Get(conventions.AttributeServiceInstanceID)
 	if !ok {
 		return nil, errors.New("service.instance.id attribute not found")
 	}
 
-	inst := instance.AsString()
-	info := p.checkStatus(conf, token, inst)
-	ok, err := p.judgeByStatus(info.agent, info.node, info.license)
-	if !ok {
+	instance := val.AsString()
+	pass, err := processLicenseStatus(checkStatus(conf, token, instance))
+	if !pass {
 		return nil, err
 	}
 
 	logger.Debugf("get or create new cacher, token=%v", token)
 	cacher := licensecache.GetOrCreateCacher(token)
-	cacher.Set(inst)
+	cacher.Set(instance)
 	return nil, nil
-}
-
-// judgeByStatus 根据已接入探针数量以及 license 状态等进行判断是否接受数据
-func (p licenseChecker) judgeByStatus(agentStatus, nodeStatus, licenseStatus Status) (bool, error) {
-	// license 过期不允许探针接入
-	if licenseStatus == statusLicenseExpire {
-		return false, errLicenseExpired
-	}
-
-	// 探针已经存在的场景下
-	if agentStatus == statusAgentOld {
-		switch licenseStatus {
-		case statusLicenseAccess: // 如果 license 未过期 直接放行
-			return true, nil
-
-		case statusLicenseTolerable: // license 在容忍度范围内的时候
-			// 已接入探针数量未超限的情况下 接收数据 并且给出提示信息
-			if nodeStatus == statusNodeAccess {
-				return true, errLicenseTolerable
-			}
-			// 超限探针（因为是原先已经接入的探针）依旧接受数据
-			return true, errLicenseTolerableNodeExcess
-		}
-	}
-
-	// 接入新探针场景下
-	if agentStatus == statusAgentNew {
-		switch licenseStatus {
-		case statusLicenseAccess: // license 未过期情况下
-			// 新探针未超限，放行数据
-			if nodeStatus == statusNodeAccess {
-				return true, nil
-			}
-			// statusNodeExcess
-			return false, errNodeExcess
-
-		case statusLicenseTolerable: // license 处于容忍期限内
-			// 新探针未超限也不接收（因证书已经过期）
-			if nodeStatus == statusNodeAccess {
-				return false, errLicenseTolerable
-			}
-			// statusNodeExcess
-			return false, errLicenseTolerableNodeExcess
-		}
-	}
-	return false, define.ErrUnknownRecordType
 }
 
 type statusInfo struct {
@@ -194,9 +148,9 @@ type statusInfo struct {
 	license Status
 }
 
-func (p licenseChecker) checkStatus(conf Config, token, instance string) statusInfo {
-	agentStatus, nodeStatus := p.checkAgentNodeStatus(conf, token, instance)
-	licenseStatus := p.checkLicenseStatus(conf)
+func checkStatus(conf Config, token, instance string) statusInfo {
+	agentStatus, nodeStatus := checkAgentNodeStatus(conf, token, instance)
+	licenseStatus := checkLicenseStatus(conf)
 	return statusInfo{
 		agent:   agentStatus,
 		node:    nodeStatus,
@@ -204,7 +158,7 @@ func (p licenseChecker) checkStatus(conf Config, token, instance string) statusI
 	}
 }
 
-func (p licenseChecker) checkLicenseStatus(conf Config) Status {
+func checkLicenseStatus(conf Config) Status {
 	expTime := time.Unix(conf.ExpireTime, 0)
 	toleTime := expTime.Add(conf.TolerableExpire)
 
@@ -217,7 +171,7 @@ func (p licenseChecker) checkLicenseStatus(conf Config) Status {
 	return statusLicenseExpire
 }
 
-func (p licenseChecker) checkAgentNodeStatus(conf Config, token, instance string) (Status, Status) {
+func checkAgentNodeStatus(conf Config, token, instance string) (Status, Status) {
 	agentStatus := statusAgentOld
 	agentNodeNum := 0
 
@@ -241,4 +195,52 @@ func (p licenseChecker) checkAgentNodeStatus(conf Config, token, instance string
 		return agentStatus, statusNodeAccess
 	}
 	return agentStatus, statusNodeExcess
+}
+
+// processLicenseStatus 根据已接入探针数量以及 license 状态等进行判断是否接受数据
+func processLicenseStatus(status statusInfo) (bool, error) {
+	// license 过期不允许探针接入
+	if status.license == statusLicenseExpire {
+		return false, errLicenseExpired
+	}
+
+	// 探针已经存在的场景下
+	if status.agent == statusAgentOld {
+		switch status.license {
+		// 如果 license 未过期 直接放行
+		case statusLicenseAccess:
+			return true, nil
+
+			// license 在容忍度范围内的时候
+		case statusLicenseTolerable:
+			// 已接入探针数量未超限的情况下 接收数据 并且给出提示信息
+			if status.node == statusNodeAccess {
+				return true, errLicenseTolerable
+			}
+			// 超限探针（因为是原先已经接入的探针）依旧接受数据
+			return true, errLicenseTolerableNodeExcess
+		}
+	}
+
+	// 接入新探针场景下
+	if status.agent == statusAgentNew {
+		switch status.license {
+		// license 未过期情况下
+		case statusLicenseAccess:
+			// 新探针未超限，放行数据
+			if status.node == statusNodeAccess {
+				return true, nil
+			}
+			return false, errNodeExcess
+
+			// license 处于容忍期限内
+		case statusLicenseTolerable:
+			// 新探针未超限也不接收（因证书已经过期）
+			if status.node == statusNodeAccess {
+				return false, errLicenseTolerable
+			}
+			return false, errLicenseTolerableNodeExcess
+		}
+	}
+	return false, define.ErrUnknownRecordType
 }

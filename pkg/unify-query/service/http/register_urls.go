@@ -54,14 +54,16 @@ func registerTSQueryExemplarService(g *gin.Engine) {
 // registerTSQueryStructToPromQLService: /query/ts/struct_to_promql
 func registerTSQueryStructToPromQLService(g *gin.Engine) {
 	servicePath := viper.GetString(TSQueryStructToPromQLHandlePathConfigPath)
-	g.POST(servicePath, HandleTsQueryStructToPromQLRequest)
+	g.POST(servicePath, HandlerStructToPromQL)
+	//g.POST(servicePath, HandleTsQueryStructToPromQLRequest)
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
 }
 
 // registerTSQueryPromQLToStructService: /query/ts/promql_to_struct
 func registerTSQueryPromQLToStructService(g *gin.Engine) {
 	servicePath := viper.GetString(TSQueryPromQLToStructHandlePathConfigPath)
-	g.POST(servicePath, HandleTsQueryPromQLToStructRequest)
+	g.POST(servicePath, HandlerPromQLToStruct)
+	//g.POST(servicePath, HandleTsQueryPromQLToStructRequest)
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
 }
 

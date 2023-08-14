@@ -299,6 +299,194 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	return resp, nil
 }
 
+func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured.QueryPromQL, error) {
+	if query == nil {
+		return nil, nil
+	}
+
+	// 是否打开对齐
+	metricMap := make(map[string]string, len(query.QueryList))
+	for _, q := range query.QueryList {
+		// 保留查询条件
+		for i, cond := range q.Conditions.FieldList {
+			q.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
+		}
+
+		// 获取完整指标
+		route, err := structured.MakeRouteFromTableID(q.TableID)
+		if err != nil {
+			return nil, err
+		}
+		route.SetMetricName(q.FieldName)
+		metricMap[q.ReferenceName] = route.RealMetricName()
+	}
+
+	promQL, err := query.ToPromExpr(ctx, metricMap)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	return &structured.QueryPromQL{
+		PromQL: promQL.String(),
+		Start:  query.Start,
+		End:    query.End,
+		Step:   query.Step,
+	}, nil
+}
+
+func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*structured.QueryTs, error) {
+	var (
+		user = metadata.GetUser(ctx)
+	)
+
+	if queryPromQL == nil {
+		return nil, nil
+	}
+
+	sp := structured.NewQueryPromQLExpr(queryPromQL.PromQL)
+	query, err := sp.QueryTs()
+	if err != nil {
+		return nil, err
+	}
+
+	// metadata 中的 spaceUid 是从 header 头信息中获取
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
+	}
+
+	query.Start = queryPromQL.Start
+	query.End = queryPromQL.End
+	query.Step = queryPromQL.Step
+
+	// 补充业务ID
+	if len(queryPromQL.BKBizIDs) > 0 {
+		for _, q := range query.QueryList {
+			q.Conditions.Append(structured.ConditionField{
+				DimensionName: structured.BizID,
+				Value:         queryPromQL.BKBizIDs,
+				Operator:      structured.Contains,
+			}, structured.ConditionAnd)
+		}
+	}
+
+	if queryPromQL.Match != "" {
+		matchers, err := parser.ParseMetricSelector(queryPromQL.Match)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(matchers) > 0 {
+			for _, m := range matchers {
+				for _, q := range query.QueryList {
+					q.Conditions.Append(structured.ConditionField{
+						DimensionName: m.Name,
+						Value:         []string{m.Value},
+						Operator:      structured.PromOperatorToConditions(m.Type),
+					}, structured.ConditionAnd)
+				}
+			}
+		}
+	}
+
+	return query, nil
+}
+
+// HandlerPromQLToStruct
+// @Summary  promql to struct
+// @ID       promql-to-struct
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/promql_to_struct [post]
+func HandlerPromQLToStruct(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c:          c,
+			action:     metric.ActionConvert,
+			actionType: metric.TypePromql,
+		}
+		span oleltrace.Span
+	)
+
+	// 这里开始context就使用trace生成的了
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-promql-to-struct")
+	if span != nil {
+		defer span.End()
+	}
+	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypePromql, metric.StatusReceived)
+
+	// 解析请求 body
+	promql := &structured.QueryPromQL{}
+	err := json.NewDecoder(c.Request.Body).Decode(promql)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+
+	query, err := promQLToStruct(ctx, promql)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+
+	resp.success(ctx, gin.H{"data": query})
+}
+
+// HandlerStructToPromQL
+// @Summary  query struct to promql
+// @ID       struct-to-promql
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      structured.QueryTs  			  true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/struct_to_promql [post]
+func HandlerStructToPromQL(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		resp = &response{
+			c:          c,
+			action:     metric.ActionConvert,
+			actionType: metric.TypeTS,
+		}
+		span oleltrace.Span
+	)
+
+	// 这里开始context就使用trace生成的了
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-struct-to-promql")
+	if span != nil {
+		defer span.End()
+	}
+	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypeTS, metric.StatusReceived)
+
+	// 解析请求 body
+	query := &structured.QueryTs{}
+	err := json.NewDecoder(c.Request.Body).Decode(query)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+	promQL, err := structToPromQL(ctx, query)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+
+	resp.success(ctx, promQL)
+}
+
 // HandlerQueryExemplar 查询时序 exemplar 数据
 // @Summary  query monitor by ts exemplar
 // @ID       ts-query-exemplar-request
@@ -480,52 +668,12 @@ func HandlerQueryPromQL(c *gin.Context) {
 		return
 	}
 
-	sp := structured.NewQueryPromQLExpr(queryPromQL.PromQL)
-	query, err := sp.QueryTs()
+	// promql to struct
+	query, err := promQLToStruct(ctx, queryPromQL)
 	if err != nil {
+		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
-	}
-
-	// metadata 中的 spaceUid 是从 header 头信息中获取
-	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
-	}
-
-	query.Start = queryPromQL.Start
-	query.End = queryPromQL.End
-	query.Step = queryPromQL.Step
-
-	// 补充业务ID
-	if len(queryPromQL.BKBizIDs) > 0 {
-		for _, q := range query.QueryList {
-			q.Conditions.Append(structured.ConditionField{
-				DimensionName: structured.BizID,
-				Value:         queryPromQL.BKBizIDs,
-				Operator:      structured.Contains,
-			}, structured.ConditionAnd)
-		}
-	}
-
-	if queryPromQL.Match != "" {
-		matchers, err := parser.ParseMetricSelector(queryPromQL.Match)
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-			resp.failed(ctx, err)
-			return
-		}
-
-		if len(matchers) > 0 {
-			for _, m := range matchers {
-				for _, q := range query.QueryList {
-					q.Conditions.Append(structured.ConditionField{
-						DimensionName: m.Name,
-						Value:         []string{m.Value},
-						Operator:      structured.PromOperatorToConditions(m.Type),
-					}, structured.ConditionAnd)
-				}
-			}
-		}
 	}
 
 	res, err := queryTs(ctx, query)

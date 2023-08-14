@@ -20,6 +20,7 @@ import (
 )
 
 const (
+	ActionConvert     = "convert"
 	ActionInfo        = "info"
 	ActionQuery       = "query"
 	ActionLabelValues = "label_values"

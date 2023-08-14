@@ -11,6 +11,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/host"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -50,6 +52,7 @@ type Controller struct {
 	buildInfo define.BuildInfo
 
 	pusherMgr     pusher.Pusher
+	hostWatcher   host.Watcher
 	receiverMgr   *receiver.Receiver
 	pipelineMgr   *pipeline.Manager
 	exporterMgr   *exporter.Exporter
@@ -205,6 +208,7 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		cancel:        cancel,
 		conf:          conf,
 		buildInfo:     buildInfo,
+		hostWatcher:   newHostWatcher(ctx, conf),
 		pusherMgr:     pusherMgr,
 		receiverMgr:   receiverMgr,
 		proxyMgr:      proxyMgr,
@@ -215,6 +219,23 @@ func New(conf *confengine.Config, buildInfo define.BuildInfo) (*Controller, erro
 		originalTasks: define.NewTaskQueue(define.PushModeGuarantee),
 		derivedTasks:  define.NewTaskQueue(define.PushModeGuarantee),
 	}, nil
+}
+
+func newHostWatcher(ctx context.Context, conf *confengine.Config) host.Watcher {
+	type HostConfig struct {
+		HostIDPath string `config:"host_id_path"`
+	}
+
+	var config HostConfig
+	if err := conf.Unpack(&config); err != nil {
+		logger.Warnf("unpack host watcher config failed, err: %v", err)
+		return nil
+	}
+
+	return host.NewWatcher(ctx, host.Config{
+		HostIDPath:      config.HostIDPath,
+		MustHostIDExist: false,
+	})
 }
 
 func (c *Controller) recordMetrics() {
@@ -236,13 +257,47 @@ func (c *Controller) recordMetrics() {
 	}
 }
 
+func (c *Controller) updateIdentity() {
+	c.wg.Add(1)
+	defer c.wg.Done()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	fn := func() {
+		if c.hostWatcher != nil {
+			id := fmt.Sprintf("%s:%s", c.hostWatcher.GetCloudId(), c.hostWatcher.GetHostInnerIp())
+			define.SetIdentity(id)
+		}
+	}
+	fn() // 启动即更新
+
+	for {
+		select {
+		case <-ticker.C:
+			fn()
+
+		case <-c.ctx.Done():
+			return
+		}
+	}
+}
+
 func (c *Controller) Start() error {
 	go c.recordMetrics()
+	go c.updateIdentity()
+
 	for i := 0; i < define.Concurrency(); i++ {
 		go wait.Until(c.ctx, c.consumeRecords)
 		go wait.Until(c.ctx, c.consumeNonSchedRecords)
 		go wait.Until(c.ctx, c.dispatchOriginalTasks)
 		go wait.Until(c.ctx, c.dispatchDerivedTasks)
+	}
+
+	if c.hostWatcher != nil {
+		if err := c.hostWatcher.Start(); err != nil {
+			return err
+		}
 	}
 
 	if c.receiverMgr != nil {
@@ -295,6 +350,10 @@ func (c *Controller) Stop() error {
 		if err := c.proxyMgr.Stop(); err != nil {
 			return err
 		}
+	}
+
+	if c.hostWatcher != nil {
+		c.hostWatcher.Stop()
 	}
 
 	if c.pingserverMgr != nil {

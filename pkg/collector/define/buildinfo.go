@@ -14,3 +14,17 @@ type BuildInfo struct {
 	GitHash string
 	Time    string
 }
+
+// 实例唯一标识
+var identity string
+
+func SetIdentity(s string) {
+	identity = s
+}
+
+func Identity() string {
+	if identity == ":" || identity == "" {
+		return "bk-collector"
+	}
+	return identity
+}

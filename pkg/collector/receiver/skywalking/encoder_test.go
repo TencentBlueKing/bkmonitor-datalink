@@ -349,7 +349,7 @@ func TestSwTransformIP(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func mockSwSpanWithAttr(opName string, SpanType agentV3.SpanType, SpanLayer agentV3.SpanLayer) *agentV3.SpanObject {
+func mockSwSpanWithAttr(opName string, SpanType agentV3.SpanType, SpanLayer agentV3.SpanLayer, Peer string, Refs []*agentV3.SegmentReference) *agentV3.SpanObject {
 	// opName: span.OperationName 对于不同的 SpanLayer 级别有不同格式的 opName 格式 HttpLayer：/api/user/list 类型
 	// DatabaseLayer：Mysql/mysqlClient/Execute
 	span := &agentV3.SpanObject{
@@ -365,7 +365,8 @@ func mockSwSpanWithAttr(opName string, SpanType agentV3.SpanType, SpanLayer agen
 		SkipAnalysis:  false,
 		Tags:          []*common.KeyStringValuePair{},
 		Logs:          []*agentV3.Log{},
-		Refs:          []*agentV3.SegmentReference{},
+		Refs:          Refs,
+		Peer:          Peer,
 	}
 	return span
 }
@@ -375,7 +376,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
 		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeHTTPScheme)
@@ -387,11 +388,48 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		assert.Equal(t, opName, v.StringVal())
 	})
 
+	t.Run("SpanLayer_Http/SpanType_Entry/PeerName", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http, "TestPeerName", nil)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, "TestPeerName", v.StringVal())
+	})
+
+	t.Run("SpanLayer_Http/SpanType_Entry/WithoutPeerName", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		Refs := []*agentV3.SegmentReference{{ParentService: "TestParentService"}}
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http, "", Refs)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, "TestParentService", v.StringVal())
+	})
+
+	t.Run("SpanLayer_Http/SpanType_Entry/WithoutRefs", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Http, "", nil)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, unknownVal, v.StringVal())
+	})
+
 	t.Run("SpanLayer_Http/SpanType_Exit", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
 		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Exit, agentV3.SpanLayer_Http)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Exit, agentV3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeHTTPTarget)
@@ -401,13 +439,29 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		v, ok = dest.Get(conventions.AttributeHTTPHost)
 		assert.True(t, ok)
 		assert.Equal(t, "www.test.com", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, unknownVal, v.StringVal())
+	})
+
+	t.Run("SpanLayer_Http/SpanType_Exit/PeerName", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "/api/leader/list/"
+		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Exit, agentV3.SpanLayer_Http, "TestPeerName", nil)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, "TestPeerName", v.StringVal())
 	})
 
 	t.Run("SpanLayer_RPCFramework", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "rpcMethod"
 		// SpanLayer_RPCFramework 情况下 SpanType 类型不会影响测试效果
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_RPCFramework)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_RPCFramework, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeRPCMethod)
@@ -419,12 +473,27 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "messagingTestSystem/TestopName"
 		// SpanLayer_MQ 情况下 SpanType 类型不会影响测试效果
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_MQ)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_MQ, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeMessagingSystem)
 		assert.True(t, ok)
-		assert.Equal(t, "messagingTestSystem", v.StringVal())
+		assert.Equal(t, "MessagingTestSystem", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, unknownVal, v.StringVal())
+	})
+
+	t.Run("SpanLayer_MQ/PeerName", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "messagingTestSystem/TestopName"
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_MQ, "TestPeerName", nil)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, "TestPeerName", v.StringVal())
 	})
 
 	t.Run("SpanLayer_Database", func(t *testing.T) {
@@ -432,7 +501,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		opName := "Mysql/MysqlClient/execute"
 		dbStatement := "SELECT data_id FROM TABLE WHERE XXXX"
 		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Database)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Database, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeDBSystem)
@@ -442,6 +511,10 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		v, ok = dest.Get(conventions.AttributeDBOperation)
 		assert.True(t, ok)
 		assert.Equal(t, "SELECT", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, unknownVal, v.StringVal())
 	})
 
 	t.Run("SpanLayer_Cache", func(t *testing.T) {
@@ -449,7 +522,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		opName := "Redis/MysqlClient/execute"
 		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
 		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
-		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Cache)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Cache, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		v, ok := dest.Get(conventions.AttributeDBSystem)
@@ -459,5 +532,22 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		v, ok = dest.Get(conventions.AttributeDBOperation)
 		assert.True(t, ok)
 		assert.Equal(t, "SET", v.StringVal())
+
+		v, ok = dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, unknownVal, v.StringVal())
+	})
+
+	t.Run("SpanLayer_Cache/PeerName", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "Redis/MysqlClient/execute"
+		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
+		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Cache, "TestPeerName", nil)
+		swTagsToAttributesByRule(dest, swSpan)
+
+		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		assert.True(t, ok)
+		assert.Equal(t, "TestPeerName", v.StringVal())
 	})
 }

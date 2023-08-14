@@ -41,6 +41,7 @@ import (
 	agentV3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 const (
@@ -216,8 +217,11 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	swReferencesToSpanLinks(span.Refs, dest.Links())
 }
 
+const unknownVal = "unknown"
+
 // swTagsToAttributesByRule 对于 attributes 中的特定属性进行兜底策略判断
 func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
+	peerName := span.Peer
 	switch span.SpanLayer {
 	case agentV3.SpanLayer_Http:
 		spanType := span.GetSpanType()
@@ -230,6 +234,29 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 					opNameSplit := strings.Split(opName, ":")
 					dest.UpsertString(conventions.AttributeHTTPRoute, opNameSplit[len(opNameSplit)-1])
 				}
+			}
+
+			// http-server 类型判断步骤如下
+			// 1) 如果 peerName 字段存在 则优先使用该值
+			// 2) 尝试获取 refs[0]的 parent.service.name 进行插入
+			// 3) 使用 unknownVal 作为兜底值
+			if peerName != "" {
+				dest.InsertString(conventions.AttributeNetPeerName, peerName)
+			} else {
+				if refs := span.Refs; len(refs) > 0 && refs[0].ParentService != "" {
+					dest.InsertString(conventions.AttributeNetPeerName, refs[0].ParentService)
+				} else {
+					dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+				}
+			}
+		}
+
+		// http-client 的情况下
+		if spanType == agentV3.SpanType_Exit {
+			if peerName != "" {
+				dest.InsertString(conventions.AttributeNetPeerName, peerName)
+			} else {
+				dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
 			}
 		}
 
@@ -269,11 +296,9 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 
 	case agentV3.SpanLayer_Database, agentV3.SpanLayer_Cache:
 		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
-		if _, ok := dest.Get(conventions.AttributeDBSystem); !ok {
-			if opName := span.GetOperationName(); opName != "" {
-				opNameSplit := strings.Split(opName, "/")
-				dest.InsertString(conventions.AttributeDBSystem, opNameSplit[0])
-			}
+		if opName := span.GetOperationName(); opName != "" {
+			opNameSplit := strings.Split(opName, "/")
+			dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
 		}
 		// attributes.db.operation
 		if _, ok := dest.Get(conventions.AttributeDBOperation); !ok {
@@ -289,13 +314,23 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 			}
 		}
 
+		if peerName != "" {
+			dest.InsertString(conventions.AttributeNetPeerName, peerName)
+		} else {
+			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+		}
+
 	case agentV3.SpanLayer_MQ:
 		// attributes.messaging.system
-		if _, ok := dest.Get(conventions.AttributeMessagingSystem); !ok {
-			if opName := span.GetOperationName(); opName != "" {
-				opNameSplit := strings.Split(opName, "/")
-				dest.InsertString(conventions.AttributeMessagingSystem, opNameSplit[0])
-			}
+		if opName := span.GetOperationName(); opName != "" {
+			opNameSplit := strings.Split(opName, "/")
+			dest.UpsertString(conventions.AttributeMessagingSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
+		}
+
+		if peerName != "" {
+			dest.InsertString(conventions.AttributeNetPeerName, peerName)
+		} else {
+			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"context"
 	"math"
 	"net"
+	"strings"
 
 	"google.golang.org/grpc/peer"
 )
@@ -65,4 +66,11 @@ func IsValidFloat64(f float64) bool {
 
 func IsValidUint64(u uint64) bool {
 	return !(u == uint64(math.NaN()) || u == uint64(math.Inf(0)))
+}
+
+func FirstUpper(s, defaultVal string) string {
+	if s == "" {
+		return defaultVal
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -225,7 +226,7 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 				// 处理 attributes 属性 支持首字母大写
 				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
 					if _, exist := rule.upper[key]; exist {
-						d = firstUpper(v.AsString())
+						d = utils.FirstUpper(v.AsString(), unknownVal)
 					} else {
 						d = v.AsString()
 					}
@@ -240,14 +241,6 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 
 	// Kind 条件不匹配直接返回，进入下一个循环
 	return false
-}
-
-// firstUpper 首字母大写
-func firstUpper(s string) string {
-	if s == "" {
-		return unknownVal
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func (p attributeFilter) dropAction(record *define.Record, config Config) {

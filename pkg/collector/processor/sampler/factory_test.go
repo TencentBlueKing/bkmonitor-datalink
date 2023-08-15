@@ -44,6 +44,7 @@ processor:
 	assert.Equal(t, define.ProcessorSampler, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
+	factory.Clean()
 }
 
 func TestNoopFactory(t *testing.T) {

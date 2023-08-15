@@ -42,14 +42,14 @@ type spanDimensionMatcher struct {
 // - attributes.rpc.system
 // - attributes.http.method
 func (sdm spanDimensionMatcher) Match(t string, span ptrace.Span) (map[string]string, bool) {
-	predicateKeys := sdm.ch.GetPredicateKeys(t, span.Kind().String())
+	spanKind := span.Kind().String()
+	predicateKeys := sdm.ch.GetPredicateKeys(t, spanKind)
 	if len(predicateKeys) == 0 {
 		return nil, false
 	}
+
 	dimensions := make(map[string]string)
 	var found bool
-
-	spanKind := span.Kind().String()
 loop:
 	for _, pk := range predicateKeys {
 		df, k := processor.DecodeDimensionFrom(pk)

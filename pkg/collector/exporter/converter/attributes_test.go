@@ -37,3 +37,14 @@ func TestMergeAttributeMaps(t *testing.T) {
 	assert.Equal(t, true, ret["key3"])
 	assert.Equal(t, false, ret["key4"])
 }
+
+func TestReplaceDotToUnderline(t *testing.T) {
+	dst := pcommon.NewMap()
+	dst.Upsert("key1.foo", pcommon.NewValueInt(10))
+	dst.Upsert("key2.bar", pcommon.NewValueString("2"))
+
+	ret := ReplaceDotToUnderline(dst.AsRaw())
+	assert.Len(t, ret, 2)
+	assert.Equal(t, int64(10), ret["key1_foo"])
+	assert.Equal(t, "2", ret["key2_bar"])
+}

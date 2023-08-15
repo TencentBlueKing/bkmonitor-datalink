@@ -40,10 +40,7 @@ func (c logsConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pdLogs, ok := record.Data.(plog.Logs)
-	if !ok {
-		return
-	}
+	pdLogs := record.Data.(plog.Logs)
 	resourceLogsSlice := pdLogs.ResourceLogs()
 	if resourceLogsSlice.Len() == 0 {
 		return
@@ -52,13 +49,13 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	for i := 0; i < resourceLogsSlice.Len(); i++ {
 		resourceLogs := resourceLogsSlice.At(i)
-		resources := resourceLogs.Resource().Attributes().AsRaw()
+		rsAttrs := resourceLogs.Resource().Attributes().AsRaw()
 		scopeLogsSlice := resourceLogs.ScopeLogs()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeLogsSlice.Len(); j++ {
 			logRecordSlice := scopeLogsSlice.At(j).LogRecords()
 			for k := 0; k < logRecordSlice.Len(); k++ {
-				content, err := c.Extract(record.RequestClient.IP, logRecordSlice.At(k), resources)
+				content, err := c.Extract(record.RequestClient.IP, logRecordSlice.At(k), rsAttrs)
 				if err != nil {
 					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordLogs, dataId)
 					logger.Warnf("failed to extract content: %v", err)
@@ -73,7 +70,7 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	}
 }
 
-func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, resources common.MapStr) (common.MapStr, error) {
+func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rsAttrs common.MapStr) (common.MapStr, error) {
 	m := common.MapStr{
 		"time_unix":       logRecord.Timestamp() / 1000,
 		"span_id":         logRecord.SpanID().HexString(),
@@ -83,7 +80,7 @@ func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, resources co
 		"flags":           logRecord.Flags(),
 		"severity_number": logRecord.SeverityNumber(),
 		"severity_text":   logRecord.SeverityText(),
-		"resource":        resources,
+		"resource":        rsAttrs,
 	}
 	content, err := json.Marshal(m)
 	if err != nil {

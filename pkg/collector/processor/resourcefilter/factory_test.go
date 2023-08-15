@@ -10,7 +10,6 @@
 package resourcefilter
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mitchellh/mapstructure"
@@ -62,11 +61,11 @@ const (
 
 func makeTracesGenerator(n int, valueType string) *generator.TracesGenerator {
 	opts := define.TracesOptions{SpanCount: n}
-	opts.RandomResourceKeys = []string{
-		resourceKey1,
-		resourceKey2,
-		resourceKey3,
-		resourceKey4,
+	opts.Resources = map[string]string{
+		resourceKey1: "key1",
+		resourceKey2: "key2",
+		resourceKey3: "key3",
+		resourceKey4: "key4",
 	}
 	opts.DimensionsValueType = valueType
 	return generator.NewTracesGenerator(opts)
@@ -119,6 +118,7 @@ func TestTracesAssembleAction(t *testing.T) {
 				Separator:   ":",
 				Keys: []string{
 					resourceKey1,
+					"not_exist",
 					resourceKey2,
 					resourceKey3,
 					resourceKey4,
@@ -133,13 +133,7 @@ func TestTracesAssembleAction(t *testing.T) {
 	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
 	val, ok := attr.Get("resource_final")
 	assert.True(t, ok)
-
-	fields := strings.Split(val.AsString(), ":")
-	assert.Len(t, fields, 4)
-
-	for _, field := range fields {
-		assert.True(t, len(field) >= 1)
-	}
+	assert.Equal(t, "key1::key2:key3:key4", val.StringVal())
 }
 
 func TestTracesDropAction(t *testing.T) {

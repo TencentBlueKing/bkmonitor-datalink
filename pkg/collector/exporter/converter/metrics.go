@@ -44,10 +44,7 @@ func (c metricsConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pdMetrics, ok := record.Data.(pmetric.Metrics)
-	if !ok {
-		return
-	}
+	pdMetrics := record.Data.(pmetric.Metrics)
 	resourceMetricsSlice := pdMetrics.ResourceMetrics()
 	if resourceMetricsSlice.Len() == 0 {
 		return
@@ -56,13 +53,13 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
 		resourceMetrics := resourceMetricsSlice.At(i)
-		resources := resourceMetrics.Resource().Attributes()
+		rsAttrs := resourceMetrics.Resource().Attributes()
 		scopeMetricsSlice := resourceMetrics.ScopeMetrics()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeMetricsSlice.Len(); j++ {
 			metrics := scopeMetricsSlice.At(j).Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				for _, dp := range c.Extract(dataId, metrics.At(k), resources) {
+				for _, dp := range c.Extract(dataId, metrics.At(k), rsAttrs) {
 					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}
@@ -92,7 +89,7 @@ func (p otMetricMapper) AsMapStr() common.MapStr {
 	return ms
 }
 
-func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, resources pcommon.Map) []common.MapStr {
+func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	switch pdMetric.DataType() {
 	case pmetric.MetricDataTypeSum:
@@ -108,7 +105,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, resourc
 				Metric:     pdMetric.Name(),
 				Value:      dp.DoubleVal(),
 				Time:       dp.Timestamp().AsTime(),
-				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), resources),
+				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -117,7 +114,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, resourc
 		dps := pdMetric.Histogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
-			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), resources)
+			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 			if !utils.IsValidFloat64(dp.Sum()) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
@@ -174,7 +171,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, resourc
 			m := otMetricMapper{
 				Metric:     pdMetric.Name(),
 				Value:      dp.DoubleVal(),
-				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), resources),
+				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())
@@ -184,7 +181,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, resourc
 		dps := pdMetric.Summary().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
-			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), resources)
+			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 			if !utils.IsValidFloat64(dp.Sum()) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)

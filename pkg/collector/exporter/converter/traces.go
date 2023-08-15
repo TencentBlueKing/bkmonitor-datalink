@@ -40,10 +40,7 @@ func (c tracesConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c tracesConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pdTraces, ok := record.Data.(ptrace.Traces)
-	if !ok {
-		return
-	}
+	pdTraces := record.Data.(ptrace.Traces)
 	resourceSpansSlice := pdTraces.ResourceSpans()
 	if resourceSpansSlice.Len() == 0 {
 		return

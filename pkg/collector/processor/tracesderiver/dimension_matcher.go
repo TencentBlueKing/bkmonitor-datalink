@@ -48,6 +48,8 @@ func (sdm spanDimensionMatcher) Match(t string, span ptrace.Span) (map[string]st
 	}
 	dimensions := make(map[string]string)
 	var found bool
+
+	spanKind := span.Kind().String()
 loop:
 	for _, pk := range predicateKeys {
 		df, k := processor.DecodeDimensionFrom(pk)
@@ -60,15 +62,15 @@ loop:
 			}
 
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, span.Kind().String(), pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, span.Kind().String(), pk)...)
+			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
+			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
 			break loop
 
 		case processor.DimensionFromUnknown:
 			// 退避处理
 			found = true
-			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, span.Kind().String(), pk)...)
-			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, span.Kind().String(), pk)...)
+			sdm.fetcher.FetchAttributes(span, dimensions, sdm.ch.GetAttributes(t, spanKind, pk)...)
+			sdm.fetcher.FetchMethods(span, dimensions, sdm.ch.GetMethods(t, spanKind, pk)...)
 			break loop
 		}
 	}

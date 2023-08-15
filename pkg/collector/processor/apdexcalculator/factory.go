@@ -105,17 +105,19 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
+				dpAttrs := dp.Attributes()
+
 				var service, instance string
-				if v, ok := dp.Attributes().Get(processor.KeyService); ok {
+				if v, ok := dpAttrs.Get(processor.KeyService); ok {
 					service = v.AsString()
 				}
-				if v, ok := dp.Attributes().Get(processor.KeyInstance); ok {
+				if v, ok := dpAttrs.Get(processor.KeyInstance); ok {
 					instance = v.AsString()
 				}
 
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
-				if v, ok := dp.Attributes().Get(processor.KeyKind); ok {
+				if v, ok := dpAttrs.Get(processor.KeyKind); ok {
 					kind = SpanKindMap[v.StringVal()]
 				}
 
@@ -123,7 +125,7 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 				var foundPk string
 				for _, pk := range predicateKeys {
 					// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-					if p.findMetricsAttributes(pk, dp.Attributes()) {
+					if p.findMetricsAttributes(pk, dpAttrs) {
 						foundPk = pk
 						break
 					}
@@ -156,16 +158,14 @@ func (p apdexCalculator) matchRules(config *Config, kind, foundPk, name string) 
 }
 
 func (p apdexCalculator) findMetricsAttributes(pk string, attrMap pcommon.Map) bool {
-	var found bool
 	df, s := processor.DecodeDimensionFrom(pk)
 	switch df {
 	case processor.DimensionFromAttribute:
-		attrMap.Range(func(k string, v pcommon.Value) bool {
-			if k == s && v.AsString() != "" {
-				found = true
-			}
-			return true
-		})
+		v, ok := attrMap.Get(s)
+		if ok {
+			return v.AsString() != ""
+		}
+		return false
 	}
-	return found
+	return false
 }

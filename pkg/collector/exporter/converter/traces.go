@@ -52,13 +52,13 @@ func (c tracesConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	for i := 0; i < resourceSpansSlice.Len(); i++ {
 		resourceSpans := resourceSpansSlice.At(i)
-		resources := resourceSpans.Resource().Attributes().AsRaw()
+		rsAttrs := resourceSpans.Resource().Attributes().AsRaw()
 		scopeSpansSlice := resourceSpans.ScopeSpans()
 		events := make([]define.Event, 0)
 		for j := 0; j < scopeSpansSlice.Len(); j++ {
 			spans := scopeSpansSlice.At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
-				content, kind := c.Extract(record.RequestClient.IP, spans.At(k), resources)
+				content, kind := c.Extract(record.RequestClient.IP, spans.At(k), rsAttrs)
 				DefaultMetricMonitor.IncConverterSpanKindCounter(dataId, kind)
 				events = append(events, c.ToEvent(record.Token, dataId, content))
 			}

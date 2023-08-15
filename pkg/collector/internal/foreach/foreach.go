@@ -28,15 +28,15 @@ func Spans(resourceSpansSlice ptrace.ResourceSpansSlice, f func(span ptrace.Span
 	}
 }
 
-func SpansWithResource(resourceSpansSlice ptrace.ResourceSpansSlice, f func(resource pcommon.Resource, span ptrace.Span)) {
+func SpansWithResourceAttrs(resourceSpansSlice ptrace.ResourceSpansSlice, f func(rsAttrs pcommon.Map, span ptrace.Span)) {
 	for i := 0; i < resourceSpansSlice.Len(); i++ {
 		resourceSpans := resourceSpansSlice.At(i)
-		resource := resourceSpans.Resource()
+		rsAttrs := resourceSpans.Resource().Attributes()
 		scopeSpansSlice := resourceSpans.ScopeSpans()
 		for j := 0; j < scopeSpansSlice.Len(); j++ {
 			spans := scopeSpansSlice.At(j).Spans()
 			for k := 0; k < spans.Len(); k++ {
-				f(resource, spans.At(k))
+				f(rsAttrs, spans.At(k))
 			}
 		}
 	}
@@ -66,15 +66,15 @@ func Metrics(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(metric pm
 	}
 }
 
-func MetricsWithResource(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(resource pcommon.Resource, metric pmetric.Metric)) {
+func MetricsWithResourceAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice, f func(rsAttrs pcommon.Map, metric pmetric.Metric)) {
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
 		scopeMetrics := resourceMetricsSlice.At(i)
-		resource := scopeMetrics.Resource()
+		rsAttrs := scopeMetrics.Resource().Attributes()
 		scopeMetricsSlice := scopeMetrics.ScopeMetrics()
 		for j := 0; j < scopeMetricsSlice.Len(); j++ {
 			metrics := scopeMetricsSlice.At(j).Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				f(resource, metrics.At(k))
+				f(rsAttrs, metrics.At(k))
 			}
 		}
 	}

@@ -22,27 +22,29 @@ import (
 )
 
 func Pretty(rtype define.RecordType, data interface{}) {
-	// 只在 debug level 级别打印
 	if logger.LoggerLevel() != logger.DebugLevelDesc {
 		return
 	}
 
 	switch rtype {
 	case define.RecordTraces:
-		if traces, ok := data.(ptrace.Traces); ok {
-			Traces(traces)
-		}
+		pdTraces := data.(ptrace.Traces)
+		Traces(pdTraces)
+
 	case define.RecordMetrics:
-		if metrics, ok := data.(pmetric.Metrics); ok {
-			Metrics(metrics)
-		}
+		pdMetrics := data.(pmetric.Metrics)
+		Metrics(pdMetrics)
 	}
 }
 
 func Traces(traces ptrace.Traces) {
-	foreach.SpansWithResource(traces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+	if logger.LoggerLevel() != logger.DebugLevelDesc {
+		return
+	}
+
+	foreach.SpansWithResourceAttrs(traces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
 		logger.Debugf("Pretty/Tracing: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
-			resource.Attributes().AsRaw(),
+			rsAttrs,
 			span.TraceID().HexString(),
 			span.SpanID().HexString(),
 			span.Name(),
@@ -54,9 +56,13 @@ func Traces(traces ptrace.Traces) {
 }
 
 func Metrics(metrics pmetric.Metrics) {
-	foreach.MetricsWithResource(metrics.ResourceMetrics(), func(resource pcommon.Resource, metric pmetric.Metric) {
+	if logger.LoggerLevel() != logger.DebugLevelDesc {
+		return
+	}
+
+	foreach.MetricsWithResourceAttrs(metrics.ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
 		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s",
-			resource.Attributes().AsRaw(),
+			rsAttrs,
 			metric.Name(),
 			metric.DataType().String(),
 		)

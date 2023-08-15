@@ -16,13 +16,13 @@ import (
 )
 
 func MergeAttributeMaps(dst pcommon.Map, attrs ...pcommon.Map) map[string]interface{} {
-	ret := dst.AsRaw()
 	for _, attr := range attrs {
-		for k, v := range attr.AsRaw() {
-			ret[k] = v
-		}
+		attr.Range(func(k string, v pcommon.Value) bool {
+			dst.Upsert(k, v)
+			return true
+		})
 	}
-	return ret
+	return dst.AsRaw()
 }
 
 func MergeMaps(dst map[string]interface{}, attrs ...map[string]interface{}) map[string]interface{} {

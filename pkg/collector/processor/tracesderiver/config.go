@@ -170,7 +170,8 @@ func (ch *ConfigHandler) GetResourceKeys(t string) []string {
 
 func (ch *ConfigHandler) GetPredicateKeys(t, kind string) []string {
 	keys := ch.predicateKeys.Get(t + "/" + kind)
-	// 如果没查到 那就使用兜底配置
+
+	// 使用兜底配置
 	if len(keys) == 0 {
 		keys = ch.predicateKeys.Get(t + "/")
 	}
@@ -179,6 +180,7 @@ func (ch *ConfigHandler) GetPredicateKeys(t, kind string) []string {
 
 func (ch *ConfigHandler) GetAttributes(t, kind, predicateKey string) []string {
 	keys := ch.attributeKeys.Get(t + "/" + kind + "/" + predicateKey)
+
 	// 使用兜底配置
 	if len(keys) == 0 && predicateKey == "" {
 		return ch.attributeKeys.Get(t + "//" + predicateKey)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -215,4 +216,33 @@ func testProcessMetricsStandardCalculator(val float64, threshold float64, status
 		return false, errs[0]
 	}
 	return true, nil
+}
+
+func TestFindMetricsAttributes(t *testing.T) {
+	t.Run("Exist", func(t *testing.T) {
+		m := pcommon.NewMap()
+		m.InsertString("net.host", "host")
+		m.InsertString("net.port", "port")
+
+		p := &apdexCalculator{}
+		found := p.findMetricsAttributes("attributes.net.port", m)
+		assert.True(t, found)
+	})
+
+	t.Run("Exist but empty value", func(t *testing.T) {
+		m := pcommon.NewMap()
+		m.InsertString("net.host", "host")
+		m.InsertString("net.port", "")
+
+		p := &apdexCalculator{}
+		found := p.findMetricsAttributes("attributes.net.port", m)
+		assert.False(t, found)
+	})
+
+	t.Run("NotExist", func(t *testing.T) {
+		m := pcommon.NewMap()
+		p := &apdexCalculator{}
+		found := p.findMetricsAttributes("attributes.net.port", m)
+		assert.False(t, found)
+	})
 }

@@ -95,8 +95,7 @@ func (p probeFilter) processAddAttrsAction(record *define.Record, config Config)
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResource(pdTraces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
-			rsAttrs := resource.Attributes()
+		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
 			for _, action := range config.AddAttrs {
 				for _, rule := range action.Rules {
 					if !rule.Enabled {

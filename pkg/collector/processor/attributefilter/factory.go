@@ -139,9 +139,8 @@ func (p attributeFilter) asStringAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResource(pdTraces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
 			for _, key := range config.AsString.Keys {
-				rsAttrs := resource.Attributes()
 				if v, ok := rsAttrs.Get(key); ok {
 					rsAttrs.UpsertString(key, v.AsString())
 				}
@@ -173,9 +172,9 @@ func (p attributeFilter) asIntAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
-		foreach.SpansWithResource(pdTraces.ResourceSpans(), func(resource pcommon.Resource, span ptrace.Span) {
+		foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
 			for _, key := range config.AsInt.Keys {
-				processAsIntAction(resource.Attributes(), key)
+				processAsIntAction(rsAttrs, key)
 				processAsIntAction(span.Attributes(), key)
 			}
 		})

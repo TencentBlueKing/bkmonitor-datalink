@@ -22,7 +22,7 @@ tasks: {% for task in tasks or get_hosts_by_node(config_hosts) %}
     timeout: {{ (task.timeout or timeout) | default("3s", true) }}
     target_host: {{ task.target_host or task.ip }}
     # 当配置的target_host_list不为空时，使用target_host_list，忽略target_host
-    {% set instances = get_hosts_by_node(task.node_list) %}
+    {% if task.node_list %}{% set instances = get_hosts_by_node(task.node_list) %}{% endif %}
     target_host_list: {% if task.target_host_list %}{% for target_host in task.target_host_list %}
     - {{ target_host }}{% endfor %}{% endif %}
     {% if instances %}{% for instance in instances -%}

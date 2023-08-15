@@ -41,7 +41,7 @@ tasks: {% for task in tasks %}
     max_rtt: {{ task.max_rtt }}
     total_num: {{ task.total_num }}
     ping_size: {{ task.size }}
-   {% set instances = get_hosts_by_node(task.node_list) %}
+   {% if task.node_list %}{% set instances = get_hosts_by_node(task.node_list) %}{% endif %}
     targets: {% for host in task.target_host_list %}
     - target: {{ host.target}}
       target_type: {{ host.target_type | default("ip", true)}}{% endfor %}

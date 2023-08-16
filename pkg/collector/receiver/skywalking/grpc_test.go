@@ -103,9 +103,9 @@ func TestFetchConfigurations(t *testing.T) {
 		Service: "TestService",
 	}
 
-	configs := receiver.SwConf{
+	configs := receiver.SkywalkingConfig{
 		Sn: "TestSnNumber",
-		SwRules: []receiver.SwRule{
+		Rules: []receiver.SkywalkingRule{
 			{
 				Type:    "Http",
 				Enabled: true,
@@ -134,7 +134,7 @@ func TestFetchConfigurations(t *testing.T) {
 	}
 
 	svc := &ConfigurationDiscoveryService{}
-	svc.SkywalkingConfigFetcher = receiver.SkywalkingConfigFetcher{Func: func(s string) receiver.SwConf {
+	svc.SkywalkingConfigFetcher = receiver.SkywalkingConfigFetcher{Func: func(s string) receiver.SkywalkingConfig {
 		return configs
 	}}
 

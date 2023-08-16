@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 )
 
 type ComponentConfig struct {
@@ -69,18 +70,12 @@ type GrpcServerConfig struct {
 	Transport   string   `config:"transport"`
 }
 
-type SubConfig struct {
-	Type           string                 `config:"type"`
-	Token          string                 `config:"token"`
-	SkywalkingConf map[string]interface{} `config:"skywalking_agent"`
+type SkywalkingConfig struct {
+	Sn    string           `mapstructure:"sn"`
+	Rules []SkywalkingRule `mapstructure:"rules"`
 }
 
-type SwConf struct {
-	Sn      string   `mapstructure:"sn"`
-	SwRules []SwRule `mapstructure:"rules"`
-}
-
-type SwRule struct {
+type SkywalkingRule struct {
 	Type    string `mapstructure:"type"`
 	Enabled bool   `mapstructure:"enabled"`
 	Target  string `mapstructure:"target"`
@@ -88,22 +83,35 @@ type SwRule struct {
 }
 
 // LoadConfigFrom 允许 receiver 加载 skywalking 应用层级自定义参数下发配置
-func LoadConfigFrom(conf *confengine.Config) map[string]SubConfig {
+func LoadConfigFrom(conf *confengine.Config) map[string]SkywalkingConfig {
 	var apmConf define.ApmConfig
-	batches := make(map[string]SubConfig)
+	batches := make(map[string]SkywalkingConfig)
 	if err := conf.UnpackChild(define.ConfigFieldApmConfig, &apmConf); err != nil {
 		return batches
 	}
+
+	type T struct {
+		Type           string                 `config:"type"`
+		Token          string                 `config:"token"`
+		SkywalkingConf map[string]interface{} `config:"skywalking_agent"`
+	}
+
 	subConfig := confengine.LoadConfigPatterns(apmConf.Patterns)
 	for _, subConf := range subConfig {
-		var sub SubConfig
-		if err := subConf.Unpack(&sub); err != nil {
+		var input T
+		if err := subConf.Unpack(&input); err != nil {
 			continue
 		}
-		if sub.Type != define.ConfigTypeSubConfig {
+		if input.Type != define.ConfigTypeSubConfig {
 			continue
 		}
-		batches[sub.Token] = sub
+
+		var swConfig SkywalkingConfig
+		err := mapstructure.Decode(input.SkywalkingConf, &swConfig)
+		if err != nil {
+			continue
+		}
+		batches[input.Token] = swConfig
 	}
 	return batches
 }

@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mitchellh/mapstructure"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -21,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -216,8 +216,8 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 				d := unknownVal
 
 				// 常量不需要判断是否存在
-				if strings.HasPrefix(key, constPrefix) {
-					d = key[len(constPrefix):]
+				if strings.HasPrefix(key, define.ConstKeyPrefix) {
+					d = key[len(define.ConstKeyPrefix):]
 					fields = append(fields, d)
 					continue
 				}

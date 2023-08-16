@@ -432,7 +432,9 @@ bk-collector:
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
-      config:
+
+    # DbFilter: db 处理器
+    - name: "db_filter/common"
 
     # TokenChecker: 权限校验处理器
     # Proxy
@@ -901,6 +903,7 @@ bk-collector:
         #- "sampler/status_code"
         - "resource_filter/assemble"
         - "attribute_filter/common"
+        - "db_filter/common"
         - "attribute_filter/app"
         - "probe_filter/common"
         - "service_discover/common"

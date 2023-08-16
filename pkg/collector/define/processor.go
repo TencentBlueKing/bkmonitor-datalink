@@ -12,6 +12,7 @@ package define
 const (
 	ResourceKeyPrefix  = "resource."
 	AttributeKeyPrefix = "attributes."
+	ConstKeyPrefix     = "const."
 
 	ProcessorApdexCalculator = "apdex_calculator"
 	ProcessorAttributeFilter = "attribute_filter"
@@ -25,5 +26,6 @@ const (
 	ProcessorTracesDeriver   = "traces_deriver"
 	ProcessorLicenseChecker  = "license_checker"
 	ProcessorForwarder       = "forwarder"
+	ProcessorDbFilter        = "db_filter"
 	ProcessorProbeFilter     = "probe_filter"
 )

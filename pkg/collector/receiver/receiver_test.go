@@ -68,6 +68,7 @@ func TestReceiver(t *testing.T) {
 
 	r.ready()
 	assert.NoError(t, r.Start())
+	r.Reload(config)
 	assert.NoError(t, r.Stop())
 	RecordHandleMetrics(DefaultMetricMonitor, define.Token{}, define.RequestHttp, define.RecordMetrics, 0, time.Now())
 }
@@ -100,5 +101,26 @@ func TestRegisterDuplicateRoutes(t *testing.T) {
 				RelativePath: "/route1",
 			},
 		})
+	})
+}
+
+func TestSkywalkingFetcher(t *testing.T) {
+	t.Run("Define function", func(t *testing.T) {
+		fetcher := SkywalkingConfigFetcher{
+			Func: func(s string) SkywalkingConfig {
+				return SkywalkingConfig{
+					Sn: "sn1",
+				}
+			},
+		}
+
+		config := fetcher.Fetch("token1")
+		assert.Equal(t, "sn1", config.Sn)
+	})
+
+	t.Run("Default", func(t *testing.T) {
+		var fetcher SkywalkingConfigFetcher
+		config := fetcher.Fetch("token1")
+		assert.Equal(t, "", config.Sn)
 	})
 }

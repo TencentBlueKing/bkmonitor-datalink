@@ -34,6 +34,25 @@ default:
         tolerable_expire: 2h
         number_nodes: 200
         tolerable_num_ratio: 1.5
+
+    - name: "db_filter/common"
+      config:
+        slow_query:
+          destination: "db.is_slow"
+          rules:
+            - match: "Mysql"
+              threshold: 50ms
+            - match: "Postgresql"
+              threshold: 50ms
+            - match: "Elasticsearch"
+              threshold: 50ms
+            - match: "Redis"
+              threshold: 50ms
+            - match: "Mangodb"
+              threshold: 50ms
+            - match: ""
+              threshold: 3s
+
     - name: "probe_filter/common"
       config:
         add_attributes:
@@ -82,30 +101,30 @@ default:
           - predicate_key: "attributes.db.system"
             max_length: 1024
             match:
-              - "mysql"
-              - "postgresql"
-              - "elasticsearch"
+              - "Mysql"
+              - "Postgresql"
+              - "Elasticsearch"
             keys:
               - "attributes.db.statement"
           - predicate_key: "attributes.db.system"
             max_length: 512
             match:
-              - "redis"
-              - "mangodb"
+              - "Redis"
+              - "Mangodb"
             keys:
               - "attributes.db.statement"
         drop:
           - predicate_key: "attributes.db.system"
             match:
-              - "mysql"
-              - "postgresql"
-              - "elasticsearch"
+              - "Mysql"
+              - "Postgresql"
+              - "Elasticsearch"
             keys:
               - "attributes.db.statement"
           - predicate_key: "attributes.db.system"
             match:
-              - "redis"
-              - "mangodb"
+              - "Redis"
+              - "Mangodb"
             keys:
 
     - name: "apdex_calculator/fixed"

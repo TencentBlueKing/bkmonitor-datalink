@@ -204,9 +204,9 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 }
 
 // createCustomParam 构造自定义参数下发配置
-func (s *ConfigurationDiscoveryService) createCustomParam(language string, swConf receiver.SwConf) *common.KeyStringValuePair {
+func (s *ConfigurationDiscoveryService) createCustomParam(language string, swConf receiver.SkywalkingConfig) *common.KeyStringValuePair {
 	var values []string
-	for _, rule := range swConf.SwRules {
+	for _, rule := range swConf.Rules {
 		if !rule.Enabled {
 			continue
 		}

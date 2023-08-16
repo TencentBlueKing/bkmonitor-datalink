@@ -240,11 +240,11 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 			// 1) 如果 peerName 字段存在 则优先使用该值
 			// 2) 尝试获取 refs[0]的 parent.service.name 进行插入
 			// 3) 使用 unknownVal 作为兜底值
-			if peerName != "" {
-				dest.InsertString(conventions.AttributeNetPeerName, peerName)
+			if refs := span.Refs; len(refs) > 0 && refs[0].ParentService != "" {
+				dest.InsertString(conventions.AttributeNetPeerName, refs[0].ParentService)
 			} else {
-				if refs := span.Refs; len(refs) > 0 && refs[0].ParentService != "" {
-					dest.InsertString(conventions.AttributeNetPeerName, refs[0].ParentService)
+				if peerName != "" {
+					dest.InsertString(conventions.AttributeNetPeerName, peerName)
 				} else {
 					dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
 				}
@@ -296,9 +296,16 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 
 	case agentV3.SpanLayer_Database, agentV3.SpanLayer_Cache:
 		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
-		if opName := span.GetOperationName(); opName != "" {
-			opNameSplit := strings.Split(opName, "/")
-			dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
+		if span.SpanLayer == agentV3.SpanLayer_Database {
+			if opName := span.GetOperationName(); opName != "" {
+				opNameSplit := strings.Split(opName, "/")
+				dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
+			}
+		} else {
+			// 对于 Cache 类型尝试进行首字母大写转化工作
+			if v, ok := dest.Get(conventions.AttributeDBSystem); ok {
+				dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(v.StringVal(), unknownVal))
+			}
 		}
 		// attributes.db.operation
 		if _, ok := dest.Get(conventions.AttributeDBOperation); !ok {

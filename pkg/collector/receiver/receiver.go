@@ -18,7 +18,6 @@ import (
 
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/elastic/beats/libbeat/outputs/transport"
-	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
@@ -42,7 +41,7 @@ type Receiver struct {
 var (
 	globalRecords          = define.NewRecordQueue(define.PushModeGuarantee)
 	globalConfig           Config
-	globalSkywalkingConfig map[string]SubConfig
+	globalSkywalkingConfig map[string]SkywalkingConfig
 )
 
 // Records 返回 Receiver 全局消息管道
@@ -72,31 +71,15 @@ func GetComponentConfig() ComponentConfig {
 	return globalConfig.Components
 }
 
-func fetchSkywalkingConfByToken(token string) SwConf {
-	v, ok := globalSkywalkingConfig[token]
-	if !ok {
-		return SwConf{}
-	}
-
-	// 解析 skywalking 应用层级下发的配置
-	var conf SwConf
-	err := mapstructure.Decode(v.SkywalkingConf, &conf)
-	if err != nil {
-		logger.Warnf("failed to parse skywalking agent config: %v", err)
-		return SwConf{}
-	}
-	return conf
-}
-
 type SkywalkingConfigFetcher struct {
-	Func func(s string) SwConf
+	Func func(s string) SkywalkingConfig
 }
 
-func (f SkywalkingConfigFetcher) Fetch(s string) SwConf {
+func (f SkywalkingConfigFetcher) Fetch(s string) SkywalkingConfig {
 	if f.Func != nil {
 		return f.Func(s)
 	}
-	return fetchSkywalkingConfByToken(s)
+	return globalSkywalkingConfig[s]
 }
 
 // New 返回 Receiver 实例

@@ -525,11 +525,10 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentV3.SpanType_Entry, agentV3.SpanLayer_Cache, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		v, ok := dest.Get(conventions.AttributeDBSystem)
-		assert.True(t, ok)
-		assert.Equal(t, "Redis", v.StringVal())
+		// Cache 类型使用原始的 db.system 的数据，不用去opName 里面获取
+		// 其他逻辑与 Database 类型保持一致
 
-		v, ok = dest.Get(conventions.AttributeDBOperation)
+		v, ok := dest.Get(conventions.AttributeDBOperation)
 		assert.True(t, ok)
 		assert.Equal(t, "SET", v.StringVal())
 

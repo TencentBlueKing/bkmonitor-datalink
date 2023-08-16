@@ -9,7 +9,11 @@
 
 package probefilter
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+)
 
 type Config struct {
 	AddAttrs []AddAttrsAction `config:"add_attributes" mapstructure:"add_attributes"`
@@ -48,17 +52,12 @@ func (f *Filter) Clean() {
 	f.Field = cleanPrefix(f.Field)
 }
 
-const (
-	attributesPrefix = "attributes."
-	resourcePrefix   = "resource."
-)
-
 func cleanPrefix(s string) string {
-	if strings.HasPrefix(s, attributesPrefix) {
-		return s[len(attributesPrefix):]
+	if strings.HasPrefix(s, define.AttributeKeyPrefix) {
+		return s[len(define.AttributeKeyPrefix):]
 	}
-	if strings.HasPrefix(s, resourcePrefix) {
-		return s[len(resourcePrefix):]
+	if strings.HasPrefix(s, define.ResourceKeyPrefix) {
+		return s[len(define.ResourceKeyPrefix):]
 	}
 	return s
 }

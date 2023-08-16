@@ -11,6 +11,8 @@ package attributefilter
 
 import (
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 type Config struct {
@@ -130,16 +132,11 @@ func (c *CutAction) Clean() {
 	}
 }
 
-const (
-	attrPrefix  = "attributes."
-	constPrefix = "const."
-)
-
 func cleanAttributesPrefixes(keys []string) []string {
 	var ret []string
 	for _, key := range keys {
-		if strings.HasPrefix(key, attrPrefix) {
-			ret = append(ret, key[len(attrPrefix):])
+		if strings.HasPrefix(key, define.AttributeKeyPrefix) {
+			ret = append(ret, key[len(define.AttributeKeyPrefix):])
 		} else {
 			ret = append(ret, key)
 		}
@@ -148,8 +145,8 @@ func cleanAttributesPrefixes(keys []string) []string {
 }
 
 func cleanAttributesPrefix(s string) string {
-	if !strings.HasPrefix(s, attrPrefix) {
+	if !strings.HasPrefix(s, define.AttributeKeyPrefix) {
 		return s
 	}
-	return s[len(attrPrefix):]
+	return s[len(define.AttributeKeyPrefix):]
 }

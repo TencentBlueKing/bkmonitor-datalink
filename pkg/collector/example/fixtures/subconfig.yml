@@ -2,6 +2,24 @@
 type: "subconfig"
 token: "token1"
 
+skywalking_agent:
+  sn: "my-test-sn"
+  rules:
+    - type: "Http"
+      enabled: true
+      target: "cookie"   # cookie 类型配置下发
+      field: "language"
+
+    - type: "Http"
+      enabled: true
+      target: "header"   # header 类型配置下发
+      field: "Accept"
+
+    - type: "Http"
+      enabled: true
+      target: "query_parameter"   # query_parameter 类型配置下发 skywalking 探针可忽略此配置
+      field: "from"
+
 default:
   processor:
     - name: "apdex_calculator/fixed"

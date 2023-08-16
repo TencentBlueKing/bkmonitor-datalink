@@ -1551,13 +1551,6 @@ bk-collector:
 
   # =============================== Exporter =================================
   exporter:
-    slow_send:
-      # 是否开启慢发送检查
-      enabled: false
-      # 慢发送检查周期
-      check_interval: 30m
-      # 慢发送阈值 p99
-      threshold: 3s
     queue:
       metrics_batch_size: 5000
       traces_batch_size: 600

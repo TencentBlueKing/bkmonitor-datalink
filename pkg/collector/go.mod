@@ -28,7 +28,6 @@ require (
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.37.0
 	github.com/rs/cors v1.8.2
-	github.com/spenczar/tdigest v1.0.1
 	github.com/spf13/cast v1.5.0
 	github.com/stretchr/testify v1.8.3
 	github.com/syndtr/goleveldb v1.0.0

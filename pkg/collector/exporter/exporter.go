@@ -17,9 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/converter"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/durationmeasurer"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/hook"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/wait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -38,7 +36,6 @@ type Exporter struct {
 	converter converter.Converter
 	queue     queue.Queue
 	cfg       *Config
-	dm        *durationmeasurer.DurationMeasurer
 	batches   map[string]queue.Config // 无并发读写 无需锁保护
 }
 
@@ -70,7 +67,6 @@ func New(conf *confengine.Config) (*Exporter, error) {
 		cancel:    cancel,
 		converter: converter.NewCommonConverter(),
 		cfg:       c,
-		dm:        durationmeasurer.New(ctx, 2*time.Minute),
 		batches:   LoadConfigFrom(conf),
 	}
 	exp.queue = queue.NewBatchQueue(c.Queue, func(s string) queue.Config {
@@ -87,52 +83,11 @@ func (e *Exporter) Start() error {
 		go wait.Until(e.ctx, e.consumeEvents)
 		go wait.Until(e.ctx, e.sendEvents)
 	}
-	go wait.Until(e.ctx, e.checkIfSlowSend)
 	return nil
 }
 
 func (e *Exporter) Reload(conf *confengine.Config) {
 	e.batches = LoadConfigFrom(conf)
-}
-
-// checkIfSlowSend 检查是否存在慢发送的情况 如果存在的话就执行 hook 逻辑
-func (e *Exporter) checkIfSlowSend() {
-	e.wg.Add(1)
-	defer e.wg.Done()
-
-	detected := time.NewTicker(time.Minute)
-	defer detected.Stop()
-
-	ch := make(chan struct{}, 1)
-	var updated int64
-
-	enabled := e.cfg.SlowSend.Enabled
-	threshold := e.cfg.SlowSend.Threshold.Seconds()
-	checkInterval := int64(e.cfg.SlowSend.CheckInterval.Seconds())
-	var p90, p95, p99 time.Duration
-	for {
-		select {
-		case <-detected.C:
-			p90, p95, p99 = e.dm.P90(), e.dm.P95(), e.dm.P99()
-			if p99.Seconds() > threshold {
-				select {
-				case ch <- struct{}{}: // 非堵塞
-				default:
-				}
-			}
-
-		case <-ch:
-			now := time.Now().Unix()
-			logger.Infof("detected slow send, p90=%v, p95=%v, p99=%v", p90, p95, p99)
-			if now-updated > checkInterval && enabled {
-				hook.OnFailureHook()
-				updated = now
-			}
-
-		case <-e.ctx.Done():
-			return
-		}
-	}
 }
 
 func (e *Exporter) consumeEvents() {
@@ -179,7 +134,6 @@ func (e *Exporter) sendEvents() {
 		case event := <-e.queue.Pop():
 			start := time.Now()
 			SentFunc(event)
-			e.dm.Measure(time.Since(start))
 			DefaultMetricMonitor.ObserveSentDuration(start)
 			DefaultMetricMonitor.IncSentCounter()
 

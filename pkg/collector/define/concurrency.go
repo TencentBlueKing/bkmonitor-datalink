@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	QueueAmplification = 1
+	QueueAmplification = 2
 	AcquireTimeout     = 5 * time.Second
 )
 

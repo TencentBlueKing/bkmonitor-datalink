@@ -19,23 +19,14 @@ import (
 
 // 不同类型的数据大小不同 所以队列大小要单独调整
 const (
-	defaultMetricsBatchSize      = 2000
-	defaultTracesBatchSize       = 200
-	defaultLogsBatchSize         = 100
-	defaultFlushInterval         = 3 * time.Second
-	defaultSlowSendThreshold     = 3 * time.Second
-	defaultSlowSendCheckInterval = 30 * time.Minute
+	defaultMetricsBatchSize = 2000
+	defaultTracesBatchSize  = 200
+	defaultLogsBatchSize    = 100
+	defaultFlushInterval    = 3 * time.Second
 )
 
 type Config struct {
-	Queue    queue.Config   `config:"queue"`
-	SlowSend SlowSendConfig `config:"slow_send"`
-}
-
-type SlowSendConfig struct {
-	Enabled       bool          `config:"enabled"`
-	CheckInterval time.Duration `config:"check_interval"`
-	Threshold     time.Duration `config:"threshold"`
+	Queue queue.Config `config:"queue"`
 }
 
 func (c *Config) Validate() {
@@ -50,12 +41,6 @@ func (c *Config) Validate() {
 	}
 	if c.Queue.FlushInterval <= 0 {
 		c.Queue.FlushInterval = defaultFlushInterval
-	}
-	if c.SlowSend.Threshold <= 0 {
-		c.SlowSend.Threshold = defaultSlowSendThreshold
-	}
-	if c.SlowSend.CheckInterval <= 0 {
-		c.SlowSend.CheckInterval = defaultSlowSendCheckInterval
 	}
 }
 

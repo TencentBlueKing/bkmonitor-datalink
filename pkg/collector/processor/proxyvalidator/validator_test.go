@@ -120,7 +120,7 @@ func TestTimeSeriesDataType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "timeseries data expected []interface{}, got int64"
+	msg := "timeseries data expected []interface{}, got []interface {}"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -148,6 +148,44 @@ func TestTimeSeriesNilMetrics(t *testing.T) {
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
 	msg := "value expected float64 type, got <nil>"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
+func TestTimeSeriesEmptyMetrics(t *testing.T) {
+	content := `
+{
+    "data_id": 1100002,
+    "access_token": "1100002_accesstoken",
+    "data": []
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeTimeSeries,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "timeseries data cannot be empty"
+	assert.Equal(t, msg, validator.Validate(&pb).Error())
+}
+
+func TestTimeSeriesIllegalMetricsItemType(t *testing.T) {
+	content := `
+{
+    "data_id": 1100002,
+    "access_token": "1100002_accesstoken",
+    "data": ["metrics"]
+}
+`
+	validator := NewValidator(Config{
+		Type:                dataTypeTimeSeries,
+		Version:             "v2",
+		MaxFutureTimeOffset: 3600,
+	})
+	var pb define.ProxyData
+	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
+	msg := "timeseries each item expected map[string]interface{} type, got string"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 

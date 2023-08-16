@@ -22,7 +22,7 @@ import (
 	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
 	common "skywalking.apache.org/repo/goapi/collect/common/v3"
 	event "skywalking.apache.org/repo/goapi/collect/event/v3"
-	segment "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 	profile "skywalking.apache.org/repo/goapi/collect/language/profile/v3"
 	management "skywalking.apache.org/repo/goapi/collect/management/v3"
 
@@ -98,10 +98,10 @@ func getAgentVersionFromMetadata(md metadata.MD) string {
 type TraceSegmentReportService struct {
 	receiver.Publisher
 	pipeline.Validator
-	segment.UnimplementedTraceSegmentReportServiceServer
+	agent.UnimplementedTraceSegmentReportServiceServer
 }
 
-func (s *TraceSegmentReportService) Collect(stream segment.TraceSegmentReportService_CollectServer) error {
+func (s *TraceSegmentReportService) Collect(stream agent.TraceSegmentReportService_CollectServer) error {
 	defer utils.HandleCrash()
 
 	ctx := stream.Context()
@@ -120,12 +120,13 @@ func (s *TraceSegmentReportService) Collect(stream segment.TraceSegmentReportSer
 	}
 }
 
-func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *segment.SegmentObject) {
-	md := getMetaDataFromContext(ctx)
+func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *agent.SegmentObject) {
 	ip := utils.GetGrpcIpFromContext(ctx)
+
+	md := getMetaDataFromContext(ctx)
 	token, err := getTokenFromMetadata(md)
 	if err != nil {
-		logger.Warnf("failed to get token from context, ip=%v, error %s", ip, err)
+		logger.Warnf("failed to get token from context, ip=%v, error: %s", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordTraces)
 		return
 	}
@@ -148,13 +149,50 @@ func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *
 	prettyprint.Pretty(define.RecordTraces, traces)
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+		logger.Warnf("run pre-check failed, service=TraceSegmentReport, code=%d, ip=%v, error: %s", code, ip, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return
 	}
 
 	s.Publish(r)
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestGrpc, define.RecordTraces, 0, start)
+}
+
+type JVMMetricReportService struct {
+	receiver.Publisher
+	pipeline.Validator
+	agent.UnimplementedJVMMetricReportServiceServer
+}
+
+func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agent.JVMMetricCollection) (*common.Commands, error) {
+	defer utils.HandleCrash()
+	ip := utils.GetGrpcIpFromContext(ctx)
+
+	md := getMetaDataFromContext(ctx)
+	token, err := getTokenFromMetadata(md)
+	if err != nil {
+		logger.Warnf("failed to get token from context, ip=%v, error: %s", ip, err)
+		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordMetrics)
+		return &common.Commands{}, err
+	}
+
+	data := convertJvmMetrics(jvmMetrics, token)
+	r := &define.Record{
+		RecordType:    define.RecordMetrics,
+		RequestType:   define.RequestGrpc,
+		RequestClient: define.RequestClient{IP: ip},
+		Data:          data,
+	}
+
+	code, processorName, err := s.Validate(r)
+	if err != nil {
+		logger.Warnf("run pre-check failed, service=JVMMetricReport, code=%d, ip=%v, error: %s", code, ip, err)
+		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
+		return &common.Commands{}, err
+	}
+
+	s.Publish(r)
+	return &common.Commands{}, nil
 }
 
 type ConfigurationDiscoveryService struct {
@@ -164,11 +202,9 @@ type ConfigurationDiscoveryService struct {
 
 func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context, req *conf.ConfigurationSyncRequest) (*common.Commands, error) {
 	defer utils.HandleCrash()
+	ip := utils.GetGrpcIpFromContext(ctx)
 
 	md := getMetaDataFromContext(ctx)
-	if md == nil {
-		return &common.Commands{}, errors.New("no metadata found in request")
-	}
 	token, err := getTokenFromMetadata(md)
 	if err != nil {
 		return &common.Commands{}, err
@@ -177,7 +213,7 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 	// SN 长度为 0 的时候直接结束，不继续执行后续代码逻辑
 	swConf := s.Fetch(token)
 	if len(swConf.Sn) == 0 {
-		err = fmt.Errorf("empty SN number, service=%s", req.GetService())
+		err = fmt.Errorf("empty SN number, service=%s, ip=%v", req.GetService(), ip)
 		logger.Warn(err)
 		return &common.Commands{}, err
 	}
@@ -270,30 +306,22 @@ func (s *ProfileService) CollectSnapshot(stream profile.ProfileTask_CollectSnaps
 	return nil
 }
 
-type JVMMetricReportService struct {
-	segment.UnimplementedJVMMetricReportServiceServer
-}
-
-func (s *JVMMetricReportService) Collect(ctx context.Context, jvm *segment.JVMMetricCollection) (*common.Commands, error) {
-	return &common.Commands{}, nil
-}
-
 type MeterService struct {
-	segment.UnimplementedMeterReportServiceServer
+	agent.UnimplementedMeterReportServiceServer
 }
 
-func (s *MeterService) Collect(stream segment.MeterReportService_CollectServer) error {
+func (s *MeterService) Collect(stream agent.MeterReportService_CollectServer) error {
 	return nil
 }
 
-func (s *MeterService) CollectBatch(batch segment.MeterReportService_CollectBatchServer) error {
+func (s *MeterService) CollectBatch(batch agent.MeterReportService_CollectBatchServer) error {
 	return nil
 }
 
 type ClrService struct {
-	segment.UnimplementedCLRMetricReportServiceServer
+	agent.UnimplementedCLRMetricReportServiceServer
 }
 
-func (s *ClrService) Collect(ctx context.Context, req *segment.CLRMetricCollection) (*common.Commands, error) {
+func (s *ClrService) Collect(ctx context.Context, req *agent.CLRMetricCollection) (*common.Commands, error) {
 	return &common.Commands{}, nil
 }

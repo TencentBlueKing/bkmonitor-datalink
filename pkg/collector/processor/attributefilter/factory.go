@@ -213,16 +213,14 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 		if rule.Kind == "" || spanKind == rule.Kind {
 			fields := make([]string, 0, len(rule.Keys))
 			for _, key := range rule.Keys {
-				d := unknownVal
-
 				// 常量不需要判断是否存在
 				if strings.HasPrefix(key, define.ConstKeyPrefix) {
-					d = key[len(define.ConstKeyPrefix):]
-					fields = append(fields, d)
+					fields = append(fields, key[len(define.ConstKeyPrefix):])
 					continue
 				}
 
 				// 处理 attributes 属性 支持首字母大写
+				d := unknownVal
 				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
 					if _, exist := rule.upper[key]; exist {
 						d = utils.FirstUpper(v.AsString(), unknownVal)

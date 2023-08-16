@@ -20,14 +20,23 @@ type Metric struct {
 	Dimensions map[string]string
 }
 
+type ResourceKv struct {
+	Key   string
+	Value string
+}
+
 type Builder struct {
 	pbMetrics   pmetric.Metrics
 	metricSlice pmetric.MetricSlice
 }
 
-func New() *Builder {
+func New(kvs ...ResourceKv) *Builder {
 	pbMetrics := pmetric.NewMetrics()
-	scopeMetrics := pbMetrics.ResourceMetrics().AppendEmpty().ScopeMetrics().AppendEmpty()
+	rs := pbMetrics.ResourceMetrics().AppendEmpty()
+	for _, kv := range kvs {
+		rs.Resource().Attributes().InsertString(kv.Key, kv.Value)
+	}
+	scopeMetrics := rs.ScopeMetrics().AppendEmpty()
 	scopeMetrics.Metrics()
 	return &Builder{pbMetrics: pbMetrics, metricSlice: scopeMetrics.Metrics()}
 }

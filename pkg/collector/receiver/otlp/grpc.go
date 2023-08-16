@@ -62,7 +62,7 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "traces pre-check processors got code %d, ip=%v", code, ip)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
 		logger.Warn(err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return ptraceotlp.NewResponse(), err
@@ -99,8 +99,8 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "metrics pre-check processors got code %d, ip=%v", code, ip)
-		logger.Error(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=metrics, code=%d, ip=%v", code, ip)
+		logger.Warn(err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 		return pmetricotlp.NewResponse(), err
 	}
@@ -136,8 +136,8 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "logs pre-check processors got code %d, ip=%v", code, ip)
-		logger.Error(err)
+		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%v", code, ip)
+		logger.Warn(err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordLogs, processorName, r.Token.Original, code)
 		return plogotlp.NewResponse(), err
 	}

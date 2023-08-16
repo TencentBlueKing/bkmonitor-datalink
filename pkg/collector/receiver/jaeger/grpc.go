@@ -58,7 +58,7 @@ func (s GrpcService) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "traces pre-check processors got code %d, ip=%v", code, ip)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
 		logger.Warn(err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return &api_v2.PostSpansResponse{}, err

@@ -144,7 +144,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		msg := []byte(fmt.Sprintf(`{"status": "failed", "error": "%s"}`, err.Error()))
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, msg)
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordPushGateway)
-		logger.Errorf("failed to read prometheus exported content, ip=%v, error %s", ip, err)
+		logger.Errorf("failed to read body content, ip=%v, error: %s", ip, err)
 		return
 	}
 
@@ -155,8 +155,9 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 
 	if jobBase64Encoded {
 		if job, err = decodeBase64(job); err != nil {
-			logger.Errorf("invalid base64 encoding in job name, job: %s, err: %v", job, err)
-			msg := s.getResponse(statusError, fmt.Sprintf("invalid base64 encoding in job name '%s'", job))
+			err = errors.Wrapf(err, "invalid base64 encoding in job name, job: %s", job)
+			logger.Warn(err)
+			msg := s.getResponse(statusError, err.Error())
 			metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
 			receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
 			return
@@ -164,8 +165,9 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	}
 
 	if job == "" {
-		logger.Errorf("empty job name in request url: %s", req.URL)
-		msg := s.getResponse(statusError, fmt.Sprintf("empty job name in request url: %s", req.URL))
+		err = fmt.Errorf("empty job name in request url: %s", req.URL)
+		logger.Warn(err)
+		msg := s.getResponse(statusError, err.Error())
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
 		return
@@ -174,15 +176,16 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	lbs := vars[fieldLabels]
 	labels, err := splitLabels(lbs)
 	if err != nil {
-		logger.Errorf("invalid labels field in request url: %s, err: %v", lbs, err)
-		msg := s.getResponse(statusError, fmt.Sprintf("invalid labels field in request url: %s", lbs))
+		err = errors.Wrapf(err, "invalid labels field in request url: %s", lbs)
+		logger.Warn(err)
+		msg := s.getResponse(statusError, err.Error())
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
 		return
 	}
 
 	labels["job"] = job
-	logger.Debugf("extract labels from request url: %s, lbs: %+v", req.URL, labels)
+	logger.Debugf("extract labels from request url=%s, lbs=%+v", req.URL, labels)
 
 	var metricFamilies map[string]*dto.MetricFamily
 	ctMediatype, ctParams, ctErr := mime.ParseMediaType(req.Header.Get("Content-Type"))
@@ -209,8 +212,9 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	}
 
 	if err != nil {
-		logger.Warnf("failed to parse body, ip=%v, error: %v", ip, err)
-		msg := s.getResponse(statusError, fmt.Sprintf("failed to parse body, error: %v", err))
+		err = errors.Wrapf(err, "failed to parse body, ip=%v", ip)
+		logger.Warn(err)
+		msg := s.getResponse(statusError, err.Error())
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
 		return
@@ -231,7 +235,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		msg := []byte(fmt.Sprintf(`{"status": "failed", "error": "%s"}`, err.Error()))
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), msg)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordPushGateway, processorName, r.Token.Original, code)
-		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+		logger.Warnf("run pre-check failed, code=%d, ip=%v, error: %s", code, ip, err)
 		return
 	}
 

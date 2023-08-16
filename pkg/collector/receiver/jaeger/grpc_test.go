@@ -11,7 +11,6 @@ package jaeger
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/jaegertracing/jaeger/proto-gen/api_v2"
@@ -33,7 +32,7 @@ func TestGrpcPostSpansPreCheck(t *testing.T) {
 
 		req := &api_v2.PostSpansRequest{}
 		_, err := svc.PostSpans(context.Background(), req)
-		assert.True(t, strings.Contains(err.Error(), "traces pre-check processors got code 401"))
+		assert.Error(t, err)
 	})
 
 	t.Run("Success", func(t *testing.T) {

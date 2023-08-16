@@ -17,7 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/metadata"
 	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
-	v3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	common "skywalking.apache.org/repo/goapi/collect/common/v3"
+	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -28,18 +29,53 @@ const (
 	token = "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
 )
 
-func TestTracesFailedPreCheck(t *testing.T) {
-	md := metadata.Pairs(authKey, token)
-	ctx := metadata.NewIncomingContext(context.Background(), md)
-	segment := mockGrpcTraceSegment(1)
+func TestTraceSegmentReportService(t *testing.T) {
+	t.Run("Failed PreCheck", func(t *testing.T) {
+		md := metadata.Pairs(authKey, token)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+		segment := mockGrpcTraceSegment(1)
 
-	svc := TraceSegmentReportService{}
-	svc.Validator = pipeline.Validator{
-		Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
-		},
-	}
-	svc.consumeTraces(ctx, segment)
+		svc := TraceSegmentReportService{}
+		svc.Validator = pipeline.Validator{
+			Func: func(record *define.Record) (define.StatusCode, string, error) {
+				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
+			},
+		}
+		svc.consumeTraces(ctx, segment)
+	})
+
+	t.Run("Nil Metadata", func(t *testing.T) {
+		segment := mockGrpcTraceSegment(1)
+
+		svc := TraceSegmentReportService{}
+		svc.consumeTraces(context.Background(), segment)
+	})
+}
+
+func TestJVMMetricReportService(t *testing.T) {
+	t.Run("Failed PreCheck", func(t *testing.T) {
+		md := metadata.Pairs(authKey, token)
+		ctx := metadata.NewIncomingContext(context.Background(), md)
+
+		svc := JVMMetricReportService{}
+		svc.Validator = pipeline.Validator{
+			Func: func(record *define.Record) (define.StatusCode, string, error) {
+				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, errors.New("MUST ERROR")
+			},
+		}
+
+		data := &agent.JVMMetricCollection{Metrics: []*agent.JVMMetric{mockJvmMetrics()}}
+		cmds, err := svc.Collect(ctx, data)
+		assert.Len(t, cmds.GetCommands(), 0)
+		assert.Error(t, err)
+	})
+
+	t.Run("Nil Metadata", func(t *testing.T) {
+		svc := JVMMetricReportService{}
+		cmds, err := svc.Collect(context.Background(), nil)
+		assert.Len(t, cmds.GetCommands(), 0)
+		assert.Error(t, err)
+	})
 }
 
 func mockContextByMetaDataMap(m map[string]string) context.Context {
@@ -142,9 +178,9 @@ func TestFetchConfigurations(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, cmds.Commands, 1)
 
-	expectedCmd := v3.Command{
+	expectedCmd := common.Command{
 		Command: "ConfigurationDiscoveryCommand",
-		Args: []*v3.KeyStringValuePair{
+		Args: []*common.KeyStringValuePair{
 			{Key: "SerialNumber", Value: "TestSnNumber"},
 			{Key: "UUID", Value: "TestSnNumber"},
 			{Key: "plugin.http.include_http_headers", Value: "Accept,Cookie"},
@@ -203,12 +239,6 @@ func TestEmptyImpl(t *testing.T) {
 		err := svc.CollectSnapshot(nil)
 		assert.NoError(t, err)
 		_, err = svc.GetProfileTaskCommands(nil, nil)
-		assert.NoError(t, err)
-	})
-
-	t.Run("JVMMetricReportService", func(t *testing.T) {
-		svc := &JVMMetricReportService{}
-		_, err := svc.Collect(nil, nil)
 		assert.NoError(t, err)
 	})
 

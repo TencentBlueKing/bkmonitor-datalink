@@ -370,7 +370,14 @@ bk-collector:
               - "resource.net.host.port"
         drop:
           keys:
-            - "bk.data.token"
+            - "resource.bk.data.token"
+
+    - name: "resource_filter/drop_token"
+      config:
+        assemble:
+        drop:
+          keys:
+            - "resource.bk.data.token"
 
 
     # Sampler: 采样处理器
@@ -948,10 +955,11 @@ bk-collector:
       type: "metrics"
       processors:
         - "token_checker/aes256"
-        - "rate_limiter/token_bucket"
-        - "metrics_filter/drop"
-        - "resource_filter/add"
-        - "apdex_calculator/fixed"
+        - "resource_filter/drop_token"
+#        - "rate_limiter/token_bucket"
+#        - "metrics_filter/drop"
+#        - "resource_filter/add"
+#        - "apdex_calculator/fixed"
 
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"

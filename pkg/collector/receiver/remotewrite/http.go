@@ -69,7 +69,7 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		receiver.WriteResponse(w, define.ContentTypeText, int(code), []byte(err.Error()))
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordRemoteWrite, processorName, r.Token.Original, code)
-		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+		logger.Warnf("run pre-check failed, code=%d, ip=%v, error: %s", code, ip, err)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		receiver.WriteResponse(w, define.ContentTypeText, http.StatusBadRequest, []byte(err.Error()))
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordRemoteWrite)
-		logger.Warnf("failed to decode write request, code=%d, ip=%v, error %s", code, ip, err)
+		logger.Warnf("failed to decode write request, code=%d, ip=%v, error: %s", code, ip, err)
 		return
 	}
 	defer func() {

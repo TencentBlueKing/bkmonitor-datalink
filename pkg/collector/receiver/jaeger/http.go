@@ -82,9 +82,10 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 
 	traces, httpCode, err := decodeThriftHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
 	if err != nil {
+		err = errors.Wrapf(err, "failed to parse jaeger exported content, ip=%v", ip)
+		logger.Warn(err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
 		receiver.WriteResponse(w, define.ContentTypeJson, httpCode, []byte(err.Error()))
-		logger.Warnf("failed to parse jaeger exported content, error %s", err)
 		return
 	}
 
@@ -98,7 +99,8 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
+		logger.Warn(err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
 		return

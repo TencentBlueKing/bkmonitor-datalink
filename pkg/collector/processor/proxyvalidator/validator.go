@@ -157,7 +157,7 @@ func newTimeSeriesValidator(config Config) Validator {
 func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 	objs, ok := pd.Data.([]interface{})
 	if !ok {
-		return errors.Errorf("timeseries data expected []interface{}, got %T", pd.DataId)
+		return errors.Errorf("timeseries data expected []interface{}, got %T", objs)
 	}
 	if len(objs) <= 0 {
 		return errors.New("timeseries data cannot be empty")

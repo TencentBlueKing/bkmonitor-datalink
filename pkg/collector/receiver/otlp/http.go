@@ -111,7 +111,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, rtype)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, nil)
-		logger.Errorf("failed to read otlp exported content, error %s", err)
+		logger.Errorf("failed to read body content, ip=%v, error: %s", ip, err)
 		return
 	}
 	defer func() {
@@ -123,7 +123,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, rtype)
 		writeError(w, rh, err, http.StatusBadRequest)
-		logger.Warnf("failed to unmarshal body, ip=%v, error %s", ip, err)
+		logger.Warnf("failed to unmarshal body, ip=%v, error: %s", ip, err)
 		return
 	}
 
@@ -138,7 +138,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
 		writeError(w, rh, err, int(code))
-		logger.Warnf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+		logger.Warnf("run pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", rtype.S(), code, ip, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, rtype, processorName, r.Token.Original, code)
 		return
 	}
@@ -150,7 +150,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, rtype)
 		writeError(w, rh, err, http.StatusInternalServerError)
-		logger.Errorf("failed to unmarshal response, error %s", err)
+		logger.Errorf("failed to unmarshal response, error: %s", err)
 		return
 	}
 	receiver.WriteResponse(w, rh.ContentType(), http.StatusOK, msg)

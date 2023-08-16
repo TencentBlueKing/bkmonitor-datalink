@@ -42,7 +42,4 @@ func TestConvert(t *testing.T) {
 	}, gather)
 
 	assert.Equal(t, 455, len(events))
-	for _, event := range events {
-		t.Logf("event: %+v", event.Data())
-	}
 }

@@ -37,8 +37,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
-	common "skywalking.apache.org/repo/goapi/collect/common/v3"
-	agentV3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -85,7 +85,7 @@ var otSpanEventsMapping = map[string]string{
 	"stack":      conventions.AttributeExceptionStacktrace,
 }
 
-func EncodeTraces(segment *agentV3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
+func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
 	traceData := ptrace.NewTraces()
 
 	swSpans := segment.Spans
@@ -135,7 +135,7 @@ func swTransformIP(instanceId string, attrs pcommon.Map) {
 	}
 }
 
-func swSpansToSpanSlice(traceID string, segmentID string, spans []*agentV3.SpanObject, dest ptrace.SpanSlice) {
+func swSpansToSpanSlice(traceID string, segmentID string, spans []*agentv3.SpanObject, dest ptrace.SpanSlice) {
 	if len(spans) == 0 {
 		return
 	}
@@ -149,7 +149,7 @@ func swSpansToSpanSlice(traceID string, segmentID string, spans []*agentV3.SpanO
 	}
 }
 
-func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, dest ptrace.Span) {
+func swSpanToSpan(traceID string, segmentID string, span *agentv3.SpanObject, dest ptrace.Span) {
 	dest.SetTraceID(swTraceIDToTraceID(traceID))
 	// skywalking defines segmentId + spanId as unique identifier
 	// so use segmentId to convert to an unique otel-span
@@ -196,17 +196,17 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 	setInternalSpanStatus(span, dest.Status())
 
 	switch {
-	case span.SpanLayer == agentV3.SpanLayer_MQ:
-		if span.SpanType == agentV3.SpanType_Entry {
+	case span.SpanLayer == agentv3.SpanLayer_MQ:
+		if span.SpanType == agentv3.SpanType_Entry {
 			dest.SetKind(ptrace.SpanKindConsumer)
-		} else if span.SpanType == agentV3.SpanType_Exit {
+		} else if span.SpanType == agentv3.SpanType_Exit {
 			dest.SetKind(ptrace.SpanKindProducer)
 		}
-	case span.GetSpanType() == agentV3.SpanType_Exit:
+	case span.GetSpanType() == agentv3.SpanType_Exit:
 		dest.SetKind(ptrace.SpanKindClient)
-	case span.GetSpanType() == agentV3.SpanType_Entry:
+	case span.GetSpanType() == agentv3.SpanType_Entry:
 		dest.SetKind(ptrace.SpanKindServer)
-	case span.GetSpanType() == agentV3.SpanType_Local:
+	case span.GetSpanType() == agentv3.SpanType_Local:
 		dest.SetKind(ptrace.SpanKindInternal)
 	default:
 		dest.SetKind(ptrace.SpanKindUnspecified)
@@ -220,15 +220,15 @@ func swSpanToSpan(traceID string, segmentID string, span *agentV3.SpanObject, de
 const unknownVal = "unknown"
 
 // swTagsToAttributesByRule 对于 attributes 中的特定属性进行兜底策略判断
-func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
+func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 	peerName := span.Peer
 	switch span.SpanLayer {
-	case agentV3.SpanLayer_Http:
+	case agentv3.SpanLayer_Http:
 		spanType := span.GetSpanType()
 		// attributes.http.route: spanOperationName 样例
 		// - java: GET:/api/leader/list/
 		// - python: /api/leader/list/
-		if spanType == agentV3.SpanType_Entry {
+		if spanType == agentv3.SpanType_Entry {
 			if _, ok := dest.Get(conventions.AttributeHTTPRoute); !ok {
 				if opName := span.GetOperationName(); opName != "" {
 					opNameSplit := strings.Split(opName, ":")
@@ -252,7 +252,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 		}
 
 		// http-client 的情况下
-		if spanType == agentV3.SpanType_Exit {
+		if spanType == agentv3.SpanType_Exit {
 			if peerName != "" {
 				dest.InsertString(conventions.AttributeNetPeerName, peerName)
 			} else {
@@ -276,7 +276,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 				dest.InsertString(conventions.AttributeHTTPScheme, urlObj.Scheme)
 			}
 			// attribute.http.target / attribute.http.host
-			if spanType == agentV3.SpanType_Exit {
+			if spanType == agentv3.SpanType_Exit {
 				if _, ok := dest.Get(conventions.AttributeHTTPTarget); !ok {
 					dest.InsertString(conventions.AttributeHTTPTarget, urlObj.Path)
 				}
@@ -286,7 +286,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 			}
 		}
 
-	case agentV3.SpanLayer_RPCFramework:
+	case agentv3.SpanLayer_RPCFramework:
 		// attributes.rpc.method
 		if _, ok := dest.Get(conventions.AttributeRPCMethod); !ok {
 			if rpcMethod := span.GetOperationName(); rpcMethod != "" {
@@ -294,9 +294,9 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 			}
 		}
 
-	case agentV3.SpanLayer_Database, agentV3.SpanLayer_Cache:
+	case agentv3.SpanLayer_Database, agentv3.SpanLayer_Cache:
 		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
-		if span.SpanLayer == agentV3.SpanLayer_Database {
+		if span.SpanLayer == agentv3.SpanLayer_Database {
 			if opName := span.GetOperationName(); opName != "" {
 				opNameSplit := strings.Split(opName, "/")
 				dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
@@ -327,7 +327,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
 		}
 
-	case agentV3.SpanLayer_MQ:
+	case agentv3.SpanLayer_MQ:
 		// attributes.messaging.system
 		if opName := span.GetOperationName(); opName != "" {
 			opNameSplit := strings.Split(opName, "/")
@@ -342,7 +342,7 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentV3.SpanObject) {
 	}
 }
 
-func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanLinkSlice) {
+func swReferencesToSpanLinks(refs []*agentv3.SegmentReference, dest ptrace.SpanLinkSlice) {
 	if len(refs) == 0 {
 		return
 	}
@@ -355,7 +355,7 @@ func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanL
 		link.SetSpanID(segmentIDToSpanID(ref.ParentTraceSegmentId, uint32(ref.ParentSpanId)))
 		// link.TraceState().FromRaw("")
 		link.SetTraceState("")
-		kvParis := []*common.KeyStringValuePair{
+		kvParis := []*commonv3.KeyStringValuePair{
 			{
 				Key:   attributeParentInstance,
 				Value: ref.ParentServiceInstance,
@@ -389,7 +389,7 @@ func swReferencesToSpanLinks(refs []*agentV3.SegmentReference, dest ptrace.SpanL
 	}
 }
 
-func setInternalSpanStatus(span *agentV3.SpanObject, dest ptrace.SpanStatus) {
+func setInternalSpanStatus(span *agentv3.SpanObject, dest ptrace.SpanStatus) {
 	if span.GetIsError() {
 		dest.SetCode(ptrace.StatusCodeError)
 		dest.SetMessage("ERROR")
@@ -399,14 +399,14 @@ func setInternalSpanStatus(span *agentV3.SpanObject, dest ptrace.SpanStatus) {
 	}
 }
 
-func setSwSpanIDToAttributes(span *agentV3.SpanObject, dest pcommon.Map) {
+func setSwSpanIDToAttributes(span *agentv3.SpanObject, dest pcommon.Map) {
 	dest.InsertInt(attributeSkywalkingSpanID, int64(span.GetSpanId()))
 	if span.ParentSpanId != -1 {
 		dest.InsertInt(attributeSkywalkingParentSpanID, int64(span.GetParentSpanId()))
 	}
 }
 
-func swLogsToSpanEvents(logs []*agentV3.Log, dest ptrace.SpanEventSlice) {
+func swLogsToSpanEvents(logs []*agentv3.Log, dest ptrace.SpanEventSlice) {
 	if len(logs) == 0 {
 		return
 	}
@@ -433,7 +433,7 @@ func swLogsToSpanEvents(logs []*agentV3.Log, dest ptrace.SpanEventSlice) {
 	}
 }
 
-func swTagsToEventsAttributes(tags []*common.KeyStringValuePair, dest pcommon.Map) {
+func swTagsToEventsAttributes(tags []*commonv3.KeyStringValuePair, dest pcommon.Map) {
 	for _, tag := range tags {
 		if v, ok := otSpanEventsMapping[tag.Key]; ok {
 			dest.UpsertString(v, tag.Value)
@@ -441,7 +441,7 @@ func swTagsToEventsAttributes(tags []*common.KeyStringValuePair, dest pcommon.Ma
 	}
 }
 
-func swKvPairsToInternalAttributes(pairs []*common.KeyStringValuePair, dest pcommon.Map) {
+func swKvPairsToInternalAttributes(pairs []*commonv3.KeyStringValuePair, dest pcommon.Map) {
 	if pairs == nil {
 		return
 	}

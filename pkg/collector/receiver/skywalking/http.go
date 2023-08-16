@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
-	event "skywalking.apache.org/repo/goapi/collect/event/v3"
-	segment "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
-	profile "skywalking.apache.org/repo/goapi/collect/language/profile/v3"
-	management "skywalking.apache.org/repo/goapi/collect/management/v3"
+	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
+	eventv3 "skywalking.apache.org/repo/goapi/collect/event/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	profilev3 "skywalking.apache.org/repo/goapi/collect/language/profile/v3"
+	managementv3 "skywalking.apache.org/repo/goapi/collect/management/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
@@ -67,14 +67,14 @@ func Ready() {
 	})
 
 	receiver.RegisterGrpcRoute(func(s *grpc.Server) {
-		conf.RegisterConfigurationDiscoveryServiceServer(s, &ConfigurationDiscoveryService{})
-		event.RegisterEventServiceServer(s, &EventService{})
-		management.RegisterManagementServiceServer(s, &ManagementService{})
-		segment.RegisterTraceSegmentReportServiceServer(s, &TraceSegmentReportService{})
-		segment.RegisterJVMMetricReportServiceServer(s, &JVMMetricReportService{})
-		segment.RegisterMeterReportServiceServer(s, &MeterService{})
-		segment.RegisterCLRMetricReportServiceServer(s, &ClrService{})
-		profile.RegisterProfileTaskServer(s, &ProfileService{})
+		confv3.RegisterConfigurationDiscoveryServiceServer(s, &ConfigurationDiscoveryService{})
+		eventv3.RegisterEventServiceServer(s, &EventService{})
+		managementv3.RegisterManagementServiceServer(s, &ManagementService{})
+		agentv3.RegisterTraceSegmentReportServiceServer(s, &TraceSegmentReportService{})
+		agentv3.RegisterJVMMetricReportServiceServer(s, &JVMMetricReportService{})
+		agentv3.RegisterMeterReportServiceServer(s, &MeterService{})
+		agentv3.RegisterCLRMetricReportServiceServer(s, &ClrService{})
+		profilev3.RegisterProfileTaskServer(s, &ProfileService{})
 	})
 }
 
@@ -104,7 +104,7 @@ func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data := &segment.SegmentObject{}
+	data := &agentv3.SegmentObject{}
 	if err = json.Unmarshal(buf.Bytes(), data); err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordTraces)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
@@ -156,7 +156,7 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	var data []*segment.SegmentObject
+	var data []*agentv3.SegmentObject
 	if err = json.Unmarshal(buf.Bytes(), &data); err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordTraces)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))

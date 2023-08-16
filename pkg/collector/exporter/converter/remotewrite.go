@@ -58,7 +58,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 
 			pm := promMapper{
 				Metrics:    common.MapStr{name: sample.GetValue()},
-				Target:     "remote_write",
+				Target:     define.Identity(),
 				Timestamp:  sample.GetTimestampMs(),
 				Dimensions: utils.CloneMap(dims),
 			}

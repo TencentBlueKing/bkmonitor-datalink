@@ -19,8 +19,8 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	common "skywalking.apache.org/repo/goapi/collect/common/v3"
-	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
@@ -57,7 +57,7 @@ func TestExtractMetadata(t *testing.T) {
 }
 
 func TestHttpReportSegments(t *testing.T) {
-	segments := []*agent.SegmentObject{mockGrpcTraceSegment(1)}
+	segments := []*agentv3.SegmentObject{mockGrpcTraceSegment(1)}
 	data, err := json.Marshal(segments)
 	assert.NoError(t, err)
 
@@ -80,7 +80,7 @@ func TestHttpReportSegments(t *testing.T) {
 }
 
 func TestHttpReportSegmentsFailedPreCheck(t *testing.T) {
-	segments := []*agent.SegmentObject{mockGrpcTraceSegment(1)}
+	segments := []*agentv3.SegmentObject{mockGrpcTraceSegment(1)}
 	data, err := json.Marshal(segments)
 	assert.NoError(t, err)
 
@@ -230,15 +230,15 @@ func TestHttpReportSegmentReadFailed(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
+func mockGrpcTraceSegment(sequence int) *agentv3.SegmentObject {
 	seq := strconv.Itoa(sequence)
-	return &agent.SegmentObject{
+	return &agentv3.SegmentObject{
 		TraceId:         "trace" + seq,
 		TraceSegmentId:  "trace-segment" + seq,
 		Service:         "demo-segmentReportService" + seq,
 		ServiceInstance: "demo-instance" + seq + "_" + token,
 		IsSizeLimited:   false,
-		Spans: []*agent.SpanObject{
+		Spans: []*agentv3.SpanObject{
 			{
 				SpanId:        1,
 				ParentSpanId:  0,
@@ -246,21 +246,21 @@ func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
 				EndTime:       time.Now().Unix() + 10,
 				OperationName: "operation" + seq,
 				Peer:          "127.0.0.1:6666",
-				SpanType:      agent.SpanType_Entry,
-				SpanLayer:     agent.SpanLayer_Http,
+				SpanType:      agentv3.SpanType_Entry,
+				SpanLayer:     agentv3.SpanLayer_Http,
 				ComponentId:   1,
 				IsError:       false,
 				SkipAnalysis:  false,
-				Tags: []*common.KeyStringValuePair{
+				Tags: []*commonv3.KeyStringValuePair{
 					{
 						Key:   "mock-key" + seq,
 						Value: "mock-value" + seq,
 					},
 				},
-				Logs: []*agent.Log{
+				Logs: []*agentv3.Log{
 					{
 						Time: time.Now().Unix(),
-						Data: []*common.KeyStringValuePair{
+						Data: []*commonv3.KeyStringValuePair{
 							{
 								Key:   "error.kind",
 								Value: "TestErrorKind",
@@ -280,9 +280,9 @@ func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
 						},
 					},
 				},
-				Refs: []*agent.SegmentReference{
+				Refs: []*agentv3.SegmentReference{
 					{
-						RefType:                  agent.RefType_CrossThread,
+						RefType:                  agentv3.RefType_CrossThread,
 						TraceId:                  "trace" + seq,
 						ParentTraceSegmentId:     "parent-trace-segment" + seq,
 						ParentSpanId:             0,
@@ -300,21 +300,21 @@ func mockGrpcTraceSegment(sequence int) *agent.SegmentObject {
 				EndTime:       time.Now().Unix() + 20,
 				OperationName: "operation" + seq,
 				Peer:          "127.0.0.1:6666",
-				SpanType:      agent.SpanType_Local,
-				SpanLayer:     agent.SpanLayer_Http,
+				SpanType:      agentv3.SpanType_Local,
+				SpanLayer:     agentv3.SpanLayer_Http,
 				ComponentId:   2,
 				IsError:       false,
 				SkipAnalysis:  false,
-				Tags: []*common.KeyStringValuePair{
+				Tags: []*commonv3.KeyStringValuePair{
 					{
 						Key:   "mock-key" + seq,
 						Value: "mock-value" + seq,
 					},
 				},
-				Logs: []*agent.Log{
+				Logs: []*agentv3.Log{
 					{
 						Time: time.Now().Unix(),
-						Data: []*common.KeyStringValuePair{
+						Data: []*commonv3.KeyStringValuePair{
 							{
 								Key:   "log-key" + seq,
 								Value: "log-value" + seq,

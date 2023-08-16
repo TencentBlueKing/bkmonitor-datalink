@@ -21,8 +21,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+func onPretty() bool {
+	return logger.LoggerLevel() == logger.DebugLevelDesc
+}
+
 func Pretty(rtype define.RecordType, data interface{}) {
-	if logger.LoggerLevel() != logger.DebugLevelDesc {
+	if !onPretty() {
 		return
 	}
 
@@ -38,7 +42,7 @@ func Pretty(rtype define.RecordType, data interface{}) {
 }
 
 func Traces(traces ptrace.Traces) {
-	if logger.LoggerLevel() != logger.DebugLevelDesc {
+	if !onPretty() {
 		return
 	}
 
@@ -56,7 +60,7 @@ func Traces(traces ptrace.Traces) {
 }
 
 func Metrics(metrics pmetric.Metrics) {
-	if logger.LoggerLevel() != logger.DebugLevelDesc {
+	if !onPretty() {
 		return
 	}
 

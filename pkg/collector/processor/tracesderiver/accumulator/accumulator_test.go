@@ -22,7 +22,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
@@ -58,17 +57,13 @@ func TestCalcStats(t *testing.T) {
 	_ = r.buildMetrics(TypeDelta)
 
 	// reset stats
-	for k, stat := range r.statsMap {
-		t.Logf("round1: k=%v; stat=%+v", k, stat)
+	for _, stat := range r.statsMap {
 		assert.Equal(t, stat.max, MinValue)
 		assert.Equal(t, stat.min, MaxValue)
 		assert.Equal(t, stat.prev, stat.curr)
 	}
 
 	r.Set(lbs1, 10)
-	for k, stat := range r.statsMap {
-		t.Logf("round2: k=%v; stat=%+v", k, stat)
-	}
 }
 
 func TestAccumulatorExceeded(t *testing.T) {
@@ -115,12 +110,11 @@ func TestAccumulatorNotExceeded(t *testing.T) {
 }
 
 func TestAccumulatorGcOk(t *testing.T) {
-	logger.SetLoggerLevel(logger.DebugLevelDesc)
 	accumulator := New(&Config{
 		MetricName:      "bk_apm_count",
 		MaxSeries:       10,
-		GcInterval:      1 * time.Second,
-		PublishInterval: 1 * time.Second,
+		GcInterval:      250 * time.Millisecond,
+		PublishInterval: time.Second,
 	}, nil)
 
 	ids := []int32{1001, 1002}
@@ -129,28 +123,27 @@ func TestAccumulatorGcOk(t *testing.T) {
 			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
 		}
 		if i == 9 {
-			ret := accumulator.Exceeded()
-			assert.Equal(t, 0, ret[1001])
-			assert.Equal(t, 0, ret[1002])
-			time.Sleep(2 * time.Second) // 超过 gcInterval
-			t.Log(accumulator.Exceeded())
+			exceeded := accumulator.Exceeded()
+			assert.Equal(t, 0, exceeded[1001])
+			assert.Equal(t, 0, exceeded[1002])
+			time.Sleep(time.Second) // 超过 gcInterval
 		}
 	}
-	ret := accumulator.Exceeded()
+
+	exceeded := accumulator.Exceeded()
 	accumulator.Stop()
 
 	// gc 后所有 series 都不应超限
-	assert.Equal(t, 0, ret[1001])
-	assert.Equal(t, 0, ret[1002])
+	assert.Equal(t, 0, exceeded[1001])
+	assert.Equal(t, 0, exceeded[1002])
 }
 
 func TestAccumulatorGcNotYet(t *testing.T) {
-	logger.SetLoggerLevel(logger.DebugLevelDesc)
 	accumulator := New(&Config{
 		MetricName:      "bk_apm_count",
 		MaxSeries:       10,
-		GcInterval:      2 * time.Second,
-		PublishInterval: 1 * time.Second,
+		GcInterval:      time.Second,
+		PublishInterval: time.Second,
 	}, nil)
 
 	ids := []int32{1001, 1002}
@@ -159,18 +152,19 @@ func TestAccumulatorGcNotYet(t *testing.T) {
 			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
 		}
 		if i == 9 {
-			ret := accumulator.Exceeded()
-			assert.Equal(t, 0, ret[1001])
-			assert.Equal(t, 0, ret[1002])
-			time.Sleep(1 * time.Second) // 不超过 gcInterval
+			exceeded := accumulator.Exceeded()
+			assert.Equal(t, 0, exceeded[1001])
+			assert.Equal(t, 0, exceeded[1002])
+			time.Sleep(250 * time.Millisecond) // 不超过 gcInterval
 		}
 	}
-	ret := accumulator.Exceeded()
+
+	exceeded := accumulator.Exceeded()
 	accumulator.Stop()
 
 	// gc 后所有 series 都不应超限
-	assert.Equal(t, 10, ret[1001])
-	assert.Equal(t, 10, ret[1002])
+	assert.Equal(t, 10, exceeded[1001])
+	assert.Equal(t, 10, exceeded[1002])
 }
 
 func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
@@ -178,8 +172,8 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	accumulator := New(&Config{
 		MetricName:      "bk_apm_metric",
 		MaxSeries:       10,
-		GcInterval:      3 * time.Second,
-		PublishInterval: 1 * time.Second,
+		GcInterval:      time.Minute,
+		PublishInterval: 250 * time.Millisecond,
 		Buckets:         prometheus.DefBuckets,
 		Type:            dt,
 	}, func(r *define.Record) { records = append(records, r) })
@@ -192,7 +186,7 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	accumulator.Accumulate(1001, dimensions, 0.5*1e9)
 	accumulator.Accumulate(1001, dimensions, 1.0*1e9)
 
-	time.Sleep(time.Second * 2)
+	time.Sleep(time.Second)
 	record := records[0]
 
 	metrics := record.Data.(pmetric.Metrics)
@@ -201,13 +195,6 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	metricSlice := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
 	firstVal := metricSlice.At(0).Gauge().DataPoints().At(0).DoubleVal()
 	assert.Equal(t, value, firstVal)
-
-	foreach.Metrics(metrics.ResourceMetrics(), func(metric pmetric.Metric) {
-		dps := metric.Gauge().DataPoints()
-		for j := 0; j < dps.Len(); j++ {
-			t.Logf("type=%s, value=%f, labels=%v", dt, dps.At(j).DoubleVal(), dps.At(j).Attributes().AsRaw())
-		}
-	})
 
 	name := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Name()
 	assert.Equal(t, "bk_apm_metric", name)

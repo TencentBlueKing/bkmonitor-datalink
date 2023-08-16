@@ -19,12 +19,12 @@ import (
 
 	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
 	"google.golang.org/grpc/metadata"
-	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
-	common "skywalking.apache.org/repo/goapi/collect/common/v3"
-	event "skywalking.apache.org/repo/goapi/collect/event/v3"
-	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
-	profile "skywalking.apache.org/repo/goapi/collect/language/profile/v3"
-	management "skywalking.apache.org/repo/goapi/collect/management/v3"
+	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
+	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	eventv3 "skywalking.apache.org/repo/goapi/collect/event/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	profilev3 "skywalking.apache.org/repo/goapi/collect/language/profile/v3"
+	managementv3 "skywalking.apache.org/repo/goapi/collect/management/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
@@ -98,10 +98,10 @@ func getAgentVersionFromMetadata(md metadata.MD) string {
 type TraceSegmentReportService struct {
 	receiver.Publisher
 	pipeline.Validator
-	agent.UnimplementedTraceSegmentReportServiceServer
+	agentv3.UnimplementedTraceSegmentReportServiceServer
 }
 
-func (s *TraceSegmentReportService) Collect(stream agent.TraceSegmentReportService_CollectServer) error {
+func (s *TraceSegmentReportService) Collect(stream agentv3.TraceSegmentReportService_CollectServer) error {
 	defer utils.HandleCrash()
 
 	ctx := stream.Context()
@@ -112,7 +112,7 @@ func (s *TraceSegmentReportService) Collect(stream agent.TraceSegmentReportServi
 		segmentObject, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return stream.SendAndClose(&common.Commands{})
+				return stream.SendAndClose(&commonv3.Commands{})
 			}
 			return err
 		}
@@ -120,7 +120,7 @@ func (s *TraceSegmentReportService) Collect(stream agent.TraceSegmentReportServi
 	}
 }
 
-func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *agent.SegmentObject) {
+func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *agentv3.SegmentObject) {
 	ip := utils.GetGrpcIpFromContext(ctx)
 
 	md := getMetaDataFromContext(ctx)
@@ -161,10 +161,10 @@ func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *
 type JVMMetricReportService struct {
 	receiver.Publisher
 	pipeline.Validator
-	agent.UnimplementedJVMMetricReportServiceServer
+	agentv3.UnimplementedJVMMetricReportServiceServer
 }
 
-func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agent.JVMMetricCollection) (*common.Commands, error) {
+func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agentv3.JVMMetricCollection) (*commonv3.Commands, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
 
@@ -173,7 +173,7 @@ func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agent.
 	if err != nil {
 		logger.Warnf("failed to get token from context, ip=%v, error: %s", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordMetrics)
-		return &common.Commands{}, err
+		return &commonv3.Commands{}, err
 	}
 
 	data := convertJvmMetrics(jvmMetrics, token)
@@ -188,26 +188,26 @@ func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agent.
 	if err != nil {
 		logger.Warnf("run pre-check failed, service=JVMMetricReport, code=%d, ip=%v, error: %s", code, ip, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
-		return &common.Commands{}, err
+		return &commonv3.Commands{}, err
 	}
 
 	s.Publish(r)
-	return &common.Commands{}, nil
+	return &commonv3.Commands{}, nil
 }
 
 type ConfigurationDiscoveryService struct {
 	receiver.SkywalkingConfigFetcher
-	conf.UnimplementedConfigurationDiscoveryServiceServer
+	confv3.UnimplementedConfigurationDiscoveryServiceServer
 }
 
-func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context, req *conf.ConfigurationSyncRequest) (*common.Commands, error) {
+func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context, req *confv3.ConfigurationSyncRequest) (*commonv3.Commands, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
 
 	md := getMetaDataFromContext(ctx)
 	token, err := getTokenFromMetadata(md)
 	if err != nil {
-		return &common.Commands{}, err
+		return &commonv3.Commands{}, err
 	}
 
 	// SN 长度为 0 的时候直接结束，不继续执行后续代码逻辑
@@ -215,11 +215,11 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 	if len(swConf.Sn) == 0 {
 		err = fmt.Errorf("empty SN number, service=%s, ip=%v", req.GetService(), ip)
 		logger.Warn(err)
-		return &common.Commands{}, err
+		return &commonv3.Commands{}, err
 	}
 
 	// 构建标识
-	args := []*common.KeyStringValuePair{
+	args := []*commonv3.KeyStringValuePair{
 		{Key: "SerialNumber", Value: swConf.Sn},
 		{Key: "UUID", Value: swConf.Sn},
 	}
@@ -230,17 +230,17 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 	}
 
 	// 构建下发配置
-	var cmds []*common.Command
-	cmds = append(cmds, &common.Command{
+	var cmds []*commonv3.Command
+	cmds = append(cmds, &commonv3.Command{
 		Command: "ConfigurationDiscoveryCommand",
 		Args:    args,
 	})
 
-	return &common.Commands{Commands: cmds}, nil
+	return &commonv3.Commands{Commands: cmds}, nil
 }
 
 // createCustomParam 构造自定义参数下发配置
-func (s *ConfigurationDiscoveryService) createCustomParam(language string, swConf receiver.SkywalkingConfig) *common.KeyStringValuePair {
+func (s *ConfigurationDiscoveryService) createCustomParam(language string, swConf receiver.SkywalkingConfig) *commonv3.KeyStringValuePair {
 	var values []string
 	for _, rule := range swConf.Rules {
 		if !rule.Enabled {
@@ -263,7 +263,7 @@ func (s *ConfigurationDiscoveryService) createCustomParam(language string, swCon
 	}
 
 	if v, ok := mapping[language]; ok {
-		return &common.KeyStringValuePair{
+		return &commonv3.KeyStringValuePair{
 			Key:   v,
 			Value: strings.Join(values, ","),
 		}
@@ -275,53 +275,53 @@ func (s *ConfigurationDiscoveryService) createCustomParam(language string, swCon
 // 以下为 grpc-service 空实现 避免报错
 
 type EventService struct {
-	event.UnimplementedEventServiceServer
+	eventv3.UnimplementedEventServiceServer
 }
 
-func (s *EventService) Collect(stream event.EventService_CollectServer) error {
+func (s *EventService) Collect(stream eventv3.EventService_CollectServer) error {
 	return nil
 }
 
 type ManagementService struct {
-	management.UnimplementedManagementServiceServer
+	managementv3.UnimplementedManagementServiceServer
 }
 
-func (s *ManagementService) ReportInstanceProperties(ctx context.Context, req *management.InstanceProperties) (*common.Commands, error) {
-	return &common.Commands{}, nil
+func (s *ManagementService) ReportInstanceProperties(ctx context.Context, req *managementv3.InstanceProperties) (*commonv3.Commands, error) {
+	return &commonv3.Commands{}, nil
 }
 
-func (s *ManagementService) KeepAlive(_ context.Context, req *management.InstancePingPkg) (*common.Commands, error) {
-	return &common.Commands{}, nil
+func (s *ManagementService) KeepAlive(_ context.Context, req *managementv3.InstancePingPkg) (*commonv3.Commands, error) {
+	return &commonv3.Commands{}, nil
 }
 
 type ProfileService struct {
-	profile.UnimplementedProfileTaskServer
+	profilev3.UnimplementedProfileTaskServer
 }
 
-func (s *ProfileService) GetProfileTaskCommands(_ context.Context, req *profile.ProfileTaskCommandQuery) (*common.Commands, error) {
-	return &common.Commands{}, nil
+func (s *ProfileService) GetProfileTaskCommands(_ context.Context, req *profilev3.ProfileTaskCommandQuery) (*commonv3.Commands, error) {
+	return &commonv3.Commands{}, nil
 }
 
-func (s *ProfileService) CollectSnapshot(stream profile.ProfileTask_CollectSnapshotServer) error {
+func (s *ProfileService) CollectSnapshot(stream profilev3.ProfileTask_CollectSnapshotServer) error {
 	return nil
 }
 
 type MeterService struct {
-	agent.UnimplementedMeterReportServiceServer
+	agentv3.UnimplementedMeterReportServiceServer
 }
 
-func (s *MeterService) Collect(stream agent.MeterReportService_CollectServer) error {
+func (s *MeterService) Collect(stream agentv3.MeterReportService_CollectServer) error {
 	return nil
 }
 
-func (s *MeterService) CollectBatch(batch agent.MeterReportService_CollectBatchServer) error {
+func (s *MeterService) CollectBatch(batch agentv3.MeterReportService_CollectBatchServer) error {
 	return nil
 }
 
 type ClrService struct {
-	agent.UnimplementedCLRMetricReportServiceServer
+	agentv3.UnimplementedCLRMetricReportServiceServer
 }
 
-func (s *ClrService) Collect(ctx context.Context, req *agent.CLRMetricCollection) (*common.Commands, error) {
-	return &common.Commands{}, nil
+func (s *ClrService) Collect(ctx context.Context, req *agentv3.CLRMetricCollection) (*commonv3.Commands, error) {
+	return &commonv3.Commands{}, nil
 }

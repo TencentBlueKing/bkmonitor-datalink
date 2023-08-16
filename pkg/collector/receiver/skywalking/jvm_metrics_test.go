@@ -14,15 +14,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	segment "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 )
 
-func mockJvmMetrics() *segment.JVMMetric {
-	return &segment.JVMMetric{
+func mockJvmMetrics() *agentv3.JVMMetric {
+	return &agentv3.JVMMetric{
 		Time: 10010,
-		Memory: []*segment.Memory{
+		Memory: []*agentv3.Memory{
 			{
 				IsHeap:    true,
 				Init:      1,
@@ -38,7 +38,7 @@ func mockJvmMetrics() *segment.JVMMetric {
 				Committed: 50,
 			},
 		},
-		MemoryPool: []*segment.MemoryPool{
+		MemoryPool: []*agentv3.MemoryPool{
 			{
 				Type:      0,
 				Init:      1,
@@ -75,7 +75,7 @@ func mockJvmMetrics() *segment.JVMMetric {
 				Committed: 30,
 			},
 		},
-		Gc: []*segment.GC{
+		Gc: []*agentv3.GC{
 			{
 				Phase: 0,
 				Count: 10,
@@ -87,7 +87,7 @@ func mockJvmMetrics() *segment.JVMMetric {
 				Time:  40,
 			},
 		},
-		Thread: &segment.Thread{
+		Thread: &agentv3.Thread{
 			LiveCount:                    1,
 			DaemonCount:                  2,
 			PeakCount:                    3,
@@ -101,8 +101,8 @@ func mockJvmMetrics() *segment.JVMMetric {
 
 func TestConvertJvmMetrics(t *testing.T) {
 	jvmMetrics := mockJvmMetrics()
-	metrics := convertJvmMetrics(&segment.JVMMetricCollection{
-		Metrics:         []*segment.JVMMetric{jvmMetrics},
+	metrics := convertJvmMetrics(&agentv3.JVMMetricCollection{
+		Metrics:         []*agentv3.JVMMetric{jvmMetrics},
 		Service:         "service1",
 		ServiceInstance: "instance1",
 	}, "my-token")
@@ -156,8 +156,8 @@ func TestConvertJvmMetrics(t *testing.T) {
 }
 
 func TestConvertNilJvmMetrics(t *testing.T) {
-	metrics := convertJvmMetrics(&segment.JVMMetricCollection{
-		Metrics:         []*segment.JVMMetric{nil},
+	metrics := convertJvmMetrics(&agentv3.JVMMetricCollection{
+		Metrics:         []*agentv3.JVMMetric{nil},
 		Service:         "service1",
 		ServiceInstance: "instance1",
 	}, "my-token")

@@ -16,9 +16,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/metadata"
-	conf "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
-	common "skywalking.apache.org/repo/goapi/collect/common/v3"
-	agent "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
+	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -64,7 +64,7 @@ func TestJVMMetricReportService(t *testing.T) {
 			},
 		}
 
-		data := &agent.JVMMetricCollection{Metrics: []*agent.JVMMetric{mockJvmMetrics()}}
+		data := &agentv3.JVMMetricCollection{Metrics: []*agentv3.JVMMetric{mockJvmMetrics()}}
 		cmds, err := svc.Collect(ctx, data)
 		assert.Len(t, cmds.GetCommands(), 0)
 		assert.Error(t, err)
@@ -135,7 +135,7 @@ func TestFetchConfigurations(t *testing.T) {
 	}
 	// 构造数据
 	ctx := mockContextByMetaDataMap(m)
-	req := &conf.ConfigurationSyncRequest{
+	req := &confv3.ConfigurationSyncRequest{
 		Service: "TestService",
 	}
 
@@ -178,9 +178,9 @@ func TestFetchConfigurations(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Len(t, cmds.Commands, 1)
 
-	expectedCmd := common.Command{
+	expectedCmd := commonv3.Command{
 		Command: "ConfigurationDiscoveryCommand",
-		Args: []*common.KeyStringValuePair{
+		Args: []*commonv3.KeyStringValuePair{
 			{Key: "SerialNumber", Value: "TestSnNumber"},
 			{Key: "UUID", Value: "TestSnNumber"},
 			{Key: "plugin.http.include_http_headers", Value: "Accept,Cookie"},
@@ -208,7 +208,7 @@ func TestFetchConfigurationsNilSn(t *testing.T) {
 	}
 	// 构造数据
 	ctx := mockContextByMetaDataMap(m)
-	req := &conf.ConfigurationSyncRequest{
+	req := &confv3.ConfigurationSyncRequest{
 		Service: "TestService",
 	}
 

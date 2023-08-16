@@ -18,7 +18,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func TestStatusCodeEvaluatorPost(t *testing.T) {
@@ -28,8 +27,6 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	})
 	evaluator.gcInterval = time.Millisecond * 200
 	defer evaluator.Stop()
-
-	logger.SetLoggerLevel(logger.DebugLevelDesc)
 
 	t1 := random.TraceID()
 	t2 := random.TraceID()

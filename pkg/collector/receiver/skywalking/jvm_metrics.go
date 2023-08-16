@@ -11,7 +11,7 @@ package skywalking
 
 import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	segment "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
+	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
 )
@@ -47,7 +47,7 @@ const (
 	jvmThreadTimeWaitingCount   = "jvm_thread_time_waiting_count"
 )
 
-func convertJvmMetrics(segment *segment.JVMMetricCollection, token string) pmetric.Metrics {
+func convertJvmMetrics(segment *agentv3.JVMMetricCollection, token string) pmetric.Metrics {
 	converter := &jvmMetricsConverter{mb: metricsbuilder.New(
 		metricsbuilder.ResourceKv{Key: "service", Value: segment.GetService()},
 		metricsbuilder.ResourceKv{Key: "instance", Value: segment.GetServiceInstance()},
@@ -68,14 +68,14 @@ type jvmMetricsConverter struct {
 	mb *metricsbuilder.Builder
 }
 
-func (c *jvmMetricsConverter) Convert(jvmMetric *segment.JVMMetric) {
+func (c *jvmMetricsConverter) Convert(jvmMetric *agentv3.JVMMetric) {
 	c.convertGcMetrics(jvmMetric)
 	c.convertMemoryMetrics(jvmMetric)
 	c.convertMemoryPoolMetrics(jvmMetric)
 	c.convertThreadMetrics(jvmMetric)
 }
 
-func (c *jvmMetricsConverter) convertGcMetrics(jvmMetric *segment.JVMMetric) {
+func (c *jvmMetricsConverter) convertGcMetrics(jvmMetric *agentv3.JVMMetric) {
 	ts := microsecondsToTimestamp(jvmMetric.GetTime())
 	for _, m := range jvmMetric.Gc {
 		switch m.Phase {
@@ -89,7 +89,7 @@ func (c *jvmMetricsConverter) convertGcMetrics(jvmMetric *segment.JVMMetric) {
 	}
 }
 
-func (c *jvmMetricsConverter) convertMemoryMetrics(jvmMetric *segment.JVMMetric) {
+func (c *jvmMetricsConverter) convertMemoryMetrics(jvmMetric *agentv3.JVMMetric) {
 	ts := microsecondsToTimestamp(jvmMetric.GetTime())
 	for _, m := range jvmMetric.Memory {
 		if m.IsHeap {
@@ -105,7 +105,7 @@ func (c *jvmMetricsConverter) convertMemoryMetrics(jvmMetric *segment.JVMMetric)
 	}
 }
 
-func (c *jvmMetricsConverter) convertMemoryPoolMetrics(jvmMetric *segment.JVMMetric) {
+func (c *jvmMetricsConverter) convertMemoryPoolMetrics(jvmMetric *agentv3.JVMMetric) {
 	ts := microsecondsToTimestamp(jvmMetric.GetTime())
 	for _, m := range jvmMetric.MemoryPool {
 		switch m.Type {
@@ -129,7 +129,7 @@ func (c *jvmMetricsConverter) convertMemoryPoolMetrics(jvmMetric *segment.JVMMet
 	}
 }
 
-func (c *jvmMetricsConverter) convertThreadMetrics(jvmMetric *segment.JVMMetric) {
+func (c *jvmMetricsConverter) convertThreadMetrics(jvmMetric *agentv3.JVMMetric) {
 	m := jvmMetric.Thread
 	ts := microsecondsToTimestamp(jvmMetric.GetTime())
 

@@ -200,6 +200,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	lbs = append(lbs, yaml.MapItem{Key: "bk_endpoint_url", Value: address + t.Path})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_endpoint_index", Value: fmt.Sprintf("%d", t.Meta.Index)})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_name", Value: t.Meta.Name})
+	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_namespace", Value: t.Meta.Namespace})
 	lbs = append(lbs, sortMap(t.ExtraLabels)...)
 	task = append(task, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{lbs}})
 	task = append(task, yaml.MapItem{Key: "module", Value: module})

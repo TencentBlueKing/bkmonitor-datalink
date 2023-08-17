@@ -94,10 +94,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					if to.extractor != nil {
 						if to.extractor.Set(record.Token.MetricsDataId, dim) {
 							val := to.extractor.Extract(spans.At(k))
-							if val < 0 {
-								logger.Debugf("extractor: drop metrics cause negative value, token=%v, dim=%v", record.Token, dim)
-								continue
-							}
 							metricItems[t.MetricName] = append(metricItems[t.MetricName], metricsbuilder.Metric{
 								Val:        val,
 								Ts:         spans.At(k).EndTimestamp(),
@@ -109,10 +105,6 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 					// accumulator 处理
 					if to.accumulator != nil {
 						val := DefaultExtractor.Extract(spans.At(k))
-						if val < 0 {
-							logger.Debugf("accumulator: drop metrics cause negative value, token=%v, dim=%v", record.Token, dim)
-							continue
-						}
 						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, val)
 					}
 				}

@@ -38,7 +38,7 @@ func NewExtractor(conf *ExtractorConfig) *Extractor {
 }
 
 func (e *Extractor) Extract(span ptrace.Span) float64 {
-	return float64(span.EndTimestamp() - span.StartTimestamp())
+	return DefaultExtractor.Extract(span)
 }
 
 func (e *Extractor) Set(dataID int32, dims map[string]string) bool {
@@ -56,5 +56,8 @@ var DefaultExtractor = defaultExtractor{}
 type defaultExtractor struct{}
 
 func (defaultExtractor) Extract(span ptrace.Span) float64 {
+	if span.StartTimestamp() > span.EndTimestamp() {
+		return 0 // 特殊处理 避免出现超大值
+	}
 	return float64(span.EndTimestamp() - span.StartTimestamp())
 }

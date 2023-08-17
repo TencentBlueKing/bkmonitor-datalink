@@ -29,7 +29,7 @@ func pipelineContext() (context.Context, context.CancelFunc) {
 		ResultTableList: []*config.MetaResultTableConfig{
 			{
 				Option: map[string]interface{}{
-					dimensionValuesOpt: []string{"k1", "k2"},
+					dimensionValuesOpt: []string{"k1", "k2", "k1/k2"},
 				},
 			},
 		},
@@ -60,6 +60,10 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 					LastUpdateTime: 1670243190,
 					Values:         []string{"v1"},
 				},
+				"k1/k2": {
+					LastUpdateTime: 1670243190,
+					Values:         nil,
+				},
 			},
 		},
 
@@ -73,6 +77,10 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 					LastUpdateTime: 1670243190,
 					Values:         []string{"v2"},
 				},
+				"k1/k2": {
+					LastUpdateTime: 1670243190,
+					Values:         []string{"v2/v2"},
+				},
 			},
 		},
 
@@ -84,11 +92,15 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 				},
 				"k2": {
 					LastUpdateTime: 1670243190,
-					Values:         []string{"v4"},
+					Values:         []string{"v4", "foo"},
 				},
 				"k3": {
 					LastUpdateTime: 1670243190,
 					Values:         nil,
+				},
+				"k1/k2": {
+					LastUpdateTime: 1670243190,
+					Values:         []string{"v1/foo"},
 				},
 			},
 		},
@@ -99,6 +111,8 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 		var entity DimensionsEntity
 		assert.NoError(m.T, json.Unmarshal([]byte(content), &entity))
 		for d := range item.Dimensions {
+			sort.Strings(item.Dimensions[d].Values)
+			sort.Strings(entity.Dimensions[d].Values)
 			assert.Equal(m.T, item.Dimensions[d].Values, entity.Dimensions[d].Values)
 			assert.Equal(m.T, item.Dimensions[d].LastUpdateTime, entity.Dimensions[d].LastUpdateTime)
 		}
@@ -128,7 +142,7 @@ func TestMetricsReporter(t *testing.T) {
 		}
 	}()
 
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k1":"v1"},"time":1670243190}`), 0), ch, nil)
+	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k1":"v1","k2":"foo"},"time":1670243190}`), 0), ch, nil)
 	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k1":"v3"},"time":1670243190}`), 0), ch, nil)
 	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k2":"v4"},"time":1670243190}`), 0), ch, nil)
 	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k3":"v5"},"time":1670243190}`), 0), ch, nil) // k3 不配置采集规则

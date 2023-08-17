@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,9 +75,9 @@ type MetricsReportProcessor struct {
 	redisStore RedisKV
 	once       sync.Once
 
-	redisMetricKey    string              // metricTimeMap 数据存放在 redis 中 sorted set key
-	redisDimensionKey string              // metricDimensionsMap 数据存放在 redis 中 hash key
-	dimensionValues   map[string]struct{} // 需要上报的维度值列表
+	redisMetricKey    string             // metricTimeMap 数据存放在 redis 中 sorted set key
+	redisDimensionKey string             // metricDimensionsMap 数据存放在 redis 中 hash key
+	dimensionOpt      DimensionValuesOpt // 需要上报的维度值列表
 
 	metricStoreMut   sync.Mutex
 	metricStore      map[string]float64
@@ -223,17 +224,45 @@ func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- def
 		p.metricStore[metric] = float64(now)
 		p.metricStoreMut.Unlock()
 
+		// 处理需要提取的维度信息
 		for name, value := range record.Dimensions {
 			v, ok := value.(string)
 			if !ok {
 				continue
 			}
 			// 如果 dimension name 没有找到 对  value 赋空值
-			if _, ok := p.dimensionValues[name]; !ok {
+			if _, ok = p.dimensionOpt.dimensionValues[name]; !ok {
 				v = ""
 			}
 			// 更新标识位 不存在则表示为新数据 需要同步
 			has := p.dimensionStore.Set(metric, Label{Name: name, Value: v})
+			gotNewDimensions = gotNewDimensions || !has
+		}
+
+		// 处理需要拼接的维度信息
+		for name, values := range p.dimensionOpt.dimensionJoin {
+			fields := make([]string, 0)
+			for _, v := range values {
+				// 维度没找到 终止流程
+				val, ok := record.Dimensions[v]
+				if !ok {
+					break
+				}
+
+				// 转换为 string 类型 转换失败同样终止流程
+				s, ok := val.(string)
+				if !ok {
+					break
+				}
+				fields = append(fields, s)
+			}
+
+			// 如果 fields 没完全匹配 那置空
+			if len(fields) != len(values) {
+				fields = []string{}
+			}
+
+			has := p.dimensionStore.Set(metric, Label{Name: name, Value: strings.Join(fields, "/")})
 			gotNewDimensions = gotNewDimensions || !has
 		}
 	}
@@ -384,21 +413,40 @@ func convertRedisBody(input []interface{}) []string {
 	return lst
 }
 
-// getDimensionValuesOpt 获取该数据源结果表需要保存维度值的维度列表
-func getDimensionValuesOpt(pipelineConfig *config.PipelineConfig) map[string]struct{} {
-	dimensionValues := map[string]struct{}{}
+// DimensionValuesOpt dimension values 配置规则
+type DimensionValuesOpt struct {
+	dimensionValues map[string]struct{} // 单维度
+	dimensionJoin   map[string][]string // 多维度拼装
+}
+
+// getDimensionValuesOpt 获取该数据源结果表需要保存维度值的维度列表以及拼接的维度值的列表
+func getDimensionValuesOpt(pipelineConfig *config.PipelineConfig) DimensionValuesOpt {
+	dimensionValOpt := DimensionValuesOpt{
+		dimensionValues: make(map[string]struct{}),
+		dimensionJoin:   make(map[string][]string),
+	}
+
 	for _, table := range pipelineConfig.ResultTableList {
 		if table.Option != nil {
 			if value, ok := table.Option[dimensionValuesOpt]; ok {
 				switch val := value.(type) {
 				case []string:
 					for _, v := range val {
-						dimensionValues[v] = struct{}{}
+						if strings.Contains(v, "/") {
+							dimensionValOpt.dimensionJoin[v] = strings.Split(v, "/")
+						} else {
+							dimensionValOpt.dimensionValues[v] = struct{}{}
+						}
 					}
+
 				case []interface{}:
 					for _, value := range val {
 						if v, ok := value.(string); ok {
-							dimensionValues[v] = struct{}{}
+							if strings.Contains(v, "/") {
+								dimensionValOpt.dimensionJoin[v] = strings.Split(v, "/")
+							} else {
+								dimensionValOpt.dimensionValues[v] = struct{}{}
+							}
 						}
 					}
 				default:
@@ -407,7 +455,7 @@ func getDimensionValuesOpt(pipelineConfig *config.PipelineConfig) map[string]str
 			}
 		}
 	}
-	return dimensionValues
+	return dimensionValOpt
 }
 
 // getMetricNameRegexOpt 获取该数据源结果表指标名该匹配的正则表达式
@@ -449,7 +497,7 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, pipelineConfig),
 		redisMetricKey:    redisMetricKeyPrefix + strconv.Itoa(pipelineConfig.DataID),
 		redisDimensionKey: redisDimensionPrefix + strconv.Itoa(pipelineConfig.DataID),
-		dimensionValues:   getDimensionValuesOpt(pipelineConfig),
+		dimensionOpt:      getDimensionValuesOpt(pipelineConfig),
 		dimensionUpdated:  make(chan struct{}, 1),
 		metricStore:       make(map[string]float64),
 		dimensionStore:    NewDimensionStore(),

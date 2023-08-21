@@ -10,7 +10,6 @@
 package pushgateway
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -137,21 +136,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	job := vars[fieldJob]
 
 	token := req.URL.Query().Get(tokenKey)
-	buf := &bytes.Buffer{}
-
-	_, err := io.Copy(buf, req.Body)
-	if err != nil {
-		msg := []byte(fmt.Sprintf(`{"status": "failed", "error": "%s"}`, err.Error()))
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, msg)
-		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordPushGateway)
-		logger.Errorf("failed to read body content, ip=%v, error: %s", ip, err)
-		return
-	}
-
-	bufLen := buf.Len()
-	defer func() {
-		_ = req.Body.Close()
-	}()
+	var err error
 
 	if jobBase64Encoded {
 		if job, err = decodeBase64(job); err != nil {
@@ -195,7 +180,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		metricFamilies = map[string]*dto.MetricFamily{}
 		for {
 			mf := &dto.MetricFamily{}
-			if _, err = pbutil.ReadDelimited(buf, mf); err != nil {
+			if _, err = pbutil.ReadDelimited(req.Body, mf); err != nil {
 				if err == io.EOF {
 					err = nil
 				}
@@ -208,7 +193,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		// fallback for now will anyway be the text format
 		// version 0.0.4, so just go for it and see if it works.
 		var parser expfmt.TextParser
-		metricFamilies, err = parser.TextToMetricFamilies(buf)
+		metricFamilies, err = parser.TextToMetricFamilies(req.Body)
 	}
 
 	if err != nil {
@@ -253,7 +238,8 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		})
 	}
 
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordPushGateway, bufLen, start)
+	// 无法统计 bodysize 因此置 0
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordPushGateway, 0, start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(`{"status": "success"}`))
 }
 

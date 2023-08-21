@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
@@ -161,24 +160,6 @@ func TestHttpExportMetricsInvalidBody(t *testing.T) {
 	rw := httptest.NewRecorder()
 	svc.ExportMetrics(rw, req)
 	assert.Equal(t, rw.Code, http.StatusBadRequest)
-}
-
-func TestHttpExportMetricsReadFailed(t *testing.T) {
-	buf := testkits.NewBrokenReader()
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
-	assert.NoError(t, err)
-
-	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
-
-	req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
-	rw := httptest.NewRecorder()
-	svc.ExportMetrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusInternalServerError)
 }
 
 func TestHttpExportBase64Metrics(t *testing.T) {

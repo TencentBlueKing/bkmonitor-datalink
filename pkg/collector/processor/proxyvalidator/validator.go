@@ -157,7 +157,7 @@ func newTimeSeriesValidator(config Config) Validator {
 func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 	objs, ok := pd.Data.([]interface{})
 	if !ok {
-		return errors.Errorf("timeseries data expected []interface{}, got %T", objs)
+		return errors.Errorf("timeseries data expected []interface{}, got %T", pd.Data)
 	}
 	if len(objs) <= 0 {
 		return errors.New("timeseries data cannot be empty")
@@ -226,7 +226,7 @@ func newEventValidator(config Config) Validator {
 func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 	objs, ok := pd.Data.([]interface{})
 	if !ok {
-		return errors.Errorf("event data expected []interface{}, got %T", objs)
+		return errors.Errorf("event data expected []interface{}, got %T", pd.Data)
 	}
 	if len(objs) <= 0 {
 		return errors.New("event data cannot be empty")

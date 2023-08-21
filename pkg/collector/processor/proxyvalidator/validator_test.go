@@ -120,7 +120,7 @@ func TestTimeSeriesDataType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "timeseries data expected []interface{}, got []interface {}"
+	msg := "timeseries data expected []interface{}, got map[string]interface {}"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 
@@ -589,7 +589,7 @@ func TestEventDataType(t *testing.T) {
 	})
 	var pb define.ProxyData
 	assert.NoError(t, json.Unmarshal([]byte(content), &pb))
-	msg := "event data expected []interface{}, got []interface {}"
+	msg := "event data expected []interface{}, got map[string]interface {}"
 	assert.Equal(t, msg, validator.Validate(&pb).Error())
 }
 

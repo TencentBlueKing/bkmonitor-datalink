@@ -62,10 +62,11 @@ type FromTokenAction struct {
 }
 
 type AssembleRule struct {
-	Kind       string   `config:"kind" mapstructure:"kind"`               // 所需 kind 的类型，不需要则为空
-	Keys       []string `config:"keys" mapstructure:"keys"`               // 所需获取的源字段
-	Separator  string   `config:"separator" mapstructure:"separator"`     // 分隔符
-	FirstUpper []string `config:"first_upper" mapstructure:"first_upper"` // 需要首字母大写的属性
+	Kind        string   `config:"kind" mapstructure:"kind"`               // 所需 kind 的类型，不需要则为空
+	Keys        []string `config:"keys" mapstructure:"keys"`               // 所需获取的源字段
+	Separator   string   `config:"separator" mapstructure:"separator"`     // 分隔符
+	FirstUpper  []string `config:"first_upper" mapstructure:"first_upper"` // 需要首字母大写的属性
+	Placeholder string   `config:"placeholder" mapstructure:"placeholder"` // 占位符
 
 	upper map[string]struct{}
 }
@@ -84,10 +85,12 @@ type AssembleAction struct {
 	Destination  string         `config:"destination" mapstructure:"destination"`     // 需要插入的字段
 	PredicateKey string         `config:"predicate_key" mapstructure:"predicate_key"` // 需要匹配的字段
 	Rules        []AssembleRule `config:"rules" mapstructure:"rules"`
+	DefaultFrom  string         `config:"default_from" mapstructure:"default_from"` // 默认值字段
 }
 
 func (c *AssembleAction) Clean() {
 	c.PredicateKey = cleanAttributesPrefix(c.PredicateKey)
+	c.DefaultFrom = cleanAttributesPrefix(c.DefaultFrom)
 	for i := 0; i < len(c.Rules); i++ {
 		c.Rules[i].Clean()
 	}

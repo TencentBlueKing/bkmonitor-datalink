@@ -181,8 +181,6 @@ func (p attributeFilter) asIntAction(record *define.Record, config Config) {
 	}
 }
 
-const unknownVal = "Unknown"
-
 func (p attributeFilter) assembleAction(record *define.Record, config Config) {
 	switch record.RecordType {
 	case define.RecordTraces:
@@ -192,7 +190,19 @@ func (p attributeFilter) assembleAction(record *define.Record, config Config) {
 			for _, action := range config.Assemble {
 				if !processAssembleAction(span, action) {
 					if _, ok := span.Attributes().Get(action.Destination); !ok {
-						span.Attributes().UpsertString(action.Destination, unknownVal)
+						key := action.DefaultFrom
+						// 判定常量情况直接插入
+						if strings.HasPrefix(key, define.ConstKeyPrefix) {
+							span.Attributes().UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
+							continue
+						}
+						// 匹配到 span_name 插入 span.Name(), 否则直接跳过
+						switch key {
+						case "span_name":
+							span.Attributes().UpsertString(action.Destination, span.Name())
+						default:
+							continue
+						}
 					}
 				}
 			}
@@ -220,10 +230,10 @@ func processAssembleAction(span ptrace.Span, action AssembleAction) bool {
 				}
 
 				// 处理 attributes 属性 支持首字母大写
-				d := unknownVal
+				d := rule.Placeholder
 				if v, ok := attrs.Get(key); ok && v.AsString() != "" {
 					if _, exist := rule.upper[key]; exist {
-						d = utils.FirstUpper(v.AsString(), unknownVal)
+						d = utils.FirstUpper(v.AsString(), d)
 					} else {
 						d = v.AsString()
 					}

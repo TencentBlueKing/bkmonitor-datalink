@@ -49,8 +49,8 @@ const (
 
 func convertJvmMetrics(segment *agentv3.JVMMetricCollection, token string) pmetric.Metrics {
 	converter := &jvmMetricsConverter{mb: metricsbuilder.New(
-		metricsbuilder.ResourceKv{Key: "service", Value: segment.GetService()},
-		metricsbuilder.ResourceKv{Key: "instance", Value: segment.GetServiceInstance()},
+		metricsbuilder.ResourceKv{Key: "service_name", Value: segment.GetService()},
+		metricsbuilder.ResourceKv{Key: "bk_instance_id", Value: segment.GetServiceInstance()},
 		metricsbuilder.ResourceKv{Key: "bk.data.token", Value: token},
 	)}
 

@@ -26,6 +26,7 @@ package skywalking
 import (
 	"bytes"
 	"encoding/hex"
+	"net"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -339,6 +340,26 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		} else {
 			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
 		}
+	}
+
+	if span.GetSpanType() == agentv3.SpanType_Entry && len(span.Refs) > 0 {
+		netWorkAddrSplit := strings.Split(span.Refs[0].NetworkAddressUsedAtPeer, ";")
+		hosts := make([]string, 0)
+		port := 0
+		for _, addr := range netWorkAddrSplit {
+			h, p, err := net.SplitHostPort(addr)
+			if err != nil {
+				continue
+			}
+			hosts = append(hosts, h)
+			if port == 0 {
+				if p, err := strconv.Atoi(p); err == nil {
+					port = p
+				}
+			}
+		}
+		dest.UpsertString(conventions.AttributeNetHostIP, strings.Join(hosts, ","))
+		dest.UpsertInt(conventions.AttributeNetHostPort, int64(port))
 	}
 }
 

@@ -233,6 +233,7 @@ bk-collector:
         assemble:
           - destination: "api_name"
             predicate_key: "attributes.http.scheme"  # HTTP
+            default_from: "span_name"
             rules:
               - kind: "SPAN_KIND_CLIENT"
                 keys:
@@ -240,22 +241,27 @@ bk-collector:
                   - "attributes.http.host"
                   - "attributes.http.target"
                 separator: ":"
+                placeholder: "Unknown"
               - kind: "SPAN_KIND_SERVER"
                 keys:
                   - "attributes.http.method"
                   - "attributes.http.route"
                 separator: ":"
+                placeholder: "Unknown"
 
           - destination: "api_name"
             predicate_key: "attributes.rpc.system"  # RPC
+            default_from: "span_name"
             rules:
               - kind: ""
                 keys:
                   - "attributes.rpc.method"
                 separator: ":"
+                placeholder: "Unknown"
 
           - destination: "api_name"
             predicate_key: "attributes.db.system"  # DataBase
+            default_from: "span_name"
             rules:
               - kind: ""
                 first_upper:
@@ -265,9 +271,11 @@ bk-collector:
                   - "attributes.db.operation"
                   - "attributes.db.name"
                 separator: ":"
+                placeholder: "Unknown"
 
           - destination: "api_name"
             predicate_key: "attributes.messaging.system"  # Messaging
+            default_from: "span_name"
             rules:
               - kind: "SPAN_KIND_PRODUCER"
                 first_upper:
@@ -277,6 +285,7 @@ bk-collector:
                   - "const.producer"
                   - "attributes.topic"
                 separator: ":"
+                placeholder: "Unknown"
               - kind: "SPAN_KIND_CONSUMER"
                 first_upper:
                   - "attributes.messaging.system"
@@ -285,6 +294,7 @@ bk-collector:
                   - "const.consumer"
                   - "attributes.topic"
                 separator: ":"
+                placeholder: "Unknown"
 
     # Attribute_filter 应用层级的配置
     - name: "attribute_filter/app"

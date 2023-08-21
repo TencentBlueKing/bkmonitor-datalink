@@ -40,10 +40,12 @@ processor:
         {%- for config in attribute_config.assemble %}
         - destination: "{{ config.destination }}"
           predicate_key: "{{ config.predicate_key }}"
+          default_from: "{{ config.default_from }}"
           rules:
             {%- for rule in config.rules %}
             - kind: "{{ rule.kind }}"
               separator: "{{ rule.separator }}"
+              placeholder: "{{ rule.placeholder }}"
               {%- if rule.get("first_upper") %}
               first_upper:
                 {%- for key in rule.get("first_upper", []) %}

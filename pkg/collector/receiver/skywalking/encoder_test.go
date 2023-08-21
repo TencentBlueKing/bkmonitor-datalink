@@ -549,4 +549,17 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "TestPeerName", v.StringVal())
 	})
+
+	t.Run("SpanType_Entry/NetworkAddressUsedAtPeer", func(t *testing.T) {
+		dest := pcommon.NewMap()
+		opName := "opNameTest"
+		Refs := []*agentv3.SegmentReference{{NetworkAddressUsedAtPeer: "127.0.0.1:3306;127.0.0.2:3306"}}
+		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "TestPeerName", Refs)
+		swTagsToAttributesByRule(dest, swSpan)
+		v, ok := dest.Get(conventions.AttributeNetHostIP)
+		assert.True(t, ok)
+		assert.Equal(t, "127.0.0.1,127.0.0.2", v.StringVal())
+		v, ok = dest.Get(conventions.AttributeNetHostPort)
+		assert.Equal(t, int64(3306), v.IntVal())
+	})
 }

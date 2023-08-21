@@ -32,6 +32,7 @@ processor:
        assemble:
          - destination: "api_name"                     # 期望插入的字段
            predicate_key: "attributes.http.scheme"     # 需要匹配到的 attributes 中的字段
+           default_from: "span_name"                   # 当所有 rules 都不符合的时候进行的操作，传入空值则不做插入，支持常量 const.xxx
            rules:
               - kind: "SPAN_KIND_CLIENT"               # 所需 Kind 的条件
                 first_upper:
@@ -42,11 +43,13 @@ processor:
                   - "attributes.http.target"
                   - "const.consumer"                   # 支持常量
                 separator: ":"                         # 拼接符号
+                placeholder: "Unknown"                 # 占位符  当 keys 中的字段找不到或者为 "" 的时候生效
               - kind: "SPAN_KIND_SERVER"
                 keys:
                   - "attributes.http.method"
                   - "attributes.http.route"
                 separator: ":"
+                placeholder: ""                        # 占位符可以传入空值
 
         # 根据最大允许长度 裁剪字段
         cut:

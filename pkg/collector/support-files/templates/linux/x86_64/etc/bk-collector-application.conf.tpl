@@ -58,14 +58,14 @@ default:
           tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
 {%- endif %}
 
-{% if db_slow_config is defined %}
-      # db slow config
-      - name: "{{ db_slow_config.name }}"
+{% if db_slow_command_config is defined %}
+      # db slow command config
+      - name: "{{ db_slow_command_config.name }}"
         config:
           slow_query:
-            destination: "{{db_slow_config.destination}}"
+            destination: "{{db_slow_command_config.destination}}"
             rules:
-              {%- for rule in db_slow_config.rules %}
+              {%- for rule in db_slow_command_config.rules %}
               - match: "{{ rule.match }}"
                 threshold: {{ rule.threshold }}ms
               {%- endfor %}

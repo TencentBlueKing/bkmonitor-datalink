@@ -211,7 +211,7 @@ EOF
 
   # 进程状态
   procstatus_task:
-{%- if nodeman.constants is defined %}
+{%- if nodeman is defined and nodeman.constants is defined %}
     dataid: {{ nodeman.constants.proc_status_dataid|default(0, true) }}
 {%- else %}
     dataid: 0

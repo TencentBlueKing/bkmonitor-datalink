@@ -11,7 +11,6 @@ package utils
 
 import (
 	"math"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,31 +38,4 @@ func TestIsValidFloat64(t *testing.T) {
 func TestIsValidUint64(t *testing.T) {
 	assert.True(t, IsValidUint64(1))
 	assert.False(t, IsValidUint64(uint64(math.NaN())))
-}
-
-func TestCloneMap(t *testing.T) {
-	m1 := map[string]string{
-		"aaa": "111",
-		"bbb": "222",
-	}
-	m2 := CloneMap(m1)
-	assert.True(t, reflect.DeepEqual(m1, m2))
-}
-
-func TestMergeMap(t *testing.T) {
-	m1 := map[string]string{
-		"aaa": "111",
-		"bbb": "222",
-	}
-	m2 := map[string]string{
-		"aaa": "112",
-		"ccc": "333",
-	}
-
-	m3 := MergeMap(m1, m2)
-	assert.True(t, reflect.DeepEqual(map[string]string{
-		"aaa": "112",
-		"bbb": "222",
-		"ccc": "333",
-	}, m3))
 }

@@ -73,7 +73,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 type otMetricMapper struct {
 	Metric     string
 	Value      float64
-	Dimensions map[string]interface{}
+	Dimensions map[string]string
 	Time       time.Time
 }
 
@@ -105,7 +105,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 				Metric:     pdMetric.Name(),
 				Value:      dp.DoubleVal(),
 				Time:       dp.Timestamp().AsTime(),
-				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+				Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 			}
 			items = append(items, m.AsMapStr())
 		}
@@ -114,7 +114,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 		dps := pdMetric.Histogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
-			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
+			dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 			if !utils.IsValidFloat64(dp.Sum()) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
@@ -148,11 +148,13 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 			bounds := dp.MExplicitBounds()
 			bucketCounts := dp.MBucketCounts()
 			for j := 0; j < len(dp.MExplicitBounds()); j++ {
-				additional := map[string]interface{}{"le": strconv.FormatFloat(bounds[j], 'f', -1, 64)}
+				additional := map[string]string{
+					"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
+				}
 				m = otMetricMapper{
 					Metric:     pdMetric.Name() + "_bucket",
 					Value:      float64(bucketCounts[j]),
-					Dimensions: MergeReplaceMaps(additional, dimensions),
+					Dimensions: utils.MergeReplaceMaps(additional, dimensions),
 					Time:       dp.Timestamp().AsTime(),
 				}
 				items = append(items, m.AsMapStr())
@@ -171,7 +173,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 			m := otMetricMapper{
 				Metric:     pdMetric.Name(),
 				Value:      dp.DoubleVal(),
-				Dimensions: MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
+				Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())
@@ -181,7 +183,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 		dps := pdMetric.Summary().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
-			dimensions := MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
+			dimensions := utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs)
 
 			if !utils.IsValidFloat64(dp.Sum()) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
@@ -212,7 +214,9 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 			quantile := dp.QuantileValues()
 			for j := 0; j < quantile.Len(); j++ {
 				qua := quantile.At(j)
-				additional := map[string]interface{}{"quantile": strconv.FormatFloat(qua.Quantile(), 'f', -1, 64)}
+				additional := map[string]string{
+					"quantile": strconv.FormatFloat(qua.Quantile(), 'f', -1, 64),
+				}
 
 				if !utils.IsValidFloat64(qua.Value()) {
 					DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
@@ -222,7 +226,7 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 				m = otMetricMapper{
 					Metric:     pdMetric.Name(),
 					Value:      qua.Value(),
-					Dimensions: MergeReplaceMaps(additional, dimensions),
+					Dimensions: utils.MergeReplaceMaps(additional, dimensions),
 					Time:       dp.Timestamp().AsTime(),
 				}
 				items = append(items, m.AsMapStr())

@@ -129,12 +129,12 @@ func (bq *BatchQueue) resize(rtype define.RecordType, token string, backup int) 
 	case define.RecordLogs:
 		if v.LogsBatchSize > 0 {
 			batchSize = v.LogsBatchSize
-			logger.Infof("resize logs batch, token=%s, size=%d", token, batchSize)
+			logger.Debugf("resize logs batch, token=%s, size=%d", token, batchSize)
 		}
 	case define.RecordTraces:
 		if v.TracesBatchSize > 0 {
 			batchSize = v.TracesBatchSize
-			logger.Infof("resize traces batch, token=%s, size=%d", token, batchSize)
+			logger.Debugf("resize traces batch, token=%s, size=%d", token, batchSize)
 		}
 	}
 

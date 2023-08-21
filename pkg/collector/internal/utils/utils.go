@@ -37,29 +37,6 @@ func GetGrpcIpFromContext(ctx context.Context) string {
 	return ""
 }
 
-func CloneMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-
-	ret := make(map[string]string)
-	for key, value := range m {
-		ret[key] = value
-	}
-	return ret
-}
-
-func MergeMap(ms ...map[string]string) map[string]string {
-	ret := make(map[string]string)
-	for _, m := range ms {
-		for k, v := range m {
-			ret[k] = v
-		}
-	}
-
-	return ret
-}
-
 func IsValidFloat64(f float64) bool {
 	return !(math.IsNaN(f) || math.IsInf(f, 0))
 }

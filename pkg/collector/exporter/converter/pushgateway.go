@@ -152,7 +152,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMap(lbs, pd.Labels),
+				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 				Exemplar:   counter.Exemplar,
 			}
 			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
@@ -172,7 +172,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMap(lbs, pd.Labels),
+				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			}
 			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 		}
@@ -192,7 +192,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMap(lbs, pd.Labels),
+				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			}
 			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 
@@ -211,7 +211,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMap(lbs, quantileLabels, pd.Labels),
+					Dimensions: utils.MergeMaps(lbs, quantileLabels, pd.Labels),
 				}
 				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 			}
@@ -232,7 +232,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMap(lbs, pd.Labels),
+				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			}
 			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 
@@ -255,7 +255,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMap(lbs, bucketLabels, pd.Labels),
+					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 					Exemplar:   bucket.Exemplar,
 				}
 				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
@@ -271,7 +271,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 					},
 					Target:     target,
 					Timestamp:  getTimestamp(now, metric.TimestampMs),
-					Dimensions: utils.MergeMap(lbs, bucketLabels, pd.Labels),
+					Dimensions: utils.MergeMaps(lbs, bucketLabels, pd.Labels),
 				}
 				events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 			}
@@ -291,7 +291,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				},
 				Target:     target,
 				Timestamp:  getTimestamp(now, metric.TimestampMs),
-				Dimensions: utils.MergeMap(lbs, pd.Labels),
+				Dimensions: utils.MergeMaps(lbs, pd.Labels),
 			}
 			events = append(events, c.ToEvent(token, dataId, m.AsMapStr()))
 		}

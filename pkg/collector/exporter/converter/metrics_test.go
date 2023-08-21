@@ -66,7 +66,7 @@ func TestConvertGaugeMetrics(t *testing.T) {
 			"bk_apm_duration": float64(0),
 		},
 		"target": define.Identity(),
-		"dimension": map[string]interface{}{
+		"dimension": map[string]string{
 			"attr1": "attr1-value",
 			"attr2": "attr2-value",
 			"res1":  "res1-value",
@@ -120,7 +120,7 @@ func TestConvertHistogramMetrics(t *testing.T) {
 			"bk_apm_duration_sum": float64(10),
 		},
 		"target": define.Identity(),
-		"dimension": map[string]interface{}{
+		"dimension": map[string]string{
 			"attr1": "attr1-value",
 			"attr2": "attr2-value",
 			"res1":  "res1-value",
@@ -171,7 +171,7 @@ func TestConvertSummaryMetrics(t *testing.T) {
 			"bk_apm_duration_sum": float64(10),
 		},
 		"target": define.Identity(),
-		"dimension": map[string]interface{}{
+		"dimension": map[string]string{
 			"attr1": "attr1-value",
 			"attr2": "attr2-value",
 			"res1":  "res1-value",
@@ -218,7 +218,7 @@ func TestConvertSumMetrics(t *testing.T) {
 			"bk_apm_duration": float64(0),
 		},
 		"target": define.Identity(),
-		"dimension": map[string]interface{}{
+		"dimension": map[string]string{
 			"attr1": "attr1-value",
 			"attr2": "attr2-value",
 			"res1":  "res1-value",

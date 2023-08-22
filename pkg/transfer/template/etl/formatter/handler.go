@@ -347,27 +347,24 @@ func TransferRecordCutterByDbmMetaCreator(store define.Store, enable bool) defin
 		return nil
 	}
 
-	// CutterByDbmMeta 非关键路径 无论失败与否 都应该传入给下一个 processor
 	return func(record *define.ETLRecord, next define.ETLRecordHandler) error {
 		items := make([]map[string]string, 0)
 		body, err := fetchDbmMetaResponseStore(record, store)
 		if err != nil {
-			logging.Warnf("failed to fetch dbm meta response: %v", err)
-			return next(record)
+			return errors.Wrap(err, "failed to fetch dbm meta response")
 		}
 
 		if len(body) <= 0 {
-			return next(record)
+			return errors.New("empty dbm meta response")
 		}
 
 		err = json.Unmarshal([]byte(body), &items)
 		if err != nil {
-			logging.Warnf("failed to decode dbm-meta field or empty items: %v", err)
-			return next(record)
+			return errors.Wrap(err, "failed to decode dbm-meta field or empty items")
 		}
 
 		if len(items) <= 0 {
-			return next(record)
+			return errors.New("empty dbm meta record items")
 		}
 
 		// 维度补充

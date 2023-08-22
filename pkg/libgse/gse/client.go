@@ -89,7 +89,10 @@ type GseClient struct {
 	msgQueueSize uint        // msg queue szie
 	cfg          Config
 	silentQuit   bool
+	timeoutCount int
 }
+
+const maxTimeoutCount = 128 // 当连续超时达到此阈值时 采集器重连
 
 // NewGseClient create a gse client
 // host set to default gse ipc path, different from linux and windows
@@ -419,6 +422,7 @@ func (c *GseClient) sendRawData(data []byte) error {
 		if err == nil {
 			logp.Debug("gse", "send size: %d", n)
 			c.onWriteSuccess()
+			c.timeoutCount = 0 // 一旦有一次发送成功则重置 timeout 次数
 			break
 		}
 
@@ -426,9 +430,12 @@ func (c *GseClient) sendRawData(data []byte) error {
 		metricGseClientSendRetry.Add(1)
 		opErrno := c.getOpErrno(err)
 		isReconnect := c.isReconnectable(opErrno)
-		if isReconnect {
+
+		// 当判断需要重连 或者超时次数达到阈值时重连
+		if isReconnect || c.timeoutCount >= maxTimeoutCount {
 			c.reconnect()
 			c.onReconnectSuccess()
+			c.timeoutCount = 0 // 发送重连 timeout 次数重置（无论是因超时而重连 避免持续陷入此逻辑）
 		}
 		logp.Err(
 			"gse client sendRawDat failed: isReconnect=>%t, connectTimes=>%d, Err=>%v",
@@ -470,6 +477,7 @@ func (c *GseClient) isReconnectable(opErrno int) bool {
 	// 写超时使用原连接进行重试
 	if opErrno == ErrIOTimeout {
 		metricGseClientSendTimeout.Add(1)
+		c.timeoutCount++
 		return false
 	}
 	// 连接关闭后，直接进行重连

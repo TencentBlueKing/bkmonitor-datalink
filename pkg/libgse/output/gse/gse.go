@@ -295,7 +295,6 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 		data["_gseindex_"] = gseIndex
 		data["_agentid_"] = info.BKAgentID
 		data["_hostid_"] = info.HostID
-		data.Delete("dataid")
 		data.Delete("time")
 	}
 

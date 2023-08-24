@@ -150,6 +150,11 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 
 	enc = enc[aes.BlockSize:]
 	stream := cipher.NewCBCDecrypter(block, d.iv)
+
+	if len(enc)%aes.BlockSize != 0 {
+		return token, errors.New("crypto/cipher: input not full blocks")
+	}
+
 	stream.CryptBlocks(enc, enc)
 	if len(enc) < aes.BlockSize {
 		return token, errors.Errorf("invalid suffix-enc len: %d", len(enc))

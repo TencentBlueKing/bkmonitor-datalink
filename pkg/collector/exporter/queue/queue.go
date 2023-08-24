@@ -37,7 +37,7 @@ func NewEventsMapStr(dataId int32, data []common.MapStr) common.MapStr {
 	}
 	return common.MapStr{
 		"datetime": now.Format("2006-01-02 15:04:05"),
-		"utctime":  now.UTC().Format("Z07"),
+		"utctime":  now.UTC().Format("2006-01-02 15:04:05"),
 		"time":     now.Unix(),
 		"dataid":   dataId,
 		"items":    data,

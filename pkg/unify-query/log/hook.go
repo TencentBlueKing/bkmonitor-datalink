@@ -66,10 +66,11 @@ func initLogConfig() {
 	if viper.GetString(PathConfigPath) == "" {
 		writeSyncer = zapcore.Lock(os.Stdout)
 	} else {
-		if writeSyncer, err = NewReopenableWriteSyncer(viper.GetString(PathConfigPath)); err != nil {
+		if Syncer, err = NewReopenableWriteSyncer(viper.GetString(PathConfigPath)); err != nil {
 			fmt.Printf("failed to create syncer for->[%s]", err)
 			return
 		}
+		writeSyncer = Syncer
 	}
 	// 配置日志格式
 	encoder = zapcore.NewConsoleEncoder(zapcore.EncoderConfig{
@@ -131,6 +132,5 @@ func InitTestLogger() {
 		viper.Set(LevelConfigPath, "debug")
 		config.InitConfig()
 		initLogConfig()
-
 	})
 }

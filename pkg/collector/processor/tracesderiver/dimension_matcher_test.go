@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
@@ -49,7 +50,7 @@ func TestDimensionMatcher(t *testing.T) {
 		SpanCount: 10,
 	})
 	traces := g.Generate()
-	span := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span := testkits.FirstSpan(traces)
 
 	fetcher := NewSpanDimensionMatcher(NewConfigHandler(c))
 	dim, ok := fetcher.Match("duration", span)
@@ -90,7 +91,7 @@ func TestDimensionMatcherBackup(t *testing.T) {
 		SpanKind:  5,
 	})
 	traces := g.Generate()
-	span := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span := testkits.FirstSpan(traces)
 
 	fetcher := NewSpanDimensionMatcher(NewConfigHandler(c))
 	dim, ok := fetcher.Match("duration", span)

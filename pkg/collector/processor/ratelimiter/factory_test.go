@@ -14,12 +14,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/ratelimiter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
 func TestFactory(t *testing.T) {
@@ -56,12 +54,12 @@ processor:
       qps: 5
       burst: 10
 `
-	config := confengine.MustLoadConfigContent(content)
-	var psc []processor.ProcessorConfig
-	_ = config.UnpackChild("processor", &psc)
 
-	factory, err := NewFactory(psc[0].Config, nil)
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*rateLimiter)
 	assert.NoError(t, err)
+
 	_, err = factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
 	assert.NoError(t, err)
 }
@@ -74,12 +72,11 @@ processor:
       type: token_bucket
       qps: -1
 `
-	config := confengine.MustLoadConfigContent(content)
-	var psc []processor.ProcessorConfig
-	_ = config.UnpackChild("processor", &psc)
-
-	factory, err := NewFactory(psc[0].Config, nil)
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*rateLimiter)
 	assert.NoError(t, err)
+
 	_, err = factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
 	assert.Error(t, err)
 }

@@ -13,11 +13,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
@@ -103,6 +103,25 @@ func makeLogsGenerator(count, length int, valueType string) *generator.LogsGener
 }
 
 func TestTracesAssembleAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/assemble"
+      config:
+        assemble:
+          - destination: "resource_final"
+            separator: ":"
+            keys:
+              - "resource.resource_key1"
+              - "resource.not_exist"
+              - "resource.resource_key2"
+              - "resource.resource_key3"
+              - "resource.resource_key4"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
 	record := define.Record{
@@ -110,33 +129,33 @@ func TestTracesAssembleAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Assemble: []AssembleAction{
-			{
-				Destination: "resource_final",
-				Separator:   ":",
-				Keys: []string{
-					resourceKey1,
-					"not_exist",
-					resourceKey2,
-					resourceKey3,
-					resourceKey4,
-				},
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	val, ok := attr.Get("resource_final")
-	assert.True(t, ok)
-	assert.Equal(t, "key1::key2:key3:key4", val.StringVal())
+
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	testkits.AssertAttrsFoundStringVal(t, attrs, "resource_final", "key1::key2:key3:key4")
+}
+
+func assertDropActionAttrs(t *testing.T, attrs pcommon.Map) {
+	testkits.AssertAttrsNotFound(t, attrs, "resource_key1")
+	testkits.AssertAttrsFound(t, attrs, "resource_key2")
+	testkits.AssertAttrsFound(t, attrs, "resource_key3")
 }
 
 func TestTracesDropAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/drop"
+      config:
+        drop:
+          keys:
+            - "resource.resource_key1"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
 	record := define.Record{
@@ -144,28 +163,27 @@ func TestTracesDropAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Drop: DropAction{
-			Keys: []string{
-				resourceKey1,
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key2")
-	assert.True(t, ok)
-	_, ok = attr.Get("resource_key3")
-	assert.True(t, ok)
+
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	assertDropActionAttrs(t, attrs)
 }
 
 func TestMetricsDropAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/drop"
+      config:
+        drop:
+          keys:
+            - "resource.resource_key1"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeMetricsGenerator(1, "string")
 	data := g.Generate()
 	record := define.Record{
@@ -173,28 +191,27 @@ func TestMetricsDropAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Drop: DropAction{
-			Keys: []string{
-				resourceKey1,
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key2")
-	assert.True(t, ok)
-	_, ok = attr.Get("resource_key3")
-	assert.True(t, ok)
+
+	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+	assertDropActionAttrs(t, attrs)
 }
 
 func TestLogsDropAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/drop"
+      config:
+        drop:
+          keys:
+            - "resource.resource_key1"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeLogsGenerator(10, 10, "string")
 	data := g.Generate()
 	record := define.Record{
@@ -202,28 +219,32 @@ func TestLogsDropAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Drop: DropAction{
-			Keys: []string{
-				resourceKey1,
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key2")
-	assert.True(t, ok)
-	_, ok = attr.Get("resource_key3")
-	assert.True(t, ok)
+
+	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+	assertDropActionAttrs(t, attrs)
+}
+
+func assertReplaceActionAttrs(t *testing.T, attrs pcommon.Map) {
+	testkits.AssertAttrsNotFound(t, attrs, resourceKey1)
+	testkits.AssertAttrsFound(t, attrs, resourceKey4)
 }
 
 func TestTracesReplaceAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        replace:
+          - source: resource_key1
+            destination: resource_key4
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
 	record := define.Record{
@@ -231,27 +252,27 @@ func TestTracesReplaceAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Replace: []ReplaceAction{
-			{
-				Source:      "resource_key1",
-				Destination: "resource_key5",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key5")
-	assert.True(t, ok)
+
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	assertReplaceActionAttrs(t, attrs)
 }
 
 func TestMetricsReplaceAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        replace:
+          - source: resource_key1
+            destination: resource_key4
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeMetricsGenerator(1, "float")
 	data := g.Generate()
 	record := define.Record{
@@ -259,27 +280,27 @@ func TestMetricsReplaceAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Replace: []ReplaceAction{
-			{
-				Source:      "resource_key1",
-				Destination: "resource_key5",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key5")
-	assert.True(t, ok)
+
+	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+	assertReplaceActionAttrs(t, attrs)
 }
 
 func TestLogsReplaceAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        replace:
+          - source: resource_key1
+            destination: resource_key4
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeLogsGenerator(10, 10, "float")
 	data := g.Generate()
 	record := define.Record{
@@ -287,27 +308,41 @@ func TestLogsReplaceAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Replace: []ReplaceAction{
-			{
-				Source:      "resource_key1",
-				Destination: "resource_key5",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	_, ok := attr.Get("resource_key1")
-	assert.False(t, ok)
-	_, ok = attr.Get("resource_key5")
-	assert.True(t, ok)
+
+	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+	assertReplaceActionAttrs(t, attrs)
+}
+
+const (
+	label1 = "label1"
+	label2 = "label2"
+	value1 = "value1"
+	value2 = "value2"
+)
+
+func assertAddActionLabels(t *testing.T, attrs pcommon.Map) {
+	testkits.AssertAttrsFoundStringVal(t, attrs, label1, value1)
+	testkits.AssertAttrsFoundStringVal(t, attrs, label2, value2)
 }
 
 func TestTracesAddAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        add:
+          - label: label1
+            value: value1
+          - label: label2
+            value: value2
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeTracesGenerator(1, "bool")
 	data := g.Generate()
 	record := define.Record{
@@ -315,34 +350,29 @@ func TestTracesAddAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Add: []AddAction{
-			{
-				Label: "new_label_1",
-				Value: "new_value_1",
-			},
-			{
-				Label: "new_label_2",
-				Value: "new_value_2",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	val, ok := attr.Get("new_label_1")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_1")
 
-	val, ok = attr.Get("new_label_2")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_2")
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	assertAddActionLabels(t, attrs)
 }
 
 func TestMetricsAddAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        add:
+          - label: label1
+            value: value1
+          - label: label2
+            value: value2
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeMetricsGenerator(1, "int")
 	data := g.Generate()
 	record := define.Record{
@@ -350,35 +380,29 @@ func TestMetricsAddAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Add: []AddAction{
-			{
-				Label: "new_label_1",
-				Value: "new_value_1",
-			},
-			{
-				Label: "new_label_2",
-				Value: "new_value_2",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	attr := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
-	val, ok := attr.Get("new_label_1")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_1")
-
-	val, ok = attr.Get("new_label_2")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_2")
+	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
+	assertAddActionLabels(t, attrs)
 }
 
 func TestLogsAddAction(t *testing.T) {
+	content := `
+processor:
+    - name: "resource_filter/replace"
+      config:
+        add:
+          - label: label1
+            value: value1
+          - label: label2
+            value: value2
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*resourceFilter)
+	assert.NoError(t, err)
+
 	g := makeLogsGenerator(10, 10, "int")
 	data := g.Generate()
 	record := define.Record{
@@ -386,30 +410,9 @@ func TestLogsAddAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Add: []AddAction{
-			{
-				Label: "new_label_1",
-				Value: "new_value_1",
-			},
-			{
-				Label: "new_label_2",
-				Value: "new_value_2",
-			},
-		},
-	})
-
-	filter := &resourceFilter{configs: configs}
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	attr := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
-	val, ok := attr.Get("new_label_1")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_1")
-
-	val, ok = attr.Get("new_label_2")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "new_value_2")
+	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
+	assertAddActionLabels(t, attrs)
 }

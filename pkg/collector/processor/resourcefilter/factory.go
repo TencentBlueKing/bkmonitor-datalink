@@ -101,10 +101,10 @@ func (p resourceFilter) assembleAction(record *define.Record, config Config) {
 		for _, action := range config.Assemble {
 			for i := 0; i < resourceSpansSlice.Len(); i++ {
 				resourceSpans := resourceSpansSlice.At(i)
-				attributes := resourceSpans.Resource().Attributes()
+				attrs := resourceSpans.Resource().Attributes()
 				var values []string
 				for _, key := range action.Keys {
-					v, ok := attributes.Get(key)
+					v, ok := attrs.Get(key)
 					if !ok {
 						// 空值保留
 						values = append(values, "")
@@ -112,7 +112,7 @@ func (p resourceFilter) assembleAction(record *define.Record, config Config) {
 					}
 					values = append(values, v.AsString())
 				}
-				attributes.UpsertString(action.Destination, strings.Join(values, action.Separator))
+				attrs.UpsertString(action.Destination, strings.Join(values, action.Separator))
 			}
 		}
 	}

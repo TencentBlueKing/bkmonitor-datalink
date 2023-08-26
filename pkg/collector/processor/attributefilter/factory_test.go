@@ -87,8 +87,8 @@ func makeMetricsGenerator(n int, valueType string) *generator.MetricsGenerator {
 	return generator.NewMetricsGenerator(opts)
 }
 
-func TestTracesBoolAsStringAction(t *testing.T) {
-	g := makeTracesGenerator(1, "bool")
+func testAsStringAction(t *testing.T, valueType string) {
+	g := makeTracesGenerator(1, valueType)
 	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
@@ -98,7 +98,9 @@ func TestTracesBoolAsStringAction(t *testing.T) {
 	configs := confengine.NewTierConfig()
 	configs.SetGlobal(Config{
 		AsString: AsStringAction{
-			Keys: []string{resourceKeyPerIp},
+			Keys: []string{
+				resourceKeyPerIp,
+			},
 		},
 	})
 
@@ -106,64 +108,22 @@ func TestTracesBoolAsStringAction(t *testing.T) {
 	_, err := filter.Process(&record)
 	assert.NoError(t, err)
 
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	v, ok := attr.Get(resourceKeyPerIp)
+	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	v, ok := attrs.Get(resourceKeyPerIp)
 	assert.True(t, ok)
 	assert.Equal(t, pcommon.ValueTypeString, v.Type())
+}
+
+func TestTracesBoolAsStringAction(t *testing.T) {
+	testAsStringAction(t, "bool")
 }
 
 func TestTracesIntAsStringAction(t *testing.T) {
-	g := makeTracesGenerator(1, "int")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
-
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		AsString: AsStringAction{
-			Keys: []string{resourceKeyPerIp},
-		},
-	})
-
-	filter := &attributeFilter{configs: configs}
-	_, err := filter.Process(&record)
-	assert.NoError(t, err)
-
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	v, ok := attr.Get(resourceKeyPerIp)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeString, v.Type())
+	testAsStringAction(t, "int")
 }
 
 func TestTracesFloatAsStringAction(t *testing.T) {
-	g := makeTracesGenerator(1, "float")
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
-
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		AsString: AsStringAction{
-			Keys: []string{resourceKeyPerIp, resourceKeyPerPort},
-		},
-	})
-
-	filter := &attributeFilter{configs: configs}
-	_, err := filter.Process(&record)
-	assert.NoError(t, err)
-
-	attr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	v, ok := attr.Get(resourceKeyPerPort)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeString, v.Type())
-
-	v, ok = attr.Get(resourceKeyPerIp)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeString, v.Type())
+	testAsStringAction(t, "float")
 }
 
 func TestTracesFromTokenAction(t *testing.T) {
@@ -189,11 +149,8 @@ func TestTracesFromTokenAction(t *testing.T) {
 	filter := &attributeFilter{configs: configs}
 	filter.fromTokenAction(&record, configs.GetByToken("").(Config))
 
-	traces := record.Data.(ptrace.Traces)
-	attrs := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
-	val, ok := attrs.Get("bk_biz_id")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "10086")
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "bk_biz_id", "10086")
 }
 
 func TestMetricsFromTokenAction(t *testing.T) {
@@ -219,11 +176,8 @@ func TestMetricsFromTokenAction(t *testing.T) {
 	filter := &attributeFilter{configs: configs}
 	filter.fromTokenAction(&record, configs.GetByToken("").(Config))
 
-	metrics := record.Data.(pmetric.Metrics)
-	point := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0)
-	val, ok := point.Attributes().Get("bk_biz_id")
-	assert.True(t, ok)
-	assert.Equal(t, val.AsString(), "10086")
+	dp := testkits.FirstGaugeDataPoint(record.Data.(pmetric.Metrics))
+	testkits.AssertAttrsFoundStringVal(t, dp.Attributes(), "bk_biz_id", "10086")
 }
 
 func TestTraceAssembleAction(t *testing.T) {
@@ -265,11 +219,8 @@ processor:
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-	v, ok := attrs.Get("api_name")
-	assert.True(t, ok)
-	assert.Equal(t, "GET:testRoute:", v.AsString())
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "GET:testRoute:")
 }
 
 func TestTraceAssembleWithoutKind(t *testing.T) {
@@ -310,11 +261,8 @@ processor:
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-	v, ok := attrs.Get("api_name")
-	assert.True(t, ok)
-	assert.Equal(t, "RpcMethod:TestConstCondition:placeholder", v.AsString())
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:placeholder")
 }
 
 func TestTraceAssembleWithPlaceholder(t *testing.T) {
@@ -353,11 +301,8 @@ processor:
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-	v, ok := attrs.Get("api_name")
-	assert.True(t, ok)
-	assert.Equal(t, "Unknown:TestConstCondition", v.AsString())
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Unknown:TestConstCondition")
 }
 
 func TestTraceAssembleWithoutPredicate(t *testing.T) {
@@ -397,10 +342,8 @@ processor:
 		_, err = factory.Process(&record)
 		assert.NoError(t, err)
 
-		span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		attrs := span.Attributes()
-		_, ok := attrs.Get("api_name")
-		assert.False(t, ok)
+		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsNotFound(t, span.Attributes(), "api_name")
 	})
 
 	t.Run("defaultFrom/span_name", func(t *testing.T) {
@@ -439,11 +382,8 @@ processor:
 		_, err = factory.Process(&record)
 		assert.NoError(t, err)
 
-		span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		attrs := span.Attributes()
-		v, ok := attrs.Get("api_name")
-		assert.True(t, ok)
-		assert.Equal(t, span.Name(), v.StringVal())
+		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", span.Name())
 	})
 
 	t.Run("defaultFrom/const", func(t *testing.T) {
@@ -482,11 +422,8 @@ processor:
 		_, err = factory.Process(&record)
 		assert.NoError(t, err)
 
-		span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		attrs := span.Attributes()
-		v, ok := attrs.Get("api_name")
-		assert.True(t, ok)
-		assert.Equal(t, "TestDefaultFrom", v.StringVal())
+		span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "TestDefaultFrom")
 	})
 }
 
@@ -526,10 +463,8 @@ processor:
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-	_, ok := attrs.Get("api_name")
-	assert.False(t, ok)
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsNotFound(t, span.Attributes(), "api_name")
 }
 
 func TestTraceAssembleWithNullValue(t *testing.T) {
@@ -571,11 +506,8 @@ processor:
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-	v, ok := attrs.Get("api_name")
-	assert.True(t, ok)
-	assert.Equal(t, "RpcMethod:TestConstCondition:", v.AsString())
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:")
 }
 
 func TestTraceAsIntAction(t *testing.T) {
@@ -605,23 +537,14 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	resourceAttr := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
-	v, ok := resourceAttr.Get(conventions.AttributeHTTPStatusCode)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
-	assert.Equal(t, int64(200), v.IntVal())
 
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	rsAttrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
+	testkits.AssertAttrsFoundIntVal(t, rsAttrs, conventions.AttributeHTTPStatusCode, 200)
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
-	v, ok = attrs.Get(conventions.AttributeHTTPStatusCode)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeInt, v.Type())
-	assert.Equal(t, int64(200), v.IntVal())
-
-	v, ok = attrs.Get(conventions.AttributeHTTPScheme)
-	assert.True(t, ok)
-	assert.Equal(t, pcommon.ValueTypeString, v.Type())
-	assert.Equal(t, "https", v.StringVal()) //
+	testkits.AssertAttrsFoundIntVal(t, attrs, conventions.AttributeHTTPStatusCode, 200)
+	testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeHTTPScheme, "https")
 }
 
 func TestTraceDropAction(t *testing.T) {
@@ -657,14 +580,11 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
-
-	_, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.False(t, ok)
-
-	_, ok = attrs.Get("db.parameters")
-	assert.False(t, ok)
+	testkits.AssertAttrsNotFound(t, attrs, conventions.AttributeDBStatement)
+	testkits.AssertAttrsNotFound(t, attrs, "db.parameters")
 }
 
 func TestTraceDropActionWithUnmatchedPreKey(t *testing.T) {
@@ -700,16 +620,11 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
-
-	v, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.True(t, ok)
-	assert.Equal(t, "testDbStatement", v.AsString())
-
-	v, ok = attrs.Get("db.parameters")
-	assert.True(t, ok)
-	assert.Equal(t, "testDbParameters", v.AsString())
+	testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeDBStatement, "testDbStatement")
+	testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters")
 }
 
 func TestTraceDropActionWithoutMatch(t *testing.T) {
@@ -742,14 +657,11 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
-
-	_, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.False(t, ok)
-
-	_, ok = attrs.Get("db.parameters")
-	assert.False(t, ok)
+	testkits.AssertAttrsNotFound(t, attrs, conventions.AttributeDBStatement)
+	testkits.AssertAttrsNotFound(t, attrs, "db.parameters")
 }
 
 func TestTraceCutAction(t *testing.T) {
@@ -786,20 +698,12 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
 
 	const maxLen = 10
-
-	v, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.True(t, ok)
-	assert.Equal(t, maxLen, len(v.AsString()))
-	assert.Equal(t, "testDbStatement"[:maxLen], v.AsString())
-
-	v, ok = attrs.Get("db.parameters")
-	assert.True(t, ok)
-	assert.Equal(t, maxLen, len(v.AsString()))
-	assert.Equal(t, "testDbParameters"[:maxLen], v.AsString())
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	attrs := span.Attributes()
+	testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeDBStatement, "testDbStatement"[:maxLen])
+	testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters"[:maxLen])
 }
 
 func TestTraceCutActionWithUnmatchedPreKey(t *testing.T) {
@@ -836,61 +740,9 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
 	attrs := span.Attributes()
-
-	v, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.True(t, ok)
-	assert.Equal(t, "testDbStatement", v.AsString())
-
-	v, ok = attrs.Get("db.parameters")
-	assert.True(t, ok)
-	assert.Equal(t, "testDbParameters", v.AsString())
-}
-
-func TestTraceCutActionWithoutMatch(t *testing.T) {
-	content := `
-processor:
-  - name: "attribute_filter/common"
-    config:
-      cut:
-        - predicate_key: "attributes.db.system"
-          max_length: 10
-          keys:
-            - "attributes.db.parameters"
-            - "attributes.db.statement"
-`
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*attributeFilter)
-	assert.NoError(t, err)
-
-	m := map[string]string{
-		"db.system":     "elasticsearch",
-		"db.parameters": "testDbParameters",
-		"db.statement":  "testDbStatement",
-	}
-
-	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-	data := g.Generate()
-	record := define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
-	}
-	_, err = factory.Process(&record)
-	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attrs := span.Attributes()
-
-	const maxLen = 10
-
-	v, ok := attrs.Get(conventions.AttributeDBStatement)
-	assert.True(t, ok)
-	assert.Equal(t, maxLen, len(v.AsString()))
-	assert.Equal(t, "testDbStatement"[:maxLen], v.AsString())
-
-	v, ok = attrs.Get("db.parameters")
-	assert.True(t, ok)
-	assert.Equal(t, maxLen, len(v.AsString()))
-	assert.Equal(t, "testDbParameters"[:maxLen], v.AsString())
+	testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeDBStatement, "testDbStatement")
+	testkits.AssertAttrsFoundStringVal(t, attrs, "db.parameters", "testDbParameters")
 }

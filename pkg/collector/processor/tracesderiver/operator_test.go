@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestOperator(t *testing.T) {
@@ -72,17 +73,10 @@ func TestOperator(t *testing.T) {
 		dataPoints := metric.Gauge().DataPoints()
 		for n := 0; n < dataPoints.Len(); n++ {
 			dp := dataPoints.At(n)
-			v, ok := dp.Attributes().Get("http.uri")
-			assert.True(t, ok)
-			assert.Equal(t, "/api/v1/healthz", v.StringVal())
-
-			v, ok = dp.Attributes().Get("service.name")
-			assert.True(t, ok)
-			assert.Equal(t, "echo", v.StringVal())
-
-			v, ok = dp.Attributes().Get("kind")
-			assert.True(t, ok)
-			assert.Equal(t, "3", v.StringVal())
+			attrs := dp.Attributes()
+			testkits.AssertAttrsFoundStringVal(t, attrs, "http.uri", "/api/v1/healthz")
+			testkits.AssertAttrsFoundStringVal(t, attrs, "service.name", "echo")
+			testkits.AssertAttrsFoundStringVal(t, attrs, "kind", "3")
 		}
 	})
 }

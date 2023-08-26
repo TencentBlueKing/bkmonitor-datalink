@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metricsbuilder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver/accumulator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -59,11 +60,7 @@ func (to tracesOperator) Clean() {
 }
 
 func (to tracesOperator) Operate(record *define.Record) *define.Record {
-	pdTraces, ok := record.Data.(ptrace.Traces)
-	if !ok {
-		return nil
-	}
-
+	pdTraces := record.Data.(ptrace.Traces)
 	mb := metricsbuilder.New()
 	resourceSpansSlice := pdTraces.ResourceSpans()
 	metricItems := map[string][]metricsbuilder.Metric{}
@@ -104,7 +101,7 @@ func (to tracesOperator) Operate(record *define.Record) *define.Record {
 
 					// accumulator 处理
 					if to.accumulator != nil {
-						val := DefaultExtractor.Extract(spans.At(k))
+						val := utils.CalcSpanDuration(spans.At(k))
 						to.accumulator.Accumulate(record.Token.MetricsDataId, dim, val)
 					}
 				}

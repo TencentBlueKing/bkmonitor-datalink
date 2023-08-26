@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func makeMetricsGenerator(gaugeCount, counterCount, histogramCount int) *generator.MetricsGenerator {
@@ -47,16 +48,17 @@ func TestConvertGaugeMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := g.Generate()
+	metrics := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-
 	assert.Len(t, events, 0)
-	m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0).SetTimestamp(0)
-	NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
+
+	dp := testkits.FirstGaugeDataPoint(metrics)
+	dp.SetTimestamp(0)
+	NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 
 	event := events[0]
 	event.Data()
@@ -94,23 +96,22 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := g.Generate()
+	metrics := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-
 	assert.Len(t, events, 0)
 
-	point := m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Histogram().DataPoints().At(0)
-	point.SetTimestamp(0)
-	point.SetMExplicitBounds([]float64{1, 2, 3, 4})
-	point.SetMBucketCounts([]uint64{4, 3, 2, 1})
-	point.SetSum(10)
-	point.SetCount(1)
+	dp := testkits.FirstHistogramPoint(metrics)
+	dp.SetTimestamp(0)
+	dp.SetMExplicitBounds([]float64{1, 2, 3, 4})
+	dp.SetMBucketCounts([]uint64{4, 3, 2, 1})
+	dp.SetSum(10)
+	dp.SetCount(1)
 
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
+	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 
 	event := events[0]
 	event.Data()
@@ -148,20 +149,20 @@ func TestConvertSummaryMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := g.Generate()
+	metrics := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-
 	assert.Len(t, events, 0)
-	point := m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Summary().DataPoints().At(0)
-	point.SetTimestamp(0)
-	point.SetSum(10)
-	point.SetCount(1)
 
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
+	dp := testkits.FirstSummaryPoint(metrics)
+	dp.SetTimestamp(0)
+	dp.SetSum(10)
+	dp.SetCount(1)
+
+	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 
 	event := events[0]
 	event.Data()
@@ -199,16 +200,17 @@ func TestConvertSumMetrics(t *testing.T) {
 	}
 
 	g := generator.NewMetricsGenerator(opts)
-	m := g.Generate()
+	metrics := g.Generate()
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-
 	assert.Len(t, events, 0)
-	m.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Sum().DataPoints().At(0).SetTimestamp(0)
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: m}, gather)
+
+	dp := testkits.FirstSumPoint(metrics)
+	dp.SetTimestamp(0)
+	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
 
 	event := events[0]
 	event.Data()

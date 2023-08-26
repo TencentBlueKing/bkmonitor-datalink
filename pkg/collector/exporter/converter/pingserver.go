@@ -15,7 +15,6 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type pingserverEvent struct {
@@ -33,16 +32,13 @@ type pingserverMapper struct {
 // AsMapStr 转换为 beat 框架要求的 MapStr 对象
 func (p pingserverMapper) AsMapStr() common.MapStr {
 	now := time.Now().Unix()
-	ms := common.MapStr{
+	return common.MapStr{
 		"dataid":    p.pd.DataId,
 		"version":   p.pd.Version,
 		"data":      []map[string]interface{}{p.pd.Data},
 		"time":      now,
 		"timestamp": now,
 	}
-
-	logger.Debugf("convert pingserver data: %+v", ms)
-	return ms
 }
 
 var PingserverConverter EventConverter = pingserverConverter{}

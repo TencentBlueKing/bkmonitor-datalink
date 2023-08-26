@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/serieslimiter"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 const (
@@ -38,7 +39,7 @@ func NewExtractor(conf *ExtractorConfig) *Extractor {
 }
 
 func (e *Extractor) Extract(span ptrace.Span) float64 {
-	return DefaultExtractor.Extract(span)
+	return utils.CalcSpanDuration(span)
 }
 
 func (e *Extractor) Set(dataID int32, dims map[string]string) bool {
@@ -49,15 +50,4 @@ func (e *Extractor) Stop() {
 	if e.limiter != nil {
 		e.limiter.Stop()
 	}
-}
-
-var DefaultExtractor = defaultExtractor{}
-
-type defaultExtractor struct{}
-
-func (defaultExtractor) Extract(span ptrace.Span) float64 {
-	if span.StartTimestamp() > span.EndTimestamp() {
-		return 0 // 特殊处理 避免出现超大值
-	}
-	return float64(span.EndTimestamp() - span.StartTimestamp())
 }

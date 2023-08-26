@@ -498,6 +498,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -511,6 +512,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Delta
@@ -536,6 +538,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -549,6 +552,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Min
@@ -574,6 +578,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -587,6 +592,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Max
@@ -612,6 +618,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -625,6 +632,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Sum
@@ -650,6 +658,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -663,6 +672,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Bucket
@@ -689,6 +699,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -702,6 +713,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
 
     # TracesDeriver: Traces 派生处理器
     # Duration
@@ -726,6 +738,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_SERVER"
                 predicate_key: "attributes.http.method"
                 dimensions:
@@ -747,6 +760,7 @@ bk-collector:
                   - "attributes.http.scheme"
                   - "attributes.http.flavor"
                   - "attributes.http.status_code"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_SERVER"
                 predicate_key: "attributes.rpc.system"
                 dimensions:
@@ -767,6 +781,7 @@ bk-collector:
                   - "attributes.rpc.service"
                   - "attributes.rpc.system"
                   - "attributes.rpc.grpc.status_code"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: ""
                 dimensions:
@@ -780,6 +795,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: "attributes.http.method"
                 dimensions:
@@ -798,6 +814,7 @@ bk-collector:
                   - "attributes.net.peer.name"
                   - "attributes.net.peer.ip"
                   - "attributes.net.peer.port"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: "attributes.rpc.system"
                 dimensions:
@@ -818,6 +835,7 @@ bk-collector:
                   - "attributes.net.peer.name"
                   - "attributes.net.peer.ip"
                   - "attributes.net.peer.port"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CLIENT"
                 predicate_key: "attributes.db.system"
                 dimensions:
@@ -837,6 +855,7 @@ bk-collector:
                   - "attributes.net.peer.name"
                   - "attributes.net.peer.ip"
                   - "attributes.net.peer.port"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_PRODUCER"
                 predicate_key: ""
                 dimensions:
@@ -850,6 +869,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_PRODUCER"
                 predicate_key: "attributes.messaging.system"
                 dimensions:
@@ -871,6 +891,7 @@ bk-collector:
                   - "attributes.net.peer.port"
                   - "attributes.celery.action"
                   - "attributes.celery.task_name"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CONSUMER"
                 predicate_key: ""
                 dimensions:
@@ -884,6 +905,7 @@ bk-collector:
                   - "resource.telemetry.sdk.version"
                   - "resource.telemetry.sdk.language"
                   - "attributes.peer.service"
+                  - "attributes.apdex_type"
               - kind: "SPAN_KIND_CONSUMER"
                 predicate_key: "attributes.messaging.system"
                 dimensions:
@@ -903,6 +925,7 @@ bk-collector:
                   - "attributes.messaging.system"
                   - "attributes.celery.state"
                   - "attributes.celery.action"
+                  - "attributes.apdex_type"
 
 
   # =============================== Pipeline =================================
@@ -924,6 +947,7 @@ bk-collector:
         - "attribute_filter/app"
         - "probe_filter/common"
         - "service_discover/common"
+        - "apdex_calculator/standard"
         - "traces_deriver/duration"
         - "traces_deriver/delta"
         - "traces_deriver/count"
@@ -974,22 +998,8 @@ bk-collector:
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
       processors:
-        - "apdex_calculator/standard"
+#        - "apdex_calculator/standard"
 
-    - name: "traces_pipeline/derived"
-      type: "traces.derived"
-      processors:
-        - "token_checker/aes256"
-        - "resource_filter/assemble"
-        - "attribute_filter/common"
-        - "service_discover/common"
-        - "traces_deriver/duration"
-        - "traces_deriver/delta"
-        - "traces_deriver/count"
-        - "traces_deriver/min"
-        - "traces_deriver/max"
-        - "traces_deriver/sum"
-        - "traces_deriver/bucket"
 
   # =============================== Exporter =================================
   exporter:

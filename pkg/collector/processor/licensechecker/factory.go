@@ -116,8 +116,8 @@ func (p licenseChecker) processTraces(record *define.Record) (*define.Record, er
 	}
 
 	// 单次 traces 数据都是同一个 AttributeServiceInstanceID
-	attributes := pdTraces.ResourceSpans().At(0).Resource().Attributes()
-	val, ok := attributes.Get(conventions.AttributeServiceInstanceID)
+	attrs := pdTraces.ResourceSpans().At(0).Resource().Attributes()
+	val, ok := attrs.Get(conventions.AttributeServiceInstanceID)
 	if !ok {
 		return nil, errors.New("service.instance.id attribute not found")
 	}

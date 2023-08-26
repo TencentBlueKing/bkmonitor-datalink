@@ -11,7 +11,9 @@ package apdexcalculator
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -141,27 +143,32 @@ func TestProcessMetricsFixedCalculator(t *testing.T) {
 }
 
 func TestProcessMetricsStandardCalculator(t *testing.T) {
-	// apdexSatisfied: val <= threshold
-	ok, err := testProcessMetricsStandardCalculator(1e6, 2, apdexSatisfied)
-	assert.NoError(t, err)
-	assert.True(t, ok)
+	threshold := float64(2) // 2ms
+	t.Run("apdexSatisfied: val <= threshold", func(t *testing.T) {
+		ok, err := testProcessMetricsStandardCalculator(time.Millisecond, threshold, apdexSatisfied)
+		assert.NoError(t, err)
+		assert.True(t, ok)
+	})
 
-	// apdexTolerating: val <= 4*threshold
-	ok, err = testProcessMetricsStandardCalculator(7e6, 2, apdexTolerating)
-	assert.NoError(t, err)
-	assert.True(t, ok)
+	t.Run("apdexTolerating: val <= 4*threshold", func(t *testing.T) {
+		ok, err := testProcessMetricsStandardCalculator(time.Millisecond*5, threshold, apdexTolerating)
+		assert.NoError(t, err)
+		assert.True(t, ok)
+	})
 
-	// apdexFrustrated: val > 4*threshold
-	ok, err = testProcessMetricsStandardCalculator(10e6, 2, apdexFrustrated)
-	assert.NoError(t, err)
-	assert.True(t, ok)
+	t.Run("apdexFrustrated: val > 4*threshold", func(t *testing.T) {
+		ok, err := testProcessMetricsStandardCalculator(time.Millisecond*100, threshold, apdexFrustrated)
+		assert.NoError(t, err)
+		assert.True(t, ok)
+	})
 }
 
-func testProcessMetricsStandardCalculator(val float64, threshold float64, status string) (bool, error) {
+func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, status string) (bool, error) {
+	fv := float64(val)
 	g := generator.NewMetricsGenerator(define.MetricsOptions{
 		MetricName: "bk_apm_duration",
 		GaugeCount: 1,
-		Value:      &val,
+		Value:      &fv,
 	})
 
 	data := g.Generate()
@@ -203,11 +210,8 @@ func testProcessMetricsStandardCalculator(val float64, threshold float64, status
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
 				v, ok := dp.Attributes().Get(dst)
-				if !ok {
-					errs = append(errs, errors.New("attribute does not exist"))
-				}
-				if status != v.AsString() {
-					errs = append(errs, errors.New("attribute does not exist"))
+				if !ok || status != v.AsString() {
+					errs = append(errs, fmt.Errorf("attribute does not exist, apdex_type=%v", v.AsString()))
 				}
 			}
 		}
@@ -216,6 +220,74 @@ func testProcessMetricsStandardCalculator(val float64, threshold float64, status
 		return false, errs[0]
 	}
 	return true, nil
+}
+
+func TestProcessTracesStandardCalculator(t *testing.T) {
+	threshold := float64(1000) // 1000ms
+	t.Run("apdexSatisfied: val <= threshold", func(t *testing.T) {
+		status, err := testProcessTracesStandardCalculator(time.Second, time.Second*2, threshold)
+		assert.NoError(t, err)
+		assert.Equal(t, apdexSatisfied, status)
+	})
+
+	t.Run("apdexTolerating: val <= 4*threshold", func(t *testing.T) {
+		status, err := testProcessTracesStandardCalculator(time.Second, time.Second*3, threshold)
+		assert.NoError(t, err)
+		assert.Equal(t, apdexTolerating, status)
+	})
+
+	t.Run("apdexFrustrated: val > 4*threshold", func(t *testing.T) {
+		status, err := testProcessTracesStandardCalculator(time.Second, time.Second*10, threshold)
+		assert.NoError(t, err)
+		assert.Equal(t, apdexFrustrated, status)
+	})
+}
+
+func testProcessTracesStandardCalculator(startTime, endTime time.Duration, threshold float64) (string, error) {
+	g := generator.NewTracesGenerator(define.TracesOptions{
+		SpanCount: 1,
+	})
+	data := g.Generate()
+	span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span.SetStartTimestamp(pcommon.Timestamp(startTime))
+	span.SetEndTimestamp(pcommon.Timestamp(endTime))
+
+	config := &Config{
+		Calculator: CalculatorConfig{
+			Type: "standard",
+		},
+		Rules: []RuleConfig{{
+			Destination: "apdex_type",
+			ApdexT:      threshold,
+		}},
+	}
+
+	confMap := make(map[string]interface{})
+	if err := mapstructure.Decode(config, &confMap); err != nil {
+		return "", err
+	}
+
+	factory, err := NewFactory(confMap, nil)
+	if err != nil {
+		return "", err
+	}
+
+	record := &define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err = factory.Process(record)
+	if err != nil {
+		return "", err
+	}
+
+	span = data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	v, ok := span.Attributes().Get("apdex_type")
+	if !ok {
+		return "", errors.New("no 'apdex_type' attribute found")
+	}
+
+	return v.AsString(), nil
 }
 
 func TestFindMetricsAttributes(t *testing.T) {

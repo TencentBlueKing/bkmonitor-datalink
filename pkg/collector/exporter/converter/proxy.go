@@ -15,7 +15,6 @@ import (
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type proxyEvent struct {
@@ -33,7 +32,7 @@ type proxyMapper struct {
 // AsMapStr 转换为 beat 框架要求的 MapStr 对象
 func (p proxyMapper) AsMapStr() common.MapStr {
 	now := time.Now().Unix()
-	ms := common.MapStr{
+	return common.MapStr{
 		"dataid":    p.pd.DataId,
 		"version":   p.pd.Version,
 		"data":      p.pd.Data,
@@ -41,9 +40,6 @@ func (p proxyMapper) AsMapStr() common.MapStr {
 		"time":      now,
 		"timestamp": now,
 	}
-
-	logger.Debugf("convert proxy data: %+v", ms)
-	return ms
 }
 
 var ProxyConverter EventConverter = proxyConverter{}

@@ -72,7 +72,6 @@ func (p promMapper) AsMapStr() common.MapStr {
 	if exemplar != nil {
 		ms["exemplar"] = exemplar
 	}
-	logger.Debugf("convert prometheus metrics: %+v", ms)
 	return ms
 }
 

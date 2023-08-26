@@ -106,11 +106,9 @@ processor:
 	}
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attr := span.Attributes()
-	v, ok := attr.Get("custom_tag.Accept")
-	assert.True(t, ok)
-	assert.Equal(t, "Application/json", v.StringVal())
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.Accept", "Application/json")
 }
 
 func TestAddAttrsActionWithInterface(t *testing.T) {
@@ -149,11 +147,9 @@ processor:
 
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attr := span.Attributes()
-	v, ok := attr.Get("custom_tag.language")
-	assert.True(t, ok)
-	assert.Equal(t, "ZH-TEST", v.StringVal())
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.language", "ZH-TEST")
 }
 
 func TestAddAttrsActionWithQueryParams(t *testing.T) {
@@ -193,9 +189,7 @@ processor:
 
 	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	span := record.Data.(ptrace.Traces).ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	attr := span.Attributes()
-	v, ok := attr.Get("custom_tag.from")
-	assert.True(t, ok)
-	assert.Equal(t, "TestFrom", v.StringVal())
+
+	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "custom_tag.from", "TestFrom")
 }

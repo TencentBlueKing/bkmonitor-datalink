@@ -97,11 +97,8 @@ processor:
 		_, err := factory.Process(record)
 		assert.NoError(t, err)
 
-		traces := record.Data.(ptrace.Traces)
-		span = traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		v, ok := span.Attributes().Get("db.is_slow")
-		assert.True(t, ok)
-		assert.Equal(t, int64(1), v.IntVal())
+		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow", 1)
 	})
 
 	t.Run("mysql normal query", func(t *testing.T) {
@@ -119,11 +116,8 @@ processor:
 		_, err := factory.Process(record)
 		assert.NoError(t, err)
 
-		traces := record.Data.(ptrace.Traces)
-		span = traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		v, ok := span.Attributes().Get("db.is_slow")
-		assert.True(t, ok)
-		assert.Equal(t, int64(0), v.IntVal())
+		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow", 0)
 	})
 }
 
@@ -166,11 +160,8 @@ processor:
 		_, err := factory.Process(record)
 		assert.NoError(t, err)
 
-		traces := record.Data.(ptrace.Traces)
-		span = traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		v, ok := span.Attributes().Get("db.is_slow_or_else_name")
-		assert.True(t, ok)
-		assert.Equal(t, int64(1), v.IntVal())
+		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsFoundIntVal(t, span.Attributes(), "db.is_slow_or_else_name", 1)
 	})
 
 	t.Run("not db system", func(t *testing.T) {
@@ -185,9 +176,7 @@ processor:
 		_, err := factory.Process(record)
 		assert.NoError(t, err)
 
-		traces := record.Data.(ptrace.Traces)
-		span = traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		_, ok := span.Attributes().Get("db.is_slow_or_else_name")
-		assert.False(t, ok)
+		span = testkits.FirstSpan(record.Data.(ptrace.Traces))
+		testkits.AssertAttrsNotFound(t, span.Attributes(), "db.is_slow_or_else_name")
 	})
 }

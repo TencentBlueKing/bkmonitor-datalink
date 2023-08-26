@@ -15,6 +15,7 @@ import (
 	"net"
 	"strings"
 
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"google.golang.org/grpc/peer"
 )
 
@@ -50,4 +51,11 @@ func FirstUpper(s, defaultVal string) string {
 		return defaultVal
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func CalcSpanDuration(span ptrace.Span) float64 {
+	if span.StartTimestamp() > span.EndTimestamp() {
+		return 0 // 特殊处理 避免出现超大值
+	}
+	return float64(span.EndTimestamp() - span.StartTimestamp())
 }

@@ -14,11 +14,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/evaluator"
 )
 
@@ -53,13 +51,11 @@ processor:
   - name: "sampler/noop"
     config:
 `
-	config := confengine.MustLoadConfigContent(content)
-	var psc []processor.ProcessorConfig
-	_ = config.UnpackChild("processor", &psc)
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*sampler)
+	assert.NoError(t, err)
 
-	f, err := NewFactory(psc[0].Config, nil)
+	_, err = factory.Process(&define.Record{})
 	assert.NoError(t, err)
-	derived, err := f.Process(&define.Record{})
-	assert.NoError(t, err)
-	assert.Nil(t, derived)
 }

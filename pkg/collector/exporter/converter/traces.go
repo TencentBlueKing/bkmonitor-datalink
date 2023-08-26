@@ -15,7 +15,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type tracesEvent struct {
@@ -31,7 +30,6 @@ var TracesConverter EventConverter = tracesConverter{}
 type tracesConverter struct{}
 
 func (c tracesConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
-	logger.Debugf("convert otlp data, dataid=%v, traces: %+v", dataId, data)
 	return tracesEvent{define.NewCommonEvent(token, dataId, data)}
 }
 

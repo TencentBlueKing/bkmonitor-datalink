@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 )
 
@@ -33,32 +34,23 @@ func TestDimensionFetcher(t *testing.T) {
 	})
 
 	pdTraces := g.Generate()
-	resourceSpansSlice := pdTraces.ResourceSpans()
 	resourceSpans := pdTraces.ResourceSpans().At(0)
 
 	assert.Equal(t, "res1", fetcher.FetchResource(resourceSpans, "r1"))
 	assert.Equal(t, map[string]string{"r2": "res2", "r3": "res3"}, fetcher.FetchResources(resourceSpans, "r2", "r3"))
 
-	for i := 0; i < resourceSpansSlice.Len(); i++ {
-		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
-		for j := 0; j < scopeSpansSlice.Len(); j++ {
-			spans := scopeSpansSlice.At(j).Spans()
-			for k := 0; k < spans.Len(); k++ {
-				span := spans.At(k)
+	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))
+		assert.Equal(t, "attr1", fetcher.FetchAttribute(span, "a1"))
 
-				assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))
-				assert.Equal(t, "attr1", fetcher.FetchAttribute(span, "a1"))
+		dimensions := make(map[string]string)
+		fetcher.FetchAttributes(span, dimensions, "a2", "a3")
+		assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dimensions)
 
-				dimensions := make(map[string]string)
-				fetcher.FetchAttributes(span, dimensions, "a2", "a3")
-				assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dimensions)
-
-				dimensions = make(map[string]string)
-				fetcher.FetchMethods(span, dimensions, "kind", "span_name", "trace_id", "span_id", "status.code", "not_exist")
-				assert.Len(t, dimensions, 6)
-			}
-		}
-	}
+		dimensions = make(map[string]string)
+		fetcher.FetchMethods(span, dimensions, "kind", "span_name", "trace_id", "span_id", "status.code", "not_exist")
+		assert.Len(t, dimensions, 6)
+	})
 }
 
 func TestDecodeDimensionFrom(t *testing.T) {

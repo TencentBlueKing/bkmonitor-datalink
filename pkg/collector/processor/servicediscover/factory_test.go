@@ -16,12 +16,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
 
 func TestFactory(t *testing.T) {
@@ -153,57 +152,38 @@ processor:
 }
 
 func TestTraceManualMatched(t *testing.T) {
-	rules := []*Rule{
-		{
-			Type:         "http",
-			Kind:         "SPAN_KIND_CLIENT",
-			Service:      "my-service",
-			MatchType:    "manual",
-			MatchKey:     "attributes.http.url",
-			PredicateKey: "attributes.http.method",
-			MatchConfig: MatchConfig{
-				Params: []RuleParam{
-					{
-						Name:     "version",
-						Operator: "eq",
-						Value:    "v1",
-					},
-					{
-						Name:     "user",
-						Operator: "nq",
-						Value:    "mando",
-					},
-				},
-				Path: RulePath{
-					Operator: "eq",
-					Value:    "/api/v1/users",
-				},
-			},
-			MatchGroups: []MatchGroup{
-				{
-					Source:      "service",
-					Destination: "peer.service",
-				},
-				{
-					Source:      "path",
-					Destination: "span_name",
-				},
-			},
-			mappings: map[string]string{
-				"service": "peer.service",
-			},
-		},
-	}
-	config := &Config{Rules: rules}
-	config.Setup()
-
-	ch := confengine.NewTierConfig()
-	ch.SetGlobal(NewConfigHandler(config))
-	sd := &serviceDiscover{
-		matcher: NewMatcher(),
-		fetcher: processor.NewSpanDimensionFetcher(),
-		configs: ch,
-	}
+	content := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "my-service"
+          type: "http"
+          match_type: "manual"
+          predicate_key: "attributes.http.method"
+          kind: "SPAN_KIND_CLIENT"
+          match_key: "attributes.http.url"
+          match_groups:
+            - source: service
+              destination: peer.service
+            - source: path
+              destination: span_name
+          rule:
+            params:
+              - name: version
+                operator: eq
+                value: v1
+              - name: user
+                operator: nq
+                value: mando
+            path:
+              operator: eq
+              value: /api/v1/users
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*serviceDiscover)
+	assert.NoError(t, err)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -221,65 +201,40 @@ func TestTraceManualMatched(t *testing.T) {
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err := sd.Process(record)
+	_, err = factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)
-	resourceSpansSlice := pdTraces.ResourceSpans()
-	for i := 0; i < resourceSpansSlice.Len(); i++ {
-		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
-		for j := 0; j < scopeSpansSlice.Len(); j++ {
-			spans := scopeSpansSlice.At(j).Spans()
-			for k := 0; k < spans.Len(); k++ {
-				span := spans.At(k)
-				val, ok := span.Attributes().Get("peer.service")
-				assert.True(t, ok)
-				assert.Equal(t, "my-service", val.AsString())
-				assert.Equal(t, "/api/v1/users", span.Name())
-			}
-		}
-	}
+	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "my-service")
+		assert.Equal(t, "/api/v1/users", span.Name())
+	})
 }
 
 func TestTracesAutoMatched(t *testing.T) {
-	rules := []*Rule{
-		{
-			Type:         "http",
-			Kind:         "SPAN_KIND_CLIENT",
-			Service:      "None",
-			MatchType:    "auto",
-			MatchKey:     "attributes.http.url",
-			PredicateKey: "attributes.http.method",
-			MatchConfig: MatchConfig{
-				Regex: `https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+`,
-			},
-			MatchGroups: []MatchGroup{
-				{
-					Source:      "peer_service",
-					Destination: "peer.service",
-				},
-				{
-					Source:      "span_name",
-					Destination: "span_name",
-				},
-			},
-			mappings: map[string]string{
-				"peer_service": "peer.service",
-				"span_name":    "span_name",
-			},
-			re: regexp.MustCompile(`https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+`),
-		},
-	}
-	config := &Config{Rules: rules}
-	config.Setup()
-
-	ch := confengine.NewTierConfig()
-	ch.SetGlobal(NewConfigHandler(config))
-	sd := &serviceDiscover{
-		matcher: NewMatcher(),
-		fetcher: processor.NewSpanDimensionFetcher(),
-		configs: ch,
-	}
+	content := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "None"
+          type: "http"
+          match_type: "auto"
+          predicate_key: "attributes.http.method"
+          kind: "SPAN_KIND_CLIENT"
+          match_key: "attributes.http.url"
+          match_groups:
+            - source: peer_service
+              destination: peer.service
+            - source: span_name
+              destination: span_name
+          rule:
+            regex: https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*serviceDiscover)
+	assert.NoError(t, err)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -297,60 +252,38 @@ func TestTracesAutoMatched(t *testing.T) {
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err := sd.Process(record)
+	_, err = factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)
-	resourceSpansSlice := pdTraces.ResourceSpans()
-	for i := 0; i < resourceSpansSlice.Len(); i++ {
-		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
-		for j := 0; j < scopeSpansSlice.Len(); j++ {
-			spans := scopeSpansSlice.At(j).Spans()
-			for k := 0; k < spans.Len(); k++ {
-				span := spans.At(k)
-				val, ok := span.Attributes().Get("peer.service")
-				assert.True(t, ok)
-				assert.Equal(t, "doc.weixin.qq.com", val.AsString())
-				assert.Equal(t, "api", span.Name())
-			}
-		}
-	}
+	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+		assert.Equal(t, "api", span.Name())
+	})
 }
 
 func TestTracesAutoMatchedWithoutSpanName(t *testing.T) {
-	rules := []*Rule{
-		{
-			Type:         "http",
-			Kind:         "SPAN_KIND_CLIENT",
-			Service:      "None",
-			MatchType:    "auto",
-			MatchKey:     "attributes.http.url",
-			PredicateKey: "attributes.http.method",
-			MatchConfig: MatchConfig{
-				Regex: `https://(?P<peer_service>[^/]+)/`,
-			},
-			MatchGroups: []MatchGroup{
-				{
-					Source:      "peer_service",
-					Destination: "peer.service",
-				},
-			},
-			mappings: map[string]string{
-				"peer_service": "peer.service",
-			},
-			re: regexp.MustCompile(`https://(?P<peer_service>[^/]+)/.+`),
-		},
-	}
-	config := &Config{Rules: rules}
-	config.Setup()
-
-	ch := confengine.NewTierConfig()
-	ch.SetGlobal(NewConfigHandler(config))
-	sd := &serviceDiscover{
-		matcher: NewMatcher(),
-		fetcher: processor.NewSpanDimensionFetcher(),
-		configs: ch,
-	}
+	content := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "None"
+          type: "http"
+          match_type: "auto"
+          predicate_key: "attributes.http.method"
+          kind: "SPAN_KIND_CLIENT"
+          match_key: "attributes.http.url"
+          match_groups:
+            - source: "peer_service"
+              destination: "peer.service"
+          rule:
+            regex: https://(?P<peer_service>[^/]+)/
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*serviceDiscover)
+	assert.NoError(t, err)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -368,21 +301,11 @@ func TestTracesAutoMatchedWithoutSpanName(t *testing.T) {
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err := sd.Process(record)
+	_, err = factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)
-	resourceSpansSlice := pdTraces.ResourceSpans()
-	for i := 0; i < resourceSpansSlice.Len(); i++ {
-		scopeSpansSlice := resourceSpansSlice.At(i).ScopeSpans()
-		for j := 0; j < scopeSpansSlice.Len(); j++ {
-			spans := scopeSpansSlice.At(j).Spans()
-			for k := 0; k < spans.Len(); k++ {
-				span := spans.At(k)
-				val, ok := span.Attributes().Get("peer.service")
-				assert.True(t, ok)
-				assert.Equal(t, "doc.weixin.qq.com", val.AsString())
-			}
-		}
-	}
+	foreach.Spans(pdTraces.ResourceSpans(), func(span ptrace.Span) {
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+	})
 }

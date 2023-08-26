@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
@@ -64,14 +63,27 @@ func TestMetricsNoAction(t *testing.T) {
 		Data:       data,
 	}
 
-	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
-	assert.True(t, metrics.Len() == 1)
+	metrics := record.Data.(pmetric.Metrics)
+	assert.Equal(t, 1, metrics.ResourceMetrics().Len())
 
-	name := metrics.At(0).ScopeMetrics().At(0).Metrics().At(0).Name()
+	name := testkits.FirstMetric(metrics).Name()
 	assert.Equal(t, "my_metrics", name)
 }
 
 func TestMetricsDropAction(t *testing.T) {
+	content := `
+processor:
+   - name: "metrics_filter/drop"
+     config:
+       drop:
+         metrics:
+           - "my_metrics"
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*metricsFilter)
+	assert.NoError(t, err)
+
 	g := makeMetricsGenerator(1)
 	data := g.Generate()
 	record := define.Record{
@@ -79,23 +91,27 @@ func TestMetricsDropAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Drop: DropAction{
-			Metrics: []string{
-				"my_metrics",
-			},
-		},
-	})
-	filter := &metricsFilter{configs: configs}
-
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
+
 	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
-	assert.True(t, metrics.Len() == 0)
+	assert.Equal(t, 0, metrics.Len())
 }
 
 func TestMetricsReplaceAction(t *testing.T) {
+	content := `
+processor:
+   - name: "metrics_filter/replace"
+     config:
+       replace:
+         - source: my_metrics
+           destination: my_metrics_replace
+`
+	psc := testkits.MustLoadProcessorConfigs(content)
+	obj, err := NewFactory(psc[0].Config, nil)
+	factory := obj.(*metricsFilter)
+	assert.NoError(t, err)
+
 	g := makeMetricsGenerator(1)
 	data := g.Generate()
 	record := define.Record{
@@ -103,22 +119,12 @@ func TestMetricsReplaceAction(t *testing.T) {
 		Data:       data,
 	}
 
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(Config{
-		Replace: []ReplaceAction{
-			{
-				Source:      "my_metrics",
-				Destination: "my_metrics_replace",
-			},
-		},
-	})
-	filter := &metricsFilter{configs: configs}
-
-	_, err := filter.Process(&record)
+	_, err = factory.Process(&record)
 	assert.NoError(t, err)
-	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
-	assert.True(t, metrics.Len() == 1)
 
-	name := metrics.At(0).ScopeMetrics().At(0).Metrics().At(0).Name()
+	metrics := record.Data.(pmetric.Metrics)
+	assert.Equal(t, 1, metrics.ResourceMetrics().Len())
+
+	name := testkits.FirstMetric(metrics).Name()
 	assert.Equal(t, "my_metrics_replace", name)
 }

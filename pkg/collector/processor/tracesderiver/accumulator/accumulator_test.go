@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -192,11 +193,10 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 	metrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, count, metrics.DataPointCount())
 
-	metricSlice := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
-	firstVal := metricSlice.At(0).Gauge().DataPoints().At(0).DoubleVal()
-	assert.Equal(t, value, firstVal)
+	dp := testkits.FirstGaugeDataPoint(metrics)
+	assert.Equal(t, value, dp.DoubleVal())
 
-	name := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Name()
+	name := testkits.FirstMetric(metrics).Name()
 	assert.Equal(t, "bk_apm_metric", name)
 	accumulator.Stop()
 }
@@ -255,7 +255,7 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	assert.Equal(t, 1, metrics.MetricCount())
 	assert.Equal(t, 1, metrics.DataPointCount())
 
-	val := metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0).Gauge().DataPoints().At(0).DoubleVal()
+	val := testkits.FirstGaugeDataPoint(metrics).DoubleVal()
 	assert.Equal(t, float64(10), val)
 	accumulator.Stop()
 }

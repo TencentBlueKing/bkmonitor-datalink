@@ -96,11 +96,6 @@ func (p tokenChecker) Process(record *define.Record) (*define.Record, error) {
 }
 
 func (p tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
-	pdTraces, ok := record.Data.(ptrace.Traces)
-	if !ok {
-		return define.ErrUnknownRecordType
-	}
-
 	var err error
 	if decoder.Skip() {
 		record.Token, err = decoder.Decode("")
@@ -108,6 +103,7 @@ func (p tokenChecker) processTraces(decoder TokenDecoder, config Config, record 
 	}
 
 	var errs []error
+	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
 		v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
 		if !ok {
@@ -134,11 +130,6 @@ func (p tokenChecker) processTraces(decoder TokenDecoder, config Config, record 
 }
 
 func (p tokenChecker) processMetrics(decoder TokenDecoder, config Config, record *define.Record) error {
-	pdMetrics, ok := record.Data.(pmetric.Metrics)
-	if !ok {
-		return define.ErrUnknownRecordType
-	}
-
 	var err error
 	if decoder.Skip() {
 		record.Token, err = decoder.Decode("")
@@ -146,6 +137,7 @@ func (p tokenChecker) processMetrics(decoder TokenDecoder, config Config, record
 	}
 
 	var errs []error
+	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
 		v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
 		if !ok {
@@ -172,17 +164,13 @@ func (p tokenChecker) processMetrics(decoder TokenDecoder, config Config, record
 }
 
 func (p tokenChecker) processLogs(decoder TokenDecoder, config Config, record *define.Record) error {
-	pdLogs, ok := record.Data.(plog.Logs)
-	if !ok {
-		return define.ErrUnknownRecordType
-	}
-
 	var err error
 	if decoder.Skip() {
 		record.Token, err = decoder.Decode("")
 		return err
 	}
 
+	pdLogs := record.Data.(plog.Logs)
 	var errs []error
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
 		v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)

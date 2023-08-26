@@ -31,7 +31,6 @@ var LogsConverter EventConverter = logsConverter{}
 type logsConverter struct{}
 
 func (c logsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
-	logger.Debugf("convert otlp data, dataid=%v, logs: %+v", dataId, data)
 	return logsEvent{define.NewCommonEvent(token, dataId, data)}
 }
 

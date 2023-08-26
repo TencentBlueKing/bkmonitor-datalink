@@ -35,7 +35,6 @@ var MetricsConverter EventConverter = metricsConverter{}
 type metricsConverter struct{}
 
 func (c metricsConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
-	logger.Debugf("convert otlp data, dataid=%v, metrics: %+v", dataId, data)
 	return metricsEvent{define.NewCommonEvent(token, dataId, data)}
 }
 

@@ -145,17 +145,17 @@ func (p attributeFilter) asStringAction(record *define.Record, config Config) {
 					rsAttrs.UpsertString(key, v.AsString())
 				}
 
-				attributes := span.Attributes()
-				if v, ok := attributes.Get(key); ok {
-					attributes.UpsertString(key, v.AsString())
+				attrs := span.Attributes()
+				if v, ok := attrs.Get(key); ok {
+					attrs.UpsertString(key, v.AsString())
 				}
 			}
 		})
 	}
 }
 
-func processAsIntAction(attributes pcommon.Map, key string) {
-	v, ok := attributes.Get(key)
+func processAsIntAction(attrs pcommon.Map, key string) {
+	v, ok := attrs.Get(key)
 	if !ok {
 		return
 	}
@@ -165,7 +165,7 @@ func processAsIntAction(attributes pcommon.Map, key string) {
 		logger.Debugf("parse attribute key '%s' as int failed, error: %s", key, err)
 		return
 	}
-	attributes.UpsertInt(key, i)
+	attrs.UpsertInt(key, i)
 }
 
 func (p attributeFilter) asIntAction(record *define.Record, config Config) {
@@ -188,21 +188,22 @@ func (p attributeFilter) assembleAction(record *define.Record, config Config) {
 		resourceSpansSlice := pdTraces.ResourceSpans()
 		foreach.Spans(resourceSpansSlice, func(span ptrace.Span) {
 			for _, action := range config.Assemble {
-				if !processAssembleAction(span, action) {
-					if _, ok := span.Attributes().Get(action.Destination); !ok {
-						key := action.DefaultFrom
-						// 判定常量情况直接插入
-						if strings.HasPrefix(key, define.ConstKeyPrefix) {
-							span.Attributes().UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
-							continue
-						}
-						// 匹配到 span_name 插入 span.Name(), 否则直接跳过
-						switch key {
-						case "span_name":
-							span.Attributes().UpsertString(action.Destination, span.Name())
-						default:
-							continue
-						}
+				if processAssembleAction(span, action) {
+					continue
+				}
+
+				attrs := span.Attributes()
+				if _, ok := attrs.Get(action.Destination); !ok {
+					key := action.DefaultFrom
+					// 判定常量情况直接插入
+					if strings.HasPrefix(key, define.ConstKeyPrefix) {
+						attrs.UpsertString(action.Destination, key[len(define.ConstKeyPrefix):])
+						continue
+					}
+					// 匹配到 span_name 插入 span.Name(), 否则直接跳过
+					switch key {
+					case "span_name":
+						attrs.UpsertString(action.Destination, span.Name())
 					}
 				}
 			}

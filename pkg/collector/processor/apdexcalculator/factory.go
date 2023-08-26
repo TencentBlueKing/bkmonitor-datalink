@@ -12,11 +12,13 @@ package apdexcalculator
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/foreach"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -91,9 +93,52 @@ func (p apdexCalculator) Process(record *define.Record) (*define.Record, error) 
 	case define.RecordMetrics:
 		p.processMetrics(record)
 		return record, nil
+	case define.RecordTraces:
+		p.processTraces(record)
 	}
 
 	return nil, nil
+}
+
+func (p apdexCalculator) processTraces(record *define.Record) {
+	pdTraces := record.Data.(ptrace.Traces)
+	foreach.SpansWithResourceAttrs(pdTraces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
+		var service, instance string
+		if v, ok := rsAttrs.Get(processor.KeyInstance); ok {
+			instance = v.AsString()
+		}
+
+		attrs := span.Attributes()
+		if v, ok := attrs.Get(processor.KeyService); ok {
+			service = v.AsString()
+		}
+
+		config := p.configs.Get(record.Token.Original, service, instance).(*Config)
+		var kind string
+		if v, ok := attrs.Get(processor.KeyKind); ok {
+			kind = SpanKindMap[v.StringVal()]
+		}
+
+		predicateKeys := config.GetPredicateKeys(kind)
+		var foundPk string
+		for _, pk := range predicateKeys {
+			// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
+			if p.findMetricsAttributes(pk, attrs) {
+				foundPk = pk
+				break
+			}
+		}
+
+		rule, found := config.Rule(kind, foundPk)
+		if !found {
+			logger.Debugf("no rules found, kind=%v, pk=%v", kind, foundPk)
+			return
+		}
+
+		calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
+		status := calculator.Calc(utils.CalcSpanDuration(span), rule.ApdexT)
+		attrs.UpsertString(rule.Destination, status)
+	})
 }
 
 func (p apdexCalculator) processMetrics(record *define.Record) {
@@ -105,19 +150,19 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
-				dpAttrs := dp.Attributes()
+				attrs := dp.Attributes()
 
 				var service, instance string
-				if v, ok := dpAttrs.Get(processor.KeyService); ok {
+				if v, ok := attrs.Get(processor.KeyService); ok {
 					service = v.AsString()
 				}
-				if v, ok := dpAttrs.Get(processor.KeyInstance); ok {
+				if v, ok := attrs.Get(processor.KeyInstance); ok {
 					instance = v.AsString()
 				}
 
 				config := p.configs.Get(record.Token.Original, service, instance).(*Config)
 				var kind string
-				if v, ok := dpAttrs.Get(processor.KeyKind); ok {
+				if v, ok := attrs.Get(processor.KeyKind); ok {
 					kind = SpanKindMap[v.StringVal()]
 				}
 
@@ -125,7 +170,7 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 				var foundPk string
 				for _, pk := range predicateKeys {
 					// TODO(mando): 目前 predicateKey 暂时只支持 attributes 后续可能会扩展
-					if p.findMetricsAttributes(pk, dpAttrs) {
+					if p.findMetricsAttributes(pk, attrs) {
 						foundPk = pk
 						break
 					}
@@ -139,7 +184,7 @@ func (p apdexCalculator) processMetrics(record *define.Record) {
 
 				calculator := p.calculators.Get(record.Token.Original, service, instance).(Calculator)
 				status := calculator.Calc(dp.DoubleVal(), rule.ApdexT)
-				dpAttrs.UpsertString(rule.Destination, status)
+				attrs.UpsertString(rule.Destination, status)
 			}
 		}
 	})

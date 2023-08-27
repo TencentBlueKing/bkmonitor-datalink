@@ -54,13 +54,9 @@ processor:
       qps: 5
       burst: 10
 `
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*rateLimiter)
-	assert.NoError(t, err)
-
-	_, err = factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
+	_, err := factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
 	assert.NoError(t, err)
 }
 
@@ -72,11 +68,8 @@ processor:
       type: token_bucket
       qps: -1
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*rateLimiter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
-	_, err = factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
+	_, err := factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
 	assert.Error(t, err)
 }

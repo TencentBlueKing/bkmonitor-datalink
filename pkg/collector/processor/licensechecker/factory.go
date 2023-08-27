@@ -14,7 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -117,7 +117,7 @@ func (p licenseChecker) processTraces(record *define.Record) (*define.Record, er
 
 	// 单次 traces 数据都是同一个 AttributeServiceInstanceID
 	attrs := pdTraces.ResourceSpans().At(0).Resource().Attributes()
-	val, ok := attrs.Get(conventions.AttributeServiceInstanceID)
+	val, ok := attrs.Get(semconv.AttributeServiceInstanceID)
 	if !ok {
 		return nil, errors.New("service.instance.id attribute not found")
 	}

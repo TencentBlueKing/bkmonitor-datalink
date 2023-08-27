@@ -19,9 +19,8 @@ func TestLoadConfigPath(t *testing.T) {
 	config, err := LoadConfigPath("../example/example.yml")
 	assert.NoError(t, err)
 
-	m := make(map[string]interface{})
-	assert.NoError(t, config.Unpack(m))
-	t.Log("load config path:", m)
+	conf := make(map[string]interface{})
+	assert.NoError(t, config.Unpack(conf))
 }
 
 func TestLoadConfigPattern(t *testing.T) {
@@ -65,7 +64,6 @@ func TestLoadPlatformConfigs(t *testing.T) {
 	config := LoadPlatformConfigs([]string{"../example/fixtures/platform.yml"})
 	assert.NotNil(t, config)
 
-	m := make(map[string]interface{})
-	assert.NoError(t, config.Unpack(m))
-	t.Log("load platform config:", m)
+	conf := make(map[string]interface{})
+	assert.NoError(t, config.Unpack(conf))
 }

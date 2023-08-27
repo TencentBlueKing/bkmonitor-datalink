@@ -37,7 +37,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
@@ -68,22 +68,22 @@ var rewriteIps = map[string]struct{}{
 
 var otSpanTagsMapping = map[string]string{
 	// HTTP
-	"url":         conventions.AttributeHTTPURL,
-	"status_code": conventions.AttributeHTTPStatusCode,
+	"url":         semconv.AttributeHTTPURL,
+	"status_code": semconv.AttributeHTTPStatusCode,
 
 	// DB
-	"db.instance": conventions.AttributeDBName,
-	"db.type":     conventions.AttributeDBSystem,
+	"db.instance": semconv.AttributeDBName,
+	"db.type":     semconv.AttributeDBSystem,
 
 	// MQ
-	"mq.broker": conventions.AttributeNetPeerName,
-	"mq.topic":  conventions.AttributeMessagingDestinationKindTopic,
+	"mq.broker": semconv.AttributeNetPeerName,
+	"mq.topic":  semconv.AttributeMessagingDestinationKindTopic,
 }
 
 var otSpanEventsMapping = map[string]string{
-	"error.kind": conventions.AttributeExceptionType,
-	"message":    conventions.AttributeExceptionMessage,
-	"stack":      conventions.AttributeExceptionStacktrace,
+	"error.kind": semconv.AttributeExceptionType,
+	"message":    semconv.AttributeExceptionMessage,
+	"stack":      semconv.AttributeExceptionStacktrace,
 }
 
 func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[string]string) ptrace.Traces {
@@ -96,8 +96,8 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 
 	resourceSpan := traceData.ResourceSpans().AppendEmpty()
 	rsAttrs := resourceSpan.Resource().Attributes()
-	rsAttrs.InsertString(conventions.AttributeServiceName, segment.GetService())
-	rsAttrs.InsertString(conventions.AttributeServiceInstanceID, segment.GetServiceInstance())
+	rsAttrs.InsertString(semconv.AttributeServiceName, segment.GetService())
+	rsAttrs.InsertString(semconv.AttributeServiceInstanceID, segment.GetServiceInstance())
 	rsAttrs.InsertString(attributeSkywalkingTraceID, segment.GetTraceId())
 	rsAttrs.InsertString(attributeDataToken, token)
 
@@ -112,7 +112,7 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 	serviceInstanceId := segment.GetServiceInstance()
 	foreach.Spans(traceData.ResourceSpans(), func(span ptrace.Span) {
 		attrs := span.Attributes()
-		v, ok := attrs.Get(conventions.AttributeNetHostIP)
+		v, ok := attrs.Get(semconv.AttributeNetHostIP)
 		if !ok {
 			swTransformIP(serviceInstanceId, attrs)
 		} else {
@@ -132,7 +132,7 @@ func swTransformIP(instanceId string, attrs pcommon.Map) {
 	s := strings.Split(instanceId, "@")
 	// 如果裁剪出则插入字段，否则不做任何操作
 	if len(s) >= 2 {
-		attrs.UpsertString(conventions.AttributeNetHostIP, s[1])
+		attrs.UpsertString(semconv.AttributeNetHostIP, s[1])
 	}
 }
 
@@ -230,10 +230,10 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		// - java: GET:/api/leader/list/
 		// - python: /api/leader/list/
 		if spanType == agentv3.SpanType_Entry {
-			if _, ok := dest.Get(conventions.AttributeHTTPRoute); !ok {
+			if _, ok := dest.Get(semconv.AttributeHTTPRoute); !ok {
 				if opName := span.GetOperationName(); opName != "" {
-					opNameSplit := strings.Split(opName, ":")
-					dest.UpsertString(conventions.AttributeHTTPRoute, opNameSplit[len(opNameSplit)-1])
+					routes := strings.Split(opName, ":")
+					dest.UpsertString(semconv.AttributeHTTPRoute, routes[len(routes)-1])
 				}
 			}
 
@@ -242,12 +242,12 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 			// 2) 尝试获取 refs[0]的 parent.service.name 进行插入
 			// 3) 使用 unknownVal 作为兜底值
 			if refs := span.Refs; len(refs) > 0 && refs[0].ParentService != "" {
-				dest.InsertString(conventions.AttributeNetPeerName, refs[0].ParentService)
+				dest.InsertString(semconv.AttributeNetPeerName, refs[0].ParentService)
 			} else {
 				if peerName != "" {
-					dest.InsertString(conventions.AttributeNetPeerName, peerName)
+					dest.InsertString(semconv.AttributeNetPeerName, peerName)
 				} else {
-					dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+					dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
 				}
 			}
 		}
@@ -255,43 +255,41 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		// http-client 的情况下
 		if spanType == agentv3.SpanType_Exit {
 			if peerName != "" {
-				dest.InsertString(conventions.AttributeNetPeerName, peerName)
+				dest.InsertString(semconv.AttributeNetPeerName, peerName)
 			} else {
-				dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+				dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
 			}
 		}
 
 		// 获取 urlObj
 		var urlObj *url.URL
-		if u, ok := dest.Get(conventions.AttributeHTTPURL); ok {
-			if u.StringVal() != "" {
-				if v, err := url.Parse(u.StringVal()); err == nil {
-					urlObj = v
-				}
+		if u, ok := dest.Get(semconv.AttributeHTTPURL); ok && u.StringVal() != "" {
+			if v, err := url.Parse(u.StringVal()); err == nil {
+				urlObj = v
 			}
 		}
 
 		if urlObj != nil {
 			// attributes.http.scheme
-			if _, ok := dest.Get(conventions.AttributeHTTPScheme); !ok {
-				dest.InsertString(conventions.AttributeHTTPScheme, urlObj.Scheme)
+			if _, ok := dest.Get(semconv.AttributeHTTPScheme); !ok {
+				dest.InsertString(semconv.AttributeHTTPScheme, urlObj.Scheme)
 			}
 			// attribute.http.target / attribute.http.host
 			if spanType == agentv3.SpanType_Exit {
-				if _, ok := dest.Get(conventions.AttributeHTTPTarget); !ok {
-					dest.InsertString(conventions.AttributeHTTPTarget, urlObj.Path)
+				if _, ok := dest.Get(semconv.AttributeHTTPTarget); !ok {
+					dest.InsertString(semconv.AttributeHTTPTarget, urlObj.Path)
 				}
-				if _, ok := dest.Get(conventions.AttributeHTTPHost); !ok {
-					dest.InsertString(conventions.AttributeHTTPHost, urlObj.Host)
+				if _, ok := dest.Get(semconv.AttributeHTTPHost); !ok {
+					dest.InsertString(semconv.AttributeHTTPHost, urlObj.Host)
 				}
 			}
 		}
 
 	case agentv3.SpanLayer_RPCFramework:
 		// attributes.rpc.method
-		if _, ok := dest.Get(conventions.AttributeRPCMethod); !ok {
+		if _, ok := dest.Get(semconv.AttributeRPCMethod); !ok {
 			if rpcMethod := span.GetOperationName(); rpcMethod != "" {
-				dest.UpsertString(conventions.AttributeRPCMethod, rpcMethod)
+				dest.UpsertString(semconv.AttributeRPCMethod, rpcMethod)
 			}
 		}
 
@@ -299,54 +297,54 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 		// attributes.db.system: spanOperationName 样例 Mysql/MysqlClient/execute
 		if span.SpanLayer == agentv3.SpanLayer_Database {
 			if opName := span.GetOperationName(); opName != "" {
-				opNameSplit := strings.Split(opName, "/")
-				dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
+				dbs := strings.Split(opName, "/")
+				dest.UpsertString(semconv.AttributeDBSystem, utils.FirstUpper(dbs[0], unknownVal))
 			}
 		} else {
 			// 对于 Cache 类型尝试进行首字母大写转化工作
-			if v, ok := dest.Get(conventions.AttributeDBSystem); ok {
-				dest.UpsertString(conventions.AttributeDBSystem, utils.FirstUpper(v.StringVal(), unknownVal))
+			if v, ok := dest.Get(semconv.AttributeDBSystem); ok {
+				dest.UpsertString(semconv.AttributeDBSystem, utils.FirstUpper(v.StringVal(), unknownVal))
 			}
 		}
 		// attributes.db.operation
-		if _, ok := dest.Get(conventions.AttributeDBOperation); !ok {
-			if v, ok := dest.Get(conventions.AttributeDBStatement); ok && v.StringVal() != "" {
-				statementSplit := strings.Split(v.StringVal(), " ")
-				dest.InsertString(conventions.AttributeDBOperation, statementSplit[0])
+		if _, ok := dest.Get(semconv.AttributeDBOperation); !ok {
+			if v, ok := dest.Get(semconv.AttributeDBStatement); ok && v.StringVal() != "" {
+				ops := strings.Split(v.StringVal(), " ")
+				dest.InsertString(semconv.AttributeDBOperation, ops[0])
 			} else {
 				// spanOperationName 样例 Mysql/JDBI/Connection/commit
 				if opName := span.GetOperationName(); opName != "" {
-					opNameSplit := strings.Split(opName, "/")
-					dest.InsertString(conventions.AttributeDBOperation, opNameSplit[len(opNameSplit)-1])
+					ops := strings.Split(opName, "/")
+					dest.InsertString(semconv.AttributeDBOperation, ops[len(ops)-1])
 				}
 			}
 		}
 
 		if peerName != "" {
-			dest.InsertString(conventions.AttributeNetPeerName, peerName)
+			dest.InsertString(semconv.AttributeNetPeerName, peerName)
 		} else {
-			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+			dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
 		}
 
 	case agentv3.SpanLayer_MQ:
 		// attributes.messaging.system
 		if opName := span.GetOperationName(); opName != "" {
-			opNameSplit := strings.Split(opName, "/")
-			dest.UpsertString(conventions.AttributeMessagingSystem, utils.FirstUpper(opNameSplit[0], unknownVal))
+			dbs := strings.Split(opName, "/")
+			dest.UpsertString(semconv.AttributeMessagingSystem, utils.FirstUpper(dbs[0], unknownVal))
 		}
 
 		if peerName != "" {
-			dest.InsertString(conventions.AttributeNetPeerName, peerName)
+			dest.InsertString(semconv.AttributeNetPeerName, peerName)
 		} else {
-			dest.InsertString(conventions.AttributeNetPeerName, unknownVal)
+			dest.InsertString(semconv.AttributeNetPeerName, unknownVal)
 		}
 	}
 
 	if span.GetSpanType() == agentv3.SpanType_Entry && len(span.Refs) > 0 {
-		netWorkAddrSplit := strings.Split(span.Refs[0].NetworkAddressUsedAtPeer, ";")
-		hosts := make([]string, 0)
-		port := 0
-		for _, addr := range netWorkAddrSplit {
+		var hosts []string
+		var port int
+		addrs := strings.Split(span.Refs[0].NetworkAddressUsedAtPeer, ";")
+		for _, addr := range addrs {
 			h, p, err := net.SplitHostPort(addr)
 			if err != nil {
 				continue
@@ -358,8 +356,8 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 				}
 			}
 		}
-		dest.UpsertString(conventions.AttributeNetHostIP, strings.Join(hosts, ","))
-		dest.UpsertInt(conventions.AttributeNetHostPort, int64(port))
+		dest.UpsertString(semconv.AttributeNetHostIP, strings.Join(hosts, ","))
+		dest.UpsertInt(semconv.AttributeNetHostPort, int64(port))
 	}
 }
 

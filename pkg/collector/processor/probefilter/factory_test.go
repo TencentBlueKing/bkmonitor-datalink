@@ -87,10 +87,7 @@ processor:
                     value: "account"
                     type: "service"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*probeFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	m := map[string]string{
 		"http.headers":   "Accept=[Application/json]",
@@ -98,13 +95,11 @@ processor:
 		"sw8.span_layer": "Http",
 	}
 	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-	data := g.Generate()
-
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       data,
+		Data:       g.Generate(),
 	}
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
@@ -128,10 +123,7 @@ processor:
                     value: "TestApiName"
                     type: "interface"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*probeFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	m := map[string]string{
 		"http.headers":   "Cookie=[language=ZH-TEST]",
@@ -139,13 +131,12 @@ processor:
 		"api_name":       "TestApiName",
 	}
 	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       data,
+		Data:       g.Generate(),
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
@@ -169,10 +160,7 @@ processor:
                     value: "TestApiName"
                     type: "interface"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*probeFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	m := map[string]string{
 		"http.params":    "from=[TestFrom] to=[TestTo]",
@@ -181,13 +169,12 @@ processor:
 	}
 
 	g := makeTracesAttributesGenerator(int(ptrace.SpanKindUnspecified), m)
-	data := g.Generate()
 	record := define.Record{
 		RecordType: define.RecordTraces,
-		Data:       data,
+		Data:       g.Generate(),
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))

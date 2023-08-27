@@ -51,11 +51,8 @@ processor:
   - name: "sampler/noop"
     config:
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*sampler)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
-	_, err = factory.Process(&define.Record{})
+	_, err := factory.Process(&define.Record{})
 	assert.NoError(t, err)
 }

@@ -50,20 +50,6 @@ processor:
 	assert.True(t, factory.IsPreCheck())
 }
 
-func makeLicenseChecker(content string) *licenseChecker {
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	if err != nil {
-		panic(err)
-	}
-	return obj.(*licenseChecker)
-}
-
-func loadConfig(content string) Config {
-	lc := makeLicenseChecker(content)
-	return lc.config.GetByToken("").(Config)
-}
-
 func TestLicenseCheckerProcess(t *testing.T) {
 	content := `
 processor:
@@ -75,7 +61,9 @@ processor:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 `
-	processor := makeLicenseChecker(content)
+
+	factory := testkits.MustCreateFactory(content, NewFactory)
+
 	t.Run("Success", func(t *testing.T) {
 		g := generator.NewTracesGenerator(define.TracesOptions{
 			GeneratorOptions: define.GeneratorOptions{
@@ -92,7 +80,7 @@ processor:
 				RecordType:  define.RecordTraces,
 				Data:        g.Generate(),
 			}
-			_, err := processor.Process(r)
+			_, err := factory.Process(r)
 			assert.NoError(t, err)
 		}
 	})
@@ -106,7 +94,7 @@ processor:
 			RecordType:  define.RecordTraces,
 			Data:        g.Generate(),
 		}
-		_, err := processor.Process(r)
+		_, err := factory.Process(r)
 		assert.Equal(t, "service.instance.id attribute not found", err.Error())
 	})
 
@@ -116,7 +104,7 @@ processor:
 			RecordType:  define.RecordTraces,
 			Data:        ptrace.NewTraces(),
 		}
-		_, err := processor.Process(r)
+		_, err := factory.Process(r)
 		assert.Equal(t, define.ErrSkipEmptyRecord, err)
 	})
 }
@@ -139,49 +127,52 @@ func TestAgentNodeStatusProcess(t *testing.T) {
 }
 
 func TestCheckLicenseStatus(t *testing.T) {
-	t.Run("statusLicenseAccess", func(t *testing.T) {
+	t.Run("Access", func(t *testing.T) {
 		content := `
 processor:
-    - name: "license_checker/common"
-      config:
-        enabled: true
-        expire_time: 4084531651
-        tolerable_expire: 24h
-        number_nodes: 200
-        tolerable_num_ratio: 1.5
+  - name: "license_checker/common"
+    config:
+      enabled: true
+      expire_time: 4084531651
+      tolerable_expire: 24h
+      number_nodes: 200
+      tolerable_num_ratio: 1.5
 `
-		status := checkLicenseStatus(loadConfig(content))
-		assert.Equal(t, statusLicenseAccess, status)
+		factory := testkits.MustCreateFactory(content, NewFactory)
+		config := factory.(*licenseChecker).config.Get("", "", "").(Config)
+		assert.Equal(t, statusLicenseAccess, checkLicenseStatus(config))
 	})
 
-	t.Run("statusLicenseTolerable", func(t *testing.T) {
+	t.Run("Tolerable", func(t *testing.T) {
 		content := `
 processor:
-   - name: "license_checker/common"
-     config:
-       enabled: true
-       expire_time: 1686134440
-       tolerable_expire: 2400000h
-       number_nodes: 200
-       tolerable_num_ratio: 1.5
+  - name: "license_checker/common"
+    config:
+      enabled: true
+      expire_time: 1686134440
+      tolerable_expire: 2400000h
+      number_nodes: 200
+      tolerable_num_ratio: 1.5
 `
-		status := checkLicenseStatus(loadConfig(content))
-		assert.Equal(t, statusLicenseTolerable, status)
+		factory := testkits.MustCreateFactory(content, NewFactory)
+		config := factory.(*licenseChecker).config.Get("", "", "").(Config)
+		assert.Equal(t, statusLicenseTolerable, checkLicenseStatus(config))
 	})
 
-	t.Run("statusLicenseExpire", func(t *testing.T) {
+	t.Run("Expire", func(t *testing.T) {
 		content := `
 processor:
-   - name: "license_checker/common"
-     config:
-       enabled: true
-       expire_time: 1683542440
-       tolerable_expire: 24h
-       number_nodes: 200
-       tolerable_num_ratio: 1.5
+  - name: "license_checker/common"
+    config:
+      enabled: true
+      expire_time: 1683542440
+      tolerable_expire: 24h
+      number_nodes: 200
+      tolerable_num_ratio: 1.5
 `
-		status := checkLicenseStatus(loadConfig(content))
-		assert.Equal(t, statusLicenseExpire, status)
+		factory := testkits.MustCreateFactory(content, NewFactory)
+		config := factory.(*licenseChecker).config.Get("", "", "").(Config)
+		assert.Equal(t, statusLicenseExpire, checkLicenseStatus(config))
 	})
 }
 

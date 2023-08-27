@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
@@ -70,10 +70,7 @@ processor:
         - match: "mysql"
           threshold: 1s
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*dbFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -132,10 +129,7 @@ processor:
          - match: ""
            threshold: 3s
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*dbFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -167,7 +161,7 @@ processor:
 	t.Run("not db system", func(t *testing.T) {
 		data := g.Generate()
 		span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-		span.Attributes().Remove(conventions.AttributeDBSystem)
+		span.Attributes().Remove(semconv.AttributeDBSystem)
 
 		record := &define.Record{
 			RecordType: define.RecordTraces,

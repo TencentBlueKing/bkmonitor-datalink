@@ -117,10 +117,7 @@ processor:
               - "resource.resource_key3"
               - "resource.resource_key4"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
@@ -129,7 +126,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
@@ -151,10 +148,7 @@ processor:
           keys:
             - "resource.resource_key1"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
@@ -163,7 +157,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
@@ -179,10 +173,7 @@ processor:
           keys:
             - "resource.resource_key1"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeMetricsGenerator(1, "string")
 	data := g.Generate()
@@ -191,7 +182,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
@@ -207,10 +198,7 @@ processor:
           keys:
             - "resource.resource_key1"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeLogsGenerator(10, 10, "string")
 	data := g.Generate()
@@ -219,7 +207,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
@@ -240,10 +228,7 @@ processor:
           - source: resource_key1
             destination: resource_key4
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeTracesGenerator(1, "string")
 	data := g.Generate()
@@ -252,7 +237,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
@@ -268,10 +253,7 @@ processor:
           - source: resource_key1
             destination: resource_key4
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeMetricsGenerator(1, "float")
 	data := g.Generate()
@@ -280,7 +262,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
@@ -296,10 +278,7 @@ processor:
           - source: resource_key1
             destination: resource_key4
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeLogsGenerator(10, 10, "float")
 	data := g.Generate()
@@ -308,7 +287,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()
@@ -338,10 +317,7 @@ processor:
           - label: label2
             value: value2
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeTracesGenerator(1, "bool")
 	data := g.Generate()
@@ -350,7 +326,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(ptrace.Traces).ResourceSpans().At(0).Resource().Attributes()
@@ -368,10 +344,7 @@ processor:
           - label: label2
             value: value2
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeMetricsGenerator(1, "int")
 	data := g.Generate()
@@ -380,7 +353,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(pmetric.Metrics).ResourceMetrics().At(0).Resource().Attributes()
@@ -398,10 +371,7 @@ processor:
           - label: label2
             value: value2
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*resourceFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeLogsGenerator(10, 10, "int")
 	data := g.Generate()
@@ -410,7 +380,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	attrs := record.Data.(plog.Logs).ResourceLogs().At(0).Resource().Attributes()

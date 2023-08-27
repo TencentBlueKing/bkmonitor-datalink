@@ -53,19 +53,15 @@ processor:
         type: time_series
         version: v2
 `
-
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*proxyValidator)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	t.Run("Unsupported", func(t *testing.T) {
-		_, err = factory.Process(&define.Record{})
+		_, err := factory.Process(&define.Record{})
 		assert.True(t, strings.Contains(err.Error(), "unsupported"))
 	})
 
 	t.Run("Empty", func(t *testing.T) {
-		_, err = factory.Process(&define.Record{
+		_, err := factory.Process(&define.Record{
 			RecordType: define.RecordProxy,
 			Data:       &define.ProxyData{},
 		})

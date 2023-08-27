@@ -58,8 +58,8 @@ processor:
         endpoints:
         - ":1001"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	factory, _ := newFactory(psc[0].Config, nil)
+	factory := testkits.MustCreateFactory(content, NewFactory)
+
 	_, err := factory.Process(&define.Record{
 		RecordType:    define.RecordTraces,
 		RequestType:   "",

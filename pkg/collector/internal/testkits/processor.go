@@ -31,3 +31,12 @@ func MustLoadProcessorConfigs(content string) []processor.ProcessorConfig {
 
 	return psc
 }
+
+func MustCreateFactory(content string, createFunc processor.CreateFunc) processor.Processor {
+	psc := MustLoadProcessorConfigs(content)
+	factory, err := createFunc(psc[0].Config, nil)
+	if err != nil {
+		panic(err)
+	}
+	return factory
+}

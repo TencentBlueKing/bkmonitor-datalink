@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
 	agentv3 "skywalking.apache.org/repo/goapi/collect/language/agent/v3"
 
@@ -170,9 +170,9 @@ func TestSwLogsToSpanEvents(t *testing.T) {
 
 			attrs := test.dest.Events().At(0).Attributes()
 			assert.Equal(t, 3, len(attrs.AsRaw()))
-			testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeExceptionType, "TestErrorKind")
-			testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeExceptionMessage, "TestMessage")
-			testkits.AssertAttrsFoundStringVal(t, attrs, conventions.AttributeExceptionStacktrace, "TestStack")
+			testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeExceptionType, "TestErrorKind")
+			testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeExceptionMessage, "TestMessage")
+			testkits.AssertAttrsFoundStringVal(t, attrs, semconv.AttributeExceptionStacktrace, "TestStack")
 		})
 	}
 }
@@ -336,7 +336,7 @@ func TestSwTransformIP(t *testing.T) {
 	serviceInstanceID := "TestServiceInstanceID@127.0.1.2"
 	m := ptrace.NewSpan().Attributes()
 	swTransformIP(serviceInstanceID, m)
-	v, ok := m.Get(conventions.AttributeNetHostIP)
+	v, ok := m.Get(semconv.AttributeNetHostIP)
 	assert.True(t, ok)
 	assert.Equal(t, v.Type(), pcommon.ValueTypeString)
 	assert.Equal(t, v.AsString(), "127.0.1.2")
@@ -344,7 +344,7 @@ func TestSwTransformIP(t *testing.T) {
 	m.Clear()
 	serviceInstanceID = "TestServiceInstanceID2"
 	swTransformIP(serviceInstanceID, m)
-	_, ok = m.Get(conventions.AttributeNetHostIP)
+	_, ok = m.Get(semconv.AttributeNetHostIP)
 	assert.False(t, ok)
 }
 
@@ -374,65 +374,65 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 	t.Run("SpanLayer_Http/SpanType_Entry", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeHTTPScheme, "https")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeHTTPRoute, opName)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPScheme, "https")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPRoute, opName)
 	})
 
 	t.Run("SpanLayer_Http/SpanType_Entry/PeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, "TestPeerName")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, "TestPeerName")
 	})
 
 	t.Run("SpanLayer_Http/SpanType_Entry/WithoutPeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		Refs := []*agentv3.SegmentReference{{ParentService: "TestParentService"}}
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", Refs)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, "TestParentService")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, "TestParentService")
 	})
 
 	t.Run("SpanLayer_Http/SpanType_Entry/WithoutRefs", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, unknownVal)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 
 	t.Run("SpanLayer_Http/SpanType_Exit", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Exit, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeHTTPTarget, "/apitest/user/list")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeHTTPHost, "www.test.com")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, unknownVal)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPTarget, "/apitest/user/list")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPHost, "www.test.com")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 
 	t.Run("SpanLayer_Http/SpanType_Exit/PeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "/api/leader/list/"
-		dest.InsertString(conventions.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
+		dest.InsertString(semconv.AttributeHTTPURL, "https://www.test.com/apitest/user/list")
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Exit, agentv3.SpanLayer_Http, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, "TestPeerName")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, "TestPeerName")
 	})
 
 	t.Run("SpanLayer_RPCFramework", func(t *testing.T) {
@@ -442,7 +442,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_RPCFramework, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeRPCMethod, opName)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeRPCMethod, opName)
 	})
 
 	t.Run("SpanLayer_MQ", func(t *testing.T) {
@@ -452,8 +452,8 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_MQ, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeMessagingSystem, "MessagingTestSystem")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, unknownVal)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeMessagingSystem, "MessagingTestSystem")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 
 	t.Run("SpanLayer_MQ/PeerName", func(t *testing.T) {
@@ -462,7 +462,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_MQ, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		v, ok := dest.Get(conventions.AttributeNetPeerName)
+		v, ok := dest.Get(semconv.AttributeNetPeerName)
 		assert.True(t, ok)
 		assert.Equal(t, "TestPeerName", v.StringVal())
 	})
@@ -471,39 +471,39 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Mysql/MysqlClient/execute"
 		dbStatement := "SELECT data_id FROM TABLE WHERE XXXX"
-		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Database, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeDBSystem, "Mysql")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeDBOperation, "SELECT")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, unknownVal)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeDBSystem, "Mysql")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeDBOperation, "SELECT")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 
 	t.Run("SpanLayer_Cache", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Redis/MysqlClient/execute"
 		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
-		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
 		// Cache 类型使用原始的 db.system 的数据，不用去opName 里面获取
 		// 其他逻辑与 Database 类型保持一致
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeDBOperation, "SET")
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, unknownVal)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeDBOperation, "SET")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 
 	t.Run("SpanLayer_Cache/PeerName", func(t *testing.T) {
 		dest := pcommon.NewMap()
 		opName := "Redis/MysqlClient/execute"
 		dbStatement := "SET xxx FROM TABLE WHERE XXXX2"
-		dest.InsertString(conventions.AttributeDBStatement, dbStatement)
+		dest.InsertString(semconv.AttributeDBStatement, dbStatement)
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "TestPeerName", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetPeerName, "TestPeerName")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, "TestPeerName")
 	})
 
 	t.Run("SpanType_Entry/NetworkAddressUsedAtPeer", func(t *testing.T) {
@@ -513,7 +513,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Cache, "TestPeerName", Refs)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, conventions.AttributeNetHostIP, "127.0.0.1,127.0.0.2")
-		testkits.AssertAttrsFoundIntVal(t, dest, conventions.AttributeNetHostPort, 3306)
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetHostIP, "127.0.0.1,127.0.0.2")
+		testkits.AssertAttrsFoundIntVal(t, dest, semconv.AttributeNetHostPort, 3306)
 	})
 }

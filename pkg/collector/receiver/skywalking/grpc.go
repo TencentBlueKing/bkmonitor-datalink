@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 	"google.golang.org/grpc/metadata"
 	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
 	commonv3 "skywalking.apache.org/repo/goapi/collect/common/v3"
@@ -133,9 +133,9 @@ func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *
 
 	// 构造 extraAttrs 对 skywalking 转 ot 的数据进行额外内容补充
 	extraAttrs := make(map[string]string)
-	extraAttrs[conventions.AttributeTelemetrySDKVersion] = getAgentVersionFromMetadata(md)
-	extraAttrs[conventions.AttributeTelemetrySDKLanguage] = getAgentLanguageFromMetadata(md)
-	extraAttrs[conventions.AttributeTelemetrySDKName] = "SkyWalking"
+	extraAttrs[semconv.AttributeTelemetrySDKVersion] = getAgentVersionFromMetadata(md)
+	extraAttrs[semconv.AttributeTelemetrySDKLanguage] = getAgentLanguageFromMetadata(md)
+	extraAttrs[semconv.AttributeTelemetrySDKName] = "SkyWalking"
 
 	traces := EncodeTraces(segment, token, extraAttrs)
 	start := time.Now()

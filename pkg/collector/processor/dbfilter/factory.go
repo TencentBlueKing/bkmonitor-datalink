@@ -11,7 +11,7 @@ package dbfilter
 
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventions "go.opentelemetry.io/collector/semconv/v1.8.0"
+	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -93,7 +93,7 @@ func (p dbFilter) processSlowQuery(record *define.Record, config Config) {
 			attrs := span.Attributes()
 
 			// 先确定 db.system 属性是否存在 不存在代表非 db 类型 span 则无需处理
-			dbSystem, ok := attrs.Get(conventions.AttributeDBSystem)
+			dbSystem, ok := attrs.Get(semconv.AttributeDBSystem)
 			if !ok {
 				return
 			}

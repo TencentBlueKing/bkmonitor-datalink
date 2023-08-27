@@ -79,10 +79,7 @@ processor:
          metrics:
            - "my_metrics"
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*metricsFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeMetricsGenerator(1)
 	data := g.Generate()
@@ -91,7 +88,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	metrics := record.Data.(pmetric.Metrics).ResourceMetrics()
@@ -107,10 +104,7 @@ processor:
          - source: my_metrics
            destination: my_metrics_replace
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*metricsFilter)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	g := makeMetricsGenerator(1)
 	data := g.Generate()
@@ -119,7 +113,7 @@ processor:
 		Data:       data,
 	}
 
-	_, err = factory.Process(&record)
+	_, err := factory.Process(&record)
 	assert.NoError(t, err)
 
 	metrics := record.Data.(pmetric.Metrics)

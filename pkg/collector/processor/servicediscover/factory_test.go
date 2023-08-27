@@ -180,10 +180,7 @@ processor:
               operator: eq
               value: /api/v1/users
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*serviceDiscover)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -201,7 +198,7 @@ processor:
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err = factory.Process(record)
+	_, err := factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)
@@ -231,10 +228,7 @@ processor:
           rule:
             regex: https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*serviceDiscover)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -252,7 +246,7 @@ processor:
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err = factory.Process(record)
+	_, err := factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)
@@ -280,10 +274,7 @@ processor:
           rule:
             regex: https://(?P<peer_service>[^/]+)/
 `
-	psc := testkits.MustLoadProcessorConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
-	factory := obj.(*serviceDiscover)
-	assert.NoError(t, err)
+	factory := testkits.MustCreateFactory(content, NewFactory)
 
 	traces := generator.NewTracesGenerator(define.TracesOptions{
 		GeneratorOptions: define.GeneratorOptions{
@@ -301,7 +292,7 @@ processor:
 		RecordType: define.RecordTraces,
 		Data:       pdTraces,
 	}
-	_, err = factory.Process(record)
+	_, err := factory.Process(record)
 	assert.NoError(t, err)
 
 	pdTraces = record.Data.(ptrace.Traces)

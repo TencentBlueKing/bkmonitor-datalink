@@ -11,12 +11,12 @@ package skywalking
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	semconv "go.opentelemetry.io/collector/semconv/v1.8.0"
 	"google.golang.org/grpc/metadata"
 	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
@@ -149,7 +149,8 @@ func (s *TraceSegmentReportService) consumeTraces(ctx context.Context, segment *
 	prettyprint.Pretty(define.RecordTraces, traces)
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		logger.Warnf("run pre-check failed, service=TraceSegmentReport, code=%d, ip=%v, error: %s", code, ip, err)
+		err = errors.Wrapf(err, "run pre-check failed, service=TraceSegmentReport, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return
 	}
@@ -186,7 +187,8 @@ func (s *JVMMetricReportService) Collect(ctx context.Context, jvmMetrics *agentv
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		logger.Warnf("run pre-check failed, service=JVMMetricReport, code=%d, ip=%v, error: %s", code, ip, err)
+		err = errors.Wrapf(err, "run pre-check failed, service=JVMMetricReport, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 		return &commonv3.Commands{}, err
 	}

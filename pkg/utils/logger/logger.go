@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -100,9 +101,40 @@ type Options struct {
 	Level string `yaml:"level"`
 }
 
+type RateCall struct {
+	mut    sync.RWMutex
+	called map[string]int64
+}
+
+func NewRateCall() *RateCall {
+	return &RateCall{
+		called: map[string]int64{},
+	}
+}
+
+func (r *RateCall) Call(d time.Duration, key string) bool {
+	now := time.Now().UnixNano()
+
+	r.mut.RLock()
+	last := r.called[key]
+	should := now-last > d.Nanoseconds()
+	r.mut.RUnlock()
+
+	if !should {
+		return false
+	}
+
+	r.mut.Lock()
+	r.called[key] = now
+	r.mut.Unlock()
+	return true
+}
+
 // Logger represents the global SugaredLogger
 type Logger struct {
-	sugared *zap.SugaredLogger
+	sugared   *zap.SugaredLogger
+	warnRate  *RateCall
+	errorRate *RateCall
 }
 
 // With adds a variadic number of fields to the logging context. It accepts a
@@ -265,7 +297,11 @@ func New(opt Options) Logger {
 
 	core := zapcore.NewCore(encoder, w, zapcore.Level(level))
 	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
-	return Logger{sugared: logger.Sugar()}
+	return Logger{
+		sugared:   logger.Sugar(),
+		warnRate:  NewRateCall(),
+		errorRate: NewRateCall(),
+	}
 }
 
 var (
@@ -343,9 +379,23 @@ func Warn(args ...interface{}) {
 	std.sugared.Warn(args...)
 }
 
+// WarnRate sets log rate with warn message
+func WarnRate(d time.Duration, key string, args ...interface{}) {
+	if std.warnRate.Call(d, key) {
+		std.sugared.Warn(args...)
+	}
+}
+
 // Error uses fmt.Sprint to construct and log a message.
 func Error(args ...interface{}) {
 	std.sugared.Error(args...)
+}
+
+// ErrorRate sets log rate with error message
+func ErrorRate(d time.Duration, key string, args ...interface{}) {
+	if std.errorRate.Call(d, key) {
+		std.sugared.Error(args...)
+	}
 }
 
 // Panic uses fmt.Sprint to construct and log a message, then panics.
@@ -373,9 +423,23 @@ func Warnf(template string, args ...interface{}) {
 	std.sugared.Warnf(template, args...)
 }
 
+// WarnfRate sets log rate with warn templated message
+func WarnfRate(d time.Duration, key string, template string, args ...interface{}) {
+	if std.warnRate.Call(d, key) {
+		std.sugared.Warnf(template, args...)
+	}
+}
+
 // Errorf uses fmt.Sprintf to log a templated message.
 func Errorf(template string, args ...interface{}) {
 	std.sugared.Errorf(template, args...)
+}
+
+// ErrorfRate sets log rate with error templated message
+func ErrorfRate(d time.Duration, key string, template string, args ...interface{}) {
+	if std.errorRate.Call(d, key) {
+		std.sugared.Errorf(template, args...)
+	}
 }
 
 // Panicf uses fmt.Sprintf to log a templated message, then panics.

@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define/prompb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -67,9 +69,10 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
+		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		receiver.WriteResponse(w, define.ContentTypeText, int(code), []byte(err.Error()))
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordRemoteWrite, processorName, r.Token.Original, code)
-		logger.Warnf("run pre-check failed, code=%d, ip=%v, error: %s", code, ip, err)
 		return
 	}
 

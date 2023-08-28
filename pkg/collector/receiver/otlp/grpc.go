@@ -62,8 +62,8 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
-		logger.Warn(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return ptraceotlp.NewResponse(), err
 	}
@@ -90,6 +90,7 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 
 	start := time.Now()
 	logger.Debugf("grpc request: service=metrics, remoteAddr=%v", ip)
+
 	metrics := req.Metrics()
 	r := &define.Record{
 		RequestType:   define.RequestGrpc,
@@ -97,10 +98,11 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 		RecordType:    define.RecordMetrics,
 		Data:          metrics,
 	}
+
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, rtype=metrics, code=%d, ip=%v", code, ip)
-		logger.Warn(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=metrics, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordMetrics, processorName, r.Token.Original, code)
 		return pmetricotlp.NewResponse(), err
 	}
@@ -127,6 +129,7 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 
 	start := time.Now()
 	logger.Debugf("grpc request: service=logs, remoteAddr=%v", ip)
+
 	logs := req.Logs()
 	r := &define.Record{
 		RequestType:   define.RequestGrpc,
@@ -134,10 +137,11 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 		RecordType:    define.RecordLogs,
 		Data:          logs,
 	}
+
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%v", code, ip)
-		logger.Warn(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=logs, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordLogs, processorName, r.Token.Original, code)
 		return plogotlp.NewResponse(), err
 	}

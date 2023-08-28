@@ -99,8 +99,8 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
-		logger.Warn(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
 		return

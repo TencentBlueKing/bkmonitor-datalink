@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	confv3 "skywalking.apache.org/repo/goapi/collect/agent/configuration/v3"
 	eventv3 "skywalking.apache.org/repo/goapi/collect/event/v3"
@@ -131,8 +132,9 @@ func (s HttpService) reportV3Segment(w http.ResponseWriter, req *http.Request) {
 	prettyprint.Pretty(define.RecordTraces, traces)
 	code, processorName, err := s.Validate(r)
 	if err != nil {
+		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
-		logger.Warnf("run pre-check failed, code=%d, ip=%v, error %s", code, ip, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
 		return
 	}
@@ -184,8 +186,9 @@ func (s HttpService) reportV3Segments(w http.ResponseWriter, req *http.Request) 
 		prettyprint.Traces(traces)
 		code, processorName, err := s.Validate(r)
 		if err != nil {
+			err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+			logger.WarnRate(time.Minute, r.Token.Original, err)
 			receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
-			logger.Warnf("run pre-check failed, code=%d, ip=%v, error: %s", code, ip, err)
 			metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
 			return
 		}

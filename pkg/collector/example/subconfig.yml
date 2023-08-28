@@ -163,7 +163,7 @@ default:
 #    - name: "rate_limiter/token_bucket"
 #      config:
 #        type: token_bucket
-#        qps: 100
+#        qps: -1
 #        burst: 200
 
 service:

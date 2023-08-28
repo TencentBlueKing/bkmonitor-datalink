@@ -42,7 +42,7 @@ func (s GrpcService) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest
 	batch := req.GetBatch()
 	traces, err := jaegertranslator.ProtoToTraces([]*model.Batch{&batch})
 	if err != nil {
-		err = errors.Wrapf(err, "jaeger translate to otlp failed, ip=%v", ip)
+		err = errors.Wrapf(err, "jaeger translate to otlp failed, ip=%s", ip)
 		logger.Warn(err)
 		metricMonitor.IncDroppedCounter(define.RequestGrpc, define.RecordTraces)
 		return &api_v2.PostSpansResponse{}, err
@@ -58,8 +58,8 @@ func (s GrpcService) PostSpans(ctx context.Context, req *api_v2.PostSpansRequest
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%v", code, ip)
-		logger.Warn(err)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestGrpc, define.RecordTraces, processorName, r.Token.Original, code)
 		return &api_v2.PostSpansResponse{}, err
 	}

@@ -217,10 +217,11 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
+		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+		logger.WarnRate(time.Minute, r.Token.Original, err)
 		msg := []byte(fmt.Sprintf(`{"status": "failed", "error": "%s"}`, err.Error()))
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), msg)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordPushGateway, processorName, r.Token.Original, code)
-		logger.Warnf("run pre-check failed, code=%d, ip=%v, error: %s", code, ip, err)
 		return
 	}
 

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package workload
+package objectsref
 
 import (
 	"context"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
+	gover "github.com/hashicorp/go-version"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
@@ -191,7 +192,13 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		cancel: cancel,
 	}
 
-	var err error
+	version, err := client.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+	KubernetesServerVersion = version.String()
+	setClusterVersion(KubernetesServerVersion)
+
 	sharedInformer := informers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, informers.WithNamespace(metav1.NamespaceAll))
 	controller.podObjs, err = newPodObjects(ctx, sharedInformer)
 	if err != nil {
@@ -223,7 +230,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		return nil, err
 	}
 
-	controller.cronJobObjs, err = newCronJobObjects(ctx, sharedInformer)
+	controller.cronJobObjs, err = newCronJobObjects(ctx, sharedInformer, KubernetesServerVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +253,13 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 	return controller, nil
 }
 
-func (oc *ObjectsController) NodeNames() []string { return oc.nodeObjs.Names() }
-func (oc *ObjectsController) NodeCount() int      { return oc.nodeObjs.Count() }
+func (oc *ObjectsController) NodeNames() []string {
+	return oc.nodeObjs.Names()
+}
+
+func (oc *ObjectsController) NodeCount() int {
+	return oc.nodeObjs.Count()
+}
 
 func (oc *ObjectsController) NodeNameExists(s string) (string, bool) {
 	return oc.nodeObjs.NameExists(s)
@@ -275,103 +287,6 @@ func (oc *ObjectsController) recordMetrics() {
 			}
 		}
 	}
-}
-
-type PodRef struct {
-	Name      string   `json:"name"`
-	Namespace string   `json:"namespace"`
-	Ref       OwnerRef `json:"ownerRef"`
-	NodeName  string   `json:"nodeName"`
-}
-
-func (oc *ObjectsController) objsMap() map[string]*Objects {
-	om := map[string]*Objects{
-		kindReplicaSet:  oc.replicaSetObjs,
-		kindDeployment:  oc.deploymentObjs,
-		kindDaemonSet:   oc.daemonSetObjs,
-		kindStatefulSet: oc.statefulSetObjs,
-		kindJob:         oc.jobObjs,
-		kindCronJob:     oc.cronJobObjs,
-	}
-
-	if oc.gameStatefulSetObjs != nil {
-		om[kindGameStatefulSet] = oc.gameStatefulSetObjs
-	}
-	if oc.gameDeploymentsObjs != nil {
-		om[kindGameDeployment] = oc.gameDeploymentsObjs
-	}
-	return om
-}
-
-// RelabelConfig relabel 配置 用于采集器做 workload 信息匹配
-type RelabelConfig struct {
-	SourceLabels []string `json:"sourceLabels"`
-	Separator    string   `json:"separator"`
-	Regex        string   `json:"regex"`
-	TargetLabel  string   `json:"targetLabel"`
-	Replacement  string   `json:"replacement"`
-	Action       string   `json:"action"`
-	NodeName     string   `json:"nodeName"`
-}
-
-func (oc *ObjectsController) getRelabelConfigs(refs []PodRef) []RelabelConfig {
-	configs := make([]RelabelConfig, 0, len(refs)*2)
-
-	for _, ref := range refs {
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"namespace", "pod_name"},
-			Separator:    ";",
-			Regex:        ref.Namespace + ";" + ref.Name,
-			TargetLabel:  "workload_kind",
-			Replacement:  ref.Ref.Kind,
-			Action:       "replace",
-			NodeName:     ref.NodeName,
-		})
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"namespace", "pod_name"},
-			Separator:    ";",
-			Regex:        ref.Namespace + ";" + ref.Name,
-			TargetLabel:  "workload_name",
-			Replacement:  ref.Ref.Name,
-			Action:       "replace",
-			NodeName:     ref.NodeName,
-		})
-	}
-	return configs
-}
-
-func (oc *ObjectsController) getRefs(pods []Object) []PodRef {
-	refs := make([]PodRef, 0, len(pods))
-	start := time.Now()
-
-	for _, pod := range pods {
-		ownerRef := Lookup(pod.ID, oc.podObjs, oc.objsMap())
-		if ownerRef == nil {
-			continue
-		}
-		refs = append(refs, PodRef{
-			Name:      pod.ID.Name,
-			Namespace: pod.ID.Namespace,
-			Ref:       *ownerRef,
-			NodeName:  pod.NodeName,
-		})
-	}
-	oc.mm.ObserveWorkloadLookupDuration(start)
-	return refs
-}
-
-// GetAll 返回所有 relabel 配置
-func (oc *ObjectsController) GetAll() []RelabelConfig {
-	oc.mm.IncWorkloadRequestCounter()
-	pods := oc.podObjs.GetAll()
-	return oc.getRelabelConfigs(oc.getRefs(pods))
-}
-
-// GetByNodeName 根据节点名称获取配置信息
-func (oc *ObjectsController) GetByNodeName(nodeName string) []RelabelConfig {
-	oc.mm.IncWorkloadRequestCounter()
-	pods := oc.podObjs.GetByNodeName(nodeName)
-	return oc.getRelabelConfigs(oc.getRefs(pods))
 }
 
 func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
@@ -724,7 +639,20 @@ func newJobObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	return objs, nil
 }
 
-func newCronJobObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
+func newCronJobObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, version string) (*Objects, error) {
+	v, err := gover.NewVersion(version)
+	if err != nil {
+		return nil, err
+	}
+
+	v125, _ := gover.NewVersion("1.25")
+	if v.GreaterThanOrEqual(v125) {
+		return newCronJobV1Objects(ctx, sharedInformer)
+	}
+	return newCronJobBetaV1Objects(ctx, sharedInformer)
+}
+
+func newCronJobBetaV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
 	genericInformer, err := sharedInformer.ForResource(batchv1beta1.SchemeGroupVersion.WithResource(resourceCronJobs))
 	if err != nil {
 		return nil, err
@@ -763,6 +691,64 @@ func newCronJobObjects(ctx context.Context, sharedInformer informers.SharedInfor
 		},
 		DeleteFunc: func(obj interface{}) {
 			cronJob, ok := obj.(*batchv1beta1.CronJob)
+			if !ok {
+				logger.Errorf("excepted type CronJob, got %T", obj)
+				return
+			}
+			objs.Del(ObjectID{
+				Name:      cronJob.Name,
+				Namespace: cronJob.Namespace,
+			})
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindCronJob, informer)
+	if !synced {
+		return nil, errors.New("failed to sync CronJob caches")
+	}
+	return objs, nil
+}
+
+func newCronJobV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
+	genericInformer, err := sharedInformer.ForResource(batchv1.SchemeGroupVersion.WithResource(resourceCronJobs))
+	if err != nil {
+		return nil, err
+	}
+	objs := NewObjects(kindCronJob)
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			cronJob, ok := obj.(*batchv1.CronJob)
+			if !ok {
+				logger.Errorf("excepted type CronJob, got %T", obj)
+				return
+			}
+			objs.Set(Object{
+				ID: ObjectID{
+					Name:      cronJob.Name,
+					Namespace: cronJob.Namespace,
+				},
+				OwnerRefs: toRefs(cronJob.OwnerReferences),
+			})
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			cronJob, ok := newObj.(*batchv1.CronJob)
+			if !ok {
+				logger.Errorf("excepted type CronJob, got %T", newObj)
+				return
+			}
+			objs.Set(Object{
+				ID: ObjectID{
+					Name:      cronJob.Name,
+					Namespace: cronJob.Namespace,
+				},
+				OwnerRefs: toRefs(cronJob.OwnerReferences),
+			})
+		},
+		DeleteFunc: func(obj interface{}) {
+			cronJob, ok := obj.(*batchv1.CronJob)
 			if !ok {
 				logger.Errorf("excepted type CronJob, got %T", obj)
 				return

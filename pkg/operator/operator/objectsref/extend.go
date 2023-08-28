@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package workload
+package objectsref
 
 import (
 	"context"
@@ -60,16 +60,6 @@ func listServerPreferredResources(discoveryClient discovery.DiscoveryInterface) 
 	return gvrks
 }
 
-func retrieveServerVersion(discoveryClient discovery.DiscoveryInterface) string {
-	info, err := discoveryClient.ServerVersion()
-	if err != nil {
-		logger.Errorf("failed to retrieve server version: %v", err)
-		return ""
-	}
-
-	return info.String()
-}
-
 var (
 	GameStatefulSetGVRK = GVRK{
 		Group:    "tkex.tencent.com",
@@ -98,10 +88,6 @@ func newTkexObjects(ctx context.Context, client tkexversiond.Interface, discover
 	var err error
 	tkexObjs := &tkexObjects{}
 	gvrks := listServerPreferredResources(discoveryClient)
-
-	// 获取 kubernetes server 版本
-	KubernetesServerVersion = retrieveServerVersion(discoveryClient)
-	setClusterVersion(KubernetesServerVersion)
 
 	if _, ok := gvrks[GameStatefulSetGVRK.ID()]; ok {
 		logger.Infof("found extend workload: %s", GameStatefulSetGVRK.ID())

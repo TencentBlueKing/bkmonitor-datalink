@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
@@ -23,6 +24,11 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+)
+
+const (
+	relabelRuleWorkload = "v1/workload"
+	relabelRuleNode     = "v1/node"
 )
 
 func IsBuiltinLabels(k string) bool {
@@ -34,9 +40,22 @@ func IsBuiltinLabels(k string) bool {
 	return false
 }
 
+func toMonitorIndex(s string) int {
+	if s == "" {
+		return -1
+	}
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return -1
+	}
+	return int(i)
+}
+
 // MetricTarget 指标采集配置
 type MetricTarget struct {
 	Meta                 define.MonitorMeta
+	RelabelRule          string
+	RelabelIndex         string
 	Address              string
 	NodeName             string
 	Scheme               string
@@ -73,7 +92,12 @@ func (t *MetricTarget) FileName() string {
 
 // RemoteRelabelConfig 返回采集器 workload 工作负载信息
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
-	if t.Path == "/metrics/cadvisor" {
+	switch t.RelabelRule {
+	case relabelRuleWorkload:
+		// index >= 0 表示 annotations 中指定了 index label
+		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+			return nil
+		}
 		return &yaml.MapItem{
 			Key:   "metric_relabel_remote",
 			Value: fmt.Sprintf("http://%s:8080/workload/node/%s", ConfServiceName, t.NodeName),
@@ -201,6 +225,11 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	lbs = append(lbs, yaml.MapItem{Key: "bk_endpoint_index", Value: fmt.Sprintf("%d", t.Meta.Index)})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_name", Value: t.Meta.Name})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_namespace", Value: t.Meta.Namespace})
+
+	if t.RelabelRule == relabelRuleNode {
+		lbs = append(lbs, yaml.MapItem{Key: "node", Value: t.NodeName})
+	}
+
 	lbs = append(lbs, sortMap(t.ExtraLabels)...)
 	task = append(task, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{lbs}})
 	task = append(task, yaml.MapItem{Key: "module", Value: module})

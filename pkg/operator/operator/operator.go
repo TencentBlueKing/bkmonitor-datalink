@@ -34,14 +34,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/pusher"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/workload"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
+
+	relabelRuleKey  = "bkm_relabel_rule"
+	relabelIndexKey = "bkm_relabel_index"
 )
 
 // Operator 负责部署和调度任务
@@ -71,7 +74,7 @@ type Operator struct {
 	discoversMut sync.RWMutex
 	discovers    map[string]discover.Discover
 
-	workloadController *workload.ObjectsController
+	objectsController *objectsref.ObjectsController
 
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
@@ -165,9 +168,9 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		}
 	}
 
-	operator.workloadController, err = workload.NewController(operator.ctx, operator.client, operator.tkexclient)
+	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
 	if err != nil {
-		return nil, errors.Wrap(err, "create workloadController failed")
+		return nil, errors.Wrap(err, "create objectsController failed")
 	}
 
 	operator.recorder = NewRecorder()
@@ -367,7 +370,7 @@ func (c *Operator) Stop() {
 
 	c.pusher.Stop()
 	c.dw.Stop()
-	c.workloadController.Stop()
+	c.objectsController.Stop()
 	discover.StopAllSharedDiscovery()
 }
 
@@ -503,9 +506,11 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 			proxyURL = *endpoint.ProxyURL
 		}
 
-		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.workloadController.NodeNameExists, &discover.EndpointParams{
+		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
 				Client:               c.client,
+				RelabelRule:          serviceMonitor.Annotations[relabelRuleKey],
+				RelabelIndex:         serviceMonitor.Annotations[relabelIndexKey],
 				Name:                 monitorMeta.ID(),
 				DataID:               dataID,
 				KubeConfig:           ConfKubeConfig,
@@ -697,9 +702,11 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		if tlsConfig != nil {
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
-		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.workloadController.NodeNameExists, &discover.PodParams{
+		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
 				Client:               c.client,
+				RelabelRule:          podMonitor.Annotations[relabelRuleKey],
+				RelabelIndex:         podMonitor.Annotations[relabelIndexKey],
 				Name:                 monitorMeta.ID(),
 				DataID:               dataID,
 				KubeConfig:           ConfKubeConfig,

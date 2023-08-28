@@ -22,8 +22,9 @@ func TestMetricsTarget(t *testing.T) {
 	ConfBuiltinLabels = []string{"job"}
 	target := MetricTarget{
 		Meta: define.MonitorMeta{
-			Name:  "monitor-name",
-			Index: 0,
+			Name:      "monitor-name",
+			Namespace: "blueking",
+			Index:     0,
 		},
 		Address:         "http://localhost:8080",
 		NodeName:        "node-127-0-1-1",
@@ -67,6 +68,7 @@ tasks:
     bk_endpoint_url: http://localhost:8080/metrics
     bk_endpoint_index: "0"
     bk_monitor_name: monitor-name
+    bk_monitor_namespace: blueking
     label3: value3
   module:
     module: prometheus

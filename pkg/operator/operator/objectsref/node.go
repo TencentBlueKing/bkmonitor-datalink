@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package workload
+package objectsref
 
 import (
 	"errors"
@@ -20,15 +20,17 @@ import (
 )
 
 type NodeMap struct {
-	mut   sync.Mutex
-	nodes map[string]*corev1.Node
-	ips   map[string][]string
+	mut         sync.Mutex
+	nodes       map[string]*corev1.Node
+	ips         map[string][]string
+	priorityIPs map[string]string
 }
 
 func NewNodeMap() *NodeMap {
 	return &NodeMap{
-		nodes: map[string]*corev1.Node{},
-		ips:   map[string][]string{},
+		nodes:       map[string]*corev1.Node{},
+		ips:         map[string][]string{},
+		priorityIPs: map[string]string{},
 	}
 }
 
@@ -37,6 +39,17 @@ func (n *NodeMap) Count() int {
 	defer n.mut.Unlock()
 
 	return len(n.nodes)
+}
+
+func (n *NodeMap) Addrs() map[string]string {
+	n.mut.Lock()
+	defer n.mut.Unlock()
+
+	cloned := make(map[string]string)
+	for k, v := range n.priorityIPs {
+		cloned[k] = v
+	}
+	return cloned
 }
 
 func (n *NodeMap) NameExists(name string) (string, bool) {
@@ -79,10 +92,11 @@ func (n *NodeMap) Set(node *corev1.Node) error {
 	}
 
 	n.nodes[node.Name] = node
-	_, address, err := k8sutils.GetNodeAddress(*node)
+	priorityIP, address, err := k8sutils.GetNodeAddress(*node)
 	if err != nil {
 		return err
 	}
+	n.priorityIPs[node.Name] = priorityIP
 
 	lst := make([]string, 0)
 	for _, ips := range address {

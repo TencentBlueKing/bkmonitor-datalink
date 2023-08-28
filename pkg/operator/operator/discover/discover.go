@@ -121,6 +121,8 @@ func EncodeBase64(s string) string {
 
 type BaseParams struct {
 	Client               kubernetes.Interface
+	RelabelRule          string
+	RelabelIndex         string
 	Name                 string
 	KubeConfig           string
 	Namespaces           []string
@@ -413,6 +415,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.ProxyURL = d.ProxyURL
 	metricTarget.Mask = d.Mask()
 	metricTarget.TaskType = taskType
+	metricTarget.RelabelRule = d.RelabelRule
+	metricTarget.RelabelIndex = d.RelabelIndex
 
 	return metricTarget, nil
 }

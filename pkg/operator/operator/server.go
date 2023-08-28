@@ -24,7 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/workload"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/pprofsnapshot"
 )
@@ -292,10 +292,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	var b []byte
 
 	// 检查 kubernetes 版本信息
-	if workload.KubernetesServerVersion == "" {
+	if objectsref.KubernetesServerVersion == "" {
 		buf.WriteString(formatKubernetesVersionFailedMsg)
 	} else {
-		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, workload.KubernetesServerVersion))
+		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, objectsref.KubernetesServerVersion))
 	}
 
 	// 检查 bkmonitor-operator 版本信息
@@ -342,7 +342,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString(fmt.Sprintf(formatCheckMonitorBlacklistMsg, string(b)))
 
 	// 检查集群负载情况
-	workloadInfo, workloadUpdated := workload.GetWorkloadInfo()
+	workloadInfo, workloadUpdated := objectsref.GetWorkloadInfo()
 	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
 	buf.WriteString(fmt.Sprintf(formatWorkloadMsg, workloadUpdated.Format(time.RFC3339), string(b)))
 
@@ -370,7 +370,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查节点列表
-	nodeCount, nodeUpdated := workload.GetClusterNodeInfo()
+	nodeCount, nodeUpdated := objectsref.GetClusterNodeInfo()
 	buf.WriteString(fmt.Sprintf(formatListNodeMsg, nodeCount, nodeUpdated.Format(time.RFC3339)))
 
 	// 检查处理 secrets 是否有问题
@@ -477,13 +477,22 @@ func (c *Operator) VersionRoute(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.workloadController.GetAll())
+	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
-	writeResponse(w, c.workloadController.GetByNodeName(nodeName))
+	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
+}
+
+func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
+	var lines []byte
+	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetNodeRelation())...)
+	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetPodRelation())...)
+	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetReplicasetRelation())...)
+
+	w.Write(lines)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
@@ -501,6 +510,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /cluster_info
 * GET /workload
 * GET /workload/node/{node}
+* GET /relation/metrics
 
 # Check Routes
 --------------
@@ -543,6 +553,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

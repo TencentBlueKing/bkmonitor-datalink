@@ -30,7 +30,7 @@ lint: mod
 
 .PHONY: test
 test: mod
-	$(GO) test ./... -buildmode=pie -parallel=8 -cover
+	$(GO) test ./... -buildmode=pie -parallel=4 -cover
 
 .PHONY: mod
 mod:

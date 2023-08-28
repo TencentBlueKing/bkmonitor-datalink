@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package workload
+package objectsref
 
 import (
 	"testing"
@@ -219,6 +219,46 @@ func TestLookup(t *testing.T) {
 
 	for _, c := range cases {
 		parent := Lookup(ObjectID{Name: c.PodName, Namespace: c.Namespace}, c.PodObj, c.Refs)
+		if c.Excepted == nil {
+			assert.Nil(t, parent)
+			continue
+		}
+		assert.Equal(t, *c.Excepted, *parent)
+	}
+}
+
+func TestLookupOnce(t *testing.T) {
+	cases := []struct {
+		PodName   string
+		PodObj    *Objects
+		Namespace string
+		Refs      map[string]*Objects
+		Excepted  *OwnerRef
+	}{
+		{
+			PodName:   podName1,
+			PodObj:    podObjs1,
+			Namespace: namespaceDefault,
+			Refs: map[string]*Objects{
+				kindReplicaSet: replicaSetObjs1,
+				kindDeployment: deploymentObjs1,
+			},
+			Excepted: &OwnerRef{Kind: kindReplicaSet, Name: replicaSetName1},
+		},
+		{
+			PodName:   podName1,
+			PodObj:    podObjs1,
+			Namespace: namespaceOther,
+			Refs: map[string]*Objects{
+				kindReplicaSet: replicaSetObjs1,
+				kindDeployment: deploymentObjs1,
+			},
+			Excepted: &OwnerRef{Kind: kindPod, Name: podName1},
+		},
+	}
+
+	for _, c := range cases {
+		parent := LookupOnce(ObjectID{Name: c.PodName, Namespace: c.Namespace}, c.PodObj, c.Refs)
 		if c.Excepted == nil {
 			assert.Nil(t, parent)
 			continue

@@ -182,7 +182,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		nodeMap[cfg.Node] = []*discover.ChildConfig{cfg}
 	}
 
-	maxSecretsAllowed := int(float64(c.workloadController.NodeCount()) * ConfMaxNodeSecretRatio)
+	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * ConfMaxNodeSecretRatio)
 	count := 0
 
 	if daemonsetAlarmer.Alarm() {
@@ -240,7 +240,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 // cleanupDaemonSetChildSecret 清理 daemonset secrets
 // 传入的 childConfigs 为全量子配置 这里需要判断是否有节点已经没有采集任务 如若发现 则将该节点对应的 secret 删除
 func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildConfig) {
-	nodes := c.workloadController.NodeNames()
+	nodes := c.objectsController.NodeNames()
 	foundNodeNames := make(map[string]struct{})
 	for _, cfg := range childConfigs {
 		foundNodeNames[cfg.Node] = struct{}{}
@@ -306,7 +306,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		currTasksCache[mod][config.FileName] = struct{}{}
 	}
 
-	maxSecretsAllowed := int(float64(c.workloadController.NodeCount()) * ConfMaxNodeSecretRatio)
+	maxSecretsAllowed := int(float64(c.objectsController.NodeCount()) * ConfMaxNodeSecretRatio)
 	count := 0
 
 	if statefulsetAlarmer.Alarm() {

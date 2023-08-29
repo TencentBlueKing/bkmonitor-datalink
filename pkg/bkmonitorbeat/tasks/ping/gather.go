@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -39,14 +40,14 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 	// 遍历结果，组装event并发送
 	recvCountMap := make(map[string]int)
 	for _, vMap := range resMap {
-		if vMap == nil {
-			event := tasks.NewPingEvent(g.GetConfig())
-			event.DataID = dataID
-			event.Status = define.BeatErrCodeConnError
-			outChan <- event
-			continue
-		}
 		for ipStr, v := range vMap {
+			// 内部逻辑通过 ipStr 为空，将异常信息透传出来
+			if ipStr == "" {
+				errUpEvent := tasks.NewGatherUpEventWithDims(g, define.BeatErrorCode(v.Code), common.MapStr{"bk_target_ip": v.Name})
+				// 目前将拨测状态异常的事件通过日志的方式记录下来，后续考虑上报独立的DataID
+				logger.Errorf("Fail to gather ping result, up = %v+", errUpEvent.AsMapStr())
+				continue
+			}
 			logger.Debugf("resMap item:%v", v)
 			event := tasks.NewPingEvent(g.GetConfig())
 			now := time.Now()

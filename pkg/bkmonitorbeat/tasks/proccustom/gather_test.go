@@ -7,31 +7,38 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package script
+package proccustom
 
 import (
+	"context"
+	"fmt"
 	"testing"
+
+	"github.com/elastic/beats/libbeat/common"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-func TestScriptEvent(t *testing.T) {
-	globalConf := configs.NewConfig()
-	// 提供一个心跳的data_id，防止命中data_id防御机制
-	globalConf.HeartBeat.GlobalDataID = 1000
-	taskConf := configs.NewScriptTaskConfig()
-	err := globalConf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
+func TestProcCustomGatherRun(t *testing.T) {
+	globalConfig := configs.NewConfig()
+	taskConf := configs.NewProcCustomConfig(globalConfig)
+	taskConf.DataID = 1
+	taskConf.PIDPath = "/aaa/aaaa.pid"
+	taskConf.MatchPattern = "polkitd"
+	taskConf.Labels = []map[string]string{
+		{"bk_target_cloud_id": "0", "bk_target_ip": "127.0.0.1"},
 	}
-	err = taskConf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	st := New(globalConf, taskConf).(*Gather)
-	event := NewEvent(st)
-	if event.ErrorCode != define.BeatErrCodeUnknown {
-		t.Errorf("script event initial failed")
+	gather := New(globalConfig, taskConf)
+	e := make(chan define.Event, 100)
+	gather.Run(context.Background(), e)
+	gather.Wait()
+	close(e)
+	for ev := range e {
+		event := ev.AsMapStr()
+		fmt.Printf("Event: %v \n", event)
+		dimension := event["dimensions"].(common.MapStr)
+		assert.Equal(t, dimension["bkm_up_code"].(string), "2401")
 	}
 }

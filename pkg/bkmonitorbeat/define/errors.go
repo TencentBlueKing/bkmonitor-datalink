@@ -11,6 +11,7 @@ package define
 
 import (
 	"errors"
+	"fmt"
 )
 
 // BeatErrorCode : beat task error code
@@ -22,37 +23,132 @@ const (
 	BeatErrCodeUnknown = 1 // 未知
 	BeatErrCodeCancel  = 2 // 取消
 	BeatErrCodeTimeout = 3 // 超时
+	BeatErrInternalErr = 4 // 系统内部异常
 
 	BeatErrCodeConnError           = 1000 // 连接失败
 	BeatErrCodeConnTimeoutError    = 1001 // 连接超时
 	BeatErrCodeConnProxyError      = 1002 // 连接代理失败
 	BeatErrCodeConnDNSResolveError = 1003 // 连接DNS解析失败
 	BeatErrCodeDNSResolveError     = 1004 // DNS解析失败
+	BeatInvalidIPError             = 1005 // 非法IP地址
 
-	BeatErrCodeRequestError         = 2000 // 请求失败
-	BeatErrCodeRequestTimeoutError  = 2001 // 请求超时
-	BeatErrCodeRequestDeadLineError = 2002 // 超时设置错误
-	BeatErrCodeRequestInitError     = 2003 // 请求初始化失败
+	BeatErrCodeRequestError         = 1100 // 请求失败
+	BeatErrCodeRequestTimeoutError  = 1101 // 请求超时
+	BeatErrCodeRequestDeadLineError = 1102 // 超时设置错误
+	BeatErrCodeRequestInitError     = 1103 // 请求初始化失败
 
-	BeatErrCodeResponseError          = 3000 // 响应失败
-	BeatErrCodeResponseTimeoutError   = 3001 // 响应超时
-	BeatErrCodeResponseMatchError     = 3002 // 匹配失败
-	BeatErrCodeResponseCodeError      = 3003 // 响应码不匹配
-	BeatErrCodeResponseTemporaryError = 3004 // 临时响应失败
-	BeatErrCodeResponseNoRspError     = 3005 // 服务无响应
-	BeatErrCodeResponseHandleError    = 3006 // 响应处理失败
-	BeatErrCodeResponseConnRefused    = 3007 // 链接拒绝
-	BeatErrCodeResponseReadError      = 3008 // 响应读取失败
-	BeatErrCodeResponseEmptyError     = 3009 // 响应头部为空
-	BeatErrCodeResponseHeaderError    = 3010 // 响应头部不符合
-	BeatErrCodeResponseNotFindIpv4    = 3011 // 未找到ipv4地址
-	BeatErrCodeResponseNotFindIpv6    = 3012 // 未找到ipv6地址
-	BeatErrCodeResponseParseUrlErr    = 3013 // url解析错误
+	BeatErrCodeResponseError          = 1200 // 响应失败
+	BeatErrCodeResponseTimeoutError   = 1201 // 响应超时
+	BeatErrCodeResponseMatchError     = 1202 // 匹配失败
+	BeatErrCodeResponseCodeError      = 1203 // 响应码不匹配
+	BeatErrCodeResponseTemporaryError = 1204 // 临时响应失败
+	BeatErrCodeResponseNoRspError     = 1205 // 服务无响应
+	BeatErrCodeResponseHandleError    = 1206 // 响应处理失败
+	BeatErrCodeResponseConnRefused    = 1207 // 链接拒绝
+	BeatErrCodeResponseReadError      = 1208 // 响应读取失败
+	BeatErrCodeResponseEmptyError     = 1209 // 响应头部为空
+	BeatErrCodeResponseHeaderError    = 1210 // 响应头部不符合
+	BeatErrCodeResponseNotFindIpv4    = 1211 // 未找到ipv4地址
+	BeatErrCodeResponseNotFindIpv6    = 1212 // 未找到ipv6地址
+	BeatErrCodeResponseParseUrlErr    = 1213 // url解析错误
 
-	BeatErrScriptRunError          = 4001 // 脚本运行报错
-	BeatErrScriptParamError        = 4002 // 脚本命令不合法
-	BeatErrScriptFormatOutputError = 4003 //解析脚本标准输出报错
+	BeatErrScriptTsUnitConfigError = 1301 // 脚本配置中的时间单位设置异常
+
+	BeaterProcSnapshotReadError  = 1402 // 主机进程状态信息读取失败
+	BeaterProcStdConnDetectError = 1403 // 标准化模式主机套接字信息读取失败
+	BeaterProcNetConnDetectError = 1404 // Netlink模式主机套接字信息读取失败
+
+	BeaterMetricBeatWriteTmpFileError = 1501 // 将相应同步至临时文件失败
+
+	// 四位状态码，且首字符为 2 的错误码属于用户侧原因
+
+	BeatPingDNSResolveOuterError = 2101 // DNS解析失败
+	BeatPingInvalidIPOuterError  = 2102 // IP 格式异常
+
+	BeatScriptRunOuterError        = 2301 // 脚本运行报错
+	BeatScriptPromFormatOuterError = 2302 // 脚本打印的 Prom 数据格式异常
+
+	BeaterProcPIDFileNotFountOuterError = 2401 // PID文件不存在
+	BeaterProcStateReadOuterError       = 2402 // 单个进程状态信息读取失败
+	BeaterProcNotMatchedOuterError      = 2403 // 进程关键字未匹配到任何进程
+
+	BeatMetricBeatConnOuterError       = 2501 // 连接用户端地址失败
+	BeatMetricBeatPromFormatOuterError = 2502 // 服务返回的 Prom 数据格式异常
 )
+
+var BeatErrorCodeNameMap = map[BeatErrorCode]string{
+	BeatErrCodeOK:      "正常",
+	BeatErrCodeUnknown: "未知错误",
+	BeatErrCodeCancel:  "取消",
+	BeatErrCodeTimeout: "超时",
+	BeatErrInternalErr: "系统内部异常",
+
+	BeatErrCodeConnError:           "连接失败",
+	BeatErrCodeConnTimeoutError:    "连接超时",
+	BeatErrCodeConnProxyError:      "连接代理失败",
+	BeatErrCodeConnDNSResolveError: "连接DNS解析失败",
+	BeatErrCodeDNSResolveError:     "DNS解析失败",
+	BeatInvalidIPError:             "非法IP地址",
+
+	BeatErrCodeRequestError:         "请求失败",
+	BeatErrCodeRequestTimeoutError:  "请求超时",
+	BeatErrCodeRequestDeadLineError: "超时设置错误",
+	BeatErrCodeRequestInitError:     "请求初始化失败",
+
+	BeatErrCodeResponseError:          "响应失败",
+	BeatErrCodeResponseTimeoutError:   "响应超时",
+	BeatErrCodeResponseMatchError:     "匹配失败",
+	BeatErrCodeResponseCodeError:      "响应码不匹配",
+	BeatErrCodeResponseTemporaryError: "临时响应失败",
+	BeatErrCodeResponseNoRspError:     "服务无响应",
+	BeatErrCodeResponseHandleError:    "响应处理失败",
+	BeatErrCodeResponseConnRefused:    "链接拒绝",
+	BeatErrCodeResponseReadError:      "响应读取失败",
+	BeatErrCodeResponseEmptyError:     "响应头部为空",
+	BeatErrCodeResponseHeaderError:    "响应头部不符合",
+	BeatErrCodeResponseNotFindIpv4:    "未找到ipv4地址",
+	BeatErrCodeResponseNotFindIpv6:    "未找到ipv6地址",
+	BeatErrCodeResponseParseUrlErr:    "url解析错误",
+
+	BeatErrScriptTsUnitConfigError: "脚本配置中的时间单位设置异常",
+
+	BeaterProcSnapshotReadError:  "主机进程状态信息读取失败",
+	BeaterProcStdConnDetectError: "标准化模式主机套接字信息读取失败",
+	BeaterProcNetConnDetectError: "Netlink模式主机套接字信息读取失败",
+
+	BeaterMetricBeatWriteTmpFileError: "将相应同步至临时文件失败",
+
+	// 四位状态码，且首字符为 2 的错误码属于用户侧原因
+	BeatPingDNSResolveOuterError: "DNS解析失败",
+	BeatPingInvalidIPOuterError:  "IP 格式异常",
+
+	BeatScriptRunOuterError:        "脚本运行报错",
+	BeatScriptPromFormatOuterError: "脚本打印的 Prom 数据格式异常",
+
+	BeaterProcPIDFileNotFountOuterError: "PID文件不存在",
+	BeaterProcStateReadOuterError:       "单个进程状态信息读取失败",
+	BeaterProcNotMatchedOuterError:      "进程关键字未匹配到任何进程",
+
+	BeatMetricBeatConnOuterError:       "连接用户端地址失败",
+	BeatMetricBeatPromFormatOuterError: "服务返回的 Prom 数据格式异常",
+}
+
+// BeaterUpMetricCodeLabel UpMetrics Labels
+const (
+	BeaterUpMetricCodeLabel     = "bkm_up_code"
+	BeaterUpMetric              = "bkm_gather_up"
+	BeaterUpMetricCodeNameLabel = "bkm_up_code_name"
+)
+
+// BeaterUpMetricErr 有关
+type BeaterUpMetricErr struct {
+	Code    int
+	Message string
+}
+
+func (e *BeaterUpMetricErr) Error() string {
+	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+}
 
 // GetErrorCodeByError 通过错误信息获取错误代码
 func GetErrorCodeByError(err error) int {

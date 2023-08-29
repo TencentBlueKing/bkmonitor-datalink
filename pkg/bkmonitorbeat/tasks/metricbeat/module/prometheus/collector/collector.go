@@ -12,6 +12,7 @@ package collector
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,12 +36,6 @@ const (
 	defaultScheme = "http"
 	defaultPath   = "/metrics"
 	metricName    = "__name__"
-)
-
-const (
-	statusOK          = 1 // HTTP 请求正常
-	statusHttpErr     = 2 // HTTP 请求失败
-	statusInternalErr = 3 // 内部处理异常
 )
 
 const (
@@ -271,9 +266,6 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	scanner := bufio.NewScanner(metricsReader)
 	linesCh := make(chan string, 1)
 	go func() {
-		if up {
-			linesCh <- newMetricUp(statusOK)
-		}
 		for scanner.Scan() {
 			linesCh <- scanner.Text()
 		}
@@ -302,8 +294,12 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				var upErr *define.BeaterUpMetricErr
 				for line := range linesCh {
-					events, dk := m.produceEvents(line, milliTs)
+					events, dk, err := m.produceEvents(line, milliTs)
+					if err != nil {
+						errors.As(err, &upErr)
+					}
 					if dk != nil {
 						lastDiffMetricMut.Lock()
 						lastDiffMetrics[dk.key][dk.hash] = dk.value
@@ -311,6 +307,18 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 					}
 					for j := 0; j < len(events); j++ {
 						eventChan <- events[j]
+					}
+				}
+				// 遍历解析 Prom 语句存在错误时则传入异常状态码，无错误则传入OK状态码
+				if up {
+					var events []common.MapStr
+					if upErr == nil {
+						events, _, _ = m.produceEvents(newMetricUp(define.BeatErrCodeOK), milliTs)
+					} else {
+						events, _, _ = m.produceEvents(newMetricUp(upErr.Code), milliTs)
+					}
+					if len(events) > 0 {
+						eventChan <- events[0]
 					}
 				}
 			}()
@@ -321,24 +329,26 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	return eventChan
 }
 
-func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, *diffKey) {
+func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, *diffKey, error) {
 	if len(line) <= 0 || line[0] == '#' {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	timeOffset := 24 * time.Hour * 365 * 2 // 默认可容忍偏移时间为两年
 	tsHandler, _ := tasks.GetTimestampHandler("s")
 	promEvent, err := tasks.NewPromEvent(line, timestamp, timeOffset, tsHandler)
 	if err != nil {
-		logger.Warnf("parse line=>(%s) failed, err: %s", line, err)
-		return nil, nil
+		errMsg := fmt.Sprintf("parse line=>(%s) failed, err: %s", line, err)
+		upErr := &define.BeaterUpMetricErr{Code: define.BeatMetricBeatPromFormatOuterError, Message: errMsg}
+		logger.Warnf(upErr.Error())
+		return nil, nil, upErr
 	}
 
 	// 生成事件
 	var events []common.MapStr
 	event, dk := m.getEventFromPromEvent(&promEvent)
 	if event == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	events = append(events, event)
 
@@ -349,7 +359,7 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 		targetEvent["key"] = targetMetricKey
 		events = append(events, targetEvent)
 	}
-	return events, dk
+	return events, dk, nil
 }
 
 func newFailReader(code int) io.ReadCloser {
@@ -367,7 +377,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 	logger.Debugf("httpClient response %s, take: %v", m.Host(), time.Since(startTime))
 	if err != nil {
 		logger.Errorf("failed to get data, err: %v", err)
-		m.fillMetrics(summary, newFailReader(statusHttpErr), false)
+		m.fillMetrics(summary, newFailReader(define.BeatMetricBeatConnOuterError), false)
 		return summary, err
 	}
 	defer rsp.Body.Close()
@@ -377,20 +387,20 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		metricsFile, err = utils.CreateTempFile(m.tempFilePattern)
 		if err != nil {
 			logger.Errorf("create metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(statusInternalErr), false)
+			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
 			return summary, err
 		}
 
 		if _, err = io.Copy(metricsFile, rsp.Body); err != nil {
 			logger.Errorf("write metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(statusInternalErr), false)
+			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
 			return summary, err
 		}
 		if err = metricsFile.Close(); err != nil {
 			logger.Errorf("close metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(statusInternalErr), false)
+			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
 			_ = os.Remove(metricsFile.Name())
 			return summary, err
 		}

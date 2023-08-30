@@ -15,9 +15,10 @@ import (
 
 	"github.com/elastic/beats/libbeat/common"
 	libbeatlogp "github.com/elastic/beats/libbeat/logp"
-	"github.com/elastic/beats/libbeat/monitoring"
+	libbeatmonitoring "github.com/elastic/beats/libbeat/monitoring"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/monitoring"
 )
@@ -47,24 +48,26 @@ func (client *mockSender) Report(dataid int32, data common.MapStr) error {
 
 func TestMetrics(t *testing.T) {
 	// 采集器公共指标
-	metric1 := monitoring.NewInt("test.v", monitoring.Gauge)
+	metric1 := monitoring.NewInt("test.v", libbeatmonitoring.Gauge)
 	metric1.Add(1)
 
 	// 采集器任务指标
 	metric2 := monitoring.NewIntWithDataID(metricDataID, "v")
 	metric2.Add(1)
-	last := makeSnapshot(monitoring.Default)
+	last := makeSnapshot(libbeatmonitoring.Default)
 
 	metric1.Add(1)
 	metric2.Add(1)
-	cur := makeSnapshot(monitoring.Default)
+	cur := makeSnapshot(libbeatmonitoring.Default)
 
 	r := &reporter{
-		dataID:      dataID,
-		taskDataID:  taskDataID,
-		registry:    monitoring.Default,
-		beatName:    beatName,
-		beatVersion: beatVersion,
+		dataID:       dataID,
+		taskDataID:   taskDataID,
+		registry:     libbeatmonitoring.Default,
+		beatName:     beatName,
+		beatVersion:  beatVersion,
+		k8sClusterID: "BCS-K8S-12345",
+		k8sNodeName:  "node-10-0-0-1",
 	}
 
 	output := &mockSender{
@@ -73,7 +76,7 @@ func TestMetrics(t *testing.T) {
 			taskDataID: {},
 		},
 	}
-	InitSender(output, bkCloudId, ip)
+	InitSender(output, gse.AgentInfo{})
 	delta := r.makeDeltaSnapshot(last, cur)
 
 	var delta1 int64 = 1
@@ -89,9 +92,12 @@ func TestMetrics(t *testing.T) {
 				"bkbeat_test_v": delta2,
 			},
 			"dimension": common.MapStr{
-				"type":         beatName,
-				"version":      beatVersion,
-				"task_data_id": 0,
+				"type":           beatName,
+				"version":        beatVersion,
+				"task_data_id":   0,
+				"bk_biz_id":      int32(0),
+				"k8s_cluster_id": "BCS-K8S-12345",
+				"k8s_node_name":  "node-10-0-0-1",
 			},
 		},
 		taskDataID: {
@@ -99,15 +105,18 @@ func TestMetrics(t *testing.T) {
 				"v": delta1,
 			},
 			"dimension": common.MapStr{
-				"type":         beatName,
-				"version":      beatVersion,
-				"task_data_id": metricDataID,
+				"type":           beatName,
+				"version":        beatVersion,
+				"task_data_id":   metricDataID,
+				"bk_biz_id":      int32(0),
+				"k8s_cluster_id": "BCS-K8S-12345",
+				"k8s_node_name":  "node-10-0-0-1",
 			},
 		},
 	}
 
 	for k, v := range output.Data {
 		item := v["data"].([]common.MapStr)
-		assert.Equal(t, item[0], assertMetric[k])
+		assert.Equal(t, assertMetric[k], item[0])
 	}
 }

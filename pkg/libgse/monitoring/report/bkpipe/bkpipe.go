@@ -124,17 +124,19 @@ type TaskMetric struct {
 }
 
 type reporter struct {
-	wg          sync.WaitGroup
-	done        chan struct{}
-	bkBizID     int32
-	dataID      int32
-	taskDataID  int32
-	period      time.Duration
-	registry    *monitoring.Registry
-	beatName    string
-	beatVersion string
-	bkCloudId   int
-	ip          string
+	wg           sync.WaitGroup
+	done         chan struct{}
+	bkBizID      int32
+	dataID       int32
+	taskDataID   int32
+	k8sClusterID string
+	k8sNodeName  string
+	period       time.Duration
+	registry     *monitoring.Registry
+	beatName     string
+	beatVersion  string
+	bkCloudId    int
+	ip           string
 }
 
 func init() {
@@ -152,14 +154,16 @@ func makeReporter(beat beat.Info, settings report.Settings, cfg *common.Config) 
 	}
 
 	reporter := &reporter{
-		done:        make(chan struct{}),
-		bkBizID:     config.BkBizID,
-		dataID:      config.DataID,
-		taskDataID:  config.TaskDataID,
-		period:      config.Period,
-		registry:    monitoring.Default,
-		beatName:    beat.Beat,
-		beatVersion: beat.Version,
+		done:         make(chan struct{}),
+		bkBizID:      config.BkBizID,
+		dataID:       config.DataID,
+		taskDataID:   config.TaskDataID,
+		period:       config.Period,
+		k8sClusterID: config.K8sClusterID,
+		k8sNodeName:  config.K8sNodeName,
+		registry:     monitoring.Default,
+		beatName:     beat.Beat,
+		beatVersion:  beat.Version,
 	}
 
 	reporter.wg.Add(1)
@@ -212,6 +216,12 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 		}
 		var key string
 
+		bkBizID := r.bkBizID
+		if r.bkBizID == 0 {
+			// 默认使用主机身份的业务ID
+			bkBizID = GetAgentInfo().BKBizID
+		}
+
 		for dataID, dataMetrics := range metrics {
 			if dataID == 0 {
 				key = "beat"
@@ -219,14 +229,24 @@ func (r *reporter) sendMetrics(s monitoring.FlatSnapshot) {
 				key = "tasks"
 			}
 
+			dimension := common.MapStr{
+				"bk_biz_id":    bkBizID,
+				"type":         r.beatName,
+				"version":      r.beatVersion,
+				"task_data_id": dataID,
+			}
+
+			if r.k8sClusterID != "" {
+				dimension["k8s_cluster_id"] = r.k8sClusterID
+			}
+
+			if r.k8sNodeName != "" {
+				dimension["k8s_node_name"] = r.k8sNodeName
+			}
+
 			data[key] = append(data[key], common.MapStr{
-				"metrics": dataMetrics,
-				"dimension": common.MapStr{
-					"bk_biz_id":    r.bkBizID,
-					"type":         r.beatName,
-					"version":      r.beatVersion,
-					"task_data_id": dataID,
-				},
+				"metrics":   dataMetrics,
+				"dimension": dimension,
 			})
 		}
 		if Sender == nil {

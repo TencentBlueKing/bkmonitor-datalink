@@ -15,12 +15,11 @@
 
 - api: /api/v1beta1/relation/mult_resource
 - method: POST
+- header: X-Bk-Scope-Space-Uid: bkcc__2
 - request:
-
 
 ```json
 {
-  "spaceUid": "bkcc__2",                                            // header
   "timestamp": 1693217460,
   "query_list": [
     {

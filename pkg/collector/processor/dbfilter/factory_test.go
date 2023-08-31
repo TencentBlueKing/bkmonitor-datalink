@@ -81,7 +81,7 @@ processor:
 
 	t.Run("mysql slow query", func(t *testing.T) {
 		data := g.Generate()
-		span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		span := testkits.FirstSpan(data)
 
 		// duration: 2s
 		span.SetEndTimestamp(pcommon.Timestamp(3 * time.Second))
@@ -100,7 +100,7 @@ processor:
 
 	t.Run("mysql normal query", func(t *testing.T) {
 		data := g.Generate()
-		span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		span := testkits.FirstSpan(data)
 
 		// duration: 0.5s
 		span.SetEndTimestamp(pcommon.Timestamp(1500 * time.Millisecond))
@@ -141,7 +141,7 @@ processor:
 	// 使用兜底规则
 	t.Run("elasticsearch slow query(default)", func(t *testing.T) {
 		data := g.Generate()
-		span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		span := testkits.FirstSpan(data)
 
 		// duration: 9s
 		span.SetEndTimestamp(pcommon.Timestamp(10 * time.Second))
@@ -160,7 +160,7 @@ processor:
 
 	t.Run("not db system", func(t *testing.T) {
 		data := g.Generate()
-		span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		span := testkits.FirstSpan(data)
 		span.Attributes().Remove(semconv.AttributeDBSystem)
 
 		record := &define.Record{

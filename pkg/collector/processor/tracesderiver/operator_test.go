@@ -109,16 +109,16 @@ func TestOperatorDuration(t *testing.T) {
 	})
 	data := g.Generate()
 
-	trace1 := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	trace1.Attributes().InsertString("http.method", "GET")
-	trace1.SetStartTimestamp(100)
-	trace1.SetEndTimestamp(200)
+	span1 := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span1.Attributes().InsertString("http.method", "GET")
+	span1.SetStartTimestamp(100)
+	span1.SetEndTimestamp(200)
 
 	// 时间戳异常 处理为 0
-	trace2 := data.ResourceSpans().At(0).ScopeSpans().At(1).Spans().At(0)
-	trace2.Attributes().InsertString("http.method", "POST")
-	trace2.SetStartTimestamp(300)
-	trace2.SetEndTimestamp(200)
+	span2 := data.ResourceSpans().At(0).ScopeSpans().At(1).Spans().At(0)
+	span2.Attributes().InsertString("http.method", "POST")
+	span2.SetStartTimestamp(300)
+	span2.SetEndTimestamp(200)
 
 	op := NewTracesOperator(c)
 	derived := op.Operate(&define.Record{

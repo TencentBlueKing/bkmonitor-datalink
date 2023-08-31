@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestIdFromTraces(t *testing.T) {
@@ -132,14 +133,14 @@ func TestQueue(t *testing.T) {
 		// 1001
 		ts := q.Pop(1001, traceID1)
 		assert.Len(t, ts, 1)
-		t1 := ts[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID()
+		t1 := testkits.FirstSpan(ts[0]).TraceID()
 		assert.Equal(t, traceID1, t1)
 		assert.NoError(t, q.Put(1001, traces1))
 
 		// t2
 		ts = q.Pop(1002, traceID2)
 		assert.Len(t, ts, 1)
-		t2 := ts[0].ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID()
+		t2 := testkits.FirstSpan(ts[0]).TraceID()
 		assert.Equal(t, traceID2, t2)
 		assert.Len(t, q.Pop(1001, random.TraceID()), 0)
 		assert.Nil(t, q.Pop(1003, random.TraceID()))

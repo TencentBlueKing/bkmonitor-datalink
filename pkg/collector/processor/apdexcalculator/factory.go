@@ -114,10 +114,7 @@ func (p apdexCalculator) processTraces(record *define.Record) {
 		}
 
 		config := p.configs.Get(record.Token.Original, service, instance).(*Config)
-		var kind string
-		if v, ok := attrs.Get(processor.KeyKind); ok {
-			kind = SpanKindMap[v.StringVal()]
-		}
+		kind := span.Kind().String()
 
 		predicateKeys := config.GetPredicateKeys(kind)
 		var foundPk string

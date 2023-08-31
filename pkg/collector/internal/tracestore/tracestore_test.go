@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -74,7 +75,7 @@ func testStorage(t *testing.T, stor Storage) {
 
 	for i := 0; i < 10; i++ {
 		traces := g.Generate()
-		span := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		span := testkits.FirstSpan(traces)
 
 		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, byte(i)})
 		spanID := pcommon.NewSpanID([8]byte{1, byte(i)})

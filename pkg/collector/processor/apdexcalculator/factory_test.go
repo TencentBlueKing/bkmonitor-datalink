@@ -248,7 +248,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 		SpanCount: 1,
 	})
 	data := g.Generate()
-	span := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span := testkits.FirstSpan(data)
 	span.SetStartTimestamp(pcommon.Timestamp(startTime))
 	span.SetEndTimestamp(pcommon.Timestamp(endTime))
 
@@ -281,7 +281,7 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 		return "", err
 	}
 
-	span = data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span = testkits.FirstSpan(data)
 	v, ok := span.Attributes().Get("apdex_type")
 	if !ok {
 		return "", errors.New("no 'apdex_type' attribute found")

@@ -18,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
 func TestStatusCodeEvaluatorPost(t *testing.T) {
@@ -48,7 +49,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	})
 
 	assert.Equal(t, 1, traces.SpanCount())
-	span3 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span3 := testkits.FirstSpan(traces)
 	assert.Equal(t, t1, span3.TraceID())
 	_, ok := evaluator.traces[span3.TraceID()]
 	assert.True(t, ok)
@@ -70,7 +71,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	})
 
 	assert.Equal(t, 1, traces.SpanCount())
-	span6 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span6 := testkits.FirstSpan(traces)
 	assert.Equal(t, t1, span6.TraceID())
 	_, ok = evaluator.traces[span6.TraceID()]
 	assert.True(t, ok)
@@ -127,7 +128,7 @@ func TestStatusCodeEvaluatorFull(t *testing.T) {
 	})
 
 	assert.Equal(t, 1, traces.SpanCount())
-	span3 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span3 := testkits.FirstSpan(traces)
 	assert.Equal(t, t1, span3.TraceID())
 	_, ok := evaluator.traces[span3.TraceID()]
 	assert.True(t, ok)
@@ -151,7 +152,7 @@ func TestStatusCodeEvaluatorFull(t *testing.T) {
 	})
 
 	assert.Equal(t, 3, traces.SpanCount())
-	span6 := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	span6 := testkits.FirstSpan(traces)
 	assert.Equal(t, t1, span6.TraceID())
 	_, ok = evaluator.traces[span6.TraceID()]
 	assert.True(t, ok)

@@ -91,6 +91,8 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 					instance: instance,
 					qry:      qry,
 				})
+			} else {
+				log.Warnf(ctx, "not instance in %s", qry.StorageID)
 			}
 		}
 	}
@@ -230,13 +232,13 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 	}
 
 	metricName := ReferenceName
-	if v, mc := metricMap[ReferenceName]; mc {
+	if v, mc := vmExpand.MetricAliasMapping[ReferenceName]; mc {
 		metricName = v
 	}
 	match, err := labels.NewMatcher(
@@ -247,7 +249,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	}
 	matchers = append(matchers, match)
 	if ok {
-		metadata.SetExpand(ctx, vmRtGroup)
+		metadata.SetExpand(ctx, vmExpand)
 		instance := GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
 		})
@@ -315,13 +317,13 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	}
 
 	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 	}
 
 	metricName := ReferenceName
-	if v, mc := metricMap[ReferenceName]; mc {
+	if v, mc := vmExpand.MetricAliasMapping[ReferenceName]; mc {
 		metricName = v
 	}
 	match, err := labels.NewMatcher(
@@ -335,7 +337,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 		if err != nil {
 			return nil, nil, err
 		}
-		metadata.SetExpand(ctx, vmRtGroup)
+		metadata.SetExpand(ctx, vmExpand)
 		instance := GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
 		})

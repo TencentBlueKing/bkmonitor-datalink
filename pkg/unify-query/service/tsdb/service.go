@@ -175,14 +175,15 @@ func (s *Service) reloadStorage() error {
 	inner.SetStorage(consul.VictoriaMetricsStorageType, &inner.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
-			Ctx:         s.ctx,
-			ContentType: VmContentType,
-			Address:     VmAddress,
-			UriPath:     VmUriPath,
-			Code:        VmCode,
-			Secret:      VmSecret,
-			Token:       VmToken,
-			Timeout:     VmTimeout,
+			Ctx:                  s.ctx,
+			ContentType:          VmContentType,
+			Address:              VmAddress,
+			UriPath:              VmUriPath,
+			Code:                 VmCode,
+			Secret:               VmSecret,
+			Token:                VmToken,
+			AuthenticationMethod: VmAuthenticationMethod,
+			Timeout:              VmTimeout,
 			// 是否开启 influxdb 正则匹配
 			InfluxCompatible: VmInfluxCompatible,
 			Curl:             &curl.HttpCurl{Log: log.OtLogger},

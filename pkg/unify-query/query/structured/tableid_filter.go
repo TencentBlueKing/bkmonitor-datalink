@@ -28,7 +28,7 @@ type TableIDFilter struct {
 
 // NewTableIDFilter
 func NewTableIDFilter(
-	metricName, tableID string, dataIDList []consul.DataID, conditions Conditions,
+	metricName string, tableID TableID, dataIDList []consul.DataID, conditions Conditions,
 ) (*TableIDFilter, error) {
 	// 找不到tableID一样需要返回一个实例，不然会报错
 	tableIDFilter := &TableIDFilter{
@@ -38,7 +38,7 @@ func NewTableIDFilter(
 		dataIDList:       make([]consul.DataID, 0),
 	}
 	// 1. 解析tableID
-	route, err := MakeRouteFromTableID(tableID)
+	route, err := MakeRouteFromTableID(TableID(tableID))
 	if err == nil {
 		tableIDFilter.values = append(tableIDFilter.values, route)
 		tableIDFilter.isAppointTableID = true

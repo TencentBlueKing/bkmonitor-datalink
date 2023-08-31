@@ -152,7 +152,7 @@ func makeInfluxdbQuery(
 	for _, q := range query.QueryList {
 		var (
 			tableInfos []*consul.TableID
-			whereList  = promql.NewWhereList()
+			whereList  = promql.NewWhereList(false)
 			fields     []string
 		)
 
@@ -167,7 +167,7 @@ func makeInfluxdbQuery(
 			structured.ReplaceOrAddCondition(&q.Conditions, structured.BizID, bizIDs)
 		}
 
-		tableIDfilter, err1 := structured.NewTableIDFilter(string(q.FieldName), string(q.TableID), nil, q.Conditions)
+		tableIDfilter, err1 := structured.NewTableIDFilter(string(q.FieldName), q.TableID, nil, q.Conditions)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -240,7 +240,7 @@ func makeInfluxdbQuery(
 			metricName = promql.StaticMetricValue
 		}
 		if len(queryInfo.Conditions) != 0 {
-			whereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(queryInfo.Conditions)))
+			whereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(queryInfo.Conditions, false)))
 		}
 
 		start := strconv.FormatInt(info.Start.UnixNano(), 10)

@@ -99,13 +99,18 @@ type QueryTime struct {
 type WhereList struct {
 	whereList   []*Where
 	logicalList []string
+
+	// 判断是否是 vm 查询
+	vm bool
 }
 
 // NewWhereList
-func NewWhereList() *WhereList {
+func NewWhereList(vm bool) *WhereList {
 	return &WhereList{
 		whereList:   make([]*Where, 0),
 		logicalList: make([]string, 0),
+
+		vm: vm,
 	}
 }
 
@@ -122,7 +127,11 @@ func (l *WhereList) String() string {
 		if index != 0 {
 			b.WriteString(" " + l.logicalList[index-1] + " ")
 		}
-		b.WriteString(where.String())
+		if l.vm {
+			b.WriteString(where.VmString())
+		} else {
+			b.WriteString(where.String())
+		}
 	}
 	return b.String()
 }
@@ -149,6 +158,15 @@ type Where struct {
 	Value     string
 	Operator  string
 	ValueType ValueType
+}
+
+func (w *Where) VmString() string {
+	switch w.ValueType {
+	case TextType:
+		return w.Value
+	default:
+		return fmt.Sprintf(`%s %s "%s"`, w.Name, w.Operator, w.Value)
+	}
 }
 
 // String
@@ -264,7 +282,7 @@ func makeInfluxdbQuery(
 		referenceName string
 
 		// where列表表示where语句的第一层，所有条件以and连接
-		whereList    = NewWhereList()
+		whereList    = NewWhereList(false)
 		start, stop  string
 		totalSQL     string
 		sqlInfos     []influxdb.SQLInfo
@@ -386,7 +404,7 @@ func makeInfluxdbQuery(
 
 		// 分段查询
 		for j, q := range queryTimes {
-			var queryTimesWhereList = NewWhereList()
+			var queryTimesWhereList = NewWhereList(false)
 			*queryTimesWhereList = *whereList
 
 			// 增加 query 查询条件
@@ -584,8 +602,14 @@ func getDownSampleFunc(
 }
 
 // makeExpression
-func makeExpression(condition ConditionField) string {
+func makeExpression(condition ConditionField, vm bool) string {
 	if len(condition.Value) == 1 {
+		if vm {
+			return fmt.Sprintf(
+				`%s%s"%s"`,
+				condition.DimensionName, condition.Operator, condition.Value[0],
+			)
+		}
 		if condition.Operator == NRegexpOperator || condition.Operator == RegexpOperator {
 			// influxdb 中以 "/" 为分隔符，所以这里将正则中的 "/" 做个简单的转义 "\/"
 			return fmt.Sprintf(
@@ -604,48 +628,62 @@ func makeExpression(condition ConditionField) string {
 	if condition.Operator == NEqualOperator || condition.Operator == NRegexpOperator {
 		logical = AndOperator
 	}
+
 	for index, value := range condition.Value {
-		if condition.Operator == NRegexpOperator || condition.Operator == RegexpOperator {
-			value = fmt.Sprintf("/%s/", strings.ReplaceAll(value, "/", "\\/"))
+		var item string
+		if vm {
+			item = fmt.Sprintf(
+				`%s%s"%s"`,
+				condition.DimensionName, condition.Operator, value,
+			)
 		} else {
-			value = fmt.Sprintf("'%s'", value)
+			if condition.Operator == NRegexpOperator || condition.Operator == RegexpOperator {
+				item = fmt.Sprintf(
+					"%s%s/%s/",
+					influxql.QuoteIdent(condition.DimensionName), condition.Operator,
+					strings.ReplaceAll(value, "/", "\\/"),
+				)
+			} else {
+				item = fmt.Sprintf("%s%s'%s'", influxql.QuoteIdent(condition.DimensionName), condition.Operator, value)
+			}
 		}
+
 		if index == 0 {
-			text = fmt.Sprintf("%s%s%s", influxql.QuoteIdent(condition.DimensionName), condition.Operator, value)
+			text = item
 			continue
 		}
 		text = fmt.Sprintf(
-			"(%s %s %s%s%s)",
-			text, logical, influxql.QuoteIdent(condition.DimensionName), condition.Operator, value,
+			"(%s %s %s)",
+			text, logical, item,
 		)
 	}
 	return text
 }
 
 // MakeAndConditions: 传入多个条件，拼接为对应的表达式
-func MakeAndConditions(row []ConditionField) string {
+func MakeAndConditions(row []ConditionField, vm bool) string {
 	// 如果只有一个条件，直接将这个条件本身返回
 	if len(row) == 1 {
-		return makeExpression(row[0])
+		return makeExpression(row[0], vm)
 	}
 
-	left := makeExpression(row[0])
+	left := makeExpression(row[0], vm)
 	operator := "and"
-	right := MakeAndConditions(row[1:])
+	right := MakeAndConditions(row[1:], vm)
 
 	return fmt.Sprintf("(%s %s %s)", left, operator, right)
 }
 
 // MakeOrExpression
-func MakeOrExpression(row [][]ConditionField) string {
+func MakeOrExpression(row [][]ConditionField, vm bool) string {
 	// 如果只有一个条件，直接将这个条件本身返回
 	if len(row) == 1 {
-		return MakeAndConditions(row[0])
+		return MakeAndConditions(row[0], vm)
 	}
 
-	left := MakeAndConditions(row[0])
+	left := MakeAndConditions(row[0], vm)
 	operator := "or"
-	right := MakeOrExpression(row[1:])
+	right := MakeOrExpression(row[1:], vm)
 
 	return fmt.Sprintf("(%s %s %s)", left, operator, right)
 }

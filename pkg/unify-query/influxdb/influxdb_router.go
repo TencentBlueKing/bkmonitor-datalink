@@ -66,7 +66,12 @@ func MockRouter(proxyInfo influxdb.ProxyInfo) {
 	ir.lock.Lock()
 	defer ir.lock.Unlock()
 
-	ir.proxyInfo = proxyInfo
+	if ir.proxyInfo == nil {
+		ir.proxyInfo = make(influxdb.ProxyInfo)
+	}
+	for k, v := range proxyInfo {
+		ir.proxyInfo[k] = v
+	}
 }
 
 func GetInfluxDBRouter() *Router {

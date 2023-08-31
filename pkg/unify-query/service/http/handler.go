@@ -144,9 +144,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		err  error
 		span oleltrace.Span
 
-		metricMap map[string]string
-		instance  tsdb.Instance
-		ok        bool
+		instance tsdb.Instance
+		ok       bool
 
 		res interface{}
 
@@ -189,19 +188,17 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
 
 	// 判断是否是直查
-	ok, metricMap, vmRtGroup, err := queryReference.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+	if err != nil {
+		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
+	}
 	if ok {
 		if err != nil {
 			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
-		// 直查需要保留 label 条件
-		for _, q := range query.QueryList {
-			for i, cond := range q.Conditions.FieldList {
-				q.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
-			}
-		}
-		metadata.SetExpand(ctx, vmRtGroup)
+
+		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
 		})
@@ -235,14 +232,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		})
 	}
 
-	trace.InsertStringIntoSpan("metric-map", fmt.Sprintf("%+v", metricMap), span)
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
 
-	promQL, err := query.ToPromExpr(ctx, metricMap)
+	promQL, err := query.ToPromExpr(ctx, true, false)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+
 	res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -305,23 +303,14 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}
 
 	// 是否打开对齐
-	metricMap := make(map[string]string, len(query.QueryList))
 	for _, q := range query.QueryList {
 		// 保留查询条件
 		for i, cond := range q.Conditions.FieldList {
 			q.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
 		}
-
-		// 获取完整指标
-		route, err := structured.MakeRouteFromTableID(q.TableID)
-		if err != nil {
-			return nil, err
-		}
-		route.SetMetricName(q.FieldName)
-		metricMap[q.ReferenceName] = route.RealMetricName()
 	}
 
-	promQL, err := query.ToPromExpr(ctx, metricMap)
+	promQL, err := query.ToPromExpr(ctx, false, true)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -358,6 +347,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query.Start = queryPromQL.Start
 	query.End = queryPromQL.End
 	query.Step = queryPromQL.Step
+	query.Timezone = queryPromQL.Timezone
 
 	// 补充业务ID
 	if len(queryPromQL.BKBizIDs) > 0 {

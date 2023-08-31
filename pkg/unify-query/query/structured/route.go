@@ -19,6 +19,19 @@ import (
 
 type TableID string
 
+// Split 按照格式解析 TableID
+func (t TableID) Split() (string, string) {
+	info := strings.Split(string(t), ".")
+	var a, b string
+	if len(info) > 0 {
+		a = info[0]
+	}
+	if len(info) > 1 {
+		b = info[1]
+	}
+	return a, b
+}
+
 // Route 数据路由
 type Route struct {
 	clusterID   string
@@ -81,7 +94,7 @@ func (r *Route) RealMetricName() string {
 	if r.DataSource() != "" {
 		metricList = append(metricList, r.DataSource())
 	} else {
-		metricList = append(metricList, dataSrc)
+		metricList = append(metricList, BkMonitor)
 	}
 
 	if r.DB() != "" {
@@ -100,25 +113,11 @@ func (r *Route) RealMetricName() string {
 }
 
 // MakeRouteFromTableID table 转换为路由表, 格式规范 {DB}.{Measurement}
-func MakeRouteFromTableID(tableID string) (*Route, error) {
-	if tableID == "" {
-		return &Route{}, ErrEmptyTableID
-	}
-
-	tableInfo := strings.Split(tableID, ".")
-
-	if len(tableInfo) > 2 {
-		return &Route{}, ErrWrongTableIDFormat
-	}
-
+func MakeRouteFromTableID(tableID TableID) (*Route, error) {
 	route := &Route{
-		dataSource: dataSrc,
-		db:         tableInfo[0],
+		dataSource: BkMonitor,
 	}
-
-	if len(tableInfo) == 2 {
-		route.measurement = tableInfo[1]
-	}
+	route.db, route.measurement = tableID.Split()
 	return route, nil
 }
 
@@ -154,13 +153,15 @@ func MakeRouteFromMetricName(name string) (*Route, error) {
 		return nil, ErrMetricMissing
 	}
 
-	// 如果第一位不是 bkmonitor 则需要补为 bkmonitor
+	// 如果第一位不是 dataSource 里面，则补充 bkmonitor
 	var split []string
-	if sn[0] != dataSrc && len(sn) < 4 {
-		split = make([]string, 0, len(split)+1)
-		split = append(split, dataSrc)
-	} else {
-		split = make([]string, 0, len(split))
+	if len(sn) < 4 {
+		if _, ok := dataSourceMap[sn[0]]; !ok {
+			split = make([]string, 0, len(split)+1)
+			split = append(split, BkMonitor)
+		} else {
+			split = make([]string, 0, len(split))
+		}
 	}
 	split = append(split, sn...)
 
@@ -219,7 +220,7 @@ func MakeRouteFromLBMatchOrMetricName(matches []*labels.Matcher) (*Route, error)
 // MakeRouteByDBTable:
 func MakeRouteByDBTable(db, measurement string) *Route {
 	return &Route{
-		dataSource:  dataSrc,
+		dataSource:  BkMonitor,
 		db:          db,
 		measurement: measurement,
 		metricName:  "",

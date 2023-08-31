@@ -88,7 +88,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 	for i, tsDB := range queryInfo.TsDBs {
 		var (
 			field     string
-			whereList = NewWhereList()
+			whereList = NewWhereList(false)
 			err       error
 			query     = &metadata.Query{
 				SegmentedEnable: tsDB.SegmentedEnable,
@@ -151,7 +151,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 
 		// 如果有额外condition，则录入where语句中
 		if len(queryInfo.Conditions) != 0 {
-			whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(queryInfo.Conditions)))
+			whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(queryInfo.Conditions, false)))
 			if len(queryInfo.Conditions) > 1 {
 				query.IsHasOr = true
 			}
@@ -185,10 +185,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 		}
 
 		if len(conditions) > 0 {
-			whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(conditions)))
-			if len(conditions) > 1 {
-				query.IsHasOr = true
-			}
+			whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(conditions, false)))
 		}
 
 		query.ClusterID = storageID
@@ -218,7 +215,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *QueryInfo) (metadata.QueryList, error) {
 	var (
 		tableInfos []*consul.TableID
-		whereList  = NewWhereList()
+		whereList  = NewWhereList(false)
 		isHasOr    = false
 		span       oleltrace.Span
 	)
@@ -248,7 +245,7 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 	}
 	// 如果有额外condition，则录入where语句中
 	if len(queryInfo.Conditions) != 0 {
-		whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(queryInfo.Conditions)))
+		whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(queryInfo.Conditions, false)))
 		if len(queryInfo.Conditions) > 1 {
 			isHasOr = true
 		}

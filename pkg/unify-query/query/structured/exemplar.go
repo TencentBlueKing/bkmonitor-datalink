@@ -50,7 +50,7 @@ func MakeInfluxdbQueryByStruct(
 	var sqlInfos []influxdb.SQLInfo
 	for _, query := range queries.QueryList {
 		var displayCol string
-		var whereList = promql.NewWhereList()
+		var whereList = promql.NewWhereList(false)
 		var displayFields, displayTags []string
 		var sqlInfo influxdb.SQLInfo
 		var measurement string

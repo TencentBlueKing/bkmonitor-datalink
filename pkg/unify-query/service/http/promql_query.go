@@ -195,7 +195,7 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		if spaceUid != "" {
 			tsDBs, err1 := structured.GetTsDBList(ctx, &structured.TsDBOption{
 				SpaceUid:  spaceUid,
-				TableID:   string(q.TableID),
+				TableID:   q.TableID,
 				FieldName: string(q.FieldName),
 			})
 			if err1 != nil {
@@ -215,7 +215,7 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		}
 
 		structured.ReplaceOrAddCondition(&q.Conditions, structured.BizID, bizIDs)
-		tableIDFilter, err1 := structured.NewTableIDFilter(string(q.FieldName), string(q.TableID), nil, q.Conditions)
+		tableIDFilter, err1 := structured.NewTableIDFilter(string(q.FieldName), q.TableID, nil, q.Conditions)
 		if err1 != nil {
 			return nil, err1
 		}

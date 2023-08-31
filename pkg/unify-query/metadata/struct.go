@@ -65,12 +65,14 @@ type Query struct {
 	DB              string // 存储 DB
 	Measurement     string // 存储 Measurement
 	Field           string // 存储 Field
+	Timezone        string // 存储 Timezone
 
 	IsHasOr bool // 标记是否有 or 条件
 
 	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
 
-	Condition string // 过滤条件
+	Condition   string // 过滤条件
+	VmCondition string
 
 	Filters []map[string]string // 查询中自带查询条件，用于拼接
 
@@ -192,15 +194,17 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 }
 
 // CheckVmQuery 判断是否是查询 vm 数据
-func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]string, map[string][]string, error) {
+func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, error) {
 	var (
-		span      oleltrace.Span
-		metricMap = make(map[string]string)
-		vmRtGroup = make(map[string][]string)
-		err       error
-		ok        bool
+		span oleltrace.Span
+		err  error
+		ok   bool
 
-		orCondition string
+		vmExpand = &VmExpand{
+			MetricAliasMapping:    make(map[string]string),
+			MetricFilterCondition: make(map[string]string),
+			ResultTableGroup:      make(map[string][]string),
+		}
 	)
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
 	if span != nil {
@@ -212,7 +216,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]s
 
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag && !druidQueryStatus {
-		return ok, metricMap, vmRtGroup, err
+		return ok, vmExpand, err
 	}
 
 	for referenceName, reference := range qRef {
@@ -225,52 +229,50 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, map[string]s
 			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
 
 			for _, query := range reference.QueryList {
-				var traceLog bytes.Buffer
+				var (
+					traceLog bytes.Buffer
+				)
 
-				if query.IsHasOr {
-					orCondition = query.Condition
-					traceLog.WriteString(fmt.Sprintf("or_condition: %s, ", orCondition))
-				}
 				// 获取 vm 的指标名
 				metricName = fmt.Sprintf("%s_%s", query.Measurement, query.Field)
 
+				traceLog.WriteString(fmt.Sprintf("vm_condition: %s, ", query.VmCondition))
 				traceLog.WriteString(fmt.Sprintf("metric_name: %s, ", metricName))
-				traceLog.WriteString(fmt.Sprintf("is-split: %v, ", query.IsSingleMetric))
-				traceLog.WriteString(fmt.Sprintf("vm-rt: %v, ", query.VmRt))
+				traceLog.WriteString(fmt.Sprintf("is_split: %v, ", query.IsSingleMetric))
+				traceLog.WriteString(fmt.Sprintf("vm_rt: %v, ", query.VmRt))
 
 				trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%s_%s", referenceName, query.DB), traceLog.String(), span)
 
 				// 只有全部为单指标单表
 				if !query.IsSingleMetric {
-					return ok, metricMap, vmRtGroup, err
+					return ok, vmExpand, err
 				}
+
+				vmExpand.MetricFilterCondition[referenceName] = query.VmCondition
 
 				// 获取 vm 对应的 rt 列表
 				if query.VmRt != "" {
 					vmRts[query.VmRt] = struct{}{}
 				}
 			}
-			metricMap[referenceName] = metricName
+
+			vmExpand.MetricAliasMapping[referenceName] = metricName
 			if len(vmRts) == 0 {
 				err = fmt.Errorf("vm query result table is empty %s", metricName)
 				break
 			}
 
-			if vmRtGroup[metricName] == nil {
-				vmRtGroup[metricName] = make([]string, 0)
+			if vmExpand.ResultTableGroup[referenceName] == nil {
+				vmExpand.ResultTableGroup[referenceName] = make([]string, 0)
 			}
 			for k := range vmRts {
-				vmRtGroup[metricName] = append(vmRtGroup[metricName], k)
+				vmExpand.ResultTableGroup[referenceName] = append(vmExpand.ResultTableGroup[referenceName], k)
 			}
 
-			sort.Strings(vmRtGroup[metricName])
+			sort.Strings(vmExpand.ResultTableGroup[referenceName])
 		}
 	}
 
 	ok = true
-	if orCondition != "" {
-		err = fmt.Errorf("vm query is not support conditions with or: %s", orCondition)
-	}
-
-	return ok, metricMap, vmRtGroup, err
+	return ok, vmExpand, err
 }

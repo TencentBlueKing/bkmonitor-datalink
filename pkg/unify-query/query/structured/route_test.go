@@ -25,7 +25,7 @@ type tableDrivenCase map[string]struct {
 // TestMakeRouteFromTableID
 func TestMakeRouteFromTableID(t *testing.T) {
 	testCases := map[string]struct {
-		tableID string
+		tableID TableID
 		route   *Route
 		err     error
 	}{
@@ -35,7 +35,7 @@ func TestMakeRouteFromTableID(t *testing.T) {
 		"valid table id": {
 			"system.cpu_summary",
 			&Route{
-				dataSource:  dataSrc,
+				dataSource:  BkMonitor,
 				db:          "system",
 				measurement: "cpu_summary",
 			},
@@ -43,13 +43,13 @@ func TestMakeRouteFromTableID(t *testing.T) {
 		},
 		"two stage": {
 			"cpu_summary", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				db:         "cpu_summary",
 			}, nil,
 		},
 		"wrong table id": {
 			"system.cpu_detail.usage", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				db:         "cpu_summary",
 			}, ErrWrongTableIDFormat,
 		},
@@ -79,34 +79,34 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 		},
 		"single metric": {
 			"usage", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				metricName: "usage",
 			}, nil,
 		},
 		"two stage": {
 			"cpu_summary:usage", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				db:         "cpu_summary",
 				metricName: "usage",
 			}, nil,
 		},
 		"two stage with all": {
 			"cpu_summary:__default__", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				db:         "cpu_summary",
 				metricName: "__default__",
 			}, nil,
 		},
 		"two stage with data source": {
 			"bkmonitor:cpu_summary:usage", &Route{
-				dataSource: dataSrc,
+				dataSource: BkMonitor,
 				db:         "cpu_summary",
 				metricName: "usage",
 			}, nil,
 		},
 		"table id + metric": {
 			"system:cpu_summary:usage", &Route{
-				dataSource:  dataSrc,
+				dataSource:  BkMonitor,
 				db:          "system",
 				measurement: "cpu_summary",
 				metricName:  "usage",
@@ -114,7 +114,7 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 		},
 		"bkmonitor + table id + metric": {
 			"bkmonitor:system:cpu_summary:usage", &Route{
-				dataSource:  dataSrc,
+				dataSource:  BkMonitor,
 				db:          "system",
 				measurement: "cpu_summary",
 				metricName:  "usage",

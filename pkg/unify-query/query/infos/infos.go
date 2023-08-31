@@ -42,8 +42,8 @@ const (
 
 // Params
 type Params struct {
-	Metric  string `json:"metric_name"`
-	TableID string `json:"table_id"`
+	Metric  string             `json:"metric_name"`
+	TableID structured.TableID `json:"table_id"`
 
 	Conditions structured.Conditions `json:"conditions"`
 	Keys       []string              `json:"keys"`
@@ -194,7 +194,7 @@ func makeInfluxQLListBySpaceUid(
 	for _, tsDB := range tsDBs {
 		var (
 			field        string
-			newWhereList = promql.NewWhereList()
+			newWhereList = promql.NewWhereList(false)
 			metricName   string
 			sqlInfo      influxdb.SQLInfo
 			// 如果有额外condition，则录入where语句中
@@ -250,7 +250,7 @@ func makeInfluxQLListBySpaceUid(
 				}
 
 				if len(conditions) > 0 {
-					newWhereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(conditions)))
+					newWhereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(conditions, false)))
 				}
 				sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 				sqlInfo.ClusterID = storageID
@@ -283,7 +283,7 @@ func makeInfluxQLListBySpaceUid(
 			field = strings.Join(params.Keys, `","`)
 
 			if len(conditions) > 0 {
-				newWhereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(conditions)))
+				newWhereList.Append(promql.AndOperator, promql.NewTextWhere(promql.MakeOrExpression(conditions, false)))
 			}
 			sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 			sqlInfo.ClusterID = storageID
@@ -307,7 +307,7 @@ func makeInfluxQLList(
 		err          error
 		influxQLList []influxdb.SQLInfo
 		limit        int
-		whereList    = promql.NewWhereList()
+		whereList    = promql.NewWhereList(false)
 		span         oleltrace.Span
 	)
 
@@ -327,7 +327,7 @@ func makeInfluxQLList(
 	if len(condition) != 0 {
 		whereList.Append(
 			promql.AndOperator, promql.NewTextWhere(
-				promql.MakeOrExpression(structured.ConvertToPromBuffer(condition)),
+				promql.MakeOrExpression(structured.ConvertToPromBuffer(condition), false),
 			))
 	}
 	// 增加时间维度查询，秒级转纳秒
@@ -385,7 +385,7 @@ func makeInfluxQLList(
 			db           = tableID.DB
 			measurement  string
 			field        string
-			newWhereList = promql.NewWhereList()
+			newWhereList = promql.NewWhereList(false)
 			metricName   string
 			sqlInfo      influxdb.SQLInfo
 		)

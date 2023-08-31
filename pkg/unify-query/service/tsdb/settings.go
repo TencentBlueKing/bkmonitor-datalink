@@ -40,6 +40,8 @@ const (
 	VmSecretConfigPath = "victoria_metrics.secret"
 	VmTokenConfigPath  = "victoria_metrics.token"
 
+	VmAuthenticationMethodConfigPath = "victoria_metrics.authentication_method"
+
 	VmInfluxCompatibleConfigPath = "victoria_metrics.influx_compatible"
 
 	// OfflineDataArchive 配置
@@ -74,11 +76,14 @@ var (
 	VmTimeout time.Duration
 	VmUriPath string
 
-	VmContentType string
+	VmAuthenticationMethod string
+	VmContentType          string
 
 	VmCode   string
 	VmSecret string
 	VmToken  string
+
+	AuthenticationMethod string
 
 	VmInfluxCompatible bool
 

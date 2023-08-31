@@ -45,6 +45,7 @@ func setDefaultConfig() {
 
 	// vm 支持 influxdb 的查询配置
 	viper.SetDefault(VmInfluxCompatibleConfigPath, true)
+	viper.SetDefault(VmAuthenticationMethodConfigPath, "token")
 
 	viper.SetDefault(OfflineDataArchiveAddressConfigPath, "bk-datalink-offline-data-archive:8089")
 	viper.SetDefault(OfflineDataArchiveTimeoutConfigPath, "10m")
@@ -76,6 +77,7 @@ func initConfig() {
 	VmCode = viper.GetString(VmCodeConfigPath)
 	VmSecret = viper.GetString(VmSecretConfigPath)
 	VmToken = viper.GetString(VmTokenConfigPath)
+	VmAuthenticationMethod = viper.GetString(VmAuthenticationMethodConfigPath)
 
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 

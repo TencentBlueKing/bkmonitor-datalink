@@ -353,6 +353,7 @@ func (i *Instance) query(
 		isCount   bool
 		sLimitStr string
 		limitStr  string
+		timezone  string
 
 		withTag     = ",*::tag"
 		aggField    string
@@ -411,15 +412,19 @@ func (i *Instance) query(
 	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	if limit > 0 {
-		sLimitStr = fmt.Sprintf(" slimit %d", slimit)
+		sLimitStr = fmt.Sprintf(` slimit %d`, slimit)
 	}
 	if slimit > 0 {
-		limitStr = fmt.Sprintf(" limit %d", limit)
+		limitStr = fmt.Sprintf(` limit %d`, limit)
+	}
+	if query.Timezone != "" {
+		timezone = fmt.Sprintf(` tz('%s')`, query.Timezone)
 	}
 
 	sql := fmt.Sprintf(
-		"select %s as %s, time as %s%s from %s where %s %s%s%s",
-		aggField, influxdb.ResultColumnName, influxdb.TimeColumnName, withTag, influxql.QuoteIdent(query.Measurement), where, groupingStr, limitStr, sLimitStr,
+		"select %s as %s, time as %s%s from %s where %s %s%s%s%s",
+		aggField, influxdb.ResultColumnName, influxdb.TimeColumnName, withTag, influxql.QuoteIdent(query.Measurement),
+		where, groupingStr, limitStr, sLimitStr, timezone,
 	)
 
 	values := &url.Values{}
@@ -862,8 +867,10 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 
 	if field == "value" {
 		sql = "show measurements"
+	} else if field == "metric_value" {
+		sql = fmt.Sprintf(`show tag values from %s with key="metric_name"`, influxql.QuoteIdent(measurement))
 	} else {
-		sql = fmt.Sprintf("show field keys from %s", influxql.QuoteIdent(measurement))
+		sql = fmt.Sprintf(`show field keys from %s`, influxql.QuoteIdent(measurement))
 	}
 
 	values := &url.Values{}
@@ -938,11 +945,25 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	for _, r := range res.Results {
 		for _, s := range r.Series {
 			for _, v := range s.Values {
-				if len(v) > 0 {
-					value := v[0].(string)
-					if value != "" {
-						lbs = append(lbs, value)
+				if len(v) < 1 {
+					continue
+				}
+
+				value := v[0].(string)
+				if value == "" {
+					continue
+				}
+
+				// metric_name 结构取后面的 values 数值
+				if value == "metric_name" {
+					if len(v) < 2 {
+						continue
 					}
+					if val := v[1].(string); val != "" {
+						lbs = append(lbs, val)
+					}
+				} else {
+					lbs = append(lbs, value)
 				}
 			}
 		}

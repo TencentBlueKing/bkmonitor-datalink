@@ -30,6 +30,8 @@ type QueryPromQL struct {
 	Limit               int      `json:"limit,omitempty"`
 	Slimit              int      `json:"slimit,omitempty"`
 	Match               string   `json:"match,omitempty"`
+	// Timezone 时区
+	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 }
 
 // queryPromQLExpr
@@ -371,7 +373,7 @@ func vectorQuery(
 	}
 
 	query.DataSource = route.DataSource()
-	query.TableID = string(route.TableID())
+	query.TableID = route.TableID()
 	query.ReferenceName = referenceName
 	query.FieldName = route.MetricName()
 	query.Conditions = Conditions{

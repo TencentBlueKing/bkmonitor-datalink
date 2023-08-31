@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
@@ -36,6 +37,17 @@ type QueryRouter struct {
 
 func GetQueryRouter() *QueryRouter {
 	return queryRouter
+}
+
+func (q *QueryRouter) MockSpaceUid(spaceUid ...string) {
+	q.mtx.Lock()
+	defer q.mtx.Unlock()
+	if q.vmQuerySpaceUid == nil {
+		q.vmQuerySpaceUid = map[string]struct{}{}
+	}
+	for _, uid := range spaceUid {
+		q.vmQuerySpaceUid[uid] = struct{}{}
+	}
 }
 
 func (q *QueryRouter) Print() string {
@@ -126,6 +138,7 @@ func (q *QueryRouter) loadVmQuerySpaceUid() error {
 
 	q.vmQuerySpaceUid = make(map[string]struct{}, len(spaceUid))
 	for _, uid := range spaceUid {
+		metric.VmQueryInfo(q.ctx, 1, uid)
 		q.vmQuerySpaceUid[uid] = struct{}{}
 	}
 	return nil

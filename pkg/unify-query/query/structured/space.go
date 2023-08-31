@@ -32,7 +32,7 @@ type SpaceFilter struct {
 func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) {
 	spaceRouter, err := influxdb.GetSpaceRouter("", "")
 	if err != nil {
-		log.Errorf(ctx, "get space router error, %v", err)
+		log.Warnf(ctx, "get space router error, %v", err)
 		return nil, err
 	}
 	space := spaceRouter.Get(ctx, spaceUid)
@@ -48,32 +48,38 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 	}, nil
 }
 
-func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error) {
+func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB, error) {
+	if tableID == "" && fieldName == "" {
+		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
+	}
+
 	// 判断 tableID 使用几段式
-	router, _ := MakeRouteFromTableID(tableID)
+	db, measurement := tableID.Split()
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
 	filterTsDBs := make([]*redis.TsDB, 0)
 	// 判断如果 tableID 完整的情况下，则直接取对应的 tsDB
-	if router.DB() != "" && router.Measurement() != "" {
-		if v, ok := s.space[tableID]; ok {
+	if db != "" && measurement != "" {
+		if v, ok := s.space[string(tableID)]; ok {
 			for _, f := range v.Field {
-				if f == fieldName {
+				// fieldName 为空则不对比 field 直接获取 tableid 路由
+				if fieldName == "" || f == fieldName {
 					filterTsDBs = append(filterTsDBs, v)
+					break
 				}
 			}
-		} else {
-			return nil, ErrNotExistTableID
 		}
-	} else if router.DB() != "" {
+	} else if db != "" {
 		// 遍历该空间下所有的 space，如果 dataLabel 符合 db 则加入到 tsDB 列表里面
 		for _, v := range s.space {
 			// 可能会存在重复的 dataLabel
-			if router.DB() == v.DataLabel {
+			if db == v.DataLabel {
 				for _, f := range v.Field {
-					if f == fieldName {
+					// fieldName 为空则不对比 field 直接获取 tableid 路由
+					if fieldName == "" || f == fieldName {
 						filterTsDBs = append(filterTsDBs, v)
+						break
 					}
 				}
 			}
@@ -83,8 +89,10 @@ func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error)
 			// 如果不指定 tableID 或者 dataLabel，则只获取单指标单表的 tsdb
 			if v.IsSplit() {
 				for _, f := range v.Field {
-					if f == fieldName {
+					// fieldName 为空则不对比 field 直接获取 tableid 路由
+					if fieldName == "" || f == fieldName {
 						filterTsDBs = append(filterTsDBs, v)
+						break
 					}
 				}
 			}
@@ -111,7 +119,7 @@ func (s *SpaceFilter) DataList(tableID, fieldName string) ([]*redis.TsDB, error)
 
 type TsDBOption struct {
 	SpaceUid  string
-	TableID   string
+	TableID   TableID
 	FieldName string
 }
 

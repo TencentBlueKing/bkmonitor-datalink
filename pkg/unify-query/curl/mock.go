@@ -21,19 +21,22 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func NewMockCurl(data map[string]string, log *otelzap.Logger) *testCurl {
-	return &testCurl{
+func NewMockCurl(data map[string]string, log *otelzap.Logger) *TestCurl {
+	return &TestCurl{
 		log:  log,
 		data: data,
 	}
 }
 
-type testCurl struct {
+type TestCurl struct {
 	log  *otelzap.Logger
 	data map[string]string
+
+	Url    string
+	Params []byte
 }
 
-func (c *testCurl) resp(body string) *http.Response {
+func (c *TestCurl) resp(body string) *http.Response {
 	return &http.Response{
 		Status:        "200 OK",
 		StatusCode:    200,
@@ -46,8 +49,12 @@ func (c *testCurl) resp(body string) *http.Response {
 	}
 }
 
-func (c *testCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
+func (c *TestCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
 	log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
+
+	c.Url = opt.UrlPath
+	c.Params = opt.Body
+
 	if res, ok := c.data[opt.UrlPath]; ok {
 		return c.resp(res), nil
 	} else {

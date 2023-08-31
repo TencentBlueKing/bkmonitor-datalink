@@ -114,7 +114,7 @@ func (r *SpaceRouter) Get(ctx context.Context, spaceUid string) redis.Space {
 
 	v, err := r.kvClient.Get(kvstore.String2byte(spaceUid))
 	if err != nil {
-		log.Errorf(ctx, "get space: %s data error, %v", spaceUid, err)
+		log.Warnf(ctx, "get space: %s data error, %v", spaceUid, err)
 		return nil
 	}
 	var val redis.Space

@@ -83,6 +83,15 @@ var (
 		},
 		[]string{"space_uid", "tsdb_type"},
 	)
+
+	vmQuerySpaceUidInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "unify_query",
+			Name:      "vm_query_info",
+			Help:      "vm query info",
+		},
+		[]string{"space_uid"},
+	)
 )
 
 func TsDBAndTableIDRequestCountInc(ctx context.Context, params ...string) {
@@ -109,6 +118,11 @@ func RequestCountInc(ctx context.Context, params ...string) {
 func RequestSecond(ctx context.Context, duration time.Duration, params ...string) {
 	metric, err := requestHandleSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, err, duration, params...)
+}
+
+func VmQueryInfo(ctx context.Context, value float64, params ...string) {
+	metric, err := vmQuerySpaceUidInfo.GetMetricWithLabelValues(params...)
+	gaugeSet(ctx, metric, err, value, params...)
 }
 
 func gaugeSet(
@@ -176,6 +190,7 @@ func observe(
 // init
 func init() {
 	prometheus.MustRegister(
-		requestCount, requestHandleSecondHistogram, resultTableInfo, tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram,
+		requestCount, requestHandleSecondHistogram, resultTableInfo,
+		tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
 	)
 }

@@ -92,7 +92,7 @@ func HandleLabelValuesRequest(c *gin.Context) {
 
 	infoType := infos.TagValues
 	params := &infos.Params{
-		TableID:    tableID,
+		TableID:    structured.TableID(tableID),
 		Conditions: structured.Conditions{},
 		Keys:       []string{labelName},
 		Limit:      100, // 默认为100
@@ -152,7 +152,7 @@ func HandleLabelValuesRequest(c *gin.Context) {
 			return
 		}
 		params.Metric = route.MetricName()
-		params.TableID = string(route.TableID())
+		params.TableID = route.TableID()
 		params.Conditions.FieldList = fields
 		structured.ReplaceOrAddCondition(&params.Conditions, structured.BizID, bizIDs)
 

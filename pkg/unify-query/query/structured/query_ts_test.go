@@ -140,7 +140,7 @@ func TestQueryToMetric(t *testing.T) {
 	}{
 		"test table id query": {
 			query: &Query{
-				TableID:       tableID,
+				TableID:       TableID(tableID),
 				FieldName:     field,
 				ReferenceName: "a",
 				Start:         "0",
@@ -189,7 +189,7 @@ func TestQueryToMetric(t *testing.T) {
 		},
 		"test two stage metric query": {
 			query: &Query{
-				TableID:       dataLabel,
+				TableID:       TableID(dataLabel),
 				FieldName:     field,
 				ReferenceName: "a",
 				Start:         "0",
@@ -313,7 +313,7 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 			mock.SetOfflineDataArchiveMetadata(mockMd)
 
 			query := &Query{
-				TableID:       tc.tableID,
+				TableID:       TableID(tc.tableID),
 				FieldName:     tc.field,
 				ReferenceName: tc.referenceName,
 				Start:         tc.start,

@@ -101,7 +101,7 @@ func HandlerLabelValues(c *gin.Context) {
 				return
 			}
 
-			params.TableID = string(route.TableID())
+			params.TableID = route.TableID()
 			params.Metric = route.MetricName()
 		}
 

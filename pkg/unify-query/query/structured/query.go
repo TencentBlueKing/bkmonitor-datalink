@@ -51,10 +51,23 @@ type CombinedQueryParams struct {
 }
 
 const (
-	dataSrc                = "bkmonitor"      // 目前只有监控平台的数据 暂时先硬编码
 	bkDatabaseLabelName    = "bk_database"    // argus/prom 存储, db 名对应的 label 名称
 	bkMeasurementLabelName = "bk_measurement" // argus/prom 存储, 表名对应的 label 名称
+
+	BkMonitor = "bkmonitor"
+	Custom    = "custom"
+	BkData    = "bkdata"
+	BkLog     = "bklog"
+	BkApm     = "bkapm"
 )
+
+var dataSourceMap = map[string]struct{}{
+	BkMonitor: {},
+	Custom:    {},
+	BkData:    {},
+	BkLog:     {},
+	BkApm:     {},
+}
 
 // ToProm 结构化数据 -> promql -> 判断查询
 func (q *CombinedQueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, error) {
@@ -183,7 +196,7 @@ func (q *QueryParams) checkOption(ctx context.Context, opt *Option) (string, str
 	)
 	// 入参可以分为两种形式： 一种是指定了tableID，一种是未指定tableID
 	// 这里优先从TableID中获取库表
-	route, tableErr = MakeRouteFromTableID(string(q.TableID))
+	route, tableErr = MakeRouteFromTableID(q.TableID)
 	// 查询的几种场景
 	// 1. 含有tableID，必定以tableID为最优先
 	// 2. 没有tableID
@@ -220,7 +233,7 @@ func (q *QueryParams) checkOption(ctx context.Context, opt *Option) (string, str
 	// 是否要过滤condition，获取data_id_list
 	if opt.IsFilterCond {
 		// 如果传了tableID，则可以找到唯一的库表，不需要再用dataID遍历
-		tableIDFilter, err1 := NewTableIDFilter(string(q.FieldName), string(q.TableID), q.DataIDList, q.Conditions)
+		tableIDFilter, err1 := NewTableIDFilter(string(q.FieldName), q.TableID, q.DataIDList, q.Conditions)
 		if err1 != nil && err1 != ErrEmptyTableID {
 			return clusterID, db, measurement, metricName, err1
 		}
@@ -397,7 +410,7 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 	if options.SpaceUid != "" {
 		tsDBs, err1 := GetTsDBList(ctx, &TsDBOption{
 			SpaceUid:  options.SpaceUid,
-			TableID:   string(q.TableID),
+			TableID:   q.TableID,
 			FieldName: string(q.FieldName),
 		})
 		if err1 != nil {

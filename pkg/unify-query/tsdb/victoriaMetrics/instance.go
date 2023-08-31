@@ -33,8 +33,8 @@ import (
 )
 
 const (
-	BKDataAuthenticationMethod = "token"
-	PreferStorage              = "vm"
+	BkUserName    = "admin"
+	PreferStorage = "vm"
 
 	ContentType = "Content-Type"
 
@@ -64,6 +64,8 @@ type Instance struct {
 	Code   string
 	Secret string
 	Token  string
+
+	AuthenticationMethod string
 
 	InfluxCompatible bool
 
@@ -138,6 +140,16 @@ func (i *Instance) dataFormat(ctx context.Context, resp *VmResponse, span oleltr
 		trace.InsertIntIntoSpan("resp-point-num", pointNum, span)
 		return matrix, nil
 	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
 	return nil, nil
 }
 
@@ -212,8 +224,8 @@ func (i *Instance) vmQuery(
 	user := metadata.GetUser(ctx)
 	params := &Params{
 		SQL:                        sql,
-		BkdataAuthenticationMethod: BKDataAuthenticationMethod,
-		BkUsername:                 user.Key,
+		BkdataAuthenticationMethod: i.AuthenticationMethod,
+		BkUsername:                 BkUserName,
 		BkAppCode:                  i.Code,
 		PreferStorage:              PreferStorage,
 		BkdataDataToken:            i.Token,
@@ -278,8 +290,8 @@ func (i *Instance) QueryRange(
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
 	var (
-		span      oleltrace.Span
-		vmRtGroup map[string][]string
+		span     oleltrace.Span
+		vmExpand *metadata.VmExpand
 
 		vmResp = &VmResponse{}
 		err    error
@@ -292,8 +304,8 @@ func (i *Instance) QueryRange(
 
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		if v, ok := expand.(map[string][]string); ok {
-			vmRtGroup = v
+		if v, ok := expand.(*metadata.VmExpand); ok {
+			vmExpand = v
 		}
 	}
 
@@ -302,16 +314,11 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
 
-	if len(vmRtGroup) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
 		return promql.Matrix{}, nil
 	}
 
-	metrics := make([]string, 0, len(vmRtGroup))
-	for m, rts := range vmRtGroup {
-		metrics = append(metrics, m)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("vm-rt-%s", m), rts, span)
-	}
-	trace.InsertStringSliceIntoSpan("query-metrics", metrics, span)
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.InfluxCompatible,
@@ -327,7 +334,9 @@ func (i *Instance) QueryRange(
 			End:   end.Unix(),
 			Step:  int64(step.Seconds()),
 		},
-		ResultTableGroup: vmRtGroup,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		MetricAliasMapping:    vmExpand.MetricAliasMapping,
+		ResultTableGroup:      vmExpand.ResultTableGroup,
 	}
 
 	sql, err := json.Marshal(paramsQueryRange)
@@ -363,9 +372,9 @@ func (i *Instance) Query(
 
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		v, ok := expand.(map[string][]string)
+		v, ok := expand.(*metadata.VmExpand)
 		if ok {
-			vmRtGroup = v
+			vmRtGroup = v.ResultTableGroup
 		}
 	}
 
@@ -414,8 +423,8 @@ func (i *Instance) Query(
 
 func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
 	var (
-		span      oleltrace.Span
-		vmRtGroup map[string][]string
+		span     oleltrace.Span
+		vmExpand *metadata.VmExpand
 
 		resp = &VmLableValuesResponse{}
 		err  error
@@ -427,24 +436,24 @@ func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
 	}
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		v, ok := expand.(map[string][]string)
+		v, ok := expand.(*metadata.VmExpand)
 		if ok {
-			vmRtGroup = v
+			vmExpand = v
 		}
 	}
 
 	trace.InsertStringIntoSpan("query-name", name, span)
 
-	if len(vmRtGroup) == 0 {
+	if vmExpand == nil {
 		return nil, nil
 	}
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
-	metrics := make([]string, 0, len(vmRtGroup))
-	for m, rts := range vmRtGroup {
-		metrics = append(metrics, m)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("vm-rt-%s", m), rts, span)
+	// 拼接 result table 和 metric
+	metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
+	if err != nil {
+		return nil, err
 	}
-	trace.InsertStringSliceIntoSpan("query-metrics", metrics, span)
 
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
@@ -454,7 +463,7 @@ func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
 		}{
 			Label: name,
 		},
-		ResultTableGroup: vmRtGroup,
+		ResultTableGroup: metricResultTableGroup,
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -472,8 +481,8 @@ func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
 
 func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span      oleltrace.Span
-		vmRtGroup map[string][]string
+		span     oleltrace.Span
+		vmExpand *metadata.VmExpand
 
 		resp = &VmLableValuesResponse{}
 		err  error
@@ -486,9 +495,9 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		v, ok := expand.(map[string][]string)
+		v, ok := expand.(*metadata.VmExpand)
 		if ok {
-			vmRtGroup = v
+			vmExpand = v
 		}
 	}
 
@@ -496,16 +505,11 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
-	if len(vmRtGroup) == 0 {
+	if vmExpand == nil {
 		return nil, nil
 	}
 
-	metrics := make([]string, 0, len(vmRtGroup))
-	for m, rts := range vmRtGroup {
-		metrics = append(metrics, m)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("vm-rt-%s", m), rts, span)
-	}
-	trace.InsertStringSliceIntoSpan("query-metrics", metrics, span)
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	metricName := ""
 	labelMatchers := make([]*labels.Matcher, 0, len(matchers)-1)
@@ -517,6 +521,12 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		}
 	}
 
+	// 拼接 result table 和 metric
+	metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
+	if err != nil {
+		return nil, err
+	}
+
 	if metricName == "" {
 		return nil, fmt.Errorf("wrong metric name: %+v", matchers)
 	}
@@ -525,6 +535,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		Name:          metricName,
 		LabelMatchers: labelMatchers,
 	}
+
 	promqlStr := vector.String()
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.InfluxCompatible,
@@ -538,7 +549,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			Start: start.Unix(),
 			End:   end.Unix(),
 		},
-		ResultTableGroup: vmRtGroup,
+		ResultTableGroup: metricResultTableGroup,
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -556,8 +567,8 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 
 func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span      oleltrace.Span
-		vmRtGroup map[string][]string
+		span     oleltrace.Span
+		vmExpand *metadata.VmExpand
 
 		resp = &VmSeriesResponse{}
 		err  error
@@ -574,27 +585,28 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 	expand := metadata.GetExpand(ctx)
 	if expand != nil {
-		v, ok := expand.(map[string][]string)
+		v, ok := expand.(*metadata.VmExpand)
 		if ok {
-			vmRtGroup = v
+			vmExpand = v
 		}
 	}
+
+	if vmExpand == nil {
+		return nil, nil
+	}
+
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	trace.InsertStringIntoSpan("query-name", name, span)
 	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
-	if len(vmRtGroup) == 0 {
-		return nil, nil
+	// 拼接 result table 和 metric
+	metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
+	if err != nil {
+		return nil, err
 	}
-
-	metrics := make([]string, 0, len(vmRtGroup))
-	for m, rts := range vmRtGroup {
-		metrics = append(metrics, m)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("vm-rt-%s", m), rts, span)
-	}
-	trace.InsertStringSliceIntoSpan("query-metrics", metrics, span)
 
 	metricName := ""
 	labelMatchers := make([]*labels.Matcher, 0, len(matchers)-1)
@@ -627,7 +639,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			Start: start.Unix(),
 			End:   end.Unix(),
 		},
-		ResultTableGroup: vmRtGroup,
+		ResultTableGroup: metricResultTableGroup,
 	}
 
 	sql, err := json.Marshal(paramsQuery)

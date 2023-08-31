@@ -49,6 +49,8 @@ type QueryTs struct {
 	Step string `json:"step" example:"1m"`
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
+	// Timezone 时区
+	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 }
 
 func ToTime(startStr, endStr, stepStr string) (time.Time, time.Time, time.Duration, error) {
@@ -114,6 +116,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	queryReference := make(metadata.QueryReference)
 	for _, qry := range q.QueryList {
+		qry.Timezone = q.Timezone
 		qry.Start = q.Start
 		qry.End = q.End
 		// 如果 qry.Step 不存在去外部统一的 step
@@ -134,7 +137,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 	return queryReference, nil
 }
 
-func (q *QueryTs) ToPromExpr(ctx context.Context, metricMap map[string]string) (parser.Expr, error) {
+func (q *QueryTs) ToPromExpr(ctx context.Context, isReferenceName, isMatcher bool) (parser.Expr, error) {
 	var (
 		err     error
 		result  parser.Expr
@@ -156,7 +159,7 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, metricMap map[string]string) (
 
 	// 获取指标查询的表达式
 	for _, query := range q.QueryList {
-		if expr, err = query.ToPromExpr(ctx, metricMap); err != nil {
+		if expr, err = query.ToPromExpr(ctx, isReferenceName, isMatcher); err != nil {
 			return nil, err
 		}
 		exprMap[query.ReferenceName] = &PromExpr{
@@ -178,7 +181,7 @@ type Query struct {
 	// DataSource 暂不使用
 	DataSource string `json:"data_source" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
-	TableID string `json:"table_id" example:"system.cpu_summary"`
+	TableID TableID `json:"table_id" example:"system.cpu_summary"`
 	// FieldName 查询指标
 	FieldName string `json:"field_name" example:"usage"`
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
@@ -223,6 +226,17 @@ type Query struct {
 	End string `json:"-" swaggerignore:"true"`
 	// Step 保留字段，会被外面的 Step 覆盖
 	Step string `json:"-" swaggerignore:"true"`
+	// Timezone 时区，会被外面的 Timezone 覆盖
+	Timezone string `json:"-" swaggerignore:"true"`
+}
+
+func (q *Query) ToRouter() (*Route, error) {
+	router := &Route{
+		dataSource: q.DataSource,
+		metricName: q.FieldName,
+	}
+	router.db, router.measurement = q.TableID.Split()
+	return router, nil
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
@@ -247,7 +261,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	trace.InsertStringIntoSpan("referenceName", referenceName, span)
 	trace.InsertStringIntoSpan("metricName", metricName, span)
 	trace.InsertStringIntoSpan("space_uid", spaceUid, span)
-	trace.InsertStringIntoSpan("table_id", tableID, span)
+	trace.InsertStringIntoSpan("table_id", string(tableID), span)
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
 		SpaceUid:  spaceUid,
@@ -266,23 +280,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	}
 	trace.InsertStringIntoSpan("query_conditions", fmt.Sprintf("%+v", q.Conditions), span)
 
-	// 没有 or 的条件拼入查询，给 promql 使用，约定同一个指标RT在同一个空间下的所有空间路由，过滤条件是一样的，所以只取第一个值，即可
-	if len(tsDBs) > 0 && len(tsDBs[0].Filters) == 1 {
-		for k, v := range tsDBs[0].Filters[0] {
-			q.Conditions.Append(ConditionField{
-				DimensionName: k,
-				Value:         []string{v},
-				Operator:      ConditionEqual,
-			}, ConditionAnd)
-		}
-	}
-	trace.InsertStringIntoSpan("query_conditions_with_tsdb_filters", fmt.Sprintf("%+v", q.Conditions), span)
-
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 	for i, tsDB := range tsDBs {
 		var (
-			field     string
-			whereList = promql.NewWhereList()
+			field string
+
+			whereList   = promql.NewWhereList(false)
+			vmWhereList = promql.NewWhereList(true)
 
 			query = &metadata.Query{
 				SegmentedEnable: tsDB.SegmentedEnable,
@@ -300,14 +304,18 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				promql.AndOperator,
 				promql.NewTextWhere(
 					promql.MakeOrExpression(
-						ConvertToPromBuffer(queryConditions),
+						ConvertToPromBuffer(queryConditions), false,
 					),
 				),
 			)
-		}
-
-		if len(queryConditions) > 1 {
-			query.IsHasOr = true
+			vmWhereList.Append(
+				promql.AndOperator,
+				promql.NewTextWhere(
+					promql.MakeOrExpression(
+						ConvertToPromBuffer(queryConditions), true,
+					),
+				),
+			)
 		}
 
 		tsDBStr, _ := json.Marshal(tsDB)
@@ -389,7 +397,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				promql.AndOperator,
 				promql.NewTextWhere(
 					promql.MakeOrExpression(
-						ConvertToPromBuffer(filterConditions),
+						ConvertToPromBuffer(filterConditions), false,
+					),
+				),
+			)
+			vmWhereList.Append(
+				promql.AndOperator,
+				promql.NewTextWhere(
+					promql.MakeOrExpression(
+						ConvertToPromBuffer(filterConditions), true,
 					),
 				),
 			)
@@ -446,7 +462,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.Measurement = measurement
 		query.VmRt = vmRt
 		query.Field = field
+		query.Timezone = q.Timezone
+
 		query.Condition = whereList.String()
+		query.VmCondition = vmWhereList.String()
 
 		queryMetric.QueryList = append(queryMetric.QueryList, query)
 
@@ -456,7 +475,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	return queryMetric, nil
 }
 
-func (q *Query) ToPromExpr(ctx context.Context, metricMap map[string]string) (parser.Expr, error) {
+func (q *Query) ToPromExpr(ctx context.Context, isReferenceName, isMatcher bool) (parser.Expr, error) {
 	var (
 		labelList []*labels.Matcher
 		metric    string
@@ -467,22 +486,38 @@ func (q *Query) ToPromExpr(ctx context.Context, metricMap map[string]string) (pa
 		step           time.Duration
 		dTmp           model.Duration
 
+		router      *Route
+		totalBuffer [][]ConditionField
+
+		window time.Duration
+
 		result parser.Expr
 	)
 
-	// 如果外部传入指标，则进行替换
-	if v, ok := metricMap[q.ReferenceName]; ok {
-		metric = v
-	} else {
+	// 判断是否使用别名作为指标
+	if isReferenceName {
 		metric = q.ReferenceName
+	} else {
+		router, err = q.ToRouter()
+		if err != nil {
+			return nil, err
+		}
+		metric = router.RealMetricName()
 	}
 
-	if labelList, _, err = q.Conditions.ToProm(); err != nil {
-		log.Errorf(ctx, "failed to translate conditions to prom ast for->[%s]", err)
-		return nil, err
+	// 判断是否拼接 conditions，使用 vm 查询需要支持 or 语法，所以不拼接 conditions 到 matchers
+	if isMatcher {
+		labelList, totalBuffer, err = q.Conditions.ToProm()
+		if err != nil {
+			log.Errorf(ctx, "failed to translate conditions to prom ast for->[%s]", err)
+			return nil, err
+		}
+		if len(totalBuffer) > 0 {
+			err = fmt.Errorf("or 过滤条件无法直接转换为 promql 语句，请使用结构化查询")
+			log.Errorf(ctx, "%s %s", err, totalBuffer)
+			return nil, err
+		}
 	}
-
-	labelList = append(labelList, labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, metric))
 
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
 		step = promql.GetDefaultStep()
@@ -499,7 +534,7 @@ func (q *Query) ToPromExpr(ctx context.Context, metricMap map[string]string) (pa
 	}
 
 	if q.Offset != "" {
-		dTmp, err := model.ParseDuration(q.Offset)
+		dTmp, err = model.ParseDuration(q.Offset)
 		if err != nil {
 			return nil, err
 		}
@@ -523,7 +558,7 @@ func (q *Query) ToPromExpr(ctx context.Context, metricMap map[string]string) (pa
 	}
 
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
-		window, err := q.TimeAggregation.Window.ToTime()
+		window, err = q.TimeAggregation.Window.ToTime()
 		if err != nil {
 			return nil, err
 		}

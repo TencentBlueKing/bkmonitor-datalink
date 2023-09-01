@@ -43,7 +43,11 @@ func isDisabledField(field *config.MetaFieldConfig) bool {
 	}
 	options := utils.NewMapHelper(field.Option)
 	value, ok := options.GetBool(config.MetaFieldOptInfluxDisabled)
-	if ok && value {
+
+	// 其它地方暂时不使用，放函数内
+	disabledFieldName := []string{define.RecordCMDBLevelFieldName}
+
+	if utils.IsStringInSlice(field.FieldName, disabledFieldName) || (ok && value) {
 		return true
 	}
 	return false

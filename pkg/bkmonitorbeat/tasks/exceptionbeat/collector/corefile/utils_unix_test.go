@@ -13,6 +13,8 @@
 package corefile
 
 import (
+	"os"
+	"path"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,6 +131,30 @@ func TestBuildDimensionKey(t *testing.T) {
 		result := buildDimensionKey(data.dimensions)
 		assert.Equal(t, data.result, result)
 	}
+}
+
+var (
+	corePatternPathV2 = path.Join(os.TempDir(), "corefile_pattern")
+)
+
+func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
+	CorePatternFile = corePatternPathV2
+	err := os.WriteFile(corePatternPathV2, []byte("/data/corefile/core_%e_%t.%p\n"), 0644)
+	if err != nil {
+		panic(err)
+	}
+	c := &CoreFileCollector{}
+	corePath, err := c.getCoreFilePath()
+	assert.Equal(t, corePath, "/data/corefile")
+	assert.Equal(t, c.pattern, "core_%e_%t.%p")
+
+	c2 := &CoreFileCollector{
+		coreFilePattern: "/data/corefile2/core_%e\n",
+	}
+	corePath2, err := c2.getCoreFilePath()
+	assert.Equal(t, corePath2, "/data/corefile2")
+	assert.Equal(t, c2.pattern, "core_%e")
+
 }
 
 func TestCoreFileCollector_fillDimension(t *testing.T) {

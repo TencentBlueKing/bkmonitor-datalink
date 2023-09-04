@@ -40,6 +40,7 @@ type CoreFileCollector struct {
 	dataid                  int32
 	done                    chan bool
 	state                   int
+	coreFilePattern         string
 	corePath                string
 	pattern                 string
 	patternArr              [][]string
@@ -76,6 +77,7 @@ func (c *CoreFileCollector) Start(ctx context.Context, e chan<- define.Event, co
 		c.reportTimeGap = time.Minute
 	}
 	c.reportTimeInfo = make(map[string]*ReportInfo)
+	c.coreFilePattern = conf.CoreFilePattern
 
 	logger.Infof("CoreFileColletor start success with config data_id->[%d] report_gap->[%s]", c.dataid, c.reportTimeGap)
 	go c.statistic(ctx, e)

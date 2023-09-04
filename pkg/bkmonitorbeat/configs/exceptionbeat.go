@@ -37,6 +37,7 @@ type ExceptionBeatConfig struct {
 	DiskRoWhiteList        []string      `config:"disk_ro_white_list"`
 	DiskRoBlackList        []string      `config:"disk_ro_black_list"`
 	CoreFileReportGap      time.Duration `config:"corefile_report_gap"`
+	CoreFilePattern        string        `config:"corefile_pattern"`
 }
 
 var DefaultExceptionBeatConfig = ExceptionBeatConfig{
@@ -49,6 +50,7 @@ var DefaultExceptionBeatConfig = ExceptionBeatConfig{
 	DiskUsagePercent:       90,
 	DiskMinFreeSpace:       10,
 	CoreFileReportGap:      time.Minute, // 默认同一个维度的corefile信息，需要相隔1分钟后才会上报
+	CoreFilePattern:        "",
 }
 
 func (c *ExceptionBeatConfig) GetTaskConfigList() []define.TaskConfig {

@@ -347,30 +347,37 @@ func (c *CoreFileCollector) statistic(ctx context.Context, e chan<- define.Event
 }
 
 func (c *CoreFileCollector) getCoreFilePath() (string, error) {
-	file, err := os.Open(CorePatternFile)
-	if err != nil {
-		return "", err
+	var corePattern string
+	// 若配置中未申明 CoreFile 路径和格式，则读取系统内置的配置文件 CorePatternFile
+	if c.coreFilePattern == "" {
+		file, err := os.Open(CorePatternFile)
+		if err != nil {
+			return "", err
+		}
+		defer func() {
+			_ = file.Close()
+		}()
+		var corePatternArr = make([]byte, 512)
+		_, err = file.Read(corePatternArr)
+		if err != nil {
+			return "", err
+		}
+		corePattern = string(corePatternArr)
+	} else {
+		corePattern = c.coreFilePattern
 	}
-	defer func() {
-		_ = file.Close()
-	}()
-	var corePatternArr = make([]byte, 512)
-	_, err = file.Read(corePatternArr)
-	if err != nil {
-		return "", err
-	}
-	corePattern := string(corePatternArr)
+
 	ind := strings.LastIndex(corePattern, "/")
 	if -1 == ind || corePattern[0] != '/' {
 		return "", fmt.Errorf("no core file storing path found, please check /proc/sys/kernel/core_pattern")
 	}
 	end := strings.LastIndex(corePattern, "\n")
-	if -1 == ind {
+	if -1 == end {
 		return "", fmt.Errorf("can not found \\n in file content, please check /proc/sys/kernel/core_pattern")
 	}
 	logger.Infof("end index of core_pattern file content is %d", end)
-	c.pattern = string(corePatternArr[ind+1 : end])
-	return string(corePatternArr[0:ind]), nil
+	c.pattern = corePattern[ind+1 : end]
+	return corePattern[0:ind], nil
 }
 
 func (c *CoreFileCollector) updateCoreFilePath() error {

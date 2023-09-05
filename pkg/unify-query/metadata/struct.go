@@ -245,7 +245,12 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 				}
 			}
 
-			vmExpand.MetricFilterCondition[referenceName] = fmt.Sprintf(`(%s)`, strings.Join(vmConditions, `) or (`))
+			metricFilterCondition := ""
+			if len(vmConditions) > 0 {
+				metricFilterCondition = fmt.Sprintf(`(%s)`, strings.Join(vmConditions, `) or (`))
+			}
+
+			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
 			vmExpand.MetricAliasMapping[referenceName] = metricName
 			if len(vmRts) == 0 {
 				err = fmt.Errorf("vm query result table is empty %s", metricName)

@@ -18,11 +18,9 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/trace"
 )
 
 const (
@@ -256,17 +254,7 @@ func (m *metadata) GetReadShardsByTimeRange(
 	var (
 		shards = make([]*shard.Shard, 0)
 		now    = time.Now()
-		span   oleltrace.Span
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-read-shard-by-time-range")
-	if span != nil {
-		defer span.End()
-	}
-
-	trace.InsertStringIntoSpan("cluster-name", clusterName, span)
-	trace.InsertStringIntoSpan("retention-policy", retentionPolicy, span)
-	trace.InsertStringIntoSpan("tag-router", tagRouter, span)
-	trace.InsertStringIntoSpan("database", database, span)
 
 	if retentionPolicy == "" {
 		retentionPolicy = "autogen"
@@ -277,9 +265,6 @@ func (m *metadata) GetReadShardsByTimeRange(
 	if err != nil {
 		return nil, err
 	}
-
-	trace.InsertStringIntoSpan("hash-key", key, span)
-	trace.InsertIntIntoSpan("hash-num", len(res), span)
 
 	errorMessage := make([]string, 0)
 	if len(res) == 0 {
@@ -352,8 +337,6 @@ func (m *metadata) GetReadShardsByTimeRange(
 		err = fmt.Errorf("start time %d must less than end time %d", start, end)
 		return nil, err
 	}
-
-	trace.InsertIntIntoSpan("shard-num", len(shards), span)
 
 	if len(shards) == 0 {
 		err = fmt.Errorf(

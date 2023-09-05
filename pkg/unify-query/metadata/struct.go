@@ -10,7 +10,6 @@
 package metadata
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -88,7 +87,8 @@ type QueryMetric struct {
 
 	ReferenceName string
 	MetricName    string
-	IsCount       bool // 标记是否为 count 方法
+
+	IsCount bool // 标记是否为 count 方法
 }
 
 type QueryReference map[string]*QueryMetric
@@ -212,10 +212,9 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	}
 
 	vmQueryFeatureFlag := qRef.GetVMQueryFeatureFlag(ctx)
-	druidQueryStatus := qRef.CheckDruidCheck(ctx)
 
-	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
-	if !vmQueryFeatureFlag && !druidQueryStatus {
+	// 未开启 vm-query 特性开关，则不使用 vm 查询能力
+	if !vmQueryFeatureFlag {
 		return ok, vmExpand, err
 	}
 
@@ -228,27 +227,17 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
 
+			vmConditions := make([]string, 0, len(reference.QueryList))
 			for _, query := range reference.QueryList {
-				var (
-					traceLog bytes.Buffer
-				)
-
 				// 获取 vm 的指标名
 				metricName = fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-
-				traceLog.WriteString(fmt.Sprintf("vm_condition: %s, ", query.VmCondition))
-				traceLog.WriteString(fmt.Sprintf("metric_name: %s, ", metricName))
-				traceLog.WriteString(fmt.Sprintf("is_split: %v, ", query.IsSingleMetric))
-				traceLog.WriteString(fmt.Sprintf("vm_rt: %v, ", query.VmRt))
-
-				trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%s_%s", referenceName, query.DB), traceLog.String(), span)
 
 				// 只有全部为单指标单表
 				if !query.IsSingleMetric {
 					return ok, vmExpand, err
 				}
 
-				vmExpand.MetricFilterCondition[referenceName] = query.VmCondition
+				vmConditions = append(vmConditions, query.VmCondition)
 
 				// 获取 vm 对应的 rt 列表
 				if query.VmRt != "" {
@@ -256,6 +245,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 				}
 			}
 
+			vmExpand.MetricFilterCondition[referenceName] = fmt.Sprintf(`(%s)`, strings.Join(vmConditions, `) or (`))
 			vmExpand.MetricAliasMapping[referenceName] = metricName
 			if len(vmRts) == 0 {
 				err = fmt.Errorf("vm query result table is empty %s", metricName)

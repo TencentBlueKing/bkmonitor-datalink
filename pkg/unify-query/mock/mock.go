@@ -40,10 +40,10 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 func SetSpaceAndProxyMockData(ctx context.Context, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
 	logInit()
 
-	space := redis.Space{
-		tdb.TableID: tdb,
-	}
 	sr, _ := influxdb.GetSpaceRouter("", "")
+	space := sr.Get(ctx, spaceUid)
+	space[tdb.TableID] = tdb
+
 	sr.Add(ctx, spaceUid, space)
 
 	proxyInfo := ir.ProxyInfo{

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
@@ -62,23 +61,15 @@ func singleGetInstance() string {
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			ctx         = c.Request.Context()
-			span        oleltrace.Span
-			start       = time.Now()
-			startMem, _ = mem.VirtualMemory()
-			instanceIP  = singleGetInstance()
+			ctx        = c.Request.Context()
+			span       oleltrace.Span
+			start      = time.Now()
+			instanceIP = singleGetInstance()
 		)
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
 
-		trace.InsertStringIntoSpan("http-api-url", c.Request.URL.Path, span)
-		trace.InsertIntIntoSpan("start-mem-total", int(startMem.Total), span)
-
 		if span != nil {
 			defer func() {
-				endMem, _ := mem.VirtualMemory()
-				trace.InsertIntIntoSpan("start-mem-free", int(startMem.Free), span)
-				trace.InsertIntIntoSpan("end-mem-free", int(endMem.Free), span)
-				trace.InsertIntIntoSpan("mem-use", int(startMem.Free-endMem.Free), span)
 				trace.InsertStringIntoSpan("instance-ip", instanceIP, span)
 
 				sub := time.Since(start)
@@ -99,8 +90,6 @@ func Timer(p *Params) gin.HandlerFunc {
 					trace.InsertStringIntoSpan("http-api-status-code", status.Code, span)
 					trace.InsertStringIntoSpan("http-api-status-message", status.Message, span)
 				}
-
-				log.Debugf(context.TODO(), "request:%s handled duration:%s", c.Request.URL.Path, sub)
 				span.End()
 			}()
 		}
@@ -108,15 +97,7 @@ func Timer(p *Params) gin.HandlerFunc {
 		// 把用户名注入到 metadata 中
 		source := c.Request.Header.Get(metadata.BkQuerySourceHeader)
 		spaceUid := c.Request.Header.Get(metadata.SpaceUIDHeader)
-
 		metadata.SetUser(ctx, source, spaceUid)
-
-		user := metadata.GetUser(ctx)
-		trace.InsertStringIntoSpan("metadata-key", user.Key, span)
-		trace.InsertStringIntoSpan("metadata-source", user.Source, span)
-		trace.InsertStringIntoSpan("metadata-name", user.Name, span)
-		trace.InsertStringIntoSpan("metadata-role", user.Role, span)
-		trace.InsertStringIntoSpan("metadata-space-uid", user.SpaceUid, span)
 
 		c.Next()
 	}

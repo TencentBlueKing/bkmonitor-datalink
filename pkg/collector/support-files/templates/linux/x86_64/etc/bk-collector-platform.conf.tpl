@@ -254,6 +254,26 @@ processor:
         {%- endfor %}
   {%- endif %}
 
+   # bk_apm_duration_delta
+  {% if metric_configs.metric_bk_apm_duration_delta_config is defined %}
+  - name: "{{ metric_configs.metric_bk_apm_duration_delta_config.name }}"
+    config:
+      operations:
+        {%- for operation in metric_configs.metric_bk_apm_duration_delta_config.operations %}
+        - type: "{{ operation.type }}"
+          metric_name: "{{ operation.metric_name }}"
+          rules:
+            {%- for rule_config in operation.rules %}
+            - kind: "{{ rule_config.kind }}"
+              predicate_key: "{{ rule_config.predicate_key }}"
+              dimensions:
+                {%- for dimension_key in rule_config.dimensions %}
+                - "{{ dimension_key }}"
+                {%- endfor %}
+            {%- endfor %}
+        {%- endfor %}
+  {%- endif %}
+
    # bk_apm_duration_bucket
   {% if metric_configs.metric_bk_apm_duration_bucket_config is defined %}
   - name: "{{ metric_configs.metric_bk_apm_duration_bucket_config.name }}"

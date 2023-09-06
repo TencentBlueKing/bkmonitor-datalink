@@ -53,7 +53,21 @@ type QueryTs struct {
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 }
 
-func ToTime(startStr, endStr, stepStr string) (time.Time, time.Time, time.Duration, error) {
+// 根据 timezone 偏移对齐
+func timeOffset(t time.Time, timezone string, step time.Duration) (time.Time, error) {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	_, offset := t.In(loc).Zone()
+	offsetDuration := time.Duration(offset) * time.Second
+	t1 := t.Add(offsetDuration)
+	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
+	t3 := t2.Add(offsetDuration * -1).In(loc)
+	return t3, nil
+}
+
+func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, time.Duration, error) {
 	var (
 		start    time.Time
 		stop     time.Time
@@ -96,9 +110,8 @@ func ToTime(startStr, endStr, stepStr string) (time.Time, time.Time, time.Durati
 		}
 	}
 
-	// start需要根据step对齐
-	start = time.Unix(int64(math.Floor(float64(start.Unix())/interval.Seconds())*interval.Seconds()), 0)
-
+	// 根据 timezone 来对齐
+	start, err = timeOffset(start, timezone, interval)
 	return start, stop, interval, nil
 }
 
@@ -426,7 +439,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.IsSingleMetric = tsDB.IsSplit()
 
 		// 通过过期时间判断是否读取归档模块
-		start, end, _, err := ToTime(q.Start, q.End, q.Step)
+		start, end, _, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 		if err != nil {
 			log.Errorf(ctx, err.Error())
 			return nil, err

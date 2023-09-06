@@ -62,7 +62,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 
-	start, end, _, err := structured.ToTime(query.Start, query.End, query.Step)
+	start, end, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -178,7 +178,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	start, end, step, err := structured.ToTime(query.Start, query.End, query.Step)
+	start, end, step, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err

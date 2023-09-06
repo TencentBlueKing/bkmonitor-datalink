@@ -554,6 +554,44 @@ bk-collector:
                   - "attributes.peer.service"
                   - "attributes.apdex_type"
 
+    - name: "traces_deriver/delta_duration"
+      config:
+        operations:
+          - type: "delta_duration"
+            metric_name: "bk_apm_duration_delta"
+            publish_interval: "10s"
+            gc_interval: "1h"
+            max_series: 1000
+            rules:
+              - kind: "SPAN_KIND_SERVER"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"
+                  - "attributes.apdex_type"
+              - kind: "SPAN_KIND_CLIENT"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"
+                  - "attributes.apdex_type"
+
     # TracesDeriver: Traces 派生处理器
     # Min
     - name: "traces_deriver/min"
@@ -950,6 +988,7 @@ bk-collector:
         - "apdex_calculator/standard"
         - "traces_deriver/duration"
         - "traces_deriver/delta"
+        - "traces_deriver/delta_duration"
         - "traces_deriver/count"
         - "traces_deriver/min"
         - "traces_deriver/max"

@@ -109,12 +109,13 @@ func (m *metricMonitor) ObservePublishedDuration(t time.Time) {
 }
 
 const (
-	TypeMin    = "min"
-	TypeMax    = "max"
-	TypeDelta  = "delta"
-	TypeCount  = "count"
-	TypeSum    = "sum"
-	TypeBucket = "bucket"
+	TypeMin           = "min"
+	TypeMax           = "max"
+	TypeDelta         = "delta"
+	TypeDeltaDuration = "delta_duration"
+	TypeCount         = "count"
+	TypeSum           = "sum"
+	TypeBucket        = "bucket"
 
 	MaxValue = math.MaxFloat64
 	MinValue = math.SmallestNonzeroFloat64
@@ -129,7 +130,8 @@ type rStats struct {
 	curr    float64
 	min     float64
 	max     float64
-	sum     float64
+	currSum float64
+	prevSum float64
 	buckets []float64
 	updated int64
 }
@@ -235,7 +237,7 @@ func (r *recorder) Set(lbs labels.Labels, value float64) bool {
 	}
 
 	s.curr += 1
-	s.sum += value
+	s.currSum += value
 
 	if s.max < value {
 		s.max = value
@@ -297,6 +299,10 @@ func (r *recorder) Delta() *define.Record {
 	return r.buildMetrics(TypeDelta)
 }
 
+func (r *recorder) DeltaDuration() *define.Record {
+	return r.buildMetrics(TypeDeltaDuration)
+}
+
 func (r *recorder) Count() *define.Record {
 	return r.buildMetrics(TypeCount)
 }
@@ -341,12 +347,18 @@ func (r *recorder) calc(kind string, k uint64, stat rStats) (rStats, []metricsbu
 		if val < 0 {
 			val = NanValue() // 无效值
 		}
+	case TypeDeltaDuration:
+		val = stat.currSum - stat.prevSum
+		stat.prevSum = stat.currSum
+		if val < 0 {
+			val = NanValue() // 无效值
+		}
 
 		// Count/Sum/Bucket 不需要更改状态
 	case TypeCount:
 		val = stat.curr
 	case TypeSum:
-		val = stat.sum
+		val = stat.currSum
 	case TypeBucket:
 		for i := 0; i < len(stat.buckets); i++ {
 			le := strconv.FormatFloat(r.buckets[i], 'f', -1, 64)
@@ -482,6 +494,7 @@ type Accumulator struct {
 	recorders   map[int32]*recorder
 	conf        *Config
 	publishFunc func(r *define.Record)
+	noAlign     bool // 默认对齐时间戳
 
 	done            chan struct{}
 	publishInterval time.Duration
@@ -501,6 +514,8 @@ func (a *Accumulator) doPublish() {
 		switch a.conf.Type {
 		case TypeDelta:
 			a.publishFunc(r.Delta())
+		case TypeDeltaDuration:
+			a.publishFunc(r.DeltaDuration())
 		case TypeCount:
 			a.publishFunc(r.Count())
 		case TypeMin:
@@ -518,6 +533,11 @@ func (a *Accumulator) doPublish() {
 }
 
 func (a *Accumulator) publish() {
+	if !a.noAlign {
+		duration := time.Duration(60-(time.Now().Unix()%60)) * time.Second
+		time.Sleep(duration)
+	}
+
 	ticker := time.NewTicker(a.publishInterval)
 	defer ticker.Stop()
 

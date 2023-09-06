@@ -36,7 +36,7 @@ tasks: {% for task in tasks %}
     - target: {{ instance[output_field] }}
       target_type: ip
     {% endif %}{% endfor %}{% endfor %}{% endif %}{% endfor %}
-{% if labels %}labels:
-{% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
-{% endfor %}{% endfor %}
-{% endif %}
+    {% if labels %}labels:
+    {% for label in labels %}{% for key, value in label.items() %}{{"-" if loop.first else " "}} {{key}}: "{{ value }}"
+    {% endfor %}{% endfor %}
+    {% endif %}

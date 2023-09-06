@@ -84,9 +84,8 @@ func TestAccumulatorExceeded(t *testing.T) {
 
 	exceeded := accumulator.Exceeded()
 	accumulator.Stop()
-	t.Logf("exceeded: %+v\n", exceeded)
-	assert.True(t, exceeded[1001] == 90)
-	assert.True(t, exceeded[1002] == 90)
+	assert.Equal(t, 90, exceeded[1001])
+	assert.Equal(t, 90, exceeded[1002])
 }
 
 func TestAccumulatorNotExceeded(t *testing.T) {
@@ -117,6 +116,7 @@ func TestAccumulatorGcOk(t *testing.T) {
 		GcInterval:      250 * time.Millisecond,
 		PublishInterval: time.Second,
 	}, nil)
+	accumulator.noAlign = true
 
 	ids := []int32{1001, 1002}
 	for i := 0; i < 20; i++ {
@@ -146,6 +146,7 @@ func TestAccumulatorGcNotYet(t *testing.T) {
 		GcInterval:      time.Second,
 		PublishInterval: time.Second,
 	}, nil)
+	accumulator.noAlign = true
 
 	ids := []int32{1001, 1002}
 	for i := 0; i < 20; i++ {
@@ -178,14 +179,15 @@ func testAccumulatorPublish(t *testing.T, dt string, value float64, count int) {
 		Buckets:         prometheus.DefBuckets,
 		Type:            dt,
 	}, func(r *define.Record) { records = append(records, r) })
+	accumulator.noAlign = true
 
 	dimensions := random.Dimensions(3)
-	accumulator.Accumulate(1001, dimensions, 0.1*1e9)
-	accumulator.Accumulate(1001, dimensions, 0.2*1e9)
-	accumulator.Accumulate(1001, dimensions, 0.3*1e9)
-	accumulator.Accumulate(1001, dimensions, 0.4*1e9)
-	accumulator.Accumulate(1001, dimensions, 0.5*1e9)
-	accumulator.Accumulate(1001, dimensions, 1.0*1e9)
+	accumulator.Accumulate(1001, dimensions, 0.1*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, 0.2*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, 0.3*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, 0.4*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, 0.5*float64(time.Second))
+	accumulator.Accumulate(1001, dimensions, 1.0*float64(time.Second))
 
 	time.Sleep(time.Second)
 	record := records[0]
@@ -211,6 +213,11 @@ func TestAccumulatorPublishDelta(t *testing.T) {
 	assert.NoError(t, labelstore.CleanStorage())
 }
 
+func TestAccumulatorPublishDeltaDuration(t *testing.T) {
+	testAccumulatorPublish(t, TypeDeltaDuration, 2.5*float64(time.Second), 1)
+	assert.NoError(t, labelstore.CleanStorage())
+}
+
 func TestAccumulatorPublishMin(t *testing.T) {
 	testAccumulatorPublish(t, TypeMin, 1e8, 1)
 	assert.NoError(t, labelstore.CleanStorage())
@@ -222,7 +229,7 @@ func TestAccumulatorPublishMax(t *testing.T) {
 }
 
 func TestAccumulatorPublishSum(t *testing.T) {
-	testAccumulatorPublish(t, TypeSum, 2.5*1e9, 1)
+	testAccumulatorPublish(t, TypeSum, 2.5*float64(time.Second), 1)
 	assert.NoError(t, labelstore.CleanStorage())
 }
 
@@ -242,6 +249,7 @@ func TestAccumulatorPublishCount10(t *testing.T) {
 	}, func(r *define.Record) {
 		records = append(records, r)
 	})
+	accumulator.noAlign = true
 
 	dims := random.Dimensions(6)
 	for i := 0; i < 10; i++ {

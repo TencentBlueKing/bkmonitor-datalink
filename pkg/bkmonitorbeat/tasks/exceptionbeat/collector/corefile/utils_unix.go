@@ -365,15 +365,20 @@ func (c *CoreFileCollector) getCoreFilePath() (string, error) {
 		corePattern = string(corePatternArr)
 	} else {
 		corePattern = c.coreFilePattern
+		if !strings.HasSuffix(corePattern, "\n") {
+			corePattern += "\n"
+		}
 	}
 
 	ind := strings.LastIndex(corePattern, "/")
-	if -1 == ind || corePattern[0] != '/' {
-		return "", fmt.Errorf("no core file storing path found, please check /proc/sys/kernel/core_pattern")
+	if ind == -1 || corePattern[0] != '/' {
+		return "", fmt.Errorf("no core file storing path found, please check /proc/sys/kernel/core_pattern " +
+			"and exceptionbeat_task.corepattern in bkmonitorbeat.config")
 	}
 	end := strings.LastIndex(corePattern, "\n")
-	if -1 == end {
-		return "", fmt.Errorf("can not found \\n in file content, please check /proc/sys/kernel/core_pattern")
+	if end == -1 {
+		return "", fmt.Errorf("can not found \\n in file content, please check /proc/sys/kernel/core_pattern " +
+			" and exceptionbeat_task.corepattern in bkmonitorbeat.config")
 	}
 	logger.Infof("end index of core_pattern file content is %d", end)
 	c.pattern = corePattern[ind+1 : end]

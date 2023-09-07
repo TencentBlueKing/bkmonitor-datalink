@@ -179,7 +179,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 }
 
 func (g *Gather) watchEvents(filename string) {
-	tr, err := tail.TailFile(filename, tail.Config{Follow: true})
+	tr, err := tail.TailFile(filename, tail.Config{
+		Follow: true,
+		ReOpen: true,
+		Poll:   true,
+	})
 	if err != nil {
 		logger.Errorf("failed to follow file: %s, err: %v", filename, err)
 		return

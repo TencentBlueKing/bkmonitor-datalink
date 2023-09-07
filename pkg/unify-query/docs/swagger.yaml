@@ -1,4 +1,11 @@
 definitions:
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
   http.ErrResponse:
     properties:
       error:
@@ -11,7 +18,7 @@ definitions:
           $ref: '#/definitions/http.TablesItem'
         type: array
       status:
-        $ref: '#/definitions/metadata.Status'
+        $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_metadata.Status'
     type: object
   http.TablesItem:
     properties:
@@ -37,24 +44,17 @@ definitions:
         type: array
       values:
         items:
-          items: { }
+          items: {}
           type: array
         type: array
-    type: object
-  metadata.Status:
-    properties:
-      code:
-        type: string
-      message:
-        type: string
     type: object
   structured.AggregateMethod:
     properties:
       dimensions:
         description: Dimensions 聚合维度
         example:
-          - bk_target_ip
-          - bk_target_cloud_id
+        - bk_target_ip
+        - bk_target_cloud_id
         items:
           type: string
         type: array
@@ -103,13 +103,13 @@ definitions:
     properties:
       conditions:
         allOf:
-          - $ref: '#/definitions/structured.Conditions'
+        - $ref: '#/definitions/structured.Conditions'
         description: Conditions 过滤条件
       dimensions:
         description: Dimensions promQL 使用维度
         example:
-          - bk_target_ip
-          - bk_target_cloud_id
+        - bk_target_ip
+        - bk_target_cloud_id
         items:
           type: string
         type: array
@@ -151,14 +151,14 @@ definitions:
         type: string
       time_aggregation:
         allOf:
-          - $ref: '#/definitions/structured.TimeAggregation'
+        - $ref: '#/definitions/structured.TimeAggregation'
         description: TimeAggregation 时间聚合方法
       timestamp:
         description: Timestamp @-modifier 标记
         type: integer
       vector_offset:
         allOf:
-          - $ref: '#/definitions/time.Duration'
+        - $ref: '#/definitions/time.Duration'
         description: VectorOffset
     type: object
   structured.QueryPromQL:
@@ -171,6 +171,8 @@ definitions:
         type: string
       limit:
         type: integer
+      match:
+        type: string
       max_source_resolution:
         type: string
       not_align_influxdb:
@@ -183,6 +185,10 @@ definitions:
       start:
         type: string
       step:
+        type: string
+      timezone:
+        description: Timezone 时区
+        example: Asia/Shanghai
         type: string
     type: object
   structured.QueryTs:
@@ -215,6 +221,10 @@ definitions:
         description: Step 步长：最终返回的点数的时间间隔
         example: 1m
         type: string
+      timezone:
+        description: Timezone 时区
+        example: Asia/Shanghai
+        type: string
     type: object
   structured.TimeAggregation:
     properties:
@@ -229,24 +239,24 @@ definitions:
     type: object
   time.Duration:
     enum:
-      - -9223372036854775808
-      - 9223372036854775807
-      - 1
-      - 1000
-      - 1000000
-      - 1000000000
-      - 60000000000
-      - 3600000000000
+    - -9223372036854775808
+    - 9223372036854775807
+    - 1
+    - 1000
+    - 1000000
+    - 1000000000
+    - 60000000000
+    - 3600000000000
     type: integer
     x-enum-varnames:
-      - minDuration
-      - maxDuration
-      - Nanosecond
-      - Microsecond
-      - Millisecond
-      - Second
-      - Minute
-      - Hour
+    - minDuration
+    - maxDuration
+    - Nanosecond
+    - Microsecond
+    - Millisecond
+    - Second
+    - Minute
+    - Hour
 info:
   contact: {}
 paths:
@@ -254,27 +264,27 @@ paths:
     post:
       operationId: ts-query-request
       parameters:
-        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
-          description: TraceID
-          in: header
-          name: traceparent
-          type: string
-        - default: username:goodman
-          description: 来源
-          in: header
-          name: Bk-Query-Source
-          type: string
-        - default: bkcc__2
-          description: 空间UID
-          in: header
-          name: X-Bk-Scope-Space-Uid
-          type: string
-        - description: json data
-          in: body
-          name: data
-          required: true
-          schema:
-            $ref: '#/definitions/structured.QueryTs'
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
       produces:
       - application/json
       responses:
@@ -291,29 +301,29 @@ paths:
     post:
       operationId: ts-query-exemplar-request
       parameters:
-        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
-          description: TraceID
-          in: header
-          name: traceparent
-          type: string
-        - default: username:goodman
-          description: 来源
-          in: header
-          name: Bk-Query-Source
-          type: string
-        - default: bkcc__2
-          description: 空间UID
-          in: header
-          name: X-Bk-Scope-Space-Uid
-          type: string
-        - description: json data
-          in: body
-          name: data
-          required: true
-          schema:
-            $ref: '#/definitions/structured.QueryTs'
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
       produces:
-        - application/json
+      - application/json
       responses:
         "200":
           description: OK
@@ -328,29 +338,29 @@ paths:
     post:
       operationId: ts-query-request-promql
       parameters:
-        - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
-          description: TraceID
-          in: header
-          name: traceparent
-          type: string
-        - default: username:goodman
-          description: 来源
-          in: header
-          name: Bk-Query-Source
-          type: string
-        - default: bkcc__2
-          description: 空间UID
-          in: header
-          name: X-Bk-Scope-Space-Uid
-          type: string
-        - description: json data
-          in: body
-          name: data
-          required: true
-          schema:
-            $ref: '#/definitions/structured.QueryPromQL'
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryPromQL'
       produces:
-        - application/json
+      - application/json
       responses:
         "200":
           description: OK
@@ -361,4 +371,78 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrResponse'
       summary: query monitor by promql
+  /query/ts/promql_to_struct:
+    post:
+      operationId: promql-to-struct
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryPromQL'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: promql to struct
+  /query/ts/struct_to_promql:
+    post:
+      operationId: struct-to-promql
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/structured.QueryTs'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.PromData'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrResponse'
+      summary: query struct to promql
 swagger: "2.0"

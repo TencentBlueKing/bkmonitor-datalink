@@ -54,20 +54,22 @@ type QueryTs struct {
 }
 
 // 根据 timezone 偏移对齐
-func timeOffset(t time.Time, timezone string, step time.Duration) (time.Time, error) {
+func timeOffset(t time.Time, timezone string, step time.Duration) (string, time.Time, error) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.UTC
 	}
-	_, offset := t.In(loc).Zone()
+	t0 := t.In(loc)
+	_, offset := t0.Zone()
+	outTimezone := t0.Location().String()
 	offsetDuration := time.Duration(offset) * time.Second
 	t1 := t.Add(offsetDuration)
 	t2 := time.Unix(int64(math.Floor(float64(t1.Unix())/step.Seconds())*step.Seconds()), 0)
 	t3 := t2.Add(offsetDuration * -1).In(loc)
-	return t3, nil
+	return outTimezone, t3, nil
 }
 
-func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, time.Duration, error) {
+func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, time.Duration, string, error) {
 	var (
 		start    time.Time
 		stop     time.Time
@@ -86,7 +88,7 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 	if startStr != "" {
 		start, err = toTime(startStr)
 		if err != nil {
-			return start, stop, interval, err
+			return start, stop, interval, timezone, err
 		}
 	}
 
@@ -95,7 +97,7 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 	} else {
 		stop, err = toTime(endStr)
 		if err != nil {
-			return start, stop, interval, err
+			return start, stop, interval, timezone, err
 		}
 	}
 
@@ -106,13 +108,13 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 		interval = time.Duration(dTmp)
 
 		if err != nil {
-			return start, stop, interval, err
+			return start, stop, interval, timezone, err
 		}
 	}
 
 	// 根据 timezone 来对齐
-	start, err = timeOffset(start, timezone, interval)
-	return start, stop, interval, nil
+	timezone, start, err = timeOffset(start, timezone, interval)
+	return start, stop, interval, timezone, nil
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
@@ -439,7 +441,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.IsSingleMetric = tsDB.IsSplit()
 
 		// 通过过期时间判断是否读取归档模块
-		start, end, _, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
+		start, end, _, timezone, err := ToTime(q.Start, q.End, q.Step, q.Timezone)
 		if err != nil {
 			log.Errorf(ctx, err.Error())
 			return nil, err
@@ -475,7 +477,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query.Measurement = measurement
 		query.VmRt = vmRt
 		query.Field = field
-		query.Timezone = q.Timezone
+		query.Timezone = timezone
 
 		query.Condition = whereList.String()
 		query.VmCondition = vmWhereList.String()

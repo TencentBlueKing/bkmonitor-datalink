@@ -62,7 +62,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 
-	start, end, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	start, end, _, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -87,6 +87,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 			return nil, err
 		}
 		for _, qry := range queryMetric.QueryList {
+			qry.Timezone = timezone
+
 			instance := prometheus.GetInstance(ctx, qry)
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
@@ -178,11 +180,12 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	start, end, step, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+	query.Timezone = timezone
 
 	qrStr, _ := json.Marshal(queryReference)
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)

@@ -85,8 +85,9 @@ func (oc *ObjectsController) GetPodRelation() []RelationMetric {
 		metrics = append(metrics, RelationMetric{
 			Name: relationNodePod,
 			Dimension: map[string]string{
-				"node": pod.NodeName,
-				"pod":  pod.ID.Name,
+				"node":      pod.NodeName,
+				"pod":       pod.ID.Name,
+				"namespace": pod.ID.Namespace,
 			},
 		})
 

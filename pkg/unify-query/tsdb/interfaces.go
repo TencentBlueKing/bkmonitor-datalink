@@ -24,7 +24,7 @@ import (
 type Instance interface {
 	QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet
 	QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
-	Query(ctx context.Context, promql string, end time.Time, step time.Duration) (promql.Matrix, error)
+	Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error)
 	QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error)
 
 	LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error)

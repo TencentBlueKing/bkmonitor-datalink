@@ -12,10 +12,11 @@ package curl
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
+	"github.com/pkg/errors"
 	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -58,6 +59,6 @@ func (c *TestCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	if res, ok := c.data[opt.UrlPath]; ok {
 		return c.resp(res), nil
 	} else {
-		return nil, fmt.Errorf("mock data is not exists: " + opt.UrlPath)
+		return nil, errors.New("mock data is not exists: " + url.QueryEscape(opt.UrlPath))
 	}
 }

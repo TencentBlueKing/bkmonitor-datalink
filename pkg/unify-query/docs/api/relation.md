@@ -4,7 +4,7 @@
 
 通过关键维度，查询对应目标资源的关联维度信息
 
-- api: /api/v1beta1/relation/resource
+- api: /api/v1/relation/resource
 - method: POST
 - request:
 
@@ -13,7 +13,7 @@
 
 通过关键维度，查询对应目标资源的关联维度信息（批量）
 
-- api: /api/v1beta1/relation/mult_resource
+- api: /api/v1/relation/multi_resource
 - method: POST
 - header: X-Bk-Scope-Space-Uid: bkcc__2
 - request:

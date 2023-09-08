@@ -114,10 +114,44 @@ func (i *Instance) QueryRange(
 
 // Query instant 查询
 func (i *Instance) Query(
-	ctx context.Context, promql string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
-	return nil, nil
+	ctx context.Context, qs string,
+	end time.Time,
+) (promql.Vector, error) {
+	var (
+		span oleltrace.Span
+		err  error
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "prometheus-query-range")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("query-promql", qs, span)
+	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	opt := &promql.QueryOpts{}
+	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+	result := query.Exec(ctx)
+	if result.Err != nil {
+		log.Errorf(ctx, result.Err.Error())
+		return nil, result.Err
+	}
+	for _, err = range result.Warnings {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	vector, err := result.Vector()
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	return vector, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

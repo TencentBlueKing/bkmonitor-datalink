@@ -75,7 +75,70 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func (i *Instance) dataFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Matrix, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Vector, error) {
+	if !resp.Result {
+		return nil, fmt.Errorf(
+			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		)
+	}
+	if resp.Code != OK {
+		return nil, fmt.Errorf(
+			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		)
+	}
+	if len(resp.Data.List) > 0 {
+		data := resp.Data.List[0].Data
+		seriesNum := 0
+
+		vector := make(promql.Vector, 0, len(data.Result))
+		for _, series := range data.Result {
+			metricIndex := 0
+			metric := make(labels.Labels, len(series.Metric))
+			for name, value := range series.Metric {
+				metric[metricIndex] = labels.Label{
+					Name:  name,
+					Value: value,
+				}
+				metricIndex++
+			}
+
+			var point promql.Point
+			if data.ResultType != VectorType {
+				continue
+			}
+
+			nt, nv, err := series.Value.Point()
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+				continue
+			}
+			point.T = nt
+			point.V = nv
+			vector = append(vector, promql.Sample{
+				Metric: metric,
+				Point:  point,
+			})
+
+			seriesNum++
+		}
+
+		trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
+		return vector, nil
+	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
+	return nil, nil
+}
+
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Matrix, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -349,14 +412,14 @@ func (i *Instance) QueryRange(
 		return nil, err
 	}
 
-	return i.dataFormat(ctx, vmResp, span)
+	return i.matrixFormat(ctx, vmResp, span)
 }
 
 // Query instant 查询
 func (i *Instance) Query(
 	ctx context.Context, promqlStr string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+	end time.Time,
+) (promql.Vector, error) {
 	var (
 		span      oleltrace.Span
 		vmRtGroup map[string][]string
@@ -380,10 +443,9 @@ func (i *Instance) Query(
 
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
-	trace.InsertStringIntoSpan("query-step", step.String(), span)
 
 	if len(vmRtGroup) == 0 {
-		return promql.Matrix{}, nil
+		return promql.Vector{}, nil
 	}
 
 	metrics := make([]string, 0, len(vmRtGroup))
@@ -418,7 +480,7 @@ func (i *Instance) Query(
 		return nil, err
 	}
 
-	return i.dataFormat(ctx, vmResp, span)
+	return i.vectorFormat(ctx, vmResp, span)
 }
 
 func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {

@@ -221,6 +221,7 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 		ok       bool
 		v        float64
 		timeItem string
+		tf       float64
 
 		timeColumnIndex  int
 		valueColumnIndex int
@@ -268,6 +269,19 @@ func (i *Instance) getRawData(columns []string, data []interface{}) (time.Time, 
 			err = fmt.Errorf("parse time type failed,data: %#v", data[timeColumnIndex])
 			return t, v, err
 		}
+	case float64:
+		tf, ok = data[timeColumnIndex].(float64)
+		if !ok {
+			err = fmt.Errorf("parse time type failed,data: %#v", data[timeColumnIndex])
+			return t, v, err
+		}
+
+		t = time.Unix(0, int64(tf))
+	default:
+		log.Errorf(context.TODO(),
+			"get time type failed, type: %T, data: %+v, timeColumnIndex: %d",
+			data[timeColumnIndex], data, timeColumnIndex,
+		)
 	}
 
 	switch value := data[valueColumnIndex].(type) {
@@ -714,8 +728,8 @@ func (i *Instance) QueryRange(
 // Query instant 查询
 func (i *Instance) Query(
 	ctx context.Context, promql string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+	end time.Time,
+) (promql.Vector, error) {
 	return nil, nil
 }
 

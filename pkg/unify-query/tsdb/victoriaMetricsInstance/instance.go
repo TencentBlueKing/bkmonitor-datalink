@@ -218,59 +218,9 @@ func (i *Instance) QueryRange(
 // Query instant 查询
 func (i *Instance) Query(
 	ctx context.Context, promqlStr string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
-	var (
-		cancel        context.CancelFunc
-		span          oleltrace.Span
-		startAnaylize time.Time
-
-		err error
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-query")
-	if span != nil {
-		defer span.End()
-	}
-	values := &url.Values{}
-	values.Set("query", promqlStr)
-	values.Set("step", fmt.Sprintf("%.f", step.Seconds()))
-	values.Set("time", fmt.Sprintf("%d", end.Unix()))
-	urlPath := i.urlPath("query", values.Encode())
-
-	ctx, cancel = context.WithTimeout(ctx, i.timeout)
-	defer cancel()
-	startAnaylize = time.Now()
-
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
-	log.Infof(ctx,
-		"victoria metrics query: %s, promql: %s",
-		urlPath, promqlStr,
-	)
-
-	resp, err := i.curl.Request(
-		ctx, curl.Get,
-		curl.Options{
-			UrlPath: urlPath,
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
-
-	data := &Data{}
-	err = json.NewDecoder(resp.Body).Decode(data)
-	if err != nil {
-		return nil, err
-	}
-	if data.Status != "success" {
-		return nil, errors.New(data.Error)
-	}
-	return i.matrixFormat(data, span), err
+	end time.Time,
+) (promql.Vector, error) {
+	panic("implement me")
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

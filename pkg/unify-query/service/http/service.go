@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/middleware"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/trace"
 )
@@ -97,6 +98,8 @@ func (s *Service) Reload(ctx context.Context) {
 	registerSpacePrint(s.g)
 	registerFeatureFlag(s.g)
 	registerSwagger(s.g)
+
+	api.RegisterRelation(ctx, s.g)
 
 	// 构造新的http服务
 	s.server = &gohttp.Server{

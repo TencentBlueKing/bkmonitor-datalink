@@ -193,6 +193,14 @@ func (r *model) GetResourceMatcher(ctx context.Context, spaceUid string, timesta
 		return source, indexMatcher, resultMatchers, fmt.Errorf("get resource error: %s", err)
 	}
 
+	if spaceUid == "" {
+		return source, indexMatcher, resultMatchers, fmt.Errorf("space uid is empty")
+	}
+
+	if timestamp == 0 {
+		return source, indexMatcher, resultMatchers, fmt.Errorf("timestamp is empty")
+	}
+
 	trace.InsertStringIntoSpan("source", string(source), span)
 	trace.InsertStringIntoSpan("index-matcher", fmt.Sprintf("%v", indexMatcher), span)
 

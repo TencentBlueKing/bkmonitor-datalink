@@ -71,10 +71,11 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		d := cmdb.RelationMultiResourceResponseData{
 			Code: http.StatusOK,
 		}
+
 		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
 		if err != nil {
 			d.Message = err.Error()
-			d.Code = http.StatusNotFound
+			d.Code = http.StatusBadRequest
 		}
 		data.Data = append(data.Data, d)
 	}

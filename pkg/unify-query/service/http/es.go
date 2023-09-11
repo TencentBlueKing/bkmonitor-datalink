@@ -19,6 +19,7 @@ import (
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -52,8 +53,10 @@ type Query struct {
 func HandleESQueryRequest(c *gin.Context) {
 	// 这里开始context就使用trace生成的了
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx         = c.Request.Context()
+		span        oleltrace.Span
+		user        = metadata.GetUser(ctx)
+		servicePath = c.Request.URL.Path
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-es-request")
@@ -61,11 +64,10 @@ func HandleESQueryRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeES, metric.StatusReceived)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read es request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeES, metric.StatusFailed)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
@@ -73,7 +75,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	err = json.Unmarshal(body, &req)
 	if err != nil {
 		log.Errorf(context.TODO(), "anaylize es request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeES, metric.StatusFailed)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
@@ -87,12 +89,12 @@ func HandleESQueryRequest(c *gin.Context) {
 	result, err := es.Query(params)
 	if err != nil {
 		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeES, metric.StatusFailed)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeES, metric.StatusSuccess)
+	metric.APIRequestInc(ctx, servicePath, metric.StatusSuccess, user.SpaceUid)
 	c.String(200, "%s", result)
 }
 

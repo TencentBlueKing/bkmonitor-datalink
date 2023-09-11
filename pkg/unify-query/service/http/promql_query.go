@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -56,8 +55,6 @@ func HandleTsQueryPromQLToStructRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
-
 	req := &promqlReq{}
 	if err := json.NewDecoder(c.Request.Body).Decode(req); err != nil {
 		// 统一返回解析body失败
@@ -74,7 +71,6 @@ func HandleTsQueryPromQLToStructRequest(c *gin.Context) {
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusSuccess)
 	c.JSON(200, gin.H{"data": qstruct})
 }
 
@@ -92,11 +88,9 @@ func HandleTsQueryPromQLDataRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusReceived)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -112,12 +106,10 @@ func HandleTsQueryPromQLDataRequest(c *gin.Context) {
 	respData, err := handlePromqlQuery(ctx, string(body), bizIDs, spaceUid)
 	if err != nil {
 		log.Errorf(context.TODO(), "handle ts request failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusSuccess)
 	c.JSON(200, respData)
 }
 

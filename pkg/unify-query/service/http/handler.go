@@ -400,9 +400,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionConvert,
-			actionType: metric.TypePromql,
+			c: c,
 		}
 		span oleltrace.Span
 	)
@@ -412,7 +410,6 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypePromql, metric.StatusReceived)
 
 	// 解析请求 body
 	promql := &structured.QueryPromQL{}
@@ -425,7 +422,6 @@ func HandlerPromQLToStruct(c *gin.Context) {
 
 	query, err := promQLToStruct(ctx, promql)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -448,9 +444,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionConvert,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		span oleltrace.Span
 	)
@@ -460,7 +454,6 @@ func HandlerStructToPromQL(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypeTS, metric.StatusReceived)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -496,9 +489,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -507,8 +498,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
 	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
@@ -535,7 +524,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -560,9 +548,7 @@ func HandlerQueryTs(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -571,8 +557,6 @@ func HandlerQueryTs(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
 	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
@@ -600,7 +584,6 @@ func HandlerQueryTs(c *gin.Context) {
 
 	res, err := queryTs(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -626,9 +609,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypePromql,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -637,8 +618,6 @@ func HandlerQueryPromQL(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("headers", fmt.Sprintf("%+v", c.Request.Header), span)
 	trace.InsertStringIntoSpan("query-source", user.Key, span)

@@ -24,7 +24,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -408,12 +407,10 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusReceived)
 	// 获取body中的具体参数
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -432,7 +429,6 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	params, err := infos.AnalysisQuery(string(queryStmt))
 	if err != nil {
 		log.Errorf(context.TODO(), "analysis info query failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -444,7 +440,6 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	result, err := infos.QueryAsync(ctx, infoType, params, spaceUid)
 	if err != nil {
 		log.Errorf(context.TODO(), "query info failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -471,22 +466,18 @@ func convertInfoData(
 
 	if err != nil {
 		log.Errorf(context.TODO(), "fill info data failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusFailed)
 		return nil, err
 	}
 
 	switch infoType {
 	case infos.TimeSeries:
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 		return resp, nil
 	case infos.Series:
 		realResp := FormatSeriesData(resp, params.Keys)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 		return realResp, nil
 	case infos.TagValues:
 		// tagvalues需要进行一次数据格式转换
 		if len(resp.Tables) == 0 {
-			metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 			dimensions := params.Keys
 			result := &TagValuesData{
 				Values: make(map[string][]string),
@@ -497,12 +488,10 @@ func convertInfoData(
 			return result, nil
 		}
 		realResp := NewTagValuesData(resp)
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 		return realResp, nil
 	case infos.TagKeys:
 		// tagKeys需要进行提取values
 		if len(resp.Tables) == 0 {
-			metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 			return []interface{}{}, nil
 		}
 
@@ -522,11 +511,9 @@ func convertInfoData(
 			}
 		}
 
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 		return result, nil
 	case infos.FieldKeys:
 		if len(resp.Tables) == 0 {
-			metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 			return []interface{}{}, nil
 		}
 
@@ -556,7 +543,6 @@ func convertInfoData(
 				}
 			}
 		}
-		metric.RequestCountInc(ctx, metric.ActionInfo, metric.TypeTS, metric.StatusSuccess)
 		return result, nil
 	}
 

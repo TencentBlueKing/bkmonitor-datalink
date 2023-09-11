@@ -24,7 +24,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -53,8 +52,6 @@ func HandleLabelValuesRequest(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionLabelValues, metric.TypeTS, metric.StatusReceived)
 
 	labelName := c.Param("label_name")
 	// start=<rfc3339 | unix_timestamp>: Start timestamp. Optional.

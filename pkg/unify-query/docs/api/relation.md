@@ -20,9 +20,9 @@
 
 ```json
 {
-  "timestamp": 1693217460,
   "query_list": [
     {
+      "timestamp": 1693217460,
       "target_type": "system",
       "source_info": {
         "bcs_cluster_id": "BCS-K8S-00000",
@@ -32,6 +32,7 @@
       }
     },
     {
+      "timestamp": 1693217460,
       "target_type": "system",
       "source_info": {
         "bcs_cluster_id": "BCS-K8S-00000",
@@ -40,6 +41,7 @@
       }
     },
     {
+      "timestamp": 1693217460,
       "target_type": "system",
       "source_info": {
         "bcs_cluster_id": "BCS-K8S-00000"

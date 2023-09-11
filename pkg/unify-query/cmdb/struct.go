@@ -34,8 +34,8 @@ type Paths []Path
 
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
-	Timestamp int64 `json:"timestamp"`
 	QueryList []struct {
+		Timestamp  int64    `json:"timestamp"`
 		TargetType Resource `json:"target_type"`
 		SourceInfo Matcher  `json:"source_info"`
 	} `json:"query_list"`

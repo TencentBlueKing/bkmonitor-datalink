@@ -11,7 +11,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -40,6 +38,10 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		span oleltrace.Span
 		user = metadata.GetUser(ctx)
 		err  error
+
+		resp = &response{
+			c: c,
+		}
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "api-relation-multi-resource")
@@ -50,8 +52,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	request := new(cmdb.RelationMultiResourceRequest)
 	err = json.NewDecoder(c.Request.Body).Decode(request)
 	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("json decode error: %s", err.Error()))
-		c.JSON(http.StatusBadRequest, err.Error())
+		resp.failed(ctx, err)
 		return
 	}
 
@@ -60,24 +61,23 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {
-		log.Errorf(ctx, fmt.Sprintf("get model error: %s", err.Error()))
-		c.JSON(http.StatusBadRequest, err.Error())
+		resp.failed(ctx, err)
 		return
 	}
 
-	response := new(cmdb.RelationMultiResourceResponse)
-	response.Data = make([]cmdb.RelationMultiResourceResponseData, 0, len(request.QueryList))
+	data := new(cmdb.RelationMultiResourceResponse)
+	data.Data = make([]cmdb.RelationMultiResourceResponseData, 0, len(request.QueryList))
 	for _, qry := range request.QueryList {
 		d := cmdb.RelationMultiResourceResponseData{
 			Code: http.StatusOK,
 		}
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, user.SpaceUid, request.Timestamp, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusNotFound
 		}
-		response.Data = append(response.Data, d)
+		data.Data = append(data.Data, d)
 	}
 
-	c.JSON(http.StatusOK, response)
+	resp.success(ctx, data)
 }

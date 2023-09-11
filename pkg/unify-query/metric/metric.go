@@ -34,24 +34,26 @@ const (
 	StatusFailed   = "failed"
 )
 
+var DefaultBuckets = []float64{0, 0.05, 0.1, 0.2, 0.5, 1, 3, 5, 10, 20, 30, 60}
+
 var (
-	requestCount = prometheus.NewCounterVec(
+	apiRequestTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
-			Name:      "request_count_total",
-			Help:      "request handled count",
+			Name:      "api_request_total",
+			Help:      "unify-query api request",
 		},
-		[]string{"action", "type", "status"},
+		[]string{"api", "status", "space_uid"},
 	)
 
-	requestHandleSecondHistogram = prometheus.NewHistogramVec(
+	apiRequestSecondHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
-			Name:      "request_handle_seconds",
-			Help:      "request handle seconds",
-			Buckets:   []float64{0, 0.5, 1, 3, 5, 10, 30},
+			Name:      "api_request_second",
+			Help:      "unify-query api request second",
+			Buckets:   DefaultBuckets,
 		},
-		[]string{"url"},
+		[]string{"api", "space_uid"},
 	)
 
 	resultTableInfo = prometheus.NewGaugeVec(
@@ -79,7 +81,7 @@ var (
 			Namespace: "unify_query",
 			Name:      "tsdb_request_seconds",
 			Help:      "tsdb request seconds",
-			Buckets:   []float64{0, 0.5, 1, 3, 5, 10, 30},
+			Buckets:   DefaultBuckets,
 		},
 		[]string{"space_uid", "tsdb_type"},
 	)
@@ -94,6 +96,16 @@ var (
 	)
 )
 
+func APIRequestInc(ctx context.Context, params ...string) {
+	metric, err := apiRequestTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric, err, params...)
+}
+
+func APIRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
+	metric, err := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
+	observe(ctx, metric, err, duration, params...)
+}
+
 func TsDBAndTableIDRequestCountInc(ctx context.Context, params ...string) {
 	metric, err := tsDBAndTableIDRequestCount.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric, err, params...)
@@ -107,17 +119,6 @@ func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...st
 func ResultTableInfoSet(ctx context.Context, value float64, params ...string) {
 	metric, err := resultTableInfo.GetMetricWithLabelValues(params...)
 	gaugeSet(ctx, metric, err, value, params...)
-}
-
-// RequestCountInc http 访问指标
-func RequestCountInc(ctx context.Context, params ...string) {
-	metric, err := requestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
-}
-
-func RequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, err := requestHandleSecondHistogram.GetMetricWithLabelValues(params...)
-	observe(ctx, metric, err, duration, params...)
 }
 
 func VmQueryInfo(ctx context.Context, value float64, params ...string) {
@@ -190,7 +191,7 @@ func observe(
 // init
 func init() {
 	prometheus.MustRegister(
-		requestCount, requestHandleSecondHistogram, resultTableInfo,
+		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
 		tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
 	)
 }

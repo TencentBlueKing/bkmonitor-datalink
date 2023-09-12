@@ -164,7 +164,7 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, matc
 	//return allPaths, nil
 }
 
-func (r *model) GetResourceMatcher(ctx context.Context, spaceUid string, timestamp int64, target cmdb.Resource, matcher cmdb.Matcher) (cmdb.Resource, cmdb.Matcher, cmdb.Matchers, error) {
+func (r *model) GetResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target cmdb.Resource, matcher cmdb.Matcher) (cmdb.Resource, cmdb.Matcher, cmdb.Matchers, error) {
 	var (
 		span oleltrace.Span
 		user = metadata.GetUser(ctx)
@@ -212,7 +212,7 @@ func (r *model) GetResourceMatcher(ctx context.Context, spaceUid string, timesta
 	trace.InsertStringIntoSpan("paths", fmt.Sprintf("%v", paths), span)
 
 	for _, path := range paths {
-		resultMatchers, err = r.getDataWithMatchers(ctx, spaceUid, timestamp, path, indexMatcher)
+		resultMatchers, err = r.getDataWithMatchers(ctx, lookBackDelta, spaceUid, timestamp, path, indexMatcher)
 		if err != nil {
 			continue
 		}
@@ -224,9 +224,20 @@ func (r *model) GetResourceMatcher(ctx context.Context, spaceUid string, timesta
 	return source, indexMatcher, resultMatchers, err
 }
 
-func (r *model) getDataWithMatchers(ctx context.Context, spaceUid string, timestamp int64, path cmdb.Path, matchers ...cmdb.Matcher) (cmdb.Matchers, error) {
+func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, spaceUid string, timestamp int64, path cmdb.Path, matchers ...cmdb.Matcher) (cmdb.Matchers, error) {
 	// 按照关联路径遍历查询
-	indexMatchers := matchers
+	var (
+		lookBackDelta time.Duration
+		err           error
+		indexMatchers = matchers
+	)
+	if lookBackDeltaStr != "" {
+		lookBackDelta, err = time.ParseDuration(lookBackDeltaStr)
+		if err != nil {
+			return indexMatchers, err
+		}
+	}
+
 	for _, p := range path {
 		if len(p.V) < 2 {
 			return indexMatchers, fmt.Errorf("path format is wrong %v", p)
@@ -267,7 +278,7 @@ func (r *model) getDataWithMatchers(ctx context.Context, spaceUid string, timest
 		instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
-		})
+		}, lookBackDelta)
 
 		end := time.Unix(timestamp, 0)
 		promQL, err := queryTs.ToPromExpr(ctx, true, false)

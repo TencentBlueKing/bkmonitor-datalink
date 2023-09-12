@@ -32,6 +32,10 @@ type QueryPromQL struct {
 	Match               string   `json:"match,omitempty"`
 	// Timezone 时区
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
+	// LookBackDelta 偏移量
+	LookBackDelta string `json:"look_back_delta"`
+	// 瞬时数据
+	Instant bool `json:"instant"`
 }
 
 // queryPromQLExpr

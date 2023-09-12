@@ -14,5 +14,5 @@ import "context"
 type CMDB interface {
 
 	// GetResourceMatcher 获取目标的关键维度和值
-	GetResourceMatcher(ctx context.Context, spaceUid string, timestamp int64, target Resource, matcher Matcher) (Resource, Matcher, Matchers, error)
+	GetResourceMatcher(ctx context.Context, lookBackDelta string, spaceUid string, timestamp int64, target Resource, matcher Matcher) (Resource, Matcher, Matchers, error)
 }

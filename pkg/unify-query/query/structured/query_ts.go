@@ -51,6 +51,10 @@ type QueryTs struct {
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
+	// LookBackDelta 偏移量
+	LookBackDelta string `json:"look_back_delta"`
+	// Instant 瞬时数据
+	Instant bool `json:"instant"`
 }
 
 // 根据 timezone 偏移对齐

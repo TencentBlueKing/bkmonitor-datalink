@@ -51,8 +51,8 @@ func SchemaByResultTablePlugin(table *config.MetaResultTableConfig) etl.Containe
 }
 
 // GetSeparatorFieldByOption
-func GetSeparatorFieldByOption(option map[string]interface{}) (etl.Field, error) {
-	helper := utils.NewMapHelper(option)
+func GetSeparatorFieldByOption(table *config.MetaResultTableConfig) (etl.Field, error) {
+	helper := utils.NewMapHelper(table.Option)
 	action, ok := helper.GetString(config.ResultTableOptSeparatorAction)
 	if !ok {
 		return nil, nil
@@ -75,7 +75,7 @@ func GetSeparatorFieldByOption(option map[string]interface{}) (etl.Field, error)
 			etl.TransformMapByRegexp(helper.MustGetString(config.ResultTableOptLogSeparatorRegexp)),
 		), nil
 	case "json":
-		return etl.NewSimpleField(node, etl.ExtractByPath(source), etl.TransformMapByJSON), nil
+		return etl.NewSimpleField(node, etl.ExtractByPath(source), etl.TransformMapByJsonWithRetainExtraJSON(table)), nil
 	case "delimiter":
 		fieldList := make([]string, 0)
 		for _, name := range helper.MustGet(config.PipelineConfigOptLogSeparatedFields).([]interface{}) {
@@ -94,7 +94,7 @@ func GetSeparatorFieldByOption(option map[string]interface{}) (etl.Field, error)
 func PrepareByResultTablePlugin(table *config.MetaResultTableConfig) etl.ContainerSchemaBuilderPlugin {
 	return func(builder *etl.ContainerSchemaBuilder) error {
 		fields := make([]etl.Field, 0)
-		field, err := GetSeparatorFieldByOption(table.Option)
+		field, err := GetSeparatorFieldByOption(table)
 		if err != nil {
 			return err
 		}

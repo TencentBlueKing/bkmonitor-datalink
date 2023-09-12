@@ -39,7 +39,7 @@ build: mod
 
 .PHONY: test
 test: mod
-	$(GO) test -timeout 70s -tags "$(BUILDTAGS)" -parallel 8  ./...
+	$(GO) test -timeout 70s -tags "$(BUILDTAGS) $(JSON_LIB)" -parallel 8  ./...
 
 .PHONY: lint
 lint: mod

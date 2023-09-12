@@ -187,13 +187,13 @@ type PrepareByResultTablePluginSuite struct {
 
 // TestDefaultGetSeparatorFieldByOption
 func (s *PrepareByResultTablePluginSuite) TestDefaultGetSeparatorFieldByOption() {
-	cases := []map[string]interface{}{
-		nil,
-		{},
-		{
+	var cases []*config.MetaResultTableConfig
+	cases = append(cases, &config.MetaResultTableConfig{})
+	cases = append(cases, &config.MetaResultTableConfig{
+		Option: map[string]interface{}{
 			config.ResultTableOptSeparatorAction: "test",
 		},
-	}
+	})
 
 	for i, c := range cases {
 		f, err := auto.GetSeparatorFieldByOption(c)
@@ -205,26 +205,29 @@ func (s *PrepareByResultTablePluginSuite) TestDefaultGetSeparatorFieldByOption()
 // TestPrepareByResultTablePlugin
 func (s *PrepareByResultTablePluginSuite) TestPrepareByResultTablePlugin() {
 	data := `{"x":1}`
-	cases := []map[string]interface{}{
-		{
+	var cases []*config.MetaResultTableConfig
+	cases = append(cases, &config.MetaResultTableConfig{
+		Option: map[string]interface{}{
 			config.ResultTableOptSeparatorAction:    "regexp",
 			config.ResultTableOptLogSeparatorRegexp: `{"(?P<k>\w+)":(?P<v>\w+)}`,
 		},
-		{
-			config.ResultTableOptSeparatorAction: "json",
-		},
-		{
-			config.ResultTableOptSeparatorAction:       "delimiter",
-			config.PipelineConfigOptLogSeparatedFields: []interface{}{"data"},
-			config.PipelineConfigOptLogSeparator:       ",",
-		},
-	}
+	})
+	cases = append(cases, &config.MetaResultTableConfig{Option: map[string]interface{}{
+		config.ResultTableOptSeparatorAction: "json",
+	},
+	})
+	cases = append(cases, &config.MetaResultTableConfig{Option: map[string]interface{}{
+		config.ResultTableOptSeparatorAction:       "delimiter",
+		config.PipelineConfigOptLogSeparatedFields: []interface{}{"data"},
+		config.PipelineConfigOptLogSeparator:       ",",
+	},
+	})
 
 	for i, c := range cases {
 		source := "data"
 		target := "prepare"
-		c[config.ResultTableOptSeparatorNodeSource] = source
-		c[config.ResultTableOptSeparatorNode] = target
+		c.Option[config.ResultTableOptSeparatorNodeSource] = source
+		c.Option[config.ResultTableOptSeparatorNode] = target
 
 		f, err := auto.GetSeparatorFieldByOption(c)
 		s.NotNil(f, i)

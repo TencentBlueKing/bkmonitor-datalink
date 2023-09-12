@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
@@ -141,7 +142,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
-func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (interface{}, error) {
 	var (
 		err  error
 		span oleltrace.Span
@@ -149,9 +150,11 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		instance tsdb.Instance
 		ok       bool
 
-		res interface{}
+		res any
 
 		user = metadata.GetUser(ctx)
+
+		lookBackDelta time.Duration
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts")
@@ -174,15 +177,20 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
 
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	queryReference, err := query.ToQueryReference(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
 	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 	query.Timezone = timezone
@@ -197,7 +205,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	if ok {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 
@@ -207,7 +214,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		})
 		if instance == nil {
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
-			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 
@@ -222,7 +228,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		err = metadata.SetQueryReference(ctx, queryReference)
 
 		if err != nil {
-			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 
@@ -232,7 +237,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         SingleflightTimeout,
-		})
+		}, lookBackDelta)
 	}
 
 	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
@@ -240,13 +245,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 	promQL, err := query.ToPromExpr(ctx, true, false)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
-	res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
+	if query.Instant {
+		res, err = instance.Query(ctx, promQL.String(), end)
+	} else {
+		res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
+	}
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -267,9 +274,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
+	case promPromql.Vector:
+		for index, series := range v {
+			tables.Add(promql.NewTableWithSample(index, series))
+
+			seriesNum++
+			pointsNum++
+		}
 	default:
 		err = fmt.Errorf("data type wrong: %T", v)
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -279,7 +292,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -351,6 +363,8 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query.End = queryPromQL.End
 	query.Step = queryPromQL.Step
 	query.Timezone = queryPromQL.Timezone
+	query.LookBackDelta = queryPromQL.LookBackDelta
+	query.Instant = queryPromQL.Instant
 
 	// 补充业务ID
 	if len(queryPromQL.BKBizIDs) > 0 {
@@ -582,7 +596,7 @@ func HandlerQueryTs(c *gin.Context) {
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertIntIntoSpan("query-body-size", len(queryStr), span)
 
-	res, err := queryTs(ctx, query)
+	res, err := queryTs(ctx, query, query.Instant)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -648,7 +662,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 		return
 	}
 
-	res, err := queryTs(ctx, query)
+	res, err := queryTs(ctx, query, query.Instant)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)

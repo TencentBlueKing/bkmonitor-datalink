@@ -72,7 +72,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			Code: http.StatusOK,
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest

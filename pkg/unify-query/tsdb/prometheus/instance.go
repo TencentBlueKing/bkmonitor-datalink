@@ -31,17 +31,20 @@ type Instance struct {
 	ctx          context.Context
 	instanceType string
 
+	lookBackDelta time.Duration
+
 	queryStorage storage.Queryable
 
 	engine *promql.Engine
 }
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable) *Instance {
+func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration) *Instance {
 	return &Instance{
-		ctx:          ctx,
-		engine:       engine,
-		queryStorage: queryStorage,
+		ctx:           ctx,
+		engine:        engine,
+		queryStorage:  queryStorage,
+		lookBackDelta: lookBackDelta,
 	}
 }
 
@@ -86,7 +89,10 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
-	opt := &promql.QueryOpts{}
+	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
+	opt := &promql.QueryOpts{
+		LookbackDelta: i.lookBackDelta,
+	}
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -129,7 +135,10 @@ func (i *Instance) Query(
 
 	trace.InsertStringIntoSpan("query-promql", qs, span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
-	opt := &promql.QueryOpts{}
+	opt := &promql.QueryOpts{
+		LookbackDelta: i.lookBackDelta,
+	}
+	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
 		log.Errorf(ctx, err.Error())

@@ -27,7 +27,7 @@ const (
 	ActionSkip           = "skip"
 
 	EnvNodeName  = "NODE_NAME"
-	EnvPodName   = "POD_NAME"
+	EnvPodName   = "POD"
 	EnvNamespace = "NAMESPACE"
 )
 

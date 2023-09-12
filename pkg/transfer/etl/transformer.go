@@ -23,6 +23,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+const (
+	FieldNameExtJSON = "ext_json"
+)
+
 // TransformAsIs : return value directly
 func TransformAsIs(value interface{}) (interface{}, error) {
 	return value, nil
@@ -103,6 +107,36 @@ func TransformMapByRegexp(pattern string) TransformFn {
 	}
 }
 
+func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) TransformFn {
+	options := utils.NewMapHelper(table.Option)
+	retainExtraJSON, _ := options.GetBool(config.PipelineConfigOptionRetainExtraJson)
+	userFieldMap := table.FieldListGroupByName()
+	return func(from interface{}) (to interface{}, err error) {
+		value, err := conv.DefaultConv.String(from)
+		if err != nil {
+			return nil, err
+		}
+		if value == "" {
+			return nil, nil
+		}
+		results := make(map[string]interface{})
+		err = json.Unmarshal([]byte(value), &results)
+		if err != nil {
+			return nil, err
+		}
+		if retainExtraJSON {
+			extraJSONMap := make(map[string]interface{})
+			for key, value := range results {
+				if _, ok := userFieldMap[key]; !ok {
+					extraJSONMap[key] = value
+				}
+			}
+			results[FieldNameExtJSON] = extraJSONMap
+		}
+		return results, nil
+	}
+}
+
 // TransformMapByJSON
 func TransformMapByJSON(from interface{}) (to interface{}, err error) {
 	value, err := conv.DefaultConv.String(from)
@@ -169,7 +203,7 @@ func TransformObject(from interface{}) (to interface{}, err error) {
 			return map[string]interface{}{}, nil
 		}
 		return TransformMapByJSON(i)
-	case map[string]interface{}:
+	case MapContainer, map[string]interface{}:
 		return i, nil
 	default:
 		logging.Warnf("the type->[%T] dose no support convert to object", from)

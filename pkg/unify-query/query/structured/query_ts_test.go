@@ -120,7 +120,7 @@ func TestQueryToMetric(t *testing.T) {
 	mock.SetRedisClient(ctx, "test")
 
 	mock.SetSpaceAndProxyMockData(
-		ctx, spaceUid, &redis.TsDB{
+		ctx, "query_ts_test", "query_ts_test", spaceUid, &redis.TsDB{
 			TableID:         tableID,
 			Field:           []string{field},
 			MeasurementType: redis.BKTraditionalMeasurement,
@@ -278,7 +278,7 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			mock.SetSpaceAndProxyMockData(
-				ctx, tc.spaceUid, &redis.TsDB{
+				ctx, "query_ts_test", "query_ts_test", tc.spaceUid, &redis.TsDB{
 					TableID:         tc.tableID,
 					Field:           []string{tc.field},
 					MeasurementType: redis.BkSplitMeasurement,

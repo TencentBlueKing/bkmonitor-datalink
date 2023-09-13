@@ -37,14 +37,20 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 	offlineDataArchive.MockMetaData(m)
 }
 
-func SetSpaceAndProxyMockData(ctx context.Context, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
+func SetSpaceAndProxyMockData(ctx context.Context, path, bucketName, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
 	logInit()
 
-	sr, _ := influxdb.GetSpaceRouter("", "")
+	sr, _ := influxdb.GetSpaceRouter(path, bucketName)
 	space := sr.Get(ctx, spaceUid)
-	space[tdb.TableID] = tdb
 
-	sr.Add(ctx, spaceUid, space)
+	if space == nil {
+		space = make(redis.Space)
+	}
+
+	if _, ok := space[tdb.TableID]; !ok {
+		space[tdb.TableID] = tdb
+		sr.Add(ctx, spaceUid, space)
+	}
 
 	proxyInfo := ir.ProxyInfo{
 		tdb.TableID: proxy,

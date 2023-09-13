@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 	oleltrace "go.opentelemetry.io/otel/trace"
@@ -142,7 +143,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
-func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (interface{}, error) {
+func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
 		err  error
 		span oleltrace.Span
@@ -155,6 +156,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (inte
 		user = metadata.GetUser(ctx)
 
 		lookBackDelta time.Duration
+
+		promQL parser.Expr
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts")
@@ -198,6 +201,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (inte
 	qrStr, _ := json.Marshal(queryReference)
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
 
+	referenceNameMetric := make(map[string]string, len(query.QueryList))
+	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
+
 	// 判断是否是直查
 	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
 	if err != nil {
@@ -206,6 +212,10 @@ func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (inte
 	if ok {
 		if err != nil {
 			return nil, err
+		}
+		if !metadata.GetVMQueryOrFeatureFlag(ctx) {
+			referenceNameMetric = vmExpand.MetricAliasMapping
+			referenceNameLabelMatcher = vmExpand.LabelsMatcher
 		}
 
 		metadata.SetExpand(ctx, vmExpand)
@@ -240,13 +250,13 @@ func queryTs(ctx context.Context, query *structured.QueryTs, instant bool) (inte
 		}, lookBackDelta)
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
-	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
-
-	promQL, err := query.ToPromExpr(ctx, true, false)
+	promQL, err = query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
 	if err != nil {
 		return nil, err
 	}
+
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
 
 	if query.Instant {
 		res, err = instance.Query(ctx, promQL.String(), end)
@@ -318,14 +328,25 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}
 
 	// 是否打开对齐
+	referenceNameMetric := make(map[string]string, len(query.QueryList))
+	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
+
 	for _, q := range query.QueryList {
 		// 保留查询条件
-		for i, cond := range q.Conditions.FieldList {
-			q.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
+		matcher, _, err := q.Conditions.ToProm()
+		if err != nil {
+			return nil, err
 		}
+		referenceNameLabelMatcher[q.ReferenceName] = matcher
+
+		router, err := q.ToRouter()
+		if err != nil {
+			return nil, err
+		}
+		referenceNameMetric[q.ReferenceName] = router.RealMetricName()
 	}
 
-	promQL, err := query.ToPromExpr(ctx, false, true)
+	promQL, err := query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -596,7 +617,7 @@ func HandlerQueryTs(c *gin.Context) {
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertIntIntoSpan("query-body-size", len(queryStr), span)
 
-	res, err := queryTs(ctx, query, query.Instant)
+	res, err := queryTs(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -662,7 +683,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 		return
 	}
 
-	res, err := queryTs(ctx, query, query.Instant)
+	res, err := queryTs(ctx, query)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)

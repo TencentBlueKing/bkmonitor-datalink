@@ -551,14 +551,14 @@ func TestCheckVmQuery(t *testing.T) {
 
 			SetUser(ctx, tc.spaceUid, tc.spaceUid)
 
-			ok, metricMap, vmRtGroup, err := tc.ref.CheckVmQuery(ctx)
+			ok, vmExpand, err := tc.ref.CheckVmQuery(ctx)
 			assert.Nil(t, err)
 			assert.Equal(t, tc.expected.ok, ok)
 			if tc.expected.metricMap != nil {
-				assert.Equal(t, tc.expected.metricMap, metricMap)
+				assert.Equal(t, tc.expected.metricMap, vmExpand.MetricAliasMapping)
 			}
 			if tc.expected.vmRtGroup != nil {
-				assert.Equal(t, tc.expected.vmRtGroup, vmRtGroup)
+				assert.Equal(t, tc.expected.vmRtGroup, vmExpand.ResultTableGroup)
 			}
 		})
 	}

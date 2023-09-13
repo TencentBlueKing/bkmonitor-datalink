@@ -182,14 +182,15 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 	if err != nil {
 		return nil, err
 	}
-	// 查询语法转化为 promql
-	for i, cond := range params.Conditions.FieldList {
-		params.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
-	}
-	labelMatchers, _, err := params.Conditions.ToProm()
+
+	labelMatchers := make([]*labels.Matcher, 0, 1)
+	match, err := labels.NewMatcher(
+		labels.MatchEqual, labels.MetricName, prometheus.ReferenceName,
+	)
 	if err != nil {
 		return nil, err
 	}
+	labelMatchers = append(labelMatchers, match)
 
 	switch key {
 	case infos.FieldKeys:
@@ -229,13 +230,6 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 			End:   end * 1e3,
 			Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
 		}
-		match, err := labels.NewMatcher(
-			labels.MatchEqual, labels.MetricName, prometheus.ReferenceName,
-		)
-		if err != nil {
-			return nil, err
-		}
-		labelMatchers = append(labelMatchers, match)
 
 		set := q.Select(true, hints, labelMatchers...)
 		if set.Err() != nil {

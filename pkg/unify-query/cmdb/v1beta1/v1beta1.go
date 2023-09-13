@@ -18,13 +18,16 @@ import (
 	"time"
 
 	"github.com/dominikbraun/graph"
+	"github.com/prometheus/prometheus/model/labels"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
@@ -242,6 +245,7 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 		if len(p.V) < 2 {
 			return indexMatchers, fmt.Errorf("path format is wrong %v", p)
 		}
+		var instance tsdb.Instance
 
 		metric := getMetric(p)
 		if metric == "" {
@@ -266,22 +270,58 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 
 		condition := getConditions(false, indexMatchers...)
 		vmCondition := getConditions(true, indexMatchers...)
+		labelsMatcher := make([]*labels.Matcher, 0)
+		for _, im := range indexMatchers {
+			matcher, err := im.ToPromMatcher()
+			if err != nil {
+				return indexMatchers, err
+			}
+			labelsMatcher = append(labelsMatcher, matcher...)
+		}
 
 		for _, qm := range queryReference {
 			for _, ql := range qm.QueryList {
 				ql.Condition = condition
+
 				ql.VmCondition = vmCondition
+				ql.LabelsMatcher = labelsMatcher
 			}
 		}
 
 		metadata.SetQueryReference(ctx, queryReference)
-		instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-			QueryMaxRouting: QueryMaxRouting,
-			Timeout:         Timeout,
-		}, lookBackDelta)
 
 		end := time.Unix(timestamp, 0)
-		promQL, err := queryTs.ToPromExpr(ctx, true, false)
+
+		referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
+		referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
+
+		ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+		if ok {
+			if err != nil {
+				return nil, err
+			}
+			if !metadata.GetVMQueryOrFeatureFlag(ctx) {
+				referenceNameMetric = vmExpand.MetricAliasMapping
+				referenceNameLabelMatcher = vmExpand.LabelsMatcher
+			}
+
+			metadata.SetExpand(ctx, vmExpand)
+			instance = prometheus.GetInstance(ctx, &metadata.Query{
+				StorageID: consul.VictoriaMetricsStorageType,
+			})
+			if instance == nil {
+				err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
+				return nil, err
+			}
+		} else {
+			instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+				QueryMaxRouting: QueryMaxRouting,
+				Timeout:         Timeout,
+			}, lookBackDelta)
+		}
+
+		promQL, err := queryTs.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+
 		if err != nil {
 			return nil, fmt.Errorf("query ts to prom expr error: %s", err)
 		}

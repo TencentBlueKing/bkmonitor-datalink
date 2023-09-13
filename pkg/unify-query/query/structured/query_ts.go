@@ -156,7 +156,7 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 	return queryReference, nil
 }
 
-func (q *QueryTs) ToPromExpr(ctx context.Context, isReferenceName, isMatcher bool) (parser.Expr, error) {
+func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, referenceNameLabelMatcher map[string][]*labels.Matcher) (parser.Expr, error) {
 	var (
 		err     error
 		result  parser.Expr
@@ -178,7 +178,14 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, isReferenceName, isMatcher boo
 
 	// 获取指标查询的表达式
 	for _, query := range q.QueryList {
-		if expr, err = query.ToPromExpr(ctx, isReferenceName, isMatcher); err != nil {
+		var labelsMatcher []*labels.Matcher
+		if referenceNameLabelMatcher != nil {
+			if v, ok := referenceNameLabelMatcher[query.ReferenceName]; ok {
+				labelsMatcher = v
+			}
+		}
+
+		if expr, err = query.ToPromExpr(ctx, referenceNameMetric, labelsMatcher...); err != nil {
 			return nil, err
 		}
 		exprMap[query.ReferenceName] = &PromExpr{
@@ -297,9 +304,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	if err != nil {
 		return nil, err
 	}
+
 	trace.InsertStringIntoSpan("query_conditions", fmt.Sprintf("%+v", q.Conditions), span)
 
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
+
+	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
+
 	for i, tsDB := range tsDBs {
 		var (
 			field string
@@ -314,11 +325,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 					SOffSet: q.Soffset,
 					SLimit:  q.Slimit,
 				},
+				LabelsMatcher: make([]*labels.Matcher, 0),
 			}
 		)
 
 		// 增加查询条件
 		if len(queryConditions) > 0 {
+			query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
+
 			whereList.Append(
 				promql.AndOperator,
 				promql.NewTextWhere(
@@ -404,13 +418,20 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 						Value:         []string{v},
 						Operator:      Contains,
 					})
-				}
 
+					// labelsMatcher 不支持 or 语法，所以只取第一个
+					if len(filter) == 1 {
+						matcher, _ := labels.NewMatcher(labels.MatchEqual, k, v)
+						query.LabelsMatcher = append(query.LabelsMatcher, matcher)
+					}
+				}
 			}
+
 			if len(cond) > 0 {
 				filterConditions = append(filterConditions, cond)
 			}
 		}
+
 		if len(filterConditions) > 0 {
 			whereList.Append(
 				promql.AndOperator,
@@ -429,7 +450,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				),
 			)
 		}
-		if len(filterConditions) > 1 {
+		if len(queryConditions) > 1 || len(filterConditions) > 1 {
 			query.IsHasOr = true
 		}
 
@@ -494,19 +515,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	return queryMetric, nil
 }
 
-func (q *Query) ToPromExpr(ctx context.Context, isReferenceName, isMatcher bool) (parser.Expr, error) {
+func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, labelList ...*labels.Matcher) (parser.Expr, error) {
 	var (
-		labelList []*labels.Matcher
-		metric    string
-		err       error
+		metric string
+		err    error
 
 		originalOffset time.Duration
 		stepDur        model.Duration
 		step           time.Duration
 		dTmp           model.Duration
-
-		router      *Route
-		totalBuffer [][]ConditionField
 
 		window time.Duration
 
@@ -514,27 +531,10 @@ func (q *Query) ToPromExpr(ctx context.Context, isReferenceName, isMatcher bool)
 	)
 
 	// 判断是否使用别名作为指标
-	if isReferenceName {
-		metric = q.ReferenceName
-	} else {
-		router, err = q.ToRouter()
-		if err != nil {
-			return nil, err
-		}
-		metric = router.RealMetricName()
-	}
-
-	// 判断是否拼接 conditions，使用 vm 查询需要支持 or 语法，所以不拼接 conditions 到 matchers
-	if isMatcher {
-		labelList, totalBuffer, err = q.Conditions.ToProm()
-		if err != nil {
-			log.Errorf(ctx, "failed to translate conditions to prom ast for->[%s]", err)
-			return nil, err
-		}
-		if len(totalBuffer) > 0 {
-			err = fmt.Errorf("or 过滤条件无法直接转换为 promql 语句，请使用结构化查询")
-			log.Errorf(ctx, "%s %s", err, totalBuffer)
-			return nil, err
+	metric = q.ReferenceName
+	if referenceNameMetric != nil {
+		if m, ok := referenceNameMetric[q.ReferenceName]; ok {
+			metric = m
 		}
 	}
 

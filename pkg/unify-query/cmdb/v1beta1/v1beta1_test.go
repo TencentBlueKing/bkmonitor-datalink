@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -34,7 +35,6 @@ import (
 var (
 	once      sync.Once
 	testModel *model
-	spaceUid  = "bkcc__2"
 )
 
 func init() {
@@ -93,14 +93,13 @@ func TestModel_GetPaths(t *testing.T) {
 				"container":      "container-1",
 				"test":           "1",
 			},
-			source: "container",
+			source: "pod",
 			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
-				"container":      "container-1",
 			},
-			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
+			expected: `[[{"V":["pod","node"]},{"V":["node","system"]}]]`,
 		},
 		"no target resource": {
 			target: "multi_cluster",
@@ -172,17 +171,21 @@ func TestModel_GetPaths(t *testing.T) {
 
 func mockData(ctx context.Context) *curl.TestCurl {
 	mockCurl := curl.NewMockCurl(map[string]string{
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
+		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+bk_target_ip%3D%27127.0.0.1%27++limit+100000000+slimit+100000000`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
+		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+bk_target_ip%3D%27127.0.0.1%27++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
+		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+%28namespace%3D%27bkmonitor-operator%27+and+pod%3D%27bkm-pod-1%27%29%29++limit+100000000+slimit+100000000`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
+		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_pod_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+%28namespace%3D%27bkmonitor-operator%27+and+pod%3D%27bkm-pod-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_pod_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-1","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-pod-2","bkmonitor-operator-operator"]]}]}]}
 `,
-		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29+or+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29%29++limit+100000000+slimit+100000000`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
+		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29+or+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
 `,
+		`victoria_metric/api`: `{}`,
 	}, nil)
+
+	metadata.GetQueryRouter().MockSpaceUid(consul.VictoriaMetricsStorageType)
+
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
@@ -210,7 +213,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		),
 	})
 	mock.SetRedisClient(ctx, "test_model")
-	mock.SetSpaceAndProxyMockData(ctx, spaceUid, &redis.TsDB{
+	mock.SetSpaceAndProxyMockData(ctx, "v1beat1_test", "v1beat1_test", consul.InfluxDBStorageType, &redis.TsDB{
 		TableID:         "db.measurement",
 		Field:           []string{"node_with_system_relation", "node_with_pod_relation"},
 		MeasurementType: redis.BkSplitMeasurement,
@@ -221,8 +224,22 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		StorageID:   consul.InfluxDBStorageType,
 		Db:          "2_bkmonitor_time_series_1572864",
 		Measurement: "__default__",
-		VmRt:        "vmrt",
 	})
+
+	mock.SetSpaceAndProxyMockData(ctx, "v1beat1_test", "v1beat1_test", consul.VictoriaMetricsStorageType, &redis.TsDB{
+		TableID:         "db_vm.measurement",
+		Field:           []string{"node_with_system_relation", "node_with_pod_relation"},
+		MeasurementType: redis.BkSplitMeasurement,
+		Filters:         []redis.Filter{},
+		SegmentedEnable: false,
+		DataLabel:       "datalabel",
+	}, &ir.Proxy{
+		StorageID:   consul.VictoriaMetricsStorageType,
+		Db:          "db_vm",
+		Measurement: "__default__",
+		VmRt:        "2_bkmonitor_time_series_1572864_vm_rt",
+	})
+
 	return mockCurl
 }
 
@@ -232,8 +249,9 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	mockData(ctx)
 
 	testCases := map[string]struct {
-		target  cmdb.Resource
-		matcher cmdb.Matcher
+		spaceUid string
+		target   cmdb.Resource
+		matcher  cmdb.Matcher
 
 		expected struct {
 			source     cmdb.Resource
@@ -243,8 +261,34 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		}
 		error error
 	}{
+		"vm node to system": {
+			spaceUid: consul.VictoriaMetricsStorageType,
+			target:   "system",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "BCS-K8S-00000",
+				"node":           "node-127-0-0-1",
+				"demo":           "1",
+			},
+			expected: struct {
+				source     cmdb.Resource
+				sourceInfo cmdb.Matcher
+				targetList cmdb.Matchers
+			}{
+				source: "node",
+				sourceInfo: cmdb.Matcher{
+					"bcs_cluster_id": "BCS-K8S-00000",
+					"node":           "node-127-0-0-1",
+				},
+				targetList: cmdb.Matchers{
+					cmdb.Matcher{
+						"bk_target_ip": "127.0.0.1",
+					},
+				},
+			},
+		},
 		"node to system": {
-			target: "system",
+			spaceUid: consul.InfluxDBStorageType,
+			target:   "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"node":           "node-127-0-0-1",
@@ -268,7 +312,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"system to pod": {
-			target: "pod",
+			spaceUid: consul.InfluxDBStorageType,
+			target:   "pod",
 			matcher: cmdb.Matcher{
 				"bk_target_ip":   "127.0.0.1",
 				"bcs_cluster_id": "BCS-K8S-00000",
@@ -297,7 +342,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 			},
 		},
 		"pod_name to system": {
-			target: "system",
+			spaceUid: consul.InfluxDBStorageType,
+			target:   "system",
 			matcher: cmdb.Matcher{
 				"bcs_cluster_id": "BCS-K8S-00000",
 				"namespace":      "bkmonitor-operator",
@@ -326,7 +372,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	timestamp := int64(1693973987)
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			source, indexMatcher, matchers, err := testModel.GetResourceMatcher(ctx, spaceUid, timestamp, c.target, c.matcher)
+			metadata.SetUser(ctx, c.spaceUid, c.spaceUid)
+			source, indexMatcher, matchers, err := testModel.GetResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.matcher)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.expected.source, source)

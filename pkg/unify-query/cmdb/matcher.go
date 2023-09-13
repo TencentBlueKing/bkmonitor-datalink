@@ -9,6 +9,8 @@
 
 package cmdb
 
+import "github.com/prometheus/prometheus/model/labels"
+
 func (m Matcher) Rename() Matcher {
 	var nameMap = map[string]string{
 		"pod_name":       "pod",
@@ -26,4 +28,16 @@ func (m Matcher) Rename() Matcher {
 		newMatcher[nk] = v
 	}
 	return newMatcher
+}
+
+func (m Matcher) ToPromMatcher() ([]*labels.Matcher, error) {
+	newMatcher := make([]*labels.Matcher, 0, len(m))
+	for k, v := range m {
+		matcher, err := labels.NewMatcher(labels.MatchEqual, k, v)
+		if err != nil {
+			return nil, err
+		}
+		newMatcher = append(newMatcher, matcher)
+	}
+	return newMatcher, nil
 }

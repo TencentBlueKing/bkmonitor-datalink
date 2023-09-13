@@ -231,24 +231,21 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 		defer span.End()
 	}
 
-	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-	if err != nil {
-		log.Errorf(ctx, err.Error())
+	referenceName := ""
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			referenceName = m.Value
+		}
 	}
 
-	metricName := ReferenceName
-	if v, mc := vmExpand.MetricAliasMapping[ReferenceName]; mc {
-		metricName = v
-	}
-	match, err := labels.NewMatcher(
-		labels.MatchEqual, labels.MetricName, metricName,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	matchers = append(matchers, match)
+	queryReference := metadata.GetQueryReference(q.ctx)
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+
 	if ok {
+		if err != nil {
+			return nil, nil, err
+		}
+
 		metadata.SetExpand(ctx, vmExpand)
 		instance := GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
@@ -275,7 +272,7 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 			labelMap[lb] = struct{}{}
 		}
 	} else {
-		queryList := q.getQueryList(metricName)
+		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
 
 			metric.TsDBAndTableIDRequestCountInc(
@@ -316,27 +313,21 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 		defer span.End()
 	}
 
-	queryReference := metadata.GetQueryReference(q.ctx)
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
-	if err != nil {
-		log.Errorf(ctx, err.Error())
+	referenceName := ""
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			referenceName = m.Value
+		}
 	}
 
-	metricName := ReferenceName
-	if v, mc := vmExpand.MetricAliasMapping[ReferenceName]; mc {
-		metricName = v
-	}
-	match, err := labels.NewMatcher(
-		labels.MatchEqual, labels.MetricName, metricName,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	matchers = append(matchers, match)
+	queryReference := metadata.GetQueryReference(q.ctx)
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+
 	if ok {
 		if err != nil {
 			return nil, nil, err
 		}
+
 		metadata.SetExpand(ctx, vmExpand)
 		instance := GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
@@ -363,7 +354,7 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 			labelMap[lb] = struct{}{}
 		}
 	} else {
-		queryList := q.getQueryList(metricName)
+		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
 			metric.TsDBAndTableIDRequestCountInc(
 				ctx, user.SpaceUid, query.qry.TableID, query.instance.GetInstanceType(), "label_names",

@@ -106,6 +106,11 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 		labelList   []*labels.Matcher
 	)
 
+	// 查询语法转化为 promql
+	for i, cond := range c.FieldList {
+		c.FieldList[i] = *(cond.ContainsToPromReg())
+	}
+
 	// 1. 判断请求是否为空，如果为空，则直接返回空的内容
 	if len(c.FieldList) == 0 {
 		log.Infof(context.TODO(), "field list is empty, nothing will return .")

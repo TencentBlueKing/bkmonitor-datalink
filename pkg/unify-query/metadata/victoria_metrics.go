@@ -9,12 +9,17 @@
 
 package metadata
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/prometheus/prometheus/model/labels"
+)
 
 type VmExpand struct {
 	ResultTableGroup      map[string][]string
 	MetricAliasMapping    map[string]string
 	MetricFilterCondition map[string]string
+	LabelsMatcher         map[string][]*labels.Matcher
 }
 
 // MetricResultTableGroup 合并 resultTable 和 metric

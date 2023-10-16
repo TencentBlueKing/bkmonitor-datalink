@@ -49,6 +49,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryPromQLToStructHandlePathConfigPath, "/query/ts/promql_to_struct")
 
 	viper.SetDefault(TSQueryLabelValuesPathConfigPath, "/query/ts/label/:label_name/values")
+	viper.SetDefault(TSQueryClusterMetricsPathConfigPath, "/query/ts/cluster_metrics")
 
 	viper.SetDefault(PrintHandlePathConfigPath, "/print")
 	viper.SetDefault(FeatureFlagHandlePathConfigPath, "/ff")

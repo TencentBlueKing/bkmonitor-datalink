@@ -1745,5 +1745,150 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	assert.Equal(t, expectData, vmExpand.MetricFilterCondition["a"])
 	assert.Nil(t, err)
 	assert.True(t, ok)
+}
 
+func setupCluterMetricsData(ctx context.Context) {
+	var err error
+	log.InitTestLogger()
+	mock.SetRedisClient(ctx, "handler_test")
+	_, err = redis.HSet(
+		ctx, "bkmonitorv3:cluster_metrics_meta", "influxdb.shard.write_points_ok",
+		"{\"metric_name\":\"influxdb.shard.write_points_ok\",\"tags\":[\"bkm_cluster\",\"database\",\"engine\",\"hostname\",\"id\",\"index_type\",\"path\",\"retention_policy\",\"wal_path\"]}")
+	if err != nil {
+		panic(err)
+	}
+	_, err = redis.HSet(
+		ctx, "bkmonitorv3:cluster_metrics", "influxdb.shard.write_points_ok|bkm_cluster=default",
+		"[{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":155029,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":154324,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"}]")
+	if err != nil {
+		panic(err)
+	}
+}
+
+func TestQueryTsClusterMetrics(t *testing.T) {
+	ctx := context.Background()
+	setupCluterMetricsData(ctx)
+	log.InitTestLogger()
+	mock.SetRedisClient(ctx, "handler_test")
+	testCases := map[string]struct {
+		query  string
+		result string
+	}{
+		"rangeCase": {
+			query: `
+                {
+                    "space_uid": "influxdb",
+                    "query_list": [
+                        {
+                            "data_source": "",
+                            "table_id": "",
+                            "field_name": "influxdb.shard.write_points_ok",
+                            "field_list": null,
+                            "function": [
+                                {
+                                    "method": "sum",
+                                    "without": false,
+                                    "dimensions": ["bkm_cluster"],
+                                    "position": 0,
+                                    "args_list": null,
+                                    "vargs_list": null
+                                }
+                            ],
+                            "time_aggregation": {
+                                "function": "avg_over_time",
+                                "window": "60s",
+                                "position": 0,
+                                "vargs_list": null
+                            },
+                            "reference_name": "a",
+                            "dimensions": [],
+                            "limit": 0,
+                            "timestamp": null,
+                            "start_or_end": 0,
+                            "vector_offset": 0,
+                            "offset": "",
+                            "offset_forward": false,
+                            "slimit": 0,
+                            "soffset": 0,
+                            "conditions": {
+                                "field_list": [{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"}],
+                                "condition_list": []
+                            },
+                            "keep_columns": [
+                                "_time",
+                                "a"
+                            ]
+                        }
+                    ],
+                    "metric_merge": "a",
+                    "result_columns": null,
+                    "start_time": "1700901370",
+                    "end_time": "1700905370",
+                    "step": "60s",
+					"instant": false
+                }
+			`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
+		},
+		"instanceCase": {
+			query: `
+                {
+                    "space_uid": "influxdb",
+                    "query_list": [
+                        {
+                            "data_source": "",
+                            "table_id": "",
+                            "field_name": "influxdb.shard.write_points_ok",
+                            "field_list": null,
+                            "reference_name": "a",
+                            "dimensions": [],
+                            "limit": 0,
+                            "timestamp": null,
+                            "start_or_end": 0,
+                            "vector_offset": 0,
+                            "offset": "",
+                            "offset_forward": false,
+                            "slimit": 0,
+                            "soffset": 0,
+                            "conditions": {
+                                "field_list": [
+									{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"},
+									{"field_name": "id", "value": ["43"], "op": "eq"},
+									{"field_name": "database", "value": ["_internal"], "op": "eq"},
+									{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"},
+									{"field_name": "id", "value": ["44"], "op": "eq"}
+								],
+                                "condition_list": ["and", "or", "and", "and"]
+                            },
+                            "keep_columns": [
+                                "_time",
+                                "a"
+                            ]
+                        }
+                    ],
+                    "metric_merge": "a",
+                    "result_columns": null,
+                    "end_time": "1700905370",
+					"instant": true
+                }
+			`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903370000,0]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903370000,0]]}]}`,
+		},
+	}
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(c.query)
+			query := &structured.QueryTs{}
+			err := json.Unmarshal(body, query)
+			assert.Nil(t, err)
+
+			res, err := QueryTsClusterMetrics(ctx, query)
+			t.Errorf("QueryTsClusterMetrics error: %+v", err)
+			assert.Nil(t, err)
+			out, err := json.Marshal(res)
+			actual := string(out)
+			assert.Nil(t, err)
+			assert.Equal(t, c.result, actual)
+		})
+	}
 }

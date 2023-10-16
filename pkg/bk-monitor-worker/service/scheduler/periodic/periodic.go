@@ -13,6 +13,7 @@ import (
 	"context"
 	"sync"
 
+	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -40,6 +41,8 @@ var (
 	CleanExpiredRestore    = "periodic:metadata:clean_expired_restore"
 	RefreshESRestore       = "periodic:metadata:refresh_es_restore"
 	RefreshBcsMetricsLabel = "periodic:metadata:refresh_bcs_metrics_label"
+
+	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -93,6 +96,10 @@ var (
 		RefreshBcsMetricsLabel: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMetricsLabel,
+		},
+		ReportInfluxdbClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
 		},
 	}
 )

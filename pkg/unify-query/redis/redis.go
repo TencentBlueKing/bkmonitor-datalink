@@ -81,6 +81,18 @@ var HGetAll = func(ctx context.Context, key string) (map[string]string, error) {
 	return res.Result()
 }
 
+var HGet = func(ctx context.Context, key string, field string) (string, error) {
+	log.Debugf(ctx, "[redis] hget %s, %s", key, field)
+	res := globalInstance.client.HGet(ctx, key, field)
+	return res.Result()
+}
+
+var HSet = func(ctx context.Context, key, field, val string) (int64, error) {
+	log.Debugf(ctx, "[redis] hset %s, %s", key, field)
+	res := globalInstance.client.HSet(ctx, key, field, val)
+	return res.Result()
+}
+
 var Set = func(ctx context.Context, key, val string, expiration time.Duration) (string, error) {
 	if key == "" {
 		key = globalInstance.serviceName

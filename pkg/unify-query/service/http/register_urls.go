@@ -100,6 +100,13 @@ func registerLabelValuesService(g *gin.Engine) {
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
 }
 
+// registerHandlerQueryTsClusterMetrics /query/ts/cluster_metrics/
+func registerHandlerQueryTsClusterMetrics(g *gin.Engine) {
+	servicePath := viper.GetString(TSQueryClusterMetricsPathConfigPath)
+	g.POST(servicePath, HandlerQueryTsClusterMetrics)
+	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+}
+
 // registerPrint: /print
 func registerPrint(g *gin.Engine) {
 	servicePath := viper.GetString(PrintHandlePathConfigPath)

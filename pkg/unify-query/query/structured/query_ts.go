@@ -13,8 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"math"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -31,7 +31,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 type QueryTs struct {
@@ -316,60 +315,24 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
 
-	var metricExp *regexp.Regexp
-	if q.IsRegexp {
-		metricExp = regexp.MustCompile(metricName)
-	}
-
 	for i, tsDB := range tsDBs {
-		// 检查是否存在命中多个字段的情况
-		metricNames := make([]string, 0)
-		if metricExp != nil {
-			for _, f := range tsDB.Field {
-				if metricExp.Match([]byte(f)) {
-					metricNames = append(metricNames, f)
-				}
-			}
-		} else {
-			metricNames = append(metricNames, metricName)
+		query, err := q.BuildMetadataQuery(ctx, tsDB, span, i, queryConditions, queryLabelsMatcher)
+		if err != nil {
+			return nil, err
 		}
-
-		proxyMetricsMap := make(map[*routerInfluxdb.Proxy][]string)
-		for _, mName := range metricNames {
-			proxy, proxyErr := influxdb.GetInfluxDBRouter().GetProxyByTableID(tsDB.TableID, mName, tsDB.IsSplit())
-			if proxyErr != nil {
-				metadata.SetStatus(ctx, metadata.TableIDProxyISNotExists, proxyErr.Error())
-				log.Errorf(ctx, proxyErr.Error())
-				continue
-			}
-			if _, ok := proxyMetricsMap[proxy]; ok {
-				proxyMetricsMap[proxy] = append(proxyMetricsMap[proxy], mName)
-			} else {
-				proxyMetricsMap[proxy] = []string{mName}
-			}
-		}
-		for proxy, proxyMetricNames := range proxyMetricsMap {
-			query, err := q.buildMetadataQuery(
-				ctx, tsDB, span, i, queryConditions, queryLabelsMatcher, proxy, proxyMetricNames)
-			if err != nil {
-				return nil, err
-			}
-			queryMetric.QueryList = append(queryMetric.QueryList, query)
-		}
+		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
 	return queryMetric, nil
 }
 
-func (q *Query) buildMetadataQuery(
+func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
-	tsDB *redis.TsDB,
+	tsDB *queryMod.TsDBV2,
 	span oleltrace.Span,
 	i int,
 	queryConditions [][]ConditionField,
 	queryLabelsMatcher []*labels.Matcher,
-	proxy *routerInfluxdb.Proxy,
-	proxyMetricNames []string,
 ) (*metadata.Query, error) {
 	var (
 		field        string
@@ -391,6 +354,7 @@ func (q *Query) buildMetadataQuery(
 		allCondition AllConditions
 	)
 	metricName := q.FieldName
+	expandMetricNames := tsDB.ExpandMetricNames
 	// 增加查询条件
 	if len(queryConditions) > 0 {
 		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
@@ -407,15 +371,13 @@ func (q *Query) buildMetadataQuery(
 
 	tsDBStr, _ := json.Marshal(tsDB)
 	trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%d", i), string(tsDBStr), span)
-	proxyStr, _ := json.Marshal(proxy)
-	trace.InsertStringIntoSpan(fmt.Sprintf("proxy_%d", i), string(proxyStr), span)
 
-	db := proxy.Db
-	storageID := proxy.StorageID
-	clusterName := proxy.ClusterName
-	tagKeys := proxy.TagsKey
-	vmRt := proxy.VmRt
-	measurement = proxy.Measurement
+	db := tsDB.DB
+	storageID := tsDB.StorageID
+	clusterName := tsDB.ClusterName
+	tagKeys := tsDB.TagsKey
+	vmRt := tsDB.VmRt
+	measurement = tsDB.Measurement
 	measurements = []string{measurement}
 
 	if q.Offset != "" {
@@ -429,7 +391,7 @@ func (q *Query) buildMetadataQuery(
 	switch tsDB.MeasurementType {
 	case redis.BKTraditionalMeasurement:
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
-		field, fields = metricName, proxyMetricNames
+		field, fields = metricName, expandMetricNames
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -445,11 +407,11 @@ func (q *Query) buildMetadataQuery(
 		)
 	// 多指标单表，字段名为指标名
 	case redis.BkStandardV2TimeSeries:
-		field, fields = metricName, proxyMetricNames
+		field, fields = metricName, expandMetricNames
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
-		measurement, measurements = metricName, proxyMetricNames
+		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
 	default:
 		err := fmt.Errorf("%s: %s 类型异常", tsDB.TableID, tsDB.MeasurementType)
@@ -535,7 +497,7 @@ func (q *Query) buildMetadataQuery(
 		return nil, err
 	}
 	// tag 路由转换
-	tagRouter, err := influxdb.GetTagRouter(ctx, proxy.TagsKey, whereList.String())
+	tagRouter, err := influxdb.GetTagRouter(ctx, tsDB.TagsKey, whereList.String())
 	if err != nil {
 		return nil, err
 	}

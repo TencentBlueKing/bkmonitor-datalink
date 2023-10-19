@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -28,7 +29,7 @@ import (
 
 // QueryInfo
 type QueryInfo struct {
-	TsDBs       []*redis.TsDB
+	TsDBs       []*query.TsDBV2
 	ClusterID   string
 	DB          string
 	Measurement string
@@ -105,19 +106,10 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 		tsDBStr, _ := json.Marshal(tsDB)
 		trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%d", i), string(tsDBStr), span)
 
-		proxy, err := influxdb.GetInfluxDBRouter().GetProxyByTableID(tsDB.TableID, metricName, tsDB.IsSplit())
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-			continue
-		}
-
-		proxyStr, _ := json.Marshal(proxy)
-		trace.InsertStringIntoSpan(fmt.Sprintf("proxy_%d", i), string(proxyStr), span)
-
-		db := proxy.Db
-		measurement := proxy.Measurement
-		storageID := proxy.StorageID
-		vmRt := proxy.VmRt
+		db := tsDB.DB
+		measurement := tsDB.Measurement
+		storageID := tsDB.StorageID
+		vmRt := tsDB.VmRt
 
 		switch tsDB.MeasurementType {
 		case redis.BKTraditionalMeasurement:

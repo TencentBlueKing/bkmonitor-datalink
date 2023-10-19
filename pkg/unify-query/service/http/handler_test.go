@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -66,136 +67,161 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 
 	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType)
 
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.VictoriaMetricsStorageType, &redis.TsDB{
-		Type:            consul.VictoriaMetricsStorageType,
-		TableID:         "a.b_2",
-		Field:           []string{redis.BkSplitMeasurement},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters: []redis.Filter{
-			{
-				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+	victoriaMetricsStorageId := int64(1)
+	influxdbStorageId := int64(2)
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			consul.VictoriaMetricsStorageType: ir.Space{
+				"a.b_2": &ir.SpaceResultTable{
+					TableId: "a.b_2",
+					Filters: []map[string]string{
+						{
+							redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+						},
+					},
+				},
+				"a.b_1": &ir.SpaceResultTable{
+					TableId: "a.b_1",
+					Filters: []map[string]string{
+						{
+							redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+						},
+					},
+				},
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          redis.BkSplitMeasurement,
-		Measurement: redis.BkSplitMeasurement,
-		VmRt:        consul.VictoriaMetricsStorageType,
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.VictoriaMetricsStorageType, &redis.TsDB{
-		Type:            consul.VictoriaMetricsStorageType,
-		TableID:         "a.b_1",
-		Field:           []string{redis.BkSplitMeasurement},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters: []redis.Filter{
-			{
-				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+		ir.ResultTableDetailInfo{
+			"a.b_2": &ir.ResultTableDetail{
+				Fields:          []string{redis.BkSplitMeasurement},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            consul.VictoriaMetricsStorageType,
+			},
+			"a.b_1": &ir.ResultTableDetail{
+				Fields:          []string{redis.BkSplitMeasurement},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            consul.VictoriaMetricsStorageType,
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          redis.BkSplitMeasurement,
-		Measurement: redis.BkSplitMeasurement,
-		VmRt:        consul.VictoriaMetricsStorageType,
-	})
+		nil, nil,
+	)
 
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.InfluxDBStorageType, &redis.TsDB{
-		Type:            consul.InfluxDBStorageType,
-		TableID:         "a.b",
-		Field:           []string{redis.BkSplitMeasurement},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters: []redis.Filter{
-			{
-				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			consul.InfluxDBStorageType: ir.Space{
+				"a.b": &ir.SpaceResultTable{
+					TableId: "a.b",
+					Filters: []map[string]string{
+						{
+							redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+						},
+					},
+				},
+				"system.cpu_summary": &ir.SpaceResultTable{
+					TableId: "system.cpu_summary",
+				},
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.InfluxDBStorageType,
-		Db:          redis.BkSplitMeasurement,
-		Measurement: redis.BkSplitMeasurement,
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
-		TableID:         "table_id.__default__",
-		Field:           []string{"metric"},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters: []redis.Filter{
-			{
-				"bcs_cluster_id": "cls",
-				"namespace":      "",
+		ir.ResultTableDetailInfo{
+			"a.b": &ir.ResultTableDetail{
+				Fields:          []string{redis.BkSplitMeasurement},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       influxdbStorageId,
+				DB:              redis.BkSplitMeasurement,
+			},
+			"system.cpu_summary": &ir.ResultTableDetail{
+				Fields:          []string{"usage", "rate"},
+				MeasurementType: redis.BKTraditionalMeasurement,
+				StorageId:       influxdbStorageId,
+				DB:              "system",
+				Measurement:     "cpu_summary",
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          "table_id",
-		Measurement: "__default__",
-		VmRt:        "vm_rt",
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
-		TableID:         "table_id.__default__",
-		Field:           []string{"container_cpu_usage_seconds_total"},
-		MeasurementType: redis.BkSplitMeasurement,
-		DataLabel:       "table_id",
-		Filters: []redis.Filter{
-			{
-				"bcs_cluster_id": "cls",
-				"namespace":      "",
-			},
-			{
-				"bcs_cluster_id": "cls-1",
-				"namespace":      "",
+		nil, nil,
+	)
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			"vm-query": ir.Space{
+				"table_id.__default__": &ir.SpaceResultTable{
+					TableId: "table_id.__default__",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "cls",
+							"namespace":      "",
+						},
+					},
+				},
+				"100147_bcs_prom_computation_result_table_25428.__default__": &ir.SpaceResultTable{
+					TableId: "100147_bcs_prom_computation_result_table_25428.__default__",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "BCS-K8S-25428",
+							"namespace":      "",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-25430",
+							"namespace":      "",
+						},
+					},
+				},
+				"100147_bcs_prom_computation_result_table_25429.__default__": &ir.SpaceResultTable{
+					TableId: "100147_bcs_prom_computation_result_table_25429.__default__",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "BCS-K8S-25429",
+							"namespace":      "",
+						},
+					},
+				},
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          "table_id",
-		Measurement: "__default__",
-		VmRt:        "table_id",
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
-		TableID:         "1_prom_computation_result.__default__",
-		Field:           []string{"container_cpu_usage_seconds_total"},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters: []redis.Filter{
-			{
-				"bcs_cluster_id": "cls-2",
-				"namespace":      "",
+		ir.ResultTableDetailInfo{
+			"table_id.__default__": &ir.ResultTableDetail{
+				Fields:          []string{"metric"},
+				MeasurementType: redis.BkSplitMeasurement,
+				Measurement:     "__default__",
+				StorageId:       victoriaMetricsStorageId,
+				DB:              "table_id",
+				VmRt:            "vm_rt",
+			},
+			"100147_bcs_prom_computation_result_table_25428.__default__": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              "100147_bcs_prom_computation_result_table_25428",
+				Measurement:     "__default__",
+				VmRt:            "100147_bcs_prom_computation_result_table_25428",
+				DataLabel:       "100147_bcs_prom_computation_result_table_25428",
+			},
+			"100147_bcs_prom_computation_result_table_25429.__default__": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              "100147_bcs_prom_computation_result_table_25429",
+				Measurement:     "__default__",
+				VmRt:            "100147_bcs_prom_computation_result_table_25429",
+				DataLabel:       "100147_bcs_prom_computation_result_table_25429",
 			},
 		},
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          "1_prom_computation_result",
-		Measurement: "__default__",
-		VmRt:        "1_prom_computation_result",
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "a_100147", &redis.TsDB{
-		TableID:         "custom_report_aggate.base",
-		Field:           []string{"bkmonitor_action_notice_api_call_count_total"},
-		MeasurementType: redis.BkSplitMeasurement,
-		BkDataID:        "1100011",
-	}, &ir.Proxy{
-		StorageID:   consul.InfluxDBStorageType,
-		ClusterName: "default",
-		Db:          "custom_report_aggate",
-		Measurement: "base",
-		VmRt:        "metric_result_table",
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.InfluxDBStorageType, &redis.TsDB{
-		Type:            consul.InfluxDBStorageType,
-		TableID:         "system.cpu_summary",
-		Field:           []string{"usage", "rate"},
-		MeasurementType: redis.BKTraditionalMeasurement,
-	}, &ir.Proxy{
-		StorageID:   consul.InfluxDBStorageType,
-		Db:          "system",
-		Measurement: "cpu_summary",
-	})
-
+		nil, nil,
+	)
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
+				TableId: "custom_report_aggate.base",
+			}}},
+		ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
+			Fields:          []string{"bkmonitor_action_notice_api_call_count_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       influxdbStorageId,
+			DB:              "custom_report_aggate",
+			Measurement:     "base",
+		}},
+		nil, nil,
+	)
 	mockCurl := curl.NewMockCurl(map[string]string{
 		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=pushgateway_bkmonitor_unify_query&q=select+metric_value+as+_value%2C+time+as+_time%2C+bk_trace_id%2C+bk_span_id%2C+bk_trace_value%2C+bk_trace_timestamp+from+group2_cmdb_level+where+time+%3E+1682149980000000000+and+time+%3C+1682154605000000000+and+%28bk_obj_id%3D%27module%27+and+%28ip%3D%27127.0.0.2%27+and+%28bk_inst_id%3D%2714261%27+and+bk_biz_id%3D%277%27%29%29%29+and+metric_name+%3D+%27unify_query_request_count_total%27+and+%28bk_span_id+%21%3D+%27%27+or+bk_trace_id+%21%3D+%27%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:53:28Z",114938716,"d8952469b9014ed6b36c19d396b15c61","0a97123ee5ad7fd8",1,1682150008967],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:53:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:53:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:53:28Z",114939201,"771073eb573336a6d3365022a512d6d8","fca46f1c065452e8",1,1682150008969],["2023-04-22T07:54:28Z",114949368,"5b4931bbeb7bf497ff46d9cd9579ab60","0b0713e4e0106e55",1,1682150068965],["2023-04-22T07:54:28Z",114949853,"7c3c66f8763071d315fe8136bf8ff35c","159d9534754dc66d",1,1682150068965],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:54:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:54:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
 {"results":[{"statement_id":0,"series":[{"name":"group2_cmdb_level","columns":["_time","_value","bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"values":[["2023-04-22T07:55:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:55:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:55:28Z",114959046,"c9659d0b28bdb0c8afbd21aedd6bacd3","94bc25ffa3cc44e5",1,1682150128965],["2023-04-22T07:55:28Z",114959529,"c9659d0b28bdb0c8afbd21aedd6bacd3","94bc25ffa3cc44e5",1,1682150128962],["2023-04-22T07:55:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937],["2023-04-22T07:56:28Z",114968813,"5def2a6568efe57199022da6f7cfcf3f","1d761b6cc2aabe5e",1,1682150188964],["2023-04-22T07:56:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900736],["2023-04-22T07:56:28Z",5,"b9cc0e45d58a70b61e8db6fffb5e3376","3d2a373cbeefa1f8",1,1680157900669],["2023-04-22T07:56:28Z",114969300,"ca18ec94669be35fee1b4ae4a2e3df2a","c113aa392812404a",1,1682150188968],["2023-04-22T07:56:28Z",483,"fe45f0eccdce3e643a77504f6e6bd87a","c72dcc8fac9bcead",1,1682121442937]],"partial":true}],"partial":true}]}
@@ -276,7 +302,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 	}, log.OtLogger)
 
-	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
+	tsdb.SetStorage(strconv.FormatInt(victoriaMetricsStorageId, 10), &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
 			Ctx:                  ctx,
@@ -288,7 +314,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 			AuthenticationMethod: "token",
 		},
 	})
-	tsdb.SetStorage(consul.InfluxDBStorageType, &tsdb.Storage{
+	tsdb.SetStorage(strconv.FormatInt(influxdbStorageId, 10), &tsdb.Storage{
 		Type: consul.InfluxDBStorageType,
 		Instance: tsdbInfluxdb.NewInstance(
 			context.TODO(),

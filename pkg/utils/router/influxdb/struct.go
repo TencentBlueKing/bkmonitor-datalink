@@ -9,6 +9,11 @@
 
 package influxdb
 
+import (
+	"fmt"
+	"strings"
+)
+
 // ClusterInfo cluster info with map
 type ClusterInfo map[string]*Cluster
 
@@ -82,4 +87,105 @@ type QueryRouter struct {
 	VmTableId          string `json:"vm_table_id"`
 	BcsClusterId       string `json:"bcs_cluster_id"`
 	IsInfluxdbDisabled bool   `json:"is_influxdb_disabled"`
+}
+
+type SpaceInfo map[string]Space
+
+type FieldToResultTable map[string]ResultTableList
+
+type DataLabelToResultTable map[string]ResultTableList
+
+type ResultTableDetailInfo map[string]*ResultTableDetail
+
+//go:generate msgp -tests=false
+type Space map[string]*SpaceResultTable
+
+type SpaceResultTable struct {
+	TableId string              `json:"table_id"`
+	Filters []map[string]string `json:"filters"`
+}
+
+//go:generate msgp -tests=false
+type ResultTableList []string
+
+//go:generate msgp -tests=false
+type ResultTableDetail struct {
+	StorageId       int64    `json:"storage_id"`
+	ClusterName     string   `json:"cluster_name"`
+	DB              string   `json:"db"`
+	TableId         string   `json:"table_id"`
+	Measurement     string   `json:"measurement"`
+	VmRt            string   `json:"vm_rt"`
+	Fields          []string `json:"fields"`
+	MeasurementType string   `json:"measurement_type"`
+	BcsClusterID    string   `json:"bcs_cluster_id"`
+	DataLabel       string   `json:"data_label"`
+	TagsKey         []string `json:"tags_key"`
+}
+
+func (s *Space) Print() string {
+	res := make([]string, 0)
+	res = append(res, fmt.Sprint("--------------------------------"))
+	for tableId, table := range *s {
+		res = append(res, fmt.Sprintf("\t%-40s: %+v", tableId, table))
+	}
+	return strings.Join(res, "\n")
+}
+
+func (rt *ResultTableDetail) Print() string {
+	return fmt.Sprintf("%+v", *rt)
+}
+
+func (rtList *ResultTableList) Print() string {
+	return fmt.Sprintf("%+v", *rtList)
+}
+
+func (info SpaceInfo) NewValueInstance() GenericValue {
+	return &Space{}
+}
+
+func (info SpaceInfo) SetValueInstance(key string, value GenericValue) {
+	space := *value.(*Space)
+	// 将 KEY 置于结构体，内容更为完整
+	for tableId, table := range space {
+		table.TableId = tableId
+	}
+	info[key] = space
+}
+
+func (info FieldToResultTable) NewValueInstance() GenericValue {
+	return &ResultTableList{}
+}
+
+func (info FieldToResultTable) SetValueInstance(key string, value GenericValue) {
+	info[key] = *value.(*ResultTableList)
+}
+
+func (info DataLabelToResultTable) NewValueInstance() GenericValue {
+	return &ResultTableList{}
+}
+
+func (info DataLabelToResultTable) SetValueInstance(key string, value GenericValue) {
+	info[key] = *value.(*ResultTableList)
+}
+
+func (info ResultTableDetailInfo) NewValueInstance() GenericValue {
+	return &ResultTableDetail{}
+}
+
+func (info ResultTableDetailInfo) SetValueInstance(key string, value GenericValue) {
+	table := value.(*ResultTableDetail)
+	table.TableId = key
+	info[key] = table
+}
+
+type GenericHash interface {
+	NewValueInstance() GenericValue
+	SetValueInstance(key string, value GenericValue)
+}
+
+type GenericValue interface {
+	MarshalMsg(b []byte) (o []byte, err error)
+	UnmarshalMsg(bts []byte) (o []byte, err error)
+	Print() string
 }

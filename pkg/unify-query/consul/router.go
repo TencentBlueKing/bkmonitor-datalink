@@ -231,7 +231,7 @@ func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Infof(context.TODO(), "get meatadata path :%v", paths)
+	log.Debugf(context.TODO(), "get meatadata path :%v", paths)
 
 	pipelineConfMap := make(map[string][]*PipelineConfig, len(paths))
 

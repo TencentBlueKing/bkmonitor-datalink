@@ -9,7 +9,9 @@
 
 package influxdb
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	TimeoutConfigPath              = "influxdb.timeout"
@@ -23,6 +25,10 @@ const (
 
 	PrefixConfigPath         = "influxdb.router.prefix"
 	RouterIntervalConfigPath = "influxdb.router.interval"
+
+	SpaceRouterPrefixConfigPath          = "influxdb.space_router_prefix"
+	SpaceRouterBboltPathConfigPath       = "influxdb.space_router_bbolt_path"
+	SpaceRouterBboltBucketNameConfigPath = "influxdb.space_router_bbolt_bucket_name"
 
 	GrpcMaxCallRecvMsgSizeConfigPath = "influxdb.grpc_max_call_recv_msg_size"
 	GrpcMaxCallSendMsgSizeConfigPath = "influxdb.grpc_max_call_send_msg_size"
@@ -40,6 +46,10 @@ var (
 
 	RouterPrefix   string
 	RouterInterval time.Duration
+
+	SpaceRouterPrefix          string
+	SpaceRouterBboltPath       string
+	SpaceRouterBboltBucketName string
 
 	GrpcMaxCallRecvMsgSize int
 	GrpcMaxCallSendMsgSize int

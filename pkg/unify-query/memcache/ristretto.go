@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	RistrettoNumCountersPath        = "memcache.ristretto.num_counters"
-	RistrettoMaxCostPath            = "memcache.ristretto.max_cost"
-	RistrettoBufferItemsPath        = "memcache.ristretto.buffer_items"
-	RistrettoIgnoreInternalCostPath = "memcache.ristretto.ignore_internal_cost"
-	RistrettoExpiredTimePath        = "memcache.ristretto.expired_time"
+	RistrettoNumCountersPath          = "memcache.ristretto.num_counters"
+	RistrettoMaxCostPath              = "memcache.ristretto.max_cost"
+	RistrettoBufferItemsPath          = "memcache.ristretto.buffer_items"
+	RistrettoIgnoreInternalCostPath   = "memcache.ristretto.ignore_internal_cost"
+	RistrettoExpiredTimePath          = "memcache.ristretto.expired_time"
+	RistrettoExpiredTimeFluxValuePath = "memcache.ristretto.expired_time_flux_value"
 )
 
 func init() {
@@ -30,7 +31,8 @@ func init() {
 	viper.SetDefault(RistrettoMaxCostPath, 1<<30)
 	viper.SetDefault(RistrettoBufferItemsPath, 64)
 	viper.SetDefault(RistrettoIgnoreInternalCostPath, true)
-	viper.SetDefault(RistrettoExpiredTimePath, 60) // 过期时间，单位 min
+	viper.SetDefault(RistrettoExpiredTimePath, 60)          // 过期时间，单位 min
+	viper.SetDefault(RistrettoExpiredTimeFluxValuePath, 20) // 过期时间，单位 min
 }
 
 type Ristretto struct {

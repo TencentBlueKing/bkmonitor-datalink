@@ -29,7 +29,6 @@ const (
 	decoderTypeFixed  = "fixed"
 	decoderTypeAcs256 = "aes256"
 	decoderTypeProxy  = "proxy"
-	nonId             = 0
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
@@ -174,8 +173,7 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 		return token, errors.Errorf("invalid split len: %d, str: %s", len(split), decoded)
 	}
 
-	v := split[0]
-	if v == "v1" {
+	if split[0] == "v1" {
 		return d.parseV1Token(decoded, s)
 	} else {
 		return d.parseV0Token(decoded, s)
@@ -229,23 +227,23 @@ func (d *aes256TokenDecoder) parseV1Token(decoded string, o string) (define.Toke
 
 	metricsDataId, err := strconv.Atoi(split[1])
 	if err != nil {
-		return token, errors.Errorf("invalid metrics dataid: %s", split[0])
+		return token, errors.Errorf("invalid metrics dataid: %s", split[1])
 	}
 	tracesDataId, err := strconv.Atoi(split[2])
 	if err != nil {
-		return token, errors.Errorf("invalid traces dataid: %s", split[1])
+		return token, errors.Errorf("invalid traces dataid: %s", split[2])
 	}
 	logsDataId, err := strconv.Atoi(split[3])
 	if err != nil {
-		return token, errors.Errorf("invalid logs dataid: %s", split[2])
+		return token, errors.Errorf("invalid logs dataid: %s", split[3])
 	}
 	profilesDataId, err := strconv.Atoi(split[4])
 	if err != nil {
-		return token, errors.Errorf("invalid logs dataid: %s", split[2])
+		return token, errors.Errorf("invalid profiles dataid: %s", split[4])
 	}
 	bizId, err := strconv.Atoi(split[5])
 	if err != nil {
-		return token, errors.Errorf("invalid bizid: %s", split[3])
+		return token, errors.Errorf("invalid bizid: %s", split[5])
 	}
 	appName := split[6]
 

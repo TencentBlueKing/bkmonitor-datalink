@@ -48,6 +48,7 @@ const (
 	JavaSpy = "jfr"
 )
 
+// HttpService 接收 pyroscope 上报的 profile 数据
 type HttpService struct {
 	receiver.Publisher
 	pipeline.Validator
@@ -61,6 +62,7 @@ func init() {
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePyroscope)
 
+// Ready 注册 pyroscope 的 http 路由
 func Ready() {
 	receiver.RegisterHttpRoute(define.SourcePyroscope, []receiver.RouteWithFunc{
 		{
@@ -79,19 +81,30 @@ func getBearerToken(req *http.Request) string {
 	return token[1]
 }
 
+func parseForm(req *http.Request) (*multipart.Form, error) {
+	raw, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := multipart.NewReader(bytes.NewReader(raw), boundary).ReadForm(32 << 20)
+	if err != nil {
+		return nil, err
+	}
+
+	return f, nil
+}
+
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
 func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 	start := time.Now()
-
-	raw, err := io.ReadAll(req.Body)
-	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to get data, err: %s", err)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
-		return
-	}
 
 	spyName := req.URL.Query().Get("spyName")
 	format := getFormatBySpy(spyName)
@@ -102,30 +115,23 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
-	logger.Debugf("format: %s profiles data received", format)
+
 	// TODO: if format is not goSpy, we should convert it to pprof format
 	token := getBearerToken(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := "failed to get valid token from profiles ingestion"
+		errMsg := fmt.Sprintf("failed to get valid token in profiles ingestion from %s", ip)
 		logger.Error(errMsg)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 
-	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
+	f, err := parseForm(req)
 	if err != nil {
-		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to parse boundary, err: %s", err)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
-		return
-	}
-
-	f, err := multipart.NewReader(bytes.NewReader(raw), boundary).ReadForm(32 << 20)
-	if err != nil {
-		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to read form body, err: %s", err)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		errMsg := fmt.Sprintf("failed to parse form from %s, err: %s", ip, err)
+		logger.Error(errMsg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 	defer func() {
@@ -135,27 +141,24 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	thisProfile, err := ReadField(f, formFieldProfile)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("read profile failed, err: %s", err)
+		logger.Errorf("read profile failed from %s, err: %s", ip, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
-	previousProfile, err := ReadField(f, formFieldPreviousProfile)
-	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("read previous profile failed, err: %s", err)
-		return
-	}
-	logger.Debugf("profiles got, previous len: %d, this len: %d \n", len(previousProfile), len(thisProfile))
+	// TODO: support previous profile
 
+	logger.Debugf("profiles got, previous len: %d, this len: %d \n", len(thisProfile))
+
+	// SampleTypeConfig is used to determine custom sample type in profile
 	c, err := ReadField(f, formFieldSampleTypeConfig)
 	if err != nil {
-		logger.Warnf("failed to get sample type config, err: %s", err)
-		// no need to return, because sample type config is optional
+		logger.Warnf("failed to get sample type config from %s, err: %s", ip, err)
+		// go on, because sample type config is optional now
 	}
 	if c == nil {
+		// lacking sample type config is not a fatal error
 		logger.Warnf("sample type config is empty")
 	}
-	// TODO: implement sample type config from user
 
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
@@ -176,7 +179,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	logger.Debugf("record published, ip=%s, token=%s", ip, r.Token.Original)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(raw), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(thisProfile), start)
 }
 
 func getFormatBySpy(spyName string) string {

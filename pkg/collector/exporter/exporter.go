@@ -11,7 +11,6 @@ package exporter
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -103,12 +102,6 @@ func (e *Exporter) consumeEvents() {
 			}
 			event := events[0]
 			DefaultMetricMonitor.AddHandledEventCounter(len(events), event.RecordType(), event.DataId())
-
-			for _, le := range events {
-				if le.RecordType() == define.RecordProfiles {
-					fmt.Println("event put", le.DataId(), le.RecordType(), le.Data())
-				}
-			}
 			e.queue.Put(events...)
 
 		case <-e.ctx.Done():

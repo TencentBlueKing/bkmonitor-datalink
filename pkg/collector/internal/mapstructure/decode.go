@@ -9,7 +9,9 @@
 
 package mapstructure
 
-import "github.com/mitchellh/mapstructure"
+import (
+	"github.com/mitchellh/mapstructure"
+)
 
 // Decode 默认支持 time.Duration 类型数据的转换处理
 func Decode(input, output interface{}) error {

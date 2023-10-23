@@ -28,6 +28,7 @@ const (
 	ContentTypeText     = "text/plain; charset=utf-8"
 
 	SourceJaeger      = "jaeger"
+	SourcePyroscope   = "pyroscope"
 	SourceOtlp        = "otlp"
 	SourcePushGateway = "pushgateway"
 	SourceRemoteWrite = "remotewrite"
@@ -43,6 +44,7 @@ func (r RecordType) S() string { return string(r) }
 const (
 	RecordUndefined      RecordType = "undefined"
 	RecordTraces         RecordType = "traces"
+	RecordProfiles       RecordType = "profiles"
 	RecordMetrics        RecordType = "metrics"
 	RecordLogs           RecordType = "logs"
 	RecordTracesDerived  RecordType = "traces.derived"
@@ -78,6 +80,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordProxy
 	case RecordPingserver.S():
 		t = RecordPingserver
+	case RecordProfiles.S():
+		t = RecordProfiles
 	default:
 		t = RecordUndefined
 	}
@@ -183,13 +187,14 @@ func (q *RecordQueue) Get() <-chan *Record {
 
 // Token 描述了 Record 校验的必要信息
 type Token struct {
-	Original      string
-	MetricsDataId int32
-	TracesDataId  int32
-	LogsDataId    int32
-	ProxyDataId   int32
-	BizId         int32
-	AppName       string
+	Original       string
+	MetricsDataId  int32
+	TracesDataId   int32
+	ProfilesDataId int32
+	LogsDataId     int32
+	ProxyDataId    int32
+	BizId          int32
+	AppName        string
 }
 
 func (t Token) GetDataID(rtype RecordType) int32 {
@@ -200,6 +205,8 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 		return t.MetricsDataId
 	case RecordLogs, RecordLogsDerived:
 		return t.LogsDataId
+	case RecordProfiles:
+		return t.ProfilesDataId
 	case RecordProxy:
 		return t.ProxyDataId
 	}

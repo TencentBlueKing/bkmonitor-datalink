@@ -7,44 +7,51 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package main
 
 import (
+	"os"
+	"os/signal"
 	"time"
+
+	"github.com/grafana/pyroscope-go"
 )
 
-type GeneratorOptions struct {
-	Enabled             bool
-	Iteration           int
-	Interval            time.Duration
-	RandomAttributeKeys []string
-	RandomResourceKeys  []string
-	Attributes          map[string]string
-	Resources           map[string]string
-	DimensionsValueType string // 支持 int/float/bool/string
+const URL = "http://localhost:10205/pyroscope/"
+
+func startPyroscope() {
+	_, _ = pyroscope.Start(pyroscope.Config{
+		ApplicationName: "fake_collector_local_app",
+		ServerAddress:   URL,
+		Logger:          pyroscope.StandardLogger,
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+		},
+	})
 }
 
-type TracesOptions struct {
-	GeneratorOptions
-	SpanCount  int
-	SpanKind   int
-	EventCount int
-	LinkCount  int
+func fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
 }
 
-type MetricsOptions struct {
-	GeneratorOptions
-	MetricName     string
-	Value          *float64
-	GaugeCount     int
-	CounterCount   int
-	HistogramCount int
-	SummaryCount   int
-}
+func main() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
 
-type LogsOptions struct {
-	GeneratorOptions
-	LogName   string
-	LogLength int
-	LogCount  int
+	go startPyroscope()
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c:
+			return
+		case <-ticker.C:
+			fib(30)
+		}
+	}
 }

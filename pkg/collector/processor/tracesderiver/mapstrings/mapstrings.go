@@ -9,7 +9,9 @@
 
 package mapstrings
 
-import "sort"
+import (
+	"sort"
+)
 
 type Order uint8
 

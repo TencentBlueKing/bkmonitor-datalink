@@ -8,4 +8,4 @@ processor:
       resource_key: "bk.data.token"
       salt: "bk" # 加盐解密标识
       decoded_iv: "bkbkbkbkbkbkbkbk"
-      decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+      decoded_key: "6ccacbf5-6e52-4842-b187-d34844f888b1"

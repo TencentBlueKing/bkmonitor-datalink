@@ -29,6 +29,7 @@ const (
 	decoderTypeFixed  = "fixed"
 	decoderTypeAcs256 = "aes256"
 	decoderTypeProxy  = "proxy"
+	nonId             = 0
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
@@ -168,6 +169,23 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 	decoded := string(enc[:delta])
 	logger.Debugf("original token: %s, decoded: %v", s, decoded)
 
+	split := strings.SplitN(decoded, d.salt, 2)
+	if len(split) < 2 {
+		return token, errors.Errorf("invalid split len: %d, str: %s", len(split), decoded)
+	}
+
+	v := split[0]
+	if v == "v1" {
+		return d.parseV1Token(decoded, s)
+	} else {
+		return d.parseV0Token(decoded, s)
+	}
+}
+
+// v0 token: metricsid#logsid#tracesid#bizid#appname
+func (d *aes256TokenDecoder) parseV0Token(decoded string, o string) (define.Token, error) {
+	var token define.Token
+
 	split := strings.SplitN(decoded, d.salt, 5)
 	if len(split) < 5 {
 		return token, errors.Errorf("invalid split len: %d, str: %s", len(split), decoded)
@@ -192,12 +210,53 @@ func (d *aes256TokenDecoder) decode(s string) (define.Token, error) {
 	appName := split[4]
 
 	return define.Token{
-		Original:      s,
+		Original:      o,
 		TracesDataId:  int32(tracesDataId),
 		MetricsDataId: int32(metricsDataId),
 		LogsDataId:    int32(logsDataId),
 		BizId:         int32(bizId),
 		AppName:       appName,
+	}, nil
+}
+
+// v1 token: v1#metricsid#logsid#tracesid#profilesid#bizid#appname
+func (d *aes256TokenDecoder) parseV1Token(decoded string, o string) (define.Token, error) {
+	var token define.Token
+	split := strings.SplitN(decoded, d.salt, 7)
+	if len(split) < 7 {
+		return token, errors.Errorf("invalid split len: %d, str: %s", len(split), decoded)
+	}
+
+	metricsDataId, err := strconv.Atoi(split[1])
+	if err != nil {
+		return token, errors.Errorf("invalid metrics dataid: %s", split[0])
+	}
+	tracesDataId, err := strconv.Atoi(split[2])
+	if err != nil {
+		return token, errors.Errorf("invalid traces dataid: %s", split[1])
+	}
+	logsDataId, err := strconv.Atoi(split[3])
+	if err != nil {
+		return token, errors.Errorf("invalid logs dataid: %s", split[2])
+	}
+	profilesDataId, err := strconv.Atoi(split[4])
+	if err != nil {
+		return token, errors.Errorf("invalid logs dataid: %s", split[2])
+	}
+	bizId, err := strconv.Atoi(split[5])
+	if err != nil {
+		return token, errors.Errorf("invalid bizid: %s", split[3])
+	}
+	appName := split[6]
+
+	return define.Token{
+		Original:       o,
+		TracesDataId:   int32(tracesDataId),
+		MetricsDataId:  int32(metricsDataId),
+		LogsDataId:     int32(logsDataId),
+		ProfilesDataId: int32(profilesDataId),
+		BizId:          int32(bizId),
+		AppName:        appName,
 	}, nil
 }
 

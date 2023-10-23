@@ -9,7 +9,9 @@
 
 package cleaner
 
-import "sync"
+import (
+	"sync"
+)
 
 type CleanFunc func() error
 

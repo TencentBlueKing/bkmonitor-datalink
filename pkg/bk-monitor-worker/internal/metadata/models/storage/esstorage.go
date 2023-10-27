@@ -48,8 +48,8 @@ type ESStorage struct {
 	DateFormat        string                       `json:"date_format" gorm:"size:64;default:%Y%m%d%H"`
 	SliceSize         uint                         `json:"slice_size" gorm:"default:500"`
 	SliceGap          int                          `json:"slice_gap" gorm:"default:120"`
-	Retention         int                          `json:"retention" gorm:";default:30"`
-	WarmPhaseDays     int                          `json:"warm_phase_days" gorm:"default:0"`
+	Retention         int                          `json:"retention" gorm:"default:30"`
+	WarmPhaseDays     int                          `json:"warm_phase_days" gorm:"column:warm_phase_days"`
 	WarmPhaseSettings string                       `json:"warm_phase_settings" gorm:"warm_phase_settings"`
 	TimeZone          int8                         `json:"time_zone" gorm:"default:0"`
 	IndexSettings     string                       `json:"index_settings" gorm:"index_settings"`
@@ -1617,6 +1617,18 @@ func (e ESStorage) ReallocateIndex(ctx context.Context) error {
 		return err
 	}
 	defer putResp.Close()
+	return nil
+}
+
+func (e ESStorage) CreateEsIndex(ctx context.Context, isSyncDb bool) error {
+	if isSyncDb {
+		if err := e.CreateIndexAndAliases(ctx, e.SliceGap); err != nil {
+			return err
+		}
+		logger.Infof("result_table [%s] has create es storage index", e.TableID)
+	} else {
+		// TODO create_es_storage_index 异步创建es索引
+	}
 	return nil
 }
 

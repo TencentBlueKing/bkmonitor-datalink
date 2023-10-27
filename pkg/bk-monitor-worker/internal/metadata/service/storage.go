@@ -11,6 +11,7 @@ package service
 
 type Storage interface {
 	ConsulConfig() (*StorageConsulConfig, error)
+	CreateTable(tableId string, isSyncDb bool, storageConfig map[string]interface{}) error
 }
 
 // StorageConsulConfig storage的consul配置信息

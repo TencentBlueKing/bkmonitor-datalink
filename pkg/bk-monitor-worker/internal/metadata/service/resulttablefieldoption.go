@@ -10,8 +10,12 @@
 package service
 
 import (
+	"errors"
+	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"time"
 )
 
 // ResultTableFieldOptionSvc result table field option service
@@ -46,4 +50,34 @@ func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[stri
 		}
 	}
 	return optionData, nil
+}
+
+func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, name string, value interface{}, creator string) error {
+	count, err := resulttable.NewResultTableFieldOptionQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).FieldNameEq(fieldName).NameEq(name).Count()
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.New(fmt.Sprintf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name))
+	}
+
+	valueStr, valueType, err := models.ParseOptionValue(value)
+	if err != nil {
+		return err
+	}
+	rtfo := resulttable.ResultTableFieldOption{
+		OptionBase: models.OptionBase{
+			ValueType:  valueType,
+			Value:      valueStr,
+			Creator:    creator,
+			CreateTime: time.Now(),
+		},
+		TableID:   tableId,
+		FieldName: fieldName,
+		Name:      name,
+	}
+	if err := rtfo.Create(mysql.GetDBSession().DB); err != nil {
+		return err
+	}
+	return nil
 }

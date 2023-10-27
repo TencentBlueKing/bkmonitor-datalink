@@ -29,6 +29,7 @@ var RegisterPeriodicTaskHandlerFunc = map[string]processor.HandlerFunc{
 	"periodic:metadata:refresh_es_storage":      task.RefreshESStorage,
 	"periodic:metadata:refresh_influxdb_route":  task.RefreshInfluxdbRoute,
 	"periodic:metadata:refresh_datasource":      task.RefreshDatasource,
+	"periodic:metadata:discover_bcs_clusters":   task.DiscoverBcsClusters,
 }
 
 var RegisterPeriodicTask = map[string]string{
@@ -37,6 +38,7 @@ var RegisterPeriodicTask = map[string]string{
 	"periodic:metadata:refresh_es_storage":      "*/10 * * * *",
 	"periodic:metadata:refresh_influxdb_route":  "*/10 * * * *",
 	"periodic:metadata:refresh_datasource":      "*/10 * * * *",
+	"periodic:metadata:discover_bcs_clusters":   "*/10 * * * *",
 }
 
 type RegisterPeriodicTaskDetail struct {

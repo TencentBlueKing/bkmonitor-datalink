@@ -1,0 +1,134 @@
+{
+  "etl_config": "bk_uptimecheck_udp",
+  "result_table_list": [
+    {
+      "schema_type": "fixed",
+      "shipper_list": [
+        {
+          "cluster_config": {
+            "domain_name": "influxdb.service.consul",
+            "port": 5260
+          },
+          "storage_config": {
+            "real_table_name": "udp",
+            "database": "uptimecheck"
+          },
+          "cluster_type": "influxdb"
+        }
+      ],
+      "result_table": "uptimecheck.udp",
+      "field_list": [
+        {
+          "default_value": null,
+          "type": "double",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "available"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_biz_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_cloud_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_supplier_id"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "error_code"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "node_id"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "status"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "target_host"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "target_port"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "task_duration"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "task_id"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "task_type"
+        },
+        {
+          "default_value": null,
+          "type": "timestamp",
+          "is_config_by_user": true,
+          "tag": "",
+          "field_name": "time"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "times"
+        }
+      ]
+    }
+  ],
+  "mq_config": {
+    "cluster_config": {
+      "domain_name": "kafka.service.consul",
+      "port": 9092
+    },
+    "storage_config": {
+      "topic": "0bkmonitor_10100",
+      "partition": 1
+    },
+    "cluster_type": "kafka"
+  },
+  "data_id": 1010
+}

@@ -1,0 +1,32 @@
+{
+  "available": 1.000000,
+  "bkmonitorbeat": {
+    "address": [
+      "127.0.0.1"
+    ],
+    "hostname": "VM_1_16_centos",
+    "name": "VM_1_16_centos",
+    "version": "1.4.3"
+  },
+  "bizid": 0,
+  "bk_cloud_id": 0,
+  "bk_agent_id": "010000525400c48bdc1670385834306k",
+  "bk_biz_id": 2,
+  "bk_host_id": 30145,
+  "cloudid": 2,
+  "dataid": 1010,
+  "error_code": 0,
+  "gseindex": 70468,
+  "ip": "127.0.0.1",
+  "max_times": 3,
+  "node_id": 4,
+  "status": 0,
+  "target_host": "127.0.0.1",
+  "target_port": 9211,
+  "task_duration": 5000,
+  "task_id": 109,
+  "task_type": "udp",
+  "times": 0,
+  "timestamp": 1552967059,
+  "type": "uptimecheckbeat"
+}

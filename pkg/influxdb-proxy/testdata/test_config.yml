@@ -1,0 +1,33 @@
+http:
+  listen: 1.1.1.1
+  port: 8080
+consul:
+  address: 127.0.0.1
+  port: 8500
+kafka:
+  address: 127.0.0.1
+  port: 9090
+  topic:
+clusters:
+  - name: cluster
+    dbs: ".*"
+    nodes:
+    - name: proxy0
+      address: 1.1.1.1
+      port: 1234
+    - name: proxy1
+      address: 1.1.1.1
+      port: 1234
+logger:
+  formatter:
+    name: text
+  level: debug
+  out:
+    name: file
+    options:
+      daily: true
+      file: tsdbproxy_v2.log
+      level: trace
+      max_days: 2
+      max_size: 536870912
+      rotate: true

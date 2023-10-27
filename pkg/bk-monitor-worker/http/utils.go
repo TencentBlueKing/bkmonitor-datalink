@@ -1,0 +1,96 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package http
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+)
+
+// BindJSON
+func BindJSON(c *gin.Context, obj interface{}) error {
+	return c.ShouldBindWith(obj, binding.JSON)
+}
+
+// MergeGinH : merger h2 to h1
+func MergeGinH(h1 *gin.H, h2 *gin.H) *gin.H {
+	if h2 == nil {
+		return h1
+	}
+	for key, value := range *h2 {
+		(*h1)[key] = value
+	}
+	return h1
+}
+
+// GetMessage : return candidate if format is empty
+func GetMessage(candidate string, format string, v []interface{}) string {
+	if format == "" {
+		return candidate
+	}
+	if len(v) > 0 {
+		return fmt.Sprintf(format, v...)
+	}
+	return format
+}
+
+// Response 正常返回
+func Response(c *gin.Context, h *gin.H) {
+	// 默认状态码为 200
+	status := 200
+	response := MergeGinH(&gin.H{
+		"result":  true,
+		"message": "ok",
+		"code":    common.Success,
+		"data":    nil,
+	}, h)
+	c.JSON(status, response)
+}
+
+// ResponseWithMessage 返回
+func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...interface{}) {
+	response := &gin.H{
+		"result":  true,
+		"code":    0,
+		"message": GetMessage("ok", message, v),
+		"data":    h,
+	}
+	Response(c, response)
+}
+
+// BadReqResponse
+func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
+	response := &gin.H{
+		"result":  false,
+		"code":    common.ParamsError,
+		"message": GetMessage("bad request", message, v),
+	}
+	Response(c, response)
+}
+
+// ServerErrResponse
+func ServerErrResponse(c *gin.Context, message string, v ...interface{}) {
+	response := &gin.H{
+		"result":  false,
+		"code":    common.ParamsError,
+		"message": GetMessage("bad request", message, v),
+	}
+	Response(c, response)
+}
+
+// IntToSecond transform int to time duration
+func IntToSecond(t int) time.Duration {
+	return time.Duration(t) * time.Second
+}

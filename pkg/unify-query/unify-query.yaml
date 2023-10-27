@@ -1,0 +1,80 @@
+consul:
+  check_ttl: 30s
+  consul_address: http://127.0.0.1:8500
+  service_name: bkmonitorv3
+  kv_base_path: bkmonitorv3/unify-query
+  metadata_path: bkmonitorv3/metadata
+  bcs_path: bkmonitorv3/metadata/project_id
+  metric_path: bkmonitorv3/metadata/influxdb_metrics
+redis:
+  mode: standalone
+  host: 127.0.0.1
+  port: 6379
+  password:
+  master_name:
+  sentinel_address:
+    - 127.0.0.1:6379
+  sentinel_password:
+  database: 0
+  dial_timeout: 1s
+  read_timeout: 10s
+  service_name: bkmonitorv3:spaces
+victoria_metrics:
+  address: http://127.0.0.1
+  uri_path: query_sync
+  timeout: 30s
+  code: bkmonitorv3
+  secret:
+  token:
+influxdb:
+  target_address: http://127.0.0.1:8086
+  timeout: 1m
+  query_raw:
+    type: http
+    uri_path: api/v1/raw/read
+    accept: application/x-protobuf
+    accept_encoding: snappy
+  max_limit: 1e8
+  max_slimit: 1e5
+  tolerance: 5
+es:
+  max_concurrency: 200
+  alias_refresh_period: 1m
+http:
+  address: 127.0.0.1
+  path:
+    es: /query/es
+    promql: /query/promql
+    ts: /query/ts
+  password: ""
+  port: 10205
+  profile:
+    enable: false
+    path: /debug/pprof/
+  prometheus:
+    enable: true
+    path: /metrics
+  read_timeout: 3s
+  username: ""
+  write_timeout: 30s
+  query:
+    max_routing: 10
+    content_type: application/x-protobuf
+    content_encoding: snappy
+query:
+  down_sampled:
+    enable: true
+    bucket:
+    - 2_bkapm_metric_test1
+logger:
+  level: info
+trace:
+  dataid: 0
+  service_name: "unify-query"
+  otlp:
+    host: 127.0.0.1
+    port: 4317
+    token:
+    type: grpc
+bbolt:
+  default_path: bolt.db

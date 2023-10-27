@@ -1,0 +1,25 @@
+# This file describes an image that is capable of building Flux.
+
+FROM mirrors.tencent.com/ci/tlinux_ci:latest
+
+# install rust
+RUN cd /tmp && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > /tmp/rustup.sh && \
+    chmod +x /tmp/rustup.sh && \
+    ./rustup.sh -y && \
+    source $HOME/.cargo/env
+
+RUN yum install -y upx
+
+# install go
+RUN mkdir /goroot && cd /goroot && wget https://golang.org/dl/go1.15.11.linux-amd64.tar.gz && \
+    mv go1.15.11.linux-amd64.tar.gz go.tar.gz && \
+    tar -xvf go.tar.gz && \
+    rm go.tar.gz
+
+ENV GOROOT=/goroot/go
+ENV GOPATH=/src/workspace
+ENV PATH=${GOROOT}/bin:${PATH}
+ENV PATH=${GOPATH}/bin:${PATH}
+
+# install flux dependence
+RUN go get github.com/influxdata/pkg-config

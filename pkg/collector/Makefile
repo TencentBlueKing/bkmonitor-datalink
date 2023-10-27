@@ -1,0 +1,58 @@
+# REQUIRE COMPONENTS
+# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@latest
+# https://github.com/incu6us/goimports-reviser => $go install github.com/incu6us/goimports-reviser/v3@v3.1.1
+# https://github.com/golangci/golangci-lint => $go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
+
+GO ?= go
+SHELL := bash
+
+# 可继承自顶层 Makefile
+RELEASE_PATH ?= $(PWD)/dist
+VERSION := $(shell cat VERSION)
+
+# 构建二进制
+BIN = $(RELEASE_PATH)/bk-collector
+
+.PHONY: help
+help:
+	@echo "Make Targets: "
+	@echo " mod: Download and tidy dependencies"
+	@echo " lint: Lint Go code"
+	@echo " test: Run unit tests"
+	@echo " build: Build release package"
+	@echo " dev: Run and test program locally"
+	@echo " bin: Build binary distribution"
+
+.PHONY: lint
+lint: mod
+	diff -u <(echo -n) <(gofumpt -w .)
+	diff -u <(echo -n) <(goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...)
+
+.PHONY: test
+test:
+	./control.sh test
+
+.PHONY: build
+build:
+	cd $(RELEASE_PATH) && ls -lh && rm -rf *
+	./control.sh package linux amd64 x86_64 $(VERSION) $(RELEASE_PATH)
+	cd $(RELEASE_PATH) && ls -lh && tar -zcvf bk-collector-$(VERSION).tgz --remove-files -C . *
+
+.PHONY: mod
+mod:
+	$(GO) mod download
+	$(GO) mod tidy
+
+.PHONY: bin
+bin:
+	GOOS=linux GOARCH=amd64 \
+	$(GO) build -ldflags " \
+	-s -w \
+	-X main.version=$(VERSION) \
+	-X main.buildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \
+	-X main.gitHash=$(shell git rev-parse HEAD)" \
+	-o $(BIN) .
+
+.PHONY: dev
+dev:
+	$(GO) run . -c ./example/example.yml

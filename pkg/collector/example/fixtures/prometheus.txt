@@ -1,0 +1,159 @@
+# HELP bk_collector_controller_reload_duration_seconds Controller reload duration in seconds
+# TYPE bk_collector_controller_reload_duration_seconds histogram
+bk_collector_controller_reload_duration_seconds_bucket{le="1"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="5"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="10"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="50"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="100"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="500"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="1000"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="5000"} 0
+bk_collector_controller_reload_duration_seconds_bucket{le="+Inf"} 0
+bk_collector_controller_reload_duration_seconds_sum 0
+bk_collector_controller_reload_duration_seconds_count 0
+# HELP bk_collector_controller_reload_failed_total Controller reload config failed total
+# TYPE bk_collector_controller_reload_failed_total counter
+bk_collector_controller_reload_failed_total 0
+# HELP bk_collector_controller_reload_success_total Controller reload config successfully total
+# TYPE bk_collector_controller_reload_success_total counter
+bk_collector_controller_reload_success_total 0
+# HELP bk_collector_engine_load_config_failed_total Engine load config failed total
+# TYPE bk_collector_engine_load_config_failed_total counter
+bk_collector_engine_load_config_failed_total 0
+# HELP bk_collector_engine_load_config_success_total Engine load config successfully total
+# TYPE bk_collector_engine_load_config_success_total counter
+bk_collector_engine_load_config_success_total 6
+# HELP bk_collector_engine_unpack_child_field_success_total Engine unpack child field successfully total
+# TYPE bk_collector_engine_unpack_child_field_success_total counter
+bk_collector_engine_unpack_child_field_success_total{child_field="apm"} 2
+bk_collector_engine_unpack_child_field_success_total{child_field="exporter"} 1
+bk_collector_engine_unpack_child_field_success_total{child_field="logging"} 1
+bk_collector_engine_unpack_child_field_success_total{child_field="pipeline"} 1
+bk_collector_engine_unpack_child_field_success_total{child_field="processor"} 2
+bk_collector_engine_unpack_child_field_success_total{child_field="receiver"} 1
+# HELP bk_collector_exporter_sent_duration_seconds Exporter sent duration in seconds
+# TYPE bk_collector_exporter_sent_duration_seconds histogram
+bk_collector_exporter_sent_duration_seconds_bucket{le="1"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="5"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="10"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="50"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="100"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="500"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="1000"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="5000"} 0
+bk_collector_exporter_sent_duration_seconds_bucket{le="+Inf"} 0
+bk_collector_exporter_sent_duration_seconds_sum 0
+bk_collector_exporter_sent_duration_seconds_count 0
+# HELP bk_collector_exporter_sent_output_total Exporter send output total
+# TYPE bk_collector_exporter_sent_output_total counter
+bk_collector_exporter_sent_output_total 0
+# HELP bk_collector_panic_total program causes panic total
+# TYPE bk_collector_panic_total counter
+bk_collector_panic_total 0
+# HELP bk_collector_pipeline_built_success_total Pipeline built success total
+# TYPE bk_collector_pipeline_built_success_total counter
+bk_collector_pipeline_built_success_total{pipeline="metrics_pipeline/common",record_type="metrics"} 1
+bk_collector_pipeline_built_success_total{pipeline="metrics_pipeline/derived",record_type="metrics.derived"} 1
+bk_collector_pipeline_built_success_total{pipeline="prometheus_pipeline/common",record_type="prometheus"} 1
+bk_collector_pipeline_built_success_total{pipeline="traces_pipeline/common",record_type="traces"} 1
+# HELP bk_collector_uptime uptime of program
+# TYPE bk_collector_uptime counter
+bk_collector_uptime 0
+# HELP go_gc_duration_seconds A summary of the pause duration of garbage collection cycles.
+# TYPE go_gc_duration_seconds summary
+go_gc_duration_seconds{quantile="0"} 3.9716e-05
+go_gc_duration_seconds{quantile="0.25"} 3.9716e-05
+go_gc_duration_seconds{quantile="0.5"} 0.00018415
+go_gc_duration_seconds{quantile="0.75"} 0.00018415
+go_gc_duration_seconds{quantile="1"} 0.00018415
+go_gc_duration_seconds_sum 0.000223866
+go_gc_duration_seconds_count 2
+# HELP go_goroutines Number of goroutines that currently exist.
+# TYPE go_goroutines gauge
+go_goroutines 71
+# HELP go_info Information about the Go environment.
+# TYPE go_info gauge
+go_info{version="go1.18.1"} 1
+# HELP go_memstats_alloc_bytes Number of bytes allocated and still in use.
+# TYPE go_memstats_alloc_bytes gauge
+go_memstats_alloc_bytes 3.506728e+06
+# HELP go_memstats_alloc_bytes_total Total number of bytes allocated, even if freed.
+# TYPE go_memstats_alloc_bytes_total counter
+go_memstats_alloc_bytes_total 5.644712e+06
+# HELP go_memstats_buck_hash_sys_bytes Number of bytes used by the profiling bucket hash table.
+# TYPE go_memstats_buck_hash_sys_bytes gauge
+go_memstats_buck_hash_sys_bytes 1.448916e+06
+# HELP go_memstats_frees_total Total number of frees.
+# TYPE go_memstats_frees_total counter
+go_memstats_frees_total 25786
+# HELP go_memstats_gc_cpu_fraction The fraction of this program's available CPU time used by the GC since the program started.
+# TYPE go_memstats_gc_cpu_fraction gauge
+go_memstats_gc_cpu_fraction 0.006625115670315708
+# HELP go_memstats_gc_sys_bytes Number of bytes used for garbage collection system metadata.
+# TYPE go_memstats_gc_sys_bytes gauge
+go_memstats_gc_sys_bytes 5.147896e+06
+# HELP go_memstats_heap_alloc_bytes Number of heap bytes allocated and still in use.
+# TYPE go_memstats_heap_alloc_bytes gauge
+go_memstats_heap_alloc_bytes 3.506728e+06
+# HELP go_memstats_heap_idle_bytes Number of heap bytes waiting to be used.
+# TYPE go_memstats_heap_idle_bytes gauge
+go_memstats_heap_idle_bytes 5.865472e+06
+# HELP go_memstats_heap_inuse_bytes Number of heap bytes that are in use.
+# TYPE go_memstats_heap_inuse_bytes gauge
+go_memstats_heap_inuse_bytes 5.439488e+06
+# HELP go_memstats_heap_objects Number of allocated objects.
+# TYPE go_memstats_heap_objects gauge
+go_memstats_heap_objects 24436
+# HELP go_memstats_heap_released_bytes Number of heap bytes released to OS.
+# TYPE go_memstats_heap_released_bytes gauge
+go_memstats_heap_released_bytes 4.694016e+06
+# HELP go_memstats_heap_sys_bytes Number of heap bytes obtained from system.
+# TYPE go_memstats_heap_sys_bytes gauge
+go_memstats_heap_sys_bytes 1.130496e+07
+# HELP go_memstats_last_gc_time_seconds Number of seconds since 1970 of last garbage collection.
+# TYPE go_memstats_last_gc_time_seconds gauge
+go_memstats_last_gc_time_seconds 1.656140502686885e+09
+# HELP go_memstats_lookups_total Total number of pointer lookups.
+# TYPE go_memstats_lookups_total counter
+go_memstats_lookups_total 0
+# HELP go_memstats_mallocs_total Total number of mallocs.
+# TYPE go_memstats_mallocs_total counter
+go_memstats_mallocs_total 50222
+# HELP go_memstats_mcache_inuse_bytes Number of bytes in use by mcache structures.
+# TYPE go_memstats_mcache_inuse_bytes gauge
+go_memstats_mcache_inuse_bytes 14400
+# HELP go_memstats_mcache_sys_bytes Number of bytes used for mcache structures obtained from system.
+# TYPE go_memstats_mcache_sys_bytes gauge
+go_memstats_mcache_sys_bytes 15600
+# HELP go_memstats_mspan_inuse_bytes Number of bytes in use by mspan structures.
+# TYPE go_memstats_mspan_inuse_bytes gauge
+go_memstats_mspan_inuse_bytes 133824
+# HELP go_memstats_mspan_sys_bytes Number of bytes used for mspan structures obtained from system.
+# TYPE go_memstats_mspan_sys_bytes gauge
+go_memstats_mspan_sys_bytes 146880
+# HELP go_memstats_next_gc_bytes Number of heap bytes when next garbage collection will take place.
+# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 5.489152e+06
+# HELP go_memstats_other_sys_bytes Number of bytes used for other system allocations.
+# TYPE go_memstats_other_sys_bytes gauge
+go_memstats_other_sys_bytes 2.236556e+06
+# HELP go_memstats_stack_inuse_bytes Number of bytes in use by the stack allocator.
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 1.277952e+06
+# HELP go_memstats_stack_sys_bytes Number of bytes obtained from system for stack allocator.
+# TYPE go_memstats_stack_sys_bytes gauge
+go_memstats_stack_sys_bytes 1.277952e+06
+# HELP go_memstats_sys_bytes Number of bytes obtained from system.
+# TYPE go_memstats_sys_bytes gauge
+go_memstats_sys_bytes 2.157876e+07
+# HELP go_threads Number of OS threads created.
+# TYPE go_threads gauge
+go_threads 16
+# HELP promhttp_metric_handler_requests_in_flight Current number of scrapes being served.
+# TYPE promhttp_metric_handler_requests_in_flight gauge
+promhttp_metric_handler_requests_in_flight 1
+# HELP promhttp_metric_handler_requests_total Total number of scrapes by HTTP status code.
+# TYPE promhttp_metric_handler_requests_total counter
+promhttp_metric_handler_requests_total{code="200"} 0
+promhttp_metric_handler_requests_total{code="500"} 0
+promhttp_metric_handler_requests_total{code="503"} 0

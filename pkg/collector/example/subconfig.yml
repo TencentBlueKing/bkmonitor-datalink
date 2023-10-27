@@ -1,0 +1,210 @@
+type: "subconfig"
+token: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="
+
+skywalking_agent:
+  sn: "e6ab1e4085c1e27a786ec55f968d044095d79dc7"
+  rules:
+    - type: "Http"
+      enabled: true
+      target: "cookie"   # cookie 类型配置下发
+      field: "language"
+
+    - type: "Http"
+      enabled: true
+      target: "header"   # header 类型配置下发
+      field: "Accept"
+
+    - type: "Http"
+      enabled: true
+      target: "query_parameter"   # query_parameter 类型配置下发 skywalking 探针可忽略此配置
+      field: "from"
+
+exporter:
+  queue:
+    logs_batch_size: 2
+    metrics_batch_size: 2
+    traces_batch_size: 5
+
+default:
+  processor:
+    - name: "license_checker/common"
+      config:
+        enabled: true
+        expire_time: 4084665444
+        tolerable_expire: 2h
+        number_nodes: 200
+        tolerable_num_ratio: 1.5
+
+    - name: "db_filter/common"
+      config:
+        slow_query:
+          destination: "db.is_slow"
+          rules:
+            - match: "Mysql"
+              threshold: 50ms
+            - match: "Postgresql"
+              threshold: 50ms
+            - match: "Elasticsearch"
+              threshold: 50ms
+            - match: "Redis"
+              threshold: 50ms
+            - match: "Mangodb"
+              threshold: 50ms
+            - match: ""
+              threshold: 3s
+
+    - name: "probe_filter/common"
+      config:
+        add_attributes:
+          - rules:
+              - type: "Http"
+                enabled: true
+                target: "cookie"
+                field: "language"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
+              - type: "Http"
+                enabled: true
+                target: "header"
+                field: "Accept"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
+              - type: "Http"
+                enabled: true
+                target: "query_parameter"
+                field: "from"
+                prefix: "custom_tag"  # 插入 attr 的前缀
+                filters:
+                  - field: "resource.service.name"
+                    value: "account"
+                    type: "service"
+                  - field: "attributes.api_name"
+                    value: "POST:/account/pay"
+                    type: "interface"
+
+    # attribute_config: attribute 属性配置
+    - name: "attribute_filter/app"
+      config:
+        cut:
+          - predicate_key: "attributes.db.system"
+            max_length: 1024
+            match:
+              - "Mysql"
+              - "Postgresql"
+              - "Elasticsearch"
+            keys:
+              - "attributes.db.statement"
+          - predicate_key: "attributes.db.system"
+            max_length: 512
+            match:
+              - "Redis"
+              - "Mangodb"
+            keys:
+              - "attributes.db.statement"
+        drop:
+          - predicate_key: "attributes.db.system"
+            match:
+              - "Mysql"
+              - "Postgresql"
+              - "Elasticsearch"
+            keys:
+              - "attributes.db.statement"
+          - predicate_key: "attributes.db.system"
+            match:
+              - "Redis"
+              - "Mangodb"
+            keys:
+
+    - name: "apdex_calculator/fixed"
+      config:
+        calculator:
+          type: "fixed"
+          apdex_status: "satisfied"
+        rules:
+          - kind: ""
+            metric_name: "bk_apm_duration"
+            destination: "apdex_type_subconfig1"
+
+    - name: "traces_deriver/delta"
+      config:
+        operations:
+          - type: "delta"
+            metric_name: "bk_apm_count"
+            publish_interval: "10s"
+            gc_interval: "1h"
+            max_series: 1000
+            rules:
+              - kind: "SPAN_KIND_SERVER"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"
+
+    - name: "traces_deriver/delta_duration"
+      config:
+        operations:
+          - type: "delta_duration"
+            metric_name: "bk_apm_duration_delta"
+            publish_interval: "10s"
+            gc_interval: "1h"
+            max_series: 1000
+            rules:
+              - kind: "SPAN_KIND_SERVER"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"
+                  - "attributes.apdex_type"
+
+service:
+  - id: "Go-Tier-Name"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "tolerating"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig2"
+instance:
+  - id: "golang:Go-Tier-Name:MANDOCHEN-MB0:192.168.1.5:8004"
+    processor:
+      - name: "apdex_calculator/fixed"
+        config:
+          calculator:
+            type: "fixed"
+            apdex_status: "frustrated"
+          rules:
+            - kind: ""
+              metric_name: "bk_apm_duration"
+              destination: "apdex_type_subconfig3"

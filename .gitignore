@@ -1,0 +1,16 @@
+# IDE
+*.DS_Store
+.idea/
+.vscode/
+__pycache__/
+.codecc/
+build.yml
+dist/
+
+go.work
+go.work.sum
+
+*_tmp
+.codecc
+.idea
+.vscode

@@ -1,0 +1,25 @@
+# 单测文件 请勿修改
+type: report
+
+http:
+  listen: 127.0.0.1
+  port: 10205
+consul:
+  enabled: 0
+
+max_length: 512000
+max_len_of_event_name:
+config_list:
+  - dataid: 1100003
+    datatype: event
+    version: v2
+    rate: 1000
+    accesstoken: 1100003_accesstoken
+    max_future_time_offset: 3600
+
+  - dataid: 1100004
+    datatype: time_series
+    version: v2
+    rate: 1000
+    accesstoken: 1100004_accesstoken
+    max_future_time_offset: 3600

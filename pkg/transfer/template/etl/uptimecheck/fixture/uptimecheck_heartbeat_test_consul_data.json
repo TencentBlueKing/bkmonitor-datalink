@@ -1,0 +1,141 @@
+{
+  "etl_config": "bk_uptimecheck_heartbeat",
+  "result_table_list": [
+    {
+      "schema_type": "fixed",
+      "shipper_list": [
+        {
+          "cluster_config": {
+            "domain_name": "influxdb.service.consul",
+            "port": 5260
+          },
+          "storage_config": {
+            "real_table_name": "heartbeat",
+            "database": "uptimecheck"
+          },
+          "cluster_type": "influxdb"
+        }
+      ],
+      "result_table": "uptimecheck.heartbeat",
+      "field_list": [
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_biz_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_cloud_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "bk_supplier_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "error"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "fail"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "loaded_tasks"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "node_id"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "reload"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "reload_timestamp"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "running_tasks"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "status"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "success"
+        },
+        {
+          "default_value": null,
+          "type": "timestamp",
+          "is_config_by_user": true,
+          "tag": "",
+          "field_name": "time"
+        },
+        {
+          "default_value": null,
+          "type": "int",
+          "is_config_by_user": true,
+          "tag": "metric",
+          "field_name": "uptime"
+        },
+        {
+          "default_value": null,
+          "type": "string",
+          "is_config_by_user": true,
+          "tag": "dimension",
+          "field_name": "version"
+        }
+      ]
+    }
+  ],
+  "mq_config": {
+    "cluster_config": {
+      "domain_name": "kafka.service.consul",
+      "port": 9092
+    },
+    "storage_config": {
+      "topic": "0bkmonitor_10080",
+      "partition": 1
+    },
+    "cluster_type": "kafka"
+  },
+  "data_id": 1008
+}

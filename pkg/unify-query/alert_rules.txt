@@ -1,0 +1,256 @@
+avg by(instance, cluster_id) (irate(node_cpu_seconds_total{mode!="idle", cluster_id="BCS-K8S-25004"}[5m])) * 100
+(sum(rate(ms_client_requests_total{cluster_id="BCS-K8S-40076",namespace="default",client_status!="OK",client_protocol="grpc"}[1m])) by (job,version)) / sum(rate(ms_client_requests_total{cluster_id="BCS-K8S-40076",namespace="default",client_protocol="grpc"}[1m])) by (job,version)*10000
+node_filefd_allocated{instance=~"9.*"}
+sum(kubelet_node_name{cluster_id="BCS-K8S-40076"})
+container_memory_rss{namespace="pg",cluster_id="BCS-K8S-40076",pod_name=~".*-prometheus-pushgateway.*"}
+kube_job_failed{condition="true"}
+sum by (cluster_id, namespace, pod_name) (rate(container_cpu_usage_seconds_total{container_name!="POD", container_name!="",job="kubelet"}[2m])) * 100
+APIServiceOpenAPIAggregationControllerQueue1_depth
+api_visited_counter_total
+event_queue_size{cluster_id="BCS-K8S-40000",endpoint="http",job="paas-analysis-stag",service="paas-analysis-stag"}
+event_queue_size{cluster_id="BCS-K8S-40000",endpoint="http",job="paas-analysis-prod",namespace="paas-analysis-prod",service="paas-analysis-prod"}
+100 * (label_join(label_join(sum
+\n        by(container_name, pod_name, namespace) (container_memory_working_set_bytes{container_name!="POD",namespace=~"bkapp-.*"}),
+\n        "pod", "", "pod_name"), "container", "",
+\n        "container_name") / ignoring(container_name, pod_name) avg by(container,
+\n        pod, namespace) (kube_pod_container_resource_limits_memory_bytes) * on (pod,namespace) group_right kube_pod_labels) > 90
+avg(buffered_keys_size{cluster_id="BCS-K8S-40000",endpoint="http", job="paas-analysis-prod",namespace="paas-analysis-prod",service="paas-analysis-prod",scheduled_for_future="f"})
+avg(buffered_keys_size{cluster_id="BCS-K8S-40000",endpoint="http", job="paas-analysis-stag",namespace="paas-analysis-stag",service="paas-analysis-stag",scheduled_for_future="f"})
+tbuspp_agent_metrics{name="kUpdateExecDurationUsec"}
+100 * (label_join(label_join(sum
+\n        by(pod_name, container_name, namespace) (rate(container_cpu_usage_seconds_total{container_name!="POD",namespace=~"bkapp-.*"}[1m])),
+\n        "pod", "", "pod_name"), "container", "",
+\n        "container_name") / ignoring(container_name, pod_name) avg by(pod, container,
+\n        namespace) (kube_pod_container_resource_limits_cpu_cores) * on (pod,namespace) group_right kube_pod_labels) > 80
+rate(kube_pod_container_status_restarts_total{job="kube-state-metrics",container_name!="POD",namespace=~"bkapp-.*"}[1h]) * on (pod,namespace) group_right kube_pod_labels > 0
+newman_x_mobile_app_up
+newman_x_url_up
+max(rate(processed_events{cluster_id="BCS-K8S-40000",job=~"paas-analysis-prod"}[1m]))
+max by (cluster_id, job, instance) (up)
+(1 - (avg by(cluster_id, instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])))) * 100
+max by (cluster_id, instance) ((node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes + node_memory_Shmem_bytes) / (node_memory_MemTotal_bytes)) * 100
+max by (cluster_id, instance ) (node_filefd_allocated / node_filefd_maximum) * 100
+max by (cluster_id, instance, device, mountpoint) ((node_filesystem_size_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"} - node_filesystem_free_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"}) / node_filesystem_size_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"}) * 100
+max by(cluster_id, namespace, pod_name, container_name, instance) (container_memory_usage_bytes{container_name!="",pod_name!=""} / (container_spec_memory_limit_bytes{container_name!="",pod_name!=""} > 0)) * 100
+max by (cluster_id, node) (kube_node_status_condition{condition="Ready",job="kube-state-metrics",status="true"})
+max by(cluster_id, namespace, pod_name, container_name, instance) (container_memory_rss{container_name!="",pod_name!=""} / (container_spec_memory_limit_bytes{container_name!="",pod_name!=""} > 0)) * 100
+max by (cluster_id, instance ) (node_filefd_allocated{instance=~"9.*"} / node_filefd_maximum) * 100
+sum by (cluster_id, namespace, pod_name) (rate(container_cpu_usage_seconds_total{container_name!="", container_name!="POD"}[1m])) * 100  > 80
+sum by (cluster_id, container_name, namespace, instance) (rate(container_cpu_usage_seconds_total{io_tencent_bcs_controller_name="rso-provider-router"}[2m])) * 100
+sum by (cluster_id, container_name, namespace, instance) (rate(container_cpu_usage_seconds_total{io_tencent_bcs_controller_name="rso-provider-web-deployment"}[2m])) * 100
+sum by (cluster_id, container_name, namespace, instance) (rate(container_cpu_usage_seconds_total{io_tencent_bcs_controller_name="rso-c2id"}[2m])) * 100
+loadbalance_zookeeper_state
+max by (cluster_id, namespace, instance, pod_name, container_name) (rate(container_network_receive_bytes_total{job=~"kubelet|cadvisor", container_name!="", pod_name!=""}[2m]) / 1024 / 1024) > 5
+max by (cluster_id, namespace, instance, pod_name, container_name) (rate(container_network_transmit_bytes_total{job=~"kubelet|cadvisor", container_name!="", pod_name!=""}[2m]) / 1024 / 1024) > 5
+gather_app_http_status{app_code="yakovtendj2"}
+(1 - (avg by(cluster_id, instance) (irate(node_cpu_seconds_total{mode="idle"}5m])))) * 100
+sum(increase(tgpa_queuesvrd_counter{job=~"ziyan-tdm-handle-go-1.*",name="totalCnt",namespace=~"ziyan-uniqueid"}[1m]))
+sum(increase(tgpa_queuesvrd_counter{job=~"ziyan-tdm-handle-2.*",name="totalCnt",namespace=~"ziyan-uniqueid"}[1m]))
+sum(rate(tgpa_guardian_counter{job="guardian-go-anti",name="/v1/uniqueid/secure/anti",namespace="guardian",key="0"}[1m])) / sum(rate(tgpa_guardian_counter{job="guardian-go-anti",name="/v1/uniqueid/secure/anti",namespace="guardian"}[1m]))* 100
+sum by(job, name)(increase(tgpa_cloudctrl_counter{job=~"cloudctrl-go",name="/xid_report/",namespace="cloudctrl"}[1m]))
+sum by (job, name) (rate(tgpa_cloudctrl_request_summary_sum{job="cloudctrl-go",name="/xid_report/",namespace=~"cloudctrl"}[1m])) / sum by (job, name ) (rate(tgpa_cloudctrl_request_summary_count{job="cloudctrl-go",name="/xid_report/",namespace=~"cloudctrl"}[1m]))
+rabbitmq_instance_queue_usage
+rabbitmq_instance_queue_messages
+rabbitmq_instance_alive
+gather_app_http_status
+label_join(label_join(sum\n        by(pod_name, container_name, namespace) (rate(container_cpu_usage_seconds_total{container_name!="POD",namespace=~"bkapp-.*"}[1m])),\n        "pod", "", "pod_name"), "container", "",\n        "container_name") / ignoring(container_name, pod_name) avg by(pod, container,\n        namespace) (kube_pod_container_resource_limits_cpu_cores) * on (pod,namespace) group_right kube_pod_labels
+label_join(label_join(sum
+\n        by(container_name, pod_name, namespace) (container_memory_working_set_bytes{container_name!="POD",namespace=~"bkapp-.*"}),
+\n        "pod", "", "pod_name"), "container", "",
+\n        "container_name") / ignoring(container_name, pod_name) avg by(container,
+\n        pod, namespace) (kube_pod_container_resource_limits_memory_bytes) * on (pod,namespace) group_right kube_pod_labels
+rabbitmq_instance_dlx_queue_messages
+(max by (bk_instance,service,vhost ) (rabbitmq_instance_connections)) / (max by (bk_instance, service,vhost  ) ( rabbitmq_instance_limits{resource="connection"}))
+ko_match_succ_count
+max by (dungeon_id) (ko_match_cost_time_bucket)
+max(frozen_deployments)
+100 - min(irate(node_cpu_seconds_total{instance="4001_gamesvr_1",mode="idle"}[1m])) by (instance) * 100
+count(up)
+max by (cluster_id, instance) (node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Cached_bytes - node_memory_Buffers_bytes + node_memory_Shmem_bytes) / 1024 / 1024 / 1024
+max by (cluster_id, instance, namespace, pod_name) (irate(container_cpu_usage_seconds_total{container_name!="", container_name!="POD"}[5m])) * 100
+(1 - (avg by(cluster_id, instance, cpu) (irate(node_cpu_seconds_total{mode="idle"}[5m])))) * 100
+sum by(name) (increase(tgpa_cs_dbproxy_counter{job=~"cs-dbproxy",namespace=~"cs-uniqueid", name="/dbproxy.CsDBOperator/QueryDeviceInfo", key="0"}[1m]))
+num1
+label_join(label_join(sum\n        by(container_name, pod_name, namespace) (container_memory_working_set_bytes{container_name!="POD",namespace=~"bkapp-.*"}),\n        "pod", "", "pod_name"), "container", "",\n        "container_name") / ignoring(container_name, pod_name) avg by(container,\n        pod, namespace) (kube_pod_container_resource_limits_memory_bytes) * on (pod,namespace) group_right kube_pod_labels
+rate(tbuspp_agent_process_cpu_seconds_total[2m])
+kubelet_running_pod_count{job="kubelet"} / 0.9
+api_request_duration_milliseconds_bucket{cluster_id="BCS-K8S-40096",job=~"ieod-bkapp-bk-iam-prod-web"}
+irate(Tbuspp_NS_TotalHttpRequestCount[2m]) * 60
+irate(Tbuspp_NS_TotalTcpFailRequestCount[2m]) * 60
+Tbuspp_NS_load_metrics_status
+Tbuspp_NS_LocalNsOnlineInstanceCount
+irate(Tbuspp_NS_TotalSendInstNotifyToApiFailCount[2m]) * 60
+irate(Tbuspp_NS_TotalThPoolAddTaskCount[2m]) * 60
+irate(Tbuspp_NS_TotalDBRequestCount[2m]) * 60
+irate(Tbuspp_NS_TotalDBRequestTimeoutCount[2m]) * 60
+ceil(increase(gcs_slow_query_logs_total{job="gcs-mysql-prod"}[15m])) > 0
+max by (cluster_id, job, instance) (up{cluster_id!="BCS-K8S-25339"})
+ceil(increase(gcs_slow_query_logs_total{job="gcs-mysql-prod"}[15m]))
+count by (cluster_id) (bkbcs_scheduler_taskgroup_info == 4)
+avg by(instance, cluster_id)(monitor_test_ugc_app_info{oper="del"})
+min by (server, address, loadbalance, instance, cluster_id) (loadbalance_haproxy_server_status{loadbalance=~".*30006"}) == 0
+max by(pod_name, namespace)(rate(container_cpu_usage_seconds_total{image!='', namespace='notebook'}[5m])*100)/sum by(pod_name, namespace)(container_spec_cpu_quota{image!='', namespace='notebook'}/100000)
+max by (cluster_id, instance, device, mountpoint) ((node_filesystem_size_bytes{cluster_id="BCS-K8S-40000", fstype=~"ext[234]|btrfs|xfs|zfs"} - node_filesystem_free_bytes{cluster_id="BCS-K8S-40000", fstype=~"ext[234]|btrfs|xfs|zfs"}) / node_filesystem_size_bytes{cluster_id="BCS-K8S-40000", fstype=~"ext[234]|btrfs|xfs|zfs"}) * 100
+idelta(tbuspp_agent_process_id[2m])
+round(irate(tbuspp_agent_process_cpu_seconds_total[2m]) * 100, 0.01)
+tbuspp_agent_process_resident_memory_bytes / 1024 / 1024
+tbuspp_agent_shm_usage / 1024 / 1024
+tbuspp_agent_load_metrics_status
+tbuspp_agent_metrics{name=~"kInitiateConnectFailTimes|kAcceptConnectFailTimes"}
+tbuspp_agent_metrics{name="kUpdateExecMaxIntervalUsec"} / 1000
+tbuspp_agent_message{name="kFailCount",type=~"kSendMsg|kRecvMsg"}
+tbuspp_agent_metrics{name="kNetTaskLoopMaxIntervalUsec"} / 1000
+tbuspp_agent_metrics{name=~"kDecryptErrorCount|kEncryptErrorCount|kRemoteNotFoundCount|kQueueIsFullCount|kAddressTableEmptyCount|kDstServerNotExistCount|kHasNoneUseRouteItemCount"}
+tbuspp_agent_metrics{name=~"kSendBytes|kRecvBytes"} / 1024 /1024 / 60
+tbuspp_agent_message{name="kMaxDelay"} / 1000
+tbuspp_agent_message_delay_sum / tbuspp_agent_message_delay_count / 1000
+tbuspp_agent_metrics{name="kRecvInvalidMsgCount"}
+tbuspp_agent_metrics{name=~"kRecvNoServerMsgCount|kSendFailTimes|kSendQueueDelayTimes|kPushQueueFailTimes"}
+idelta(tbuspp_agent_exporter_process_id[2m])
+max by (cluster_id, job, instance) (up{namespace="llfmesh"})
+label_replace (max by(project_id, cc_cluster_id) (bcs_cc_cluster{cluster_id="BCS-K8S-40053"}) > 0 ,"cluster_id", "$1", "cc_cluster_id", "(.*)")\nunless on(cluster_id) up{job="prometheus"}
+job_status{table_name="PVP"}
+job_status{exported_instance="127.0.0.1"}
+(sum(rate(api_requests_total{job="apigateway", status =~ "2..|4.."}[5m])) by (api, stage) /  (sum(rate(api_requests_total{job="apigateway"}[5m])) by (api, stage) > 1)) * 100
+(sum(rate(api_requests_total{job="apigateway", status =~ "2..|4.."}[5m])) by (api, stage, resource, path) /  (sum(rate(api_requests_total{job="apigateway"}[5m])) by (api, stage, resource, path) > 1)) * 100
+histogram_quantile(0.90, rate(api_request_duration_milliseconds_bucket{job="apigateway"}[5m]))
+node_load15 / (count without(cpu, mode) (node_cpu_seconds_total{job="node-exporter", mode="idle"}))
+node_filesystem_readonly{fstype=~"ext[234]|btrfs|xfs|zfs"}
+rate(node_disk_io_time_seconds_total[2m])* 100
+(node_filesystem_files{fstype=~"ext[234]|btrfs|xfs|zfs"} - node_filesystem_files_free{fstype=~"ext[234]|btrfs|xfs|zfs"}) / node_filesystem_files{fstype=~"ext[234]|btrfs|xfs|zfs"} * 100
+kube_pod_container_status_restarts_total{job="kube-state-metrics"} - (kube_pod_container_status_restarts_total{job="kube-state-metrics"} offset 30m)\n
+kube_pod_container_status_restarts_total{job="kube-state-metrics", namespace!="kube-system"}
+kube_daemonset_status_number_ready{job="kube-state-metrics"} /\nkube_daemonset_status_desired_number_scheduled{job="kube-state-metrics"} * 100\n
+kube_daemonset_status_desired_number_scheduled{job="kube-state-metrics"} -\nkube_daemonset_status_current_number_scheduled{job="kube-state-metrics"}\n
+kube_daemonset_status_number_misscheduled{job="kube-state-metrics"}\n
+kube_job_status_failed{job="kube-state-metrics"}\n
+kubelet_running_pod_count{job="kubelet"}\n
+sum(rate(apiserver_request_count{job="apiserver",code=~"^(?:5..)$"}[5m])) by (cluster_id) /\nsum(rate(apiserver_request_count{job="apiserver"}[5m])) by(cluster_id) * 100\n
+histogram_quantile(0.01, sum by (job, cluster_id, le) (rate(apiserver_client_certificate_expiration_seconds_bucket{job="apiserver"}[5m])))\n
+floor(rate(kube_pod_container_status_restarts_total{job="kube-state-metrics"}[15m]) * 60 * 15)\n
+kube_pod_container_status_restarts_total{job="kube-state-metrics"}
+kube_job_status_failed{job="kube-state-metrics"}
+kube_pod_container_status_restarts_total{job="kube-state-metrics"} - (kube_pod_container_status_restarts_total{job="kube-state-metrics"} offset 30m)
+kube_daemonset_status_number_ready{job="kube-state-metrics"} /\nkube_daemonset_status_desired_number_scheduled{job="kube-state-metrics"} * 100
+kube_daemonset_status_desired_number_scheduled{job="kube-state-metrics"} -\nkube_daemonset_status_current_number_scheduled{job="kube-state-metrics"}
+kube_daemonset_status_number_misscheduled{job="kube-state-metrics"}
+kubelet_running_pod_count{job="kubelet"}
+sum(rate(apiserver_request_count{job="apiserver",code=~"^(?:5..)$"}[5m])) by (cluster_id) /\nsum(rate(apiserver_request_count{job="apiserver"}[5m])) by(cluster_id) * 100
+histogram_quantile(0.01, sum by (job, cluster_id, le) (rate(apiserver_client_certificate_expiration_seconds_bucket{job="apiserver"}[5m])))
+kube_pod_container_status_restarts_total{job="kube-state-metrics", namespace!~"bkapp-.*"} - (kube_pod_container_status_restarts_total{job="kube-state-metrics", namespace!~"bkapp-.*"} offset 30m) > 0
+absent(up{job="apigateway",cluster_id="BCS-K8S-40000"})
+idelta(Tbuspp_NS_Pid[2m])
+idelta(Tbuspp_NS_exporter_process_id[2m])
+up{}
+sum by (site_id) (increase(site_abnormal_requests_total{}[5m]))
+ceil(increase(kube_pod_container_status_restarts_total{job="kube-state-metrics", cluster_id=~"BCS-K8S-40001|BCS-K8S-40005|BCS-K8S-40006|BCS-K8S-40104", namespace=~"bkapp-.*", container=~".*-bkapp-.*"}[30m])  * on (namespace, pod) group_right kube_pod_labels) >= 1
+up{job="tbuspp_ns"}
+round(Tbuspp_NS_process_resident_memory_bytes / 1024 / 1024, 0.01)
+round(irate(Tbuspp_NS_TotalTcpFailRequestCount[2m]) * 60)
+round(irate(Tbuspp_NS_TotalHttpFailRequestCount[2m]) * 60)
+round(irate(Tbuspp_NS_TotalDBRequestTimeoutCount[2m]) * 60)
+round(irate(Tbuspp_NS_TotalDBRequestCount{instance!~"127.0.0.1:9151|127.0.0.1:9151"}[2m]) * 60)
+round(irate(Tbuspp_NS_TotalThPoolAddTaskCount{instance!~"127.0.0.1:9151|127.0.0.1:9151"}[2m]) * 60)
+round(irate(Tbuspp_NS_TotalSendInstNotifyToApiFailCount[2m]) * 60)
+Tbuspp_NS_LocalNsOnlineInstanceCount{instance!~"127.0.0.1:9151|127.0.0.1:9151"}
+up{job="tbuspp-service-monitor"}
+round(tbuspp_agent_process_resident_memory_bytes / 1024 / 1024, 0.01)
+round(tbuspp_agent_shm_usage / 1024 / 1024, 0.01)
+round(tbuspp_agent_message_delay_sum / tbuspp_agent_message_delay_count / 1000, 0.01)
+tbuspp_agent_message{type="kSendMsg",name="kMaxDelay"} / 1000
+node_filesystem_free_bytes{cluster_id="BCS-K8S-40000", namespace="apigateway", fstype!="tmpfs"} / node_filesystem_size_bytes{cluster_id="BCS-K8S-40000", namespace="apigateway"} * 100
+delta(node_sockstat_sockets_used{cluster_id="BCS-K8S-40000", namespace="apigateway"}[1h])
+predict_linear(node_sockstat_sockets_used{cluster_id="BCS-K8S-40000", namespace="apigateway"}[1h], 3600)
+(sum(rate(api_requests_total{job="apigateway", status =~ "2..|4.."}[1m])) by (api, stage) /  (sum(rate(api_requests_total{job="apigateway"}[1m])) by (api, stage) > 1)) * 100
+(sum(rate(api_requests_total{job="apigateway", status =~ "2..|4.."}[1m])) by (api, stage, resource, path) /  (sum(rate(api_requests_total{job="apigateway"}[1m])) by (api, stage, resource, path) > 1)) * 100
+max by (cluster_id, instance, device, mountpoint) ((node_filesystem_size_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"} - predict_linear(node_filesystem_free_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"}[1h],4 * 3600)) / node_filesystem_size_bytes{fstype=~"ext[234]|btrfs|xfs|zfs"}) * 100
+Tbuspp_NS_process_open_fds
+podagent_loop
+sum(floor(increase(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="TotalReqCnt"}[5m]))) by (service)
+sum(rate(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="ErrRspCnt"}[5m])) by (service) / sum(rate(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="TotalReqCnt"}[5m])) by (service)
+floor(sum(increase(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="TotalReqCnt"}[5m])) by (service))
+sum(increase(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="TotalReqCnt"}[5m])) by (service)  / \nsum(increase(HandleBatchQueryCommonIdByRailid{service="common-id",category="c-http_operation",method_type="TotalReqCnt"}[5m] offset 5m)) by (service)
+sum(increase(go_frame_request_counter{app="minaMysteryShop", cluster_id="BCS-K8S-40109", uri="/MinaMysteryShop.MinaMysteryShop/ReqFetchStatus"}[1m]))
+histogram_quantile(0.9, sum(rate(api_visited_time_consumed_bucket{exported_endpoint!="api.applications.create_v2", exported_endpoint!="api.process.metrics.get", exported_endpoint!="None"}[30m])) by (exported_endpoint, method, le)) > 3000
+bottomk(10, sum(rate(push_time_seconds{instance=~"[0-9]+_[a-z]+_[0-9]+"}[1m])) by (instance))
+ceil(increase(kube_pod_container_status_restarts_total{job="kube-state-metrics", cluster_id=~"BCS-K8S-40001|BCS-K8S-40005|BCS-K8S-40006|BCS-K8S-40104|BCS-K8S-40096", namespace=~"bkapp-.*", container=~".*-bkapp-.*"}[30m])  * on (namespace, pod) group_right kube_pod_labels) >= 1
+ceil(increase(kube_pod_container_status_restarts_total{job="kube-state-metrics", cluster_id=~"BCS-K8S-40001|BCS-K8S-40005|BCS-K8S-40006|BCS-K8S-40104|BCS-K8S-40051", namespace=~"bkapp-.*", container=~".*-bkapp-.*"}[30m])  * on (namespace, pod) group_right kube_pod_labels) >= 1
+backup_package_count
+is_package_updated
+max(rabbitmq_instance_queues) by (vhost, bk_cluster, bk_instance) / max(rabbitmq_instance_limits{resource="queue"}) by (vhost, bk_cluster, bk_instance)
+max(rabbitmq_instance_connections) by (vhost, bk_cluster, bk_instance) / max(rabbitmq_instance_limits{resource="connection"}) by (vhost, bk_cluster, bk_instance)
+abs((sum(increase(HLReactRtiSvrafter_event_trigger_counter{cluster_id="BCS-K8S-40109", EventName!="none"}[1m])) by (EventName) > 1000) / (sum(increase(HLReactRtiSvrafter_event_trigger_counter{cluster_id="BCS-K8S-40109"}[1m] offset 1m )) by (EventName) > 1000 )   - 1 ) * 100
+sum(increase(meshgatemesh_gate_call_server_error_counter{cluster_id="BCS-K8S-40109", error_url!="", error_code!="0"}[1m])) by (error_url,error_code)
+sum(rate(app_requests_total{service="apigateway"}[1h])) by (api, stage, resource, app_code, instance) /  ignoring (instance) group_left min(label_join(app_rate_limit_token_produce_rate{name!=""}, "app_code", "", "name")) by (api, stage, resource, app_code)
+sum(rate(app_requests_total{service="apigateway"}[1h]) unless on (app_code) label_join(app_rate_limit_token_produce_rate{name!=""}, "app_code", "", "name")) by (api, stage, resource, app_code, instance) /  ignoring (instance, app_code) group_left min(app_rate_limit_token_produce_rate{name=""}) by (api, stage, resource)
+sum(rate(app_requests_total{service="apigateway"}[12h]) unless on (api, stage, resource, app_code) label_join(app_rate_limit_token_produce_rate{service="apigateway", name!=""}, "app_code", "", "name")) by (api, stage, resource, app_code) / ignoring (app_code) group_left min(app_rate_limit_token_produce_rate{service="apigateway", name=""}) by (api, stage, resource, app_code)
+sum(rate(app_requests_total{service="apigateway"}[12h])) by (api, stage, resource, app_code) / min(label_join(app_rate_limit_token_produce_rate{service="apigateway",name!=""}, "app_code", "", "name")) by (api, stage, resource, app_code)
+sum(rate(api_requests_total{service="apigateway"}[12h])) by (api, stage) / ignoring(resource) group_left min(stage_rate_limit_token_produce_rate{service="apigateway"}) by (api, stage)
+ceil(increase(kube_pod_container_status_terminated_reason{reason="OOMKilled", cluster_id!~"BCS-K8S-25231|BCS-K8S-25269|BCS-K8S-40000", pod=~"bkapp-.*"}[30m]) * on (namespace, pod) group_right kube_pod_labels)
+max by (job, namespace) (up{service="web-prod-iam"})
+max by (job, namespace) (up{service="web-stage-iam"})
+max by (job, namespace, cluster) (up{service="web-prod-iam"})
+histogram_quantile(0.90, sum(rate(api_request_duration_milliseconds_bucket{namespace="prod"}[1m])) by (le))
+max by (job, namespace,cluster) (up{service="web-stage-iam"})
+sum by (namespace, pod) (\n          max by(namespace, pod) (\n            kube_pod_status_phase{job="kube-state-metrics", namespace=~"prod|stage", phase=~"Pending|Unknown"}\n          ) * on(namespace, pod) group_left(owner_kind) topk by(namespace, pod) (\n            1, max by(namespace, pod, owner_kind) (kube_pod_owner{owner_kind!="Job"})\n          )\n        )
+kube_deployment_status_observed_generation{job="kube-state-metrics", namespace=~"prod"}\n          -\nkube_deployment_metadata_generation{job="kube-state-metrics", namespace=~"prod"}
+(idelta(tbuspp_agent_process_id{}[2m]) == bool 0) * (idelta(tbuspp_agent_exporter_process_id{}[2m]) != bool 0)
+(idelta(tbuspp_agent_process_id{}[2m]) != bool 0) * (idelta(tbuspp_agent_exporter_process_id{}[2m]) == bool 0)
+up{job=~".*tbuspp_agent.*"}
+tbuspp_agent_load_metrics_status{}
+(delta(tbuspp_agent_process_id{}[2m]) != bool 0) * (delta(tbuspp_agent_exporter_process_id{}[2m]) == bool 0)
+round(irate(tbuspp_agent_process_cpu_seconds_total{}[2m]) * 100, 0.01)
+round(tbuspp_agent_process_resident_memory_bytes{} / 1024 / 1024, 0.01)
+round(tbuspp_agent_shm_usage{} / 1024 / 1024, 0.01)
+round(tbuspp_agent_message_delay_sum{} / tbuspp_agent_message_delay_count{} / 1000, 0.01)
+tbuspp_agent_message{type="kRecvMsg",name="kMaxDelay"} / 1000
+up{job=~".*tbuspp_ns.*"}
+(idelta(Tbuspp_NS_Pid{}[2m]) == bool 0) * (idelta(Tbuspp_NS_exporter_process_id{}[2m]) != bool 0)
+Tbuspp_NS_load_metrics_status{}
+(idelta(Tbuspp_NS_Pid{}[2m]) != bool 0) * (idelta(Tbuspp_NS_exporter_process_id{}[2m]) == bool 0)
+round(irate(Tbuspp_NS_process_cpu_seconds_total{}[2m]) * 100, 0.01)
+round(Tbuspp_NS_process_resident_memory_bytes{} / 1024 / 1024, 0.01)
+round(irate(Tbuspp_NS_TotalTcpFailRequestCount{}[2m]) * 60)
+round(irate(Tbuspp_NS_TotalHttpFailRequestCount{}[2m]) * 60)
+round(irate(Tbuspp_NS_TotalDBRequestTimeoutCount{}[2m]) * 60)
+round(irate(Tbuspp_NS_TotalSendInstNotifyToApiFailCount{}[2m]) * 60)
+up{job="tbuspp-metrics-center"}
+resets(process_cpu_seconds_total{job="tbuspp-metrics-center"}[2m])
+irate(process_cpu_seconds_total{job="tbuspp-metrics-center"}[2m]) * 100
+process_resident_memory_bytes{job="tbuspp-metrics-center"} / 1024 / 1024
+irate(metrics_registry_create_worker_times{result="true"}[2m]) * 60
+irate(metrics_registry_create_worker_times{result="false"}[2m]) * 60
+irate(metrics_registry_update_endpoints_times{result="false"}[2m]) * 60
+irate(metrics_registry_deal_addr_count{result="false"}[2m]) * 60
+irate(metrics_registry_deal_http_addr_count{result!="success"}[2m]) * 60
+sum(increase({job="ddzbattlepass", req="client", stat="failed"}[1m])) by (method, code)
+increase(go_frame_ddzbattlepass_logic{job="ddzbattlepass",  req="config", code!="0"}[1m])
+floor(sum(increase(QueryUserGameList{cluster_id="BCS-K8S-40174",service="appstore",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(QueryUserGame{service="appstore",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(QueryUserGameBatch{cluster_id="BCS-K8S-40174",service="appstore",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(GetAuthSessionCredential{cluster_id="BCS-K8S-40174",service="appstore",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(QueryUserGame{cluster_id="BCS-K8S-40174",service="appstore",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+sum(rate(django_http_requests_total_by_view_transport_method_total{cluster_id="BCS-K8S-40096",job="ieod-bkapp-iam-prod-web", view!="prometheus-django-metrics", view!~"open.[*]"}[1m])) BY (view, method)
+sum(rate(django_http_requests_total_by_view_transport_method_total{cluster_id="BCS-K8S-40096",job=~"ieod-bkapp-iam-prod-web", view=~"open.*"}[1m])) BY (view, method)
+histogram_quantile(0.9, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{cluster_id="BCS-K8S-40096",job="ieod-bkapp-iam-prod-web", view!="prometheus-django-metrics", view!~"open.[*]"}[1m])) BY (view, method, le))
+histogram_quantile(0.9, sum(rate(django_http_requests_latency_seconds_by_view_method_bucket{cluster_id="BCS-K8S-40096",job=~"ieod-bkapp-iam-prod-web", view=~"open.*"}[1m])) BY (view, method, le))
+sum(increase(go_frame_ddzuserprivilege_logic{stat="total", job=~"ddzuserprivilege", code!="0"}[5m]))
+sum(increase(monitor_sum{exported_service="monitor_35329262"}[1m]))
+sum by(cluster_id, namespace, pod) (kube_pod_status_phase{job="kube-state-metrics",phase=~"Pending|Unknown"})
+min by (server, address, loadbalance, instance, cluster_id) (loadbalance_haproxy_server_status{loadbalance=~".*30030"}) == 0
+sum(rate(container_cpu_usage_seconds_total{namespace="lb-underlay"}[1m])) by (container_name, io_tencent_bcs_netsvc_requestip, instance)
+up{job=~".*tbuspp.*"}
+delta(tbuspp_agent_process_id{}[2m]) != bool 0
+delta(tbuspp_agent_exporter_process_id{}[2m]) != bool 0
+max by(cluster_id, namespace, pod_name, container_name, instance) (container_memory_usage_bytes{container_name!="",pod_name!="",namespace="lb-underlay"} / (container_spec_memory_limit_bytes{container_name!="",pod_name!="",namespace="lb-underlay"} > 0)) * 100
+max by (cluster_id, namespace, instance, pod_name, container_name) (rate(container_network_receive_bytes_total{job=~"kubelet|cadvisor", container_name!="", pod_name!=""}[2m]) / 1000 / 1000) > 5
+floor(sum(increase(CheckGrayInfo{cluster_id="BCS-K8S-40174",service="game-gray",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(CheckGrayInfoForGivenGame{cluster_id="BCS-K8S-40174",service="game-gray",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+floor(sum(increase(QueryGrayInfoForGivenType{cluster_id="BCS-K8S-40174",service="game-gray",category="c-operation",method_type="ErrRspCnt"}[1m])) by (service))
+max(circuit_breaker_target_status) by (api, resource, stage, target)
+max by (cluster_id, job, instance) (up{job="apigateway"})
+sum(hlsvr_business_trigger_count{job="ddzearningredpacket",trigger_type="ExchangeMoneySum",name="Total"})-absent(sum(hlsvr_business_trigger_count{job="ddzearningredpacket",trigger_type="ExchangeMoneySum",name="Total"}offset 1d))
+100 - (avg(irate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+thanos_compactor_halted
+sum(rate(thanos_objstore_bucket_operations_total{cluster_id="BCS-K8S-40053"}[10m]))
+sum(thanos_blocks_meta_synced{cluster_id="BCS-K8S-40053",job=~"thanos-compact"}) by (cluster_id)

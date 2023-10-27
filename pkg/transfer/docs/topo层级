@@ -1,0 +1,42 @@
+#### cache 数据结构
+
+    ```
+    {
+      "127.0.0.1": [
+        {
+          "bk_biz_name": "",
+          "bk_biz_name": "1",
+          "bk_set_name": "set",
+          "bk_module_id": 5,
+          "bk_module_name": "module",
+          "Customize": [
+            {
+              "Name": "consumer1",
+              "Id": 1
+            }
+          ]
+        }
+      ]
+    }```
+    type CMDBLevel struct {
+        Count int    `json:"count"`
+        Ip    string `json:"inner_ip"` //todo
+        Info  []Topo `json:"info"`
+    }
+        - 设计思路,ip set module 与 biz 以及 自定义结构,均为多对多关系
+        - 通过key:ip 可以获取该主机对应的所有set,biz,module 以及自定义
+        - 树形结构的每条分支为一个数组
+        - cmdb 提供主机统计信息,故无法在查询时过滤
+        - ip 对应的所有biz信息有search_host提供
+        - 层级 仅由search_biz_topo 提供
+        
+
+
+#### cache 大小
+    单条数据大小约为157b
+    n台主机,自定义b个层级
+    最好情况为 n +1 +b +b + b 
+    最坏情况为n*n*n*n*b
+    
+    
+    

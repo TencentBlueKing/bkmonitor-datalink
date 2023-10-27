@@ -1,0 +1,13 @@
+new-query:
+  variations:
+    raw: true
+    query: false
+  targeting:
+    - query: name in ["tianyizhu", "shamcleren", "mandochen", "jackyliang"]
+      percentage:
+        raw: 100
+        query: 0
+  defaultRule:
+    percentage:
+      raw: 0
+      query: 100

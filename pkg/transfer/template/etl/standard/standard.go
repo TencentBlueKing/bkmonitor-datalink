@@ -56,11 +56,18 @@ func (p *Processor) FillDimensions(record *Record) {
 	if record.BKAgentID != nil {
 		record.Dimensions[define.RecordBKAgentID] = conv.String(*record.BKAgentID)
 	}
+
+	// 为了避免 bk_biz_id/bk_host_ip 在 icmp 任务重被覆盖
+	// 当且仅当维度中不存在才赋值
 	if record.BKBizID != nil {
-		record.Dimensions[define.RecordBKBizID] = conv.String(*record.BKBizID)
+		if _, ok := record.Dimensions[define.RecordBKBizID]; !ok {
+			record.Dimensions[define.RecordBKBizID] = conv.String(*record.BKBizID)
+		}
 	}
 	if record.BKHostID != nil {
-		record.Dimensions[define.RecordBKHostID] = conv.String(*record.BKHostID)
+		if _, ok := record.Dimensions[define.RecordBKHostID]; !ok {
+			record.Dimensions[define.RecordBKHostID] = conv.String(*record.BKHostID)
+		}
 	}
 }
 

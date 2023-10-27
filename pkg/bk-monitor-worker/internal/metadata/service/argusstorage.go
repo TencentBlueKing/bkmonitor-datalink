@@ -51,3 +51,8 @@ func (a ArgusStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	}
 	return consulConfig, nil
 }
+
+// CreateTable 创建存储
+func (a ArgusStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig map[string]interface{}) error {
+	return nil
+}

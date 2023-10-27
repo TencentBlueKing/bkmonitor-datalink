@@ -28,7 +28,7 @@ type ResultTableField struct {
 	Unit           string    `json:"unit" gorm:"size:32"`
 	Tag            string    `json:"tag" gorm:"size:16"`
 	IsConfigByUser bool      `json:"is_config_by_user"`
-	DefaultValue   string    `json:"default_value" gorm:"size:128;default:null"`
+	DefaultValue   *string   `json:"default_value" gorm:"size:128;default:null"`
 	Creator        string    `json:"creator" gorm:"size:32"`
 	CreateTime     time.Time `json:"create_time" gorm:"column:create_time;default:null"`
 	LastModifyUser string    `json:"last_modify_user" gorm:"size:32"`

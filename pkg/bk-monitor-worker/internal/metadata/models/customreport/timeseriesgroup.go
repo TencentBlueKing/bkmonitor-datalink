@@ -35,7 +35,7 @@ import (
 // gen:qs
 type TimeSeriesGroup struct {
 	CustomGroupBase
-	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique"`
+	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
 	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
 }
 
@@ -87,7 +87,7 @@ func (ts *TimeSeriesGroup) UpdateMetricsFromRedis() error {
 			FieldType:      models.ResultTableFieldTypeFloat,
 			Creator:        username,
 			LastModifyUser: username,
-			DefaultValue:   "0",
+			DefaultValue:   nil,
 			IsConfigByUser: true,
 			LastModifyTime: time.Now(),
 			CreateTime:     time.Now(),
@@ -106,7 +106,7 @@ func (ts *TimeSeriesGroup) UpdateMetricsFromRedis() error {
 			FieldType:      models.ResultTableFieldTypeString,
 			Creator:        username,
 			LastModifyUser: username,
-			DefaultValue:   "",
+			DefaultValue:   nil,
 			IsConfigByUser: true,
 			LastModifyTime: time.Now(),
 			CreateTime:     time.Now(),

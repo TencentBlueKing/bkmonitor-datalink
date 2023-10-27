@@ -11,16 +11,20 @@ package api
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var gseApi *bkgse.Client
+var bcsClusterManager *bcsclustermanager.Client
+var cmdbApi *cmdb.Client
 
 const (
 	BkApiBaseUrlPath       = "bk_api.api_url"
@@ -55,10 +59,54 @@ func GetGseApi() (*bkgse.Client, error) {
 			AuthorizationParams: map[string]string{"bk_username": "admin"},
 		}
 	}
-
-	gseApi, err := bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	var err error
+	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
 	if err != nil {
 		return nil, err
 	}
 	return gseApi, nil
+}
+
+const (
+	BkApiBcsApiGatewaySchemaPath = "bk_api.bcs_api_gateway_schema"
+	BkApiBcsApiGatewayHostPath   = "bk_api.bcs_api_gateway_host"
+	BkApiBcsApiGatewayPortPath   = "bk_api.bcs_api_gateway_port"
+	BkApiBcsApiGatewayTokenPath  = "bk_api.bcs_api_gateway_token"
+)
+
+func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
+	if bcsClusterManager != nil {
+		return bcsClusterManager, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s://%s:%v/bcsapi/v4/clustermanager/v1/", viper.GetString(BkApiBcsApiGatewaySchemaPath), viper.GetString(BkApiBcsApiGatewayHostPath), viper.GetInt(BkApiBcsApiGatewayPortPath)),
+		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", viper.GetString(BkApiBcsApiGatewayTokenPath))},
+		JsonMarshaler:       jsonx.Marshal,
+	}
+	var err error
+	bcsClusterManager, err = bcsclustermanager.New(true, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return bcsClusterManager, nil
+}
+
+func GetCmdbApi() (*cmdb.Client, error) {
+	if bcsClusterManager != nil {
+		return cmdbApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", viper.GetString(BkApiBaseUrlPath)),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             viper.GetString(BkApiAppCodePath),
+		AppSecret:           viper.GetString(BkApiAppSecretPath),
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	cmdbApi, err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return cmdbApi, nil
 }

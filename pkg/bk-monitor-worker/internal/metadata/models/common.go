@@ -11,7 +11,9 @@ package models
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"time"
 
@@ -52,6 +54,31 @@ func (r *OptionBase) InterfaceValue() (interface{}, error) {
 			return nil, err
 		}
 		return value, nil
+	}
+}
+
+// ParseOptionValue 解析option的interface{}的类型
+func ParseOptionValue(value interface{}) (string, string, error) {
+	if value == nil {
+		return "", "", errors.New("ParseOptionValue value can not be nil")
+	}
+	valueStr, err := jsonx.MarshalString(value)
+	if err != nil {
+		return "", "", err
+	}
+	switch reflect.TypeOf(value).Kind() {
+	case reflect.Bool:
+		return valueStr, "bool", nil
+	case reflect.Slice, reflect.Array:
+		return valueStr, "list", nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return valueStr, "int", nil
+	case reflect.Map:
+		return valueStr, "dict", nil
+	default:
+		return value.(string), "string", nil
 	}
 }
 

@@ -30,7 +30,7 @@ type ResultTable struct {
 	LastModifyUser string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
 	LastModifyTime time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	BkBizId        int       `gorm:"bk_biz_id;default:0" json:"bk_biz_id"`
-	IsDeleted      bool      `gorm:"is_deleted;default:false" json:"is_deleted"`
+	IsDeleted      bool      `gorm:"is_deleted" json:"is_deleted"`
 	Label          string    `gorm:"label;size:128;default:others" json:"label"`
 	IsEnable       bool      `gorm:"is_enable;default:true" json:"is_enable"`
 	DataLabel      string    `gorm:"data_label;size:128" json:"data_label"`

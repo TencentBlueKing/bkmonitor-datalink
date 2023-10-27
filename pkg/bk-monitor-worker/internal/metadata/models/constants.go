@@ -14,15 +14,38 @@ const (
 	ResultTableLabelOther = "others"
 	// ResultTableFieldTagMetric 指标字段
 	ResultTableFieldTagMetric = "metric"
+	// ResultTableFieldTagDimension dimension
+	ResultTableFieldTagDimension = "dimension"
+	// ResultTableFieldTagTimestamp timestamp
+	ResultTableFieldTagTimestamp = "timestamp"
+
+	// ResultTableFieldTypeInt int type
+	ResultTableFieldTypeInt = "int"
 	// ResultTableFieldTypeFloat float type
 	ResultTableFieldTypeFloat = "float"
 	// ResultTableFieldTypeString string type
 	ResultTableFieldTypeString = "string"
-	// ResultTableFieldTagDimension dimension
-	ResultTableFieldTagDimension = "dimension"
+	// ResultTableFieldTypeObject object type
+	ResultTableFieldTypeObject = "object"
+	// ResultTableFieldTypeBoolean boolean type
+	ResultTableFieldTypeBoolean = "boolean"
+	// ResultTableFieldTypeTimestamp timestamp type
+	ResultTableFieldTypeTimestamp = "timestamp"
 
 	// EventTargetDimensionName target维度
 	EventTargetDimensionName = "target"
+
+	ResultTableSchemaTypeFree    = "free"
+	ResultTableSchemaTypeDynamic = "dynamic"
+	ResultTableSchemaTypeFixed   = "fixed"
+)
+
+// ResultTableFieldOption
+const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdb专用，表示字段是否不必写入到influxdb
+
+// ResultTableOption
+const (
+	OptionCustomReportDimensionValues = "dimension_values"
 )
 
 // ClusterStorageType
@@ -30,6 +53,9 @@ const (
 	StorageTypeInfluxdb = "influxdb"
 	StorageTypeKafka    = "kafka"
 	StorageTypeES       = "elasticsearch"
+	StorageTypeRedis    = "redis"
+	StorageTypeBkdata   = "bkdata"
+	StorageTypeArgus    = "argus"
 	StorageTypeVM       = "victoria_metrics"
 )
 
@@ -48,6 +74,47 @@ const (
 	InfluxdbProxyStorageRouterKey = "influxdb_proxy"       // 结果表使用的 proxy 集群和实际存储集群的关联关系
 	InfluxdbTagInfoKey            = "tag_info"             // 标签信息，主要是用于数据分片
 	QueryVmStorageRouterKey       = "query_vm_router"      // 查询 vm 存储的路由信息
+)
+
+// bcs cluster
+const (
+	BcsClusterStatusRunning       = "running"                   // 集群状态running
+	BcsClusterStatusDeleted       = "deleted"                   // 集群状态deleted
+	BcsDataTypeK8sMetric          = "k8s_metric"                // bcs metric类型数据
+	BcsDataTypeK8sEvent           = "k8s_event"                 // bcs event类型数据
+	BcsDataTypeCustomMetric       = "custom_metric"             // bcs custom_event类型数据
+	BcsResourceGroupName          = "monitoring.bk.tencent.com" // 容器资源组名
+	BcsResourceVersion            = "v1beta1"                   // 容器资源版本号
+	BcsResourceDataIdResourceKind = "DataID"                    // data_id注入资源类型
+)
+
+// Label
+const (
+	LabelTypeSource      = "source_label"
+	LabelTypeResultTable = "result_table_label"
+	LabelTypeType        = "type_label"
+)
+
+const (
+	TSGroupDefaultMeasurement = "__default__"
+)
+
+// ReplaceConfig
+const (
+	ReplaceTypesMetric         = "metric"
+	ReplaceTypesDimension      = "dimension"
+	ReplaceCustomLevelsCluster = "cluster"
+)
+
+// Datasource
+const (
+	MinDataId = 1500000 // DATA_ID最小值
+	MaxDataId = 2097151 // DATA_ID最大值
+)
+
+// DataSourceOption
+const (
+	OptionTimestampUnit = "timestamp_precision"
 )
 
 // root consul path template

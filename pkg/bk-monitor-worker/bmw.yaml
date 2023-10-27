@@ -12,6 +12,7 @@ service:
       refresh_influxdb_route: 10
       refresh_es_storage: 10
       refresh_event_dimension: 10
+      discover_bcs_clusters: 10
 broker:
   redis:
     type: "single"
@@ -73,3 +74,14 @@ bk_api:
   stage: "prod"
   app_code: ""
   app_secret: ""
+  bcs_api_gateway_host: ""
+  bcs_api_gateway_port: 443
+  bcs_api_gateway_token: ""
+  bcs_cluster_bk_env_label: ""
+bcs:
+  enable_bcs_gray: false
+  gray_cluster_id_list: []
+  cluster_bk_env_label: ""
+  kafka_storage_cluster_id: 0
+  influxdb_default_proxy_cluster_name_for_k8s: "default"
+  custom_event_storage_cluster_id: 0

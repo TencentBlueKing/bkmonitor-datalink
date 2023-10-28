@@ -12,6 +12,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 )
@@ -73,11 +75,10 @@ func GetProcessPid() string {
 		fmt.Println("unable to get the path of pid file")
 		return pid
 	}
-
-	f, err := os.ReadFile(pidPath)
-	if err != nil {
-		fmt.Printf("unable to open pidfile: %s, error:%s \n", pidPath, err)
+	pidFile := filepath.Join(pidPath, "bkmonitorbeat.pid")
+	if f, err := os.ReadFile(pidFile); err == nil {
+		// 删除尾部换行符
+		pid = strings.TrimRight(string(f), "\n")
 	}
-	fmt.Println(string(f))
-	return string(f)
+	return pid
 }

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"log"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -25,6 +26,7 @@ type UserInfo struct {
 
 // HandleExampleTask
 func HandleExampleTask(ctx context.Context, t *task.Task) error {
+	logger.Info("example func trigger")
 	var p UserInfo
 	if err := json.Unmarshal(t.Payload, &p); err != nil {
 		return fmt.Errorf("json.Unmarshal failed: %v", err)

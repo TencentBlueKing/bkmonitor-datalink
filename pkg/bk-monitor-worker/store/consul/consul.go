@@ -14,35 +14,12 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
-
-const (
-	consulAddressPath    = "store.consul.address"
-	consulPortPath       = "store.consul.port"
-	consulSrvNamePath    = "store.consul.srv_name"
-	consulConsulAddrPath = "store.consul.consul_addr"
-	consulTagPath        = "store.consul.tag"
-	consulTTLPath        = "store.consul.ttl"
-	consulTaskPath       = "store.consul.task"
-	ConsulBasePath       = "store.consul.basic_path"
-)
-
-func init() {
-	viper.SetDefault(consulAddressPath, "")
-	viper.SetDefault(consulPortPath, 8500)
-	viper.SetDefault(consulSrvNamePath, "bmw")
-	viper.SetDefault(consulConsulAddrPath, "127.0.0.1:8500")
-	viper.SetDefault(consulTagPath, []string{"bmw"})
-	viper.SetDefault(consulTTLPath, "")
-	viper.SetDefault(consulTaskPath, "")
-	viper.SetDefault(ConsulBasePath, "")
-}
 
 type Instance struct {
 	ctx       context.Context
@@ -57,12 +34,12 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 	client, err := consulUtils.NewConsulInstance(
 		ctx,
 		consulUtils.InstanceOptions{
-			SrvName:    viper.GetString(consulSrvNamePath),
-			Addr:       viper.GetString(consulAddressPath),
-			Port:       viper.GetInt(consulPortPath),
-			ConsulAddr: viper.GetString(consulConsulAddrPath),
-			Tags:       viper.GetStringSlice(consulTagPath),
-			TTL:        viper.GetString(consulTTLPath),
+			SrvName:    config.StorageConsulSrvName,
+			Addr:       config.StorageConsulAddress,
+			Port:       config.StorageConsulPort,
+			ConsulAddr: config.StorageConsulAddr,
+			Tags:       config.StorageConsulTag,
+			TTL:        config.StorageConsulTll,
 		},
 	)
 	if err != nil {
@@ -71,7 +48,7 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 	}
 	// new a kv client
 	conf := api.DefaultConfig()
-	conf.Address = viper.GetString(consulAddressPath)
+	conf.Address = config.StorageConsulAddress
 	apiClient, err := api.NewClient(conf)
 	if err != nil {
 		logger.Errorf("new consul api client error, %v", err)
@@ -86,12 +63,7 @@ func GetInstance(ctx context.Context) (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	newInstance, err := NewInstance(ctx)
-	if err != nil {
-		return nil, err
-	}
-	instance = newInstance
-	return instance, nil
+	return NewInstance(ctx)
 }
 
 // Open new a instance
@@ -119,8 +91,10 @@ func (c *Instance) Get(key string) ([]byte, error) {
 		return nil, err
 	}
 	if kvPair == nil {
-		return nil, NotFoundErr
+		// Key not exist
+		return nil, nil
 	}
+
 	return kvPair.Value, nil
 }
 
@@ -137,7 +111,3 @@ func (c *Instance) Delete(key string) error {
 func (c *Instance) Close() error {
 	return nil
 }
-
-var (
-	NotFoundErr = errors.New("path not found")
-)

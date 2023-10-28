@@ -16,11 +16,13 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/bytedance/sonic"
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -62,8 +64,10 @@ func (eg EventGroup) UpdateEventDimensionsFromES(ctx context.Context) error {
 func (eg EventGroup) GetESClient(ctx context.Context) (*elasticsearch.Elasticsearch, error) {
 	// 获取对应的es客户端
 	dbSession := mysql.GetDBSession()
+	qs := storage.NewESStorageQuerySet(dbSession.DB)
+	qs = qs.TableIDEq(eg.TableID)
 	var esStorage storage.ESStorage
-	if err := storage.NewESStorageQuerySet(dbSession.DB).TableIDEq(eg.TableID).One(&esStorage); err != nil {
+	if err := qs.One(&esStorage); err != nil {
 		logger.Errorf("table: [%s] find es storage record error, %v", eg.TableID, err)
 		return nil, err
 	}
@@ -77,6 +81,9 @@ func (eg EventGroup) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 
 func (eg EventGroup) GetESData(ctx context.Context) (map[string][]string, error) {
 	client, err := eg.GetESClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// 获取当前index下，所有的event_name集合
 	resp, err := client.SearchWithBody(
 		ctx,
@@ -87,12 +94,16 @@ func (eg EventGroup) GetESData(ctx context.Context) (map[string][]string, error)
 		return nil, err
 	}
 	defer resp.Close()
+	if resp.IsError() {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, errors.Errorf("es resp error, status code [%v], body:[%s]", resp.StatusCode, body)
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 	var eventNameCount EventNameCountResult
-	err = jsonx.Unmarshal(body, &eventNameCount)
+	err = sonic.Unmarshal(body, &eventNameCount)
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +124,18 @@ func (eg EventGroup) GetESData(ctx context.Context) (map[string][]string, error)
 				return
 			}
 			defer resp.Close()
+			if resp.IsError() {
+				body, _ := io.ReadAll(resp.Body)
+				logger.Errorf("es resp error, status code [%v], body:[%s]", resp.StatusCode, body)
+				return
+			}
 			body, err := io.ReadAll(resp.Body)
 			if err != nil {
 				logger.Errorf("table_id [%s] read [%s] response body error, %s", eg.TableID, eventName, err)
 				return
 			}
 			var eventDimensionResult EventDimensionResult
-			err = jsonx.Unmarshal(body, &eventDimensionResult)
+			err = sonic.Unmarshal(body, &eventDimensionResult)
 			if err != nil {
 				logger.Errorf("table_id [%s] unmarshal [%s] response body error, %s", eg.TableID, eventName, err)
 				return

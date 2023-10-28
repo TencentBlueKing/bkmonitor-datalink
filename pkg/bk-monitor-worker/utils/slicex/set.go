@@ -31,22 +31,3 @@ func StringList2Set(l []string) mapset.Set {
 	}
 	return set
 }
-
-// UintSet2List convert set to list
-func UintSet2List(s mapset.Set) []uint {
-	t := s.ToSlice()
-	var l []uint
-	for _, v := range t {
-		l = append(l, v.(uint))
-	}
-	return l
-}
-
-// UintList2Set convert list to set
-func UintList2Set(l []uint) mapset.Set {
-	set := mapset.NewSet()
-	for _, i := range l {
-		set.Add(i)
-	}
-	return set
-}

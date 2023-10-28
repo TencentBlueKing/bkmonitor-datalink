@@ -23,8 +23,6 @@ import (
 
 //go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo.go
 
-var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果表类型,vm类型结果表不写入consul
-
 // Event: cluster info model
 // gen:qs
 type ClusterInfo struct {

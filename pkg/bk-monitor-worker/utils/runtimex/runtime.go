@@ -9,7 +9,11 @@
 
 package runtimex
 
-import "runtime"
+import (
+	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"runtime"
+)
 
 // GetFuncName get function name
 func GetFuncName() string {
@@ -21,4 +25,40 @@ func GetFuncName() string {
 func GetCallerFuncName() string {
 	pc, _, _, _ := runtime.Caller(2)
 	return runtime.FuncForPC(pc).Name()
+}
+
+var PanicHandlers = []func(any){
+	logPanicHandler,
+}
+
+func logPanicHandler(r any) {
+	const size = 64 << 10
+	stacktrace := make([]byte, size)
+	stacktrace = stacktrace[:runtime.Stack(stacktrace, false)]
+	if _, ok := r.(string); ok {
+		logger.Errorf("observed a panic: %s\n%s", r, stacktrace)
+	} else {
+		logger.Errorf("observed a panic: %#v (%v)\n%s", r, r, stacktrace)
+	}
+}
+
+func HandleCrash() {
+	if r := recover(); r != nil {
+		for _, fn := range PanicHandlers {
+			fn(r)
+		}
+	}
+}
+
+func HandleCrashToChan(errorReceiveChan chan<- error) {
+	if r := recover(); r != nil {
+		const size = 64 << 10
+		stacktrace := make([]byte, size)
+		stacktrace = stacktrace[:runtime.Stack(stacktrace, false)]
+		if _, ok := r.(string); ok {
+			errorReceiveChan <- fmt.Errorf("observed a panic: %s\n%s", r, stacktrace)
+		} else {
+			errorReceiveChan <- fmt.Errorf("observed a panic: %#v (%v)\n%s", r, r, stacktrace)
+		}
+	}
 }

@@ -15,45 +15,20 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
+	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
-	"github.com/spf13/viper"
 
 	common "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	task "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
-
-const (
-	redisModePath             = "broker.redis.mode"
-	redisMasterNamePath       = "broker.redis.master_name"
-	redisAddressPath          = "broker.redis.address"
-	redisHostPath             = "broker.redis.host"
-	redisPortPath             = "broker.redis.port"
-	redisUsernamePath         = "broker.redis.username"
-	redisSentinelPasswordPath = "broker.redis.sentinel_password"
-	redisPasswordPath         = "broker.redis.password"
-	redisDatabasePath         = "broker.redis.database"
-	redisDialTimeoutPath      = "broker.redis.dial_timeout"
-	redisReadTimeoutPath      = "broker.redis.read_timeout"
-)
-
-func init() {
-	viper.SetDefault(redisMasterNamePath, "")
-	viper.SetDefault(redisAddressPath, []string{"127.0.0.1:6379"})
-	viper.SetDefault(redisHostPath, "127.0.0.1")
-	viper.SetDefault(redisPortPath, 6379)
-	viper.SetDefault(redisUsernamePath, "root")
-	viper.SetDefault(redisPasswordPath, "")
-	viper.SetDefault(redisSentinelPasswordPath, "")
-	viper.SetDefault(redisDatabasePath, 0)
-	viper.SetDefault(redisDialTimeoutPath, time.Second*10)
-	viper.SetDefault(redisReadTimeoutPath, time.Second*10)
-}
 
 // set ttl
 const statsTTL = 90 * 24 * time.Hour
@@ -66,33 +41,36 @@ type RDB struct {
 	clock  timex.Clock
 }
 
-var rdb *RDB
+var (
+	brokerInstance *RDB
+	brokerOnce     sync.Once
+)
 
-// NewRDB new a rdb client
-func NewRDB() (*RDB, error) {
-	if rdb != nil {
-		return rdb, nil
-	}
-	// new redis client
-	client, err := redisUtils.NewRedisClient(
-		context.Background(),
-		&redisUtils.Option{
-			Mode:             viper.GetString(redisModePath),
-			Host:             viper.GetString(redisHostPath),
-			Port:             viper.GetInt(redisPortPath),
-			SentinelAddress:  viper.GetStringSlice(redisAddressPath),
-			MasterName:       viper.GetString(redisMasterNamePath),
-			Password:         viper.GetString(redisPasswordPath),
-			SentinelPassword: viper.GetString(redisSentinelPasswordPath),
-			Db:               viper.GetInt(redisDatabasePath),
-			DialTimeout:      viper.GetDuration(redisDialTimeoutPath),
-			ReadTimeout:      viper.GetDuration(redisReadTimeoutPath),
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &RDB{client: client, clock: timex.NewTimeClock()}, err
+// GetRDB new a rdb client
+func GetRDB() *RDB {
+	brokerOnce.Do(func() {
+		client, err := redisUtils.NewRedisClient(
+			context.Background(),
+			&redisUtils.Option{
+				Mode:             config.BrokerRedisMode,
+				Host:             config.BrokerRedisStandaloneHost,
+				Port:             config.BrokerRedisStandalonePort,
+				Password:         config.BrokerRedisStandalonePassword,
+				SentinelAddress:  config.BrokerRedisSentinelAddress,
+				MasterName:       config.BrokerRedisSentinelMasterName,
+				SentinelPassword: config.BrokerRedisSentinelPassword,
+				Db:               config.BrokerRedisDatabase,
+				DialTimeout:      time.Duration(config.BrokerRedisDialTimeout) * time.Second,
+				ReadTimeout:      time.Duration(config.BrokerRedisReadTimeout) * time.Second,
+			},
+		)
+		if err != nil {
+			logger.Errorf("failed to create redisBroker, broker will not be available, error: %s", err)
+		}
+		brokerInstance = &RDB{client: client, clock: timex.NewTimeClock()}
+	})
+
+	return brokerInstance
 }
 
 // Open open a connection

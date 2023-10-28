@@ -11,59 +11,19 @@ package redis
 
 import (
 	"context"
+	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"sync"
 	"time"
-
-	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
+	goRedis "github.com/go-redis/redis/v8"
 )
-
-const (
-	redisModePath             = "store.redis.mode"
-	redisMasterNamePath       = "store.redis.master_name"
-	redisAddressPath          = "store.redis.address"
-	redisHostPath             = "store.redis.host"
-	redisPortPath             = "store.redis.port"
-	redisUsernamePath         = "store.redis.username"
-	redisSentinelPasswordPath = "store.redis.sentinel_password"
-	redisPasswordPath         = "store.redis.password"
-	redisDatabasePath         = "store.redis.database"
-	redisDialTimeoutPath      = "store.redis.dial_timeout"
-	redisReadTimeoutPath      = "store.redis.read_timeout"
-	redisPeriodicTaskKeyPath  = "store.redis.periodic_task_key"
-	redisChannelNamePath      = "store.redis.channel_name"
-)
-
-func init() {
-	viper.SetDefault(redisMasterNamePath, "")
-	viper.SetDefault(redisAddressPath, []string{"127.0.0.1:6379"})
-	viper.SetDefault(redisHostPath, "127.0.0.1")
-	viper.SetDefault(redisPortPath, 6379)
-	viper.SetDefault(redisUsernamePath, "root")
-	viper.SetDefault(redisPasswordPath, "")
-	viper.SetDefault(redisSentinelPasswordPath, "")
-	viper.SetDefault(redisDatabasePath, 0)
-	viper.SetDefault(redisDialTimeoutPath, time.Second*10)
-	viper.SetDefault(redisReadTimeoutPath, time.Second*10)
-	viper.SetDefault(redisPeriodicTaskKeyPath, "bmw:periodic_task")
-	viper.SetDefault(redisChannelNamePath, "bmw:channel:periodic_task")
-}
-
-// GetPeriodicTaskKey return periodic task key
-func GetPeriodicTaskKey() string {
-	return viper.GetString(redisPeriodicTaskKeyPath)
-}
-
-// GetChannelName return channel name
-func GetChannelName() string {
-	return viper.GetString(redisChannelNamePath)
-}
 
 var (
-	PeriodicTaskKey = viper.GetString(redisPeriodicTaskKeyPath)
-	ChannelName     = viper.GetString(redisChannelNamePath)
+	StoragePeriodicTaskKey        = fmt.Sprintf("%s:periodicTask", config.StorageRedisKeyPrefix)
+	StoragePeriodicTaskChannelKey = fmt.Sprintf("%s:channel:periodicTask", config.StorageRedisKeyPrefix)
 )
 
 type Instance struct {
@@ -71,36 +31,37 @@ type Instance struct {
 	Client goRedis.UniversalClient
 }
 
-var instance *Instance
-
-func NewInstance(ctx context.Context) (*Instance, error) {
-	client, err := redisUtils.NewRedisClient(
-		ctx,
-		&redisUtils.Option{
-			Mode:             viper.GetString(redisModePath),
-			Host:             viper.GetString(redisHostPath),
-			Port:             viper.GetInt(redisPortPath),
-			SentinelAddress:  viper.GetStringSlice(redisAddressPath),
-			MasterName:       viper.GetString(redisMasterNamePath),
-			Password:         viper.GetString(redisPasswordPath),
-			SentinelPassword: viper.GetString(redisSentinelPasswordPath),
-			Db:               viper.GetInt(redisDatabasePath),
-			DialTimeout:      viper.GetDuration(redisDialTimeoutPath),
-			ReadTimeout:      viper.GetDuration(redisReadTimeoutPath),
-		},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &Instance{ctx: ctx, Client: client}, nil
-}
+var (
+	storageRedisInstance *Instance
+	storageRedisOnce     sync.Once
+)
 
 // GetInstance get a redis instance
-func GetInstance(ctx context.Context) (*Instance, error) {
-	if instance != nil {
-		return instance, nil
-	}
-	return NewInstance(ctx)
+func GetInstance(ctx context.Context) *Instance {
+
+	storageRedisOnce.Do(func() {
+		client, err := redisUtils.NewRedisClient(
+			ctx,
+			&redisUtils.Option{
+				Mode:             config.StorageRedisMode,
+				Host:             config.StorageRedisStandaloneHost,
+				Port:             config.StorageRedisStandalonePort,
+				SentinelAddress:  config.StorageRedisSentinelAddress,
+				MasterName:       config.StorageRedisSentinelMasterName,
+				SentinelPassword: config.StorageRedisSentinelPassword,
+				Password:         config.StorageRedisStandalonePassword,
+				Db:               config.StorageRedisDatabase,
+				DialTimeout:      time.Duration(config.StorageRedisDialTimeout) * time.Second,
+				ReadTimeout:      time.Duration(config.StorageRedisReadTimeout) * time.Second,
+			},
+		)
+		if err != nil {
+			logger.Errorf("Failed to create storageRedis, tasks stored in this redis may not be executed. error: %s", err)
+		}
+		storageRedisInstance = &Instance{ctx: ctx, Client: client}
+	})
+
+	return storageRedisInstance
 }
 
 // Open new a instance

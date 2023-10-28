@@ -14,38 +14,11 @@ import (
 	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
-
-const (
-	redisModePath             = "store.dependent_redis.mode"
-	redisMasterNamePath       = "store.dependent_redis.master_name"
-	redisAddressPath          = "store.dependent_redis.address"
-	redisHostPath             = "store.dependent_redis.host"
-	redisPortPath             = "store.dependent_redis.port"
-	redisUsernamePath         = "store.dependent_redis.username"
-	redisSentinelPasswordPath = "store.dependent_redis.sentinel_password"
-	redisPasswordPath         = "store.dependent_redis.password"
-	redisDatabasePath         = "store.dependent_redis.database"
-	redisDialTimeoutPath      = "store.dependent_redis.dial_timeout"
-	redisReadTimeoutPath      = "store.dependent_redis.read_timeout"
-)
-
-func init() {
-	viper.SetDefault(redisMasterNamePath, "")
-	viper.SetDefault(redisAddressPath, []string{"127.0.0.1:6379"})
-	viper.SetDefault(redisHostPath, "127.0.0.1")
-	viper.SetDefault(redisPortPath, 6379)
-	viper.SetDefault(redisUsernamePath, "root")
-	viper.SetDefault(redisPasswordPath, "")
-	viper.SetDefault(redisSentinelPasswordPath, "")
-	viper.SetDefault(redisDatabasePath, 0)
-	viper.SetDefault(redisDialTimeoutPath, time.Second*10)
-	viper.SetDefault(redisReadTimeoutPath, time.Second*10)
-}
 
 type Instance struct {
 	ctx    context.Context
@@ -58,16 +31,16 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 	client, err := redisUtils.NewRedisClient(
 		ctx,
 		&redisUtils.Option{
-			Mode:             viper.GetString(redisModePath),
-			Host:             viper.GetString(redisHostPath),
-			Port:             viper.GetInt(redisPortPath),
-			SentinelAddress:  viper.GetStringSlice(redisAddressPath),
-			MasterName:       viper.GetString(redisMasterNamePath),
-			Password:         viper.GetString(redisPasswordPath),
-			SentinelPassword: viper.GetString(redisSentinelPasswordPath),
-			Db:               viper.GetInt(redisDatabasePath),
-			DialTimeout:      viper.GetDuration(redisDialTimeoutPath),
-			ReadTimeout:      viper.GetDuration(redisReadTimeoutPath),
+			Mode:             config.StorageDependentRedisMode,
+			Host:             config.StorageDependentRedisStandaloneHost,
+			Port:             config.StorageDependentRedisStandalonePort,
+			SentinelAddress:  config.StorageDependentRedisSentinelAddress,
+			MasterName:       config.StorageDependentRedisSentinelMasterName,
+			SentinelPassword: config.StorageDependentRedisSentinelPassword,
+			Password:         config.StorageDependentRedisStandalonePassword,
+			Db:               config.StorageDependentRedisDatabase,
+			DialTimeout:      time.Duration(config.StorageDependentRedisDialTimeout) * time.Second,
+			ReadTimeout:      time.Duration(config.StorageDependentRedisReadTimeout) * time.Second,
 		},
 	)
 	if err != nil {

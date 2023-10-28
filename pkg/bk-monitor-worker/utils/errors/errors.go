@@ -291,3 +291,19 @@ func As(err error, target interface{}) bool { return errors.As(err, target) }
 // This function is the errors.Unwrap function from the standard library (https://golang.org/pkg/errors/#Unwrap).
 // It is exported from this package for import convenience.
 func Unwrap(err error) error { return errors.Unwrap(err) }
+
+// CombineErrors takes a slice of errors as input and combines all the error messages into a single error.
+// Each error message is separated by a newline character, making it easier to read and display.
+func CombineErrors(e []error) error {
+	if len(e) == 0 {
+		return nil
+	}
+
+	var errorMessages []string
+	for _, err := range e {
+		errorMessages = append(errorMessages, err.Error())
+	}
+
+	combinedMessage := strings.Join(errorMessages, "\n")
+	return errors.New(combinedMessage)
+}

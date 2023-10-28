@@ -71,14 +71,17 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 	if baseCtxFn == nil {
 		baseCtxFn = context.Background
 	}
+
 	n := cfg.Concurrency
 	if n < 1 {
 		n = runtime.NumCPU()
 	}
+
 	delayFunc := cfg.RetryDelayFunc
 	if delayFunc == nil {
 		delayFunc = DefaultRetryDelayFunc
 	}
+
 	isFailureFunc := cfg.IsFailure
 	if isFailureFunc == nil {
 		isFailureFunc = func(err error) bool { return err != nil }
@@ -111,10 +114,7 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 		healthcheckInterval = common.DefaultHealthCheckInterval
 	}
 
-	rdb, err := rdb.NewRDB()
-	if err != nil {
-		return nil, err
-	}
+	rdb := rdb.GetRDB()
 
 	delayedTaskCheckInterval := cfg.DelayedTaskCheckInterval
 	if delayedTaskCheckInterval == 0 {
@@ -177,7 +177,6 @@ func (w *Worker) Start(handler processor.Handler) error {
 	w.processor.Handler = handler
 
 	logger.Info("Starting processing")
-
 	w.forwarder.Start(&w.wg)
 	w.processor.Start(&w.wg)
 	return nil

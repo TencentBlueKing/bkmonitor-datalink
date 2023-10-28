@@ -12,6 +12,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker"
@@ -27,18 +28,17 @@ type Client struct {
 	broker broker.Broker
 }
 
-var client *Client
+var (
+	clientOnce     sync.Once
+	clientInstance *Client
+)
 
-// NewClient new a client
-func NewClient() (*Client, error) {
-	if client != nil {
-		return client, nil
-	}
-	rdb, err := rdb.NewRDB()
-	if err != nil {
-		return nil, err
-	}
-	return &Client{broker: rdb}, nil
+// GetClient new a client
+func GetClient() *Client {
+	clientOnce.Do(func() {
+		clientInstance = &Client{broker: rdb.GetRDB()}
+	})
+	return clientInstance
 }
 
 // Close

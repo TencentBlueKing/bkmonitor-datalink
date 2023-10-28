@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/jinzhu/gorm"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -41,12 +41,12 @@ func (e *Event) BeforeCreate(tx *gorm.DB) error {
 
 func (e Event) GetDimensionList() []string {
 	var dimensionList []string
-	jsonx.Unmarshal([]byte(e.DimensionList), &dimensionList)
+	sonic.Unmarshal([]byte(e.DimensionList), &dimensionList)
 	return dimensionList
 }
 
 func (e *Event) SetDimensionList(dimensionList []string) error {
-	dimensionBytes, err := jsonx.Marshal(dimensionList)
+	dimensionBytes, err := sonic.Marshal(dimensionList)
 	if err != nil {
 		return err
 	}

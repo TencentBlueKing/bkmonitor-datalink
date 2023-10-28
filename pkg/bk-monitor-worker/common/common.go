@@ -14,20 +14,20 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/ptypes"
-	"google.golang.org/protobuf/proto"
-
 	pb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/proto"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
+	"github.com/golang/protobuf/ptypes"
+	"google.golang.org/protobuf/proto"
 )
 
 // QueueKeyPrefix returns a prefix for all keys in the given queue.
 func QueueKeyPrefix(qname string) string {
-	return fmt.Sprintf("{%s}:{%s}:", DefaultQueuePrefix, qname)
+	return fmt.Sprintf("{%s}:{%s}:", config.StorageRedisKeyPrefix, qname)
 }
 
 // TaskKeyPrefix returns a prefix for task key.
@@ -105,8 +105,22 @@ func ServerInfoKey(hostname string, pid int, serverID string) string {
 }
 
 // WorkersKey returns a redis key for the workers given hostname, pid, and server ID.
+// Deprecated: use WorkerKey
 func WorkersKey(hostname string, pid int, serverID string) string {
 	return fmt.Sprintf("bmw:workers:{%s:%d:%s}", hostname, pid, serverID)
+}
+
+// WorkerKey 一个worker可以监听多个队列 以队列名称作为前缀便于快速定位某个队列下的worker
+func WorkerKey(queue, workerIdentification string) string {
+	return fmt.Sprintf("%s:%s", WorkerKeyQueuePrefix(queue), workerIdentification)
+}
+
+func WorkerKeyPrefix() string {
+	return "bmw:workers:"
+}
+
+func WorkerKeyQueuePrefix(queue string) string {
+	return fmt.Sprintf("%s%s", WorkerKeyPrefix(), queue)
 }
 
 // SchedulerEntriesKey returns a redis key for the scheduler entries given scheduler ID.
@@ -126,6 +140,21 @@ func UniqueKey(qname, tasktype string, payload []byte) string {
 	}
 	checksum := md5.Sum(payload)
 	return fmt.Sprintf("%sunique:%s:%s", QueueKeyPrefix(qname), tasktype, hex.EncodeToString(checksum[:]))
+}
+
+// DaemonTaskKey list of daemon task definitions
+func DaemonTaskKey() string {
+	return "bmw:daemonTasks:tasks"
+}
+
+// DaemonBindingTask binding relationship between task to worker
+func DaemonBindingTask() string {
+	return "bmw:daemonTasks:binding:taskBinding"
+}
+
+// DaemonBindingWorker binding relationship between worker to tasks
+func DaemonBindingWorker(workerId string) string {
+	return fmt.Sprintf("bmw:daemonTasks:binding:workerBinding:%s", workerId)
 }
 
 // ValidateQueueName validate queue name

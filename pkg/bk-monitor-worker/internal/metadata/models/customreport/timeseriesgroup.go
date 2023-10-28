@@ -18,7 +18,6 @@ import (
 
 	mapset "github.com/deckarep/golang-set"
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -42,20 +41,6 @@ type TimeSeriesGroup struct {
 // TableName: 用于设置表的别名
 func (TimeSeriesGroup) TableName() string {
 	return "metadata_timeseriesgroup"
-}
-
-const (
-	metricKeyPrefixPath             = "metric_dimension.metric_key_prefix"
-	metricDimensionKeyPrefixPath    = "metric_dimension.metric_dimension_key_prefix"
-	maxMetricsFetchStepPath         = "metric_dimension.max_metrics_fetch_step"
-	timeSeriesMetricExpiredDaysPath = "metric_dimension.time_series_metric_expired_days"
-)
-
-func init() {
-	viper.SetDefault(metricKeyPrefixPath, "bkmonitor:metrics_")
-	viper.SetDefault(metricDimensionKeyPrefixPath, "bkmonitor:metric_dimensions_")
-	viper.SetDefault(maxMetricsFetchStepPath, 500)
-	viper.SetDefault(timeSeriesMetricExpiredDaysPath, 30)
 }
 
 // UpdateMetricsFromRedis: update ts metrics from redis record
@@ -123,14 +108,14 @@ func (ts *TimeSeriesGroup) UpdateMetricsFromRedis() error {
 // GetRedisData get data from redis
 func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 	// 获取要处理的指标和维度的标识
-	metricKey := fmt.Sprintf("%s%d", viper.GetString(metricKeyPrefixPath), ts.BkDataID)
-	metricDimensionsKey := fmt.Sprintf("%s%d", viper.GetString(metricDimensionKeyPrefixPath), ts.BkDataID)
-	fetchStep := viper.GetInt(maxMetricsFetchStepPath)
+	metricKey := fmt.Sprintf("%s%d", config.MetadataMetricDimensionMetricKeyPrefix, ts.BkDataID)
+	metricDimensionsKey := fmt.Sprintf("%s%d", config.MetadataMetricDimensionKeyPrefix, ts.BkDataID)
+	fetchStep := config.MetadataMetricDimensionMaxMetricFetchStep
 	// 转换时间
 	nowTime := time.Now()
 	nowTimeStampStr := fmt.Sprintf("%d", nowTime.Unix())
 	// NOTE: 使用ADD，参数为负值
-	validBeginTimeStamp := nowTime.Add(-viper.GetDuration(timeSeriesMetricExpiredDaysPath) * time.Hour * 24).Unix()
+	validBeginTimeStamp := nowTime.Add(-time.Duration(config.MetadataMetricDimensionTimeSeriesMetricExpiredDays) * time.Hour * 24).Unix()
 	validBeginTimeStampStr := fmt.Sprintf("%d", validBeginTimeStamp)
 
 	ctx := context.Background()

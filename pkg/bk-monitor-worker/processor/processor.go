@@ -36,9 +36,8 @@ type Processor struct {
 	Broker broker.Broker
 	Clock  timex.Clock
 
-	Handler   Handler
-	BaseCtxFn func() context.Context
-
+	Handler     Handler
+	BaseCtxFn   func() context.Context
 	QueueConfig map[string]int
 
 	// orderedQueues is set only in strict-priority mode.
@@ -155,7 +154,7 @@ func (p *Processor) Exec() {
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
-			logger.Info("All queues are empty")
+			//logger.Info("All queues are empty")
 			time.Sleep(time.Second)
 			<-p.Sema // release token
 			return

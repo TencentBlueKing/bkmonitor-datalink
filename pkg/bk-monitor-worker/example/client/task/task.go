@@ -10,10 +10,10 @@
 package task
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"log"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	worker "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 )
 
@@ -22,11 +22,11 @@ var once sync.Once
 func Add(i int) {
 	once.Do(func() {
 		// init the config path
-		config.ConfigPath = "../../dev_config.yaml"
+		config.FilePath = "../../dev_config.yaml"
 		config.InitConfig()
 	})
 
-	client, _ := worker.NewClient()
+	client := worker.GetClient()
 	defer client.Close()
 
 	task, err := NewAddTask(i)

@@ -12,6 +12,24 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"reflect"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
+	k8sErr "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -22,21 +40,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	"github.com/pkg/errors"
-	"github.com/spf13/viper"
-	"io"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-	"net"
-	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const (
@@ -610,50 +613,30 @@ func (b BcsClusterInfoSvc) InitResource() error {
 
 }
 
-func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config map[string]interface{}) error {
-	k8sConfig, err := b.GetK8sClientConfig()
-	if err != nil {
-		return err
-	}
-	dynamicClient, err := dynamic.NewForConfig(k8sConfig)
-	if err != nil {
-		return err
-	}
-	gvr := schema.GroupVersionResource{
-		Group:    "monitoring.bk.tencent.com",
-		Version:  "v1beta1",
-		Resource: "dataids",
-	}
+func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config *unstructured.Unstructured) error {
 	var action = "update"
-	resp, err := dynamicClient.Resource(gvr).Get(context.Background(), name, metav1.GetOptions{})
+	resp, err := b.GetK8sResource(name, models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			action = "create"
+		var realErr *k8sErr.StatusError
+		if errors.As(err, &realErr) {
+			if realErr.Status().Code == http.StatusNotFound {
+				action = "create"
+			} else {
+				return err
+			}
 		} else {
 			return err
 		}
 	}
 	if action == "update" {
 		// 存在则更新
-		var data DataIdSource
-		err := runtime.DefaultUnstructuredConverter.FromUnstructured(resp.UnstructuredContent(), &data)
-		if err != nil {
-			return err
-		}
-		configMetadata := config["metadata"].(map[string]interface{})
-		configMetadata["resourceVersion"] = data.Metadata["resourceVersion"]
-		newConfig := &unstructured.Unstructured{Object: config}
-		if err != nil {
-			return err
-		}
-		_, err = dynamicClient.Resource(gvr).Update(context.Background(), newConfig, metav1.UpdateOptions{})
+		config.SetResourceVersion(resp.GetResourceVersion())
+		_, err = b.UpdateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("update resource %s failed, %v", name, err))
 		}
 	} else {
-		// 不存在则新增
-		newConfig := &unstructured.Unstructured{Object: config}
-		_, err = dynamicClient.Resource(gvr).Create(context.Background(), newConfig, metav1.CreateOptions{})
+		_, err = b.CreateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("create resource %s failed, %v", name, err))
 		}
@@ -677,7 +660,79 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 	return config, nil
 }
 
-func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (map[string]interface{}, error) {
+// GetK8sDynamicClient 获取k8s Dynamic client
+func (b BcsClusterInfoSvc) GetK8sDynamicClient() (*dynamic.DynamicClient, error) {
+	if b.BCSClusterInfo == nil {
+		return nil, errors.New("BCSClusterInfo obj can not be nil")
+	}
+	k8sConfig, err := b.GetK8sClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	dynamicClient, err := dynamic.NewForConfig(k8sConfig)
+	if err != nil {
+		return nil, err
+	}
+	return dynamicClient, nil
+}
+
+func (b BcsClusterInfoSvc) GetK8sResource(name, group, version, resource string) (*unstructured.Unstructured, error) {
+	if b.BCSClusterInfo == nil {
+		return nil, errors.New("BCSClusterInfo obj can not be nil")
+	}
+	dynamicClient, err := b.GetK8sDynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+
+	return dynamicClient.Resource(gvr).Get(context.Background(), name, metav1.GetOptions{})
+}
+
+// ListK8sResource 获取k8s resource信息列表
+func (b BcsClusterInfoSvc) ListK8sResource(group, version, resource string) (*unstructured.UnstructuredList, error) {
+	if b.BCSClusterInfo == nil {
+		return nil, errors.New("BCSClusterInfo obj can not be nil")
+	}
+	dynamicClient, err := b.GetK8sDynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+
+	return dynamicClient.Resource(gvr).List(context.Background(), metav1.ListOptions{})
+
+}
+
+// UpdateK8sResource 更新k8s resource信息
+func (b BcsClusterInfoSvc) UpdateK8sResource(group, version, resource string, config *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if b.BCSClusterInfo == nil {
+		return nil, errors.New("BCSClusterInfo obj can not be nil")
+	}
+	dynamicClient, err := b.GetK8sDynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+
+	return dynamicClient.Resource(gvr).Update(context.Background(), config, metav1.UpdateOptions{})
+}
+
+// CreateK8sResource 创建k8s resource信息
+func (b BcsClusterInfoSvc) CreateK8sResource(group, version, resource string, config *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if b.BCSClusterInfo == nil {
+		return nil, errors.New("BCSClusterInfo obj can not be nil")
+	}
+	dynamicClient, err := b.GetK8sDynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+
+	return dynamicClient.Resource(gvr).Create(context.Background(), config, metav1.CreateOptions{})
+}
+
+func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (*unstructured.Unstructured, error) {
 	rcSvc := NewReplaceConfigSvc(nil)
 	replaceConfig, err := rcSvc.GetCommonReplaceConfig()
 	if err != nil {
@@ -705,6 +760,17 @@ func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (map[string]
 		"isCommon": "true",
 		"isSystem": isSystem,
 	}
+	var dataId int64
+	switch register.DatasourceName {
+	case "K8sMetricDataID":
+		dataId = int64(b.K8sMetricDataID)
+	case "CustomMetricDataID":
+		dataId = int64(b.CustomMetricDataID)
+	case "K8sEventDataID":
+		dataId = int64(b.K8sEventDataID)
+	case "CustomEventDataID":
+		dataId = int64(b.CustomEventDataID)
+	}
 	result := map[string]interface{}{
 		"apiVersion": fmt.Sprintf("%s/%s", models.BcsResourceGroupName, models.BcsResourceVersion),
 		"kind":       models.BcsResourceDataIdResourceKind,
@@ -712,7 +778,7 @@ func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (map[string]
 			"name":   b.composeDataidResourceName(strings.ToLower(register.DatasourceName)),
 			"labels": b.composeDataidResourceLabel(labels)},
 		"spec": map[string]interface{}{
-			"dataID": register.DatasourceName,
+			"dataID": dataId,
 			"labels": map[string]string{
 				"bcs_cluster_id": b.ClusterID,
 				"bk_biz_id":      strconv.Itoa(b.BkBizId),
@@ -721,7 +787,7 @@ func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (map[string]
 			"dimensionReplace": replaceConfig[models.ReplaceTypesDimension],
 		},
 	}
-	return result, nil
+	return &unstructured.Unstructured{Object: result}, nil
 }
 
 // 组装下发的配置资源的名称
@@ -747,6 +813,83 @@ func (b BcsClusterInfoSvc) bkEnvLabel() string {
 		return *b.BkEnv
 	}
 	return viper.GetString(BcsClusterBkEnvLabelPath)
+}
+
+// RefreshCommonResource 刷新内置公共dataid资源信息，追加部署的资源，更新未同步的资源
+func (b BcsClusterInfoSvc) RefreshCommonResource() error {
+	if b.BCSClusterInfo == nil {
+		return errors.New("BCSClusterInfo obj can not be nil")
+	}
+	resp, err := b.ListK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural)
+	if err != nil {
+		return err
+	}
+	logger.Infof("cluster [%s] got common dataid resource total [%v]", b.ClusterID, len(resp.Items))
+
+	resourceMap := make(map[string]unstructured.Unstructured)
+	for _, res := range resp.Items {
+		resourceMap[res.GetName()] = res
+	}
+
+	for _, register := range bcsDatasourceRegisterInfo {
+		datasourceNameLower := b.composeDataidResourceName(strings.ToLower(register.DatasourceName))
+		dataIdConfig, err := b.makeConfig(register)
+		if err != nil {
+			return err
+		}
+		// 检查k8s集群里是否已经存在对应resource
+		if _, ok := resourceMap[datasourceNameLower]; !ok {
+			// 如果k8s_resource不存在，则增加
+			if err := b.ensureDataIdResource(datasourceNameLower, dataIdConfig); err != nil {
+				return err
+			}
+			return nil
+		}
+		// 否则检查信息是否一致，不一致则更新
+		res := resourceMap[datasourceNameLower]
+		if !b.isSameResourceConfig(dataIdConfig.UnstructuredContent(), res.UnstructuredContent()) {
+			if err := b.ensureDataIdResource(datasourceNameLower, dataIdConfig); err != nil {
+				return err
+			}
+			logger.Infof("cluster [%s] update resource [%v]", b.ClusterID, dataIdConfig)
+		}
+
+	}
+	return nil
+}
+
+// 判断传入的config与当前是否相同，以dbConfig为准
+func (b BcsClusterInfoSvc) isSameResourceConfig(dbConfig map[string]interface{}, currConfig map[string]interface{}) bool {
+	// 只检查自己生成的配置，额外配置不检查
+	return b.isSameMapConfig(dbConfig, currConfig)
+}
+
+func (b BcsClusterInfoSvc) isSameMapConfig(source map[string]interface{}, target map[string]interface{}) bool {
+	// 以source为准
+	for k, v := range source {
+		val, ok := target[k]
+		if !ok {
+			return false
+		}
+		// warning 目前配置中要比较的类型不存在列表类型，先不处理
+		switch reflect.TypeOf(v).Kind() {
+		case reflect.Map:
+			if reflect.TypeOf(val).Kind() != reflect.Map {
+				return false
+			} else {
+				vMap, _ := v.(map[string]interface{})
+				valMap, _ := val.(map[string]interface{})
+				if !b.isSameMapConfig(vMap, valMap) {
+					return false
+				}
+			}
+		default:
+			if v != val {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // BcsClusterInfo FetchK8sClusterList 中返回的集群信息对象
@@ -973,12 +1116,4 @@ type DatasourceRegister struct {
 	IsSpitMeasurement bool
 	IsSystem          bool
 	Usage             string
-}
-
-// DataIdSource 集群dataid资源信息
-type DataIdSource struct {
-	ApiVersion string                 `json:"apiVersion"`
-	Kind       string                 `json:"kind"`
-	Metadata   map[string]interface{} `json:"metadata"`
-	Spec       map[string]interface{} `json:"spec"`
 }

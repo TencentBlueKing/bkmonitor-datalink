@@ -24,12 +24,13 @@ var RegisterTaskHandleFunc = map[string]processor.HandlerFunc{
 
 // RegisterPeriodicTaskHandlerFunc periodic task map
 var RegisterPeriodicTaskHandlerFunc = map[string]processor.HandlerFunc{
-	"periodic:metadata:refresh_ts_metric":       task.RefreshTimeSeriesMetric,
-	"periodic:metadata:refresh_event_dimension": task.RefreshEventDimension,
-	"periodic:metadata:refresh_es_storage":      task.RefreshESStorage,
-	"periodic:metadata:refresh_influxdb_route":  task.RefreshInfluxdbRoute,
-	"periodic:metadata:refresh_datasource":      task.RefreshDatasource,
-	"periodic:metadata:discover_bcs_clusters":   task.DiscoverBcsClusters,
+	"periodic:metadata:refresh_ts_metric":        task.RefreshTimeSeriesMetric,
+	"periodic:metadata:refresh_event_dimension":  task.RefreshEventDimension,
+	"periodic:metadata:refresh_es_storage":       task.RefreshESStorage,
+	"periodic:metadata:refresh_influxdb_route":   task.RefreshInfluxdbRoute,
+	"periodic:metadata:refresh_datasource":       task.RefreshDatasource,
+	"periodic:metadata:discover_bcs_clusters":    task.DiscoverBcsClusters,
+	"periodic:metadata:refresh_bcs_monitor_info": task.RefreshBcsMonitorInfo,
 }
 
 var RegisterPeriodicTask = map[string]string{

@@ -61,3 +61,13 @@ func (s ReplaceConfigSvc) GetClusterReplaceConfig(clusterId string) (map[string]
 	}
 	return s.GetReplaceConfig(items), nil
 }
+
+// GetResourceReplaceConfig 构造ResourceReplaceConfig配置
+func (s ReplaceConfigSvc) GetResourceReplaceConfig(clusterId, resourceName, resourceNamespace, resourceType string) (map[string]map[string]interface{}, error) {
+	var items []bcs.ReplaceConfig
+	if err := bcs.NewReplaceConfigQuerySet(mysql.GetDBSession().DB).IsCommonEq(false).ClusterIdEq(clusterId).CustomLevelEq(models.ReplaceCustomLevelsResource).
+		ResourceNameEq(resourceName).ResourceNamespaceEq(resourceNamespace).ResourceTypeEq(resourceType).All(&items); err != nil {
+		return nil, err
+	}
+	return s.GetReplaceConfig(items), nil
+}

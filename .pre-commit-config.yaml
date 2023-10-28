@@ -1,16 +1,10 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 default_stages: [ commit ]
-default_install_hook_types: [ pre-commit, commit-msg ]
+default_install_hook_types: [ pre-commit, commit-msg, pre-push ]
 repos:
   - repo: local
     hooks:
-      - id: check-pre-ci
-        name: check pre ci
-        entry: scripts/pre_commit/preci.sh
-        language: system
-        verbose: true
-
       # 提交前，需要检查提交 message
       - id: check-commit-message
         name: Check commit message
@@ -18,6 +12,22 @@ repos:
         language: system
         stages: [ commit-msg ]
         verbose: true
+
+      # 执行 preci 流水线
+      - id: check-pre-ci-pipeline
+        name: check pre ci pipeline
+        entry: scripts/pre_commit/preci/run.sh
+        language: system
+        stages: [ pre-push ]
+        verbose: true
+
+      # 执行 preci 扫描
+      - id: check-pre-ci-pre-commit
+        name: check pre ci pre commit
+        entry: scripts/pre_commit/preci/scan.sh
+        language: system
+        verbose: true
+
 
       # 提交前检查敏感 IP 信息
       - id: ip

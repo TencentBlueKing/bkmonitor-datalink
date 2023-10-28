@@ -79,6 +79,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 			return
 		}(cluster, wg, ch)
 	}
+	wg.Wait()
 	// 接口未返回的集群标记为删除状态
 	if len(clusterIdList) != 0 {
 		if err := bcs.NewBCSClusterInfoUpdater(mysql.GetDBSession().DB.Model(&bcs.BCSClusterInfo{}).Where("cluster_id not in (?)", clusterIdList)).
@@ -150,4 +151,72 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 	}
 	logger.Infof("cluster_id [%s], project_id [%s] already exists, skip create", cluster.ClusterId, cluster.ProjectId)
 	return nil
+}
+
+// RefreshBcsMonitorInfo 刷新monitor info信息
+func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("DiscoverBcsClusters Runtime panic caught: %v", err)
+		}
+	}()
+
+	var bcsClusterInfoList []bcs.BCSClusterInfo
+	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+		return err
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_bcs_monitor_info"))
+	wg.Add(len(bcsClusterInfoList))
+	for _, cluster := range bcsClusterInfoList {
+		ch <- true
+		go func(cluster *bcs.BCSClusterInfo, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			clusterSvc := service.NewBcsClusterInfoSvc(cluster)
+			// 刷新集群内置公共dataid resource
+			if err := clusterSvc.RefreshCommonResource(); err != nil {
+				logger.Errorf("refresh bcs common resource in cluster: %s failed, %v", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs common resource in cluster: %s done", cluster.ClusterID)
+
+			// 查找新的monitor info并记录到数据库，删除已不存在的
+			// service monitor custom metric dataid
+			if err := service.NewServiceMonitorInfoSvc(nil).RefreshResource(&clusterSvc, cluster.CustomMetricDataID); err != nil {
+				logger.Errorf("refresh bcs service monitor resource in cluster: %s failed, %v", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs service monitor resource in cluster: %s done", cluster.ClusterID)
+
+			// pod monitor custom metric dataid
+			if err := service.NewPodMonitorInfoSvc(nil).RefreshResource(&clusterSvc, cluster.CustomMetricDataID); err != nil {
+				logger.Errorf("refresh bcs pod monitor resource in cluster: %s failed, %v", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs pod monitor resource in cluster: %s done", cluster.ClusterID)
+
+			// 刷新配置了自定义dataid的dataid resource
+			// service monitor custom resource
+			if err := service.NewServiceMonitorInfoSvc(nil).RefreshCustomResource(&clusterSvc); err != nil {
+				logger.Errorf("refresh bcs service monitor custom resource in cluster: %s failed, %v", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs service monitor custom resource in cluster: %s done", cluster.ClusterID)
+
+			// pod monitor custom resource
+			if err := service.NewPodMonitorInfoSvc(nil).RefreshCustomResource(&clusterSvc); err != nil {
+				logger.Errorf("refresh bcs pod monitor custom resource in cluster: %s failed, %v", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs pod monitor custom resource in cluster: %s done", cluster.ClusterID)
+
+		}(&cluster, wg, ch)
+	}
+	wg.Wait()
+	return nil
+
 }

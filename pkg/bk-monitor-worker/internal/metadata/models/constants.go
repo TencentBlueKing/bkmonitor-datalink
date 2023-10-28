@@ -78,14 +78,21 @@ const (
 
 // bcs cluster
 const (
-	BcsClusterStatusRunning       = "running"                   // 集群状态running
-	BcsClusterStatusDeleted       = "deleted"                   // 集群状态deleted
-	BcsDataTypeK8sMetric          = "k8s_metric"                // bcs metric类型数据
-	BcsDataTypeK8sEvent           = "k8s_event"                 // bcs event类型数据
-	BcsDataTypeCustomMetric       = "custom_metric"             // bcs custom_event类型数据
-	BcsResourceGroupName          = "monitoring.bk.tencent.com" // 容器资源组名
-	BcsResourceVersion            = "v1beta1"                   // 容器资源版本号
-	BcsResourceDataIdResourceKind = "DataID"                    // data_id注入资源类型
+	BcsClusterStatusRunning         = "running"                   // 集群状态running
+	BcsClusterStatusDeleted         = "deleted"                   // 集群状态deleted
+	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
+	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
+	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据
+	BcsResourceGroupName            = "monitoring.bk.tencent.com" // 容器资源组名
+	BcsResourceVersion              = "v1beta1"                   // 容器资源版本号
+	BcsResourceDataIdResourceKind   = "DataID"                    // data_id注入资源类型
+	BcsResourceDataIdResourcePlural = "dataids"                   // data_id注入类型查询名
+	BcsMonitorResourceGroupName     = "monitoring.coreos.com"     // monitor资源组名
+	BcsMonitorResourceVersion       = "v1"                        // monitor资源版本号
+	BcsPodMonitorResourcePlural     = "podmonitors"               // pod monitor注入类型查询名
+	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
+	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
+	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
 )
 
 // Label
@@ -101,9 +108,10 @@ const (
 
 // ReplaceConfig
 const (
-	ReplaceTypesMetric         = "metric"
-	ReplaceTypesDimension      = "dimension"
-	ReplaceCustomLevelsCluster = "cluster"
+	ReplaceTypesMetric          = "metric"
+	ReplaceTypesDimension       = "dimension"
+	ReplaceCustomLevelsCluster  = "cluster"
+	ReplaceCustomLevelsResource = "resource"
 )
 
 // Datasource

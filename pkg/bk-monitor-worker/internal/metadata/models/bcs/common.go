@@ -10,8 +10,9 @@
 package bcs
 
 import (
-	"github.com/jinzhu/gorm"
 	"time"
+
+	"github.com/jinzhu/gorm"
 )
 
 type BCSBase struct {
@@ -29,4 +30,17 @@ type BCSBase struct {
 func (r *BCSBase) BeforeCreate(tx *gorm.DB) error {
 	r.CreateAt = time.Now()
 	return nil
+}
+
+// BCSResource kubernetes资源描述
+type BCSResource struct {
+	Id                 uint      `gorm:"primary_key" json:"id"`
+	ClusterID          string    `gorm:"size:128" json:"cluster_id"`
+	Namespace          string    `gorm:"size:512" json:"namespace"`
+	Name               string    `gorm:"size:128" json:"name"`
+	BkDataId           uint      `gorm:"column:bk_data_id;" json:"bk_data_id"`
+	IsCustomResource   bool      `gorm:"default:true" json:"is_custom_resource"`
+	IsCommonDataId     bool      `gorm:"default:true" json:"is_common_data_id"`
+	RecordCreateTime   time.Time `json:"record_create_time"`
+	ResourceCreateTime time.Time `json:"resource_create_time"`
 }

@@ -10,6 +10,9 @@
 package config
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 )
 
@@ -37,7 +40,10 @@ func GetConfInfo() BkmonitorbeatConf {
 // ParseConfiguration 解析配置文件对 confInfo 进行赋值操作
 func ParseConfiguration() {
 	rowConfig := beat.GetRawConfig()
+
+	// 对于无法获取配置文件的情况，视情况决定是否退出
 	if rowConfig == nil {
+		fmt.Printf("unable to get bkmonitorbeat configuration, please check config.\n")
 		return
 	}
 
@@ -57,4 +63,21 @@ func ParseConfiguration() {
 		}
 	}
 
+}
+
+// GetProcessPid 获取进程的 Pid
+func GetProcessPid() string {
+	var pid string
+	pidPath := bkmonitorConf.Path.Pid
+	if pidPath == "" {
+		fmt.Println("unable to get the path of pid file")
+		return pid
+	}
+
+	f, err := os.ReadFile(pidPath)
+	if err != nil {
+		fmt.Printf("unable to open pidfile: %s, error:%s \n", pidPath, err)
+	}
+	fmt.Println(string(f))
+	return string(f)
 }

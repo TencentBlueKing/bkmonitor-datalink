@@ -65,11 +65,6 @@ func selectTestMap(name string) (TestFunc, error) {
 	return f, nil
 }
 
-// quickTest 快速检测
-func quickTest() {
-	fmt.Println(configArgs.ConfigPath)
-}
-
 // fullyTest 全量检测
 func fullyTest() {
 	for k, _ := range testMap {
@@ -96,8 +91,6 @@ func DoSelfCheck() {
 		fmt.Println(`please input test type like 'FullyTest or QuickTest' or component name like 'basereport、ping...'`)
 	case FullyTestType:
 		fullyTest()
-	case QuickTestType:
-		quickTest()
 	default:
 		componentTest(configArgs.CheckType)
 	}

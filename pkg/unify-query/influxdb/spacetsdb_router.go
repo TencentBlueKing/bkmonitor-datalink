@@ -104,9 +104,9 @@ func (r *SpaceTsDbRouter) Add(ctx context.Context, stoPrefix string, stoKey stri
 
 	// 更新对应的值
 	if keyNotFount {
-		metric.SpaceRequestCountInc(ctx, stoKey, metric.SpaceTypeBolt, metric.SpaceActionCreate)
+		metric.SpaceRequestCountInc(ctx, stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionCreate)
 	} else {
-		metric.SpaceRequestCountInc(ctx, stoKey, metric.SpaceTypeBolt, metric.SpaceActionWrite)
+		metric.SpaceRequestCountInc(ctx, stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionWrite)
 	}
 	err = r.kvClient.Put(kvstore.String2byte(stoKey), v)
 	if err != nil {
@@ -129,7 +129,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	if cached && r.cache != nil {
 		data, exist := r.cache.client.Get(stoKey)
 		if exist {
-			metric.SpaceRequestCountInc(ctx, stoKey, metric.SpaceTypeCache, metric.SpaceActionRead)
+			metric.SpaceRequestCountInc(ctx, stoPrefix, metric.SpaceTypeCache, metric.SpaceActionRead)
 			// 存入缓存的数据可能有 nil 情况，需要兼容
 			if data == nil {
 				return nil
@@ -142,7 +142,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 			}
 		}
 	}
-	metric.SpaceRequestCountInc(ctx, stoKey, metric.SpaceTypeBolt, metric.SpaceActionRead)
+	metric.SpaceRequestCountInc(ctx, stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionRead)
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
 	if err != nil {
 		log.Warnf(ctx, "Fail to get value in KVBolt, key: %s, error: %v", stoKey, err)

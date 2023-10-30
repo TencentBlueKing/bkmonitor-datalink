@@ -10,9 +10,11 @@
 package overall
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,6 +35,7 @@ func Check() {
 	} else {
 		fmt.Println("bkmonitorbeat process status is ok!")
 	}
+
 	ckSocket := checkDomainSocket()
 	if !ckSocket {
 		fmt.Println("unable to connect unix domain socket, please check socket file.")
@@ -127,9 +130,69 @@ func checkLog() {
 		fmt.Printf("logDir: %s is empty\n", logDir)
 		return
 	}
-	// 尝试捕获最近一天的 bkmonitorbeat 以及 bkmonitorbeat.log 文件
-	// cat xxx | grep "ERROR" 拉取错误的代码
-	// cat xxx | grep "ERROR" | grep "cpu.go" 拉取CPU相关的错误
-	// ...
-	// 分批次输出错误的内容 限定行数
+
+	// 因为对于日志保留的情况，默认是存 7 天的数据，所以仅检测最近的日志文件
+	// bkmonitorbeat、bkmonitorbeat.1、bkmonitorbeat.log
+	// 检测 bkmonitorbeat.1 的情况是为了防止 bkmonitorbeat.log 刚刚进行切换 数量不足
+
+	FileNames := []string{"bkmonitorbeat", "bkmonitorbeat.log", "bkmonitorbeat.1"}
+	for _, filename := range FileNames {
+		filePath := filepath.Join(logDir, filename)
+		fmt.Printf("start to scan the log: %s\n\n", filename)
+		tailLogFile(filePath, 30, nil)
+		fmt.Printf("finish to scan log: %s\n\n", filename)
+	}
+
+}
+
+// tailLogFile 扫描特定文件尾部的内容，并且进行捕获输出，支持关键字匹配
+func tailLogFile(filePath string, row int, keywords []string) {
+	// 文件路径为空的情况
+	if filePath == "" {
+		fmt.Println("log file path is empty, please check!")
+		return
+	}
+	// 无法打开文件的情况
+	file, err := os.Open(filePath)
+	if err != nil {
+		fmt.Printf("unable to open the log file: %s, error: %s\n", filePath, err)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lines := make([]string, 0)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		// 保证 lines 最后只会存有文件末尾 row 行的数据
+		if len(lines) > row {
+			lines = lines[1:]
+		}
+	}
+	// 对于扫描的过程中产生了错误，则不对数据进行输出，直接返回
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("an error occurred while scanning the file, error: %s\n", err)
+		return
+	}
+
+	// 关键词检测，不检测关键词的时候直接一行行输出
+	if len(keywords) == 0 {
+		for _, line := range lines {
+			fmt.Print(line)
+		}
+	}
+
+	// 进行关键词匹配
+	for _, line := range lines {
+		matched := true
+		for _, keyword := range keywords {
+			if !strings.Contains(line, keyword) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			fmt.Print(line)
+		}
+	}
 }

@@ -21,7 +21,6 @@ import (
 const (
 	EmptyTestType = ""
 	FullyTestType = "FullyTest" // 全量检测
-	QuickTestType = "QuickTest" // 快速检测
 )
 
 type CheckConf struct {
@@ -44,7 +43,7 @@ func RegisterTestMap(name string, f TestFunc) {
 	testMap[name] = f
 }
 
-// GetAllTestFunc 获取所有的测试函数
+// GetAllTestFunc 获取所有的测试函数，预留功能输出所有的检测函数
 func GetAllTestFunc() []string {
 	allFunc := make([]string, len(testMap))
 	for k, _ := range testMap {

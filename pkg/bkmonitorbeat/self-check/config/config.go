@@ -43,7 +43,7 @@ func GetConfInfo() BkmonitorbeatConf {
 func ParseConfiguration() {
 	rowConfig := beat.GetRawConfig()
 
-	// 对于无法获取配置文件的情况，视情况决定是否退出
+	// 对于无法获取配置文件的情况，视为配置文件不正确，输出内容检查配置文件。
 	if rowConfig == nil {
 		fmt.Printf("unable to get bkmonitorbeat configuration, please check config.\n")
 		return
@@ -64,7 +64,6 @@ func ParseConfiguration() {
 			bkmonitorConf.OutPut = outputCfg
 		}
 	}
-
 }
 
 // GetProcessPid 获取进程的 Pid

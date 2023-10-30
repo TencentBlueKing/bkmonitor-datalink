@@ -18,6 +18,9 @@ require (
 	github.com/prometheus/prometheus v0.37.0
 	github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc
 	github.com/stretchr/testify v1.8.3
+	go.opentelemetry.io/otel v1.12.0
+	go.opentelemetry.io/otel/sdk v1.12.0
+	go.opentelemetry.io/otel/trace v1.12.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -42,6 +45,8 @@ require (
 	github.com/elastic/gosigar v0.11.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/garyburd/redigo v1.6.2 // indirect
+	github.com/go-logr/logr v1.2.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.0.3 // indirect
 	github.com/gofrs/uuid v4.3.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -67,9 +72,9 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.0.0-20220511200225-c6db032c6c88 // indirect
-	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e // indirect
+	golang.org/x/net v0.4.0 // indirect
 	golang.org/x/sys v0.7.0 // indirect
-	google.golang.org/protobuf v1.28.0 // indirect
+	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect
 	gopkg.in/jcmturner/gokrb5.v7 v7.5.0 // indirect

@@ -92,3 +92,13 @@ func checkDomainSocket() bool {
 	defer conn.Close()
 	return true
 }
+
+// checkLog 检测 bkmonitorbeat 近期的日志情况
+func checkLog() {
+	logFile := config.GetConfInfo().Path.Log
+	if logFile == "" {
+		fmt.Println("unable to get bkmonitorbeat log path")
+		return
+	}
+
+}

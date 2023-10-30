@@ -26,6 +26,7 @@ type BkmonitorbeatConf struct {
 type PathConfig struct {
 	Pid  string `config:"pid"`  // pid 文件路径
 	Data string `config:"data"` // data 路径
+	Log  string `config:"logs"` // log 文件路径
 }
 
 type OutPutConfig struct {

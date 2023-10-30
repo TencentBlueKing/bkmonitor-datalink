@@ -11,3 +11,6 @@
 ### Socket 文件
 - 检测 SocketFile 是否存在
 - 尝试与 SocketFile 建立连接，保证 SocketFile 可用
+
+### 日志
+- 尝试捕获近期的日志 并且进行输出到终端

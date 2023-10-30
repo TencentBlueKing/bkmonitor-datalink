@@ -26,9 +26,11 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs/validator"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/register"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report"
 	senderagent "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/agent"
 	senderhttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/http"
+	selfcheck "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/self-check"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/exceptionbeat/collector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -40,6 +42,7 @@ var (
 	BeatName         = "bkmonitorbeat"
 	Version          = "unknown"
 	reportFlag       = flag.Bool("report", false, "Report event to time series to bkmonitorproxy")
+	checkFlag        = flag.Bool("check", false, "Bool. start to do self-check")
 	fakeproc         = flag.String("fakeproc", "", "Show the real pid of the mapping process info")
 	disableNormalize = flag.Bool("disable-normalize", false, "If present, disable data normalization")
 )
@@ -106,6 +109,12 @@ func main() {
 	if err != nil {
 		fmt.Printf("Init filed with error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *checkFlag {
+		fmt.Println("start to do self-check")
+		selfcheck.DoSelfCheck()
+		os.Exit(0)
 	}
 
 	// 日志配置

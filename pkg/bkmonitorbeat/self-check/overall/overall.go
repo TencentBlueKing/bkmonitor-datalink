@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/shirou/gopsutil/v3/process"
 
@@ -75,7 +76,7 @@ func checkDomainSocket() bool {
 		return socketFlag
 	}
 
-	// 当 err != nil  的时候说明 DomainSocket 文件夹不存在
+	// 当 err != nil  的时候说明 DomainSocket 文件夹不存在或其他错误
 	_, err := os.Stat(socketPath)
 	if err != nil {
 		fmt.Printf("unable to get socket file:%s error: %s\n", socketPath, err)
@@ -101,4 +102,18 @@ func checkLog() {
 		return
 	}
 
+	files, err := os.ReadDir(logFile)
+	// 无法读取文件夹的情况
+	if err != nil {
+		fmt.Printf("unable to open logFile: %s, error: %s\n", logFile, err)
+		return
+	}
+
+	logs := make([]os.DirEntry, 0)
+	for _, v := range files {
+		// 尝试获取
+		if strings.Contains(v.Name(), "bkmonitorbeat") {
+			logs = append(logs, v)
+		}
+	}
 }

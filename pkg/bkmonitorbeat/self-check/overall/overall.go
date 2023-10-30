@@ -39,6 +39,8 @@ func Check() {
 	} else {
 		fmt.Println("bkmonitorbeat unix domain socket status is ok!")
 	}
+
+	checkLog()
 }
 
 // CheckPidProcess 检测对应 Pid 的进程是否存在
@@ -96,24 +98,38 @@ func checkDomainSocket() bool {
 
 // checkLog 检测 bkmonitorbeat 近期的日志情况
 func checkLog() {
-	logFile := config.GetConfInfo().Path.Log
-	if logFile == "" {
+	logDir := config.GetConfInfo().Path.Log
+	if logDir == "" {
 		fmt.Println("unable to get bkmonitorbeat log path")
 		return
 	}
 
-	files, err := os.ReadDir(logFile)
+	files, err := os.ReadDir(logDir)
 	// 无法读取文件夹的情况
 	if err != nil {
-		fmt.Printf("unable to open logFile: %s, error: %s\n", logFile, err)
+		fmt.Printf("unable to open logDir: %s, error: %s\n", logDir, err)
 		return
 	}
 
 	logs := make([]os.DirEntry, 0)
 	for _, v := range files {
-		// 尝试获取
+		// 尝试获取所有 bkmonitorbeat 的日志文件
 		if strings.Contains(v.Name(), "bkmonitorbeat") {
 			logs = append(logs, v)
+			fmt.Printf("file name %s\n", v.Name())
+			if info, err := v.Info(); err == nil {
+				fmt.Printf("file time %s\n", info.ModTime())
+			}
 		}
 	}
+	// 日志文件不存在则不继续
+	if len(logs) == 0 {
+		fmt.Printf("logDir: %s is empty\n", logDir)
+		return
+	}
+	// 尝试捕获最近一天的 bkmonitorbeat 以及 bkmonitorbeat.log 文件
+	// cat xxx | grep "ERROR" 拉取错误的代码
+	// cat xxx | grep "ERROR" | grep "cpu.go" 拉取CPU相关的错误
+	// ...
+	// 分批次输出错误的内容 限定行数
 }

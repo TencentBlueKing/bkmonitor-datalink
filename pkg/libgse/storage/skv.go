@@ -80,6 +80,9 @@ func (kvs *KVStore) Put(key string, value string) error {
 		return err
 	}
 	return kvs.db.Update(func(tx *bolt.Tx) error {
+		if value == "" {
+			return tx.Bucket(bucketName).Delete([]byte(key))
+		}
 		return tx.Bucket(bucketName).Put([]byte(key), buf.Bytes())
 	})
 }

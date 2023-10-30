@@ -74,10 +74,7 @@ func Open(path string) (*KVStore, error) {
 //	    "emma":  101,
 //	}
 //	err := store.Put("key43", m)
-func (kvs *KVStore) Put(key string, value interface{}) error {
-	if value == nil {
-		return ErrBadValue
-	}
+func (kvs *KVStore) Put(key string, value string) error {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(value); err != nil {
 		return err
@@ -137,7 +134,7 @@ func (kvs *KVStore) BulkPut(kvParis map[string]string) error {
 //	if err := store.Get("key42", nil); err == nil {
 //	    fmt.Println("entry is present")
 //	}
-func (kvs *KVStore) Get(key string, value interface{}) error {
+func (kvs *KVStore) Get(key string, value *string) error {
 	return kvs.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketName).Cursor()
 		if k, v := c.Seek([]byte(key)); k == nil || string(k) != key {

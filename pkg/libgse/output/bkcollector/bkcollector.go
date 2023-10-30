@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"net"
 	"time"
 
 	"github.com/elastic/beats/libbeat/beat"
@@ -14,6 +11,8 @@ import (
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 )
 
 type Output struct {
@@ -34,15 +33,11 @@ func MakeBkCollector(_ outputs.IndexManager, beat beat.Info, observer outputs.Ob
 		logp.Err("unpack config error, %v", err)
 		return outputs.Fail(err)
 	}
-	ip, port, err := GetIpPort(c.GrpcHost)
-	if err != nil {
-		logp.Err("bkcollector host info is nil!")
-	}
-	err = BkCollectorConnect(ip, port)
+	err = BkCollectorConnect(c.GrpcHost)
 	if err != nil {
 		return outputs.Fail(err)
 	}
-	output := NewOutput(ip, port, c.BkDataToken)
+	output := NewOutput(c.GrpcHost, c.BkDataToken)
 	if output == nil {
 		return outputs.Fail(fmt.Errorf("new client error"))
 	}
@@ -72,8 +67,12 @@ func (c *Output) Publish(batch publisher.Batch) error {
 			mapData := value.(map[string]interface{})
 			log := mapData["data"].(string)
 			mapLog := ToMap(log)
+			if mapLog == nil {
+				continue
+			}
 			roSpan := PushData(mapLog, c.bkdatatoken)
 			err := c.exporter.ExportSpans(context.Background(), roSpan)
+			println("push 数据成功！")
 			if err != nil {
 				logp.Err("push data err : %v", err)
 			}
@@ -94,11 +93,11 @@ func (c *Output) Close() error {
 	}
 	return nil
 }
-func NewExporter(ip string, port string) *otlptrace.Exporter {
-	address := net.JoinHostPort(ip, fmt.Sprint(port))
+func NewExporter(GrpcHost string) *otlptrace.Exporter {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithEndpoint(address),
+		otlptracegrpc.WithEndpoint(GrpcHost),
+
 		otlptracegrpc.WithReconnectionPeriod(50 * time.Millisecond),
 	}
 
@@ -116,8 +115,8 @@ func NewExporter(ip string, port string) *otlptrace.Exporter {
 	return exp
 }
 
-func NewOutput(ip string, port string, bkDataToken string) *Output {
-	exp := NewExporter(ip, port)
+func NewOutput(GrpcHost string, bkDataToken string) *Output {
+	exp := NewExporter(GrpcHost)
 	output := Output{
 		exporter:    exp,
 		bkdatatoken: bkDataToken,

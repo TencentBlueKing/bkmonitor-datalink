@@ -23,13 +23,6 @@ var jsonStr = "{\"attributes\": {\"api_name\": \"GET\"}, " +
 	"\"trace_id\": \"a47d4bb2397def77bd80c3b2ffbf1a33\", " +
 	"\"trace_state\": \"rojo=00f067aa0ba902b7\"}"
 
-func TestGetIpPort(t *testing.T) {
-	host := "http://127.0.0.1:4317"
-	ip, port, _ := GetIpPort(host)
-	assert.Equal(t, "127.0.0.1", ip)
-	assert.Equal(t, "4317", port)
-}
-
 func TestToMap(t *testing.T) {
 
 	mapData := ToMap(jsonStr)
@@ -99,7 +92,7 @@ func TestBkCollectorConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to grab an available port: %v", err)
 	}
-	result := BkCollectorConnect("localhost", "4317")
+	result := BkCollectorConnect("http://localhost:4317")
 	assert.Equal(t, nil, result)
 
 	_ = ln.Close()
@@ -110,7 +103,7 @@ func TestNewExporter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to grab an available port: %v", err)
 	}
-	result := NewExporter("localhost", "4317")
+	result := NewExporter("localhost:4317")
 	_ = ln.Close()
 	assert.Equal(t, "*otlptrace.Exporter", reflect.TypeOf(result).String())
 }
@@ -120,7 +113,7 @@ func TestNewOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to grab an available port: %v", err)
 	}
-	result := NewOutput("localhost", "4317", bkDataToken)
+	result := NewOutput("localhost:4317", bkDataToken)
 	_ = ln.Close()
 	assert.Equal(t, "*bkcollector.Output", reflect.TypeOf(result).String())
 	assert.Equal(t, bkDataToken, result.bkdatatoken)

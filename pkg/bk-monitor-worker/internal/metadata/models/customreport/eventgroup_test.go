@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"

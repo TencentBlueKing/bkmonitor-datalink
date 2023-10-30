@@ -11,8 +11,6 @@ import (
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 )
 
 type Output struct {
@@ -72,7 +70,6 @@ func (c *Output) Publish(batch publisher.Batch) error {
 			}
 			roSpan := PushData(mapLog, c.bkdatatoken)
 			err := c.exporter.ExportSpans(context.Background(), roSpan)
-			println("push 数据成功！")
 			if err != nil {
 				logp.Err("push data err : %v", err)
 			}

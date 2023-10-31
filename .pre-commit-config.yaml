@@ -1,13 +1,8 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 default_stages: [ commit ]
-default_install_hook_types: [ pre-commit, commit-msg ]
+default_install_hook_types: [ pre-commit, commit-msg, pre-push ]
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.3.0
-    hooks:
-      - id: check-merge-conflict
-      - id: detect-private-key
   - repo: local
     hooks:
       # 提交前，需要检查提交 message
@@ -17,6 +12,22 @@ repos:
         language: system
         stages: [ commit-msg ]
         verbose: true
+
+      # 执行 preci 流水线
+      - id: check-pre-ci-pipeline
+        name: check pre ci pipeline
+        entry: scripts/pre_commit/preci/run.sh
+        language: system
+        stages: [ pre-push ]
+        verbose: true
+
+      # 执行 preci 扫描
+      - id: check-pre-ci-pre-commit
+        name: check pre ci pre commit
+        entry: scripts/pre_commit/preci/scan.sh
+        language: system
+        verbose: true
+
 
       # 提交前检查敏感 IP 信息
       - id: ip
@@ -51,3 +62,9 @@ repos:
         language: script
         verbose: true
         files: ".*\\.go"
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.3.0
+    hooks:
+      - id: check-merge-conflict
+      - id: detect-private-key

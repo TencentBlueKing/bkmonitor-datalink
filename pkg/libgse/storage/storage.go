@@ -26,9 +26,10 @@ type StorageConfig struct{}
 type Storage interface {
 	Set(key, value string, expire time.Duration) error
 	Get(key string) (string, error)
+	List(prefix string) (values map[string]string, err error)
 	Del(key string) error
 	Close() error
-	Destory() error // clean files
+	Destroy() error // clean files
 
 	SetFlushInterval(interval time.Duration) // set flush interval
 }
@@ -44,6 +45,11 @@ func Init(path string, config *StorageConfig) error {
 // Get get value. will return error=ErrNotFound if key not exist
 func Get(key string) (string, error) {
 	return _storage.Get(key)
+}
+
+// List values with key prefix
+func List(prefix string) (values map[string]string, err error) {
+	return _storage.List(prefix)
 }
 
 // Set kv to storage, expire not used now
@@ -68,7 +74,7 @@ func Close() {
 	_storage.Close()
 }
 
-// Destory remove files
-func Destory() error {
-	return _storage.Destory()
+// Destroy remove files
+func Destroy() error {
+	return _storage.Destroy()
 }

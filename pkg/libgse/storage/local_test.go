@@ -47,7 +47,7 @@ func Test_Local_Normal(t *testing.T) {
 	}
 
 	// clear db
-	err = c.Destory()
+	err = c.Destroy()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func Test_Local_DoubleClose(t *testing.T) {
 	}
 
 	// clear db
-	err = c.Destory()
+	err = c.Destroy()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func Test_Local_NonExistValue(t *testing.T) {
 	}
 
 	// clear db
-	err = c.Destory()
+	err = c.Destroy()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func Test_Local_CoverSet(t *testing.T) {
 	}
 
 	// clear db
-	err = c.Destory()
+	err = c.Destroy()
 	if err != nil {
 		t.Fatal(err)
 	}

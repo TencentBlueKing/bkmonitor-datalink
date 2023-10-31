@@ -14,18 +14,18 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
-
-	"github.com/rapidloop/skv"
 )
 
 // LocalStorage
 type LocalStorage struct {
 	path   string
-	store  *skv.KVStore
+	store  *KVStore
 	cancel context.CancelFunc
 
 	// skv 底层使用boltdb存储，每秒大约存储5K左右条数据，如果有频繁的读写相同的数据，需要增加缓存
@@ -47,7 +47,7 @@ func NewLocalStorage(path string) (*LocalStorage, error) {
 		}
 	}
 
-	local, err := skv.Open(path)
+	local, err := Open(path)
 
 	storage := &LocalStorage{
 		store: local,
@@ -112,15 +112,36 @@ func (cli *LocalStorage) Get(key string) (val string, err error) {
 	defer cli.cacheMutex.Unlock()
 
 	// search cache first
-	if val, ok := cli.cache[key]; ok {
+	if val = cli.cache[key]; val != "" {
 		return val, err
 	}
 
-	err = cli.store.Get(key, &val)
-	if err == skv.ErrNotFound {
+	val, err = cli.store.Get(key)
+	if errors.Is(err, ErrKeyNotFound) {
 		err = ErrNotFound
 	}
 	return val, err
+}
+
+// List : list value with prefix
+func (cli *LocalStorage) List(prefix string) (values map[string]string, err error) {
+	cli.cacheMutex.Lock()
+	defer cli.cacheMutex.Unlock()
+
+	values, err = cli.store.List(prefix)
+
+	for k, v := range cli.cache {
+		if strings.HasPrefix(k, prefix) {
+			if v == "" {
+				// 如果缓存是空，则删除
+				delete(values, k)
+			} else {
+				values[k] = v
+			}
+		}
+	}
+
+	return values, err
 }
 
 // Del : delete key
@@ -128,18 +149,13 @@ func (cli *LocalStorage) Del(key string) error {
 	cli.cacheMutex.Lock()
 	defer cli.cacheMutex.Unlock()
 
-	// remove from cache
-	delete(cli.cache, key)
-
-	err := cli.store.Delete(key)
-	if err != nil && err != skv.ErrNotFound {
-		return err
-	}
+	// set empty string, which means to be deleted
+	cli.cache[key] = ""
 	return nil
 }
 
-// Destory remove db files
-func (cli *LocalStorage) Destory() error {
+// Destroy remove db files
+func (cli *LocalStorage) Destroy() error {
 	cli.Close()
 	return os.RemoveAll(cli.path)
 }
@@ -149,8 +165,6 @@ func (cli *LocalStorage) Flush() {
 	cli.cacheMutex.Lock()
 	defer cli.cacheMutex.Unlock()
 
-	for key, value := range cli.cache {
-		cli.store.Put(key, value)
-	}
+	cli.store.BulkPut(cli.cache)
 	cli.cache = make(map[string]string)
 }

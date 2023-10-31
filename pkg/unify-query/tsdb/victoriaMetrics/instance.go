@@ -679,7 +679,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	if vmExpand == nil {
+	// 检查 vmExpand 以及 vmExpand.ResultTableGroup 不能为空
+	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 {
 		return nil, nil
 	}
 
@@ -728,6 +729,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
 		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
 		metricName = referenceName
+
 	} else {
 		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
 			metricName = m

@@ -73,7 +73,6 @@ func TestRealQueryRange(t *testing.T) {
 
 		InfluxCompatible:          true,
 		UseNativeOr:               true,
-		UseResultTableGroupFilter: false,
 	}
 
 	testCase := map[string]struct {

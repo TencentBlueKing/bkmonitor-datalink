@@ -12,11 +12,16 @@ package service
 import (
 	"errors"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -185,8 +190,7 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 		return nil, err
 	}
 	// 刷新配置到节点管理，通过节点管理下发配置到采集器
-	// todo refresh_custom_report_config
-
+	// todo 做异步调用 RefreshCustomReportConfig(bkBizId)
 	return &eventGroup, nil
 }
 
@@ -224,4 +228,102 @@ func (s EventGroupSvc) MakeTableId(bkBizId int, bkDataId uint) string {
 		return fmt.Sprintf("%v_bkmonitor_event_%v", bkBizId, bkDataId)
 	}
 	return fmt.Sprintf("_bkmonitor_event_%v", bkDataId)
+}
+
+func RefreshCustomReportConfig(bkBizId int) error {
+	// 判定节点管理是否上传支持v2新配置模版的bk-collector版本0.16.1061
+	defaultVersion := "0.0.0"
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return err
+	}
+	var resp nodeman.PluginInfoResp
+	_, err = nodemanApi.PluginInfo().SetQueryParams(map[string]string{"name": "bk-collector"}).SetResult(&resp).Request()
+	if err != nil {
+		return err
+	}
+	var versionStrList []string
+	for _, plugin := range resp.Data {
+		if plugin.IsReady {
+			if plugin.Version == "" {
+				versionStrList = append(versionStrList, defaultVersion)
+			} else {
+				versionStrList = append(versionStrList, plugin.Version)
+			}
+		}
+	}
+	maxVersion := getMaxVersion(defaultVersion, versionStrList)
+
+	if compareVersion(maxVersion, models.RecommendedBkCollectorVersion) > 0 {
+		if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(&bkBizId, "bk-collector", "add"); err != nil {
+			return err
+		}
+	} else {
+		logger.Infof("bk-collector version [%s] lower than supported version %s, stop refresh bk-collector config", maxVersion, models.RecommendedBkCollectorVersion)
+	}
+	// bkmonitorproxy全量更新
+	if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(nil, "bkmonitorproxy", "add"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func getMaxVersion(defaultVersion string, versionList []string) string {
+	maxVersion := defaultVersion
+	for _, version := range versionList {
+		if compareVersion(maxVersion, version) < 0 {
+			maxVersion = version
+		}
+	}
+	return maxVersion
+}
+
+func compareVersion(version1 string, version2 string) int {
+	var res int
+	ver1Strs := getValidatedVersion(version1) //[1 2 3]
+	ver2Strs := getValidatedVersion(version2) //[2 3 4]
+	ver1Len := len(ver1Strs)
+	ver2Len := len(ver2Strs)
+	if ver1Len == 0 || ver2Len == 0 {
+		return 0
+	}
+	for i := 0; i < 3; i++ {
+		var ver1Int, ver2Int int
+		var err error
+		if i < ver1Len {
+			// 字符串转换成整数strconv.Atoi
+			ver1Int, err = strconv.Atoi(ver1Strs[i])
+			if err != nil {
+				return 0
+			}
+		}
+		if i < ver2Len {
+			ver2Int, err = strconv.Atoi(ver2Strs[i])
+			if err != nil {
+				return 0
+			}
+		}
+		if ver1Int == ver2Int {
+			res = 1
+			continue
+		}
+		if ver1Int > ver2Int {
+			res = 1
+			break
+		}
+		if ver1Int < ver2Int {
+			res = -1
+			break
+		}
+	}
+	return res
+}
+
+func getValidatedVersion(version string) []string {
+	version = regexp.MustCompile(`[^\d.]`).ReplaceAllString(version, "")
+	parts := strings.Split(version, ".")
+	if len(parts) >= 3 {
+		parts = parts[:3]
+	}
+	return parts
 }

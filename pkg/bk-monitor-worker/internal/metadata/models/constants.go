@@ -134,3 +134,15 @@ const (
 	InfluxdbTagInfoConsulPathTemplate     = "%s/metadata/influxdb_info/tag_info"     // InfluxdbTagInfo的consul根路径
 	InfluxdbInfoVersionConsulPathTemplate = "%s/metadata/influxdb_info/version/"     // InfluxdbInfoVersion的consul路径
 )
+
+const RecommendedBkCollectorVersion = "0.16.1061" // 推荐的bkcollector版本
+
+// subscription config
+const (
+	BkMonitorProxyListenPort = 10205      // bk_monitor_proxy 自定义上报服务监听的端口
+	MaxDataIdThroughPut      = 1000       // 单个dataid最大的上报频率(条/min)
+	MaxFutureTimeOffset      = 3600       // 支持的最大未来时间，超过这个偏移值，则丢弃
+	MaxReqThroughPut         = 4000       // 最大的请求数
+	MaxReqLength             = 500 * 1024 // 最大请求Body大小，500KB
+
+)

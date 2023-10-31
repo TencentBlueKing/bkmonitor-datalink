@@ -127,7 +127,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		return nil, err
 	}
 	// 刷新配置到节点管理，通过节点管理下发配置到采集器
-	// todo refresh_custom_report_config
+	// todo 做异步调用 RefreshCustomReportConfig(bkBizId)
 
 	return &tsGroup, nil
 }

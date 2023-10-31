@@ -86,3 +86,31 @@ type ListBizHostsTopoDataInfo struct {
 	Host ListBizHostsTopoDataInfoHost   `json:"host"`
 	Topo []ListBizHostsTopoDataInfoTopo `json:"topo"`
 }
+
+type SearchBusinessResp struct {
+	define.ApiCommonRespMeta
+	Data BusinessData `json:"data"`
+}
+
+type BusinessData struct {
+	Count int                `json:"count"`
+	Info  []BusinessDataInfo `json:"info"`
+}
+
+type BusinessDataInfo struct {
+	BkBizDeveloper    string    `json:"bk_biz_developer"`
+	BkBizId           int       `json:"bk_biz_id"`
+	BkBizMaintainer   string    `json:"bk_biz_maintainer"`
+	BkBizName         string    `json:"bk_biz_name"`
+	BkBizProductor    string    `json:"bk_biz_productor"`
+	BkBizTester       string    `json:"bk_biz_tester"`
+	BkSupplierAccount string    `json:"bk_supplier_account"`
+	CreateTime        time.Time `json:"create_time"`
+	DbAppAbbr         string    `json:"db_app_abbr,omitempty"`
+	Default           int       `json:"default"`
+	Language          string    `json:"language"`
+	LastTime          time.Time `json:"last_time"`
+	LifeCycle         string    `json:"life_cycle"`
+	Operator          string    `json:"operator"`
+	TimeZone          string    `json:"time_zone"`
+}

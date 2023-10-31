@@ -11,20 +11,25 @@ package api
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var gseApi *bkgse.Client
+
 var bcsClusterManager *bcsclustermanager.Client
+
 var cmdbApi *cmdb.Client
+
+var nodemanApi *nodeman.Client
 
 const (
 	BkApiBaseUrlPath       = "bk_api.api_url"
@@ -74,6 +79,7 @@ const (
 	BkApiBcsApiGatewayTokenPath  = "bk_api.bcs_api_gateway_token"
 )
 
+// GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
 func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	if bcsClusterManager != nil {
 		return bcsClusterManager, nil
@@ -91,6 +97,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	return bcsClusterManager, nil
 }
 
+// GetCmdbApi 获取CmdbApi客户端
 func GetCmdbApi() (*cmdb.Client, error) {
 	if bcsClusterManager != nil {
 		return cmdbApi, nil
@@ -109,4 +116,25 @@ func GetCmdbApi() (*cmdb.Client, error) {
 		return nil, err
 	}
 	return cmdbApi, nil
+}
+
+// GetNodemanApi NodemanApi
+func GetNodemanApi() (*nodeman.Client, error) {
+	if nodemanApi != nil {
+		return nodemanApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/nodeman/", viper.GetString(BkApiBaseUrlPath)),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             viper.GetString(BkApiAppCodePath),
+		AppSecret:           viper.GetString(BkApiAppSecretPath),
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	nodemanApi, err = nodeman.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return nodemanApi, nil
 }

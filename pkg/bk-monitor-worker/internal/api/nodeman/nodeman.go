@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmdb
+package nodeman
 
 import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
@@ -19,9 +19,9 @@ type Client struct {
 	define.BkApiClient
 }
 
-// New bk_gse client
+// New nodeman client
 func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
-	client, err := bkapi.NewBkApiClient("cmdb", configProvider, opts...)
+	client, err := bkapi.NewBkApiClient("node_man", configProvider, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -29,34 +29,53 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 	return &Client{BkApiClient: client}, nil
 }
 
-// SearchCloudArea for cmdb resource search_cloud_area
-// 查询云区域信息
-func (c *Client) SearchCloudArea(opts ...define.OperationOption) define.Operation {
-	path := "search_cloud_area"
+// PluginInfo for nodeman resource search_cloud_area
+// 查询插件信息
+func (c *Client) PluginInfo(opts ...define.OperationOption) define.Operation {
+	path := "plugin_info"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "search_cloud_area",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// GetProxiesByBiz for nodeman resource get_proxies_by_biz
+// 通过业务查询业务所使用的所有云区域下的ProxyIP
+func (c *Client) GetProxiesByBiz(opts ...define.OperationOption) define.Operation {
+	path := "api/host/biz_proxies/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_proxies_by_biz",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// UpdateSubscription for nodeman resource subscription_update
+func (c *Client) UpdateSubscription(opts ...define.OperationOption) define.Operation {
+	path := "subscription_update/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "subscription_update",
 		Method: "POST",
 		Path:   path,
 	}, opts...)
 }
 
-// ListBizHostsTopo for cmdb resource list_biz_hosts_topo
-// 查询业务主机及关联拓扑
-func (c *Client) ListBizHostsTopo(opts ...define.OperationOption) define.Operation {
-	path := "list_biz_hosts_topo"
+// CreateSubscription for nodeman resource subscription_create
+func (c *Client) CreateSubscription(opts ...define.OperationOption) define.Operation {
+	path := "subscription_create/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "list_biz_hosts_topo",
+		Name:   "subscription_create",
 		Method: "POST",
 		Path:   path,
 	}, opts...)
 }
 
-// SearchBusiness for cmdb resource search_business
-// 查询业务信息
-func (c *Client) SearchBusiness(opts ...define.OperationOption) define.Operation {
-	path := "search_business"
+// RunSubscription for nodeman resource subscription_run
+func (c *Client) RunSubscription(opts ...define.OperationOption) define.Operation {
+	path := "subscription_run/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "search_business",
+		Name:   "subscription_run",
 		Method: "POST",
 		Path:   path,
 	}, opts...)

@@ -137,24 +137,25 @@ func (kvs *KVStore) BulkPut(kvParis map[string]string) error {
 //	if err := store.Get("key42", nil); err == nil {
 //	    fmt.Println("entry is present")
 //	}
-func (kvs *KVStore) Get(key string, value *string) error {
-	return kvs.db.View(func(tx *bolt.Tx) error {
+func (kvs *KVStore) Get(key string) (string, error) {
+	var value string
+	err := kvs.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketName).Cursor()
 		if k, v := c.Seek([]byte(key)); k == nil || string(k) != key {
 			return ErrKeyNotFound
-		} else if value == nil {
-			return nil
 		} else {
 			d := gob.NewDecoder(bytes.NewReader(v))
-			return d.Decode(value)
+			return d.Decode(&value)
 		}
 	})
+	return value, err
 }
 
 // List entries with prefix
-func (kvs *KVStore) List(prefix string, values map[string]string) error {
+func (kvs *KVStore) List(prefix string) (map[string]string, error) {
 	var err error
-	return kvs.db.View(func(tx *bolt.Tx) error {
+	values := make(map[string]string)
+	err = kvs.db.View(func(tx *bolt.Tx) error {
 		prefixBytes := []byte(prefix)
 		c := tx.Bucket(bucketName).Cursor()
 		for k, v := c.Seek(prefixBytes); k != nil && bytes.HasPrefix(k, prefixBytes); k, v = c.Next() {
@@ -167,6 +168,7 @@ func (kvs *KVStore) List(prefix string, values map[string]string) error {
 		}
 		return err
 	})
+	return values, err
 }
 
 // Delete the entry with the given key. If no such key is present in the store,

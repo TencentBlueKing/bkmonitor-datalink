@@ -116,7 +116,7 @@ func (cli *LocalStorage) Get(key string) (val string, err error) {
 		return val, err
 	}
 
-	err = cli.store.Get(key, &val)
+	val, err = cli.store.Get(key)
 	if errors.Is(err, ErrKeyNotFound) {
 		err = ErrNotFound
 	}
@@ -128,8 +128,7 @@ func (cli *LocalStorage) List(prefix string) (values map[string]string, err erro
 	cli.cacheMutex.Lock()
 	defer cli.cacheMutex.Unlock()
 
-	values = make(map[string]string)
-	err = cli.store.List(prefix, values)
+	values, err = cli.store.List(prefix)
 
 	for k, v := range cli.cache {
 		if strings.HasPrefix(k, prefix) {

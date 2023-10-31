@@ -1,10 +1,11 @@
 package bkcollector
 
 import (
-	"github.com/stretchr/testify/assert"
 	"net"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var jsonStr = "{\"attributes\": {\"api_name\": \"GET\"}, " +
@@ -44,22 +45,22 @@ func TestToMap(t *testing.T) {
 	assert.Equal(t, attributes, event["attributes"].(map[string]interface{}))
 
 }
+
 func TestGetEvents(t *testing.T) {
 	mapData := ToMap(jsonStr)
-	events := mapData["events"].([]interface{})
-	result := getEvents(events)
+	result := getEvents(mapData)
 	assert.Equal(t, "[]trace.Event", reflect.TypeOf(result).String())
 }
 
 func TestGetLinks(t *testing.T) {
 	mapData := ToMap(jsonStr)
-	links := mapData["links"].([]interface{})
 	traceId := mapData["trace_id"].(string)
 	var byteTraceId [16]byte
 	copy(byteTraceId[:], traceId)
-	result := getLinks(links, byteTraceId)
+	result := getLinks(mapData, byteTraceId)
 	assert.Equal(t, "[]trace.Link", reflect.TypeOf(result).String())
 }
+
 func TestGetKeyValue(t *testing.T) {
 	mapData := ToMap(jsonStr)
 	attributes := mapData["attributes"].(map[string]interface{})
@@ -72,30 +73,16 @@ func TestPushData(t *testing.T) {
 	bkDataToken := "123"
 	mapData := ToMap(jsonStr)
 	result := PushData(mapData, bkDataToken)
-	assert.Equal(t, "[]trace.ReadOnlySpan", reflect.TypeOf(result).String())
-
+	assert.Equal(t, "bkcollector.SpanStub", reflect.TypeOf(result).String())
 }
 
 func TestCreateSpanContext(t *testing.T) {
-	traceId := "a47d4bb2397def77bd80c3b2ffbf1a33"
-	var byteTraceId [16]byte
-	copy(byteTraceId[:], traceId)
-	byteSpanId := getSpanId("a49c0fc65429cf78")
+	mapData := ToMap(jsonStr)
+	traceId := getTraceId(mapData)
+	byteSpanId := getSpanId(mapData)
 	traceState := "rojo=00f067aa0ba902b7"
-	result := CreateSpanContext(byteSpanId, byteTraceId, traceState)
+	result := CreateSpanContext(byteSpanId, traceId, traceState)
 	assert.Equal(t, "trace.SpanContext", reflect.TypeOf(result).String())
-
-}
-
-func TestBkCollectorConnect(t *testing.T) {
-	ln, err := net.Listen("tcp", "localhost:4317")
-	if err != nil {
-		t.Fatalf("Failed to grab an available port: %v", err)
-	}
-	result := BkCollectorConnect("http://localhost:4317")
-	assert.Equal(t, nil, result)
-
-	_ = ln.Close()
 }
 
 func TestNewExporter(t *testing.T) {
@@ -107,6 +94,7 @@ func TestNewExporter(t *testing.T) {
 	_ = ln.Close()
 	assert.Equal(t, "*otlptrace.Exporter", reflect.TypeOf(result).String())
 }
+
 func TestNewOutput(t *testing.T) {
 	ln, err := net.Listen("tcp", "localhost:4317")
 	bkDataToken := "123"

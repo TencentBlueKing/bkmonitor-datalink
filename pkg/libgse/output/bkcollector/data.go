@@ -1,6 +1,10 @@
 package bkcollector
 
 import (
+	"encoding/json"
+	"reflect"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/logp"
@@ -18,7 +22,6 @@ func (s SpanStubs) Snapshots() []tracesdk.ReadOnlySpan {
 	if len(s) == 0 {
 		return nil
 	}
-
 	ro := make([]tracesdk.ReadOnlySpan, len(s))
 	for i := 0; i < len(s); i++ {
 		ro[i] = s[i].Snapshot()
@@ -91,8 +94,8 @@ type spanSnapshot struct {
 func (s spanSnapshot) InstrumentationLibrary() instrumentation.Library {
 	return s.instrumentationScope
 }
-func getTime(timestamp float64) time.Time {
 
+func getTime(timestamp float64) time.Time {
 	// 将 float64 时间戳转换为 int64 类型
 	seconds := int64(timestamp / 1e9)
 	nanoseconds := int64(timestamp) % int64(1e9)
@@ -100,15 +103,34 @@ func getTime(timestamp float64) time.Time {
 	t := time.Unix(seconds, nanoseconds)
 	return t
 }
-func getSpanId(spanId string) [8]byte {
+
+func getSpanId(traceData map[string]interface{}) [8]byte {
+	spanId, ok := traceData["span_id"].(string)
+	if !ok {
+		spanId = convertToString(traceData["span_id"])
+	}
 	var byteSpanId [8]byte
 	copy(byteSpanId[:], spanId)
 	return byteSpanId
 }
+
+func getParentId(traceData map[string]interface{}) [8]byte {
+	parentSpanId, ok := traceData["span_id"].(string)
+	if !ok {
+		parentSpanId = convertToString(traceData["parent_span_id"])
+	}
+	var byteParentSpanId [8]byte
+	copy(byteParentSpanId[:], parentSpanId)
+	return byteParentSpanId
+}
+
 func getKeyValue(attributes map[string]interface{}) []attribute.KeyValue {
-	var result = make([]attribute.KeyValue, 0, 0)
+	var result = make([]attribute.KeyValue, 0)
 	for key, value := range attributes {
-		v, _ := value.(string)
+		v, ok := value.(string)
+		if !ok {
+			v = convertToString(value)
+		}
 		_value := attribute.StringValue(v)
 		attr := attribute.KeyValue{
 			Key:   attribute.Key(key),
@@ -118,132 +140,284 @@ func getKeyValue(attributes map[string]interface{}) []attribute.KeyValue {
 	}
 	return result
 }
-func getEvents(events []interface{}) []tracesdk.Event {
-	var result = make([]tracesdk.Event, 0, 0)
+
+func getEvents(traceData map[string]interface{}) []tracesdk.Event {
+	var result = make([]tracesdk.Event, 0)
+	events, ok := traceData["events"].([]interface{})
+	if !ok {
+		logp.Err("Cannot be converted into time data,  events:%v", traceData["events"])
+		return result
+	}
 	for _, event := range events {
-		eventMap := event.(map[string]interface{})
-		Name := eventMap["name"].(string)
-		timestamp := eventMap["timestamp"].(float64)
-		eventTime := getTime(timestamp)
-		attributes := eventMap["attributes"].(map[string]interface{})
-		Attributes := getKeyValue(attributes)
-		Event := tracesdk.Event{
-			Name:       Name,
-			Time:       eventTime,
-			Attributes: Attributes,
+		eventMap, toEventMap := event.(map[string]interface{})
+		if !toEventMap {
+			continue
 		}
-		result = append(result, Event)
+		name := getSpanName(eventMap)
+		eventTime := time.Time{}
+		timestamp, toTimeStamp := eventMap["timestamp"].(float64)
+		if !toTimeStamp {
+			logp.Err("Cannot be converted into time data,  events_timestamp:%v", eventMap["timestamp"])
+		}
+		eventTime = getTime(timestamp)
+		attributes := getAttributes(eventMap)
+		traceEvent := tracesdk.Event{
+			Name:       name,
+			Time:       eventTime,
+			Attributes: attributes,
+		}
+		result = append(result, traceEvent)
 	}
 	return result
 }
-func getLinks(links []interface{}, traceId [16]byte) []tracesdk.Link {
-	var result = make([]tracesdk.Link, 0, 0)
+
+func getLinks(traceData map[string]interface{}, traceId [16]byte) []tracesdk.Link {
+	var result = make([]tracesdk.Link, 0)
+	links, ok := traceData["links"].([]interface{})
+	if !ok {
+		logp.Err("Cannot be converted into time data,  links:%v", traceData["links"])
+		return result
+	}
 	for _, link := range links {
-		linkMap := link.(map[string]interface{})
-		spanId := linkMap["span_id"].(string)
-		SpanId := getSpanId(spanId)
-		var TraceState string
+		linkMap, toLinkMap := link.(map[string]interface{})
+		if !toLinkMap {
+			continue
+		}
+		spanId := getSpanId(linkMap)
+		var linkTraceState string
 		traceState, ok := linkMap["trace_state"]
 		if ok {
-			TraceState = traceState.(string)
+			linkTraceState = traceState.(string)
 		}
-		SpanContext := CreateSpanContext(SpanId, traceId, TraceState)
-		attributes := linkMap["attributes"].(map[string]interface{})
-		Attributes := getKeyValue(attributes)
-		Link := tracesdk.Link{
-			SpanContext: SpanContext,
-			Attributes:  Attributes,
+		spanContext := CreateSpanContext(spanId, traceId, linkTraceState)
+		attributes := getAttributes(linkMap)
+		traceLink := tracesdk.Link{
+			SpanContext: spanContext,
+			Attributes:  attributes,
 		}
-		result = append(result, Link)
+		result = append(result, traceLink)
 	}
 	return result
 }
 
 func CreateSpanContext(spanId [8]byte, traceId [16]byte, traceState string) trace.SpanContext {
-	TracesSate, err := trace.ParseTraceState(traceState)
+	traceSate, err := trace.ParseTraceState(traceState)
 	if err != nil {
-		logp.Err("traceState err! ")
+		logp.Err("get traceState err: %v", err)
 	}
-	SpanContextConfig := trace.SpanContextConfig{
+	spanContextConfig := trace.SpanContextConfig{
 		TraceID:    traceId,
 		SpanID:     spanId,
-		TraceState: TracesSate,
+		TraceState: traceSate,
 	}
-	SpanContext := trace.NewSpanContext(SpanContextConfig)
-	return SpanContext
-
+	spanContext := trace.NewSpanContext(spanContextConfig)
+	return spanContext
 }
-func PushData(traceData map[string]interface{}, bkDataToken string) []tracesdk.ReadOnlySpan {
-	traceId := traceData["trace_id"].(string)
-	spanId := traceData["span_id"].(string)
-	var ParentSpanId string
-	parentSpanId, ok := traceData["parent_span_id"]
-	if ok {
-		ParentSpanId = parentSpanId.(string)
+
+func convertToString(value interface{}) string {
+	switch v := value.(type) {
+	case int:
+		return strconv.Itoa(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	case []int:
+		strSlice := make([]string, len(v))
+		for i, num := range v {
+			strSlice[i] = strconv.Itoa(num)
+		}
+		return "[" + strings.Join(strSlice, ", ") + "]"
+	case map[string]interface{}:
+		jsonString, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(jsonString)
+	default:
+		return ""
 	}
-	traceState := traceData["trace_state"].(string)
-	byteSpanId := getSpanId(spanId)
-	byteParentSpanId := getSpanId(ParentSpanId)
+}
+
+func getSpanName(traceData map[string]interface{}) string {
+	name, ok := traceData["span_name"].(string)
+	if !ok {
+		name = convertToString(traceData["span_name"])
+	}
+	return name
+}
+
+func getTraceId(traceData map[string]interface{}) [16]byte {
+	traceId, ok := traceData["trace_id"].(string)
+	if !ok {
+		traceId = convertToString(traceData["trace_id"])
+	}
 	var byteTraceId [16]byte
 	copy(byteTraceId[:], traceId)
-	startTime := traceData["start_time"].(float64)
-	endTime := traceData["end_time"].(float64)
-	StartTime := getTime(startTime)
-	EndTime := getTime(endTime)
-	kind := traceData["kind"].(float64)
-	SpanKind := int(kind)
-	code := traceData["status"].(map[string]interface{})["code"].(float64)
-	Code := uint32(code)
-	attributes := traceData["attributes"].(map[string]interface{})
-	Attributes := getKeyValue(attributes)
-
-	tracedResource := traceData["resource"].(map[string]interface{})
-	tracedResource["bk.data.token"] = bkDataToken
-	TraceDataResource := getKeyValue(tracedResource)
-	newResource := resource.NewSchemaless(TraceDataResource...)
-	events := traceData["events"].([]interface{})
-	links := traceData["links"].([]interface{})
-	Links := getLinks(links, byteTraceId)
-	Events := getEvents(events)
-	SpanContext := CreateSpanContext(byteSpanId, byteTraceId, traceState)
-	Parent := CreateSpanContext(byteParentSpanId, byteTraceId, "")
-
-	roSpans := SpanStubs{{
-		Name:        traceData["span_name"].(string),
-		StartTime:   StartTime,
-		EndTime:     EndTime,
-		SpanKind:    trace.SpanKind(SpanKind),
-		SpanContext: SpanContext,
-		Parent:      Parent,
-		Status: tracesdk.Status{
-			Code:        codes.Code(Code),
-			Description: traceData["status"].(map[string]interface{})["message"].(string),
-		},
-		Resource:   newResource,
-		Attributes: Attributes,
-		Events:     Events,
-		Links:      Links,
-	}}.Snapshots()
-
-	return roSpans
-
+	return byteTraceId
 }
 
-func (s spanSnapshot) Name() string                     { return s.name }
-func (s spanSnapshot) SpanContext() trace.SpanContext   { return s.spanContext }
-func (s spanSnapshot) Parent() trace.SpanContext        { return s.parent }
-func (s spanSnapshot) SpanKind() trace.SpanKind         { return s.spanKind }
-func (s spanSnapshot) StartTime() time.Time             { return s.startTime }
-func (s spanSnapshot) EndTime() time.Time               { return s.endTime }
+func getStartTime(traceData map[string]interface{}) time.Time {
+	floatStartTime, ok := traceData["start_time"].(float64)
+	if !ok {
+		logp.Err("Cannot be converted into time data,  start_time:%v", floatStartTime)
+		return time.Time{}
+	}
+	startTime := getTime(floatStartTime)
+	return startTime
+}
+
+func getEndTime(traceData map[string]interface{}) time.Time {
+	floatEndTime, ok := traceData["end_time"].(float64)
+	if !ok {
+		logp.Err("Cannot be converted into time data,  end_time:%v", floatEndTime)
+		return time.Time{}
+	}
+	endTime := getTime(floatEndTime)
+	return endTime
+}
+
+func getKind(traceData map[string]interface{}) int {
+	kind := traceData["kind"]
+	switch reflect.TypeOf(kind).Kind() {
+	case reflect.Int:
+		return kind.(int)
+	case reflect.Float64:
+		return int(kind.(float64))
+	default:
+		logp.Err("trace kind Wrong data format, kind:%v", kind)
+		return 0
+	}
+}
+
+func getTraceState(traceData map[string]interface{}) string {
+	traceState, ok := traceData["trace_state"].(string)
+	if !ok {
+		logp.Err("trace_state Wrong data format, trace_state:%v", traceState)
+		return ""
+	}
+	return traceState
+}
+
+func getCode(status map[string]interface{}) uint32 {
+	switch reflect.TypeOf(status["code"]).Kind() {
+	case reflect.Int:
+		return uint32(status["code"].(int))
+	case reflect.Float64:
+		return uint32(status["code"].(float64))
+	default:
+		logp.Err("trace_state Wrong data format, code:%v", status["code"])
+		return uint32(0)
+	}
+}
+
+func getStatus(traceData map[string]interface{}) tracesdk.Status {
+	status, ok := traceData["status"].(map[string]interface{})
+	if !ok {
+		logp.Err("trace_state Wrong data format, status:%v", status)
+		return tracesdk.Status{}
+	}
+	code := getCode(status)
+	statusMessage := getMessage(status)
+	traceStatus := tracesdk.Status{
+		Code:        codes.Code(code),
+		Description: statusMessage,
+	}
+	return traceStatus
+}
+
+func getMessage(status map[string]interface{}) string {
+	statusMessage, ok := status["message"].(string)
+	if !ok {
+		statusMessage = convertToString(status["message"])
+		return statusMessage
+	}
+	return statusMessage
+}
+
+func getAttributes(traceData map[string]interface{}) []attribute.KeyValue {
+	attributes, ok := traceData["attributes"].(map[string]interface{})
+	if !ok {
+		var attributes = make([]attribute.KeyValue, 0)
+		return attributes
+	}
+	return getKeyValue(attributes)
+}
+
+func getResource(traceData map[string]interface{}, bkDataToken string) []attribute.KeyValue {
+	traceResource, ok := traceData["resource"].(map[string]interface{})
+	if !ok {
+		resourceMap := make(map[string]interface{})
+		resourceMap["bk.data.token"] = bkDataToken
+		return getKeyValue(resourceMap)
+	}
+	traceResource["bk.data.token"] = bkDataToken
+	return getKeyValue(traceResource)
+}
+
+func PushData(traceData map[string]interface{}, bkDataToken string) SpanStub {
+	name := getSpanName(traceData)
+	traceId := getTraceId(traceData)
+	traceState := getTraceState(traceData)
+	byteSpanId := getSpanId(traceData)
+	byteParentSpanId := getParentId(traceData)
+	startTime := getStartTime(traceData)
+	endTime := getEndTime(traceData)
+	kind := getKind(traceData)
+	status := getStatus(traceData)
+	attributes := getAttributes(traceData)
+	tracedResource := getResource(traceData, bkDataToken)
+	newResource := resource.NewSchemaless(tracedResource...)
+	traceLinks := getLinks(traceData, traceId)
+	traceEvents := getEvents(traceData)
+	spanContext := CreateSpanContext(byteSpanId, traceId, traceState)
+	parent := CreateSpanContext(byteParentSpanId, traceId, "")
+	spanStub := SpanStub{
+		Name:        name,
+		StartTime:   startTime,
+		EndTime:     endTime,
+		SpanKind:    trace.SpanKind(kind),
+		SpanContext: spanContext,
+		Parent:      parent,
+		Status:      status,
+		Resource:    newResource,
+		Attributes:  attributes,
+		Events:      traceEvents,
+		Links:       traceLinks,
+	}
+	return spanStub
+}
+
+func (s spanSnapshot) Name() string { return s.name }
+
+func (s spanSnapshot) SpanContext() trace.SpanContext { return s.spanContext }
+
+func (s spanSnapshot) Parent() trace.SpanContext { return s.parent }
+
+func (s spanSnapshot) SpanKind() trace.SpanKind { return s.spanKind }
+
+func (s spanSnapshot) StartTime() time.Time { return s.startTime }
+
+func (s spanSnapshot) EndTime() time.Time { return s.endTime }
+
 func (s spanSnapshot) Attributes() []attribute.KeyValue { return s.attributes }
-func (s spanSnapshot) Links() []tracesdk.Link           { return s.links }
-func (s spanSnapshot) Events() []tracesdk.Event         { return s.events }
-func (s spanSnapshot) Status() tracesdk.Status          { return s.status }
-func (s spanSnapshot) DroppedAttributes() int           { return s.droppedAttributes }
-func (s spanSnapshot) DroppedLinks() int                { return s.droppedLinks }
-func (s spanSnapshot) DroppedEvents() int               { return s.droppedEvents }
-func (s spanSnapshot) ChildSpanCount() int              { return s.childSpanCount }
-func (s spanSnapshot) Resource() *resource.Resource     { return s.resource }
+
+func (s spanSnapshot) Links() []tracesdk.Link { return s.links }
+
+func (s spanSnapshot) Events() []tracesdk.Event { return s.events }
+
+func (s spanSnapshot) Status() tracesdk.Status { return s.status }
+
+func (s spanSnapshot) DroppedAttributes() int { return s.droppedAttributes }
+
+func (s spanSnapshot) DroppedLinks() int { return s.droppedLinks }
+
+func (s spanSnapshot) DroppedEvents() int { return s.droppedEvents }
+
+func (s spanSnapshot) ChildSpanCount() int { return s.childSpanCount }
+
+func (s spanSnapshot) Resource() *resource.Resource { return s.resource }
+
 func (s spanSnapshot) InstrumentationScope() instrumentation.Scope {
 	return s.instrumentationScope
 }

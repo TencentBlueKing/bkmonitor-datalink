@@ -110,7 +110,7 @@ pre-commit:
 
 .PHONY: pre-commit-install
 pre-commit-install: .check_pip_vars
-	$(PIP_PATH) install -U pre-commit
+	$(PIP_PATH) install -r scripts/requirements.txt
 	go install github.com/google/addlicense@latest
 	go install github.com/incu6us/goimports-reviser/v3@latest
 	pre-commit clean

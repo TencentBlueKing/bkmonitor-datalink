@@ -112,7 +112,6 @@ func main() {
 	}
 
 	if *checkFlag {
-		fmt.Println("start to do self-check")
 		selfcheck.DoSelfCheck()
 		os.Exit(0)
 	}

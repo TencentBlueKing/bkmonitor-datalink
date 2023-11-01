@@ -10,10 +10,11 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/fatih/color"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 )
@@ -46,7 +47,7 @@ func ParseConfiguration() {
 
 	// 对于无法获取配置文件的情况，视为配置文件不正确，输出内容检查配置文件。
 	if rowConfig == nil {
-		fmt.Printf("unable to get bkmonitorbeat configuration, please check config.\n")
+		color.Red("unable to get bkmonitorbeat configuration, please check config.\n")
 		return
 	}
 
@@ -72,7 +73,7 @@ func GetProcessPid() string {
 	var pid string
 	pidPath := bkmonitorConf.Path.Pid
 	if pidPath == "" {
-		fmt.Println("unable to get the path of pid file")
+		color.Red("unable to get the path of pid file\n")
 		return pid
 	}
 	pidFile := filepath.Join(pidPath, "bkmonitorbeat.pid")

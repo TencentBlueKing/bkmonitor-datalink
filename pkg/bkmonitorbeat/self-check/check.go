@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/fatih/color"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/self-check/config"
@@ -55,11 +56,11 @@ func GetAllTestFunc() []string {
 // selectTestMap 返回测试功能函数
 func selectTestMap(name string) (TestFunc, error) {
 	if name == "" {
-		return nil, errors.New("test func not found, name is empty")
+		return nil, errors.New("test func not found, name is empty\n")
 	}
 	f, ok := testMap[name]
 	if !ok {
-		return nil, errors.New("test func not found.")
+		return nil, errors.New("test func not found.\n")
 	}
 	return f, nil
 }
@@ -73,14 +74,14 @@ func fullyTest() {
 
 // componentTest 补分功能检测
 func componentTest(name string) {
-	fmt.Printf("start to check component: %s\n", name)
+	color.Yellow("start to check component: %s\n\n", name)
 	f, err := selectTestMap(name)
 	if err != nil {
-		fmt.Println(err)
+		color.Red(err.Error())
 	}
 	// 开始执行组件功能测试
 	f()
-	fmt.Printf("component: %s test finished!\n", name)
+	color.Yellow("\ncomponent: %s test finished!\n", name)
 }
 
 func DoSelfCheck() {

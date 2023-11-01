@@ -19,14 +19,15 @@ import sys
 
 
 ALLOWED_COMMIT_MSG_PREFIX = [
-    ("feat", "A new feature"),
-    ("fix", "A bug fix"),
+    ("feat", "A new feature. Correlates with MINOR in SemVer"),
+    ("fix", "A bug fix. Correlates with PATCH in SemVer"),
     ("docs", "Documentation only changes"),
-    ("style", "Changes that do not affect the meaning of the code (white-space, formatting, missing semi-colons, etc)"),
+    ("style", "Changes that do not affect the meaning of the code"),
     ("refactor", "A code change that neither fixes a bug nor adds a feature"),
     ("perf", "A code change that improves performance"),
     ("test", "Adding missing or correcting existing tests"),
     ("chore", "Changes to the build process or auxiliary tools and libraries such as documentation generation"),
+    ("merge", "Merge branch and fix conflicts"),
 ]
 
 

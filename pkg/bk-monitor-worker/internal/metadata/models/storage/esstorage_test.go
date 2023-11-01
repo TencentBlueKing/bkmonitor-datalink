@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/jinzhu/gorm"
 	"github.com/spf13/viper"
@@ -195,4 +196,7 @@ func TestESStorage_isIndexExist(t *testing.T) {
 	exist, err = ess.isIndexExist(context.TODO(), ess.searchFormatV1(), ess.IndexReV1())
 	assert.Nil(t, err)
 	assert.False(t, exist)
+	indexExist, err := ess.CheckIndexExist(context.TODO())
+	assert.Nil(t, err)
+	assert.True(t, indexExist)
 }

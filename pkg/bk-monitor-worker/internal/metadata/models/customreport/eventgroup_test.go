@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
@@ -30,10 +31,7 @@ import (
 )
 
 func TestEventGroup_GetESData(t *testing.T) {
-	patchNewEsClient := gomonkey.ApplyFunc(EventGroup.GetESClient, func() (*elasticsearch.Elasticsearch, error) {
-		return &elasticsearch.Elasticsearch{}, nil
-	})
-
+	gomonkey.ApplyMethod(EventGroup{}, "GetESClient", func() (*elasticsearch.Elasticsearch, error) { return &elasticsearch.Elasticsearch{}, nil })
 	patchSearchWithBody := gomonkey.ApplyFunc(elasticsearch.Elasticsearch.SearchWithBody, func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
 		all, _ := io.ReadAll(body)
 		input := string(all)
@@ -54,7 +52,7 @@ func TestEventGroup_GetESData(t *testing.T) {
 		}
 		return resp, nil
 	})
-	defer patchNewEsClient.Reset()
+
 	defer patchSearchWithBody.Reset()
 	eg := EventGroup{
 		CustomGroupBase: CustomGroupBase{TableID: "gse_event_report_base"},
@@ -63,7 +61,19 @@ func TestEventGroup_GetESData(t *testing.T) {
 	}
 	data, err := eg.GetESData(context.TODO())
 	assert.Nil(t, err)
-	assert.True(t, reflect.DeepEqual(data, map[string][]string{"event_name_a": {"module", "location", "d4"}, "event_name_b": {"module2", "location"}}))
+	assert.Equal(t, 2, len(data))
+	eventNameA, ok := data["event_name_a"]
+	assert.True(t, ok)
+	targetA := []string{"module", "location", "d4"}
+	sort.Strings(eventNameA)
+	sort.Strings(targetA)
+	assert.Equal(t, targetA, eventNameA)
+	eventNameB, ok := data["event_name_b"]
+	assert.True(t, ok)
+	targetB := []string{"module2", "location"}
+	sort.Strings(eventNameB)
+	sort.Strings(targetB)
+	assert.Equal(t, targetB, eventNameB)
 }
 
 func TestEventGroup_ModifyEventList(t *testing.T) {

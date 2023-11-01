@@ -278,16 +278,17 @@ func getEndTime(traceData map[string]interface{}) time.Time {
 }
 
 func getKind(traceData map[string]interface{}) int {
-	kind := traceData["kind"]
-	switch reflect.TypeOf(kind).Kind() {
-	case reflect.Int:
-		return kind.(int)
-	case reflect.Float64:
-		return int(kind.(float64))
-	default:
-		logp.Err("trace kind Wrong data format, kind:%v", kind)
-		return 0
+	kind, ok := traceData["kind"].(int)
+	if !ok {
+		switch reflect.TypeOf(kind).Kind() {
+		case reflect.Float64:
+			return int(traceData["kind"].(float64))
+		default:
+			logp.Err("trace kind Wrong data format, kind:%v", traceData["kind"])
+			return 0
+		}
 	}
+	return kind
 }
 
 func getTraceState(traceData map[string]interface{}) string {

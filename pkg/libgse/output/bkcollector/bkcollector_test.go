@@ -64,16 +64,27 @@ func TestGetLinks(t *testing.T) {
 func TestGetKeyValue(t *testing.T) {
 	mapData := ToMap(jsonStr)
 	attributes := mapData["attributes"].(map[string]interface{})
-
 	result := getKeyValue(attributes)
+	testAttributes := map[string]interface{}{}
+	result1 := getKeyValue(testAttributes)
+	testAttributes["intData"] = 10
+	testAttributes["boolData"] = true
+	testAttributes["mapData"] = mapData
+	result2 := getKeyValue(testAttributes)
 	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result).String())
+	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result1).String())
+	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result2).String())
+
 }
 
 func TestPushData(t *testing.T) {
 	bkDataToken := "123"
 	mapData := ToMap(jsonStr)
 	result := PushData(mapData, bkDataToken)
+	testMapData := map[string]interface{}{}
+	result1 := PushData(testMapData, bkDataToken)
 	assert.Equal(t, "bkcollector.SpanStub", reflect.TypeOf(result).String())
+	assert.Equal(t, "bkcollector.SpanStub", reflect.TypeOf(result1).String())
 }
 
 func TestCreateSpanContext(t *testing.T) {
@@ -106,4 +117,36 @@ func TestNewOutput(t *testing.T) {
 	assert.Equal(t, "*bkcollector.Output", reflect.TypeOf(result).String())
 	assert.Equal(t, bkDataToken, result.bkdatatoken)
 	assert.Equal(t, "bkcollector", result.String())
+}
+
+func TestGetCode(t *testing.T) {
+	status := map[string]interface{}{
+		"code":    1,
+		"message": "testdata",
+	}
+	status1 := map[string]interface{}{
+		"code": 2.0,
+	}
+	result := getStatus(status)
+	result1 := getStatus(status1)
+	assert.Equal(t, "trace.Status", reflect.TypeOf(result).String())
+	assert.Equal(t, "trace.Status", reflect.TypeOf(result1).String())
+}
+
+func TestGetEndTime(t *testing.T) {
+	testdata1 := map[string]interface{}{
+		"end_time": 1698229907793288.0,
+	}
+	testdata2 := map[string]interface{}{
+		"end_time": 1234,
+	}
+	testdata3 := map[string]interface{}{
+		"end_time": "1234",
+	}
+	result := getEndTime(testdata1)
+	result2 := getEndTime(testdata2)
+	result3 := getEndTime(testdata3)
+	assert.Equal(t, "time.Time", reflect.TypeOf(result).String())
+	assert.Equal(t, "time.Time", reflect.TypeOf(result2).String())
+	assert.Equal(t, "time.Time", reflect.TypeOf(result3).String())
 }

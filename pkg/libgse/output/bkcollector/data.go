@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/logp"
@@ -222,12 +221,12 @@ func convertToString(value interface{}) string {
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case bool:
 		return strconv.FormatBool(v)
-	case []int:
-		strSlice := make([]string, len(v))
-		for i, num := range v {
-			strSlice[i] = strconv.Itoa(num)
+	case []interface{}:
+		jsonString, err := json.Marshal(v)
+		if err != nil {
+			return ""
 		}
-		return "[" + strings.Join(strSlice, ", ") + "]"
+		return string(jsonString)
 	case map[string]interface{}:
 		jsonString, err := json.Marshal(v)
 		if err != nil {
@@ -280,9 +279,9 @@ func getEndTime(traceData map[string]interface{}) time.Time {
 func getKind(traceData map[string]interface{}) int {
 	kind, ok := traceData["kind"].(int)
 	if !ok {
-		switch reflect.TypeOf(kind).Kind() {
-		case reflect.Float64:
-			return int(traceData["kind"].(float64))
+		switch v := traceData["kind"].(type) {
+		case float64:
+			return int(v)
 		default:
 			logp.Err("trace kind Wrong data format, kind:%v", traceData["kind"])
 			return 0

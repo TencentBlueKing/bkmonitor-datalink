@@ -84,9 +84,19 @@ func (c *Output) Publish(batch publisher.Batch) error {
 	}
 	spanStubs := SpanStubs(roSpans)
 	pushSpan := spanStubs.Snapshots()
-	err := c.exporter.ExportSpans(context.Background(), pushSpan)
-	if err != nil {
-		logp.Err("push data err : %v", err)
+	var pushCount = 3
+	// Retry three times at an interval of one minute
+	for count := 0; count <= pushCount; count++ {
+		err := c.exporter.ExportSpans(context.Background(), pushSpan)
+		if err == nil {
+			break
+		}
+		if err != nil {
+			logp.Err("push data err : %v", err)
+		}
+		if count < pushCount {
+			time.Sleep(time.Minute)
+		}
 	}
 	batch.ACK()
 	return nil
@@ -107,23 +117,10 @@ func NewExporter(GrpcHost string) *otlptrace.Exporter {
 
 		otlptracegrpc.WithReconnectionPeriod(50 * time.Millisecond),
 	}
-
 	client := otlptracegrpc.NewClient(opts...)
 	exp, err := otlptrace.New(context.Background(), client)
-
 	if err != nil {
 		logp.Err("failed to create a new collector exporter: %v", err)
-		go func() {
-			for {
-				time.Sleep(1 * time.Second)
-				exp, err = otlptrace.New(context.Background(), client)
-				if err != nil {
-					logp.Err("failed to create a new collector exporter: %v", err)
-					continue
-				}
-				break
-			}
-		}()
 	}
 	return exp
 }

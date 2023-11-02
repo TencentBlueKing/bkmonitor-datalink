@@ -273,7 +273,7 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		if err1 != nil {
 			return nil, err1
 		}
-		log.Infof(ctx, "directly query %v", ok)
+		log.Debugf(ctx, "directly query %v", ok)
 		return directlyQuery(ctx, &qstruct, spaceUid)
 	}
 

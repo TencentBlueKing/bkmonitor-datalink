@@ -20,21 +20,32 @@ import (
 )
 
 const (
-	ClusterInfoKey     = "cluster_info"
-	HostInfoKey        = "host_info"
-	TagInfoKey         = "tag_info"
-	HostStatusInfoKey  = "host_info:status"
-	ProxyKey           = "influxdb_proxy"
-	QueryRouterInfoKey = "query_router_info"
+	ClusterInfoKey                   = "cluster_info"
+	HostInfoKey                      = "host_info"
+	TagInfoKey                       = "tag_info"
+	HostStatusInfoKey                = "host_info:status"
+	ProxyKey                         = "influxdb_proxy"
+	QueryRouterInfoKey               = "query_router_info"
+	SpaceToResultTableKey            = "space_to_result_table"
+	DataLabelToResultTableKey        = "data_label_to_result_table"
+	FieldToResultTableKey            = "field_to_result_table"
+	ResultTableDetailKey             = "result_table_detail"
+	SpaceToResultTableChannelKey     = "space_to_result_table:channel"
+	DataLabelToResultTableChannelKey = "data_label_to_result_table:channel"
+	FieldToResultTableChannelKey     = "field_to_result_table:channel"
+	ResultTableDetailChannelKey      = "result_table_detail:channel"
 )
 
-var AllKey = []string{
-	ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey, ProxyKey, QueryRouterInfoKey,
-}
+var (
+	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey, QueryRouterInfoKey}
+	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, FieldToResultTableKey, ResultTableDetailKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, FieldToResultTableChannelKey, ResultTableDetailChannelKey}
+)
 
 type Router interface {
 	Close() error
 	Subscribe(ctx context.Context) <-chan *goRedis.Message
+	SubscribeChannels(ctx context.Context, channels ...string) <-chan *goRedis.Message
 	GetClusterInfo(ctx context.Context) (ClusterInfo, error)
 	GetHostInfo(ctx context.Context) (HostInfo, error)
 	GetTagInfo(ctx context.Context) (TagInfo, error)
@@ -44,6 +55,14 @@ type Router interface {
 	GetQueryRouterInfo(ctx context.Context) (QueryRouterInfo, error)
 	SubHostStatus(ctx context.Context) <-chan *goRedis.Message
 	SetHostStatusRead(ctx context.Context, hostName string, readStatus bool) error
+	GetSpaceInfo(ctx context.Context) (SpaceInfo, error)
+	GetFieldToResultTable(ctx context.Context) (FieldToResultTable, error)
+	GetDataLabelResultTable(ctx context.Context) (DataLabelToResultTable, error)
+	GetResultTableDetailInfo(ctx context.Context) (ResultTableDetailInfo, error)
+	GetSpace(ctx context.Context, spaceId string) (Space, error)
+	GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error)
+	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
+	GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error)
 }
 
 type router struct {
@@ -78,6 +97,14 @@ func (r *router) key(keys ...string) string {
 // Subscribe sub all key
 func (r *router) Subscribe(ctx context.Context) <-chan *goRedis.Message {
 	return r.client.Subscribe(ctx, r.prefix).Channel()
+}
+
+func (r *router) SubscribeChannels(ctx context.Context, channels ...string) <-chan *goRedis.Message {
+	actualChannels := make([]string, 0)
+	for _, c := range channels {
+		actualChannels = append(actualChannels, fmt.Sprintf("%s:%s", r.prefix, c))
+	}
+	return r.client.Subscribe(ctx, actualChannels...).Channel()
 }
 
 // GetClusterInfo get all cluster info with map
@@ -264,6 +291,123 @@ func (r *router) SetHostStatusRead(ctx context.Context, hostName string, readSta
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (r *router) GetSpaceInfo(ctx context.Context) (SpaceInfo, error) {
+	result := SpaceInfo{}
+	err := GetGenericKeyResult(r, ctx, SpaceToResultTableKey, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *router) GetFieldToResultTable(ctx context.Context) (FieldToResultTable, error) {
+	result := FieldToResultTable{}
+	err := GetGenericKeyResult(r, ctx, FieldToResultTableKey, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *router) GetDataLabelResultTable(ctx context.Context) (DataLabelToResultTable, error) {
+	result := DataLabelToResultTable{}
+	err := GetGenericKeyResult(r, ctx, DataLabelToResultTableKey, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *router) GetResultTableDetailInfo(ctx context.Context) (ResultTableDetailInfo, error) {
+	result := ResultTableDetailInfo{}
+	err := GetGenericKeyResult(r, ctx, ResultTableDetailKey, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *router) GetSpace(ctx context.Context, spaceId string) (Space, error) {
+	value := Space{}
+	err := GetGenericHashKeyResult(r, ctx, SpaceToResultTableKey, spaceId, &value)
+	if err != nil {
+		return nil, err
+	}
+	for tableId, table := range value {
+		table.TableId = tableId
+	}
+	return value, nil
+}
+
+func (r *router) GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error) {
+	value := &ResultTableDetail{}
+	err := GetGenericHashKeyResult(r, ctx, ResultTableDetailKey, tableId, value)
+	if err != nil {
+		return nil, err
+	}
+	value.TableId = tableId
+	return value, nil
+}
+
+func (r *router) GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error) {
+	value := ResultTableList{}
+	err := GetGenericHashKeyResult(r, ctx, DataLabelToResultTableKey, dataLabel, &value)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func (r *router) GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error) {
+	value := ResultTableList{}
+	err := GetGenericHashKeyResult(r, ctx, FieldToResultTableKey, field, &value)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// GetGenericKeyResult 从 Redis 获取 KEY 的完整内容
+func GetGenericKeyResult(r *router, ctx context.Context, coreKey string, result GenericHash) error {
+	key := r.key(coreKey)
+	cursor := uint64(0)
+	count := int64(10000)
+	for {
+		cmd := r.client.HScan(ctx, key, cursor, "", count)
+		res, nextCursor, err := cmd.Result()
+		if err != nil {
+			return err
+		}
+		for i := 0; i < len(res); i += 2 {
+			item := result.NewValueInstance()
+			err = json.Unmarshal([]byte(res[i+1]), item)
+			if err != nil {
+				return err
+			}
+			result.SetValueInstance(res[i], item)
+		}
+		if nextCursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+// GetGenericHashKeyResult 从 Redis 获取 HashKey 中某一个键值对
+func GetGenericHashKeyResult(r *router, ctx context.Context, coreKey string, fieldKey string, value GenericValue) error {
+	key := r.key(coreKey)
+	res, err := r.client.HGet(ctx, key, fieldKey).Result()
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal([]byte(res), value)
+	if err != nil {
+		return err
 	}
 	return nil
 }

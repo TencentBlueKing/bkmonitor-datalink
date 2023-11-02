@@ -35,6 +35,11 @@ var (
 	mutex *sync.RWMutex
 )
 
+const (
+	KeyNotFound    = "keyNotFound"
+	BucketNotFount = "bucket not found"
+)
+
 func init() {
 	mutex = new(sync.RWMutex)
 	viper.SetDefault(BboltDefaultPathConfigPath, "bolt.db")
@@ -129,12 +134,12 @@ func (c *Client) Get(key []byte) ([]byte, error) {
 	err := c.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(c.BucketName)
 		if b == nil {
-			return errors.New("bucket not found")
+			return errors.New(BucketNotFount)
 		}
 		// get the val by key
 		ret = b.Get(key)
 		if ret == nil {
-			return errors.New("keyNotFound")
+			return errors.New(KeyNotFound)
 		}
 		return nil
 	})
@@ -183,7 +188,7 @@ func (c *Client) GetAll() ([][]byte, [][]byte, error) {
 	err := c.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(c.BucketName)
 		if b == nil {
-			return errors.New("bucket not found")
+			return errors.New(BucketNotFount)
 		}
 		cursor := b.Cursor()
 		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {

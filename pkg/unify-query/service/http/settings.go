@@ -47,6 +47,7 @@ const (
 	PrintHandlePathConfigPath                 = "http.path.print"
 	InfluxDBPrintHandlePathConfigPath         = "http.path.influxdb_print"
 	SpacePrintHandlePathConfigPath            = "http.path.space_print"
+	SpaceKeyPrintHandlePathConfigPath         = "http.path.space_key_print"
 	FeatureFlagHandlePathConfigPath           = "http.path.feature_flag_path"
 	ESHandlePathConfigPath                    = "http.path.es"
 

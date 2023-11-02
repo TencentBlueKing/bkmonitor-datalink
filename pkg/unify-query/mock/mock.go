@@ -11,11 +11,15 @@ package mock
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync"
 
 	goRedis "github.com/go-redis/redis/v8"
+	"github.com/spf13/viper"
 
 	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
@@ -29,6 +33,7 @@ var (
 
 func logInit() {
 	once.Do(func() {
+		config.CustomConfigFilePath = os.Getenv("UNIFY-QUERY-CONFIG-FILE-PATH")
 		log.InitTestLogger()
 	})
 }
@@ -37,32 +42,49 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 	offlineDataArchive.MockMetaData(m)
 }
 
-func SetSpaceAndProxyMockData(ctx context.Context, path, bucketName, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
+func SetSpaceTsDbMockData(
+	ctx context.Context, path string, bucketName string, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo,
+	fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	logInit()
-
-	sr, _ := influxdb.GetSpaceRouter(path, bucketName)
-	space := sr.Get(ctx, spaceUid)
-
-	if space == nil {
-		space = make(redis.Space)
+	sr, err := influxdb.SetSpaceTsDbRouter(ctx, path, bucketName, "")
+	if err != nil {
+		panic(err)
 	}
-
-	if _, ok := space[tdb.TableID]; !ok {
-		space[tdb.TableID] = tdb
-		sr.Add(ctx, spaceUid, space)
+	for sid, space := range spaceInfo {
+		err = sr.Add(ctx, ir.SpaceToResultTableKey, sid, &space)
+		if err != nil {
+			panic(err)
+		}
 	}
-
-	proxyInfo := ir.ProxyInfo{
-		tdb.TableID: proxy,
+	for rid, rt := range rtInfo {
+		err = sr.Add(ctx, ir.ResultTableDetailKey, rid, rt)
+		if err != nil {
+			panic(err)
+		}
 	}
-	influxdb.MockRouter(proxyInfo)
+	for field, rts := range fieldInfo {
+		err = sr.Add(ctx, ir.FieldToResultTableKey, field, &rts)
+		if err != nil {
+			panic(err)
+		}
+	}
+	for dataLabel, rts := range dataLabelInfo {
+		err = sr.Add(ctx, ir.DataLabelToResultTableKey, dataLabel, &rts)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
 func SetRedisClient(ctx context.Context, serverName string) {
 	logInit()
+	host := viper.GetString("redis.host")
+	port := viper.GetInt("redis.port")
+	pwd := viper.GetString("redis.password")
 	options := &goRedis.UniversalOptions{
-		DB:    0,
-		Addrs: []string{"127.0.0.1:6379"},
+		DB:       0,
+		Addrs:    []string{fmt.Sprintf("%s:%d", host, port)},
+		Password: pwd,
 	}
 	redis.SetInstance(ctx, serverName, options)
 }

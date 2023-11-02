@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strings"
 	"sync"
 
 	goRedis "github.com/go-redis/redis/v8"
@@ -421,38 +420,6 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		}
 	}
 	return err
-}
-
-func (r *Router) GetProxyByTableID(tableId, field string, isProxy bool) (*influxdb.Proxy, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
-	route := strings.Split(tableId, ".")
-	if len(route) != 2 {
-		return nil, fmt.Errorf("tableid format is wrong %s", tableId)
-	}
-
-	var ckList []string
-	if isProxy {
-		// 判断是否需要路由
-		ckList = []string{
-			fmt.Sprintf("%s.%s", route[0], field),
-			tableId,
-			fmt.Sprintf("%s.__default__", route[0]),
-		}
-	} else {
-		ckList = []string{
-			tableId,
-		}
-	}
-
-	for _, ck := range ckList {
-		if v, ok := r.proxyInfo[ck]; ok {
-			return v, nil
-		}
-	}
-
-	return nil, fmt.Errorf("influxdb proxy router is empty, with talbeID: %s, field: %s", tableId, field)
 }
 
 func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (string, error) {

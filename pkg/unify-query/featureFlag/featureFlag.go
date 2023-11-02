@@ -78,7 +78,7 @@ func setEvent(ctx context.Context, events []exporter.FeatureEvent) error {
 		if err != nil {
 			return err
 		}
-		log.Infof(ctx, string(info))
+		log.Debugf(ctx, string(info))
 	}
 	return nil
 }

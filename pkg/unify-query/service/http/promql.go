@@ -172,8 +172,8 @@ func directlyQuery(
 	trace.InsertStringIntoSpan("end", info.Stop.String(), span)
 	trace.InsertStringIntoSpan("step", info.Interval.String(), span)
 
-	log.Infof(ctx, "directly query old promql: %s", oldStmt)
-	log.Infof(ctx, "directly query new promql: %s", stmt)
+	log.Debugf(ctx, "directly query old promql: %s", oldStmt)
+	log.Debugf(ctx, "directly query new promql: %s", stmt)
 
 	metadata.SetExpand(ctx, &metadata.VmExpand{ResultTableGroup: queries.DirectlyResultTable()})
 

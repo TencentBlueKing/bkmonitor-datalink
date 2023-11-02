@@ -312,7 +312,7 @@ func (i *Instance) vmQuery(
 	trace.InsertStringIntoSpan("query-address", i.Address, span)
 	trace.InsertStringIntoSpan("query-uri-path", i.UriPath, span)
 	trace.InsertStringIntoSpan("query-sql", sql, span)
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
 		address, body, sql,
 	)

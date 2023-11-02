@@ -185,7 +185,7 @@ func (i *Instance) QueryRange(
 
 	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"victoria metrics query: %s, promql: %s",
 		urlPath, promqlStr,
 	)

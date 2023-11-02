@@ -36,7 +36,7 @@ func (r *response) failed(ctx context.Context, err error) {
 }
 
 func (r *response) success(ctx context.Context, data interface{}) {
-	log.Infof(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
+	log.Debugf(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
 	user := metadata.GetUser(ctx)
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid)
 	r.c.JSON(http.StatusOK, data)

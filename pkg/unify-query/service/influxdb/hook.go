@@ -32,6 +32,10 @@ func setDefaultConfig() {
 	viper.SetDefault(PrefixConfigPath, "bkmonitorv3:influxdb")
 	viper.SetDefault(RouterIntervalConfigPath, "30m")
 
+	viper.SetDefault(SpaceRouterPrefixConfigPath, "bkmonitorv3:spaces")
+	viper.SetDefault(SpaceRouterBboltPathConfigPath, "boltV2.db")
+	viper.SetDefault(SpaceRouterBboltBucketNameConfigPath, "space")
+
 	viper.SetDefault(GrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
 	viper.SetDefault(GrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
 }
@@ -49,6 +53,10 @@ func LoadConfig() {
 
 	RouterPrefix = viper.GetString(PrefixConfigPath)
 	RouterInterval = viper.GetDuration(RouterIntervalConfigPath)
+
+	SpaceRouterPrefix = viper.GetString(SpaceRouterPrefixConfigPath)
+	SpaceRouterBboltPath = viper.GetString(SpaceRouterBboltPathConfigPath)
+	SpaceRouterBboltBucketName = viper.GetString(SpaceRouterBboltBucketNameConfigPath)
 
 	GrpcMaxCallRecvMsgSize = viper.GetInt(GrpcMaxCallRecvMsgSizeConfigPath)
 	GrpcMaxCallSendMsgSize = viper.GetInt(GrpcMaxCallSendMsgSizeConfigPath)

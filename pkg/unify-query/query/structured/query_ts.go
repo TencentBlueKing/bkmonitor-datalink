@@ -331,7 +331,15 @@ func (q *Query) BuildMetadataQuery(
 			LabelsMatcher: make([]*labels.Matcher, 0),
 		}
 		allCondition AllConditions
+
+		span oleltrace.Span
 	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "build-metadata-query")
+	if span != nil {
+		defer span.End()
+	}
+
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
 	// 增加查询条件
@@ -355,6 +363,15 @@ func (q *Query) BuildMetadataQuery(
 	vmRt := tsDB.VmRt
 	measurement = tsDB.Measurement
 	measurements = []string{measurement}
+
+	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
+	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
+	trace.InsertStringIntoSpan("tsdb-db", db, span)
+	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
+	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
+	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
+	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -394,6 +411,8 @@ func (q *Query) BuildMetadataQuery(
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+
+	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
 
 	// 拼入空间自带过滤条件
 	var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))

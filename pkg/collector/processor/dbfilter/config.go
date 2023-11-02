@@ -9,7 +9,9 @@
 
 package dbfilter
 
-import "time"
+import (
+	"time"
+)
 
 type Config struct {
 	SlowQuery SlowQueryConfig `config:"slow_query" mapstructure:"slow_query"`

@@ -20,7 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -34,26 +33,43 @@ processor:
         keys:
           - "resource.service.name"
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "resource_filter/drop"
+    config:
+      drop:
+        keys:
+          - "resource.service.name1"
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*resourceFilter)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	mainConfig := factory.configs.GetGlobal().(Config)
+	assert.Equal(t, "service.name", mainConfig.Drop.Keys[0])
 
-	actualConfig := factory.configs.GetGlobal().(Config)
-	c.Drop.Keys[0] = "service.name"
-	assert.Equal(t, c.Drop, actualConfig.Drop)
+	customConfig := factory.configs.GetByToken("token1").(Config)
+	assert.Equal(t, "service.name1", customConfig.Drop.Keys[0])
 
 	assert.Equal(t, define.ProcessorResourceFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 const (

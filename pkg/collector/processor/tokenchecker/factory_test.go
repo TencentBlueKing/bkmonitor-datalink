@@ -34,15 +34,39 @@ processor:
       metrics_dataid: 1001
       logs_dataid: 1002
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "token_checker/fixed"
+    config:
+      type: "fixed"
+      fixed_token: "token1"
+      resource_key: "bk.data.token"
+      traces_dataid: 1009
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*tokenChecker)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	var c1 Config
+	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
+	assert.Equal(t, c1, factory.configs.GetGlobal().(Config))
+
+	var c2 Config
+	assert.NoError(t, mapstructure.Decode(customConf, &c2))
+	assert.Equal(t, c2, factory.configs.GetByToken("token1").(Config))
 
 	assert.Equal(t, define.ProcessorTokenChecker, factory.Name())
 	assert.False(t, factory.IsDerived())
@@ -52,8 +76,8 @@ processor:
 	err = factory.processCommon(decoder, &define.Record{RecordType: define.RecordTraces})
 	assert.NoError(t, err)
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func makeTracesGenerator(n int, resources map[string]string) *generator.TracesGenerator {

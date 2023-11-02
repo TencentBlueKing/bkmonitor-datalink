@@ -33,24 +33,47 @@ processor:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 `
+	mainConf := processor.MustLoadConfigs(content)[0].Config
 
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	customContent := `
+processor:
+    - name: "license_checker/common"
+      config:
+        enabled: true
+        expire_time: 110001110
+        tolerable_expire: 24h
+        number_nodes: 200
+        tolerable_num_ratio: 1.5
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*licenseChecker)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
-	assert.Equal(t, c, factory.configs.GetGlobal().(Config))
+	var c1 Config
+	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
+	assert.Equal(t, c1, factory.configs.GetGlobal().(Config))
+
+	var c2 Config
+	assert.NoError(t, mapstructure.Decode(customConf, &c2))
+	assert.Equal(t, c2, factory.configs.GetByToken("token1").(Config))
 
 	assert.Equal(t, define.ProcessorLicenseChecker, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.True(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func TestLicenseCheckerProcess(t *testing.T) {

@@ -42,26 +42,51 @@ processor:
           destination: "apdex_type"
           apdex_t: 20 # ms
 `
+	mainConf := processor.MustLoadConfigs(content)[0].Config
 
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	customContent := `
+processor:
+  - name: "apdex_calculator/standard"
+    config:
+      calculator:
+        type: "standard"
+      rules:
+        - kind: ""
+          metric_name: "bk_apm_duration"
+          destination: "apdex_type"
+          apdex_t: 50 # ms
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*apdexCalculator)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	var c1 Config
+	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
+	mainConfig := factory.configs.GetGlobal().(*Config)
+	assert.Equal(t, c1.Rules, mainConfig.Rules)
 
-	actualConfig := factory.configs.GetGlobal().(*Config)
-	assert.Equal(t, c.Rules, actualConfig.Rules)
+	var c2 Config
+	assert.NoError(t, mapstructure.Decode(customConf, &c2))
+	customConfig := factory.configs.GetByToken("token1").(*Config)
+	assert.Equal(t, c2.Rules, customConfig.Rules)
 
 	assert.Equal(t, define.ProcessorApdexCalculator, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func testMetricsDimension(t *testing.T, data interface{}, conf *Config, exist bool) {
@@ -250,6 +275,12 @@ func TestProcessTracesStandardCalculator(t *testing.T) {
 func testProcessTracesStandardCalculator(startTime, endTime time.Duration, threshold float64) (string, error) {
 	g := generator.NewTracesGenerator(define.TracesOptions{
 		SpanCount: 1,
+		GeneratorOptions: define.GeneratorOptions{
+			RandomAttributeKeys: []string{
+				processor.KeyService,
+				processor.KeyInstance,
+			},
+		},
 	})
 	data := g.Generate()
 	span := testkits.FirstSpan(data)

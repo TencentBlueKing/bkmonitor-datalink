@@ -620,6 +620,12 @@ func TestVmQueryParams(t *testing.T) {
 			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum(count_over_time(a[1m] offset -59s999ms))","start":1697458200,"end":1697461800,"step":60},"result_table_group":{"a":["1_prom_computation_result"]},"metric_filter_condition":{"a":"result_table_id=\"1_prom_computation_result\", __name__=\"container_cpu_usage_seconds_total_value\", bcs_cluster_id=\"cls-2\", bk_biz_id=\"7\", ip=~\"198\\\\.0\\\\.0\\\\.1|198\\\\.0\\\\.0\\\\.2\", ip=~\"[a-z]|[A-Z]\", api!=\"/metrics\" or result_table_id=\"1_prom_computation_result\", __name__=\"container_cpu_usage_seconds_total_value\", bcs_cluster_id=\"cls-2\", bk_biz_id=\"7\", api=\"/metrics\""},"metric_alias_mapping":null}`,
 		},
 		{
+			username: "vm-query-or-for-interval",
+			spaceUid: "vm-query",
+			promql:   `{"promql":"sum by(job, metric_name) (delta(label_replace({__name__=~\"container_cpu_.+_total\", __name__ !~ \".+_size_count\", __name__ !~ \".+_process_time_count\", job=\"metric-social-friends-forever\"}, \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\")[2m:]))","start":"1698147600","end":"1698151200","step":"60s","bk_biz_ids":null,"timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum by (job, metric_name) (label_replace(delta(a[2m:] offset 1ms), \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\"))","start":1698147600,"end":1698151200,"step":60},"result_table_group":{"a":["1_prom_computation_result"]},"metric_filter_condition":{"a":"result_table_id=\"1_prom_computation_result\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"cls-2\", job=\"metric-social-friends-forever\""},"metric_alias_mapping":null}`,
+		},
+		{
 			username: "vm-query",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["or", "and"]}},{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
@@ -1214,6 +1220,39 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `1m`,
+			},
+		},
+		"promql to struct with 1m:2m": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `count_over_time(bkmonitor:metric[1m:2m])`,
+				Start:  `1691132705`,
+				End:    `1691136305`,
+				Step:   `30s`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: `bkmonitor`,
+						FieldName:  `metric`,
+						TimeAggregation: structured.TimeAggregation{
+							Function: "count_over_time",
+							Window:   "1m0s",
+						},
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						IsSubQuery:    true,
+						Step:          "2m0s",
+						ReferenceName: `a`,
+						Offset:        "0s",
+					},
+				},
+				MetricMerge: "a",
+				Start:       `1691132705`,
+				End:         `1691136305`,
+				Step:        `30s`,
 			},
 		},
 	}

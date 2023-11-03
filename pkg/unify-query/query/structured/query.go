@@ -377,7 +377,7 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 			log.Errorf(context.TODO(), "failed to parse window function for->[%s]", err)
 			return nil, err
 		}
-		log.Infof(context.TODO(), "function->[%s] with window->[%s]will add to expr",
+		log.Debugf(context.TODO(), "function->[%s] with window->[%s]will add to expr",
 			q.TimeAggregation.Function, q.TimeAggregation.Window)
 	}
 
@@ -393,7 +393,7 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 			Dimensions: method.Dimensions,
 			Without:    method.Without,
 		})
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"function->[%s] args->[%s] dimension->[%s] is add to list.", method.Method, method.VArgsList, method.Dimensions,
 		)
 	}

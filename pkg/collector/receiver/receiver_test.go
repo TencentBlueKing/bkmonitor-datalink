@@ -11,6 +11,7 @@ package receiver
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -59,12 +60,23 @@ func TestReceiver(t *testing.T) {
       pushgateway:
         enabled: true
       zipkin:
-        enabled: false
+        enabled: true
+      remotewrite:
+        enabled: true
+      skywalking:
+        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
 	r, err := New(config)
 	assert.NoError(t, err)
+
+	componentsReady[define.SourceJaeger] = func() { t.Logf("%s ready", define.SourceJaeger) }
+	componentsReady[define.SourceOtlp] = func() { t.Logf("%s ready", define.SourceOtlp) }
+	componentsReady[define.SourcePushGateway] = func() { t.Logf("%s ready", define.SourcePushGateway) }
+	componentsReady[define.SourceRemoteWrite] = func() { t.Logf("%s ready", define.SourceRemoteWrite) }
+	componentsReady[define.SourceZipkin] = func() { t.Logf("%s ready", define.SourceZipkin) }
+	componentsReady[define.SourceSkywalking] = func() { t.Logf("%s ready", define.SourceSkywalking) }
 
 	r.ready()
 	assert.NoError(t, r.Start())
@@ -123,4 +135,10 @@ func TestSkywalkingFetcher(t *testing.T) {
 		config := fetcher.Fetch("token1")
 		assert.Equal(t, "", config.Sn)
 	})
+}
+
+func TestWriteResponse(t *testing.T) {
+	r := httptest.NewRecorder()
+	WriteResponse(r, "application/json", 200, nil)
+	assert.Equal(t, 200, r.Result().StatusCode)
 }

@@ -468,7 +468,7 @@ func (sp *structParser) splitVecGroups() error {
 				} else {
 					start = l[len(r)-1]
 				}
-				log.Infof(context.TODO(), "%s => [%d:%d] %s\n", oldStr, start, end, sp.q[start:end])
+				log.Debugf(context.TODO(), "%s => [%d:%d] %s\n", oldStr, start, end, sp.q[start:end])
 			}
 
 			group = append(group, node)

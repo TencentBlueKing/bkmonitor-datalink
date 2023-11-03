@@ -9,7 +9,9 @@
 
 package resourcefilter
 
-import "strings"
+import (
+	"strings"
+)
 
 type Config struct {
 	Drop     DropAction       `config:"drop" mapstructure:"drop"`

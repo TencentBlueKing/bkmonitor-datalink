@@ -140,7 +140,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 	trace.InsertStringIntoSpan("query-sql", stmt, span)
 	trace.InsertStringIntoSpan("query-cost", startAnaylize.Sub(startQuery).String(), span)
 
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
 	)
 	if resp == nil {
@@ -173,7 +173,7 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 
 	trace.InsertStringIntoSpan("analyzer-cost", time.Since(startAnaylize).String(), span)
 
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"influxdb query:[%s][%s], result anaylize cost:%s", db, stmt, time.Since(startAnaylize),
 	)
 
@@ -290,7 +290,7 @@ func (i *Instance) Query(
 	startAnaylize = time.Now()
 
 	trace.InsertStringIntoSpan("query-cost", startAnaylize.Sub(startQuery).String(), span)
-	log.Infof(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
+	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
 		log.Warnf(ctx, "query:%s get nil response", stmt)
 		return nil, errors.New("get nil response")
@@ -351,7 +351,7 @@ func (i *Instance) Query(
 
 	trace.InsertStringIntoSpan("analyzer_cost", time.Since(startAnaylize).String(), span)
 
-	log.Infof(ctx, fmt.Sprintf(
+	log.Debugf(ctx, fmt.Sprintf(
 		"influxdb query:%s, result anaylize cost:%s, result num: %d, series num: %d, point num: %d",
 		stmt, time.Since(startAnaylize), resultNum, seriesNum, pointNum,
 	))

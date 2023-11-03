@@ -547,8 +547,6 @@ github.com/prometheus/procfs v0.7.4-0.20211011103944-1a7a2bd3279f/go.mod h1:cz+a
 github.com/prometheus/prometheus v0.37.0 h1:LgnE+97wnUK/qcmk5oHIqieJEKwhZtaSidyKpUyeats=
 github.com/prometheus/prometheus v0.37.0/go.mod h1:egARUgz+K93zwqsVIAneFlLZefyGOON44WyAp4Xqbbk=
 github.com/rabbitmq/amqp091-go v1.1.0/go.mod h1:ogQDLSOACsLPsIq0NpbtiifNZi2YOz0VTJ0kHRghqbM=
-github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc h1:eXQoy66wUI9meNnIdKYJ+EV/Tq3LvXeUe95AB2dPk8g=
-github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc/go.mod h1:V5hvlcTzUJ3MOo0fEolWR25CZBBsb7q3wWVAmBYwr54=
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 h1:N/ElC8H3+5XpJzTSTfLsJV/mx9Q9g7kxmchpfZyxgzM=
 github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/rogpeppe/fastuuid v1.2.0/go.mod h1:jVj6XXZzXRy/MSR5jhDC/2q6DgLz+nrA6LYCDYWNEvQ=

@@ -9,7 +9,9 @@
 
 package licensechecker
 
-import "time"
+import (
+	"time"
+)
 
 type Config struct {
 	Enabled           bool          `config:"enabled" mapstructure:"enabled"`

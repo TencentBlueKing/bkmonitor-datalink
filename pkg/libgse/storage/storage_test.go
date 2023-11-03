@@ -11,6 +11,8 @@ package storage
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_Storage_Normal(t *testing.T) {
@@ -20,6 +22,7 @@ func Test_Storage_Normal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer Close()
 
 	key := "key"
 	val := "value"
@@ -39,9 +42,10 @@ func Test_Storage_Normal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	Close()
+	_, err = Get(key)
+	assert.Error(t, err)
 
-	if err := Destory(); err != nil {
+	if err := Destroy(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -51,7 +55,7 @@ func Test_Storage_DoubleClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer Destory()
+	defer Destroy()
 	Close()
 	Close()
 }
@@ -61,10 +65,10 @@ func Test_Storage_NonExistValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer Destory()
+	defer Destroy()
 
 	if _, err := Get("not_existed"); err == nil {
-		t.Fatal(err)
+		t.Fatal("key found")
 	}
 
 	if err := Del("not_existed"); err != nil {
@@ -95,7 +99,7 @@ func Test_Storage_CoverSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Destory(); err != nil {
+	if err := Destroy(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -124,7 +128,139 @@ func Test_Storage_SetNull(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Destory(); err != nil {
+	if err := Destroy(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func Test_Storage_List(t *testing.T) {
+	if err := Init("abc.db", nil); err != nil {
+		t.Fatal(err)
+	}
+	defer Close()
+
+	if err := Set("state:1|2", "v1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Set("state:2|3", "v2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Set("others:test", "v3", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	values, err := List("state")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, map[string]string{
+		"state:1|2": "v1",
+		"state:2|3": "v2",
+	}, values)
+
+	values, err = List("others")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, map[string]string{
+		"others:test": "v3",
+	}, values)
+
+	values, err = List("notexist")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Empty(t, values)
+
+	if err := Destroy(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func Test_Storage_Flush(t *testing.T) {
+	storage, err := NewLocalStorage("abc.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+
+	if err := storage.Set("state:1|2", "v1", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := storage.Set("state:2|3", "v2", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	storage.Flush()
+
+	values, err := storage.List("state")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, map[string]string{
+		"state:1|2": "v1",
+		"state:2|3": "v2",
+	}, values)
+
+	v, err := storage.Get("state:1|2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "v1" {
+		t.Fatal("value is not correct")
+	}
+
+	v, err = storage.Get("state:2|3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "v2" {
+		t.Fatal("value is not correct")
+	}
+
+	storage.Del("state:1|2")
+
+	values, err = storage.List("state")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, map[string]string{
+		"state:2|3": "v2",
+	}, values)
+
+	storage.Flush()
+
+	v, err = storage.Get("state:1|2")
+	if err == nil {
+		t.Fatal("key should be not exist")
+	}
+
+	v, err = storage.Get("state:2|3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v != "v2" {
+		t.Fatal("value is not correct")
+	}
+
+	values, err = storage.List("state")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, map[string]string{
+		"state:2|3": "v2",
+	}, values)
+
+	if err := storage.Destroy(); err != nil {
 		t.Fatal(err)
 	}
 }

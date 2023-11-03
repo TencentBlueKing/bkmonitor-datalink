@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -34,58 +35,55 @@ type sqlExpected struct {
 func mockSpace() {
 	fmt.Println("mock space")
 	fmt.Println("------------------------------------------------------------------------------------------------")
-	space := redis.Space{
-		"system.cpu_summary": &redis.TsDB{
-			TableID:         "system.cpu_summary",
-			Field:           []string{"metric", "metric2"},
-			MeasurementType: redis.BKTraditionalMeasurement,
-			BkDataID:        "1001",
-			Filters:         []redis.Filter{},
-		},
-		"2_bkmonitor_time_series_1573076.__default__": &redis.TsDB{
-			TableID:         "2_bkmonitor_time_series_1573076.__default__",
-			Field:           []string{"metric", "metric2"},
-			MeasurementType: redis.BkExporter,
-			BkDataID:        "1001",
-			Filters:         []redis.Filter{},
-		},
-		"2_bkmonitor_time_series_1572904.__default__": &redis.TsDB{
-			TableID:         "2_bkmonitor_time_series_1572904.__default__",
-			Field:           []string{"metric", "metric2"},
-			MeasurementType: redis.BkSplitMeasurement,
-			BkDataID:        "1001",
-			Filters:         []redis.Filter{},
-		},
-	}
-
 	ctx := context.Background()
-	sr, _ := influxdb.GetSpaceRouter("", "")
-	sr.Add(ctx, "bkcc__2", space)
-
-	for k, v := range sr.Get(context.Background(), "bkcc__2") {
-		fmt.Println(k)
-		fmt.Println(v)
-	}
-
-	proxyInfo := ir.ProxyInfo{
-		"system.cpu_summary": &ir.Proxy{
-			StorageID:   "",
-			Db:          "system",
-			Measurement: "cpu_summary",
+	spaceId := "bkcc__2"
+	path := "infos_test.db"
+	bucketName := "infos_test"
+	mock.SetSpaceTsDbMockData(
+		ctx, path, bucketName,
+		ir.SpaceInfo{
+			spaceId: ir.Space{
+				"2_bkmonitor_time_series_1573076.__default__": &ir.SpaceResultTable{
+					TableId: "2_bkmonitor_time_series_1573076.__default__",
+					Filters: []map[string]string{},
+				},
+				"2_bkmonitor_time_series_1572904.__default__": &ir.SpaceResultTable{
+					TableId: "2_bkmonitor_time_series_1572904.__default__",
+					Filters: []map[string]string{},
+				},
+				"system.cpu_summary": &ir.SpaceResultTable{
+					TableId: "system.cpu_summary",
+					Filters: []map[string]string{},
+				},
+			},
 		},
-		"2_bkmonitor_time_series_1573076.__default__": &ir.Proxy{
-			StorageID:   "",
-			Db:          "2_bkmonitor_time_series_1573076",
-			Measurement: "__default__",
+		ir.ResultTableDetailInfo{
+			"2_bkmonitor_time_series_1573076.__default__": &ir.ResultTableDetail{
+				TableId:         "2_bkmonitor_time_series_1573076.__default__",
+				Fields:          []string{"metric", "metric2"},
+				MeasurementType: redis.BkExporter,
+				StorageId:       0,
+				DB:              "2_bkmonitor_time_series_1573076",
+				Measurement:     "__default__",
+			},
+			"2_bkmonitor_time_series_1572904.__default__": &ir.ResultTableDetail{
+				TableId:         "2_bkmonitor_time_series_1572904.__default__",
+				Fields:          []string{"metric", "metric2"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       0,
+				DB:              "2_bkmonitor_time_series_1572904",
+				Measurement:     "__default__",
+			},
+			"system.cpu_summary": &ir.ResultTableDetail{
+				TableId:         "system.cpu_summary",
+				Fields:          []string{"metric", "metric2"},
+				MeasurementType: redis.BKTraditionalMeasurement,
+				StorageId:       0,
+				DB:              "system",
+				Measurement:     "cpu_summary",
+			},
 		},
-		"2_bkmonitor_time_series_1572904.__default__": &ir.Proxy{
-			StorageID:   "",
-			Db:          "2_bkmonitor_time_series_1572904",
-			Measurement: "__default__",
-		},
-	}
-
-	influxdb.MockRouter(proxyInfo)
+		nil, nil)
 }
 
 // fakeData

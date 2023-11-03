@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	DefaultDataType   string = "log_v2"
-	DefaultOutputType string = "otlp_trace"
-	BkDataToken       string = "bk.data.token"
+	DefaultDataType      string = "log_v2"
+	DefaultOutputType    string = "otlp_trace"
+	BkDataTokenFieldName string = "bk.data.token"
 )
 
 type Output struct {
@@ -145,7 +145,7 @@ func (c *Output) parseTraceData(batch publisher.Batch) []tracesdk.ReadOnlySpan {
 				logp.Err("parse log to TraceData error. error:%v log:%v", err, log)
 				continue
 			}
-			traceData.Resource[BkDataToken] = c.bkDataToken
+			traceData.Resource[BkDataTokenFieldName] = c.bkDataToken
 			roSpans = append(roSpans, traceData)
 		}
 	}

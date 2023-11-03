@@ -19,14 +19,13 @@ import (
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 )
 
 const (
-	dataType   string = "log_v2"
-	outputType string = "otlp_trace"
+	DefaultDataType   string = "log_v2"
+	DefaultOutputType string = "otlp_trace"
+	BkDataToken       string = "bk.data.token"
 )
 
 type Output struct {
@@ -55,7 +54,7 @@ func MakeBkCollector(_ outputs.IndexManager, beat beat.Info, observer outputs.Ob
 }
 
 func (c *Output) Publish(batch publisher.Batch) error {
-	if c.dataType == dataType && c.outputType == outputType {
+	if c.dataType == DefaultDataType && c.outputType == DefaultOutputType {
 		snapshots := c.parseTraceData(batch)
 		err := pushData(c, snapshots)
 		if err != nil {
@@ -146,7 +145,7 @@ func (c *Output) parseTraceData(batch publisher.Batch) []tracesdk.ReadOnlySpan {
 				logp.Err("parse log to TraceData error. error:%v log:%v", err, log)
 				continue
 			}
-			traceData.Resource["bk.data.token"] = c.bkDataToken
+			traceData.Resource[BkDataToken] = c.bkDataToken
 			roSpans = append(roSpans, traceData)
 		}
 	}

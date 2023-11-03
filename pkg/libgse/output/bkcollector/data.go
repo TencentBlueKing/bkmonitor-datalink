@@ -12,7 +12,6 @@ package bkcollector
 import (
 	"encoding/hex"
 	"encoding/json"
-	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/logp"
@@ -126,7 +125,7 @@ func (t *TraceData) Snapshot() tracesdk.ReadOnlySpan {
 func getTraceId(t *TraceData) [16]byte {
 	traceId, err := hex.DecodeString(t.TraceId)
 	if err != nil {
-		logp.Err("trace_id cannot be converted to hexadecimal data,  trace_id:%v", t.TraceId)
+		logp.Err("trace_id cannot be converted to hexadecimal data. error:%v,  trace_id:%v", err, t.TraceId)
 	}
 	var byteTraceId [16]byte
 	copy(byteTraceId[:], traceId)
@@ -140,7 +139,7 @@ func getTime(timestamp int64) time.Time {
 func getSpanId(t *TraceData) [8]byte {
 	spanId, err := hex.DecodeString(t.SpanId)
 	if err != nil {
-		logp.Err("span_id cannot be converted to hexadecimal data,  span_id:%v", t.SpanId)
+		logp.Err("span_id cannot be converted to hexadecimal data. error:%v span_id:%v", err, t.SpanId)
 	}
 	var byteSpanId [8]byte
 	copy(byteSpanId[:], spanId)
@@ -150,7 +149,7 @@ func getSpanId(t *TraceData) [8]byte {
 func getParentId(t *TraceData) [8]byte {
 	parentSpanId, err := hex.DecodeString(t.ParentSpanId)
 	if err != nil {
-		logp.Err("Parent_span_id cannot be converted to hexadecimal data,  Parent_span_id:%v", t.ParentSpanId)
+		logp.Err("Parent_span_id cannot be converted to hexadecimal data. error:%V Parent_span_id:%v", err, t.ParentSpanId)
 	}
 	var byteParentSpanId [8]byte
 	copy(byteParentSpanId[:], parentSpanId)
@@ -164,10 +163,9 @@ func getKeyValue(attributes map[string]interface{}) []attribute.KeyValue {
 		if !ok {
 			v = convertToString(value)
 		}
-		_value := attribute.StringValue(v)
 		attr := attribute.KeyValue{
 			Key:   attribute.Key(key),
-			Value: _value,
+			Value: attribute.StringValue(v),
 		}
 		result = append(result, attr)
 	}
@@ -218,8 +216,7 @@ func newSpanCpanContext(t *TraceData) otelTrace.SpanContext {
 		SpanID:     getSpanId(t),
 		TraceState: traceSate,
 	}
-	spanContext := otelTrace.NewSpanContext(spanContextConfig)
-	return spanContext
+	return otelTrace.NewSpanContext(spanContextConfig)
 }
 
 func newParent(t *TraceData) otelTrace.SpanContext {
@@ -232,28 +229,14 @@ func newParent(t *TraceData) otelTrace.SpanContext {
 }
 
 func convertToString(value interface{}) string {
-	switch v := value.(type) {
-	case int:
-		return strconv.Itoa(v)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		return strconv.FormatBool(v)
-	case []interface{}:
-		jsonString, err := json.Marshal(v)
-		if err != nil {
-			return ""
-		}
-		return string(jsonString)
-	case map[string]interface{}:
-		jsonString, err := json.Marshal(v)
-		if err != nil {
-			return ""
-		}
-		return string(jsonString)
-	default:
+
+	jsonStr, err := json.Marshal(value)
+	if err != nil {
+		logp.Err("Data cannot be converted to string. data:%v", value)
 		return ""
 	}
+
+	return string(jsonStr)
 }
 
 func getStatus(t *TraceData) tracesdk.Status {

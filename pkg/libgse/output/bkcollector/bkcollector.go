@@ -44,7 +44,7 @@ func MakeBkCollector(_ outputs.IndexManager, beat beat.Info, observer outputs.Ob
 	c := defaultConfig
 	err := cfg.Unpack(&c)
 	if err != nil {
-		logp.Err("unpack config error, %v", err)
+		logp.Err("unpack config error:%v", err)
 		return outputs.Fail(err)
 	}
 	output, err := NewOutput(c)
@@ -85,11 +85,7 @@ func NewExporter(GrpcHost string) (*otlptrace.Exporter, error) {
 	}
 	client := otlptracegrpc.NewClient(opts...)
 
-	exp, err := otlptrace.New(context.Background(), client)
-	if err != nil {
-		return nil, err
-	}
-	return exp, nil
+	return otlptrace.New(context.Background(), client)
 }
 
 func NewOutput(c Config) (*Output, error) {
@@ -129,25 +125,25 @@ func (c *Output) parseTraceData(batch publisher.Batch) []tracesdk.ReadOnlySpan {
 
 		items, ok := eventItems.([]common.MapStr)
 		if !ok {
-			logp.Err("parse log data items to error! items:%v", eventItems)
+			logp.Err("parse log data items to error items:%v", eventItems)
 			continue
 		}
 		for _, item := range items {
 			itemData, err := item.GetValue("data")
 			if err != nil {
-				logp.Err("Failed to get the data in the item! error:%v, item:%v", err, item)
+				logp.Err("Failed to get the data in the item. error:%v, item:%v", err, item)
 				continue
 			}
 			log, ok := itemData.(string)
 			if !ok {
-				logp.Err("Failed to log data to string, log:%v", itemData)
+				logp.Err("Failed to log data to string. log:%v", itemData)
 				continue
 			}
 
 			var traceData TraceData
 			err = json.Unmarshal([]byte(log), &traceData)
 			if err != nil {
-				logp.Err("parse log to TraceData error! log:%v", log)
+				logp.Err("parse log to TraceData error. error:%v log:%v", err, log)
 				continue
 			}
 			traceData.Resource["bk.data.token"] = c.bkDataToken

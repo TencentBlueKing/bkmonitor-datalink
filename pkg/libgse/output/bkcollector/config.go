@@ -12,7 +12,7 @@ package bkcollector
 type Config struct {
 	GrpcHost       string `config:"otlp_grpc_host"`
 	BkDataToken    string `config:"otlp_bk_data_token"`
-	EventBufferMax int32  `config:"eventbuffermax"`
+	EventBufferMax int32  `config:"event_buffer_max"`
 	DataType       string `config:"data_type"`
 	OutputType     string `config:"output_type"`
 }

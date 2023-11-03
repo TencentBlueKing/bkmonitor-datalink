@@ -405,7 +405,7 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		return storage.Instance
 	}
 
-	trace.InsertStringIntoSpan("stroage-instance-type", instance.GetInstanceType(), span)
+	trace.InsertStringIntoSpan("stroage-type", storage.Type, span)
 	trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
 	trace.InsertStringIntoSpan("storage-address", storage.Address, span)
 	trace.InsertStringIntoSpan("storage-uri-path", storage.UriPath, span)

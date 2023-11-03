@@ -114,26 +114,7 @@ func GetDruidQueryFeatureFlag(ctx context.Context) bool {
 }
 
 func GetVMQueryOrFeatureFlag(ctx context.Context) bool {
-	var (
-		span oleltrace.Span
-		user = GetUser(ctx)
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-or-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
-
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query-or", false)
-	trace.InsertStringIntoSpan("vm-query-or-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
-
-	return status
+	return true
 }
 
 func GetVMQueryFeatureFlag(ctx context.Context) bool {

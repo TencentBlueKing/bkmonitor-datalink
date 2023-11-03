@@ -405,6 +405,12 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		return storage.Instance
 	}
 
+	trace.InsertStringIntoSpan("stroage-instance-type", instance.GetInstanceType(), span)
+	trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
+	trace.InsertStringIntoSpan("storage-address", storage.Address, span)
+	trace.InsertStringIntoSpan("storage-uri-path", storage.UriPath, span)
+	trace.InsertStringIntoSpan("storage-password", storage.Password, span)
+
 	curl := &curl.HttpCurl{Log: log.OtLogger}
 	switch storage.Type {
 	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
@@ -445,15 +451,8 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 		instance = tsDBInfluxdb.NewInstance(ctx, insOption)
 
-		trace.InsertStringIntoSpan("instance-type", instance.GetInstanceType(), span)
-		trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
 		trace.InsertStringIntoSpan("cluster-name", qry.ClusterName, span)
 		trace.InsertStringIntoSpan("tag-keys", fmt.Sprintf("%+v", qry.TagsKey), span)
-
-		trace.InsertStringIntoSpan("storage-address", storage.Address, span)
-		trace.InsertStringIntoSpan("storage-uripath", storage.UriPath, span)
-		trace.InsertStringIntoSpan("storage-password", storage.Password, span)
-
 		trace.InsertStringIntoSpan("ins-option", fmt.Sprintf("%+v", insOption), span)
 	default:
 		return nil

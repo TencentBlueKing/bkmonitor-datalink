@@ -255,7 +255,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
 
 	if query.Instant {

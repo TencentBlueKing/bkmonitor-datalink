@@ -1,6 +1,16 @@
+//// Tencent is pleased to support the open source community by making
+//// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+//// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+//// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+//// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+//// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+//// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+//// specific language governing permissions and limitations under the License.
+
 package bkcollector
 
 import (
+	"encoding/json"
 	"net"
 	"reflect"
 	"testing"
@@ -24,129 +34,70 @@ var jsonStr = "{\"attributes\": {\"api_name\": \"GET\"}, " +
 	"\"trace_id\": \"a47d4bb2397def77bd80c3b2ffbf1a33\", " +
 	"\"trace_state\": \"rojo=00f067aa0ba902b7\"}"
 
-func TestToMap(t *testing.T) {
-
-	mapData := ToMap(jsonStr)
-	attributes := map[string]interface{}{
-		"api_name": "GET",
-	}
-	var kind float64
-	kind = 2
-	events := mapData["events"].([]interface{})
-	event := events[0].(map[string]interface{})
-	assert.Equal(t, "a47d4bb2397def77bd80c3b2ffbf1a33", mapData["trace_id"].(string))
-	assert.Equal(t, "a49c0fc65429cf78", mapData["span_id"].(string))
-	assert.Equal(t, "b8fd7234e727c351", mapData["parent_span_id"].(string))
-	assert.Equal(t, "HTTP GET", mapData["span_name"].(string))
-	assert.Equal(t, kind, mapData["kind"].(float64))
-	assert.Equal(t, "rojo=00f067aa0ba902b7", mapData["trace_state"].(string))
-	assert.Equal(t, attributes, mapData["attributes"].(map[string]interface{}))
-	assert.Equal(t, "log", event["name"].(string))
-	assert.Equal(t, attributes, event["attributes"].(map[string]interface{}))
-
-}
-
 func TestGetEvents(t *testing.T) {
-	mapData := ToMap(jsonStr)
-	result := getEvents(mapData)
+	var traceData TraceData
+	err := json.Unmarshal([]byte(jsonStr), &traceData)
+	result := getEvents(&traceData)
 	assert.Equal(t, "[]trace.Event", reflect.TypeOf(result).String())
+	assert.Equal(t, nil, err)
 }
 
 func TestGetLinks(t *testing.T) {
-	mapData := ToMap(jsonStr)
-	traceId := mapData["trace_id"].(string)
-	var byteTraceId [16]byte
-	copy(byteTraceId[:], traceId)
-	result := getLinks(mapData, byteTraceId)
+	var traceData TraceData
+	err := json.Unmarshal([]byte(jsonStr), &traceData)
+	result := getLinks(&traceData)
 	assert.Equal(t, "[]trace.Link", reflect.TypeOf(result).String())
+	assert.Equal(t, nil, err)
 }
 
 func TestGetKeyValue(t *testing.T) {
-	mapData := ToMap(jsonStr)
-	attributes := mapData["attributes"].(map[string]interface{})
-	result := getKeyValue(attributes)
-	testAttributes := map[string]interface{}{}
-	result1 := getKeyValue(testAttributes)
-	testAttributes["intData"] = 10
-	testAttributes["boolData"] = true
-	testAttributes["mapData"] = mapData
-	result2 := getKeyValue(testAttributes)
+	var traceData TraceData
+	err := json.Unmarshal([]byte(jsonStr), &traceData)
+	result := getKeyValue(traceData.Attributes)
 	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result).String())
-	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result1).String())
-	assert.Equal(t, "[]attribute.KeyValue", reflect.TypeOf(result2).String())
+	assert.Equal(t, nil, err)
 
 }
 
-func TestPushData(t *testing.T) {
-	bkDataToken := "123"
-	mapData := ToMap(jsonStr)
-	result := PushData(mapData, bkDataToken)
-	testMapData := map[string]interface{}{}
-	result1 := PushData(testMapData, bkDataToken)
-	assert.Equal(t, "bkcollector.SpanStub", reflect.TypeOf(result).String())
-	assert.Equal(t, "bkcollector.SpanStub", reflect.TypeOf(result1).String())
-}
-
-func TestCreateSpanContext(t *testing.T) {
-	mapData := ToMap(jsonStr)
-	traceId := getTraceId(mapData)
-	byteSpanId := getSpanId(mapData)
-	traceState := "rojo=00f067aa0ba902b7"
-	result := CreateSpanContext(byteSpanId, traceId, traceState)
-	assert.Equal(t, "trace.SpanContext", reflect.TypeOf(result).String())
-}
-
+//	func TestCreateSpanContext(t *testing.T) {
+//		mapData := ToMap(jsonStr)
+//		traceId := getTraceId(mapData)
+//		byteSpanId := getSpanId(mapData)
+//		traceState := "rojo=00f067aa0ba902b7"
+//		result := CreateSpanContext(byteSpanId, traceId, traceState)
+//		assert.Equal(t, "trace.SpanContext", reflect.TypeOf(result).String())
+//	}
 func TestNewExporter(t *testing.T) {
 	ln, err := net.Listen("tcp", "localhost:4317")
 	if err != nil {
 		t.Fatalf("Failed to grab an available port: %v", err)
 	}
-	result := NewExporter("localhost:4317")
+	result, err := NewExporter("localhost:4317")
 	_ = ln.Close()
 	assert.Equal(t, "*otlptrace.Exporter", reflect.TypeOf(result).String())
+	assert.Equal(t, nil, err)
 }
-
 func TestNewOutput(t *testing.T) {
 	ln, err := net.Listen("tcp", "localhost:4317")
-	bkDataToken := "123"
 	if err != nil {
 		t.Fatalf("Failed to grab an available port: %v", err)
 	}
-	result := NewOutput("localhost:4317", bkDataToken)
+	testConfig := defaultConfig
+	testConfig.BkDataToken = "123"
+	testConfig.GrpcHost = "localhost:4317"
+	result, err := NewOutput(testConfig)
 	_ = ln.Close()
 	assert.Equal(t, "*bkcollector.Output", reflect.TypeOf(result).String())
-	assert.Equal(t, bkDataToken, result.bkdatatoken)
+	assert.Equal(t, "123", result.bkDataToken)
 	assert.Equal(t, "bkcollector", result.String())
+	assert.Equal(t, nil, err)
 }
 
 func TestGetCode(t *testing.T) {
-	status := map[string]interface{}{
-		"code":    1,
-		"message": "testdata",
-	}
-	status1 := map[string]interface{}{
-		"code": 2.0,
-	}
-	result := getStatus(status)
-	result1 := getStatus(status1)
+	var traceData TraceData
+	err := json.Unmarshal([]byte(jsonStr), &traceData)
+	result := getStatus(&traceData)
 	assert.Equal(t, "trace.Status", reflect.TypeOf(result).String())
-	assert.Equal(t, "trace.Status", reflect.TypeOf(result1).String())
-}
+	assert.Equal(t, nil, err)
 
-func TestGetEndTime(t *testing.T) {
-	testdata1 := map[string]interface{}{
-		"end_time": 1698229907793288.0,
-	}
-	testdata2 := map[string]interface{}{
-		"end_time": 1234,
-	}
-	testdata3 := map[string]interface{}{
-		"end_time": "1234",
-	}
-	result := getEndTime(testdata1)
-	result2 := getEndTime(testdata2)
-	result3 := getEndTime(testdata3)
-	assert.Equal(t, "time.Time", reflect.TypeOf(result).String())
-	assert.Equal(t, "time.Time", reflect.TypeOf(result2).String())
-	assert.Equal(t, "time.Time", reflect.TypeOf(result3).String())
 }

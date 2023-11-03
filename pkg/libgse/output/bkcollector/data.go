@@ -1,8 +1,17 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package bkcollector
 
 import (
+	"encoding/hex"
 	"encoding/json"
-	"reflect"
 	"strconv"
 	"time"
 
@@ -12,10 +21,50 @@ import (
 	"go.opentelemetry.io/otel/sdk/instrumentation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/trace"
+	otelTrace "go.opentelemetry.io/otel/trace"
 )
 
-type SpanStubs []SpanStub
+type SpanStubs []TraceData
+
+type TraceData struct {
+	Name         string                 `json:"span_name"`
+	EndTime      int64                  `json:"end_time"`
+	StartTime    int64                  `json:"start_time"`
+	ParentSpanId string                 `json:"parent_span_id"`
+	SpanId       string                 `json:"span_id"`
+	TraceId      string                 `json:"trace_id"`
+	Kind         int                    `json:"kind"`
+	Attributes   map[string]interface{} `json:"attributes"`
+	Events       []Event                `json:"events"`
+	Links        []Link                 `json:"links"`
+	TraceState   string                 `json:"trace_state"`
+	Status       Status                 `json:"status"`
+	Resource     map[string]interface{} `json:"resource"`
+
+	droppedAttributes    int
+	droppedEvents        int
+	droppedLinks         int
+	childSpanCount       int
+	instrumentationScope instrumentation.Scope
+}
+
+type Status struct {
+	Code    uint32 `json:"code"`
+	Message string `json:"message"`
+}
+
+type Link struct {
+	Attributes map[string]interface{} `json:"attributes"`
+	TraceID    string                 `json:"trace_id"`
+	SpanID     string                 `json:"span_id"`
+	TraceState string                 `json:"trace_state"`
+}
+
+type Event struct {
+	Name       string                 `json:"name"`
+	Attributes map[string]interface{} `json:"attributes"`
+	TimeStamp  int64                  `json:"timestamp"`
+}
 
 func (s SpanStubs) Snapshots() []tracesdk.ReadOnlySpan {
 	if len(s) == 0 {
@@ -28,65 +77,24 @@ func (s SpanStubs) Snapshots() []tracesdk.ReadOnlySpan {
 	return ro
 }
 
-// SpanStub is a stand-in for a Span.
-type SpanStub struct {
-	Name                   string
-	SpanContext            trace.SpanContext
-	Parent                 trace.SpanContext
-	SpanKind               trace.SpanKind
-	StartTime              time.Time
-	EndTime                time.Time
-	Attributes             []attribute.KeyValue
-	Events                 []tracesdk.Event
-	Links                  []tracesdk.Link
-	Status                 tracesdk.Status
-	DroppedAttributes      int
-	DroppedEvents          int
-	DroppedLinks           int
-	ChildSpanCount         int
-	Resource               *resource.Resource
-	InstrumentationLibrary instrumentation.Library
-}
-
-func (s SpanStub) Snapshot() tracesdk.ReadOnlySpan {
-	return spanSnapshot{
-		name:                 s.Name,
-		spanContext:          s.SpanContext,
-		parent:               s.Parent,
-		spanKind:             s.SpanKind,
-		startTime:            s.StartTime,
-		endTime:              s.EndTime,
-		attributes:           s.Attributes,
-		events:               s.Events,
-		links:                s.Links,
-		status:               s.Status,
-		droppedAttributes:    s.DroppedAttributes,
-		droppedEvents:        s.DroppedEvents,
-		droppedLinks:         s.DroppedLinks,
-		childSpanCount:       s.ChildSpanCount,
-		resource:             s.Resource,
-		instrumentationScope: s.InstrumentationLibrary,
-	}
-}
-
 type spanSnapshot struct {
 	tracesdk.ReadOnlySpan
 
 	name                 string
-	spanContext          trace.SpanContext
-	parent               trace.SpanContext
-	spanKind             trace.SpanKind
+	spanContext          otelTrace.SpanContext
+	parent               otelTrace.SpanContext
+	spanKind             otelTrace.SpanKind
 	startTime            time.Time
 	endTime              time.Time
 	attributes           []attribute.KeyValue
 	events               []tracesdk.Event
 	links                []tracesdk.Link
 	status               tracesdk.Status
+	resource             *resource.Resource
 	droppedAttributes    int
 	droppedEvents        int
 	droppedLinks         int
 	childSpanCount       int
-	resource             *resource.Resource
 	instrumentationScope instrumentation.Scope
 }
 
@@ -94,29 +102,55 @@ func (s spanSnapshot) InstrumentationLibrary() instrumentation.Library {
 	return s.instrumentationScope
 }
 
-func getTime(timestamp float64) time.Time {
-	// 将 float64 时间戳转换为 int64 类型
-	seconds := int64(timestamp / 1e9)
-	nanoseconds := int64(timestamp) % int64(1e9)
-
-	t := time.Unix(seconds, nanoseconds)
-	return t
+func (t *TraceData) Snapshot() tracesdk.ReadOnlySpan {
+	return spanSnapshot{
+		name:                 t.Name,
+		spanContext:          newSpanCpanContext(t),
+		parent:               newParent(t),
+		startTime:            getTime(t.StartTime),
+		endTime:              getTime(t.EndTime),
+		spanKind:             otelTrace.SpanKind(t.Kind),
+		attributes:           getAttributes(t.Attributes),
+		resource:             getResource(t),
+		events:               getEvents(t),
+		links:                getLinks(t),
+		status:               getStatus(t),
+		droppedAttributes:    t.droppedAttributes,
+		droppedEvents:        t.droppedEvents,
+		droppedLinks:         t.droppedLinks,
+		childSpanCount:       t.childSpanCount,
+		instrumentationScope: t.instrumentationScope,
+	}
 }
 
-func getSpanId(traceData map[string]interface{}) [8]byte {
-	spanId, ok := traceData["span_id"].(string)
-	if !ok {
-		spanId = convertToString(traceData["span_id"])
+func getTraceId(t *TraceData) [16]byte {
+	traceId, err := hex.DecodeString(t.TraceId)
+	if err != nil {
+		logp.Err("trace_id cannot be converted to hexadecimal data,  trace_id:%v", t.TraceId)
+	}
+	var byteTraceId [16]byte
+	copy(byteTraceId[:], traceId)
+	return byteTraceId
+}
+
+func getTime(timestamp int64) time.Time {
+	return time.Unix(0, timestamp)
+}
+
+func getSpanId(t *TraceData) [8]byte {
+	spanId, err := hex.DecodeString(t.SpanId)
+	if err != nil {
+		logp.Err("span_id cannot be converted to hexadecimal data,  span_id:%v", t.SpanId)
 	}
 	var byteSpanId [8]byte
 	copy(byteSpanId[:], spanId)
 	return byteSpanId
 }
 
-func getParentId(traceData map[string]interface{}) [8]byte {
-	parentSpanId, ok := traceData["span_id"].(string)
-	if !ok {
-		parentSpanId = convertToString(traceData["parent_span_id"])
+func getParentId(t *TraceData) [8]byte {
+	parentSpanId, err := hex.DecodeString(t.ParentSpanId)
+	if err != nil {
+		logp.Err("Parent_span_id cannot be converted to hexadecimal data,  Parent_span_id:%v", t.ParentSpanId)
 	}
 	var byteParentSpanId [8]byte
 	copy(byteParentSpanId[:], parentSpanId)
@@ -124,7 +158,7 @@ func getParentId(traceData map[string]interface{}) [8]byte {
 }
 
 func getKeyValue(attributes map[string]interface{}) []attribute.KeyValue {
-	var result = make([]attribute.KeyValue, 0)
+	var result = make([]attribute.KeyValue, 0, len(attributes))
 	for key, value := range attributes {
 		v, ok := value.(string)
 		if !ok {
@@ -140,29 +174,15 @@ func getKeyValue(attributes map[string]interface{}) []attribute.KeyValue {
 	return result
 }
 
-func getEvents(traceData map[string]interface{}) []tracesdk.Event {
-	var result = make([]tracesdk.Event, 0)
-	events, ok := traceData["events"].([]interface{})
-	if !ok {
-		logp.Err("Cannot be converted into time data,  events:%v", traceData["events"])
-		return result
-	}
+func getEvents(t *TraceData) []tracesdk.Event {
+	events := t.Events
+	var result = make([]tracesdk.Event, 0, len(events))
 	for _, event := range events {
-		eventMap, toEventMap := event.(map[string]interface{})
-		if !toEventMap {
-			continue
-		}
-		name := getSpanName(eventMap)
-		eventTime := time.Time{}
-		timestamp, toTimeStamp := eventMap["timestamp"].(float64)
-		if !toTimeStamp {
-			logp.Err("Cannot be converted into time data,  events_timestamp:%v", eventMap["timestamp"])
-		}
-		eventTime = getTime(timestamp)
-		attributes := getAttributes(eventMap)
+		timeStamp := getTime(event.TimeStamp)
+		attributes := getAttributes(event.Attributes)
 		traceEvent := tracesdk.Event{
-			Name:       name,
-			Time:       eventTime,
+			Name:       event.Name,
+			Time:       timeStamp,
 			Attributes: attributes,
 		}
 		result = append(result, traceEvent)
@@ -170,26 +190,15 @@ func getEvents(traceData map[string]interface{}) []tracesdk.Event {
 	return result
 }
 
-func getLinks(traceData map[string]interface{}, traceId [16]byte) []tracesdk.Link {
+func getLinks(t *TraceData) []tracesdk.Link {
+	NewTraceData := &TraceData{}
 	var result = make([]tracesdk.Link, 0)
-	links, ok := traceData["links"].([]interface{})
-	if !ok {
-		logp.Err("Cannot be converted into time data,  links:%v", traceData["links"])
-		return result
-	}
-	for _, link := range links {
-		linkMap, toLinkMap := link.(map[string]interface{})
-		if !toLinkMap {
-			continue
-		}
-		spanId := getSpanId(linkMap)
-		var linkTraceState string
-		traceState, ok := linkMap["trace_state"]
-		if ok {
-			linkTraceState = traceState.(string)
-		}
-		spanContext := CreateSpanContext(spanId, traceId, linkTraceState)
-		attributes := getAttributes(linkMap)
+	for _, link := range t.Links {
+		NewTraceData.TraceId = link.TraceID
+		NewTraceData.SpanId = link.SpanID
+		NewTraceData.TraceState = link.TraceState
+		spanContext := newSpanCpanContext(NewTraceData)
+		attributes := getAttributes(link.Attributes)
 		traceLink := tracesdk.Link{
 			SpanContext: spanContext,
 			Attributes:  attributes,
@@ -199,17 +208,26 @@ func getLinks(traceData map[string]interface{}, traceId [16]byte) []tracesdk.Lin
 	return result
 }
 
-func CreateSpanContext(spanId [8]byte, traceId [16]byte, traceState string) trace.SpanContext {
-	traceSate, err := trace.ParseTraceState(traceState)
+func newSpanCpanContext(t *TraceData) otelTrace.SpanContext {
+	traceSate, err := otelTrace.ParseTraceState(t.TraceState)
 	if err != nil {
 		logp.Err("get traceState err: %v", err)
 	}
-	spanContextConfig := trace.SpanContextConfig{
-		TraceID:    traceId,
-		SpanID:     spanId,
+	spanContextConfig := otelTrace.SpanContextConfig{
+		TraceID:    getTraceId(t),
+		SpanID:     getSpanId(t),
 		TraceState: traceSate,
 	}
-	spanContext := trace.NewSpanContext(spanContextConfig)
+	spanContext := otelTrace.NewSpanContext(spanContextConfig)
+	return spanContext
+}
+
+func newParent(t *TraceData) otelTrace.SpanContext {
+	spanContextConfig := otelTrace.SpanContextConfig{
+		TraceID: getTraceId(t),
+		SpanID:  getParentId(t),
+	}
+	spanContext := otelTrace.NewSpanContext(spanContextConfig)
 	return spanContext
 }
 
@@ -238,163 +256,31 @@ func convertToString(value interface{}) string {
 	}
 }
 
-func getSpanName(traceData map[string]interface{}) string {
-	name, ok := traceData["span_name"].(string)
-	if !ok {
-		name = convertToString(traceData["span_name"])
-	}
-	return name
-}
-
-func getTraceId(traceData map[string]interface{}) [16]byte {
-	traceId, ok := traceData["trace_id"].(string)
-	if !ok {
-		traceId = convertToString(traceData["trace_id"])
-	}
-	var byteTraceId [16]byte
-	copy(byteTraceId[:], traceId)
-	return byteTraceId
-}
-
-func getStartTime(traceData map[string]interface{}) time.Time {
-	floatStartTime, ok := traceData["start_time"].(float64)
-	if !ok {
-		logp.Err("Cannot be converted into time data,  start_time:%v", floatStartTime)
-		return time.Time{}
-	}
-	startTime := getTime(floatStartTime)
-	return startTime
-}
-
-func getEndTime(traceData map[string]interface{}) time.Time {
-	floatEndTime, ok := traceData["end_time"].(float64)
-	if !ok {
-		logp.Err("Cannot be converted into time data,  end_time:%v", floatEndTime)
-		return time.Time{}
-	}
-	endTime := getTime(floatEndTime)
-	return endTime
-}
-
-func getKind(traceData map[string]interface{}) int {
-	kind, ok := traceData["kind"].(int)
-	if !ok {
-		switch v := traceData["kind"].(type) {
-		case float64:
-			return int(v)
-		default:
-			logp.Err("trace kind Wrong data format, kind:%v", traceData["kind"])
-			return 0
-		}
-	}
-	return kind
-}
-
-func getTraceState(traceData map[string]interface{}) string {
-	traceState, ok := traceData["trace_state"].(string)
-	if !ok {
-		logp.Err("trace_state Wrong data format, trace_state:%v", traceState)
-		return ""
-	}
-	return traceState
-}
-
-func getCode(status map[string]interface{}) uint32 {
-	switch reflect.TypeOf(status["code"]).Kind() {
-	case reflect.Int:
-		return uint32(status["code"].(int))
-	case reflect.Float64:
-		return uint32(status["code"].(float64))
-	default:
-		logp.Err("trace_state Wrong data format, code:%v", status["code"])
-		return uint32(0)
-	}
-}
-
-func getStatus(traceData map[string]interface{}) tracesdk.Status {
-	status, ok := traceData["status"].(map[string]interface{})
-	if !ok {
-		logp.Err("trace_state Wrong data format, status:%v", status)
-		return tracesdk.Status{}
-	}
-	code := getCode(status)
-	statusMessage := getMessage(status)
+func getStatus(t *TraceData) tracesdk.Status {
 	traceStatus := tracesdk.Status{
-		Code:        codes.Code(code),
-		Description: statusMessage,
+		Code:        codes.Code(t.Status.Code),
+		Description: t.Status.Message,
 	}
 	return traceStatus
 }
 
-func getMessage(status map[string]interface{}) string {
-	statusMessage, ok := status["message"].(string)
-	if !ok {
-		statusMessage = convertToString(status["message"])
-		return statusMessage
-	}
-	return statusMessage
-}
-
-func getAttributes(traceData map[string]interface{}) []attribute.KeyValue {
-	attributes, ok := traceData["attributes"].(map[string]interface{})
-	if !ok {
-		var attributes = make([]attribute.KeyValue, 0)
-		return attributes
-	}
+func getAttributes(attributes map[string]interface{}) []attribute.KeyValue {
 	return getKeyValue(attributes)
 }
 
-func getResource(traceData map[string]interface{}, bkDataToken string) []attribute.KeyValue {
-	traceResource, ok := traceData["resource"].(map[string]interface{})
-	if !ok {
-		resourceMap := make(map[string]interface{})
-		resourceMap["bk.data.token"] = bkDataToken
-		return getKeyValue(resourceMap)
-	}
-	traceResource["bk.data.token"] = bkDataToken
-	return getKeyValue(traceResource)
-}
-
-func PushData(traceData map[string]interface{}, bkDataToken string) SpanStub {
-	name := getSpanName(traceData)
-	traceId := getTraceId(traceData)
-	traceState := getTraceState(traceData)
-	byteSpanId := getSpanId(traceData)
-	byteParentSpanId := getParentId(traceData)
-	startTime := getStartTime(traceData)
-	endTime := getEndTime(traceData)
-	kind := getKind(traceData)
-	status := getStatus(traceData)
-	attributes := getAttributes(traceData)
-	tracedResource := getResource(traceData, bkDataToken)
-	newResource := resource.NewSchemaless(tracedResource...)
-	traceLinks := getLinks(traceData, traceId)
-	traceEvents := getEvents(traceData)
-	spanContext := CreateSpanContext(byteSpanId, traceId, traceState)
-	parent := CreateSpanContext(byteParentSpanId, traceId, "")
-	spanStub := SpanStub{
-		Name:        name,
-		StartTime:   startTime,
-		EndTime:     endTime,
-		SpanKind:    trace.SpanKind(kind),
-		SpanContext: spanContext,
-		Parent:      parent,
-		Status:      status,
-		Resource:    newResource,
-		Attributes:  attributes,
-		Events:      traceEvents,
-		Links:       traceLinks,
-	}
-	return spanStub
+func getResource(t *TraceData) *resource.Resource {
+	traceResource := getKeyValue(t.Resource)
+	newResource := resource.NewSchemaless(traceResource...)
+	return newResource
 }
 
 func (s spanSnapshot) Name() string { return s.name }
 
-func (s spanSnapshot) SpanContext() trace.SpanContext { return s.spanContext }
+func (s spanSnapshot) SpanContext() otelTrace.SpanContext { return s.spanContext }
 
-func (s spanSnapshot) Parent() trace.SpanContext { return s.parent }
+func (s spanSnapshot) Parent() otelTrace.SpanContext { return s.parent }
 
-func (s spanSnapshot) SpanKind() trace.SpanKind { return s.spanKind }
+func (s spanSnapshot) SpanKind() otelTrace.SpanKind { return s.spanKind }
 
 func (s spanSnapshot) StartTime() time.Time { return s.startTime }
 

@@ -1,9 +1,17 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package bkcollector
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/elastic/beats/libbeat/beat"
@@ -13,90 +21,48 @@ import (
 	"github.com/elastic/beats/libbeat/publisher"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
+)
+
+const (
+	dataType   string = "log_v2"
+	outputType string = "otlp_trace"
 )
 
 type Output struct {
 	exporter    *otlptrace.Exporter
-	bkdatatoken string
+	bkDataToken string
+	dataType    string // log_v1, log_v2
+	outputType  string // otlp_trace, otlp_metric
 }
 
 func init() {
 	outputs.RegisterType("bkcollector", MakeBkCollector)
-
 }
 
 func MakeBkCollector(_ outputs.IndexManager, beat beat.Info, observer outputs.Observer, cfg *common.Config) (outputs.Group, error) {
-	//
 	c := defaultConfig
 	err := cfg.Unpack(&c)
 	if err != nil {
 		logp.Err("unpack config error, %v", err)
 		return outputs.Fail(err)
 	}
-	output := NewOutput(c.GrpcHost, c.BkDataToken)
-	if output == nil {
-		return outputs.Fail(fmt.Errorf("new client error"))
+	output, err := NewOutput(c)
+	if err != nil {
+		return outputs.Fail(err)
 	}
-
 	return outputs.Success(int(c.EventBufferMax), 0, output)
 }
 
-func ToMap(data string) map[string]interface{} {
-	var mapInfo map[string]interface{}
-
-	// 将 JSON 字符串转换为 map
-	err := json.Unmarshal([]byte(data), &mapInfo)
-	if err != nil {
-		logp.Err("failed to map data: %v", err)
-		return nil
-	}
-	return mapInfo
-}
-
 func (c *Output) Publish(batch publisher.Batch) error {
-	events := batch.Events()
-	roSpans := make([]SpanStub, 0)
-	for i := range events {
-		data := events[i].Content.Fields
-		items := data.String()
-		mapItem := ToMap(items)
-		if mapItem == nil {
-			continue
-		}
-		makeItems, toMakeItems := mapItem["items"].([]interface{})
-		if !toMakeItems {
-			continue
-		}
-		for _, value := range makeItems {
-			mapData, toMapData := value.(map[string]interface{})
-			if !toMapData {
-				continue
-			}
-			log := mapData["data"].(string)
-			mapLog := ToMap(log)
-			if mapLog == nil {
-				logp.Err("The collected data is not trace data:%v", log)
-				continue
-			}
-			roSpan := PushData(mapLog, c.bkdatatoken)
-			roSpans = append(roSpans, roSpan)
-		}
-	}
-	spanStubs := SpanStubs(roSpans)
-	pushSpan := spanStubs.Snapshots()
-	var pushCount = 3
-	// Retry three times at an interval of one minute
-	for count := 0; count <= pushCount; count++ {
-		err := c.exporter.ExportSpans(context.Background(), pushSpan)
-		if err == nil {
-			break
-		}
+	if c.dataType == dataType && c.outputType == outputType {
+		snapshots := c.parseTraceData(batch)
+		err := pushData(c, snapshots)
 		if err != nil {
-			logp.Err("push data err : %v", err)
+			return err
 		}
-		if count < pushCount {
-			time.Sleep(time.Minute)
-		}
+		batch.ACK()
+		return nil
 	}
 	batch.ACK()
 	return nil
@@ -110,7 +76,7 @@ func (c *Output) Close() error {
 	return c.exporter.Shutdown(context.Background())
 }
 
-func NewExporter(GrpcHost string) *otlptrace.Exporter {
+func NewExporter(GrpcHost string) (*otlptrace.Exporter, error) {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithInsecure(),
 		otlptracegrpc.WithEndpoint(GrpcHost),
@@ -118,18 +84,77 @@ func NewExporter(GrpcHost string) *otlptrace.Exporter {
 		otlptracegrpc.WithReconnectionPeriod(50 * time.Millisecond),
 	}
 	client := otlptracegrpc.NewClient(opts...)
+
 	exp, err := otlptrace.New(context.Background(), client)
 	if err != nil {
-		logp.Err("failed to create a new collector exporter: %v", err)
+		return nil, err
 	}
-	return exp
+	return exp, nil
 }
 
-func NewOutput(GrpcHost string, bkDataToken string) *Output {
-	exp := NewExporter(GrpcHost)
+func NewOutput(c Config) (*Output, error) {
+	exp, err := NewExporter(c.GrpcHost)
+	if err != nil {
+		return nil, err
+	}
 	output := Output{
 		exporter:    exp,
-		bkdatatoken: bkDataToken,
+		bkDataToken: c.BkDataToken,
+		dataType:    c.DataType,
+		outputType:  c.OutputType,
 	}
-	return &output
+	return &output, nil
+}
+
+func pushData(c *Output, snapshots []tracesdk.ReadOnlySpan) error {
+
+	err := c.exporter.ExportSpans(context.Background(), snapshots)
+	if err != nil {
+		logp.Err("push data err : %v", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Output) parseTraceData(batch publisher.Batch) []tracesdk.ReadOnlySpan {
+	events := batch.Events()
+	roSpans := make([]TraceData, 0)
+	for i := range events {
+		data := events[i].Content.Fields
+		eventItems, err := data.GetValue("items")
+		if err != nil {
+			logp.Err("parse log data items error: %v", err)
+			continue
+		}
+
+		items, ok := eventItems.([]common.MapStr)
+		if !ok {
+			logp.Err("parse log data items to error! items:%v", eventItems)
+			continue
+		}
+		for _, item := range items {
+			itemData, err := item.GetValue("data")
+			if err != nil {
+				logp.Err("Failed to get the data in the item! error:%v, item:%v", err, item)
+				continue
+			}
+			log, ok := itemData.(string)
+			if !ok {
+				logp.Err("Failed to log data to string, log:%v", itemData)
+				continue
+			}
+
+			var traceData TraceData
+			err = json.Unmarshal([]byte(log), &traceData)
+			if err != nil {
+				logp.Err("parse log to TraceData error! log:%v", log)
+				continue
+			}
+			traceData.Resource["bk.data.token"] = c.bkDataToken
+			roSpans = append(roSpans, traceData)
+		}
+	}
+	spanStubs := SpanStubs(roSpans)
+	snapshots := spanStubs.Snapshots()
+	return snapshots
 }

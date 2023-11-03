@@ -50,11 +50,16 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	// es的consul配置
 	var indexSettingsMap map[string]interface{}
 	var mappingSettingMap map[string]interface{}
+	var WarmPhaseSettingsMap map[string]interface{}
 	err = jsonx.UnmarshalString(e.IndexSettings, &indexSettingsMap)
 	if err != nil {
 		return nil, err
 	}
 	err = jsonx.UnmarshalString(e.MappingSettings, &mappingSettingMap)
+	if err != nil {
+		return nil, err
+	}
+	err = jsonx.UnmarshalString(e.WarmPhaseSettings, &WarmPhaseSettingsMap)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +73,7 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 			"slice_gap":               e.SliceGap,
 			"retention":               e.Retention,
 			"warm_phase_days":         e.WarmPhaseDays,
-			"warm_phase_settings":     e.WarmPhaseSettings,
+			"warm_phase_settings":     WarmPhaseSettingsMap,
 			"base_index":              strings.ReplaceAll(e.TableID, ".", "_"),
 			"index_settings":          indexSettingsMap,
 			"mapping_settings":        mappingSettingMap,

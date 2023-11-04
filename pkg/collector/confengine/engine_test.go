@@ -23,7 +23,7 @@ func TestLoadConfigPath(t *testing.T) {
 	assert.NoError(t, config.Unpack(conf))
 }
 
-func TestLoadCNotExistPath(t *testing.T) {
+func TestLoadNotExistPath(t *testing.T) {
 	config, err := LoadConfigPath("./example/example.yml")
 	assert.Error(t, err)
 	assert.Nil(t, config)

@@ -46,10 +46,12 @@ func IsValidUint64(u uint64) bool {
 	return !(u == uint64(math.NaN()) || u == uint64(math.Inf(0)))
 }
 
+// FirstUpper 仅首字母大写，过滤掉驼峰的情况
 func FirstUpper(s, defaultVal string) string {
 	if s == "" {
 		return defaultVal
 	}
+	s = strings.ToLower(s)
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 

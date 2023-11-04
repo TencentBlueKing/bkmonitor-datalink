@@ -12,3 +12,6 @@ config_list:
   - target_ip: 127.0.0.2
     target_cloud_id: 0
     target_biz_id: 1
+  - target_ip: 127.0.0.9999
+    target_cloud_id: 0
+    target_biz_id: 1

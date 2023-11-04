@@ -12,6 +12,7 @@ package hook
 import (
 	"context"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -104,8 +105,13 @@ func (s *ScriptExecutor) execute(script string) ScriptResult {
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", script)
-
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.CommandContext(ctx, "cmd", "/C", script)
+	default:
+		cmd = exec.CommandContext(ctx, "bash", "-c", script)
+	}
 	return ScriptResult{
 		Script: script,
 		Err:    cmd.Run(),

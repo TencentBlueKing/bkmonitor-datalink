@@ -122,16 +122,6 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
-	var (
-		span oleltrace.Span
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-reference")
-	if span != nil {
-		defer span.End()
-	}
-
-	trace.InsertIntIntoSpan("query_list_num", len(q.QueryList), span)
 
 	queryReference := make(metadata.QueryReference)
 	for _, qry := range q.QueryList {
@@ -270,7 +260,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
 		tableID       = q.TableID
+		span          oleltrace.Span
 	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-metric")
+	if span != nil {
+		defer span.End()
+	}
 
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
@@ -295,6 +291,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
+
+	trace.InsertStringIntoSpan("query-space-uid", spaceUid, span)
+	trace.InsertStringIntoSpan("query-table-id", string(tableID), span)
+	trace.InsertStringIntoSpan("query-metric", metricName, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+	trace.InsertIntIntoSpan("tsdb-num", len(tsDBs), span)
 
 	for _, tsDB := range tsDBs {
 		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)

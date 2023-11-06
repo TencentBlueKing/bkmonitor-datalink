@@ -88,9 +88,10 @@ func (p *rateLimiter) Reload(config map[string]interface{}, customized []process
 }
 
 func (p *rateLimiter) getRateLimiter(token string) ratelimiter.RateLimiter {
-	c := p.configs.GetByToken(token).(ratelimiter.Config)
 	p.mut.Lock()
 	defer p.mut.Unlock()
+
+	c := p.configs.GetByToken(token).(ratelimiter.Config)
 	if _, ok := p.rateLimiters[token]; !ok {
 		p.rateLimiters[token] = ratelimiter.New(c)
 	}

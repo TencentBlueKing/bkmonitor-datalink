@@ -65,8 +65,8 @@ func (cli *LocalStorage) Del(key string) error {
 	return cli.store.Erase(key)
 }
 
-// Destory remove db files
-func (cli *LocalStorage) Destory() error {
+// Destroy remove db files
+func (cli *LocalStorage) Destroy() error {
 	cli.Close()
 	return os.RemoveAll(cli.path)
 }

@@ -196,4 +196,7 @@ func TestESStorage_isIndexExist(t *testing.T) {
 	exist, err = ess.isIndexExist(context.TODO(), ess.searchFormatV1(), ess.IndexReV1())
 	assert.Nil(t, err)
 	assert.False(t, exist)
+	indexExist, err := ess.CheckIndexExist(context.TODO())
+	assert.Nil(t, err)
+	assert.True(t, indexExist)
 }

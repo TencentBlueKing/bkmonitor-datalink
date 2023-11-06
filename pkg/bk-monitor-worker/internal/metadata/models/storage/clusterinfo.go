@@ -40,20 +40,20 @@ type ClusterInfo struct {
 	IsSslVerify               bool      `json:"is_ssl_verify"`
 	Schema                    string    `gorm:"size:32" json:"schema"`
 	Version                   string    `gorm:"size:64" json:"version"`
-	RegisteredSystem          string    `gorm:"size:128;default:_default" json:"registered_system"`
+	RegisteredSystem          string    `gorm:"size:128" json:"registered_system"`
 	CustomOption              string    `json:"custom_option"`
 	CreateTime                time.Time ` json:"create_time"`
-	Creator                   string    `gorm:"size:255;default:system" json:"creator"`
+	Creator                   string    `gorm:"size:255" json:"creator"`
 	LastModifyTime            time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser            string    `gorm:"size:32" json:"last_modify_user"`
-	GseStreamToId             int       `gorm:"default:-1" json:"gse_stream_to_id"`
-	IsRegisterToGse           bool      `gorm:"default:false" json:"is_register_to_gse"`
+	GseStreamToId             int       `gorm:"column:gse_stream_to_id" json:"gse_stream_to_id"`
+	IsRegisterToGse           bool      `gorm:"column:is_register_to_gse" json:"is_register_to_gse"`
 	DefaultSettings           string    `gorm:"default_settings" json:"default_settings"`
 	Label                     string    `gorm:"size:32" json:"label"`
 	SslCertificate            string    `json:"ssl_certificate"`
 	SslCertificateAuthorities string    `json:"ssl_certificate_authorities"`
 	SslCertificateKey         string    `json:"ssl_certificate_key"`
-	SslInsecureSkipVerify     bool      `gorm:"default:false" json:"ssl_insecure_skip_verify"`
+	SslInsecureSkipVerify     bool      `gorm:"column:ssl_insecure_skip_verify" json:"ssl_insecure_skip_verify"`
 	SslVerificationMode       string    `gorm:"size:16" json:"ssl_verification_mode"`
 	ExtranetDomainName        string    `gorm:"size:128" json:"extranet_domain_name"`
 	ExtranetPort              uint      `gorm:"default:0" json:"extranet_port"`

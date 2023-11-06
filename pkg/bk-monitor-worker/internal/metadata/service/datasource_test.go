@@ -67,11 +67,29 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 		Topic:     "0bkmonitor_999990",
 		Partition: 1,
 	}
+	rt := resulttable.ResultTable{
+		TableId:        "test_data_source_table_id",
+		IsCustomTable:  true,
+		SchemaType:     "",
+		DefaultStorage: "influxDB",
+		IsEnable:       true,
+		Label:          "others",
+	}
+	dsrt := resulttable.DataSourceResultTable{
+		BkDataId: ds.BkDataId,
+		TableId:  rt.TableId,
+	}
 	// 初始化数据
 	mysql.GetDBSession().DB.Where("bk_data_id=?", kafkaTopic.BkDataId).Delete(&kafkaTopic)
 	kafkaTopic.Create(mysql.GetDBSession().DB)
 	ds.Delete(mysql.GetDBSession().DB)
 	err := ds.Create(mysql.GetDBSession().DB)
+	assert.Nil(t, err)
+	mysql.GetDBSession().DB.Where("table_id=?", rt.TableId).Delete(&rt)
+	err = rt.Create(mysql.GetDBSession().DB)
+	assert.Nil(t, err)
+	mysql.GetDBSession().DB.Where("table_id=?", dsrt.TableId).Delete(&dsrt)
+	err = dsrt.Create(mysql.GetDBSession().DB)
 	assert.Nil(t, err)
 
 	dsSvc := NewDataSourceSvc(ds)

@@ -67,15 +67,6 @@ var (
 		},
 	)
 
-	tsDBAndTableIDRequestCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "unify_query",
-			Name:      "tsdb_table_id_request_count_total",
-			Help:      "request handled count",
-		},
-		[]string{"space_uid", "table_id", "tsdb_type", "query_type"},
-	)
-
 	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
@@ -104,11 +95,6 @@ func APIRequestInc(ctx context.Context, params ...string) {
 func APIRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
 	metric, err := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, err, duration, params...)
-}
-
-func TsDBAndTableIDRequestCountInc(ctx context.Context, params ...string) {
-	metric, err := tsDBAndTableIDRequestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
 }
 
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
@@ -192,6 +178,6 @@ func observe(
 func init() {
 	prometheus.MustRegister(
 		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
-		tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
+		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
 	)
 }

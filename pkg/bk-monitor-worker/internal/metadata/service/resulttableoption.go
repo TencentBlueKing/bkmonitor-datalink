@@ -12,12 +12,13 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	"strings"
-	"time"
 )
 
 // ResultTableOptionSvc result table option service

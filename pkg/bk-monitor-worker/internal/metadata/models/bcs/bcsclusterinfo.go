@@ -10,8 +10,9 @@
 package bcs
 
 import (
-	"github.com/jinzhu/gorm"
 	"time"
+
+	"github.com/jinzhu/gorm"
 )
 
 //go:generate goqueryset -in bcsclusterinfo.go -out qs_bcsclusterinfo.go

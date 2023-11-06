@@ -12,12 +12,12 @@ package storage
 import (
 	"context"
 	"fmt"
-	"github.com/agiledragon/gomonkey/v2"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/jinzhu/gorm"
 	"github.com/spf13/viper"

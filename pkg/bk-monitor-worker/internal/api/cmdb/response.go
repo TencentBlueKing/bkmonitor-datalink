@@ -10,8 +10,9 @@
 package cmdb
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 )
 
 type SearchCloudAreaResp struct {

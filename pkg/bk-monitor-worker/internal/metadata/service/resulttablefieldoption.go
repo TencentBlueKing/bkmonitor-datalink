@@ -12,10 +12,11 @@ package service
 import (
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"time"
 )
 
 // ResultTableFieldOptionSvc result table field option service

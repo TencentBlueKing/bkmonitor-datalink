@@ -271,8 +271,11 @@ func swTagsToAttributesByRule(dest pcommon.Map, span *agentv3.SpanObject) {
 
 		if urlObj != nil {
 			// attributes.http.scheme
-			if _, ok := dest.Get(semconv.AttributeHTTPScheme); !ok {
-				dest.InsertString(semconv.AttributeHTTPScheme, urlObj.Scheme)
+			httpScheme, ok := dest.Get(semconv.AttributeHTTPScheme)
+			if !ok {
+				dest.InsertString(semconv.AttributeHTTPScheme, utils.FirstUpper(urlObj.Scheme, unknownVal))
+			} else {
+				dest.UpsertString(semconv.AttributeHTTPScheme, utils.FirstUpper(httpScheme.StringVal(), unknownVal))
 			}
 			// attribute.http.target / attribute.http.host
 			if spanType == agentv3.SpanType_Exit {

@@ -17,17 +17,16 @@ import (
 // Client for bcs cluster manager
 type Client struct {
 	define.BkApiClient
-	UseApiGateway bool
 }
 
-// New bk_gse client
-func New(useApiGateway bool, configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
+// New bcs_cluster_manager client
+func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
 	client, err := bkapi.NewBkApiClient("bcs-cluster-manager", configProvider, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Client{BkApiClient: client, UseApiGateway: useApiGateway}, nil
+	return &Client{BkApiClient: client}, nil
 }
 
 // FetchClusters for bcs cluster manager resource fetch clusters

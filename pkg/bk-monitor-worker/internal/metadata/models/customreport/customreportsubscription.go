@@ -22,6 +22,6 @@ type CustomReportSubscription struct {
 }
 
 // TableName 用于设置表的别名
-func (eg CustomReportSubscription) TableName() string {
+func (CustomReportSubscription) TableName() string {
 	return "custom_report_subscription_config_v2"
 }

@@ -11,6 +11,7 @@ package api
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
@@ -23,12 +24,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
+var muForGseApi sync.Mutex
+var muForBcsClusterManager sync.Mutex
+var muForCmdbApi sync.Mutex
+var muForNodemanApi sync.Mutex
+
 var gseApi *bkgse.Client
-
 var bcsClusterManager *bcsclustermanager.Client
-
 var cmdbApi *cmdb.Client
-
 var nodemanApi *nodeman.Client
 
 const (
@@ -41,6 +44,8 @@ const (
 
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
+	muForGseApi.Lock()
+	defer muForGseApi.Unlock()
 	if gseApi != nil {
 		return gseApi, nil
 	}
@@ -81,6 +86,8 @@ const (
 
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
 func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
+	muForBcsClusterManager.Lock()
+	defer muForBcsClusterManager.Unlock()
 	if bcsClusterManager != nil {
 		return bcsClusterManager, nil
 	}
@@ -90,7 +97,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		JsonMarshaler:       jsonx.Marshal,
 	}
 	var err error
-	bcsClusterManager, err = bcsclustermanager.New(true, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +106,8 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 
 // GetCmdbApi 获取CmdbApi客户端
 func GetCmdbApi() (*cmdb.Client, error) {
+	muForCmdbApi.Lock()
+	defer muForCmdbApi.Unlock()
 	if bcsClusterManager != nil {
 		return cmdbApi, nil
 	}
@@ -120,6 +129,8 @@ func GetCmdbApi() (*cmdb.Client, error) {
 
 // GetNodemanApi NodemanApi
 func GetNodemanApi() (*nodeman.Client, error) {
+	muForNodemanApi.Lock()
+	defer muForNodemanApi.Unlock()
 	if nodemanApi != nil {
 		return nodemanApi, nil
 	}

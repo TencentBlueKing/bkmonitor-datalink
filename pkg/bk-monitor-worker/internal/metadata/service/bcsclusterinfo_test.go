@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
@@ -186,4 +187,39 @@ func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 1, createCount)
 	assert.Equal(t, 1, updateCount)
+}
+
+func Test_isIPv6(t *testing.T) {
+	type args struct {
+		ip string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"ipv4", args{ip: "1.1.2.3"}, false},
+		{"err", args{ip: "1111.1.2.3"}, false},
+		{"ipv6", args{ip: "fe80::eca3:77af:98e1:725c"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, isIPv6(tt.args.ip), "isIPv6(%v)", tt.args.ip)
+		})
+	}
+}
+
+func TestKubernetesNodeJsonParser(t *testing.T) {
+	var nodeInfo NodeInfo
+	err := jsonx.UnmarshalString(`{"metadata":{"selfLink":"/api/v1/nodes/10.0.0.1","uid":"f974e001-0398-48f9-a305-c1d50ab68a20","annotations":{"csi.volume.kubernetes.io/nodeid":"{\"com.tencent.cloud.csi.cbs\":\"ins-qcc4u546\"}","node.alpha.kubernetes.io/ttl":"0","volumes.kubernetes.io/controller-managed-attach-detach":"true"},"creationTimestamp":"2023-05-23T11:29:27Z","labels":{"beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","node-role.kubernetes.io/role-test":"test-role"},"name":"10.0.0.1-test-name","resourceVersion":"10804990572"},"spec":{"taints":[{"key":"dedicated","value":"ingress-nginx","effect":"PreferNoSchedule"},{"effect":"NoSchedule","key":"node.kubernetes.io/unschedulable","timeAdded":"2023-09-27T09:58:05Z"}],"unschedulable":true,"podCIDR":"172.0.0.0/24","podCIDRs":["172.0.0.0/24"],"providerID":"qcloud:///100006/ins-qcc4u546"},"status":{"conditions":[{"lastHeartbeatTime":"2023-05-23T11:29:30Z","lastTransitionTime":"2023-05-23T11:29:30Z","message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable"},{"lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False","type":"MemoryPressure","lastHeartbeatTime":"2023-10-26T07:48:56Z"},{"lastHeartbeatTime":"2023-10-26T07:48:56Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure","status":"False","type":"DiskPressure"},{"type":"PIDPressure","lastHeartbeatTime":"2023-10-26T07:48:56Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID","status":"False"},{"lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True","type":"Ready","lastHeartbeatTime":"2023-10-26T07:48:56Z"}],"daemonEndpoints":{"kubeletEndpoint":{"Port":10250}},"images":[{"names":["ccr.ccs.tencentyun.com/tkeimages/hyperkube@sha256:3c16349f393b7dc0820661a87dc5160904176ce371f7d40b4d338524dc3aaa6f","ccr.ccs.tencentyun.com/tkeimages/hyperkube:v1.20.6-tke.33"],"sizeBytes":638859459},{"names":["ccr.ccs.tencentyun.com/library/pause@sha256:5ab61aabaedd6c40d05ce1ac4ea72c2079f4a0f047ec1dc100ea297b553539ab","ccr.ccs.tencentyun.com/library/pause:latest"],"sizeBytes":682696}],"nodeInfo":{"osImage":"CentOS Linux 7 (Core)","bootID":"122e6ee1-39b6-42f7-a0f6-3357231f6d2e","kernelVersion":"3.10.0-1160.88.1.el7.x86_64","machineID":"f4fb1e809fc4402a9d3e7822776988fa","systemUUID":"F4FB1E80-9FC4-402A-9D3E-7822776988FA","operatingSystem":"linux","architecture":"amd64","kubeProxyVersion":"v1.20.6-tke.33","kubeletVersion":"v1.20.6-tke.33","containerRuntimeVersion":"docker://19.3.9-tke.1"},"addresses":[{"type":"InternalIP","address":"10.0.0.1"},{"address":"10.0.0.1","type":"Hostname"}],"allocatable":{"memory":"3090468Ki","pods":"253","cpu":"1900m","ephemeral-storage":"94998384074","hugepages-1Gi":"0","hugepages-2Mi":"0"},"capacity":{"cpu":"2","ephemeral-storage":"103079844Ki","hugepages-1Gi":"0","hugepages-2Mi":"0","memory":"3717156Ki","pods":"253"}},"apiVersion":"v1","kind":"Node"}`, &nodeInfo)
+	assert.NoError(t, err)
+	parser := KubernetesNodeJsonParser{Node: nodeInfo}
+	assert.Equal(t, "10.0.0.1", parser.NodeIp())
+	assert.Equal(t, "10.0.0.1-test-name", parser.Name())
+
+	labelsJson, err := jsonx.MarshalString(parser.Labels())
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","node-role.kubernetes.io/role-test":"test-role"}`, labelsJson)
+	assert.Equal(t, []string{"role-test"}, parser.RoleList())
+	assert.Equal(t, "Ready,SchedulingDisabled", parser.ServiceStatus())
 }

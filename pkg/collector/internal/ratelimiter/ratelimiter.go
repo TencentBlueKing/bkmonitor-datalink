@@ -97,8 +97,8 @@ func newTokenBucketRateLimiter(qps float32, burst int) RateLimiter {
 		limiter.rejected = true
 		return limiter
 	}
-	if burst <= 0 {
-		burst = int(qps) * 2
+	if burst < int(qps) {
+		burst = int(qps) + 1
 	}
 	return &tokenBucketRateLimiter{
 		limiter: flowcontrol.NewTokenBucketRateLimiter(qps, burst),

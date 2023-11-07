@@ -9,7 +9,9 @@
 
 package auth
 
-import "net/http"
+import (
+	"net/http"
+)
 
 // Auth 认证接口
 type Auth interface {

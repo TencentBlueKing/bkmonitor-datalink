@@ -9,7 +9,9 @@
 
 package influxql
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrUnsupportedStmt  = errors.New("unsupported sql")

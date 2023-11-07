@@ -9,7 +9,9 @@
 
 package es
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrStorageIDNotFound = errors.New("storage id not found")

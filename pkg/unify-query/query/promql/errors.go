@@ -9,7 +9,9 @@
 
 package promql
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 var (
 	ErrTimeRangeTooLarge   = errors.New("time range is too large")

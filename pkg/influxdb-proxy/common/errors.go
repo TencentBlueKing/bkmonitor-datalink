@@ -9,7 +9,9 @@
 
 package common
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 // 定义常用的错误内容
 var (

@@ -16,7 +16,9 @@
 
 package storage_test
 
-import "testing"
+import (
+	"testing"
+)
 
 // BenchmarkStoreSet_BBolt :
 func BenchmarkStoreSet_BBolt(b *testing.B) {

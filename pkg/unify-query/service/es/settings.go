@@ -9,7 +9,9 @@
 
 package es
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	MaxConcurrencyConfigPath     = "es.max_concurrency"

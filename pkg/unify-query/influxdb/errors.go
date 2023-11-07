@@ -9,7 +9,9 @@
 
 package influxdb
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrWrongInfluxdbSQLFormat = errors.New("get wrong influxdb sql")

@@ -9,7 +9,9 @@
 
 package elasticsearch
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 var (
 	NotFoundErr        = errors.New("404 not found")

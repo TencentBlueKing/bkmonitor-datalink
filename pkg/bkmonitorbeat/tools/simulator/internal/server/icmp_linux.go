@@ -9,7 +9,9 @@
 
 package server
 
-import "os"
+import (
+	"os"
+)
 
 const (
 	ipv4ICMPFile = "/proc/sys/net/ipv4/icmp_echo_ignore_all"

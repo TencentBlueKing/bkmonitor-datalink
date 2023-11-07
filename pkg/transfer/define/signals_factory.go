@@ -9,7 +9,9 @@
 
 package define
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 // mapSignals : Payload factory mappings
 var mapSignals = make(map[string]string)

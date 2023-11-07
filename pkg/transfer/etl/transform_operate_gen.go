@@ -13,7 +13,9 @@
 
 package etl
 
-import conv "github.com/cstockton/go-conv"
+import (
+	conv "github.com/cstockton/go-conv"
+)
 
 // TransformMultiplyByFloat32 :
 func TransformMultiplyByFloat32(right interface{}) func(interface{}) (interface{}, error) {

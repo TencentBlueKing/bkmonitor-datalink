@@ -9,7 +9,9 @@
 
 package define
 
-import "errors"
+import (
+	"errors"
+)
 
 // errors
 var (

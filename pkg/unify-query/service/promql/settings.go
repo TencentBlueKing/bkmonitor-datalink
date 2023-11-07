@@ -9,7 +9,9 @@
 
 package promql
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	MaxSamplesConfigPath           = "promql.max_samples"

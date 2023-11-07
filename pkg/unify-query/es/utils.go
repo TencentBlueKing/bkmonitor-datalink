@@ -9,7 +9,9 @@
 
 package es
 
-import "strings"
+import (
+	"strings"
+)
 
 // ConvertTableIDToIndexName
 func ConvertTableIDToIndexName(tableID string) string {

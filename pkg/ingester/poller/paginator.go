@@ -9,7 +9,9 @@
 
 package poller
 
-import "strconv"
+import (
+	"strconv"
+)
 
 type Paginator interface {
 	SetTotalToMax()

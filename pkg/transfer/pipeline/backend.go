@@ -188,6 +188,13 @@ func NewBulkBackendDefaultAdapter(ctx context.Context, name string, handler Bulk
 func NewBulkBackendAdapter(ctx context.Context, name string, handler BulkHandler, bufferSize int, flushInterval time.Duration, flushRetries int) *BulkBackendAdapter {
 	pipelineConfig := config.PipelineConfigFromContext(ctx)
 	ctx, cancelFunc := context.WithCancel(ctx)
+
+	concurrency := BulkDefaultConcurrency
+	n := pipelineConfig.MQConfig.BulkConcurrency
+	if n > 0 {
+		concurrency = n
+	}
+
 	adapter := &BulkBackendAdapter{
 		bufferUsageObserver: MonitorBulkBackendBufferUsage.With(prometheus.Labels{
 			"name":    name,
@@ -200,7 +207,7 @@ func NewBulkBackendAdapter(ctx context.Context, name string, handler BulkHandler
 			"cluster": define.ConfClusterID,
 		})),
 		concurrency: utils.NewChainingSemaphore(
-			BulkGlobalConcurrencySemaphore, utils.NewWeightedSemaphore(BulkDefaultConcurrency),
+			BulkGlobalConcurrencySemaphore, utils.NewWeightedSemaphore(concurrency),
 		),
 		BaseBackend:           define.NewBaseBackend(name),
 		ProcessorMonitor:      NewBackendProcessorMonitor(config.PipelineConfigFromContext(ctx), config.ShipperConfigFromContext(ctx)),
@@ -217,7 +224,7 @@ func NewBulkBackendAdapter(ctx context.Context, name string, handler BulkHandler
 		pool:                  sync.Pool{New: func() interface{} { return make([]interface{}, 0, bufferSize) }},
 		buffer:                make([]interface{}, 0, bufferSize),
 		pushSem: utils.NewChainingSemaphore(
-			BulkGlobalPushSemaphore, utils.NewWeightedSemaphore(BulkDefaultConcurrency),
+			BulkGlobalPushSemaphore, utils.NewWeightedSemaphore(concurrency),
 		),
 	}
 	handler.SetManager(adapter)

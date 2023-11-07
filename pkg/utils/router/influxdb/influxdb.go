@@ -55,14 +55,17 @@ type Router interface {
 	GetQueryRouterInfo(ctx context.Context) (QueryRouterInfo, error)
 	SubHostStatus(ctx context.Context) <-chan *goRedis.Message
 	SetHostStatusRead(ctx context.Context, hostName string, readStatus bool) error
-	GetSpaceInfo(ctx context.Context) (SpaceInfo, error)
-	GetFieldToResultTable(ctx context.Context) (FieldToResultTable, error)
-	GetDataLabelResultTable(ctx context.Context) (DataLabelToResultTable, error)
-	GetResultTableDetailInfo(ctx context.Context) (ResultTableDetailInfo, error)
 	GetSpace(ctx context.Context, spaceId string) (Space, error)
 	GetFieldToResultTableDetail(ctx context.Context, field string) (ResultTableList, error)
 	GetResultTableDetail(ctx context.Context, tableId string) (*ResultTableDetail, error)
 	GetDataLabelToResultTableDetail(ctx context.Context, dataLabel string) (ResultTableList, error)
+	IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV)
+}
+
+type GenericKV struct {
+	Key string
+	Val GenericValue
+	Err error
 }
 
 type router struct {
@@ -295,50 +298,11 @@ func (r *router) SetHostStatusRead(ctx context.Context, hostName string, readSta
 	return nil
 }
 
-func (r *router) GetSpaceInfo(ctx context.Context) (SpaceInfo, error) {
-	result := SpaceInfo{}
-	err := GetGenericKeyResult(r, ctx, SpaceToResultTableKey, result)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (r *router) GetFieldToResultTable(ctx context.Context) (FieldToResultTable, error) {
-	result := FieldToResultTable{}
-	err := GetGenericKeyResult(r, ctx, FieldToResultTableKey, result)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (r *router) GetDataLabelResultTable(ctx context.Context) (DataLabelToResultTable, error) {
-	result := DataLabelToResultTable{}
-	err := GetGenericKeyResult(r, ctx, DataLabelToResultTableKey, result)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-func (r *router) GetResultTableDetailInfo(ctx context.Context) (ResultTableDetailInfo, error) {
-	result := ResultTableDetailInfo{}
-	err := GetGenericKeyResult(r, ctx, ResultTableDetailKey, result)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 func (r *router) GetSpace(ctx context.Context, spaceId string) (Space, error) {
 	value := Space{}
 	err := GetGenericHashKeyResult(r, ctx, SpaceToResultTableKey, spaceId, &value)
 	if err != nil {
 		return nil, err
-	}
-	for tableId, table := range value {
-		table.TableId = tableId
 	}
 	return value, nil
 }
@@ -349,7 +313,6 @@ func (r *router) GetResultTableDetail(ctx context.Context, tableId string) (*Res
 	if err != nil {
 		return nil, err
 	}
-	value.TableId = tableId
 	return value, nil
 }
 
@@ -371,30 +334,43 @@ func (r *router) GetFieldToResultTableDetail(ctx context.Context, field string) 
 	return value, nil
 }
 
-// GetGenericKeyResult 从 Redis 获取 KEY 的完整内容
-func GetGenericKeyResult(r *router, ctx context.Context, coreKey string, result GenericHash) error {
+// IterGenericKeyResult 遍历 Redis 获取 KEY 的完整内容
+func (r *router) IterGenericKeyResult(ctx context.Context, coreKey string, batchSize int64, genericCh chan GenericKV) {
 	key := r.key(coreKey)
 	cursor := uint64(0)
-	count := int64(10000)
+	defer close(genericCh)
 	for {
-		cmd := r.client.HScan(ctx, key, cursor, "", count)
-		res, nextCursor, err := cmd.Result()
-		if err != nil {
-			return err
-		}
-		for i := 0; i < len(res); i += 2 {
-			item := result.NewValueInstance()
-			err = json.Unmarshal([]byte(res[i+1]), item)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			cmd := r.client.HScan(ctx, key, cursor, "", batchSize)
+			res, nextCursor, err := cmd.Result()
 			if err != nil {
-				return err
+				genericCh <- GenericKV{Err: fmt.Errorf("Fail to HScan key(%s), %v ", key, err)}
+				return
 			}
-			result.SetValueInstance(res[i], item)
-		}
-		if nextCursor == 0 {
-			break
+			for i := 0; i < len(res); i += 2 {
+				item, err := NewGenericValue(coreKey)
+				if err != nil {
+					genericCh <- GenericKV{Err: fmt.Errorf("Fail to new generic value, %v ", err)}
+					return
+				}
+				err = json.Unmarshal([]byte(res[i+1]), item)
+				if err != nil {
+					genericCh <- GenericKV{
+						Err: fmt.Errorf("Fail to unmarshal value, %s, %v, %v ", res[i], res[i+1], item)}
+					continue
+				}
+				item.Fill(res[i])
+				genericCh <- GenericKV{Key: res[i], Val: item}
+			}
+			if nextCursor == 0 {
+				return
+			}
+			cursor = nextCursor
 		}
 	}
-	return nil
 }
 
 // GetGenericHashKeyResult 从 Redis 获取 HashKey 中某一个键值对
@@ -409,5 +385,22 @@ func GetGenericHashKeyResult(r *router, ctx context.Context, coreKey string, fie
 	if err != nil {
 		return err
 	}
+	value.Fill(fieldKey)
 	return nil
+}
+
+func NewGenericValue(typeKey string) (stoVal GenericValue, err error) {
+	switch typeKey {
+	case FieldToResultTableKey:
+		stoVal = &ResultTableList{}
+	case SpaceToResultTableKey:
+		stoVal = &Space{}
+	case DataLabelToResultTableKey:
+		stoVal = &ResultTableList{}
+	case ResultTableDetailKey:
+		stoVal = &ResultTableDetail{}
+	default:
+		err = fmt.Errorf("invalid generic type(%s) ", typeKey)
+	}
+	return
 }

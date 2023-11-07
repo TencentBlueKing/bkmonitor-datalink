@@ -13,8 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 )
 
 func TestClusterInfoSvc_base64WithPrefix(t *testing.T) {

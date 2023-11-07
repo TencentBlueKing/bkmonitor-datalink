@@ -13,9 +13,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 )
 
 func TestAccessVMRecord_RefreshVmRouter(t *testing.T) {

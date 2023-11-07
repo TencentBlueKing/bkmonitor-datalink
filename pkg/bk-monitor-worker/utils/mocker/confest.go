@@ -12,11 +12,12 @@ package mocker
 import (
 	"fmt"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/jinzhu/gorm"
 	"github.com/spf13/viper"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 func PatchDBSession() *gomonkey.Patches {

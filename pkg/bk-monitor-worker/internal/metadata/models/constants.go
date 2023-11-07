@@ -46,6 +46,21 @@ const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdb�
 // ResultTableOption
 const (
 	OptionCustomReportDimensionValues = "dimension_values"
+	OptionSegmentedQueryEnable        = "segmented_query_enable"
+)
+
+// MeasurementType
+const (
+	MeasurementTypeBkTraditional          = "bk_traditional_measurement"
+	MeasurementTypeBkSplit                = "bk_split_measurement"
+	MeasurementTypeBkExporter             = "bk_exporter"
+	MeasurementTypeBkStandardV2TimeSeries = "bk_standard_v2_time_series"
+)
+
+// ETLConfigType
+const (
+	ETLConfigTypeBkStandardV2TimeSeries = "bk_standard_v2_time_series"
+	ETLConfigTypeBkExporter             = "bk_exporter"
 )
 
 // ClusterStorageType
@@ -93,6 +108,8 @@ const (
 	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
 	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
 	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
+	BcsClusterTypeSingle            = "single"                    // 独享集群类型
+	BcsClusterTypeShared            = "shared"                    // 共享集群类型
 )
 
 // Label
@@ -122,7 +139,10 @@ const (
 
 // DataSourceOption
 const (
-	OptionTimestampUnit = "timestamp_precision"
+	OptionTimestampUnit        = "timestamp_precision"
+	OptionIsSplitMeasurement   = "is_split_measurement"
+	OptionDisableMetricCutter  = "disable_metric_cutter"
+	OptionEnableFieldBlackList = "enable_field_black_list"
 )
 
 // root consul path template
@@ -145,4 +165,13 @@ const (
 	MaxReqThroughPut         = 4000       // 最大的请求数
 	MaxReqLength             = 500 * 1024 // 最大请求Body大小，500KB
 
+)
+
+// space
+const (
+	SpaceTypeBKCC   = "bkcc"
+	SpaceTypeBCS    = "bcs"
+	SpaceTypeBKCI   = "bkci"
+	SpaceTypeBKSAAS = "bksaas"
+	SpaceTypeAll    = "all"
 )

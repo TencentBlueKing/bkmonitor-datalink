@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -344,4 +345,28 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 	}
 	logger.Infof("table_id [%s] refresh etl config success", r.TableId)
 	return nil
+}
+
+func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
+	var dsrt resulttable.DataSourceResultTable
+	if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).One(&dsrt); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+	var dso resulttable.DataSourceOption
+	if err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).BkDataIdEq(dsrt.BkDataId).NameEq(models.OptionDisableMetricCutter).One(&dso); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+	var value bool
+	if err := jsonx.UnmarshalString(dso.Value, &value); err != nil {
+		return false, err
+	}
+	return value, nil
 }

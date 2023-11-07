@@ -32,12 +32,12 @@ type DataSource struct {
 	CreateTime        time.Time `gorm:"create_time;" json:"create_time"`
 	LastModifyUser    string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
 	LastModifyTime    time.Time `gorm:"last_modify_time" json:"last_modify_time"`
-	TypeLabel         string    `gorm:"size:128;default:others" json:"type_label"`
-	SourceLabel       string    `gorm:"size:128;default:others" json:"source_label"`
+	TypeLabel         string    `gorm:"size:128" json:"type_label"`
+	SourceLabel       string    `gorm:"size:128" json:"source_label"`
 	CustomLabel       *string   `gorm:"size:256" json:"custom_label"`
 	SourceSystem      string    `gorm:"size:256" json:"source_system"`
-	IsEnable          bool      `gorm:"is_enable;default:true" json:"is_enable"`
-	TransferClusterId string    `gorm:"size:50;default:default" json:"transfer_cluster_id"`
+	IsEnable          bool      `gorm:"is_enable" json:"is_enable"`
+	TransferClusterId string    `gorm:"size:50" json:"transfer_cluster_id"`
 	IsPlatformDataId  bool      `gorm:"column:is_platform_data_id" json:"is_platform_data_id"`
 	SpaceTypeId       string    `gorm:"size:64;default:all" json:"space_type_id"`
 	SpaceUid          string    `gorm:"size:256" json:"space_uid"`

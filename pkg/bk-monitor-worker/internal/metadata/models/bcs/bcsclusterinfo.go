@@ -28,7 +28,7 @@ type BCSClusterInfo struct {
 	BkBizId            int       `gorm:"column:bk_biz_id" json:"bk_biz_id"`
 	BkCloudId          *int      `gorm:"column:bk_cloud_id" json:"BkCloudId"`
 	ProjectId          string    `gorm:"size:128" json:"project_id"`
-	Status             string    `gorm:"size:50;default:running" json:"status"`
+	Status             string    `gorm:"size:50" json:"status"`
 	DomainName         string    `gorm:"size:512" json:"domain_name"`
 	Port               uint      `json:"port"`
 	ServerAddressPath  string    `gorm:"size:512" json:"server_address_path"`

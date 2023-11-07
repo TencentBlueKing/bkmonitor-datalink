@@ -142,7 +142,7 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 					logging.Warnf("backend %v write %v to %v error %v:%v", b, index.ID, index.Index, cause.Type, cause.Reason)
 				}
 			}
-			MonitorESBackendPartialWrite.WithLabelValues(b.resultTable.ResultTable).Add(float64(total))
+			count = len(writeResult.Items) - total // 成功写入的数据量
 		} else {
 			count = len(writeResult.Items)
 			if count != len(records) {

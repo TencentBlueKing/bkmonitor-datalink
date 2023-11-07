@@ -347,7 +347,10 @@ func (f *Frontend) init() error {
 
 	pipeConfig := config.PipelineConfigFromContext(f.ctx)
 	dataID := strconv.Itoa(pipeConfig.DataID)
-	define.MonitorFrontendKafka.WithLabelValues(dataID, define.ConfClusterID, kafkaConfig.GetDomain()).Add(1)
+
+	// 由于 dataid 归属的 transfer 集群会发生切换
+	// 所以使用时间作为其 values 值，这样查询的时候可以使用 max 语法查询出来
+	define.MonitorFrontendKafka.WithLabelValues(dataID, define.ConfClusterID, kafkaConfig.GetDomain(), kafkaConfig.GetTopic()).Set(float64(time.Now().UnixMilli()))
 
 	c, err := NewKafkaConsumerConfig(conf)
 	if err != nil {

@@ -9,7 +9,9 @@
 
 package cmdb
 
-import "context"
+import (
+	"context"
+)
 
 type CMDB interface {
 

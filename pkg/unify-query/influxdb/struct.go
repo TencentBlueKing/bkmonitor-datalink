@@ -9,7 +9,9 @@
 
 package influxdb
 
-import "time"
+import (
+	"time"
+)
 
 // Host
 type Host struct {

@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 // TagValuesData
@@ -379,18 +380,60 @@ func HandleFeatureFlag(c *gin.Context) {
 // HandleSpacePrint : 打印路由信息
 func HandleSpacePrint(c *gin.Context) {
 	ctx := c.Request.Context()
-	spaceUid := c.Query("spaceUid")
-	refresh := c.Query("refresh")
+	typeKey := c.Query("type_key")
+	refresh, _ := strconv.ParseBool(c.DefaultQuery("refresh", "false"))
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	if err != nil {
+		c.String(500, err.Error())
+		return
+	}
 	res := ""
-	if refresh != "" {
-		res += fmt.Sprintf("refresh %s\n", spaceUid)
-		err := influxdb.ReloadSpace(ctx, spaceUid)
+	if refresh {
+		res += fmt.Sprintf("Refresh %s \n", typeKey)
+		err := router.LoadRouter(ctx, typeKey)
 		if err != nil {
-			res += fmt.Sprintf("err %s\n", err.Error())
+			res += fmt.Sprintf("Error: %v\n", err)
 		}
 		res += fmt.Sprintln("--------------------------------")
 	}
-	res += influxdb.SpacePrint(ctx, spaceUid)
+	res += router.Print(ctx, typeKey)
+	c.String(200, res)
+}
+
+func HandleSpaceKeyPrint(c *gin.Context) {
+	ctx := c.Request.Context()
+	typeKey := c.Query("type_key")
+	hashKey := c.Query("hash_key")
+	toCached, _ := strconv.ParseBool(c.DefaultQuery("cached", "false"))
+	refresh, _ := strconv.ParseBool(c.DefaultQuery("refresh", "false"))
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	if err != nil {
+		c.String(500, err.Error())
+		return
+	}
+	res := ""
+	if refresh {
+		res += fmt.Sprintf("Refresh %s + %s\n", typeKey, hashKey)
+		refreshMapping := map[string]string{
+			routerInfluxdb.SpaceToResultTableKey:     routerInfluxdb.SpaceToResultTableChannelKey,
+			routerInfluxdb.FieldToResultTableKey:     routerInfluxdb.FieldToResultTableChannelKey,
+			routerInfluxdb.DataLabelToResultTableKey: routerInfluxdb.DataLabelToResultTableChannelKey,
+			routerInfluxdb.ResultTableDetailKey:      routerInfluxdb.ResultTableDetailChannelKey,
+		}
+		err := router.ReloadByChannel(ctx, refreshMapping[typeKey], hashKey)
+		if err != nil {
+			res += fmt.Sprintf("Error: %v\n", err)
+		}
+		res += fmt.Sprintln("--------------------------------")
+	}
+	val := router.Get(ctx, typeKey, hashKey, toCached)
+	if val != nil {
+		res += fmt.Sprintf("Value: %s\n", val.Print())
+	} else {
+		res += fmt.Sprintf("Value: nil")
+	}
 	c.String(200, res)
 }
 

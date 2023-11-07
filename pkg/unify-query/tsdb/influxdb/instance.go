@@ -174,7 +174,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 	trace.InsertStringIntoSpan("query-where", where, span)
 	trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
 
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"influxdb query: %s, where: %s",
 		urlPath, where,
 	)
@@ -490,7 +490,7 @@ func (i *Instance) query(
 	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
 	trace.InsertStringIntoSpan("query-where", where, span)
 
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"influxdb query: %s, where: %s",
 		urlPath, where,
 	)
@@ -837,7 +837,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
 		trace.InsertStringIntoSpan("query-where", where, span)
 
-		log.Infof(ctx,
+		log.Debugf(ctx,
 			"influxdb query: %s, where: %s",
 			urlPath, where,
 		)
@@ -959,7 +959,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	trace.InsertStringIntoSpan("query-field", field, span)
 	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
 
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"influxdb query: %s", urlPath,
 	)
 
@@ -1109,7 +1109,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
 		trace.InsertStringIntoSpan("query-where", where, span)
 
-		log.Infof(ctx,
+		log.Debugf(ctx,
 			"influxdb query: %s, where: %s",
 			urlPath, where,
 		)

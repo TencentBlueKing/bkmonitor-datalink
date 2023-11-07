@@ -29,6 +29,9 @@ func TestSemaphore(t *testing.T) {
 	assert.True(t, got)
 	sem.Release()
 
+	assert.Equal(t, "test", sem.String())
+	assert.Equal(t, 0, sem.Count())
+
 	sem.Acquire()
 	sem.Release()
 	sem.Close()

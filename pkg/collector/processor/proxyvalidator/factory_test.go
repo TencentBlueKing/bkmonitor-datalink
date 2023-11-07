@@ -29,22 +29,40 @@ processor:
         version: v2
         max_future_time_offset: 3600
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+    - name: "proxy_validator/common"
+      config:
+        type: time_series
+        version: v2
+        max_future_time_offset: 7200
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*proxyValidator)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	var c1 Config
+	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
 
 	assert.Equal(t, define.ProcessorProxyValidator, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.True(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func TestProcess(t *testing.T) {

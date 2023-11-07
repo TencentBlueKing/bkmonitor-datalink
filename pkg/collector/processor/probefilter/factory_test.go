@@ -17,7 +17,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -42,26 +41,51 @@ processor:
                     value: "POST:/account/pay"
                     type: "interface"
 `
+	mainConf := processor.MustLoadConfigs(content)[0].Config
 
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	customContent := `
+processor:
+    - name: "probe_filter/common"
+      config:
+        add_attributes:
+          - rules:
+              - type: "Http"
+                enabled: true
+                target: "cookie"
+                field: "language"
+                prefix: "custom_tag"
+                filters:
+                  - field: "resource.service.name"
+                    value: "account1"
+                    type: "service"
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*probeFilter)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
-	c.AddAttrs[0].Rules[0].Filters[0].Field = "service.name"
-	c.AddAttrs[0].Rules[0].Filters[1].Field = "api_name"
-	assert.Equal(t, c, factory.configs.GetGlobal().(Config))
+	mainConfig := factory.configs.GetGlobal().(Config)
+	assert.Len(t, mainConfig.AddAttrs[0].Rules[0].Filters, 2)
+
+	customConfig := factory.configs.GetByToken("token1").(Config)
+	assert.Len(t, customConfig.AddAttrs[0].Rules[0].Filters, 1)
 
 	assert.Equal(t, define.ProcessorProbeFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func makeTracesAttributesGenerator(n int, attrs map[string]string) *generator.TracesGenerator {

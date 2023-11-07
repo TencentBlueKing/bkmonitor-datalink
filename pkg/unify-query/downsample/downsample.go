@@ -28,7 +28,7 @@ func Downsample(points []promql.Point, factor float64) []promql.Point {
 	threshold = int(math.Ceil(float64(len(points)) * factor))
 	downSamplePoints = lttbFunc(points, threshold)
 
-	log.Infof(context.TODO(), "downsample series done %s %d %s %d %s %d",
+	log.Debugf(context.TODO(), "downsample series done %s %d %s %d %s %d",
 		"threshold", threshold,
 		"rawPointCount", len(points),
 		"downsamplePointCount", len(downSamplePoints),

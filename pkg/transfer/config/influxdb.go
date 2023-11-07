@@ -9,7 +9,9 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // InfluxDBMetaClusterInfo :
 type InfluxDBMetaClusterInfo struct {

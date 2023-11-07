@@ -11,10 +11,8 @@ package structured
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -28,10 +26,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
+	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 type QueryTs struct {
@@ -124,16 +122,6 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 }
 
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
-	var (
-		span oleltrace.Span
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-reference")
-	if span != nil {
-		defer span.End()
-	}
-
-	trace.InsertIntIntoSpan("query_list_num", len(q.QueryList), span)
 
 	queryReference := make(metadata.QueryReference)
 	for _, qry := range q.QueryList {
@@ -150,9 +138,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 			return nil, err
 		}
 		queryReference[qry.ReferenceName] = queryMetric
-
-		queryMetricStr, _ := json.Marshal(queryMetric)
-		trace.InsertStringIntoSpan(fmt.Sprintf("reference_%s", qry.ReferenceName), string(queryMetricStr), span)
 	}
 
 	return queryReference, nil
@@ -248,14 +233,14 @@ type Query struct {
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
 
-	IsSubQuery bool `json:"-"`
+	IsSubQuery bool `json:"is_sub_query"`
 
 	// Start 保留字段，会被外面的 Start 覆盖
 	Start string `json:"-" swaggerignore:"true"`
 	// End 保留字段，会被外面的 End 覆盖
 	End string `json:"-" swaggerignore:"true"`
-	// Step 保留字段，会被外面的 Step 覆盖
-	Step string `json:"-" swaggerignore:"true"`
+	// Step
+	Step string `json:"step" swaggerignore:"true"`
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
 }
@@ -288,11 +273,6 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		MetricName:    metricName,
 	}
 
-	trace.InsertStringIntoSpan("referenceName", referenceName, span)
-	trace.InsertStringIntoSpan("metricName", metricName, span)
-	trace.InsertStringIntoSpan("space_uid", spaceUid, span)
-	trace.InsertStringIntoSpan("table_id", string(tableID), span)
-
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
 		SpaceUid:  spaceUid,
 		TableID:   tableID,
@@ -303,73 +283,37 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
-	trace.InsertIntIntoSpan("result_table_num", len(tsDBs), span)
-
 	queryConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("query_conditions", fmt.Sprintf("%+v", q.Conditions), span)
-
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
 
-	var metricExp *regexp.Regexp
-	if q.IsRegexp {
-		metricExp = regexp.MustCompile(metricName)
-	}
+	trace.InsertStringIntoSpan("query-space-uid", spaceUid, span)
+	trace.InsertStringIntoSpan("query-table-id", string(tableID), span)
+	trace.InsertStringIntoSpan("query-metric", metricName, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+	trace.InsertIntIntoSpan("tsdb-num", len(tsDBs), span)
 
-	for i, tsDB := range tsDBs {
-		// 检查是否存在命中多个字段的情况
-		metricNames := make([]string, 0)
-		if metricExp != nil {
-			for _, f := range tsDB.Field {
-				if metricExp.Match([]byte(f)) {
-					metricNames = append(metricNames, f)
-				}
-			}
-		} else {
-			metricNames = append(metricNames, metricName)
+	for _, tsDB := range tsDBs {
+		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		if err != nil {
+			return nil, err
 		}
-
-		proxyMetricsMap := make(map[*routerInfluxdb.Proxy][]string)
-		for _, mName := range metricNames {
-			proxy, proxyErr := influxdb.GetInfluxDBRouter().GetProxyByTableID(tsDB.TableID, mName, tsDB.IsSplit())
-			if proxyErr != nil {
-				metadata.SetStatus(ctx, metadata.TableIDProxyISNotExists, proxyErr.Error())
-				log.Errorf(ctx, proxyErr.Error())
-				continue
-			}
-			if _, ok := proxyMetricsMap[proxy]; ok {
-				proxyMetricsMap[proxy] = append(proxyMetricsMap[proxy], mName)
-			} else {
-				proxyMetricsMap[proxy] = []string{mName}
-			}
-		}
-		for proxy, proxyMetricNames := range proxyMetricsMap {
-			query, err := q.buildMetadataQuery(
-				ctx, tsDB, span, i, queryConditions, queryLabelsMatcher, proxy, proxyMetricNames)
-			if err != nil {
-				return nil, err
-			}
-			queryMetric.QueryList = append(queryMetric.QueryList, query)
-		}
+		queryMetric.QueryList = append(queryMetric.QueryList, query)
 	}
 
 	return queryMetric, nil
 }
 
-func (q *Query) buildMetadataQuery(
+func (q *Query) BuildMetadataQuery(
 	ctx context.Context,
-	tsDB *redis.TsDB,
-	span oleltrace.Span,
-	i int,
+	tsDB *queryMod.TsDBV2,
 	queryConditions [][]ConditionField,
 	queryLabelsMatcher []*labels.Matcher,
-	proxy *routerInfluxdb.Proxy,
-	proxyMetricNames []string,
 ) (*metadata.Query, error) {
 	var (
 		field        string
@@ -389,8 +333,17 @@ func (q *Query) buildMetadataQuery(
 			LabelsMatcher: make([]*labels.Matcher, 0),
 		}
 		allCondition AllConditions
+
+		span oleltrace.Span
 	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "build-metadata-query")
+	if span != nil {
+		defer span.End()
+	}
+
 	metricName := q.FieldName
+	expandMetricNames := tsDB.ExpandMetricNames
 	// 增加查询条件
 	if len(queryConditions) > 0 {
 		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
@@ -405,18 +358,22 @@ func (q *Query) buildMetadataQuery(
 		)
 	}
 
-	tsDBStr, _ := json.Marshal(tsDB)
-	trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%d", i), string(tsDBStr), span)
-	proxyStr, _ := json.Marshal(proxy)
-	trace.InsertStringIntoSpan(fmt.Sprintf("proxy_%d", i), string(proxyStr), span)
-
-	db := proxy.Db
-	storageID := proxy.StorageID
-	clusterName := proxy.ClusterName
-	tagKeys := proxy.TagsKey
-	vmRt := proxy.VmRt
-	measurement = proxy.Measurement
+	db := tsDB.DB
+	storageID := tsDB.StorageID
+	clusterName := tsDB.ClusterName
+	tagKeys := tsDB.TagsKey
+	vmRt := tsDB.VmRt
+	measurement = tsDB.Measurement
 	measurements = []string{measurement}
+
+	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
+	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
+	trace.InsertStringIntoSpan("tsdb-db", db, span)
+	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
+	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
+	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
+	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -429,7 +386,7 @@ func (q *Query) buildMetadataQuery(
 	switch tsDB.MeasurementType {
 	case redis.BKTraditionalMeasurement:
 		// measurement: cpu_detail, field: usage  =>  cpu_detail_usage
-		field, fields = metricName, proxyMetricNames
+		field, fields = metricName, expandMetricNames
 	// 多指标单表，单列多指标，维度: metric_name 为指标名，metric_value 为指标值
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
@@ -445,17 +402,19 @@ func (q *Query) buildMetadataQuery(
 		)
 	// 多指标单表，字段名为指标名
 	case redis.BkStandardV2TimeSeries:
-		field, fields = metricName, proxyMetricNames
+		field, fields = metricName, expandMetricNames
 	// 单指标单表，指标名为表名，值为指定字段 value
 	case redis.BkSplitMeasurement:
 		// measurement: usage, field: value  => usage_value
-		measurement, measurements = metricName, proxyMetricNames
+		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
 	default:
 		err := fmt.Errorf("%s: %s 类型异常", tsDB.TableID, tsDB.MeasurementType)
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+
+	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
 
 	// 拼入空间自带过滤条件
 	var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))
@@ -535,22 +494,14 @@ func (q *Query) buildMetadataQuery(
 		return nil, err
 	}
 	// tag 路由转换
-	tagRouter, err := influxdb.GetTagRouter(ctx, proxy.TagsKey, whereList.String())
+	tagRouter, err := influxdb.GetTagRouter(ctx, tsDB.TagsKey, whereList.String())
 	if err != nil {
 		return nil, err
 	}
 	// 获取可以查询的 ShardID
-	offlineDataArchiveQuery, odaErr := offlineDataArchive.GetMetaData().GetReadShardsByTimeRange(
+	offlineDataArchiveQuery, _ := offlineDataArchive.GetMetaData().GetReadShardsByTimeRange(
 		ctx, clusterName, tagRouter, db, query.RetentionPolicy, start.UnixNano(), end.UnixNano(),
 	)
-
-	trace.InsertStringIntoSpan("offline-data-archive-cluster-name", clusterName, span)
-	trace.InsertStringIntoSpan("offline-data-archive-tag-router", tagRouter, span)
-	trace.InsertStringIntoSpan("offline-data-archive-retention-policy", query.RetentionPolicy, span)
-	trace.InsertStringIntoSpan("offline-data-archive-start", start.String(), span)
-	trace.InsertStringIntoSpan("offline-data-archive-end", end.String(), span)
-	trace.InsertIntIntoSpan("offline-data-archive-shard-num", len(offlineDataArchiveQuery), span)
-	trace.InsertStringIntoSpan("offline-data-archive-error", fmt.Sprintf("%+v", odaErr), span)
 
 	if len(offlineDataArchiveQuery) > 0 {
 		query.StorageID = consul.OfflineDataArchive
@@ -572,7 +523,6 @@ func (q *Query) buildMetadataQuery(
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
 
-	trace.InsertStringIntoSpan("query-metric-query", fmt.Sprintf("%+v", query), span)
 	return query, nil
 }
 

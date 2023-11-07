@@ -9,7 +9,9 @@
 
 package structured
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 var (
 	ErrWrongTableIDFormat = errors.New("wrong table id format > 2")

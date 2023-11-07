@@ -13,31 +13,32 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sync"
+	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 type SpaceFilter struct {
 	ctx      context.Context
 	spaceUid string
-	space    redis.Space
-
-	mux sync.Mutex
+	router   *influxdb.SpaceTsDbRouter
+	space    routerInfluxdb.Space
 }
 
 // NewSpaceFilter 通过 spaceUid  过滤真实需要使用的 tsDB 实例列表
 func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) {
-	spaceRouter, err := influxdb.GetSpaceRouter("", "")
+	router, err := influxdb.GetSpaceTsDbRouter()
 	if err != nil {
-		log.Warnf(ctx, "get space router error, %v", err)
 		return nil, err
 	}
-	space := spaceRouter.Get(ctx, spaceUid)
-	if len(space) == 0 {
+	space := router.GetSpace(ctx, spaceUid)
+	if space == nil {
 		msg := fmt.Sprintf("spaceUid: %s is not exists", spaceUid)
 		metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
 		log.Warnf(ctx, msg)
@@ -45,74 +46,188 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 	return &SpaceFilter{
 		ctx:      ctx,
 		spaceUid: spaceUid,
+		router:   router,
 		space:    space,
 	}, nil
 }
 
-func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool) ([]*redis.TsDB, error) {
+func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp,
+	fieldName, tableID, measurementType string, isK8s bool) []*query.TsDBV2 {
+	rtDetail := s.router.GetResultTable(s.ctx, tableID)
+	if rtDetail == nil {
+		return nil
+	}
+
+	// 是否使用单指标只查询 k8s 集群的特性开关判断
+	if metadata.GetIsK8sFeatureFlag(s.ctx) {
+		// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
+		if isK8s {
+			if rtDetail.BcsClusterID == "" {
+				return nil
+			}
+		}
+	} else {
+		// 当传入有效的 measurementType 字段时，需要进行类型过滤
+		if measurementType != "" && measurementType != rtDetail.MeasurementType {
+			return nil
+		}
+	}
+
+	filters := make([]query.Filter, 0, len(spaceTable.Filters))
+	for _, f := range spaceTable.Filters {
+		filters = append(filters, f)
+	}
+
+	tsDBs := make([]*query.TsDBV2, 0)
+	defaultMetricNames := make([]string, 0)
+	// 原 Space(Type、BKDataID) 字段去掉，SegmentedEnable 设置了默认值 false
+	// 原 Proxy(RetentionPolicies、BKBizID、DataID）直接去掉
+	defaultTsDB := query.TsDBV2{
+		TableID:         tableID,
+		Field:           rtDetail.Fields,
+		MeasurementType: rtDetail.MeasurementType,
+		Filters:         filters,
+		SegmentedEnable: false,
+		DataLabel:       rtDetail.DataLabel,
+		StorageID:       strconv.Itoa(int(rtDetail.StorageId)),
+		ClusterName:     rtDetail.ClusterName,
+		TagsKey:         rtDetail.TagsKey,
+		DB:              rtDetail.DB,
+		Measurement:     rtDetail.Measurement,
+		VmRt:            rtDetail.VmRt,
+		MetricName:      fieldName,
+	}
+	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
+	if fieldName == "" {
+		tsDBs = append(tsDBs, &defaultTsDB)
+		return tsDBs
+	}
+	// 字段不为空时，需要判断是否有匹配字段，返回解析后的结果
+	metricNames := make([]string, 0)
+	for _, f := range rtDetail.Fields {
+		if f == fieldName || (fieldNameExp != nil && fieldNameExp.Match([]byte(f))) {
+			metricNames = append(metricNames, f)
+		}
+	}
+
+	if !defaultTsDB.IsSplit() {
+		defaultMetricNames = metricNames
+	} else {
+		//当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
+		for _, mName := range metricNames {
+			sepRt := s.GetMetricSepRT(tableID, mName)
+			if sepRt != nil {
+				sepTsDB := defaultTsDB
+				sepTsDB.DB = sepRt.DB
+				sepTsDB.StorageID = strconv.FormatInt(sepRt.StorageId, 10)
+				sepTsDB.ClusterName = sepRt.ClusterName
+				sepTsDB.TagsKey = sepRt.TagsKey
+				sepTsDB.Measurement = sepRt.Measurement
+				sepTsDB.VmRt = sepRt.VmRt
+				sepTsDB.ExpandMetricNames = []string{mName}
+				tsDBs = append(tsDBs, &sepTsDB)
+			} else {
+				defaultMetricNames = append(defaultMetricNames, mName)
+			}
+		}
+	}
+	if len(defaultMetricNames) > 0 {
+		defaultTsDB.ExpandMetricNames = defaultMetricNames
+		tsDBs = append(tsDBs, &defaultTsDB)
+	}
+	return tsDBs
+}
+
+// GetMetricSepRT 获取指标独立配置的 RT
+func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerInfluxdb.ResultTableDetail {
+	route := strings.Split(tableID, ".")
+	if len(route) != 2 {
+		log.Errorf(s.ctx, "TableID(%s) format is wrong", tableID)
+		return nil
+	}
+	// 按照固定路由规则来检索是否有独立配置的 RT
+	sepRtID := fmt.Sprintf("%s.%s", route[0], metricName)
+	rt := s.router.GetResultTable(s.ctx, sepRtID)
+	return rt
+}
+
+func (s *SpaceFilter) GetSpaceRtInfo(tableID string) *routerInfluxdb.SpaceResultTable {
+	if s.space == nil {
+		return nil
+	}
+	v, _ := s.space[tableID]
+	return v
+}
+
+func (s *SpaceFilter) GetSpaceRtIDs() []string {
+	tIDs := make([]string, 0)
+	if s.space != nil {
+		for tID := range s.space {
+			tIDs = append(tIDs, tID)
+		}
+	}
+	return tIDs
+
+}
+
+func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool) ([]*query.TsDBV2, error) {
 	if tableID == "" && fieldName == "" {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
+	}
+	tsDBs := make([]*query.TsDBV2, 0)
+	// 当空间为空时，无需进行下一步的检索
+	if s.space == nil {
+		return tsDBs, nil
 	}
 
 	// 判断 tableID 使用几段式
 	db, measurement := tableID.Split()
-	s.mux.Lock()
-	defer s.mux.Unlock()
 
 	var fieldNameExp *regexp.Regexp
 	if isRegexp {
 		fieldNameExp = regexp.MustCompile(fieldName)
 	}
+	tableIDs := make([]string, 0)
+	measurementType := ""
+	isK8s := false
 
-	filterTsDBs := make([]*redis.TsDB, 0)
-	// 判断如果 tableID 完整的情况下，则直接取对应的 tsDB
 	if db != "" && measurement != "" {
-		if v, ok := s.space[string(tableID)]; ok {
-			for _, f := range v.Field {
-				// fieldName 为空则不对比 field 直接获取 tableid 路由
-				if fieldName == "" || f == fieldName || (fieldNameExp != nil && fieldNameExp.Match([]byte(f))) {
-					filterTsDBs = append(filterTsDBs, v)
-					break
-				}
-			}
-		}
+		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
+		tableIDs = append(tableIDs, string(tableID))
 	} else if db != "" {
-		// 遍历该空间下所有的 space，如果 dataLabel 符合 db 则加入到 tsDB 列表里面
-		for _, v := range s.space {
-			// 可能会存在重复的 dataLabel
-			if db == v.DataLabel {
-				for _, f := range v.Field {
-					// fieldName 为空则不对比 field 直接获取 tableid 路由
-					if fieldName == "" || f == fieldName || (fieldNameExp != nil && fieldNameExp.Match([]byte(f))) {
-						filterTsDBs = append(filterTsDBs, v)
-						break
-					}
-				}
-			}
+		// 指标二段式，仅传递 data-label
+		tIDs := s.router.GetDataLabelRelatedRts(s.ctx, db)
+		if tIDs != nil {
+			tableIDs = tIDs
 		}
 	} else {
-		for _, v := range s.space {
-			// 如果不指定 tableID 或者 dataLabel，则只获取单指标单表的 tsdb
-			if v.IsSplit() {
-				for _, f := range v.Field {
-					// fieldName 为空则不对比 field 直接获取 tableid 路由
-					if fieldName == "" || f == fieldName || (fieldNameExp != nil && fieldNameExp.Match([]byte(f))) {
-						filterTsDBs = append(filterTsDBs, v)
-						break
-					}
-				}
+		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取单指标单表的 TsDB
+		measurementType = redis.BkSplitMeasurement
+		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
+		isK8s = true
+
+		if fieldNameExp == nil {
+			_tIDs := s.router.GetFieldRelatedRts(s.ctx, fieldName)
+			if _tIDs != nil {
+				tableIDs = _tIDs
 			}
+		} else {
+			tableIDs = s.GetSpaceRtIDs()
+		}
+	}
+	for _, tID := range tableIDs {
+		spaceRt := s.GetSpaceRtInfo(tID)
+		if spaceRt == nil {
+			continue
+		}
+		// 指标模糊匹配，可能命中多个私有指标 RT
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, fieldName, tID, measurementType, isK8s)
+		for _, newTsDB := range newTsDBs {
+			tsDBs = append(tsDBs, newTsDB)
 		}
 	}
 
-	if len(s.space) == 0 {
-		msg := fmt.Sprintf(
-			"spaceUid: %s is not exists",
-			s.spaceUid,
-		)
-		metadata.SetStatus(s.ctx, metadata.SpaceIsNotExists, msg)
-		log.Warnf(s.ctx, msg)
-	} else if len(filterTsDBs) == 0 {
+	if len(tsDBs) == 0 {
 		msg := fmt.Sprintf(
 			"spaceUid: %s and tableID: %s and fieldName: %s is not exists",
 			s.spaceUid, tableID, fieldName,
@@ -120,7 +235,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 		metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
 		log.Warnf(s.ctx, msg)
 	}
-	return filterTsDBs, nil
+	return tsDBs, nil
 }
 
 type TsDBOption struct {
@@ -131,7 +246,7 @@ type TsDBOption struct {
 	IsRegexp bool
 }
 
-type TsDBs []*redis.TsDB
+type TsDBs []*query.TsDBV2
 
 func (t TsDBs) StringSlice() []string {
 	arr := make([]string, len(t))

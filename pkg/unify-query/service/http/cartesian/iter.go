@@ -9,7 +9,9 @@
 
 package cartesian
 
-import "sync"
+import (
+	"sync"
+)
 
 // Iter takes interface-slices and returns a channel, receiving cartesian products
 func Iter(params ...[]interface{}) chan []interface{} {

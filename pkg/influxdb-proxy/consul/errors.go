@@ -9,7 +9,9 @@
 
 package consul
 
-import "errors"
+import (
+	"errors"
+)
 
 // consul包的错误信息
 var (

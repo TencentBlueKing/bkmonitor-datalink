@@ -71,8 +71,8 @@ func TestRealQueryRange(t *testing.T) {
 
 		Curl: &curl.HttpCurl{Log: log.OtLogger},
 
-		InfluxCompatible:          true,
-		UseNativeOr:               true,
+		InfluxCompatible: true,
+		UseNativeOr:      true,
 	}
 
 	testCase := map[string]struct {

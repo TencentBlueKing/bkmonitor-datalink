@@ -9,7 +9,9 @@
 
 package tsdb
 
-import "time"
+import (
+	"time"
+)
 
 type Storage struct {
 	Type     string

@@ -9,7 +9,9 @@
 
 package json
 
-import "github.com/bytedance/sonic"
+import (
+	"github.com/bytedance/sonic"
+)
 
 var sonicAPI = sonic.Config{
 	EscapeHTML:       true, // 安全性

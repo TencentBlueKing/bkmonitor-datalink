@@ -20,7 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -38,29 +37,45 @@ processor:
         - match: "redis"
           threshold: 2s
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "db_filter/common"
+    config:
+      slow_query:
+        destination: "db.is_slow"
+        rules:
+        - match: "mysql"
+          threshold: 1s
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*dbFilter)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	c := &Config{}
-	err = mapstructure.Decode(psc[0].Config, c)
-	c.Setup()
+	mainConfig := factory.configs.GetGlobal().(Config)
+	assert.Len(t, mainConfig.SlowQuery.Rules, 2)
 
-	assert.NoError(t, err)
-	assert.Equal(t, *c, factory.configs.GetGlobal().(Config))
+	customConfig := factory.configs.GetByToken("token1").(Config)
+	assert.Len(t, customConfig.SlowQuery.Rules, 1)
 
 	assert.Equal(t, define.ProcessorDbFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	duration, ok := c.GetSlowQueryConf("mysql")
-	assert.True(t, ok)
-	assert.Equal(t, time.Second, duration)
-
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func TestSlowMySqlQuery(t *testing.T) {

@@ -94,7 +94,7 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 		grouping = promExpr.Dimensions
 	}
 
-	log.Infof(context.TODO(), "exp->[%s] transfer to result->[%s] with grouping->[%s]", e, finalExpr, grouping)
+	log.Debugf(context.TODO(), "exp->[%s] transfer to result->[%s] with grouping->[%s]", e, finalExpr, grouping)
 	return finalExpr, grouping, nil
 }
 
@@ -153,15 +153,15 @@ func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 	}
 
 	if leftHasNumber && rightHasNumber {
-		log.Infof(context.TODO(), "expr->[%s] both side is number, nothing will change.", e)
+		log.Debugf(context.TODO(), "expr->[%s] both side is number, nothing will change.", e)
 		return expr, nil, nil
 	} else if leftHasNumber {
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"expr->[%s] with left number, will return expr->[%s] and right grouping->[%s]", e, expr, rightGroup,
 		)
 		return expr, rightGroup, nil
 	} else if rightHasNumber {
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"expr->[%s] with right number, will return expr->[%s] and left grouping->[%s]",
 			e, expr, rightGroup,
 		)
@@ -202,7 +202,7 @@ func handleBinaryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 		}
 	}
 
-	log.Infof(context.TODO(), "expr->[%s] transfer to final expr->[%s] with group->[%s]", e, expr, finalGroup)
+	log.Debugf(context.TODO(), "expr->[%s] transfer to final expr->[%s] with group->[%s]", e, expr, finalGroup)
 	return expr, finalGroup, nil
 
 }
@@ -337,7 +337,7 @@ func handleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, []string
 		return expr, nil, nil
 	}
 
-	log.Infof(context.TODO(), "expr->[%s] transfer to->[%s] with grouping->[%s] err->[%s]", expr, result, group, err)
+	log.Debugf(context.TODO(), "expr->[%s] transfer to->[%s] with grouping->[%s] err->[%s]", expr, result, group, err)
 	return result, group, err
 }
 

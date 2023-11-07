@@ -9,7 +9,9 @@
 
 package errors
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 var (
 	// Wrapf returns an error annotating err with a stack trace

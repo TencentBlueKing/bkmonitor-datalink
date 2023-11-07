@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/ratelimiter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -29,23 +28,40 @@ processor:
       qps: 5
       burst: 10
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "rate_limiter/token_bucket"
+    config:
+      type: token_bucket
+      qps: 10
+      burst: 10
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*rateLimiter)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c ratelimiter.Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
-	assert.Equal(t, c, factory.configs.GetGlobal().(ratelimiter.Config))
+	assert.Equal(t, float32(5), factory.rateLimiters.GetGlobal().(ratelimiter.RateLimiter).QPS())
+	assert.Equal(t, float32(10), factory.rateLimiters.GetByToken("token1").(ratelimiter.RateLimiter).QPS())
 
 	assert.Equal(t, define.ProcessorRateLimiter, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.True(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func TestNormalProcess(t *testing.T) {
@@ -56,6 +72,20 @@ processor:
       type: token_bucket
       qps: 5
       burst: 10
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	_, err := factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
+	assert.NoError(t, err)
+}
+
+func TestAcceptAll(t *testing.T) {
+	content := `
+processor:
+  - name: "rate_limiter/token_bucket"
+    config:
+      type: token_bucket
+      qps: 0
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 

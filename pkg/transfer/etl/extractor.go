@@ -9,7 +9,9 @@
 
 package etl
 
-import "errors"
+import (
+	"errors"
+)
 
 // errors
 var (

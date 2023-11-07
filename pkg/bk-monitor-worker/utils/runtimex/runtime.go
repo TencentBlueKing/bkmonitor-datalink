@@ -9,7 +9,9 @@
 
 package runtimex
 
-import "runtime"
+import (
+	"runtime"
+)
 
 // GetFuncName get function name
 func GetFuncName() string {

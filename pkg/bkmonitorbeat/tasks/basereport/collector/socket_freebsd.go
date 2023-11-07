@@ -9,7 +9,9 @@
 
 package collector
 
-import "github.com/shirou/gopsutil/v3/net"
+import (
+	"github.com/shirou/gopsutil/v3/net"
+)
 
 type SocketInfo struct {
 	BaseSocketInfo

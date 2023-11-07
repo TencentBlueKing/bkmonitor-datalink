@@ -68,14 +68,44 @@ processor:
           rule:
             regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "my-service"
+          type: "http"
+          match_type: "manual"
+          predicate_key: "attributes.http.method"
+          kind: "SPAN_KIND_CLIENT"
+          match_key: "attributes.http.url"
+          match_groups:
+            - source: "service"
+              destination: "peer.service"
+          rule:
+            path:
+              value: "/api/v1/users"
+              operator: eq
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*serviceDiscover)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
 	c := &Config{}
-	assert.NoError(t, mapstructure.Decode(psc[0].Config, c))
+	assert.NoError(t, mapstructure.Decode(mainConf, c))
 	c.Setup()
 
 	rules := []*Rule{
@@ -151,8 +181,8 @@ processor:
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 func TestTraceManualMatched(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -168,7 +169,7 @@ func makeInfluxQLListBySpaceUid(
 		influxQLList []influxdb.SQLInfo
 		limit        int
 		span         oleltrace.Span
-		tsDBs        []*redis.TsDB
+		tsDBs        []*queryMod.TsDBV2
 	)
 
 	if params.Limit > 0 {
@@ -200,15 +201,9 @@ func makeInfluxQLListBySpaceUid(
 			// 如果有额外condition，则录入where语句中
 			conditions [][]promql.ConditionField
 		)
-
-		proxy, proxyErr := influxdb.GetInfluxDBRouter().GetProxyByTableID(tsDB.TableID, metricName, tsDB.IsSplit())
-		if proxyErr != nil {
-			log.Errorf(ctx, proxyErr.Error())
-			continue
-		}
-		db := proxy.Db
-		measurement := proxy.Measurement
-		storageID := proxy.StorageID
+		db := tsDB.DB
+		measurement := tsDB.Measurement
+		storageID := tsDB.StorageID
 
 		// 增加过滤条件
 		for _, filter := range tsDB.Filters {

@@ -2,9 +2,9 @@
 type: ping
 dataid: 1100005
 period: 60s
-total_num: 3
+#total_num: 3
 max_batch_size: 20
-ping.timeout: 3s
+#ping.timeout: 3s
 server.ip: 127.0.0.1
 server.cloud_id: 0
 

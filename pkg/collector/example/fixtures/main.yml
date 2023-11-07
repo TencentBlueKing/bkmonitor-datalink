@@ -259,6 +259,15 @@ bk-collector:
       processors:
         - "token_checker/fixed"
 
+    # 同名 pipeline 会报错
+    - name: "pushgateway_pipeline/common"
+      type: "pushgateway"
+      processors:
+
+    # 不支持 pipeline 会报错
+    - name: "pushgateway_pipeline/common"
+      type: "unsupported"
+      processors:
 
   # =============================== Exporter =================================
   exporter:

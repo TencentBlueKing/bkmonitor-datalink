@@ -20,7 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -34,25 +33,43 @@ processor:
         keys:
           - "attributes.http.host"
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "attribute_filter/as_string"
+    config:
+      as_string:
+        keys:
+          - "attributes.http.port"
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*attributeFilter)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	mainConfig := factory.configs.GetGlobal().(Config)
+	assert.Equal(t, "http.host", mainConfig.AsString.Keys[0])
 
-	c.AsString.Keys[0] = "http.host"
-	assert.Equal(t, c, factory.configs.GetGlobal().(Config))
+	customConfig := factory.configs.GetByToken("token1").(Config)
+	assert.Equal(t, "http.port", customConfig.AsString.Keys[0])
 
 	assert.Equal(t, define.ProcessorAttributeFilter, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 }
 
 const (
@@ -225,7 +242,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "GET:testRoute:")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Get:testRoute:")
 }
 
 func TestTraceAssembleWithoutKind(t *testing.T) {
@@ -264,7 +281,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:placeholder")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:placeholder")
 }
 
 func TestTraceAssembleWithPlaceholder(t *testing.T) {
@@ -491,7 +508,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:")
 }
 
 func TestTraceAsIntAction(t *testing.T) {

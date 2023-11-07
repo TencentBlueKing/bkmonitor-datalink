@@ -7,26 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package victoriaMetricsInstance
+package hook
 
-type Metric map[string]string
+import (
+	"testing"
+	"time"
+)
 
-type Series struct {
-	Metric Metric          `json:"metric"`
-	Value  []interface{}   `json:"value,omitempty"`
-	Values [][]interface{} `json:"values,omitempty"`
-}
+func TestHook(t *testing.T) {
+	cfg := Config{OnFailure: OnFailureConfig{
+		Timeout: time.Second,
+		Scripts: []string{"echo"},
+	}}
 
-// Data 查询返回结构体
-type Data struct {
-	Status string `json:"status"`
-
-	ErrorType string `json:"errorType,omitempty"`
-	Error     string `json:"error,omitempty"`
-
-	IsPartial bool `json:"isPartial,omitempty"`
-	Data      struct {
-		ResultType string   `json:"resultType"`
-		Result     []Series `json:"result"`
-	} `json:"data,omitempty"`
+	Register(cfg)
+	OnFailureHook()
 }

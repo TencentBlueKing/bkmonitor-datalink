@@ -14,7 +14,7 @@ set -e
 # shellcheck disable=SC2086
 
 MODULE=bk-collector
-TEST_COVERAGE_THRESHOLD=80
+TEST_COVERAGE_THRESHOLD=84
 
 function unittest() {
   go test ./... -coverprofile coverage.out -covermode count

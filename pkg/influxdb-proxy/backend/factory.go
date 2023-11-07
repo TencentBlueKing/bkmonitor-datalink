@@ -9,7 +9,9 @@
 
 package backend
 
-import "context"
+import (
+	"context"
+)
 
 // NewBackendFunc Backend生成方法，生成一个指定类型的Backend
 type NewBackendFunc func(ctx context.Context, config *BasicConfig) (Backend, chan *Status, error)

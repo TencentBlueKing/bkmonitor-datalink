@@ -45,6 +45,13 @@ func removeTempDir(logf func(format string, args ...any), dir string) {
 	logf("remove temp dir: %v", dir)
 }
 
+func TestGlobal(t *testing.T) {
+	InitStorage(".", "")
+	stor := GetOrCreateStorage(1001)
+	assert.NotNil(t, stor)
+	assert.NoError(t, CleanStorage())
+}
+
 func TestBuiltinStorage(t *testing.T) {
 	sc := NewStorageController(".", TypeBuiltin)
 	defer sc.Clean()

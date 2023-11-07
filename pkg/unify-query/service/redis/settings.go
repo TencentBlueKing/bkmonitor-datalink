@@ -9,7 +9,9 @@
 
 package redis
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	ModeConfigPath     = "redis.mode"

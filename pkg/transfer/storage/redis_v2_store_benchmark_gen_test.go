@@ -16,7 +16,9 @@
 
 package storage_test
 
-import "testing"
+import (
+	"testing"
+)
 
 // BenchmarkStoreSet_Reids :
 func BenchmarkStoreSet_Reids(b *testing.B) {

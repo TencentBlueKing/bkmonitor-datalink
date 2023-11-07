@@ -9,7 +9,9 @@
 
 package memcache
 
-import "time"
+import (
+	"time"
+)
 
 type Cache interface {
 	Get(string) (interface{}, bool)

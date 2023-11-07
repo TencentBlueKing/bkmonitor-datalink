@@ -11,6 +11,7 @@ package query
 
 import (
 	"fmt"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 

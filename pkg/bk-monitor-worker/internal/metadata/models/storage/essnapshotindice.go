@@ -9,7 +9,9 @@
 
 package storage
 
-import "time"
+import (
+	"time"
+)
 
 //go:generate goqueryset -in essnapshotindice.go -out qs_essnapshotindice.go
 

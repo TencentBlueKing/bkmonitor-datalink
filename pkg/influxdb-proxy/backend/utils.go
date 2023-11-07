@@ -9,7 +9,9 @@
 
 package backend
 
-import "net/http"
+import (
+	"net/http"
+)
 
 // CopyHeader :
 func CopyHeader(target, source http.Header) {

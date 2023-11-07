@@ -9,7 +9,9 @@
 
 package kits
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	WaitPeriod = 5 * time.Second

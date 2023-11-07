@@ -9,7 +9,9 @@
 
 package define
 
-import "github.com/elastic/beats/libbeat/common"
+import (
+	"github.com/elastic/beats/libbeat/common"
+)
 
 type MetricsReaderFunc func() (<-chan common.MapStr, error)
 

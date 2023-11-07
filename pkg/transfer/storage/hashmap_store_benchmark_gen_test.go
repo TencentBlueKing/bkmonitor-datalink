@@ -16,7 +16,9 @@
 
 package storage_test
 
-import "testing"
+import (
+	"testing"
+)
 
 // BenchmarkStoreSet_HashMap :
 func BenchmarkStoreSet_HashMap(b *testing.B) {

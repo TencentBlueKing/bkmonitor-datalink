@@ -11,11 +11,11 @@ package bkcollector
 
 import (
 	"encoding/json"
-	"go.opentelemetry.io/otel/attribute"
 	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 var jsonStr = "{\"attributes\": {\"api_name\": \"GET\"}, " +

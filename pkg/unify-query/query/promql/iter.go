@@ -9,7 +9,9 @@
 
 package promql
 
-import "github.com/prometheus/prometheus/storage"
+import (
+	"github.com/prometheus/prometheus/storage"
+)
 
 // lazySeriesSet
 type lazySeriesSet struct {

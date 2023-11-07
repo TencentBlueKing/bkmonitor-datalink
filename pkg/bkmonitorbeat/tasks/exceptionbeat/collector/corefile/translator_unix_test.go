@@ -12,7 +12,9 @@
 
 package corefile
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestTranslate(t *testing.T) {
 	testCases := []struct {

@@ -13,7 +13,9 @@
 
 package define
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // CharSetDecoderCreator : function to create CharSetDecoder
 type CharSetDecoderCreator func(name string) (CharSetDecoder, error)

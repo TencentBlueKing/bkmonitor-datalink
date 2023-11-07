@@ -52,14 +52,25 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp,
-	fieldName, tableID, measurementType string) []*query.TsDBV2 {
+	fieldName, tableID, measurementType string, isK8s bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID)
 	if rtDetail == nil {
 		return nil
 	}
-	// 当传入有效的 measurementType 字段时，需要进行类型过滤
-	if measurementType != "" && measurementType != rtDetail.MeasurementType {
-		return nil
+
+	// 是否使用单指标只查询 k8s 集群的特性开关判断
+	if metadata.GetIsK8sFeatureFlag(s.ctx) {
+		// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
+		if isK8s {
+			if rtDetail.BcsClusterID == "" {
+				return nil
+			}
+		}
+	} else {
+		// 当传入有效的 measurementType 字段时，需要进行类型过滤
+		if measurementType != "" && measurementType != rtDetail.MeasurementType {
+			return nil
+		}
 	}
 
 	filters := make([]query.Filter, 0, len(spaceTable.Filters))
@@ -178,6 +189,8 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 	}
 	tableIDs := make([]string, 0)
 	measurementType := ""
+	isK8s := false
+
 	if db != "" && measurement != "" {
 		// 判断如果 tableID 完整的情况下（三段式），则直接取对应的 tsDB
 		tableIDs = append(tableIDs, string(tableID))
@@ -190,6 +203,9 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取单指标单表的 TsDB
 		measurementType = redis.BkSplitMeasurement
+		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
+		isK8s = true
+
 		if fieldNameExp == nil {
 			_tIDs := s.router.GetFieldRelatedRts(s.ctx, fieldName)
 			if _tIDs != nil {
@@ -205,7 +221,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, fieldName, tID, measurementType)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, fieldName, tID, measurementType, isK8s)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}

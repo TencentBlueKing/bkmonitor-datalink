@@ -9,7 +9,9 @@
 
 package define
 
-import "runtime"
+import (
+	"runtime"
+)
 
 func CoreNum() int {
 	return runtime.NumCPU()

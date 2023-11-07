@@ -7,32 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package semaphore
+package cleaner
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSemaphore(t *testing.T) {
-	sem := New("test", 1)
-	got := sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
+func TestClean(t *testing.T) {
+	Register("foo", func() error {
+		t.Log("bar")
+		return nil
+	})
 
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.False(t, got)
-	sem.Release()
-
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
-	sem.Release()
-
-	assert.Equal(t, "test", sem.String())
-	assert.Equal(t, 0, sem.Count())
-
-	sem.Acquire()
-	sem.Release()
-	sem.Close()
+	assert.Len(t, CleanFuncs(), 1)
 }

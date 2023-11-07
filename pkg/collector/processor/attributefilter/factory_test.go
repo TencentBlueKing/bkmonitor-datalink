@@ -242,7 +242,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "GET:testRoute:")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Get:testRoute:")
 }
 
 func TestTraceAssembleWithoutKind(t *testing.T) {
@@ -281,7 +281,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:placeholder")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:placeholder")
 }
 
 func TestTraceAssembleWithPlaceholder(t *testing.T) {
@@ -508,7 +508,7 @@ processor:
 	assert.NoError(t, err)
 
 	span := testkits.FirstSpan(record.Data.(ptrace.Traces))
-	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "RpcMethod:TestConstCondition:")
+	testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "api_name", "Rpcmethod:TestConstCondition:")
 }
 
 func TestTraceAsIntAction(t *testing.T) {

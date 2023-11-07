@@ -11,6 +11,7 @@ package foreach
 
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -75,6 +76,32 @@ func MetricsWithResourceAttrs(resourceMetricsSlice pmetric.ResourceMetricsSlice,
 			metrics := scopeMetricsSlice.At(j).Metrics()
 			for k := 0; k < metrics.Len(); k++ {
 				f(rsAttrs, metrics.At(k))
+			}
+		}
+	}
+}
+
+func Logs(resourceLogsSlice plog.ResourceLogsSlice, f func(logRecord plog.LogRecord)) {
+	for i := 0; i < resourceLogsSlice.Len(); i++ {
+		scopeLogsSlice := resourceLogsSlice.At(i).ScopeLogs()
+		for j := 0; j < scopeLogsSlice.Len(); j++ {
+			logs := scopeLogsSlice.At(j).LogRecords()
+			for k := 0; k < logs.Len(); k++ {
+				f(logs.At(k))
+			}
+		}
+	}
+}
+
+func LogsWithResourceAttrs(resourceLogsSlice plog.ResourceLogsSlice, f func(rsAttrs pcommon.Map, logRecord plog.LogRecord)) {
+	for i := 0; i < resourceLogsSlice.Len(); i++ {
+		scopeLogs := resourceLogsSlice.At(i)
+		rsAttrs := scopeLogs.Resource().Attributes()
+		scopeLogsSlice := scopeLogs.ScopeLogs()
+		for j := 0; j < scopeLogsSlice.Len(); j++ {
+			logs := scopeLogsSlice.At(j).LogRecords()
+			for k := 0; k < logs.Len(); k++ {
+				f(rsAttrs, logs.At(k))
 			}
 		}
 	}

@@ -34,6 +34,43 @@ type testCase struct {
 	Event  []define.Event
 }
 
+func TestConvertPushGatewayData(t *testing.T) {
+	pd := &define.PushGatewayData{
+		MetricFamilies: &dto.MetricFamily{
+			Name: proto.String("http_request_duration_microseconds"),
+			Help: proto.String("foo"),
+			Type: dto.MetricType_COUNTER.Enum(),
+			Metric: []*dto.Metric{{
+				Label: []*dto.LabelPair{
+					{
+						Name:  proto.String("handler"),
+						Value: proto.String("query"),
+					},
+				},
+				Counter: &dto.Counter{
+					Value: proto.Float64(10),
+				},
+				TimestampMs: &fakeTs,
+			}},
+		},
+	}
+
+	events := make([]define.Event, 0)
+	NewCommonConverter().Convert(&define.Record{
+		RecordType: define.RecordPushGateway,
+		Data:       pd,
+	}, func(evts ...define.Event) {
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordPushGateway, evt.RecordType())
+			assert.Equal(t, int32(0), evt.DataId())
+			events = append(events, evt)
+		}
+	})
+
+	assert.Len(t, events, 1)
+}
+
 func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 	t.Run("convertCounter1", func(t *testing.T) {
 		c := &pushGatewayConverter{}
@@ -45,20 +82,18 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_COUNTER.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Label: []*dto.LabelPair{
-							{
-								Name:  proto.String("handler"),
-								Value: proto.String("query"),
-							},
+				Metric: []*dto.Metric{{
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
 						},
-						Counter: &dto.Counter{
-							Value: proto.Float64(10),
-						},
-						TimestampMs: &fakeTs,
 					},
-				},
+					Counter: &dto.Counter{
+						Value: proto.Float64(10),
+					},
+					TimestampMs: &fakeTs,
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -95,32 +130,30 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds_with_exemplar"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_COUNTER.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Label: []*dto.LabelPair{
-							{
-								Name:  proto.String("handler"),
-								Value: proto.String("query"),
-							},
+				Metric: []*dto.Metric{{
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
 						},
-						Counter: &dto.Counter{
-							Value: proto.Float64(10),
-							Exemplar: &dto.Exemplar{
-								Label: []*dto.LabelPair{
-									{
-										Name: &traceLabel, Value: &fakeString,
-									},
-									{
-										Name: &spanLabel, Value: &fakeString,
-									},
-								},
-								Value:     &fakeValue,
-								Timestamp: &timestamp.Timestamp{},
-							},
-						},
-						TimestampMs: &fakeTs,
 					},
-				},
+					Counter: &dto.Counter{
+						Value: proto.Float64(10),
+						Exemplar: &dto.Exemplar{
+							Label: []*dto.LabelPair{
+								{
+									Name: &traceLabel, Value: &fakeString,
+								},
+								{
+									Name: &spanLabel, Value: &fakeString,
+								},
+							},
+							Value:     &fakeValue,
+							Timestamp: &timestamp.Timestamp{},
+						},
+					},
+					TimestampMs: &fakeTs,
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -158,20 +191,18 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_GAUGE.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Gauge: &dto.Gauge{
-							Value: proto.Float64(10),
-						},
-						TimestampMs: &fakeTs,
-						Label: []*dto.LabelPair{
-							{
-								Name:  proto.String("handler"),
-								Value: proto.String("query"),
-							},
+				Metric: []*dto.Metric{{
+					Gauge: &dto.Gauge{
+						Value: proto.Float64(10),
+					},
+					TimestampMs: &fakeTs,
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
 						},
 					},
-				},
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -200,32 +231,30 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_HISTOGRAM.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Histogram: &dto.Histogram{
-							SampleCount: proto.Uint64(10),
-							SampleSum:   proto.Float64(10),
-							Bucket: []*dto.Bucket{
-								{
-									UpperBound:      proto.Float64(0.99),
-									CumulativeCount: proto.Uint64(10),
-									Exemplar: &dto.Exemplar{
-										Label: []*dto.LabelPair{
-											{
-												Name: &traceLabel, Value: &fakeString,
-											},
-											{
-												Name: &spanLabel, Value: &fakeString,
-											},
+				Metric: []*dto.Metric{{
+					Histogram: &dto.Histogram{
+						SampleCount: proto.Uint64(10),
+						SampleSum:   proto.Float64(10),
+						Bucket: []*dto.Bucket{
+							{
+								UpperBound:      proto.Float64(0.99),
+								CumulativeCount: proto.Uint64(10),
+								Exemplar: &dto.Exemplar{
+									Label: []*dto.LabelPair{
+										{
+											Name: &traceLabel, Value: &fakeString,
 										},
-										Value:     &fakeValue,
-										Timestamp: &timestamp.Timestamp{},
+										{
+											Name: &spanLabel, Value: &fakeString,
+										},
 									},
+									Value:     &fakeValue,
+									Timestamp: &timestamp.Timestamp{},
 								},
 							},
 						},
 					},
-				},
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -281,20 +310,18 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds_with_exemplar"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_HISTOGRAM.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Histogram: &dto.Histogram{
-							SampleCount: proto.Uint64(10),
-							SampleSum:   proto.Float64(10),
-							Bucket: []*dto.Bucket{
-								{
-									UpperBound:      proto.Float64(0.99),
-									CumulativeCount: proto.Uint64(10),
-								},
+				Metric: []*dto.Metric{{
+					Histogram: &dto.Histogram{
+						SampleCount: proto.Uint64(10),
+						SampleSum:   proto.Float64(10),
+						Bucket: []*dto.Bucket{
+							{
+								UpperBound:      proto.Float64(0.99),
+								CumulativeCount: proto.Uint64(10),
 							},
 						},
 					},
-				},
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -347,19 +374,17 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_UNTYPED.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Label: []*dto.LabelPair{
-							{
-								Name:  proto.String("handler"),
-								Value: proto.String("query"),
-							},
-						},
-						Untyped: &dto.Untyped{
-							Value: proto.Float64(10),
+				Metric: []*dto.Metric{{
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
 						},
 					},
-				},
+					Untyped: &dto.Untyped{
+						Value: proto.Float64(10),
+					},
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
@@ -391,26 +416,24 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				Name: proto.String("http_request_duration_microseconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_SUMMARY.Enum(),
-				Metric: []*dto.Metric{
-					{
-						Label: []*dto.LabelPair{
-							{
-								Name:  proto.String("handler"),
-								Value: proto.String("query"),
-							},
+				Metric: []*dto.Metric{{
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
 						},
-						Summary: &dto.Summary{
-							SampleCount: proto.Uint64(10),
-							SampleSum:   proto.Float64(10),
-							Quantile: []*dto.Quantile{
-								{
-									Quantile: proto.Float64(10),
-									Value:    proto.Float64(10),
-								},
+					},
+					Summary: &dto.Summary{
+						SampleCount: proto.Uint64(10),
+						SampleSum:   proto.Float64(10),
+						Quantile: []*dto.Quantile{
+							{
+								Quantile: proto.Float64(10),
+								Value:    proto.Float64(10),
 							},
 						},
 					},
-				},
+				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{

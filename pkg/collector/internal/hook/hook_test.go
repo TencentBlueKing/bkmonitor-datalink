@@ -7,32 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package semaphore
+package hook
 
 import (
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
-func TestSemaphore(t *testing.T) {
-	sem := New("test", 1)
-	got := sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
+func TestHook(t *testing.T) {
+	cfg := Config{OnFailure: OnFailureConfig{
+		Timeout: time.Second,
+		Scripts: []string{"echo"},
+	}}
 
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.False(t, got)
-	sem.Release()
-
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
-	sem.Release()
-
-	assert.Equal(t, "test", sem.String())
-	assert.Equal(t, 0, sem.Count())
-
-	sem.Acquire()
-	sem.Release()
-	sem.Close()
+	Register(cfg)
+	OnFailureHook()
 }

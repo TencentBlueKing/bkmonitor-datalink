@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/ratelimiter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 )
@@ -54,13 +53,8 @@ processor:
 	assert.NoError(t, err)
 	assert.Equal(t, mainConf, factory.MainConfig())
 
-	var c1 ratelimiter.Config
-	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
-	assert.Equal(t, c1, factory.configs.GetGlobal().(ratelimiter.Config))
-
-	var c2 ratelimiter.Config
-	assert.NoError(t, mapstructure.Decode(customConf, &c2))
-	assert.Equal(t, c2, factory.configs.GetByToken("token1").(ratelimiter.Config))
+	assert.Equal(t, float32(5), factory.rateLimiters.GetGlobal().(ratelimiter.RateLimiter).QPS())
+	assert.Equal(t, float32(10), factory.rateLimiters.GetByToken("token1").(ratelimiter.RateLimiter).QPS())
 
 	assert.Equal(t, define.ProcessorRateLimiter, factory.Name())
 	assert.False(t, factory.IsDerived())
@@ -78,6 +72,20 @@ processor:
       type: token_bucket
       qps: 5
       burst: 10
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	_, err := factory.Process(&define.Record{Token: define.Token{Original: "fortest"}})
+	assert.NoError(t, err)
+}
+
+func TestAcceptAll(t *testing.T) {
+	content := `
+processor:
+  - name: "rate_limiter/token_bucket"
+    config:
+      type: token_bucket
+      qps: 0
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 

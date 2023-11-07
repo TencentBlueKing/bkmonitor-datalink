@@ -57,7 +57,11 @@ func TestTracesRandom(t *testing.T) {
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
-		events = append(events, evts...)
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordTraces, evt.RecordType())
+			events = append(events, evt)
+		}
 	}
 	NewCommonConverter().Convert(&record, gather)
 	assert.Equal(t, len(events), 2)

@@ -378,7 +378,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_Http, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPScheme, "https")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPScheme, "Https")
 		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeHTTPRoute, opName)
 	})
 
@@ -452,7 +452,7 @@ func TestSwTagsToAttributesByRule(t *testing.T) {
 		swSpan := mockSwSpanWithAttr(opName, agentv3.SpanType_Entry, agentv3.SpanLayer_MQ, "", nil)
 		swTagsToAttributesByRule(dest, swSpan)
 
-		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeMessagingSystem, "MessagingTestSystem")
+		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeMessagingSystem, "Messagingtestsystem")
 		testkits.AssertAttrsFoundStringVal(t, dest, semconv.AttributeNetPeerName, unknownVal)
 	})
 

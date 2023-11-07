@@ -37,8 +37,8 @@ func NewLogsGenerator(opts define.LogsOptions) *LogsGenerator {
 }
 
 func (g *LogsGenerator) Generate() plog.Logs {
-	ld := plog.NewLogs()
-	rs := ld.ResourceLogs().AppendEmpty()
+	pdLogs := plog.NewLogs()
+	rs := pdLogs.ResourceLogs().AppendEmpty()
 	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
 	rs.Resource().Attributes().UpsertString("bk.data.token", "generator.data.token")
 
@@ -60,5 +60,5 @@ func (g *LogsGenerator) Generate() plog.Logs {
 		}
 	}
 
-	return ld
+	return pdLogs
 }

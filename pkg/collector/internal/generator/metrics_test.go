@@ -7,32 +7,33 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package semaphore
+package generator
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestSemaphore(t *testing.T) {
-	sem := New("test", 1)
-	got := sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
+func TestMetrics(t *testing.T) {
+	v := float64(10)
+	g := NewMetricsGenerator(define.MetricsOptions{
+		GeneratorOptions: define.GeneratorOptions{
+			RandomAttributeKeys: []string{"attr1", "attr2"},
+			RandomResourceKeys:  []string{"res1", "res2"},
+			Resources:           map[string]string{"foo": "bar"},
+			Attributes:          map[string]string{"hello": "mando"},
+		},
+		MetricName:     "testmetric",
+		Value:          &v,
+		GaugeCount:     1,
+		CounterCount:   1,
+		HistogramCount: 1,
+		SummaryCount:   1,
+	})
 
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.False(t, got)
-	sem.Release()
-
-	got = sem.AcquireWithTimeout(time.Second)
-	assert.True(t, got)
-	sem.Release()
-
-	assert.Equal(t, "test", sem.String())
-	assert.Equal(t, 0, sem.Count())
-
-	sem.Acquire()
-	sem.Release()
-	sem.Close()
+	data := g.Generate()
+	assert.NotNil(t, data)
 }

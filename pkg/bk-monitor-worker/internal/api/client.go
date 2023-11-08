@@ -11,6 +11,7 @@ package api
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
@@ -25,21 +26,29 @@ import (
 )
 
 var muForGseApi sync.Mutex
+
 var muForBcsClusterManager sync.Mutex
+
 var muForCmdbApi sync.Mutex
+
 var muForNodemanApi sync.Mutex
 
 var gseApi *bkgse.Client
+
 var bcsClusterManager *bcsclustermanager.Client
+
 var cmdbApi *cmdb.Client
+
 var nodemanApi *nodeman.Client
 
 const (
-	BkApiBaseUrlPath       = "bk_api.api_url"
-	BkApiStagePath         = "bk_api.stage"
-	BkApiAppCodePath       = "bk_api.app_code"
-	BkApiAppSecretPath     = "bk_api.app_secret"
-	BkApiUseApiGatewayPath = "bk_api.use_api_gateway"
+	BkApiBaseUrlPath             = "bk_api.api_url"
+	BkApiStagePath               = "bk_api.stage"
+	BkApiAppCodePath             = "bk_api.app_code"
+	BkApiAppSecretPath           = "bk_api.app_secret"
+	BkApiUseApiGatewayPath       = "bk_api.use_api_gateway"
+	BkApiBcsApiGatewayDomainPath = "bk_api.bcs_api_gateway_domain"
+	BkApiBcsApiGatewayTokenPath  = "bk_api.bcs_api_gateway_token"
 )
 
 // GetGseApi 获取GseApi客户端
@@ -77,13 +86,6 @@ func GetGseApi() (*bkgse.Client, error) {
 	return gseApi, nil
 }
 
-const (
-	BkApiBcsApiGatewaySchemaPath = "bk_api.bcs_api_gateway_schema"
-	BkApiBcsApiGatewayHostPath   = "bk_api.bcs_api_gateway_host"
-	BkApiBcsApiGatewayPortPath   = "bk_api.bcs_api_gateway_port"
-	BkApiBcsApiGatewayTokenPath  = "bk_api.bcs_api_gateway_token"
-)
-
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
 func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	muForBcsClusterManager.Lock()
@@ -92,7 +94,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s://%s:%v/bcsapi/v4/clustermanager/v1/", viper.GetString(BkApiBcsApiGatewaySchemaPath), viper.GetString(BkApiBcsApiGatewayHostPath), viper.GetInt(BkApiBcsApiGatewayPortPath)),
+		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(viper.GetString(BkApiBcsApiGatewayDomainPath), "/")),
 		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", viper.GetString(BkApiBcsApiGatewayTokenPath))},
 		JsonMarshaler:       jsonx.Marshal,
 	}

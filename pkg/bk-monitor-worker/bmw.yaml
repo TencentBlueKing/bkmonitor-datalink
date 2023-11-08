@@ -74,9 +74,7 @@ bk_api:
   stage: "prod"
   app_code: ""
   app_secret: ""
-  bcs_api_gateway_schema: ""
-  bcs_api_gateway_host: ""
-  bcs_api_gateway_port: 443
+  bcs_api_gateway_domain: ""
   bcs_api_gateway_token: ""
 bcs:
   enable_bcs_gray: false

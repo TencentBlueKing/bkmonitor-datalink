@@ -292,11 +292,11 @@ func (b BcsClusterInfoSvc) FetchK8sNodeListByCluster(bcsClusterId string) ([]K8s
 
 // 获取bcs storage
 func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([]FetchBcsStorageRespData, error) {
-	urlTemplate := "%s://%s:%v/bcsapi/v4/storage/k8s/dynamic/all_resources/clusters/%s/%s?field=%s"
+	urlTemplate := "%s/bcsapi/v4/storage/k8s/dynamic/all_resources/clusters/%s/%s?field=%s"
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	target, err := url.Parse(fmt.Sprintf(urlTemplate, viper.GetString(api.BkApiBcsApiGatewaySchemaPath), viper.GetString(api.BkApiBcsApiGatewayHostPath), viper.GetString(api.BkApiBcsApiGatewayPortPath), clusterId, sourceType, field))
+	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(viper.GetString(api.BkApiBcsApiGatewayDomainPath), "/"), clusterId, sourceType, field))
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +377,15 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 			fmt.Sprintf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId),
 		)
 	}
+	bcsUrl, err := url.ParseRequestURI(viper.GetString(api.BkApiBcsApiGatewayDomainPath))
+	if err != nil {
+		return nil, err
+	}
+	portStr := bcsUrl.Port()
+	port, err := strconv.ParseUint(portStr, 10, 64)
+	if err != nil {
+		port = 443
+	}
 
 	bkEnv := viper.GetString(BcsClusterBkEnvLabelPath)
 	cluster := bcs.BCSClusterInfo{
@@ -384,8 +393,8 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		BCSApiClusterId:   clusterId,
 		BkBizId:           int(bkBizIdInt),
 		ProjectId:         projectId,
-		DomainName:        viper.GetString(api.BkApiBcsApiGatewayHostPath),
-		Port:              viper.GetUint(api.BkApiBcsApiGatewayPortPath),
+		DomainName:        bcsUrl.Hostname(),
+		Port:              uint(port),
 		ServerAddressPath: "clusters",
 		ApiKeyType:        "authorization",
 		ApiKeyContent:     viper.GetString(api.BkApiBcsApiGatewayTokenPath),
@@ -670,8 +679,17 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 	if b.BCSClusterInfo == nil {
 		return nil, errors.New("BCSClusterInfo obj can not be nil")
 	}
+
+	parsedUrl, err := url.Parse(viper.GetString(api.BkApiBcsApiGatewayDomainPath))
+	if err == nil {
+		return nil, err
+	}
+	scm := parsedUrl.Scheme
+	if scm == "" {
+		scm = "https"
+	}
 	config := &rest.Config{
-		Host:        fmt.Sprintf("%s://%s:%v/%s/%s", viper.GetString(api.BkApiBcsApiGatewaySchemaPath), b.DomainName, b.Port, b.ServerAddressPath, b.ClusterID),
+		Host:        fmt.Sprintf("%s://%s:%v/%s/%s", scm, b.DomainName, b.Port, b.ServerAddressPath, b.ClusterID),
 		BearerToken: fmt.Sprintf("%s %s", b.ApiKeyPrefix, b.ApiKeyContent),
 		TLSClientConfig: rest.TLSClientConfig{
 			Insecure: b.IsSkipSslVerify,

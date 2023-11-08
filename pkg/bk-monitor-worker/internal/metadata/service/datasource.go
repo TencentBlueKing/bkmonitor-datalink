@@ -560,8 +560,14 @@ func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
 	if resp.Code != 0 {
 		return 0, errors.New(resp.Message)
 	}
-	data := resp.Data.(map[string]interface{})
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		return 0, errors.New("ApplyForDataIdFromGse parse response data failed")
+	}
 	channelIdInterface := data["channel_id"]
-	channelId := channelIdInterface.(float64)
+	channelId, ok := channelIdInterface.(float64)
+	if !ok {
+		return 0, errors.New("ApplyForDataIdFromGse parse channel_id failed")
+	}
 	return uint(channelId), nil
 }

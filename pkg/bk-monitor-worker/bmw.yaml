@@ -78,7 +78,6 @@ bk_api:
   bcs_api_gateway_host: ""
   bcs_api_gateway_port: 443
   bcs_api_gateway_token: ""
-  bcs_cluster_bk_env_label: ""
 bcs:
   enable_bcs_gray: false
   gray_cluster_id_list: []

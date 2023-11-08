@@ -9,7 +9,7 @@
 
 package storage
 
-//go:generate goqueryset -in influxdbproxystorage.go -out qs_influxdbproxystorage.go
+//go:generate goqueryset -in influxdbproxystorage.go -out qs_influxdbproxystorage_gen.go
 
 // InfluxdbProxyStorage influxdb proxy storage model
 // gen:qs

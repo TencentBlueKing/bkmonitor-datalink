@@ -9,7 +9,7 @@
 
 package space
 
-//go:generate goqueryset -in space.go -out qs_space.go
+//go:generate goqueryset -in space.go -out qs_space_gen.go
 
 // Space space model
 // gen:qs

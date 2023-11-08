@@ -29,7 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup.go
+//go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup_gen.go
 
 // TimeSeriesGroup: time series group model
 // gen:qs

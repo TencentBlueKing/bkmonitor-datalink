@@ -9,7 +9,7 @@
 
 package storage
 
-//go:generate goqueryset -in kafkastorage.go -out qs_kafkastorage.go
+//go:generate goqueryset -in kafkastorage.go -out qs_kafkastorage_gen.go
 
 // KafkaStorage kafka storage model
 // gen:qs

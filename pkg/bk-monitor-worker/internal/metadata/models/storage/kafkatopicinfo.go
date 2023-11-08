@@ -9,7 +9,7 @@
 
 package storage
 
-//go:generate goqueryset -in kafkatopicinfo.go -out qs_kafkatopicinfo.go
+//go:generate goqueryset -in kafkatopicinfo.go -out qs_kafkatopicinfo_gen.go
 
 // KafkaTopicInfo kafka topic info model
 // gen:qs

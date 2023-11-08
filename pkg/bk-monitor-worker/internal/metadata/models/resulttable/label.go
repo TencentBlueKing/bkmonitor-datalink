@@ -9,7 +9,7 @@
 
 package resulttable
 
-//go:generate goqueryset -in label.go -out qs_label.go
+//go:generate goqueryset -in label.go -out qs_label_gen.go
 
 // Label label model
 // gen:qs

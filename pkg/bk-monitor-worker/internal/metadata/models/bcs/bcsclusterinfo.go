@@ -15,7 +15,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-//go:generate goqueryset -in bcsclusterinfo.go -out qs_bcsclusterinfo.go
+//go:generate goqueryset -in bcsclusterinfo.go -out qs_bcsclusterinfo_gen.go
 
 var DefaultServiceMonitorDimensionTerm = []string{"bk_monitor_name", "bk_monitor_namespace/bk_monitor_name"}
 

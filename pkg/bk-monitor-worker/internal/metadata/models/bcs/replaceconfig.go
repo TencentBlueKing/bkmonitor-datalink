@@ -9,7 +9,7 @@
 
 package bcs
 
-//go:generate goqueryset -in replaceconfig.go -out qs_replaceconfig.go
+//go:generate goqueryset -in replaceconfig.go -out qs_replaceconfig_gen.go
 
 // ReplaceConfig replace config model
 // gen:qs

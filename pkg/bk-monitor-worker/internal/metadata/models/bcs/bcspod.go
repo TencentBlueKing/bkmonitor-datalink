@@ -9,7 +9,7 @@
 
 package bcs
 
-//go:generate goqueryset -in bcspod.go -out qs_bcspod.go
+//go:generate goqueryset -in bcspod.go -out qs_bcspod_gen.go
 
 // BCSPod BCS Pod model
 // gen:qs

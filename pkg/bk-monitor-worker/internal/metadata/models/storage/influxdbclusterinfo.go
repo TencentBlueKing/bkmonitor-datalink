@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbclusterinfo.go -out qs_influxdbclusterinfo.go
+//go:generate goqueryset -in influxdbclusterinfo.go -out qs_influxdbclusterinfo_gen.go
 
 // InfluxdbClusterInfo influxdb cluster info model
 // gen:qs

@@ -9,7 +9,7 @@
 
 package bcs
 
-//go:generate goqueryset -in podmonitorinfo.go -out qs_podmonitorinfo.go
+//go:generate goqueryset -in podmonitorinfo.go -out qs_podmonitorinfo_gen.go
 
 // PodMonitorInfo pod monitor info model
 // gen:qs

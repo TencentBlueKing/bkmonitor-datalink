@@ -33,7 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage.go
+//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage_gen.go
 
 // InfluxdbStorage influxdb storage model
 // gen:qs

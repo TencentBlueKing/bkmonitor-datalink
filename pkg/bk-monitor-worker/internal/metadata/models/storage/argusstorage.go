@@ -9,7 +9,7 @@
 
 package storage
 
-//go:generate goqueryset -in argusstorage.go -out qs_argusstorage.go
+//go:generate goqueryset -in argusstorage.go -out qs_argusstorage_gen.go
 
 // ArgusStorage argus storage model
 // gen:qs

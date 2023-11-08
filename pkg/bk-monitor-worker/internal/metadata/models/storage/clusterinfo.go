@@ -21,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 )
 
-//go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo.go
+//go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo_gen.go
 
 var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果表类型,vm类型结果表不写入consul
 

@@ -6,6 +6,7 @@
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
+
 package customreport
 
 import (
@@ -20,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 )
 
-//go:generate goqueryset -in timeseriesmetric.go -out qs_tsmetric.go
+//go:generate goqueryset -in timeseriesmetric.go -out qs_tsmetric_gen.go
 
 // TimeSeriesMetric: time series metric model
 // gen:qs

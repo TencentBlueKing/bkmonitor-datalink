@@ -9,7 +9,7 @@
 
 package bcs
 
-//go:generate goqueryset -in bcslabel.go -out qs_bcslabel.go
+//go:generate goqueryset -in bcslabel.go -out qs_bcslabel_gen.go
 
 // BCSLabel BCS label model
 // gen:qs

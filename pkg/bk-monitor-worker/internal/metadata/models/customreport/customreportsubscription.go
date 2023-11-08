@@ -9,7 +9,7 @@
 
 package customreport
 
-//go:generate goqueryset -in customreportsubscription.go -out qs_customreportsubscription.go
+//go:generate goqueryset -in customreportsubscription.go -out qs_customreportsubscription_gen.go
 
 // CustomReportSubscription custom report subscription
 // gen:qs

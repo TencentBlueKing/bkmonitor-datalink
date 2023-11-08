@@ -9,7 +9,7 @@
 
 package bcs
 
-//go:generate goqueryset -in servicemonitorinfo.go -out qs_servicemonitorinfo.go
+//go:generate goqueryset -in servicemonitorinfo.go -out qs_servicemonitorinfo_gen.go
 
 // ServiceMonitorInfo service monitor info model
 // gen:qs

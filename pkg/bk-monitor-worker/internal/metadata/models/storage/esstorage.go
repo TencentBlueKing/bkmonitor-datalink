@@ -33,7 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in esstorage.go -out qs_esstorage.go
+//go:generate goqueryset -in esstorage.go -out qs_esstorage_gen.go
 
 const ESRetainInvalidAliasPath = "elasticsearch_update_task.es_retain_invalid_alias"
 

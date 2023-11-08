@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in resulttablefield.go -out qs_rtfield.go
+//go:generate goqueryset -in resulttablefield.go -out qs_rtfield_gen.go
 
 // ResultTableField: result table field model
 // gen:qs

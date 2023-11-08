@@ -9,7 +9,7 @@
 
 package storage
 
-//go:generate goqueryset -in redisstorage.go -out qs_redisstorage.go
+//go:generate goqueryset -in redisstorage.go -out qs_redisstorage_gen.go
 
 // RedisStorage redis storage model
 // gen:qs

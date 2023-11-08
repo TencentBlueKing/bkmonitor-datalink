@@ -24,7 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in eventgroup.go -out qs_eventgroup.go
+//go:generate goqueryset -in eventgroup.go -out qs_eventgroup_gen.go
 
 // EventGroup event group model
 // gen:qs

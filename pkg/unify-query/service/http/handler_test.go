@@ -1413,6 +1413,48 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: "a",
 			},
 		},
+		"promq to struct with condition contains`": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `bkmonitor:metric{dim-contains=~"^val-1|val-2|val-3$",dim-req=~"val-1|val-2|val-3"} @ end()`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						StartOrEnd: parser.END,
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "dim-contains",
+									Value: []string{
+										"val-1",
+										"val-2",
+										"val-3",
+									},
+									Operator: "contains",
+								},
+								{
+									DimensionName: "dim-req",
+									Value: []string{
+										"val-1",
+										"val-2",
+										"val-3",
+									},
+									Operator: "req",
+								},
+							},
+							ConditionList: []string{
+								"and",
+							},
+						},
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
 	}
 
 	for n, c := range testCase {

@@ -136,7 +136,7 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 
 	// 如果非正则查询需要补充头尾，达到完全匹配
 	if !isRegx {
-		newValue = fmt.Sprintf("^%s$", newValue)
+		newValue = fmt.Sprintf("^(%s)$", newValue)
 	}
 	c.Value = []string{newValue}
 

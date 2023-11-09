@@ -1416,7 +1416,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promq to struct with condition contains`": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `bkmonitor:metric{dim-contains=~"^val-1|val-2|val-3$",dim-req=~"val-1|val-2|val-3"} @ end()`,
+				PromQL: `bkmonitor:metric{dim-contains=~"^(val-1|val-2|val-3)$",dim-req=~"val-1|val-2|val-3"} @ end()`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{

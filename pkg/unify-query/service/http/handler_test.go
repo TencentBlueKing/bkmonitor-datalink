@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -774,8 +775,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList: []structured.ConditionField{
@@ -814,7 +816,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"promql struct with and": {
-			queryStruct: false,
+			queryStruct: true,
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -831,8 +833,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList: []structured.ConditionField{
@@ -871,7 +874,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"promql struct 1": {
-			queryStruct: false,
+			queryStruct: true,
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -887,8 +890,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList: []structured.ConditionField{
@@ -926,8 +930,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "count_over_time",
-							Window:   "1m0s",
+							Function:  "count_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList:     []structured.ConditionField{},
@@ -936,13 +941,13 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						ReferenceName: "b",
 					},
 				},
-				MetricMerge: "a / on(bcs_cluster_id) group_left b",
+				MetricMerge: "a / on (bcs_cluster_id) group_left () b",
 				Start:       `1691132705`,
 				End:         `1691136305`,
 				Step:        `1m`,
 			},
 			promql: &structured.QueryPromQL{
-				PromQL: `sum(sum_over_time(container_cpu_usage_seconds_total{bcs_cluster_id=~"cls-2|cls-2", bk_biz_id="2"}[1m])) by (bcs_cluster_id, result_table_id) / on(bcs_cluster_id) group_left sum(count_over_time(container_cpu_usage_seconds_total[1m])) by (bcs_cluster_id, result_table_id)`,
+				PromQL: `sum by (bcs_cluster_id, result_table_id) (sum_over_time(bkmonitor:container_cpu_usage_seconds_total{bcs_cluster_id=~"cls-2|cls-2",bk_biz_id="2"}[1m])) / on (bcs_cluster_id) group_left () sum by (bcs_cluster_id, result_table_id) (count_over_time(bkmonitor:container_cpu_usage_seconds_total[1m]))`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `1m`,
@@ -965,8 +970,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList: []structured.ConditionField{
@@ -1004,8 +1010,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "count_over_time",
-							Window:   "1m0s",
+							Function:  "count_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList:     []structured.ConditionField{},
@@ -1014,7 +1021,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						ReferenceName: "b",
 					},
 				},
-				MetricMerge: "a / on(bcs_cluster_id) group_left b",
+				MetricMerge: "a / on (bcs_cluster_id) group_left () b",
 				Start:       `1691132705`,
 				End:         `1691136305`,
 				Step:        `1m`,
@@ -1027,7 +1034,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"query struct with __name__ ": {
-			queryStruct: true,
+			queryStruct: false,
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -1045,8 +1052,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						ReferenceName: "a",
 						Dimensions:    nil,
@@ -1081,7 +1089,6 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						},
 						KeepColumns:         nil,
 						AlignInfluxdbResult: false,
-						IsSubQuery:          false,
 						Start:               "",
 						End:                 "",
 						Step:                "",
@@ -1102,8 +1109,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "count_over_time",
-							Window:   "1m0s",
+							Function:  "count_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList:     []structured.ConditionField{},
@@ -1118,14 +1126,14 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				Step:        `1m`,
 			},
 			promql: &structured.QueryPromQL{
-				PromQL: `sum by (bcs_cluster_id, result_table_id) (sum_over_time(bkmonitor:table_id:.*{bcs_cluster_id=~"cls-2|cls-2",bk_biz_id="2"}[1m])) / on (bcs_cluster_id) group_left () sum by (bcs_cluster_id, result_table_id) (count_over_time(bkmonitor:table_id:.*[1m]))`,
+				PromQL: `sum by (bcs_cluster_id, result_table_id) (sum_over_time({__name__=~"bkmonitor:table_id:.*",bcs_cluster_id=~"cls-2|cls-2",bk_biz_id="2"}[1m])) / on (bcs_cluster_id) group_left () sum by (bcs_cluster_id, result_table_id) (count_over_time({__name__=~"bkmonitor:table_id:.*"}[1m]))`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `1m`,
 			},
 		},
 		"promql struct with __name__ ": {
-			queryStruct: false,
+			queryStruct: true,
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -1143,8 +1151,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						TimeAggregation: structured.TimeAggregation{
-							Function: "sum_over_time",
-							Window:   "1m0s",
+							Function:  "sum_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						ReferenceName: "a",
 						Dimensions:    nil,
@@ -1179,7 +1188,6 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						},
 						KeepColumns:         nil,
 						AlignInfluxdbResult: false,
-						IsSubQuery:          false,
 						Start:               "",
 						End:                 "",
 						Step:                "",
@@ -1223,7 +1231,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"promql to struct with 1m:2m": {
-			queryStruct: false,
+			queryStruct: true,
 			promql: &structured.QueryPromQL{
 				PromQL: `count_over_time(bkmonitor:metric[1m:2m])`,
 				Start:  `1691132705`,
@@ -1236,15 +1244,16 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						DataSource: `bkmonitor`,
 						FieldName:  `metric`,
 						TimeAggregation: structured.TimeAggregation{
-							Function: "count_over_time",
-							Window:   "1m0s",
+							Function:   "count_over_time",
+							Window:     "1m0s",
+							IsSubQuery: true,
+							Step:       "2m0s",
+							NodeIndex:  2,
 						},
 						Conditions: structured.Conditions{
 							FieldList:     []structured.ConditionField{},
 							ConditionList: []string{},
 						},
-						IsSubQuery:    true,
-						Step:          "2m0s",
 						ReferenceName: `a`,
 						Offset:        "0s",
 					},
@@ -1253,6 +1262,155 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				Start:       `1691132705`,
 				End:         `1691136305`,
 				Step:        `30s`,
+			},
+		},
+		"promql to struct with delta label_replace 1m:2m": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (job, metric_name) (delta(label_replace({__name__=~"bkmonitor:container_cpu_.+_total",job="metric-social-friends-forever"}, "metric_name", "$1", "__name__", "ffs_rest_(.*)_count")[2m:]))`,
+				Start:  `1691132705`,
+				End:    `1691136305`,
+				Step:   `30s`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: `bkmonitor`,
+						FieldName:  `container_cpu_.+_total`,
+						IsRegexp:   true,
+						TimeAggregation: structured.TimeAggregation{
+							Function:   "delta",
+							Window:     "2m0s",
+							NodeIndex:  3,
+							IsSubQuery: true,
+							Step:       "0s",
+						},
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "job",
+									Operator:      "eq",
+									Value: []string{
+										"metric-social-friends-forever",
+									},
+								},
+								//{
+								//	DimensionName: "__name__",
+								//	Operator:      "nreq",
+								//	Value: []string{
+								//		".+_size_count",
+								//	},
+								//},
+								//{
+								//	DimensionName: "__name__",
+								//	Operator:      "nreq",
+								//	Value: []string{
+								//		".+_process_time_count",
+								//	},
+								//},
+							},
+							ConditionList: []string{},
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "label_replace",
+								VArgsList: []interface{}{
+									"metric_name",
+									"$1",
+									"__name__",
+									"ffs_rest_(.*)_count",
+								},
+							},
+							{
+								Method: "sum",
+								Dimensions: []string{
+									"job",
+									"metric_name",
+								},
+							},
+						},
+						ReferenceName: `a`,
+						Offset:        "0s",
+					},
+				},
+				MetricMerge: "a",
+				Start:       `1691132705`,
+				End:         `1691136305`,
+				Step:        `30s`,
+			},
+		},
+		"promq to struct with topk": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `topk(1, bkmonitor:metric)`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"promq to struct with delta(metric[1m])`": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `delta(bkmonitor:metric[1m])`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "delta",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"promq to struct with metric @end()`": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `bkmonitor:metric @ end()`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						StartOrEnd: parser.END,
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
 			},
 		},
 	}

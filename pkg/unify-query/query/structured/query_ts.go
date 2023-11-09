@@ -233,8 +233,6 @@ type Query struct {
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
 
-	IsSubQuery bool `json:"is_sub_query"`
-
 	// Start 保留字段，会被外面的 Start 覆盖
 	Start string `json:"-" swaggerignore:"true"`
 	// End 保留字段，会被外面的 End 覆盖
@@ -526,17 +524,14 @@ func (q *Query) BuildMetadataQuery(
 	return query, nil
 }
 
-func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, labelList ...*labels.Matcher) (parser.Expr, error) {
+func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, matchers ...*labels.Matcher) (parser.Expr, error) {
 	var (
 		metric string
 		err    error
 
 		originalOffset time.Duration
-		stepDur        model.Duration
 		step           time.Duration
 		dTmp           model.Duration
-
-		window time.Duration
 
 		result parser.Expr
 	)
@@ -578,55 +573,50 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		}
 	}
 
+	if q.IsRegexp {
+		metricMatcher, err := labels.NewMatcher(labels.MatchRegexp, labels.MetricName, metric)
+		if err != nil {
+			return nil, err
+		}
+		matchers = append(matchers, metricMatcher)
+		metric = ""
+	}
+
 	result = &parser.VectorSelector{
-		Name:           metric,
-		LabelMatchers:  labelList,
+		Name:          metric,
+		LabelMatchers: matchers,
+
 		Offset:         q.VectorOffset,
 		Timestamp:      q.Timestamp,
 		StartOrEnd:     q.StartOrEnd,
 		OriginalOffset: originalOffset,
 	}
 
+	timeIdx := 0
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
-		window, err = q.TimeAggregation.Window.ToTime()
-		if err != nil {
-			return nil, err
-		}
-
-		if q.IsSubQuery {
-			if q.Step != "" {
-				stepDur, err = model.ParseDuration(q.Step)
-				if err != nil {
-					return nil, err
-				}
+		// 拼接时间聚合函数，NodeIndex 的数据如下：
+		// count_over_time(metric[1m:2m])：vector -> subQuery -> call： nodeIndex 为 2
+		// sum by(job, metric_name) (delta(label_replace(metric, "")[1m:]))：vector -> call -> subQuery -> call -> aggr：nodeIndex 为 3
+		// count_over_time(a[1m])：vector -> matrix -> call：nodeIndex 为 2
+		// 所以最小值为 2
+		timeIdx = q.TimeAggregation.NodeIndex - 2
+		// 增加小于 0 的场景兼容默认值为空的情况
+		if timeIdx <= 0 {
+			result, err = q.TimeAggregation.ToProm(result)
+			if err != nil {
+				return nil, err
 			}
-
-			result = &parser.SubqueryExpr{
-				Expr: &parser.VectorSelector{
-					Name:          metric,
-					LabelMatchers: labelList,
-				},
-				Range:          window,
-				OriginalOffset: originalOffset,
-				Offset:         q.VectorOffset,
-				Timestamp:      q.Timestamp,
-				StartOrEnd:     q.StartOrEnd,
-				Step:           time.Duration(stepDur),
-			}
-		} else {
-			result = &parser.MatrixSelector{
-				VectorSelector: result,
-				Range:          window,
-			}
-		}
-
-		result, err = q.TimeAggregation.ToProm(result)
-		if err != nil {
-			return nil, err
 		}
 	}
 
-	for _, method := range q.AggregateMethodList {
+	for idx, method := range q.AggregateMethodList {
+		if timeIdx > 0 && idx == timeIdx {
+			result, err = q.TimeAggregation.ToProm(result)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		if result, err = method.ToProm(result); err != nil {
 			log.Errorf(ctx, "failed to translate function for->[%s]", err)
 			return nil, err

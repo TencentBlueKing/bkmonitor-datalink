@@ -32,13 +32,14 @@ type MetadataConfig interface {
 
 // MetaClusterInfo :
 type MetaClusterInfo struct {
-	ClusterConfig map[string]interface{} `mapstructure:"cluster_config" json:"cluster_config"`
-	StorageConfig map[string]interface{} `mapstructure:"storage_config" json:"storage_config"`
-	AuthInfo      map[string]interface{} `mapstructure:"auth_info" json:"auth_info"`
-	ClusterType   string                 `mapstructure:"cluster_type" json:"cluster_type"`
-	BatchSize     int                    `mapstructure:"batch_size" json:"batch_size"`
-	FlushInterval string                 `mapstructure:"flush_interval" json:"flush_interval"`
-	ConsumeRate   int                    `mapstructure:"consume_rate" json:"consume_rate"` // unit:Bytes
+	ClusterConfig   map[string]interface{} `mapstructure:"cluster_config" json:"cluster_config"`
+	StorageConfig   map[string]interface{} `mapstructure:"storage_config" json:"storage_config"`
+	AuthInfo        map[string]interface{} `mapstructure:"auth_info" json:"auth_info"`
+	ClusterType     string                 `mapstructure:"cluster_type" json:"cluster_type"`
+	BatchSize       int                    `mapstructure:"batch_size" json:"batch_size"`
+	BulkConcurrency int64                  `mapstructure:"bulk_concurrency" json:"bulk_concurrency"`
+	FlushInterval   string                 `mapstructure:"flush_interval" json:"flush_interval"`
+	ConsumeRate     int                    `mapstructure:"consume_rate" json:"consume_rate"` // unit:Bytes
 }
 
 // NewMetaClusterInfo :

@@ -55,14 +55,14 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	if count == 0 {
-		return nil, errors.New(fmt.Sprintf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel))
+		return nil, fmt.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
 	}
 	count, err = resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
 	if err != nil {
 		return nil, err
 	}
 	if count == 0 {
-		return nil, errors.New(fmt.Sprintf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel))
+		return nil, fmt.Errorf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel)
 	}
 	// 判断参数是否符合预期
 	// 数据源名称是否重复
@@ -71,7 +71,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	if count != 0 {
-		return nil, errors.New(fmt.Sprintf("data_name [%s] is already exists, maybe something go wrong?", dataName))
+		return nil, fmt.Errorf("data_name [%s] is already exists, maybe something go wrong", dataName)
 	}
 	// 如果集群信息无提供，则使用默认的MQ集群信息
 	var mqClusterObj storage.ClusterInfo
@@ -320,7 +320,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return err
 	}
 	if mqCluster.GseStreamToId == -1 {
-		return errors.New(fmt.Sprintf("dataid [%v] mq is not inited", d.BkDataId))
+		return fmt.Errorf("dataid [%v] mq is not inited", d.BkDataId)
 	}
 	gseApi, err := api.GetGseApi()
 	if err != nil {

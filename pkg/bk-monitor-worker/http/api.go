@@ -19,7 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	storeRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 )
@@ -112,13 +111,13 @@ func enqueueTask(t *task.Task) error {
 	// new client
 	client, err := worker.NewClient()
 	if err != nil {
-		return errors.New(fmt.Sprintf("new client error, %v", err))
+		return fmt.Errorf("new client error, %v", err)
 	}
 	defer client.Close()
 
 	// 入队列
 	if _, err = client.Enqueue(t); err != nil {
-		return errors.New(fmt.Sprintf("enqueue task error, %v", err))
+		return fmt.Errorf("enqueue task error, %v", err)
 	}
 
 	return nil

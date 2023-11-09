@@ -42,7 +42,7 @@ type ClusterInfo struct {
 	Version                   string    `gorm:"size:64" json:"version"`
 	RegisteredSystem          string    `gorm:"size:128" json:"registered_system"`
 	CustomOption              string    `json:"custom_option"`
-	CreateTime                time.Time ` json:"create_time"`
+	CreateTime                time.Time `json:"create_time"`
 	Creator                   string    `gorm:"size:255" json:"creator"`
 	LastModifyTime            time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser            string    `gorm:"size:32" json:"last_modify_user"`

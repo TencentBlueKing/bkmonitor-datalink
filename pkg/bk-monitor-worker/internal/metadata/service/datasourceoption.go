@@ -10,7 +10,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -54,7 +53,7 @@ func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interf
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("bk_data_id [%v] already has option [%s]", bkDataId, name))
+		return fmt.Errorf("bk_data_id [%v] already has option [%s]", bkDataId, name)
 	}
 	valueStr, valueType, err := models.ParseOptionValue(value)
 	if err != nil {

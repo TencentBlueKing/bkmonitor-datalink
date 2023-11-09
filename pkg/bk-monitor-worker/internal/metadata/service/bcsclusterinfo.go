@@ -322,7 +322,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 		return nil, err
 	}
 	if result.Code != 0 {
-		return nil, errors.New(fmt.Sprintf("fetch bcs storage failed, %s", result.Message))
+		return nil, fmt.Errorf("fetch bcs storage failed, %s", result.Message)
 	}
 	return result.Data, nil
 }

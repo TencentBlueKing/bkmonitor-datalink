@@ -10,7 +10,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -88,7 +87,7 @@ func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string
 		for _, o := range existOptions {
 			existOptionsNames = append(existOptionsNames, o.Name)
 		}
-		return errors.New(fmt.Sprintf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ",")))
+		return fmt.Errorf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ","))
 	}
 
 	for _, option := range rtoList {

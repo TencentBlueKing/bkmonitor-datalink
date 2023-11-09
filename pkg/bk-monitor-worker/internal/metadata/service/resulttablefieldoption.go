@@ -10,7 +10,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -59,7 +58,7 @@ func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, 
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name))
+		return fmt.Errorf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name)
 	}
 
 	valueStr, valueType, err := models.ParseOptionValue(value)

@@ -112,14 +112,14 @@ func (r ResultTableSvc) CreateResultTable(
 		return err
 	}
 	if count == 0 {
-		return errors.New(fmt.Sprintf("label [%s] is not exists as a rt label", label))
+		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	tableId = strings.ToLower(tableId)
 	// 判断data_source是否存在
 	var ds resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).One(&ds); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
-			return errors.New(fmt.Sprintf("bk_data_id [%v] is not exists", bkDataId))
+			return fmt.Errorf("bk_data_id [%v] is not exists", bkDataId)
 		}
 		return err
 	}
@@ -128,7 +128,7 @@ func (r ResultTableSvc) CreateResultTable(
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("table_id [%s] is already exist", tableId))
+		return fmt.Errorf("table_id [%s] is already exist", tableId)
 	}
 	var spaceTypeId, spaceId string
 	if bkBizId == 0 {
@@ -236,7 +236,7 @@ func (r ResultTableSvc) CreateResultTable(
 // BulkCreateFields 批量创建新的字段
 func (r ResultTableSvc) BulkCreateFields(fieldList []map[string]interface{}, isEtlRefresh bool, isForceAdd bool) error {
 	if !isForceAdd && r.SchemaType == models.ResultTableSchemaTypeFixed {
-		return errors.New(fmt.Sprintf("result_table [%s] schema type is set, no field can be added", r.TableId))
+		return fmt.Errorf("result_table [%s] schema type is set, no field can be added", r.TableId)
 	}
 	if err := NewResultTableFieldSvc(nil).BulkCreateFields(r.TableId, fieldList); err != nil {
 		return err
@@ -264,7 +264,7 @@ func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, Stor
 	case models.StorageTypeArgus:
 		s = NewArgusStorageSvc(nil)
 	default:
-		return errors.New(fmt.Sprintf("storage [%s] now is not supported", defaultStorage))
+		return fmt.Errorf("storage [%s] now is not supported", defaultStorage)
 	}
 	if err := s.CreateTable(r.TableId, isSyncDb, StorageConfig); err != nil {
 		return err

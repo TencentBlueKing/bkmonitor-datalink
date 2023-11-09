@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -233,7 +231,7 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 		for _, rtf := range rtfList {
 			names = names + "," + rtf.FieldName
 		}
-		return errors.New(fmt.Sprintf("field [%s] is exists under table [%s]", names, tableId))
+		return fmt.Errorf("field [%s] is exists under table [%s]", names, tableId)
 	}
 	for _, field := range fields {
 		description, _ := field["description"].(string)

@@ -10,7 +10,6 @@
 package service
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -140,7 +139,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count == 0 {
-		return errors.New(fmt.Sprintf("label [%s] is not exists as a rt label", label))
+		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	// 判断同一个data_id是否已经被其他事件绑定了
 	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkDataIDEq(bkDataId).Count()
@@ -148,7 +147,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId))
+		return fmt.Errorf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId)
 	}
 	// 判断同一个业务下是否有重名的custom_group_name
 	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
@@ -156,7 +155,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("biz_id [%v] already has TimeSeriesGroup [TimeSeriesGroupName], should change %s and try again", bkDataId, customGroupName))
+		return fmt.Errorf("biz_id [%v] already has TimeSeriesGroup [TimeSeriesGroupName], should change %s and try again", bkDataId, customGroupName)
 	}
 	return nil
 }

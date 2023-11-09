@@ -11,7 +11,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -70,7 +69,7 @@ func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageCo
 		return err
 	}
 	if count == 0 {
-		return errors.New(fmt.Sprintf("proxy_cluster [%s] has no config", *proxyClusterName))
+		return fmt.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
 	}
 	// 如果未有指定对应的结果表及数据库，则从table_id中分割获取
 	split := strings.Split(tableId, ".")

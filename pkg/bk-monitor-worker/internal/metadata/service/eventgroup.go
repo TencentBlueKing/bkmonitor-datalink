@@ -10,12 +10,10 @@
 package service
 
 import (
-	"errors"
 	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/hashicorp/go-version"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
@@ -203,7 +201,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return err
 	}
 	if count == 0 {
-		return errors.New(fmt.Sprintf("label [%s] is not exists as a rt label", label))
+		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	// 判断同一个data_id是否已经被其他事件绑定了
 	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkDataIDEq(bkDataId).Count()
@@ -211,7 +209,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId))
+		return fmt.Errorf("bk_data_id [%v] is already used by other custom group, use it first", bkDataId)
 	}
 	// 判断同一个业务下是否有重名的custom_group_name
 	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
@@ -219,7 +217,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return err
 	}
 	if count != 0 {
-		return errors.New(fmt.Sprintf("biz_id [%v] already has EventGroup [EventGroupName], should change %s and try again", bkDataId, customGroupName))
+		return fmt.Errorf("biz_id [%v] already has EventGroup [EventGroupName], should change %s and try again", bkDataId, customGroupName)
 	}
 	return nil
 }
@@ -280,51 +278,13 @@ func getMaxVersion(defaultVersion string, versionList []string) string {
 }
 
 func compareVersion(version1 string, version2 string) int {
-	var res int
-	ver1Strs := getValidatedVersion(version1) //[1 2 3]
-	ver2Strs := getValidatedVersion(version2) //[2 3 4]
-	ver1Len := len(ver1Strs)
-	ver2Len := len(ver2Strs)
-	if ver1Len == 0 || ver2Len == 0 {
+	v1, err := version.NewVersion(version1)
+	if err != nil {
 		return 0
 	}
-	for i := 0; i < 3; i++ {
-		var ver1Int, ver2Int int
-		var err error
-		if i < ver1Len {
-			// 字符串转换成整数strconv.Atoi
-			ver1Int, err = strconv.Atoi(ver1Strs[i])
-			if err != nil {
-				return 0
-			}
-		}
-		if i < ver2Len {
-			ver2Int, err = strconv.Atoi(ver2Strs[i])
-			if err != nil {
-				return 0
-			}
-		}
-		if ver1Int == ver2Int {
-			res = 1
-			continue
-		}
-		if ver1Int > ver2Int {
-			res = 1
-			break
-		}
-		if ver1Int < ver2Int {
-			res = -1
-			break
-		}
+	v2, err := version.NewVersion(version2)
+	if err != nil {
+		return 0
 	}
-	return res
-}
-
-func getValidatedVersion(version string) []string {
-	version = regexp.MustCompile(`[^\d.]`).ReplaceAllString(version, "")
-	parts := strings.Split(version, ".")
-	if len(parts) >= 3 {
-		parts = parts[:3]
-	}
-	return parts
+	return v1.Compare(v2)
 }

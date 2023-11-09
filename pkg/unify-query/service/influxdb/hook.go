@@ -35,7 +35,7 @@ func setDefaultConfig() {
 	viper.SetDefault(SpaceRouterPrefixConfigPath, "bkmonitorv3:spaces")
 	viper.SetDefault(SpaceRouterBboltPathConfigPath, "boltV2.db")
 	viper.SetDefault(SpaceRouterBboltBucketNameConfigPath, "space")
-	viper.SetDefault(SpaceRouterBboltWriteBatchSizeConfigPath, 10000)
+	viper.SetDefault(SpaceRouterBboltWriteBatchSizeConfigPath, 1000)
 
 	viper.SetDefault(GrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
 	viper.SetDefault(GrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)

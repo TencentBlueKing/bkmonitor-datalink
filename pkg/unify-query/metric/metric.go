@@ -123,9 +123,15 @@ func gaugeSet(
 	metric.Set(value)
 }
 
-// handleCount
 func counterInc(
 	ctx context.Context, metric prometheus.Counter, err error, params ...string,
+) {
+	counterAdd(ctx, metric, 1, err, params...)
+}
+
+// handleCount
+func counterAdd(
+	ctx context.Context, metric prometheus.Counter, val float64, err error, params ...string,
 ) {
 	if err != nil {
 		log.Warnf(ctx, "metric counter:%v failed,error:%s", params, err)
@@ -136,7 +142,7 @@ func counterInc(
 	if sp.IsSampled() {
 		exemplarAdder, ok := metric.(prometheus.ExemplarAdder)
 		if ok {
-			exemplarAdder.AddWithExemplar(1, prometheus.Labels{
+			exemplarAdder.AddWithExemplar(val, prometheus.Labels{
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
@@ -144,7 +150,7 @@ func counterInc(
 			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
-		metric.Inc()
+		metric.Add(val)
 	}
 }
 

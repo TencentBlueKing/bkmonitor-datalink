@@ -41,6 +41,11 @@ func SpaceRequestCountInc(ctx context.Context, params ...string) {
 	counterInc(ctx, metric, err, params...)
 }
 
+func SpaceRequestCountAdd(ctx context.Context, val float64, params ...string) {
+	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
+	counterAdd(ctx, metric, val, err, params...)
+}
+
 func init() {
 	prometheus.MustRegister(
 		spaceRequestCount,

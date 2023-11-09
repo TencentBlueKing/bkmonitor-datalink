@@ -33,9 +33,9 @@ const (
 // 过滤条件，包含了字段描述以及条件的组合方式
 type Conditions struct {
 	// FieldList 查询条件
-	FieldList []ConditionField `json:"field_list"`
+	FieldList []ConditionField `json:"field_list,omitempty"`
 	// ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
-	ConditionList []string `json:"condition_list" example:"and"`
+	ConditionList []string `json:"condition_list,omitempty" example:"and"`
 }
 
 // AnalysisConditions

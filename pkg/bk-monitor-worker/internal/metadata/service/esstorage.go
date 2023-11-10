@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -89,17 +90,17 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig map[string]interface{}) error {
+func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
 	// 判断是否需要使用默认集群信息
-	clusterId, _ := storageConfig["cluster_id"].(*uint)
-	if clusterId == nil {
+	var clusterId uint
+	if id, ok := storageConfig.GetUint("cluster_id"); !ok {
 		var clusterInfo storage.ClusterInfo
 		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeES).IsDefaultClusterEq(true).One(&clusterInfo); err != nil {
 			return err
 		}
-		clusterId = &clusterInfo.ClusterID
+		clusterId = clusterInfo.ClusterID
 	} else {
-		count, err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(*clusterId).Count()
+		count, err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(id).Count()
 		if err != nil {
 			return err
 		}
@@ -116,7 +117,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig m
 		return fmt.Errorf("result_table [%s] already has redis storage config", tableId)
 	}
 	// 测试date_format是否正确可用的 -- 格式化结果的数据只能包含数字，不能有其他结果
-	dateformat, ok := storageConfig["date_format"].(string)
+	dateformat, ok := storageConfig.GetString("date_format")
 	if !ok {
 		dateformat = "%Y%m%d%H"
 	}
@@ -126,39 +127,33 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig m
 		return fmt.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
 	}
 	// 	断言配置参数设置默认值
-	sliceSize, ok := storageConfig["slice_size"].(uint)
+	sliceSize, ok := storageConfig.GetUint("slice_size")
 	if !ok {
 		sliceSize = 500
 	}
-	sliceGap, ok := storageConfig["slice_gap"].(int)
+	sliceGap, ok := storageConfig.GetInt("slice_gap")
 	if !ok {
 		sliceGap = 120
 	}
-	retention, ok := storageConfig["retention"].(int)
+	retention, ok := storageConfig.GetInt("retention")
 	if !ok {
 		retention = 30
 	}
-	warmPhaseDays, ok := storageConfig["warm_phase_days"].(int)
-	if !ok {
-		warmPhaseDays = 0
-	}
-	timeZone, ok := storageConfig["time_zone"].(int8)
-	if !ok {
-		timeZone = 0
-	}
-	enableCreateIndex, ok := storageConfig["enable_create_index"].(bool)
+	warmPhaseDays, _ := storageConfig.GetInt("warm_phase_days")
+	timeZone, _ := storageConfig.GetInt8("time_zone")
+	enableCreateIndex, ok := storageConfig.GetBool("enable_create_index")
 	if !ok {
 		enableCreateIndex = true
 	}
-	indexSettingsMap, ok := storageConfig["index_settings"].(map[string]interface{})
+	indexSettingsMap, ok := storageConfig.GetStringMap("index_settings")
 	if !ok {
 		indexSettingsMap = make(map[string]interface{})
 	}
-	mappingSettingsMap, _ := storageConfig["mapping_settings"].(map[string]interface{})
+	mappingSettingsMap, _ := storageConfig.GetStringMap("mapping_settings")
 	if !ok {
 		mappingSettingsMap = make(map[string]interface{})
 	}
-	warmPhaseSettings, _ := storageConfig["warm_phase_settings"].(map[string]interface{})
+	warmPhaseSettings, _ := storageConfig.GetStringMap("warm_phase_settings")
 	if !ok {
 		warmPhaseSettings = make(map[string]interface{})
 	}
@@ -201,7 +196,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig m
 		TimeZone:          timeZone,
 		IndexSettings:     indexSettingsMapStr,
 		MappingSettings:   mappingSettingsMapStr,
-		StorageClusterID:  *clusterId,
+		StorageClusterID:  clusterId,
 	}
 	if err := ess.Create(mysql.GetDBSession().DB); err != nil {
 		return err

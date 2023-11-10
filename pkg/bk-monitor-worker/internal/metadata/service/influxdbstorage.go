@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -51,11 +52,20 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig map[string]interface{}) error {
-	influxdbProxyStorageId, _ := storageConfig["influxdb_proxy_storage_id"].(*uint)
-	proxyClusterName, _ := storageConfig["proxy_cluster_name"].(*string)
-	storageClusterId, _ := storageConfig["storage_cluster_id"].(*uint)
+func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+	var influxdbProxyStorageId *uint
+	var proxyClusterName *string
+	var storageClusterId *uint
 
+	if value, ok := storageConfig.GetUint("influxdb_proxy_storage_id"); ok {
+		influxdbProxyStorageId = &value
+	}
+	if value, ok := storageConfig.GetString("proxy_cluster_name"); ok {
+		proxyClusterName = &value
+	}
+	if value, ok := storageConfig.GetUint("storage_cluster_id"); ok {
+		storageClusterId = &value
+	}
 	influxdbStorage, err := NewInfluxdbProxyStorageSvc(nil).GetInfluxdbStorage(influxdbProxyStorageId, proxyClusterName, storageClusterId)
 	if err != nil {
 		return err
@@ -76,23 +86,23 @@ func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageCo
 	database := split[0]
 	realTableName := split[1]
 	// InfluxDB不需要实际创建结果表，只需要创建一条DB记录即可
-	UseDefaultRp, ok := storageConfig["use_default_rp"].(bool)
+	UseDefaultRp, ok := storageConfig.GetBool("use_default_rp")
 	if !ok {
 		UseDefaultRp = true
 	}
-	EnableRefreshRp, _ := storageConfig["enable_refresh_rp"].(bool)
+	EnableRefreshRp, ok := storageConfig.GetBool("enable_refresh_rp")
 	if !ok {
 		EnableRefreshRp = true
 	}
-	SourceDurationTime, ok := storageConfig["source_duration_time"].(string)
+	SourceDurationTime, ok := storageConfig.GetString("source_duration_time")
 	if !ok {
 		SourceDurationTime = "30d"
 	}
-	DownSampleTable, _ := storageConfig["down_sample_table"].(string)
-	DownSampleGap, _ := storageConfig["down_sample_gap"].(string)
-	DownSampleDurationTime, _ := storageConfig["down_sample_duration_time"].(string)
-	PartitionTag, _ := storageConfig["partition_tag"].(string)
-	VmTableId, _ := storageConfig["vm_table_id"].(string)
+	DownSampleTable, _ := storageConfig.GetString("down_sample_table")
+	DownSampleGap, _ := storageConfig.GetString("down_sample_gap")
+	DownSampleDurationTime, _ := storageConfig.GetString("down_sample_duration_time")
+	PartitionTag, _ := storageConfig.GetString("partition_tag")
+	VmTableId, _ := storageConfig.GetString("vm_table_id")
 
 	influxdb := storage.InfluxdbStorage{
 		TableID:                tableId,

@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -250,7 +251,7 @@ func (r ResultTableSvc) BulkCreateFields(fieldList []map[string]interface{}, isE
 }
 
 // CreateStorage 创建结果表的一个实际存储
-func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, StorageConfig map[string]interface{}) error {
+func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, storageConfig map[string]interface{}) error {
 	var s Storage
 	switch defaultStorage {
 	case models.StorageTypeES:
@@ -266,7 +267,7 @@ func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, Stor
 	default:
 		return fmt.Errorf("storage [%s] now is not supported", defaultStorage)
 	}
-	if err := s.CreateTable(r.TableId, isSyncDb, StorageConfig); err != nil {
+	if err := s.CreateTable(r.TableId, isSyncDb, optionx.NewOptions(storageConfig)); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] has create real storage on type [%s]", r.TableId, defaultStorage)

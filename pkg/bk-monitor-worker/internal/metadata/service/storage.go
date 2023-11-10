@@ -9,9 +9,11 @@
 
 package service
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+
 type Storage interface {
 	ConsulConfig() (*StorageConsulConfig, error)
-	CreateTable(tableId string, isSyncDb bool, storageConfig map[string]interface{}) error
+	CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error
 }
 
 // StorageConsulConfig storage的consul配置信息

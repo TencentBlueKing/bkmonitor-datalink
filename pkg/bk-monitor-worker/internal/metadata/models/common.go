@@ -77,8 +77,14 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 		return valueStr, "int", nil
 	case reflect.Map:
 		return valueStr, "dict", nil
+	case reflect.String:
+		valueStr, ok := value.(string)
+		if !ok {
+			return "", "", fmt.Errorf("assert string value type error, %#v", value)
+		}
+		return valueStr, "string", nil
 	default:
-		return value.(string), "string", nil
+		return "", "", fmt.Errorf("unsupport option value type [%s], value [%v]", reflect.TypeOf(value).Kind().String(), value)
 	}
 }
 

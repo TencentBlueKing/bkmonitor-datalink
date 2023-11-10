@@ -101,6 +101,15 @@ func (c *Client) Open() error {
 		return fmt.Errorf("unable to open boltdb: %w", err)
 	}
 
+	// New Bucket
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, bucketErr := tx.CreateBucketIfNotExists(c.BucketName)
+		return bucketErr
+	})
+	if err != nil {
+		return fmt.Errorf("create bucket error: %v", err)
+	}
+
 	c.DB = db
 	// set db noSync
 	c.DB.NoSync = !viper.GetBool(BboltDefaultSyncPath)
@@ -119,9 +128,9 @@ func (c *Client) Close() error {
 // Put a key value pair into the db
 func (c *Client) Put(key, val []byte) error {
 	err := c.DB.Update(func(tx *bolt.Tx) error {
-		b, err := tx.CreateBucketIfNotExists(c.BucketName)
-		if err != nil {
-			return fmt.Errorf("create bucket error: %v", err)
+		b := tx.Bucket(c.BucketName)
+		if b == nil {
+			return errors.New(BucketNotFount)
 		}
 		return b.Put(key, val)
 	})
@@ -160,21 +169,16 @@ func (c *Client) Delete(key []byte) error {
 
 // BatchWrite batch write key value pairs
 func (c *Client) BatchWrite(keys [][]byte, vals [][]byte) error {
-	timeSleep := viper.GetDuration(BboltDefaultBatchTimeSleep)
 	err := c.DB.Batch(func(tx *bolt.Tx) error {
 		// check bucket
-		b, err := tx.CreateBucketIfNotExists(c.BucketName)
-		if err != nil {
-			return fmt.Errorf("create bucket error: %v", err)
+		b := tx.Bucket(c.BucketName)
+		if b == nil {
+			return errors.New(BucketNotFount)
 		}
-
 		// write the k-v pairs
 		for i := 0; i < len(keys); i++ {
 			if err := b.Put(keys[i], vals[i]); err != nil {
 				return err
-			}
-			if timeSleep.Seconds() > 0 {
-				time.Sleep(timeSleep)
 			}
 		}
 		return nil

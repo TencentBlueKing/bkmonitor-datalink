@@ -46,7 +46,7 @@ func SetSpaceTsDbMockData(
 	ctx context.Context, path string, bucketName string, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo,
 	fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
 	logInit()
-	sr, err := influxdb.SetSpaceTsDbRouter(ctx, path, bucketName, "")
+	sr, err := influxdb.SetSpaceTsDbRouter(ctx, path, bucketName, "", 100)
 	if err != nil {
 		panic(err)
 	}

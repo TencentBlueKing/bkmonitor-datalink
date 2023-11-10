@@ -120,6 +120,12 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 		keys = append(keys, kvstore.String2byte(k))
 		values = append(values, v)
 	}
+
+	// 如果变更和新增都为空则不处理该逻辑
+	if len(createdKeys) == 0 && len(updatedKeys) == 0 {
+		return nil
+	}
+
 	err := r.kvClient.BatchWrite(keys, values)
 	if err != nil {
 		return err
@@ -129,7 +135,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	for _, uk := range updatedKeys {
 		r.cache.Del(uk)
 	}
-	log.Infof(ctx, "Write KVStorage in key(%s), %d created, %d updated", stoPrefix, len(createdKeys), len(updatedKeys))
+	log.Debugf(ctx, "Write KVStorage in key(%s), %d created, %d updated", stoPrefix, len(createdKeys), len(updatedKeys))
 	return nil
 }
 
@@ -316,7 +322,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string) error {
 				count += 1
 			}
 			if !ok || count%batchSize == 0 {
-				log.Infof(ctx, "Read %v entities from key(%s) channel", len(entities), key)
+				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
 				err = r.BatchAdd(ctx, key, entities, false)
 				if err != nil {
 					log.Errorf(ctx, "Fail to add batch from key(%s), %v", key, err)

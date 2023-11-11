@@ -530,7 +530,6 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		err    error
 
 		originalOffset time.Duration
-		step           time.Duration
 		dTmp           model.Duration
 
 		result parser.Expr
@@ -545,17 +544,15 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 	}
 
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
-		step = promql.GetDefaultStep()
-		if q.Step != "" {
-			dTmp, err = model.ParseDuration(q.Step)
-			if err != nil {
-				log.Errorf(ctx, "parse step err->[%s]", err)
-				return nil, err
-			}
-			step = time.Duration(dTmp)
+		// 使用 window 做为对齐标准
+		dTmp, err = model.ParseDuration(string(q.TimeAggregation.Window))
+		if err != nil {
+			log.Errorf(ctx, "parse step err->[%s]", err)
+			return nil, err
 		}
+		window := time.Duration(dTmp)
 		// 控制偏移，promQL 只支持毫秒级别数据
-		originalOffset = -step + time.Millisecond
+		originalOffset = -window + time.Millisecond
 	}
 
 	if q.Offset != "" {

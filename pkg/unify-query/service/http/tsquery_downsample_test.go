@@ -12,6 +12,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"testing"
 	"time"
 
@@ -363,7 +364,7 @@ func TestDownSample(t *testing.T) {
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			ctx := MockTrace()
+			ctx := mock.Init(context.Background())
 			// 根据请求参数请求url，使用mock的假数据看数据的计算结果
 			res, err := handlePromqlQuery(ctx, testCase.req, nil, "")
 			if testCase.err != nil {

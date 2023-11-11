@@ -145,7 +145,7 @@ func TestQueryToMetric(t *testing.T) {
 		nil, nil,
 	)
 	router, _ := influxdb.GetSpaceTsDbRouter()
-	ret := router.Print(ctx, "query_ts_test")
+	ret := router.Print(ctx, "query_ts_test", false)
 	fmt.Println(ret)
 
 	var testCases = map[string]struct {

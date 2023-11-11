@@ -17,9 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"go.opentelemetry.io/otel/trace"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -33,6 +30,7 @@ import (
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
+	"github.com/stretchr/testify/assert"
 )
 
 // makeDimensions
@@ -114,20 +112,6 @@ func generateData(metricName string, startValue int, dimensionsPrefix string, di
 		return ""
 	}
 	return string(result)
-}
-
-var (
-	genTraceID int
-	genSpanID  int
-)
-
-func MockTrace() context.Context {
-	genTraceID++
-	genSpanID++
-	tid, _ := trace.TraceIDFromHex(fmt.Sprintf("%032x", genTraceID))
-	sid, _ := trace.SpanIDFromHex(fmt.Sprintf("%016x", genTraceID))
-	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid})
-	return trace.ContextWithRemoteSpanContext(context.Background(), sc)
 }
 
 func MockTsDB(t *testing.T) {
@@ -275,7 +259,7 @@ func TestPromQueryBasic(t *testing.T) {
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			ctx := MockTrace()
+			ctx := mock.Init(context.Background())
 			query := &structured.QueryTs{}
 			err = json.Unmarshal([]byte(testCase.data), &query)
 			assert.Nil(t, err)

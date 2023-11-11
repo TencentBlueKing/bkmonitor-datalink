@@ -1360,7 +1360,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promq to struct with topk": {
 			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `topk(1, bkmonitor:metric)`,
+				PromQL: `topk($1, bkmonitor:metric)`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{

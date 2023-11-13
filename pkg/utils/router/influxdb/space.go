@@ -11,6 +11,7 @@ package influxdb
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -78,12 +79,26 @@ func (s *Space) Length() int {
 
 // Marshal 由于 Space 是无序字典，无法保证每一次的序列化的内容是稳定的，需要在序列化过程中，将其转换为有序的切片对象
 func (s *Space) Marshal(b []byte) (o []byte, err error) {
-	return s.MarshalMsg(b)
+	ss := StableSpace{}
+	for _, table := range *s {
+		ss = append(ss, table)
+	}
+	// 排序保证结构稳定
+	sort.Sort(ss)
+	return (&ss).MarshalMsg(b)
 }
 
 // Unmarshal 由于 Space 是无序字典，内部存的是切片对象 StableSpace，反序列化过程需要做对象转换
 func (s *Space) Unmarshal(bts []byte) (o []byte, err error) {
-	return s.UnmarshalMsg(bts)
+	ss := StableSpace{}
+	o, err = (&ss).UnmarshalMsg(bts)
+	if err != nil {
+		return
+	}
+	for _, table := range ss {
+		(*s)[table.TableId] = table
+	}
+	return
 }
 
 func (s *Space) Fill(key string) {

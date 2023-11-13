@@ -18,7 +18,6 @@ import (
 
 	mapset "github.com/deckarep/golang-set"
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -31,7 +30,7 @@ import (
 
 //go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup.go
 
-// TimeSeriesGroup: time series group model
+// TimeSeriesGroup : time series group model
 // gen:qs
 type TimeSeriesGroup struct {
 	CustomGroupBase
@@ -39,23 +38,9 @@ type TimeSeriesGroup struct {
 	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
 }
 
-// TableName: 用于设置表的别名
+// TableName : 用于设置表的别名
 func (TimeSeriesGroup) TableName() string {
 	return "metadata_timeseriesgroup"
-}
-
-const (
-	metricKeyPrefixPath             = "metric_dimension.metric_key_prefix"
-	metricDimensionKeyPrefixPath    = "metric_dimension.metric_dimension_key_prefix"
-	maxMetricsFetchStepPath         = "metric_dimension.max_metrics_fetch_step"
-	timeSeriesMetricExpiredDaysPath = "metric_dimension.time_series_metric_expired_days"
-)
-
-func init() {
-	viper.SetDefault(metricKeyPrefixPath, "bkmonitor:metrics_")
-	viper.SetDefault(metricDimensionKeyPrefixPath, "bkmonitor:metric_dimensions_")
-	viper.SetDefault(maxMetricsFetchStepPath, 500)
-	viper.SetDefault(timeSeriesMetricExpiredDaysPath, 30)
 }
 
 // UpdateMetricsFromRedis: update ts metrics from redis record
@@ -123,16 +108,17 @@ func (ts *TimeSeriesGroup) UpdateMetricsFromRedis() error {
 // GetRedisData get data from redis
 func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 	// 获取要处理的指标和维度的标识
-	metricKey := fmt.Sprintf("%s%d", viper.GetString(metricKeyPrefixPath), ts.BkDataID)
-	metricDimensionsKey := fmt.Sprintf("%s%d", viper.GetString(metricDimensionKeyPrefixPath), ts.BkDataID)
-	fetchStep := viper.GetInt(maxMetricsFetchStepPath)
+	metricKey := fmt.Sprintf("%s%d", config.MetadataMetricDimensionMetricKeyPrefix, ts.BkDataID)
+	metricDimensionsKey := fmt.Sprintf("%s%d", config.MetadataMetricDimensionKeyPrefix, ts.BkDataID)
+	fetchStep := config.MetadataMetricDimensionMaxMetricFetchStep
 	// 转换时间
 	nowTime := time.Now()
 	nowTimeStampStr := fmt.Sprintf("%d", nowTime.Unix())
 	// NOTE: 使用ADD，参数为负值
-	validBeginTimeStamp := nowTime.Add(-viper.GetDuration(timeSeriesMetricExpiredDaysPath) * time.Hour * 24).Unix()
+	validBeginTimeStamp := nowTime.Add(
+		-time.Duration(config.MetadataMetricDimensionTimeSeriesMetricExpiredDays) * time.Hour * 24,
+	).Unix()
 	validBeginTimeStampStr := fmt.Sprintf("%d", validBeginTimeStamp)
-
 	ctx := context.Background()
 	redisClient, err := redisStore.GetInstance(ctx)
 	// 根据过滤参数，获取总量
@@ -158,7 +144,6 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 				metricKey, validBeginTimeStampStr, nowTimeStampStr)
 			continue
 		}
-
 		// 1. 获取当前这批 metrics 的 dimensions 信息
 		var fields []string
 		for _, m := range metricsWithScores {
@@ -170,7 +155,6 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 			logger.Errorf("failed to get dimensions from metrics, err: %v", err)
 			continue
 		}
-
 		// 2. 尝试更新 metrics 和对应 dimensions(tags)
 		for j, m := range metricsWithScores {
 			// NOTE: metrics 和 dimensions 列表一一对应
@@ -178,7 +162,6 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 			if dimension == nil {
 				continue
 			}
-
 			// 解析
 			var dimensionsMap map[string]interface{}
 			if err := json.Unmarshal([]byte(fmt.Sprint(dimension)), &dimensionsMap); err != nil {
@@ -190,7 +173,6 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 				logger.Error("key: dimensions not exist")
 				continue
 			}
-
 			// field name 转换为string
 			memStr := fmt.Sprintf("%v", m.Member)
 			metricInfo = append(

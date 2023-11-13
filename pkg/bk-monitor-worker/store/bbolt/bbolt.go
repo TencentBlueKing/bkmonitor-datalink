@@ -41,7 +41,7 @@ func init() {
 	viper.SetDefault(BboltDefaultBucketNamePath, "spaceBucket")
 }
 
-// Client bbolt client struct
+// Instance Client bbolt client struct
 type Instance struct {
 	Path       string
 	DB         *bolt.DB

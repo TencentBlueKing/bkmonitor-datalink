@@ -13,12 +13,9 @@ import (
 	"time"
 )
 
-// 默认队列名
 const (
-	// 默认前缀
-	DefaultQueuePrefix = "bmw"
-	// 默认队列名
-	DefaultQueueName = "bmw:default"
+	// DefaultQueueName 默认队列名
+	DefaultQueueName = "default"
 )
 
 // DefaultQueue is the redis key for the default queue.
@@ -26,36 +23,39 @@ var DefaultQueue = PendingKey(DefaultQueueName)
 
 // key 标识
 const (
-	AllServers    = "bmw:servers"
-	AllWorkers    = "bmw:workers"
+	// AllServers server key
+	AllServers = "bmw:servers"
+	// AllWorkers worker key
+	AllWorkers = "bmw:workers"
+	// AllSchedulers scheduler key
 	AllSchedulers = "bmw:schedulers"
-	AllQueues     = "bmw:queues"
-	CancelChannel = "bmw:cancel"
+	// AllQueues queues key
+	AllQueues = "bmw:queues"
 )
 
 const (
-	// 默认最大重试次数
+	// DefaultMaxRetry 默认最大重试次数
 	DefaultMaxRetry = 10
-	// 默认超时时间
+	// DefaultTimeout 默认超时时间
 	DefaultTimeout = 30 * time.Minute
-	// 默认等待时间
+	// DefaultShutdownTimeout 默认等待时间
 	DefaultShutdownTimeout = 8 * time.Second
-	// 默认健康检查间隔
+	// DefaultHealthCheckInterval 默认健康检查间隔
 	DefaultHealthCheckInterval = 15 * time.Second
-	// 默认延迟任务检测间隔
+	// DefaultDelayedTaskCheckInterval 默认延迟任务检测间隔
 	DefaultDelayedTaskCheckInterval = 5 * time.Second
 )
 
 var (
-	// 无超时
+	// NotTimeout 无超时
 	NotTimeout time.Duration = 0
-	// 无截止时间
+	// NotDeadline 无截止时间
 	NotDeadline time.Time = time.Unix(0, 0)
 )
 
 const (
+	// Success 成功
 	Success = 0
-	// 参数异常
-	ParamsError  = 400
-	UnknownError = 2001400
+	// ParamsError 参数异常错误
+	ParamsError = 400
 )

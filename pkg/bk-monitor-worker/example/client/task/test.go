@@ -27,7 +27,7 @@ type UserInfo struct {
 	UserID int
 }
 
-// NewEmailDeliveryTask
+// NewAddTask NewEmailDeliveryTask
 func NewAddTask(userID int) (*task.Task, error) {
 	payload, err := json.Marshal(UserInfo{UserID: userID})
 	if err != nil {
@@ -37,7 +37,7 @@ func NewAddTask(userID int) (*task.Task, error) {
 	return task.NewTask(taskKind, payload), nil
 }
 
-// HandleTask
+// HandleTask mock handle task
 func HandleTask(ctx context.Context, t *task.Task) error {
 	var p UserInfo
 	if err := json.Unmarshal(t.Payload, &p); err != nil {

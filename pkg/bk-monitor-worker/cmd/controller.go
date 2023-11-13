@@ -10,31 +10,22 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/logging"
-	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
+	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	serviceControllerListenPath = "service.controller.listen"
-	serviceControllerPortPath   = "service.controller.port"
-)
-
 func init() {
-	viper.SetDefault(serviceControllerListenPath, "127.0.0.1")
-	viper.SetDefault(serviceControllerPortPath, 10213)
-	// add subcommand
 	rootCmd.AddCommand(controllerCmd)
 }
 
@@ -45,53 +36,33 @@ var controllerCmd = &cobra.Command{
 	Run:   startController,
 }
 
-// start 启动服务
 func startController(cmd *cobra.Command, args []string) {
-	fmt.Println("start controller service...")
-	// 初始化配置
+	defer runtimex.HandleCrash()
+
 	config.InitConfig()
+	log.InitLogger()
 
-	// 初始化日志
-	logging.InitLogger()
+	r := service.NewHTTPService(true)
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// 启动 controller
-	err := service.NewController()
-	if err != nil {
-		logger.Fatalf("start controller error, %v", err)
-	}
-
-	// start http service, not include api router
-	r := service.NewHTTPService(false)
-	host := viper.GetString(serviceControllerListenPath)
-	port := viper.GetInt(serviceControllerPortPath)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", host, port),
+		Addr:    fmt.Sprintf("%s:%d", config.HttpListenPath, config.HttpListenPort),
 		Handler: r,
 	}
-
-	logger.Infof("controller http service with host: %s and port: %d", host, port)
+	logger.Infof("Starting HTTP server at %s:%d", config.HttpListenPath, config.HttpListenPort)
 
 	go func() {
-		// 服务连接
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
 
-	// 信号处理
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			defer cancel()
-			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("shutdown controller service error : %s", err)
-			}
-			logger.Warn("controller service exit by syscall SIGQUIT, SIGTERM or SIGINT")
-			return
+			logger.Info("Bye")
+			os.Exit(0)
 		}
 	}
 }

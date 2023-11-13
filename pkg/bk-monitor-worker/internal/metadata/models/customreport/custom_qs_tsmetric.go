@@ -16,7 +16,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-// SetTagList set tag list value
+// CustomSetTagList set tag list value
 func (u TimeSeriesMetricUpdater) CustomSetTagList(tagList []string) TimeSeriesMetricUpdater {
 	jsonTagList, _ := json.Marshal(tagList)
 	u.fields["tag_list"] = jsonTagList

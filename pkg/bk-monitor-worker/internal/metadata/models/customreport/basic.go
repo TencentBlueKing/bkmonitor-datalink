@@ -9,9 +9,7 @@
 
 package customreport
 
-import (
-	"time"
-)
+import "time"
 
 // CustomGroupBase : custom group base info for time series、event
 type CustomGroupBase struct {

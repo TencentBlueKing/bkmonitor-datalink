@@ -10,8 +10,10 @@
 package http
 
 const (
-	// 异步任务
+	// AsyncTask 异步任务
 	AsyncTask = "async"
-	// 周期任务
+	// PeriodicTask 周期任务
 	PeriodicTask = "periodic"
+	// DaemonTask 常驻任务
+	DaemonTask = "daemon"
 )

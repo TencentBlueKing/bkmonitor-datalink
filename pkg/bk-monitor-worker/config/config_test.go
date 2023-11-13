@@ -20,7 +20,7 @@ import (
 
 // TestConfigParamsFromEnv
 func TestConfigParamsFromEnv(t *testing.T) {
-	defaultConfigPath = "../bmw.yaml"
+	FilePath = "../bmw.yaml"
 	InitConfig()
 
 	expectedValue := "3"

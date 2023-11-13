@@ -21,6 +21,7 @@ import (
 	esapi6 "github.com/elastic/go-elasticsearch/v6/esapi"
 	es7 "github.com/elastic/go-elasticsearch/v7"
 	esapi7 "github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/pkg/errors"
 )
 
 type Elasticsearch struct {
@@ -77,22 +78,18 @@ func (e Elasticsearch) Ping(ctx context.Context) (*Response, error) {
 	case "5":
 		client, ok := e.client.(*es5.Client)
 		if !ok {
-			return nil, ClientVersionErr
+			return nil, errors.Errorf("es client version error")
 		}
 		response, err := client.Ping(client.Ping.WithContext(ctx))
 		if err != nil {
 			return nil, err
 		}
-		resp := &Response{
-			StatusCode: response.StatusCode,
-			Header:     response.Header,
-			Body:       response.Body,
-		}
-		return resp, err
+		resp := e.ParseResponse(response)
+		return resp, nil
 	case "6":
 		client, ok := e.client.(*es6.Client)
 		if !ok {
-			return nil, ClientVersionErr
+			return nil, errors.Errorf("es client version error")
 		}
 		response, err := client.Ping(client.Ping.WithContext(ctx))
 		if err != nil {
@@ -107,7 +104,7 @@ func (e Elasticsearch) Ping(ctx context.Context) (*Response, error) {
 	default:
 		client, ok := e.client.(*es7.Client)
 		if !ok {
-			return nil, ClientVersionErr
+			return nil, errors.Errorf("es client version error")
 		}
 		response, err := client.Ping(client.Ping.WithContext(ctx))
 		if err != nil {
@@ -123,100 +120,58 @@ func (e Elasticsearch) Ping(ctx context.Context) (*Response, error) {
 }
 
 // ParseResponse 对ES查询返回值进行封装
-func (e Elasticsearch) ParseResponse(resp interface{}) (*Response, error) {
+func (e Elasticsearch) ParseResponse(resp interface{}) *Response {
 	switch e.Version {
 	case "5":
-		response, ok := resp.(*esapi5.Response)
-		if !ok {
-			return nil, ResponseVersionErr
-		}
-		wrapResp := &Response{
+		response, _ := resp.(*esapi5.Response)
+		return &Response{
 			StatusCode: response.StatusCode,
 			Header:     response.Header,
 			Body:       response.Body,
 		}
-		err := wrapResp.DealStatusCodeError()
-		if err != nil {
-			return nil, err
-		}
-		return wrapResp, nil
 	case "6":
-		response, ok := resp.(*esapi6.Response)
-		if !ok {
-			return nil, ResponseVersionErr
-		}
-		wrapResp := &Response{
+		response, _ := resp.(*esapi6.Response)
+		return &Response{
 			StatusCode: response.StatusCode,
 			Header:     response.Header,
 			Body:       response.Body,
 		}
-		err := wrapResp.DealStatusCodeError()
-		if err != nil {
-			return nil, err
-		}
-		return wrapResp, nil
 	default:
-		response, ok := resp.(*esapi7.Response)
-		if !ok {
-			return nil, ResponseVersionErr
-		}
-		wrapResp := &Response{
+		response, _ := resp.(*esapi7.Response)
+		return &Response{
 			StatusCode: response.StatusCode,
 			Header:     response.Header,
 			Body:       response.Body,
 		}
-		err := wrapResp.DealStatusCodeError()
-		if err != nil {
-			return nil, err
-		}
-		return wrapResp, nil
 	}
 }
 
 // GetIndices 获取索引信息
-func (e Elasticsearch) GetIndices(indices []string) (*Response, error) {
+func (e Elasticsearch) GetIndices(index string) (*Response, error) {
 	switch e.Version {
 	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Get(indices)
+		client, _ := e.client.(*es5.Client)
+		response, err := client.Indices.Get([]string{index})
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Get(indices)
+		client, _ := e.client.(*es6.Client)
+		response, err := client.Indices.Get([]string{index})
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Get(indices)
+		client, _ := e.client.(*es7.Client)
+		response, err := client.Indices.Get([]string{index})
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	}
 }
@@ -225,10 +180,7 @@ func (e Elasticsearch) GetIndices(indices []string) (*Response, error) {
 func (e Elasticsearch) SearchWithBody(ctx context.Context, index string, body io.Reader) (*Response, error) {
 	switch e.Version {
 	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
+		client, _ := e.client.(*es5.Client)
 		response, err := client.Search(
 			client.Search.WithContext(ctx),
 			client.Search.WithIndex(index),
@@ -237,16 +189,10 @@ func (e Elasticsearch) SearchWithBody(ctx context.Context, index string, body io
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
+		client, _ := e.client.(*es6.Client)
 		response, err := client.Search(
 			client.Search.WithContext(ctx),
 			client.Search.WithIndex(index),
@@ -255,16 +201,10 @@ func (e Elasticsearch) SearchWithBody(ctx context.Context, index string, body io
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
+		client, _ := e.client.(*es7.Client)
 		response, err := client.Search(
 			client.Search.WithContext(ctx),
 			client.Search.WithIndex(index),
@@ -273,636 +213,7 @@ func (e Elasticsearch) SearchWithBody(ctx context.Context, index string, body io
 		if err != nil {
 			return nil, err
 		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// CreateIndex 创建索引
-func (e Elasticsearch) CreateIndex(ctx context.Context, index string, body io.Reader) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Create(
-			index,
-			client.Indices.Create.WithBody(body),
-			client.Indices.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Create(
-			index,
-			client.Indices.Create.WithBody(body),
-			client.Indices.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Create(
-			index,
-			client.Indices.Create.WithBody(body),
-			client.Indices.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// IndexStat 获取所以状态信息
-func (e Elasticsearch) IndexStat(ctx context.Context, index string, metrics []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Stats(
-			client.Indices.Stats.WithIndex(index),
-			client.Indices.Stats.WithMetric(metrics...),
-			client.Indices.Stats.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Stats(
-			client.Indices.Stats.WithIndex(index),
-			client.Indices.Stats.WithMetric(metrics...),
-			client.Indices.Stats.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Stats(
-			client.Indices.Stats.WithIndex(index),
-			client.Indices.Stats.WithMetric(metrics...),
-			client.Indices.Stats.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// GetAlias 获取别名信息
-func (e Elasticsearch) GetAlias(ctx context.Context, index string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetAlias(
-			client.Indices.GetAlias.WithIndex(index),
-			client.Indices.GetAlias.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetAlias(
-			client.Indices.GetAlias.WithIndex(index),
-			client.Indices.GetAlias.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetAlias(
-			client.Indices.GetAlias.WithIndex(index),
-			client.Indices.GetAlias.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// UpdateAlias 更新别名
-func (e Elasticsearch) UpdateAlias(ctx context.Context, body io.Reader) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.UpdateAliases(body, client.Indices.UpdateAliases.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.UpdateAliases(body, client.Indices.UpdateAliases.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.UpdateAliases(body, client.Indices.UpdateAliases.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// DeleteAlias 删除别名
-func (e Elasticsearch) DeleteAlias(ctx context.Context, indices, alias []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.DeleteAlias(indices, alias, client.Indices.DeleteAlias.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.DeleteAlias(indices, alias, client.Indices.DeleteAlias.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.DeleteAlias(indices, alias, client.Indices.DeleteAlias.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// DeleteIndex 删除索引
-func (e Elasticsearch) DeleteIndex(ctx context.Context, indices []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// CountByIndex 统计索引中的数据
-func (e Elasticsearch) CountByIndex(ctx context.Context, indices []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Count(client.Count.WithIndex(indices...), client.Count.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Count(client.Count.WithIndex(indices...), client.Count.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Count(client.Count.WithIndex(indices...), client.Count.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// GetIndexMapping 获取索引的mapping
-func (e Elasticsearch) GetIndexMapping(ctx context.Context, indices []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetMapping(client.Indices.GetMapping.WithIndex(indices...), client.Indices.GetMapping.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetMapping(client.Indices.GetMapping.WithIndex(indices...), client.Indices.GetMapping.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.GetMapping(client.Indices.GetMapping.WithIndex(indices...), client.Indices.GetMapping.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// PutSettings 修改索引的mapping
-func (e Elasticsearch) PutSettings(ctx context.Context, body io.Reader, indices []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.PutSettings(body, client.Indices.PutSettings.WithIndex(indices...), client.Indices.PutSettings.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.PutSettings(body, client.Indices.PutSettings.WithIndex(indices...), client.Indices.PutSettings.WithContext(ctx))
-
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Indices.PutSettings(body, client.Indices.PutSettings.WithIndex(indices...), client.Indices.PutSettings.WithContext(ctx))
-
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// GetSnapshot 获取快照信息
-func (e Elasticsearch) GetSnapshot(ctx context.Context, repository string, snapshot []string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Get(repository, snapshot, client.Snapshot.Get.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Get(repository, snapshot, client.Snapshot.Get.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Get(repository, snapshot, client.Snapshot.Get.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// CreateSnapshot 创建快照
-func (e Elasticsearch) CreateSnapshot(ctx context.Context, repository string, snapshot string, body io.Reader) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Create(
-			repository,
-			snapshot,
-			client.Snapshot.Create.WithBody(body),
-			client.Snapshot.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Create(
-			repository,
-			snapshot,
-			client.Snapshot.Create.WithBody(body),
-			client.Snapshot.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Create(
-			repository,
-			snapshot,
-			client.Snapshot.Create.WithBody(body),
-			client.Snapshot.Create.WithContext(ctx),
-		)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	}
-}
-
-// DeleteSnapshot 删除快照
-func (e Elasticsearch) DeleteSnapshot(ctx context.Context, repository string, snapshot string) (*Response, error) {
-	switch e.Version {
-	case "5":
-		client, ok := e.client.(*es5.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Delete(repository, snapshot, client.Snapshot.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	case "6":
-		client, ok := e.client.(*es6.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Delete(repository, snapshot, client.Snapshot.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
-	default:
-		client, ok := e.client.(*es7.Client)
-		if !ok {
-			return nil, ClientVersionErr
-		}
-		response, err := client.Snapshot.Delete(repository, snapshot, client.Snapshot.Delete.WithContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		resp, err := e.ParseResponse(response)
-		if err != nil {
-			return nil, err
-		}
+		resp := e.ParseResponse(response)
 		return resp, nil
 	}
 }

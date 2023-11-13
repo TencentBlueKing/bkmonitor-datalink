@@ -10,10 +10,6 @@
 package timex
 
 import (
-	"fmt"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -52,55 +48,4 @@ func StringToTime(timeStr string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return _time, nil
-}
-
-// ParsePyDateFormat 解析python日期格式化字符串
-func ParsePyDateFormat(dataFormat string) string {
-	dataFormat = strings.ReplaceAll(dataFormat, "%Y", "2006")
-	dataFormat = strings.ReplaceAll(dataFormat, "%y", "06")
-	dataFormat = strings.ReplaceAll(dataFormat, "%m", "01")
-	dataFormat = strings.ReplaceAll(dataFormat, "%d", "02")
-	return dataFormat
-}
-
-func TimeStrToTime(timeStr, format string, timeZone int8) *time.Time {
-	utcTime, err := time.Parse(format, timeStr)
-	if err != nil {
-		return nil
-	}
-	realTime := utcTime.Add(time.Duration(timeZone) * time.Hour)
-	return &realTime
-}
-
-// ParseDuration 扩展time.ParseDuration支持单位天d和周w
-func ParseDuration(s string) (time.Duration, error) {
-	// 使用正则表达式提取数字和单位
-	re := regexp.MustCompile(`(\d+)([a-zA-Z]+)`)
-	matchesList := re.FindAllStringSubmatch(s, -1)
-	var valueSum time.Duration
-	for _, matches := range matchesList {
-		if len(matches) != 3 {
-			return 0, fmt.Errorf("invalid input format")
-		}
-		// 提取数字和单位
-		value, err := strconv.Atoi(matches[1])
-		if err != nil {
-			return 0, err
-		}
-		unit := matches[2]
-		// 将非标准单位转换为标准单位
-		switch unit {
-		case "d":
-			valueSum += time.Duration(value) * 24 * time.Hour
-		case "w":
-			valueSum += time.Duration(value) * 7 * 24 * time.Hour
-		default:
-			value, err := time.ParseDuration(matches[0])
-			if err != nil {
-				return 0, err
-			}
-			valueSum += value
-		}
-	}
-	return valueSum, nil
 }

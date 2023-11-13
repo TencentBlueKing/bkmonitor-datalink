@@ -32,10 +32,7 @@ func NewWatcher(ctx context.Context, wg *sync.WaitGroup) *Watcher {
 	if wg == nil {
 		wg = new(sync.WaitGroup)
 	}
-	instance, err := storeRedis.GetInstance(ctx)
-	if err != nil {
-		logger.Errorf("get redis instance error, %v", err)
-	}
+	instance := storeRedis.GetInstance(ctx)
 	watcher = &Watcher{
 		instance: instance,
 		wg:       wg,
@@ -43,23 +40,20 @@ func NewWatcher(ctx context.Context, wg *sync.WaitGroup) *Watcher {
 	return watcher
 }
 
-// Watch sub a channel
-func (s *Watcher) Watch(ctx context.Context) error {
-	ch := s.instance.Subscribe(storeRedis.GetChannelName())
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				logger.Warnf("subscription service exist")
-				return
-			// get payload from redis
-			case msg := <-ch:
-				logger.Infof("subscribe msg: %s", msg.String())
-				// refresh payload to mem
-			}
+// Watch sub a channel, watch periodic task
+func (s *Watcher) Watch(ctx context.Context, receiveChan chan<- string) {
+	ch := s.instance.Subscribe(storeRedis.StoragePeriodicTaskChannelKey)
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warnf("subscription service exist")
+			return
+		// get payload from redis
+		case msg := <-ch:
+			// TODO Process message and returned to the implements
+			receiveChan <- msg.Payload
+			logger.Infof("subscribe msg: %s", msg.String())
+			// refresh payload to mem
 		}
-	}()
-	return nil
+	}
 }

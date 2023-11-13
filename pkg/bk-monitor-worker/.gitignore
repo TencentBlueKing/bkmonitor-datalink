@@ -12,3 +12,7 @@ dist/
 
 # yaml config
 dev_config.yaml
+
+local/
+.env
+bmw.yaml

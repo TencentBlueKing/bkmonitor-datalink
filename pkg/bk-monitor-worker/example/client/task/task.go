@@ -19,14 +19,18 @@ import (
 
 var once sync.Once
 
+// Add task enqueue test
 func Add(i int) {
 	once.Do(func() {
 		// init the config path
-		config.ConfigPath = "../../dev_config.yaml"
+		config.FilePath = "../../dev_config.yaml"
 		config.InitConfig()
 	})
 
-	client, _ := worker.NewClient()
+	client, err := worker.GetClient()
+	if err != nil {
+		log.Fatalf("failed to create client: %s", err)
+	}
 	defer client.Close()
 
 	task, err := NewAddTask(i)

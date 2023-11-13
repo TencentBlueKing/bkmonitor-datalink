@@ -10,6 +10,7 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,12 +25,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	commonUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// Scheduler are safe for concurrent use by multiple goroutines.
 // A Scheduler kicks off tasks at regular intervals based on the user defined schedule.
-//
-// Schedulers are safe for concurrent use by multiple goroutines.
 type Scheduler struct {
 	id string
 
@@ -45,6 +46,8 @@ type Scheduler struct {
 	mu sync.Mutex
 	// idmap maps Scheduler's entry ID to cron.EntryID
 	idmap map[string]cron.EntryID
+
+	ctx context.Context
 }
 
 // SchedulerOpts specifies scheduler options.
@@ -56,45 +59,30 @@ type SchedulerOpts struct {
 }
 
 // NewScheduler returns a new Scheduler
-func NewScheduler(opts *SchedulerOpts) (*Scheduler, error) {
-	// make a client
-	client, err := NewClient()
-	if err != nil {
-		return nil, err
-	}
-	// make a rdb
-	rdb, err := redis.NewRDB()
-	if err != nil {
-		return nil, err
-	}
-	if opts == nil {
-		opts = &SchedulerOpts{}
-	}
+func NewScheduler(ctx context.Context, opts SchedulerOpts) (*Scheduler, error) {
 
 	// 如果不指定，则使用 utc 时间
 	loc := opts.Location
 	if loc == nil {
 		loc = time.UTC
 	}
+	broker := redis.GetRDB()
+	client, err := GetClient()
+	if err != nil {
+		return nil, err
+	}
 
 	return &Scheduler{
-		id:         generateSchedulerID(),
+		id:         commonUtils.GenerateProcessorId(),
 		client:     client,
-		rdb:        rdb,
+		rdb:        broker,
 		cron:       cron.New(cron.WithLocation(loc)),
 		location:   loc,
 		done:       make(chan struct{}),
 		errHandler: opts.EnqueueErrorHandler,
 		idmap:      make(map[string]cron.EntryID),
+		ctx:        ctx,
 	}, nil
-}
-
-func generateSchedulerID() string {
-	host, err := os.Hostname()
-	if err != nil {
-		host = "unknown-host"
-	}
-	return fmt.Sprintf("%s:%d:%v", host, os.Getpid(), uuid.New())
 }
 
 // enqueueJob encapsulates the job of enqueuing a task and recording the event.
@@ -180,36 +168,34 @@ func (s *Scheduler) waitForSignals() {
 // Run starts the scheduler until an os signal to exit the program is received.
 // It returns an error if scheduler is already running or has been shutdown.
 func (s *Scheduler) Run() error {
-	if err := s.Start(); err != nil {
-		return err
-	}
-	s.waitForSignals()
-	s.Shutdown()
-	return nil
-}
 
-// Start starts the scheduler.
-func (s *Scheduler) Start() error {
-	logger.Info("Scheduler starting")
-	logger.Infof("Scheduler timezone is set to %v", s.location)
 	s.cron.Start()
-	s.wg.Add(1)
-	go s.runHeartbeater()
-	return nil
+
+	ticker := time.NewTicker(5 * time.Second)
+	// send heartbeat
+	for {
+		select {
+		case <-ticker.C:
+			s.beat()
+		case <-s.ctx.Done():
+			s.Shutdown()
+		}
+	}
 }
 
 // Shutdown stops and shuts down the scheduler.
 func (s *Scheduler) Shutdown() {
 	logger.Info("Scheduler shutting down")
-	close(s.done) // signal heartbeater to stop
 	ctx := s.cron.Stop()
 	<-ctx.Done()
-	s.wg.Wait()
 
 	s.clearHistory()
-	s.client.Close()
-	s.rdb.Close()
-	logger.Info("Scheduler stopped")
+	if err := s.client.Close(); err != nil {
+		logger.Warnf("Failed to close client, error: %s", err)
+	}
+	if err := s.rdb.Close(); err != nil {
+		logger.Warnf("Failed to close RDB, error: %s", err)
+	}
 }
 
 func (s *Scheduler) runHeartbeater() {

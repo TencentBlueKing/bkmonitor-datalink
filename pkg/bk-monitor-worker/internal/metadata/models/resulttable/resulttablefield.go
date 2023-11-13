@@ -34,7 +34,6 @@ type ResultTableField struct {
 	LastModifyUser string    `json:"last_modify_user" gorm:"size:32"`
 	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time;default:null"`
 	AliasName      string    `json:"alias_name" gorm:"size:64"`
-	IsDisabled     bool      `json:"is_disabled" gorm:"column:is_disabled"`
 }
 
 // TableName table alias name

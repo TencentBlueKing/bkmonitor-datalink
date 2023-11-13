@@ -14,6 +14,7 @@ import (
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -22,19 +23,14 @@ import (
 )
 
 const (
-	AESKeyPath = "aes.key"
-	AESPrefix  = "aes_str:::"
+	AESPrefix = "aes_str:::"
 )
-
-func init() {
-	viper.SetDefault(AESKeyPath, "")
-}
 
 // AESDecrypt AES256解密
 func AESDecrypt(encryptedPwd string) string {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Warnf("decrypt password [%v] failed,return '', %v", encryptedPwd, r)
+			logger.Errorf("decrypt password failed")
 		}
 	}()
 	// 非加密串返回原密码
@@ -52,7 +48,7 @@ func AESDecrypt(encryptedPwd string) string {
 	}
 	// 获取iv
 	iv := base64Decoded[:aes.BlockSize]
-	key := sha256.Sum256([]byte(viper.GetString(AESKeyPath)))
+	key := sha256.Sum256([]byte(viper.GetString(config.AesKey)))
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Errorf("new cipher error, %s", err)

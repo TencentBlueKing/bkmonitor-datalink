@@ -11,88 +11,62 @@ package cmd
 
 import (
 	"context"
-	"fmt"
-	"net/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	workerLog "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/spf13/cobra"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/logging"
-	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
-const (
-	serviceTaskListenPath = "service.task.listen"
-	serviceTaskPortPath   = "service.task.port"
 )
 
 func init() {
-	viper.SetDefault(serviceTaskListenPath, "127.0.0.1")
-	viper.SetDefault(serviceTaskPortPath, 10211)
-	// add subcommand
-	rootCmd.AddCommand(taskCmd)
+	rootCmd.AddCommand(taskModuleCmd)
 }
 
-var taskCmd = &cobra.Command{
+var taskModuleCmd = &cobra.Command{
 	Use:   "task",
 	Short: "bk monitor tasks",
 	Long:  "task module for blueking monitor worker",
-	Run:   startTask,
+	Run:   startTaskModule,
 }
 
-// start 启动服务
-func startTask(cmd *cobra.Command, args []string) {
-	fmt.Println("start task service...")
-	// 初始化配置
-	config.InitConfig()
+func startTaskModule(cmd *cobra.Command, args []string) {
+	defer runtimex.HandleCrash()
 
-	// 初始化日志
-	logging.InitLogger()
+	config.InitConfig()
+	workerLog.InitLogger()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 启动 watcher
-	if err := service.NewWatcherService(ctx); err != nil {
-		logger.Fatalf("start watcher error: %v", err)
+	// 1. 任务监听器
+	taskWatcher := periodic.NewWatchService(ctx)
+	go taskWatcher.StartWatch()
+
+	// 2. 周期任务调度器
+	periodicTaskScheduler, err := periodic.NewPeriodicTaskScheduler(ctx)
+	if err != nil {
+		log.Fatalf("failed to create period task scheduler: %s", err)
 	}
+	go periodicTaskScheduler.Run()
 
-	// 启动 periodic task scheduler
-	go func() {
-		if err := service.NewPeriodicTaskSchedulerService(); err != nil {
-			logger.Fatalf("start periodic task scheduler error: %v", err)
-		}
-	}()
+	// 3. 常驻任务调度器
+	daemonTaskScheduler := daemon.NewDaemonTaskScheduler(ctx)
+	go daemonTaskScheduler.Run()
 
-	// start http service, include api router
-	r := service.NewHTTPService(true)
-	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", viper.GetString(serviceTaskListenPath), viper.GetInt(serviceTaskPortPath)),
-		Handler: r,
-	}
-	go func() {
-		// 服务连接
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("listen addr error, %v", err)
-		}
-	}()
-
-	// 信号处理
+	logger.Infof("Task module started.")
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			defer cancel()
-			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("shutdown task service error : %s", err)
-			}
-			logger.Warn("task service exit by syscall SIGQUIT, SIGTERM or SIGINT")
-			return
+			cancel()
+			logger.Info("Bye")
+			os.Exit(0)
 		}
 	}
 }

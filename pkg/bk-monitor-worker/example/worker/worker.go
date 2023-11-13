@@ -12,15 +12,15 @@ package main
 import (
 	"fmt"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	task "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/example/client/task"
+	main2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/example/client/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
-	worker "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 )
 
 func main() {
-	config.ConfigPath = "../../dev_config.yaml"
-	config.InitConfig()
+	main2.FilePath = "../../dev_config.yaml"
+	main2.InitConfig()
 
 	w, _ := worker.NewWorker(
 		worker.WorkerConfig{Concurrency: 1},

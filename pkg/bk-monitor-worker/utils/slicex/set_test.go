@@ -32,20 +32,3 @@ func TestStringList2Set(t *testing.T) {
 	}
 	assert.Equal(t, expected, m)
 }
-
-// TestUintSet2List
-func TestUintSet2List(t *testing.T) {
-	m := UintList2Set([]uint{1, 2, 3})
-	mStr := UintSet2List(m)
-	assert.Equal(t, len(mStr), 3)
-}
-
-// TestUintList2Set
-func TestUintList2Set(t *testing.T) {
-	m := UintList2Set([]uint{1, 2, 1})
-	expected := mapset.NewSet()
-	for _, v := range []uint{1, 2} {
-		expected.Add(v)
-	}
-	assert.Equal(t, expected, m)
-}

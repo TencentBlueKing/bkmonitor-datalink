@@ -11,7 +11,7 @@ package models
 
 const (
 	// ResultTableLabelOther
-	ResultTableLabelOther = "others"
+	ResultTableLabelOther = "other"
 	// ResultTableFieldTagMetric 指标字段
 	ResultTableFieldTagMetric = "metric"
 	// ResultTableFieldTypeFloat float type
@@ -34,28 +34,5 @@ const (
 )
 
 const (
-	ESQueryMaxSize          = 10000
-	ESRemoveTypeVersion     = "7" // 从ES7开始移除_type
-	ESFieldTypeObject       = "object"
-	ESAliasExpiredDelayDays = 1 // ES别名延迟过期时间
-)
-
-// Influxdb Redis Keys
-const (
-	InfluxdbKeyPrefix             = "bkmonitorv3:influxdb" // 前缀
-	InfluxdbHostInfoKey           = "host_info"            // 集群关联的主机信息
-	InfluxdbClusterInfoKey        = "cluster_info"         // 存储的集群信息
-	InfluxdbProxyStorageRouterKey = "influxdb_proxy"       // 结果表使用的 proxy 集群和实际存储集群的关联关系
-	InfluxdbTagInfoKey            = "tag_info"             // 标签信息，主要是用于数据分片
-	QueryVmStorageRouterKey       = "query_vm_router"      // 查询 vm 存储的路由信息
-)
-
-// root consul path template
-const (
-	DataSourceConsulPathTemplate          = "%s/metadata/v1"                         // DataSource的consul根路径
-	InfluxdbClusterInfoConsulPathTemplate = "%s/metadata/influxdb_info/cluster_info" // InfluxdbClusterInfo的consul根路径
-	InfluxdbStorageConsulPathTemplate     = "%s/metadata/influxdb_info/router"       // InfluxdbStorage router的consul根路径
-	InfluxdbHostInfoConsulPathTemplate    = "%s/metadata/influxdb_info/host_info"    // InfluxdbHostInfo的consul根路径
-	InfluxdbTagInfoConsulPathTemplate     = "%s/metadata/influxdb_info/tag_info"     // InfluxdbTagInfo的consul根路径
-	InfluxdbInfoVersionConsulPathTemplate = "%s/metadata/influxdb_info/version/"     // InfluxdbInfoVersion的consul路径
+	ESQueryMaxSize = 10000
 )

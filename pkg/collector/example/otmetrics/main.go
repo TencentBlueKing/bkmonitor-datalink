@@ -80,6 +80,26 @@ func main() {
 	ctx, cancel := newOSSignalContext()
 	defer cancel()
 
+	meter := cont.Meter("mando.usage")
+
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		g1, _ := meter.AsyncInt64().Gauge("gauge_int")
+		g2, _ := meter.AsyncFloat64().Gauge("gauge_float")
+
+		for {
+			select {
+			case <-ticker.C:
+				g1.Observe(context.Background(), 1)
+				g2.Observe(context.Background(), float64(time.Now().Second()))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	<-ctx.Done()
 
 	if err := cont.Stop(context.Background()); err != nil {

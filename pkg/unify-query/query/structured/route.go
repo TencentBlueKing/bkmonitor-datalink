@@ -39,6 +39,12 @@ type Route struct {
 	db          string // 数据库, 如 system
 	measurement string // 数据表, 如 cpu_summary
 	metricName  string // 指标名, 如 usage
+	matchType   labels.MatchType
+}
+
+// MatchType 获取路由查询规则
+func (r *Route) MatchType() labels.MatchType {
+	return r.matchType
 }
 
 // DataSource

@@ -382,6 +382,7 @@ func HandleSpacePrint(c *gin.Context) {
 	ctx := c.Request.Context()
 	typeKey := c.Query("type_key")
 	refresh, _ := strconv.ParseBool(c.DefaultQuery("refresh", "false"))
+	content, _ := strconv.ParseBool(c.DefaultQuery("content", "false"))
 
 	router, err := influxdb.GetSpaceTsDbRouter()
 	if err != nil {
@@ -391,13 +392,13 @@ func HandleSpacePrint(c *gin.Context) {
 	res := ""
 	if refresh {
 		res += fmt.Sprintf("Refresh %s \n", typeKey)
-		err := router.LoadRouter(ctx, typeKey)
+		err = router.LoadRouter(ctx, typeKey)
 		if err != nil {
 			res += fmt.Sprintf("Error: %v\n", err)
 		}
 		res += fmt.Sprintln("--------------------------------")
 	}
-	res += router.Print(ctx, typeKey)
+	res += router.Print(ctx, typeKey, content)
 	c.String(200, res)
 }
 
@@ -407,6 +408,7 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 	hashKey := c.Query("hash_key")
 	toCached, _ := strconv.ParseBool(c.DefaultQuery("cached", "false"))
 	refresh, _ := strconv.ParseBool(c.DefaultQuery("refresh", "false"))
+	content, _ := strconv.ParseBool(c.DefaultQuery("content", "false"))
 
 	router, err := influxdb.GetSpaceTsDbRouter()
 	if err != nil {
@@ -430,7 +432,10 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 	}
 	val := router.Get(ctx, typeKey, hashKey, toCached)
 	if val != nil {
-		res += fmt.Sprintf("Value: %s\n", val.Print())
+		res += fmt.Sprintf("Count: %v\n", val.Length())
+		if content {
+			res += fmt.Sprintf("Value: %s\n", val.Print())
+		}
 	} else {
 		res += fmt.Sprintf("Value: nil")
 	}

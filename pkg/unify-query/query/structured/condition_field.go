@@ -131,7 +131,15 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 		}
 		resultValues = append(resultValues, nv)
 	}
-	c.Value = []string{strings.Join(resultValues, "|")}
+
+	newValue := strings.Join(resultValues, "|")
+
+	// 如果非正则查询需要补充头尾，达到完全匹配
+	if !isRegx {
+		newValue = fmt.Sprintf("^(%s)$", newValue)
+	}
+	c.Value = []string{newValue}
+
 	return c
 }
 

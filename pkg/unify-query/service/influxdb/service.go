@@ -283,7 +283,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 				if err != nil {
 					log.Errorf(ctx, err.Error())
 				}
-				log.Infof(ctx, "time ticker reload")
+				log.Infof(ctx, "ir reload all key time ticker reload")
 			case msg := <-ch:
 				ir.ReloadByKey(ctx, msg.Payload)
 				log.Infof(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
@@ -296,7 +296,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 
 // reloadInfluxDBRouter 重新加载 SpaceTsDbRouter
 func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
-	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix)
+	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize)
 	if err != nil {
 		return err
 	}

@@ -26,9 +26,10 @@ const (
 	PrefixConfigPath         = "influxdb.router.prefix"
 	RouterIntervalConfigPath = "influxdb.router.interval"
 
-	SpaceRouterPrefixConfigPath          = "influxdb.space_router_prefix"
-	SpaceRouterBboltPathConfigPath       = "influxdb.space_router_bbolt_path"
-	SpaceRouterBboltBucketNameConfigPath = "influxdb.space_router_bbolt_bucket_name"
+	SpaceRouterPrefixConfigPath              = "influxdb.space_router_prefix"
+	SpaceRouterBboltPathConfigPath           = "influxdb.space_router_bbolt_path"
+	SpaceRouterBboltBucketNameConfigPath     = "influxdb.space_router_bbolt_bucket_name"
+	SpaceRouterBboltWriteBatchSizeConfigPath = "influxdb.space_router_bbolt_write_batch_size"
 
 	GrpcMaxCallRecvMsgSizeConfigPath = "influxdb.grpc_max_call_recv_msg_size"
 	GrpcMaxCallSendMsgSizeConfigPath = "influxdb.grpc_max_call_send_msg_size"
@@ -47,9 +48,10 @@ var (
 	RouterPrefix   string
 	RouterInterval time.Duration
 
-	SpaceRouterPrefix          string
-	SpaceRouterBboltPath       string
-	SpaceRouterBboltBucketName string
+	SpaceRouterPrefix              string
+	SpaceRouterBboltPath           string
+	SpaceRouterBboltBucketName     string
+	SpaceRouterBboltWriteBatchSize int
 
 	GrpcMaxCallRecvMsgSize int
 	GrpcMaxCallSendMsgSize int

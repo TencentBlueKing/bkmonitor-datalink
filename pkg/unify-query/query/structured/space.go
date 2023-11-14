@@ -53,7 +53,7 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag bool) []*query.TsDBV2 {
-	rtDetail := s.router.GetResultTable(s.ctx, tableID)
+	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		return nil
 	}
@@ -146,7 +146,7 @@ func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerI
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
 	sepRtID := fmt.Sprintf("%s.%s", route[0], metricName)
-	rt := s.router.GetResultTable(s.ctx, sepRtID)
+	rt := s.router.GetResultTable(s.ctx, sepRtID, true)
 	return rt
 }
 
@@ -230,7 +230,10 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 			"spaceUid: %s and tableID: %s and fieldName: %s is not exists",
 			s.spaceUid, tableID, fieldName,
 		)
-		metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
+		// 当不存在前置异常，则需要在此处进行结论性记录
+		if metadata.GetStatus(s.ctx) == nil {
+			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
+		}
 		log.Warnf(s.ctx, msg)
 	}
 	return tsDBs, nil

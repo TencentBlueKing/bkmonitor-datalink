@@ -191,8 +191,10 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	metric.SpaceRequestCountInc(ctx, stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionRead)
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
 	if err != nil {
-		if err.Error() == "keyNotFound" && !ignoreKeyNotFound {
-			log.Infof(ctx, "Key(%s) not found in KVBolt", stoKey)
+		if err.Error() == "keyNotFound" {
+			if !ignoreKeyNotFound {
+				log.Infof(ctx, "Key(%s) not found in KVBolt", stoKey)
+			}
 		} else {
 			log.Warnf(ctx, "Fail to get value in KVBolt, key: %s, error: %v", stoKey, err)
 		}

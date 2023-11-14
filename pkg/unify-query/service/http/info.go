@@ -486,7 +486,7 @@ func HandleTsDBPrint(c *gin.Context) {
 			spaceRt, ok := space[rtId]
 			results = append(results, fmt.Sprintf("SpaceResultTable: %s, %v", rtId, spaceRt))
 			if ok {
-				rt := router.GetResultTable(ctx, string(tableId), true)
+				rt := router.GetResultTable(ctx, rtId, true)
 				results = append(results, fmt.Sprintf("ResultTableDetail: %s, %+v", rtId, rt))
 			}
 		}

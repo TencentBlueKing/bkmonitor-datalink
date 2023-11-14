@@ -286,7 +286,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 				log.Infof(ctx, "ir reload all key time ticker reload")
 			case msg := <-ch:
 				ir.ReloadByKey(ctx, msg.Payload)
-				log.Infof(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
+				log.Debugf(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
 			}
 		}
 	}()

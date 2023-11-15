@@ -97,6 +97,7 @@ func (s *Service) Reload(ctx context.Context) {
 	registerInfluxDBPrint(s.g)
 	registerSpacePrint(s.g)
 	registerSpaceKeyPrint(s.g)
+	registerTsDBPrint(s.g)
 	registerFeatureFlag(s.g)
 	registerSwagger(s.g)
 

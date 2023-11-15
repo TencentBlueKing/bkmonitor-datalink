@@ -11,11 +11,11 @@ package daemon
 
 import (
 	"context"
-	jsoniter "github.com/json-iterator/go"
 	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"

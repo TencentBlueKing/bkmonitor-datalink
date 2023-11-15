@@ -11,8 +11,9 @@ package runtimex
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"runtime"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // GetFuncName get function name

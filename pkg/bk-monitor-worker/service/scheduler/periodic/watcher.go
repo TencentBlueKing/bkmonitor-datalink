@@ -11,9 +11,9 @@ package periodic
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	redisWatcher "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/watcher/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

@@ -443,7 +443,7 @@ func newLayersCapDecreaseBloomClient(options BloomOptions) (BloomOperator, error
 	curCap := options.layersCapDecreaseBloomOptions.cap
 	for i := 0; i < options.layersCapDecreaseBloomOptions.layers; i++ {
 		sbf := boom.NewBloomFilter(uint(curCap), options.fpRate)
-		// newOverlapBloomClient or newBloomClient
+		// select overlapBloom as base filter
 		bloom := newOverlapBloomClient(sbf, uint(curCap), options.fpRate, options)
 		blooms = append(blooms, bloom)
 		curCap = curCap / options.layersCapDecreaseBloomOptions.divisor

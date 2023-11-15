@@ -9,7 +9,9 @@
 
 package watcher
 
-import "context"
+import (
+	"context"
+)
 
 type Watcher interface {
 	Watch(ctx context.Context, path string) (<-chan interface{}, error)

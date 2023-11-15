@@ -15,15 +15,16 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"strings"
 	"sync"
 	"time"
 
-	pb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/golang/protobuf/ptypes"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	pb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/proto"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 )
 
 // QueueKeyPrefix returns a prefix for all keys in the given queue.

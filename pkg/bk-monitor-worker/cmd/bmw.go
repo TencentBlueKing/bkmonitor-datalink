@@ -11,13 +11,13 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	// Import automaxprocs to automatically adjust the GOMAXPROCS value based on the
-	// CPU quota assigned to the container or the host system's CPU count.
 	_ "go.uber.org/automaxprocs"
-	"os"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 var rootCmd = &cobra.Command{

@@ -12,12 +12,12 @@ package pre_calculate
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/exp/maps"
 	"net/http"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
 	jsoniter "github.com/json-iterator/go"
+	"golang.org/x/exp/maps"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"

@@ -11,11 +11,12 @@ package pre_calculate
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"os"
 	"os/signal"
 	"syscall"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const dataIdFilePath = "./connections_test.yaml"

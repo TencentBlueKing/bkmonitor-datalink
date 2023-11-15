@@ -12,10 +12,12 @@ package storage
 import (
 	"context"
 	"fmt"
-	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
+	"time"
+
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/patrickmn/go-cache"
-	"time"
+
+	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
 type CacheType string

@@ -12,8 +12,9 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 )
 
 func TestApmTaskUniId(t *testing.T) {

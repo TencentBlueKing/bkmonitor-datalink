@@ -12,15 +12,16 @@ package daemon
 import (
 	"context"
 	"fmt"
-	jsoniter "github.com/json-iterator/go"
 	"sync"
+
+	redis "github.com/go-redis/redis/v8"
+	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	redis "github.com/go-redis/redis/v8"
 )
 
 type TaskBinding struct {

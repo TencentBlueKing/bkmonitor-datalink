@@ -55,6 +55,13 @@ func TestLoadContentFailed(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestMustLoadContentFailed(t *testing.T) {
+	assert.Panics(t, func() {
+		conf := MustLoadConfigContent("|{}")
+		assert.Nil(t, conf)
+	})
+}
+
 func TestLoadConfigPatterns(t *testing.T) {
 	configs := LoadConfigPatterns([]string{"../example/fixtures/report_v2*.yml", "^.!.!"})
 	assert.Len(t, configs, 2)

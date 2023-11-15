@@ -84,6 +84,17 @@ func (p otMetricMapper) AsMapStr() common.MapStr {
 	}
 }
 
+func constructFloatValue(dp pmetric.NumberDataPoint) float64 {
+	var val float64
+	switch dp.ValueType() {
+	case pmetric.NumberDataPointValueTypeDouble:
+		val = dp.DoubleVal()
+	case pmetric.NumberDataPointValueTypeInt:
+		val = float64(dp.IntVal())
+	}
+	return val
+}
+
 func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
 	var items []common.MapStr
 	switch pdMetric.DataType() {
@@ -92,13 +103,14 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
 
-			if !utils.IsValidFloat64(dp.DoubleVal()) {
+			val := constructFloatValue(dp)
+			if !utils.IsValidFloat64(val) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 				continue
 			}
 			m := otMetricMapper{
 				Metric:     pdMetric.Name(),
-				Value:      dp.DoubleVal(),
+				Value:      val,
 				Time:       dp.Timestamp().AsTime(),
 				Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 			}
@@ -160,14 +172,16 @@ func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs
 		dps := pdMetric.Gauge().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			dp := dps.At(i)
-			if !utils.IsValidFloat64(dp.DoubleVal()) {
+
+			val := constructFloatValue(dp)
+			if !utils.IsValidFloat64(val) {
 				DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 				continue
 			}
 
 			m := otMetricMapper{
 				Metric:     pdMetric.Name(),
-				Value:      dp.DoubleVal(),
+				Value:      val,
 				Dimensions: utils.MergeReplaceAttributeMaps(dp.Attributes(), rsAttrs),
 				Time:       dp.Timestamp().AsTime(),
 			}

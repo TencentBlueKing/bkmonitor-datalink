@@ -54,6 +54,7 @@ func setDefaultConfig() {
 	viper.SetDefault(FeatureFlagHandlePathConfigPath, "/ff")
 	viper.SetDefault(SpacePrintHandlePathConfigPath, "/space_print")
 	viper.SetDefault(SpaceKeyPrintHandlePathConfigPath, "/space_key_print")
+	viper.SetDefault(TsDBPrintHandlePathConfigPath, "/tsdb_print")
 	viper.SetDefault(InfluxDBPrintHandlePathConfigPath, "/influxdb_print")
 
 	viper.SetDefault(AlignInfluxdbResultConfigPath, true)

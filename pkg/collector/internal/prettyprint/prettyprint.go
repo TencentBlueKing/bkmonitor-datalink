@@ -70,10 +70,11 @@ func Metrics(metrics pmetric.Metrics) {
 	}
 
 	foreach.MetricsWithResourceAttrs(metrics.ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
-		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s",
+		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, unit=%s",
 			rsAttrs.AsRaw(),
 			metric.Name(),
 			metric.DataType().String(),
+			metric.Unit(),
 		)
 	})
 }
@@ -84,10 +85,11 @@ func Logs(logs plog.Logs) {
 	}
 
 	foreach.LogsWithResourceAttrs(logs.ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) {
-		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v",
+		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v, logLevel=%s",
 			rsAttrs.AsRaw(),
 			logRecord.Body().AsString(),
 			logRecord.Attributes().AsRaw(),
+			logRecord.SeverityText(),
 		)
 	})
 }

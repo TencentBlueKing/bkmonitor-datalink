@@ -29,6 +29,117 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver"
 )
 
+func TestParseProcessor(t *testing.T) {
+	t.Run("Invalid processor", func(t *testing.T) {
+		content := `
+processorx:
+    - name: ""
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parseProcessors("x", conf, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("Empty processor name", func(t *testing.T) {
+		content := `
+processor:
+    - name: ""
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parseProcessors("x", conf, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Duplicated processor", func(t *testing.T) {
+		content := `
+processor:
+    - name: "apdex_calculator/fixed"
+      config:
+    - name: "apdex_calculator/fixed"
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parseProcessors("x", conf, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("No exist processor", func(t *testing.T) {
+		content := `
+processor:
+    - name: "whatever/fixed"
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parseProcessors("x", conf, nil)
+		assert.NoError(t, err)
+	})
+}
+
+func TestParsePipeline(t *testing.T) {
+	t.Run("Invalid pipeline", func(t *testing.T) {
+		content := `
+pipelinex:
+    - name: ""
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parsePipelines("x", conf, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("Empty pipeline name", func(t *testing.T) {
+		content := `
+pipeline:
+    - name: ""
+      config:
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parsePipelines("x", conf, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Unknown pipeline type", func(t *testing.T) {
+		content := `
+pipeline:
+    - name: "metrics_pipeline/common"
+      type: "undefined"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parsePipelines("x", conf, nil)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Validate failed", func(t *testing.T) {
+		content := `
+pipeline:
+    - name: "metrics_pipeline/common"
+      type: "metrics"
+      processors:
+        - "sampler/status_code"
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+`
+		conf := confengine.MustLoadConfigContent(content)
+		_, err := parsePipelines("x", conf, nil)
+		assert.NoError(t, err)
+	})
+}
+
+func TestParseReportV2Configs(t *testing.T) {
+	t.Run("Invalid type", func(t *testing.T) {
+		content := `
+type: report_v2
+`
+		conf := confengine.MustLoadConfigContent(content)
+		parseReportV2Configs([]*confengine.Config{conf})
+	})
+}
+
 func TestSubConfigParseAndLoad(t *testing.T) {
 	patterns := []string{"../example/fixtures/*.yml"}
 	configs := parseProcessorSubConfigs(confengine.LoadConfigPatterns(patterns))

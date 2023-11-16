@@ -38,6 +38,9 @@ func TestTierConfig(t *testing.T) {
 	assert.Equal(t, "token1/service1/instance1", tc.Get("token1", "", "instance1").(testConfig).id)
 	assert.Equal(t, "token1/service1/instance2", tc.Get("token1", "", "instance2").(testConfig).id)
 
+	tc.Del("token1", "service", "service1")
+	assert.Equal(t, "token1", tc.Get("token1", "service1", "").(testConfig).id)
+
 	tc.DelGlobal()
 	assert.Nil(t, tc.GetGlobal())
 }
@@ -54,6 +57,7 @@ proxy:
     path: /path/to/config
 `
 	config := MustLoadConfigContent(content)
+	assert.NotNil(t, config.RawConfig())
 	assert.True(t, config.Has("proxy"))
 
 	cfg := config.MustChild("proxy")

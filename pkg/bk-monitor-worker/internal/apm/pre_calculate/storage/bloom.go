@@ -12,15 +12,22 @@ package storage
 import (
 	"context"
 	"crypto/md5"
+	"math"
 	"sync"
 	"time"
 
 	redisBloom "github.com/RedisBloom/redisbloom-go"
+	"github.com/facebookincubator/go-qfext"
 	"github.com/gomodule/redigo/redis"
 	"github.com/minio/highwayhash"
 	boom "github.com/tylertreat/BoomFilters"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+)
+
+var (
+	DefaultFilter  = "defaultFilter"
+	QuotientFilter = "quotientFilter"
 )
 
 // BloomStorageData storage request of bloom-filter
@@ -38,7 +45,9 @@ type BloomOperator interface {
 type BloomOptions struct {
 	fpRate float64
 
-	normalMemoryBloomOptions      MemoryBloomOptions
+	normalMemoryBloomOptions    MemoryBloomOptions
+	normalMemoryQuotientOptions QuotientFilterOptions
+
 	normalOverlapBloomOptions     OverlapBloomOptions
 	layersBloomOptions            LayersBloomOptions
 	layersCapDecreaseBloomOptions LayersCapDecreaseBloomOptions
@@ -94,18 +103,18 @@ func LayersCapDecreaseBloomConfig(opts ...LayersCapDecreaseBloomOption) BloomOpt
 	}
 }
 
-type Bloom struct {
+type RedisNormalBloom struct {
 	filterName string
 	config     BloomOptions
 	c          *redisBloom.Client
 }
 
-func (b *Bloom) Add(data BloomStorageData) error {
+func (b *RedisNormalBloom) Add(data BloomStorageData) error {
 	_, err := b.c.Add(b.filterName, data.Key)
 	return err
 }
 
-func (b *Bloom) Exist(k string) (bool, error) {
+func (b *RedisNormalBloom) Exist(k string) (bool, error) {
 	return b.c.Exists(b.filterName, k)
 }
 
@@ -115,7 +124,7 @@ func newRedisBloomClient(rConfig RedisCacheOptions, opts BloomOptions) (BloomOpe
 	}}
 	c := redisBloom.NewClientFromPool(pool, "bloom-client")
 
-	return &Bloom{filterName: "traceMeta", config: opts, c: c}, nil
+	return &RedisNormalBloom{filterName: "traceMeta", config: opts, c: c}, nil
 }
 
 type MemoryBloomOptions struct {
@@ -153,12 +162,12 @@ func (m *MemoryBloom) TestAndAdd(key []byte) bool {
 func (m *MemoryBloom) AutoReset() {
 	// Prevent the memory from being too large.
 	// Data will be cleared after a specified time.
-	logger.Infof("Bloom-filter will reset every %s", m.config.autoClean)
+	logger.Infof("RedisNormalBloom-filter will reset every %s", m.config.autoClean)
 	for {
 		if time.Now().After(m.nextCleanDate) {
 			m.resetFunc()
 			m.nextCleanDate = time.Now().Add(m.cleanDuration)
-			logger.Infof("Bloom-filter reset data trigger, next time the filter reset data is %s", m.nextCleanDate)
+			logger.Infof("RedisNormalBloom-filter reset data trigger, next time the filter reset data is %s", m.nextCleanDate)
 		}
 		time.Sleep(1 * time.Minute)
 	}
@@ -175,6 +184,45 @@ func newBloomClient(f boom.Filter, resetFunc func(), options BloomOptions) boom.
 	}
 	go bloom.AutoReset()
 	return bloom
+}
+
+type QuotientFilterOption func(*QuotientFilterOptions)
+
+type QuotientFilterOptions struct {
+	magnitudePerMin int
+}
+
+type MemoryQuotientFilter struct {
+	c      *qf.Filter
+	config QuotientFilterOptions
+}
+
+func (f *MemoryQuotientFilter) Add(data []byte) boom.Filter {
+	f.c.Insert(data)
+	return f
+}
+
+func (f *MemoryQuotientFilter) Test(data []byte) bool {
+	return f.c.Contains(data)
+}
+
+func (f *MemoryQuotientFilter) TestAndAdd(data []byte) bool {
+	// unsafe
+	res := f.c.Contains(data)
+	f.c.Insert(data)
+	return res
+}
+
+func newQuotientFilter(fpRate float64, resetDuration time.Duration, options QuotientFilterOptions) boom.Filter {
+	exceptEntries := options.magnitudePerMin * int(resetDuration.Minutes())
+	perEntry := uint(math.Ceil(-math.Log2(fpRate) / 0.75))
+
+	f := qf.NewWithConfig(qf.Config{
+		BitsOfStoragePerEntry: perEntry,
+		BitPacked:             true,
+		ExpectedEntries:       uint64(exceptEntries),
+	})
+	return &MemoryQuotientFilter{c: f, config: options}
 }
 
 type OverlapBloomOptions struct {
@@ -200,10 +248,10 @@ type OverlapBloom struct {
 	cap        uint
 	fpRate     float64
 
-	config BloomOptions
-	ctx    context.Context
-	cancel context.CancelFunc
-	lock   sync.Mutex
+	resetDuration time.Duration
+	ctx           context.Context
+	cancel        context.CancelFunc
+	lock          sync.Mutex
 }
 
 func (m *OverlapBloom) Add(data []byte) boom.Filter {
@@ -228,8 +276,8 @@ func (m *OverlapBloom) TestAndAdd(key []byte) bool {
 
 func (m *OverlapBloom) AddOverlap() {
 
-	intervalTicker := time.NewTicker(m.config.normalOverlapBloomOptions.resetDuration / 2)
-	logger.Infof("overlap bloom add overlap interval: %s", m.config.normalOverlapBloomOptions.resetDuration/2)
+	intervalTicker := time.NewTicker(m.resetDuration / 2)
+	logger.Infof("overlap bloom add overlap interval: %s", m.resetDuration/2)
 
 	for {
 		select {
@@ -245,9 +293,9 @@ func (m *OverlapBloom) AddOverlap() {
 					continue
 				}
 				m.bloomChain.after = boom.NewBloomFilter(m.cap, m.fpRate)
-				logger.Debugf("add overlap release lock，after is created")
+				logger.Infof("add overlap release lock，after is created")
 				// changed to interleaved execution
-				intervalTicker = time.NewTicker(m.config.normalOverlapBloomOptions.resetDuration)
+				intervalTicker = time.NewTicker(m.resetDuration)
 				m.lock.Unlock()
 				break
 			}
@@ -258,8 +306,8 @@ func (m *OverlapBloom) AddOverlap() {
 }
 
 func (m *OverlapBloom) AutoReset() {
-	intervalTicker := time.NewTicker(m.config.normalOverlapBloomOptions.resetDuration)
-	logger.Infof("overlap bloom reset interval: %s", m.config.normalOverlapBloomOptions.resetDuration)
+	intervalTicker := time.NewTicker(m.resetDuration)
+	logger.Infof("overlap bloom reset interval: %s", m.resetDuration)
 
 	for {
 		select {
@@ -269,7 +317,7 @@ func (m *OverlapBloom) AutoReset() {
 			logger.Debugf("auto reset get lock")
 			m.bloomChain.front = m.bloomChain.after
 			m.bloomChain.after = nil
-			logger.Debugf("auto reset release lock, move after to front, set after = null")
+			logger.Infof("auto reset release lock, move after to front, set after = null")
 			m.lock.Unlock()
 		case <-m.ctx.Done():
 			return
@@ -281,16 +329,16 @@ func (m *OverlapBloom) Close() {
 	m.cancel()
 }
 
-func newOverlapBloomClient(f boom.Filter, cap uint, fpRate float64, options BloomOptions) boom.Filter {
+func newOverlapBloomClient(f boom.Filter, cap uint, fpRate float64, resetDuration time.Duration) boom.Filter {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	bloom := OverlapBloom{
-		bloomChain: BloomChain{front: f},
-		config:     options,
-		cap:        cap,
-		fpRate:     fpRate,
-		ctx:        ctx,
-		cancel:     cancel,
+		bloomChain:    BloomChain{front: f},
+		resetDuration: resetDuration,
+		cap:           cap,
+		fpRate:        fpRate,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	go bloom.AddOverlap()
@@ -371,18 +419,6 @@ type LayersMemoryBloom struct {
 	strategies []layerStrategy
 }
 
-func newLayersBloomClient(options BloomOptions) (BloomOperator, error) {
-	var blooms []boom.Filter
-
-	for i := 0; i < options.layersBloomOptions.layers; i++ {
-		sbf := boom.NewScalableBloomFilter(uint(options.layersBloomOptions.layers), options.fpRate, 0.8)
-		bloom := newBloomClient(sbf, func() { sbf.Reset() }, options)
-		blooms = append(blooms, bloom)
-	}
-	logger.Infof("bloom-filter layers: %d", options.layersBloomOptions.layers)
-	return &LayersMemoryBloom{blooms: blooms, strategies: strategies}, nil
-}
-
 func (l *LayersMemoryBloom) Add(data BloomStorageData) error {
 	for index, b := range l.blooms {
 		key := l.strategies[index](data.Key)
@@ -405,6 +441,18 @@ func (l *LayersMemoryBloom) Exist(originKey string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func newLayersBloomClient(options BloomOptions) (BloomOperator, error) {
+	var blooms []boom.Filter
+
+	for i := 0; i < options.layersBloomOptions.layers; i++ {
+		sbf := boom.NewScalableBloomFilter(uint(options.layersBloomOptions.layers), options.fpRate, 0.8)
+		bloom := newBloomClient(sbf, func() { sbf.Reset() }, options)
+		blooms = append(blooms, bloom)
+	}
+	logger.Infof("bloom-filter layers: %d", options.layersBloomOptions.layers)
+	return &LayersMemoryBloom{blooms: blooms, strategies: strategies}, nil
 }
 
 type LayersCapDecreaseBloomOption func(*LayersCapDecreaseBloomOptions)
@@ -433,26 +481,13 @@ func CapDecreaseBloomDivisor(c int) LayersCapDecreaseBloomOption {
 	}
 }
 
-type LayersCapDecreaseBloom struct {
+// LayersCapDecreaseOverlapBloom layers + overlap filter.
+// It is optional to choice base-filter: boom.BloomFilter or QuotientFilter
+type LayersCapDecreaseOverlapBloom struct {
 	blooms []boom.Filter
 }
 
-func newLayersCapDecreaseBloomClient(options BloomOptions) (BloomOperator, error) {
-	var blooms []boom.Filter
-
-	curCap := options.layersCapDecreaseBloomOptions.cap
-	for i := 0; i < options.layersCapDecreaseBloomOptions.layers; i++ {
-		sbf := boom.NewBloomFilter(uint(curCap), options.fpRate)
-		// select overlapBloom as base filter
-		bloom := newOverlapBloomClient(sbf, uint(curCap), options.fpRate, options)
-		blooms = append(blooms, bloom)
-		curCap = curCap / options.layersCapDecreaseBloomOptions.divisor
-	}
-
-	return &LayersCapDecreaseBloom{blooms: blooms}, nil
-}
-
-func (l *LayersCapDecreaseBloom) Add(data BloomStorageData) error {
+func (l *LayersCapDecreaseOverlapBloom) Add(data BloomStorageData) error {
 	key := []byte(data.Key)
 	for _, b := range l.blooms {
 		b.Add(key)
@@ -460,7 +495,7 @@ func (l *LayersCapDecreaseBloom) Add(data BloomStorageData) error {
 	return nil
 }
 
-func (l *LayersCapDecreaseBloom) Exist(originKey string) (bool, error) {
+func (l *LayersCapDecreaseOverlapBloom) Exist(originKey string) (bool, error) {
 	key := []byte(originKey)
 
 	for _, b := range l.blooms {
@@ -471,4 +506,31 @@ func (l *LayersCapDecreaseBloom) Exist(originKey string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func newLayersCapDecreaseBloomClient(baseFilter string, options BloomOptions) (BloomOperator, error) {
+	var blooms []boom.Filter
+
+	curCap := options.layersCapDecreaseBloomOptions.cap
+	for i := 0; i < options.layersCapDecreaseBloomOptions.layers; i++ {
+		var sbf boom.Filter
+		switch baseFilter {
+		case QuotientFilter:
+			sbf = newQuotientFilter(
+				options.fpRate,
+				options.normalOverlapBloomOptions.resetDuration,
+				options.normalMemoryQuotientOptions,
+			)
+		default:
+			sbf = boom.NewBloomFilter(uint(curCap), options.fpRate)
+		}
+		// select overlapBloom as super stratum
+		bloom := newOverlapBloomClient(
+			sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,
+		)
+		blooms = append(blooms, bloom)
+		curCap = curCap / options.layersCapDecreaseBloomOptions.divisor
+	}
+
+	return &LayersCapDecreaseOverlapBloom{blooms: blooms}, nil
 }

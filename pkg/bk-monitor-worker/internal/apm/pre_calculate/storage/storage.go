@@ -291,7 +291,7 @@ func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, erro
 	}
 
 	// todo 由于部署环境可能不支持redis-bloom 故统一使用内存方式进行
-	bloomFilter, err := newLayersCapDecreaseBloomClient(opt.bloomConfig)
+	bloomFilter, err := newLayersCapDecreaseBloomClient(DefaultFilter, opt.bloomConfig)
 	if err != nil {
 		return nil, err
 	}

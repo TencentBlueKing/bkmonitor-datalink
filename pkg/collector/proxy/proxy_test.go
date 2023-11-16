@@ -42,3 +42,20 @@ proxy:
 	default:
 	}
 }
+
+func TestFailedOnConsul(t *testing.T) {
+	content := `
+proxy:
+  disabled: false
+  http:
+    port: 60991
+    host: localhost
+  consul:
+    enabled: true
+    address: localhost:1234
+`
+	config := confengine.MustLoadConfigContent(content)
+	proxy, err := New(config)
+	assert.NoError(t, err)
+	assert.Error(t, proxy.Start())
+}

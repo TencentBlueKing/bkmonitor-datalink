@@ -17,26 +17,39 @@ import (
 )
 
 func TestDecode(t *testing.T) {
-	input := map[string]interface{}{
-		"int":      1,
-		"float64":  1.0,
-		"string":   "foo",
-		"duration": "10s",
-	}
+	t.Run("Success", func(t *testing.T) {
+		input := map[string]interface{}{
+			"int":      1,
+			"float64":  1.0,
+			"string":   "foo",
+			"duration": "10s",
+		}
 
-	type Output struct {
-		Int      int           `mapstructure:"int"`
-		Float    float64       `mapstructure:"float64"`
-		String   string        `mapstructure:"string"`
-		Duration time.Duration `mapstructure:"duration"`
-	}
+		type Output struct {
+			Int      int           `mapstructure:"int"`
+			Float    float64       `mapstructure:"float64"`
+			String   string        `mapstructure:"string"`
+			Duration time.Duration `mapstructure:"duration"`
+		}
 
-	var output Output
-	assert.NoError(t, Decode(input, &output))
-	assert.Equal(t, Output{
-		Int:      1,
-		Float:    1.0,
-		String:   "foo",
-		Duration: time.Second * 10,
-	}, output)
+		var output Output
+		assert.NoError(t, Decode(input, &output))
+		assert.Equal(t, Output{
+			Int:      1,
+			Float:    1.0,
+			String:   "foo",
+			Duration: time.Second * 10,
+		}, output)
+	})
+
+	t.Run("Failed", func(t *testing.T) {
+		input := "foo"
+
+		type Output struct {
+			Foo int `mapstructure:"foo"`
+		}
+
+		var output Output
+		assert.Error(t, Decode(input, &output))
+	})
 }

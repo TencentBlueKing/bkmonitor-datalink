@@ -25,11 +25,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
-var (
-	DefaultFilter  = "defaultFilter"
-	QuotientFilter = "quotientFilter"
-)
-
 // BloomStorageData storage request of bloom-filter
 type BloomStorageData struct {
 	Key string
@@ -508,22 +503,12 @@ func (l *LayersCapDecreaseOverlapBloom) Exist(originKey string) (bool, error) {
 	return true, nil
 }
 
-func newLayersCapDecreaseBloomClient(baseFilter string, options BloomOptions) (BloomOperator, error) {
+func newLayersCapDecreaseBloomClient(options BloomOptions) (BloomOperator, error) {
 	var blooms []boom.Filter
 
 	curCap := options.layersCapDecreaseBloomOptions.cap
 	for i := 0; i < options.layersCapDecreaseBloomOptions.layers; i++ {
-		var sbf boom.Filter
-		switch baseFilter {
-		case QuotientFilter:
-			sbf = newQuotientFilter(
-				options.fpRate,
-				options.normalOverlapBloomOptions.resetDuration,
-				options.normalMemoryQuotientOptions,
-			)
-		default:
-			sbf = boom.NewBloomFilter(uint(curCap), options.fpRate)
-		}
+		sbf := boom.NewBloomFilter(uint(curCap), options.fpRate)
 		// select overlapBloom as super stratum
 		bloom := newOverlapBloomClient(
 			sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,

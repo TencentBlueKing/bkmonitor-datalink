@@ -148,7 +148,10 @@ func readAndWrite(bloomFilter BloomOperator, count, magnitude int) ([]float64, [
 		if existCount != 0 {
 			increase = (float64(tmpExistsCount) / float64(existCount)) * 100
 		}
-		fmt.Printf("existsCount: %d -> %d (%.2f) - %s (write: %d / read: %d ) \n", existCount, tmpExistsCount+existCount, increase, time.Now(), a, b)
+		fmt.Printf(
+			"existsCount: %d -> %d (%.2f) - %s (write: %d / read: %d ) %d/%d \n",
+			existCount, tmpExistsCount+existCount, increase, time.Now(), a, b, i, count,
+		)
 		existCount += tmpExistsCount
 		xValues = append(xValues, math.Round(now.Sub(start).Seconds()*100)/100)
 		yValues = append(yValues, float64(existCount))
@@ -186,8 +189,8 @@ func exportChart(x, y []float64, duration time.Duration, title string) {
 	}
 }
 
-func startBenchmark(count, magnitude int, filterType, title string, options BloomOptions) {
-	bloomFilter, _ := newLayersCapDecreaseBloomClient(filterType, options)
+func startBenchmark(count, magnitude int, title string, options BloomOptions) {
+	bloomFilter, _ := newLayersCapDecreaseBloomClient(options)
 	xValues, yValues, duration := readAndWrite(bloomFilter, count, magnitude)
 	exportChart(xValues, yValues, duration, title)
 }
@@ -195,14 +198,13 @@ func startBenchmark(count, magnitude int, filterType, title string, options Bloo
 // BenchmarkBloomFilter overLap bloom-filter benchmark
 func BenchmarkBloomFilter(b *testing.B) {
 	count := 600
-	magnitude := 5000000
+	magnitude := 1000000
 	fpRate := 0.01
 	initCap := 1000000000
 	layers := 10
 	startBenchmark(
 		count,
 		magnitude,
-		DefaultFilter,
 		fmt.Sprintf(
 			"InitCap: %d fpRate: %f layers: %d count: %d read&write: %d/s",
 			initCap, fpRate, layers, count, magnitude,
@@ -214,34 +216,6 @@ func BenchmarkBloomFilter(b *testing.B) {
 			},
 			layersCapDecreaseBloomOptions: LayersCapDecreaseBloomOptions{
 				cap:     initCap,
-				layers:  10,
-				divisor: 2,
-			},
-		})
-}
-
-// BenchmarkBloomFilter overLap bloom-filter benchmark
-func BenchmarkQuotientFilter(b *testing.B) {
-	count := 300
-	magnitude := 500000
-	fpRate := 0.01
-	startBenchmark(
-		count,
-		magnitude,
-		QuotientFilter,
-		fmt.Sprintf(
-			"fpRate: %f count: %d read&write: %d/s",
-			fpRate, count, magnitude,
-		),
-		BloomOptions{
-			fpRate: fpRate,
-			normalMemoryQuotientOptions: QuotientFilterOptions{
-				magnitudePerMin: magnitude,
-			},
-			normalOverlapBloomOptions: OverlapBloomOptions{
-				resetDuration: 2 * time.Hour,
-			},
-			layersCapDecreaseBloomOptions: LayersCapDecreaseBloomOptions{
 				layers:  10,
 				divisor: 2,
 			},

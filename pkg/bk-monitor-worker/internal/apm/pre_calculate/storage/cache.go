@@ -121,15 +121,15 @@ func RedisCacheDb(db int) RedisCacheOption {
 	}
 }
 
-func RedisCacheDialTimeout(dialTimeout int) RedisCacheOption {
+func RedisCacheDialTimeout(dialTimeout time.Duration) RedisCacheOption {
 	return func(options *RedisCacheOptions) {
-		options.dialTimeout = time.Duration(dialTimeout) * time.Second
+		options.dialTimeout = dialTimeout
 	}
 }
 
-func RedisCacheReadTimeout(readTimeout int) RedisCacheOption {
+func RedisCacheReadTimeout(readTimeout time.Duration) RedisCacheOption {
 	return func(options *RedisCacheOptions) {
-		options.readTimeout = time.Duration(readTimeout) * time.Second
+		options.readTimeout = readTimeout
 	}
 }
 

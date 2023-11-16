@@ -26,7 +26,7 @@ func TestLogger(t *testing.T) {
 	infoMsg := "this is a info test"
 	logger.Info(infoMsg)
 
-	logFile := config.LoggerStdoutPath
+	logFile := config.Path
 	// 查询日志
 	file, err := os.Open(logFile)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
@@ -27,12 +28,12 @@ var (
 
 	TaskWatchChanSize int
 
-	LoggerEnabledStdout        bool
-	LoggerLevel                string
-	LoggerStdoutPath           string
-	LoggerStdoutFileMaxSize    int
-	LoggerStdoutFileMaxAge     int
-	LoggerStdoutFileMaxBackups int
+	LoggerEnabledStdout bool
+	LoggerLevel         string
+	Path                string
+	MaxSize             int
+	MaxAge              int
+	MaxBackups          int
 
 	BrokerRedisMode               string
 	BrokerRedisSentinelMasterName string
@@ -42,8 +43,8 @@ var (
 	BrokerRedisStandalonePort     int
 	BrokerRedisStandalonePassword string
 	BrokerRedisDatabase           int
-	BrokerRedisDialTimeout        int
-	BrokerRedisReadTimeout        int
+	BrokerRedisDialTimeout        time.Duration
+	BrokerRedisReadTimeout        time.Duration
 
 	StorageRedisMode               string
 	StorageRedisSentinelMasterName string
@@ -53,8 +54,8 @@ var (
 	StorageRedisStandalonePort     int
 	StorageRedisStandalonePassword string
 	StorageRedisDatabase           int
-	StorageRedisDialTimeout        int
-	StorageRedisReadTimeout        int
+	StorageRedisDialTimeout        time.Duration
+	StorageRedisReadTimeout        time.Duration
 	StorageRedisKeyPrefix          string
 
 	StorageDependentRedisMode               string
@@ -65,8 +66,8 @@ var (
 	StorageDependentRedisStandalonePort     int
 	StorageDependentRedisStandalonePassword string
 	StorageDependentRedisDatabase           int
-	StorageDependentRedisDialTimeout        int
-	StorageDependentRedisReadTimeout        int
+	StorageDependentRedisDialTimeout        time.Duration
+	StorageDependentRedisReadTimeout        time.Duration
 
 	StorageConsulPathPrefix string
 	StorageConsulSrvName    string
@@ -100,7 +101,7 @@ var (
 	SchedulerDaemonTaskTaskWatcherInterval   int
 
 	HttpGinMode      string
-	HttpListenPath   string
+	HttpListenHost   string
 	HttpListenPort   int
 	HttpEnabledPprof bool
 
@@ -122,14 +123,14 @@ func initVariables() {
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)
 	// LoggerLevel 日志等级
 	LoggerLevel = GetValue("log.level", "info")
-	// LoggerStdoutPath 日志文件输出路径
-	LoggerStdoutPath = GetValue("log.stdoutPath", "./bmw.log")
-	// LoggerStdoutFileMaxSize 日志文件最大分裂大小
-	LoggerStdoutFileMaxSize = GetValue("log.stdoutFileMaxSize", 200)
-	// LoggerStdoutFileMaxAge 日志文件最大存活时间
-	LoggerStdoutFileMaxAge = GetValue("log.stdoutFileMaxAge", 1)
-	// LoggerStdoutFileMaxBackups 日志文件保存最大数量
-	LoggerStdoutFileMaxBackups = GetValue("log.stdoutFileMaxBackups", 5)
+	// Path 日志文件输出路径
+	Path = GetValue("log.path", "./bmw.log")
+	// MaxSize 日志文件最大分裂大小
+	MaxSize = GetValue("log.maxSize", 200)
+	// MaxAge 日志文件最大存活时间
+	MaxAge = GetValue("log.maxAge", 1)
+	// MaxBackups 日志文件保存最大数量
+	MaxBackups = GetValue("log.maxBackups", 5)
 
 	/* Broker Redis 配置 */
 	BrokerRedisMode = GetValue("broker.redis.mode", "standalone")
@@ -140,8 +141,8 @@ func initVariables() {
 	BrokerRedisStandalonePort = GetValue("broker.redis.standalone.port", 6379)
 	BrokerRedisStandalonePassword = GetValue("broker.redis.standalone.password", "")
 	BrokerRedisDatabase = GetValue("broker.redis.db", 0)
-	BrokerRedisDialTimeout = GetValue("broker.redis.dialTimeout", 10)
-	BrokerRedisReadTimeout = GetValue("broker.redis.readTimeout", 10)
+	BrokerRedisDialTimeout = GetValue("broker.redis.dialTimeout", 10*time.Second, viper.GetDuration)
+	BrokerRedisReadTimeout = GetValue("broker.redis.readTimeout", 10*time.Second, viper.GetDuration)
 
 	/* Storage Redis 配置 */
 	StorageRedisMode = GetValue("store.redis.mode", "standalone")
@@ -152,8 +153,8 @@ func initVariables() {
 	StorageRedisStandalonePort = GetValue("store.redis.standalone.port", 6379)
 	StorageRedisStandalonePassword = GetValue("store.redis.standalone.password", "")
 	StorageRedisDatabase = GetValue("store.redis.db", 0)
-	StorageRedisDialTimeout = GetValue("store.redis.dialTimeout", 10)
-	StorageRedisReadTimeout = GetValue("store.redis.readTimeout", 10)
+	StorageRedisDialTimeout = GetValue("store.redis.dialTimeout", 10*time.Second, viper.GetDuration)
+	StorageRedisReadTimeout = GetValue("store.redis.readTimeout", 10*time.Second, viper.GetDuration)
 	StorageRedisKeyPrefix = GetValue("store.redis.keyPrefix", "bmw")
 
 	/* Storage DependentRedis 配置 */
@@ -165,8 +166,8 @@ func initVariables() {
 	StorageDependentRedisStandalonePort = GetValue("store.dependentRedis.standalone.port", 6379)
 	StorageDependentRedisStandalonePassword = GetValue("store.dependentRedis.standalone.password", "")
 	StorageDependentRedisDatabase = GetValue("store.dependentRedis.db", 0)
-	StorageDependentRedisDialTimeout = GetValue("store.dependentRedis.dialTimeout", 10)
-	StorageDependentRedisReadTimeout = GetValue("store.dependentRedis.readTimeout", 10)
+	StorageDependentRedisDialTimeout = GetValue("store.dependentRedis.dialTimeout", 10*time.Second, viper.GetDuration)
+	StorageDependentRedisReadTimeout = GetValue("store.dependentRedis.readTimeout", 10*time.Second, viper.GetDuration)
 
 	/* Storage Consul配置 */
 	StorageConsulPathPrefix = GetValue("store.consul.pathPrefix", "bk_bkmonitorv3_enterprise_production")
@@ -227,7 +228,7 @@ func initVariables() {
 	*/
 
 	HttpGinMode = GetValue("service.http.mode", "release")
-	HttpListenPath = GetValue("service.http.listen", "127.0.0.1")
+	HttpListenHost = GetValue("service.http.listen", "127.0.0.1")
 	HttpListenPort = GetValue("service.http.port", 10213)
 	HttpEnabledPprof = GetValue("service.http.enablePprof", true)
 

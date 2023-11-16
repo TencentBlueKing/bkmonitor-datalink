@@ -39,8 +39,8 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 			SentinelPassword: config.StorageDependentRedisSentinelPassword,
 			Password:         config.StorageDependentRedisStandalonePassword,
 			Db:               config.StorageDependentRedisDatabase,
-			DialTimeout:      time.Duration(config.StorageDependentRedisDialTimeout) * time.Second,
-			ReadTimeout:      time.Duration(config.StorageDependentRedisReadTimeout) * time.Second,
+			DialTimeout:      config.StorageDependentRedisDialTimeout,
+			ReadTimeout:      config.StorageDependentRedisReadTimeout,
 		},
 	)
 	if err != nil {

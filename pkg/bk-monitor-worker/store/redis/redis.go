@@ -52,8 +52,8 @@ func GetInstance(ctx context.Context) *Instance {
 				SentinelPassword: config.StorageRedisSentinelPassword,
 				Password:         config.StorageRedisStandalonePassword,
 				Db:               config.StorageRedisDatabase,
-				DialTimeout:      time.Duration(config.StorageRedisDialTimeout) * time.Second,
-				ReadTimeout:      time.Duration(config.StorageRedisReadTimeout) * time.Second,
+				DialTimeout:      config.StorageRedisDialTimeout,
+				ReadTimeout:      config.StorageRedisReadTimeout,
 			},
 		)
 		if err != nil {

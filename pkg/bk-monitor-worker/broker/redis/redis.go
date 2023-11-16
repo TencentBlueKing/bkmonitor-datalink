@@ -9,7 +9,6 @@
 
 // from bmw redis command
 
-// Package redis
 package redis
 
 import (
@@ -62,8 +61,8 @@ func GetRDB() *RDB {
 			MasterName:       config.BrokerRedisSentinelMasterName,
 			SentinelPassword: config.BrokerRedisSentinelPassword,
 			Db:               config.BrokerRedisDatabase,
-			DialTimeout:      time.Duration(config.BrokerRedisDialTimeout) * time.Second,
-			ReadTimeout:      time.Duration(config.BrokerRedisReadTimeout) * time.Second,
+			DialTimeout:      config.BrokerRedisDialTimeout,
+			ReadTimeout:      config.BrokerRedisReadTimeout,
 		},
 	)
 	if err != nil {

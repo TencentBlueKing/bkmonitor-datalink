@@ -18,9 +18,9 @@ func InitLogger() {
 	logger.SetOptions(logger.Options{
 		Stdout:     config.LoggerEnabledStdout,
 		Level:      config.LoggerLevel,
-		Filename:   config.LoggerStdoutPath,
-		MaxSize:    config.LoggerStdoutFileMaxSize,
-		MaxAge:     config.LoggerStdoutFileMaxAge,
-		MaxBackups: config.LoggerStdoutFileMaxBackups,
+		Filename:   config.Path,
+		MaxSize:    config.MaxSize,
+		MaxAge:     config.MaxAge,
+		MaxBackups: config.MaxBackups,
 	})
 }

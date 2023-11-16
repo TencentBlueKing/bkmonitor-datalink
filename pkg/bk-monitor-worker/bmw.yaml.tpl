@@ -8,8 +8,8 @@ broker:
   redis:
     mode: standalone
     db: 0
-    dialTimeout: 10
-    readTimeout: 10
+    dialTimeout: 10s
+    readTimeout: 10s
     standalone:
       host: 127.0.0.1
       port: 6379
@@ -23,8 +23,8 @@ store:
   redis:
     mode: standalone
     db: 0
-    dialTimeout: 10
-    readTimeout: 10
+    dialTimeout: 10s
+    readTimeout: 10s
     keyPrefix: bmw
     standalone:
       host: 127.0.0.1
@@ -38,8 +38,8 @@ store:
   dependentRedis:
     mode: standalone
     db: 0
-    dialTimeout: 10
-    readTimeout: 10
+    dialTimeout: 10s
+    readTimeout: 10s
     standalone:
       host: 127.0.0.1
       port: 6379
@@ -62,10 +62,10 @@ store:
 log:
   enableStdout: true
   level: "info"
-  stdoutPath: "./bmw.log"
-  stdoutFileMaxSize: 200
-  stdoutFileMaxAge: 1
-  stdoutFileMaxBackups: 5
+  path: "./bmw.log"
+  maxSize: 200
+  maxAge: 1
+  maxBackups: 5
 aes:
   key: ""
 test:

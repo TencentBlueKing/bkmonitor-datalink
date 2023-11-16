@@ -38,14 +38,16 @@ type taskOptions struct {
 }
 
 type taskParams struct {
-	Kind    string                 `binding:"required" json:"kind"`
-	Payload map[string]interface{} `json:"payload"`
-	Options taskOptions            `json:"options"`
+	Kind    string         `binding:"required" json:"kind"`
+	Payload map[string]any `json:"payload"`
+	Options taskOptions    `json:"options"`
 }
 
 type daemonTaskItem struct {
-	task.SerializerTask
-	UniId string `json:"uni_id"`
+	UniId   string         `json:"uni_id"`
+	Kind    string         `json:"kind"`
+	Payload map[string]any `json:"payload"`
+	Options task.Options   `json:"options"`
 }
 
 type removeTaskParams struct {
@@ -267,7 +269,21 @@ func ListTask(c *gin.Context) {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
 				return
 			}
-			res = append(res, daemonTaskItem{SerializerTask: item, UniId: daemon.ComputeTaskUniId(item)})
+
+			var payload map[string]any
+			if err = json.Unmarshal(item.Payload, &payload); err != nil {
+				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
+				return
+			}
+			res = append(
+				res,
+				daemonTaskItem{
+					UniId:   daemon.ComputeTaskUniId(item),
+					Kind:    item.Kind,
+					Options: item.Options,
+					Payload: payload,
+				},
+			)
 		}
 		Response(c, &gin.H{"data": res})
 	default:

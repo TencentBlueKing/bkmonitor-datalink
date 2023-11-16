@@ -252,6 +252,9 @@ func (c metricsConverter) convertSummaryMetrics(dataId int32, pdMetric pmetric.M
 }
 
 func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {
+	name := utils.NormalizeName(pdMetric.Name())
+	pdMetric.SetName(name)
+
 	switch pdMetric.DataType() {
 	case pmetric.MetricDataTypeSum:
 		return c.convertSumMetrics(dataId, pdMetric, rsAttrs)

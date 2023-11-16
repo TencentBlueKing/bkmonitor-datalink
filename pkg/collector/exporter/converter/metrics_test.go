@@ -24,7 +24,7 @@ import (
 func TestConvertGaugeMetrics(t *testing.T) {
 	opts := define.MetricsOptions{
 		GaugeCount: 1,
-		MetricName: "bkm_usage",
+		MetricName: "bkm.usage",
 		GeneratorOptions: define.GeneratorOptions{
 			Attributes: map[string]string{"a1": "v1"},
 			Resources:  map[string]string{"r1": "v1"},

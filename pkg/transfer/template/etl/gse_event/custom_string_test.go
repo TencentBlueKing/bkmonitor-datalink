@@ -34,15 +34,7 @@ func (s *CustomStringSuite) runCase(input string, pass bool, dimensions map[stri
 		CloudID: 0,
 		CCTopoBaseModelInfo: &models.CCTopoBaseModelInfo{
 			BizID: []int{2},
-			Topo: []map[string]string{
-				{
-					define.RecordBkModuleID: "19",
-					"Anduin":                "1",
-				}, {
-					define.RecordBkModuleID: "18",
-					"Guldan":                "2",
-				},
-			},
+			Topo:  []map[string]string{},
 		},
 	}
 	s.StoreHost(&hostInfo).AnyTimes()

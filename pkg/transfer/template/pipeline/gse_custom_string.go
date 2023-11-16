@@ -16,17 +16,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
-const TypeGseCustomString = "bk_gse_custom_string"
-
+// NewGseCustomStringPipeline
 func NewGseCustomStringPipeline(ctx context.Context, name string) (define.Pipeline, error) {
 	builder, err := pipeline.NewGseCustomStringConfigBuilder(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	return builder.BuildBranchingWithGluttonous(nil, func(ctx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(ctx, from, to)
+		return builder.ConnectStandardNodesByETLName(ctx, TypeGseCustomString, from, to)
 	})
 }
+
+const TypeGseCustomString = "bk_gse_custom_string"
 
 func init() {
 	define.RegisterPipeline(TypeGseCustomString, NewGseCustomStringPipeline)

@@ -10,6 +10,7 @@
 package pipeline_test
 
 import (
+	"sort"
 	"sync"
 	"testing"
 
@@ -129,15 +130,23 @@ func (s *FTAPipelineSuite) TestRun() {
 		wg.Done()
 		delete(result, "time")
 		delete(result, "bk_clean_time")
+
+		// 排序
+		tags := result["tags"].([]map[string]string)
+		sort.SliceStable(tags, func(i, j int) bool {
+			return tags[i]["key"] < tags[j]["key"]
+		})
+		result["tags"] = tags
+
 		s.MapEqual(map[string]interface{}{
 			"alert_name": "CPU Usage",
 			"target":     "127.0.0.1",
 			"tags": []interface{}{
-				map[string]interface{}{
+				map[string]string{
 					"key":   "my",
 					"value": "test",
 				},
-				map[string]interface{}{
+				map[string]string{
 					"key":   "device",
 					"value": "cpu0",
 				},

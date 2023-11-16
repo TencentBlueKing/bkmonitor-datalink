@@ -11,6 +11,8 @@ package pipeline
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 )
@@ -21,10 +23,23 @@ type GseCustomStringConfigBuilder struct {
 	*ConfigBuilder
 }
 
-// ConnectStandardNodesByETLName 连接标准节点
-func (b *GseCustomStringConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, from Node, to Node) error {
+func (b *GseCustomStringConfigBuilder) GetStandardProcessors(_ string, _ *config.PipelineConfig, _ *config.MetaResultTableConfig) []string {
+	processors := []string{"gse_custom_string", "event_v2_standard", "event_v2_handler"}
+	return processors
+}
+
+func (b *GseCustomStringConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node) error {
 	nodes := []Node{from}
-	standards, err := b.GetDataProcessors(ctx, "gse_custom_string", "event_v2_standard", "event_v2_handler")
+
+	pipe := config.PipelineConfigFromContext(ctx)
+	rt := config.ResultTableConfigFromContext(ctx)
+
+	// 事件内容强制要求为动态类型
+	if rt.SchemaType != config.ResultTableSchemaTypeFree {
+		return errors.WithMessagef(define.ErrOperationForbidden, "event schema should be free")
+	}
+
+	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(name, pipe, rt)...)
 	if err != nil {
 		return err
 	}
@@ -35,12 +50,17 @@ func (b *GseCustomStringConfigBuilder) ConnectStandardNodesByETLName(ctx context
 	return nil
 }
 
+func (b *GseCustomStringConfigBuilder) BuildStandardBranchingByETLName(etl string) (*Pipeline, error) {
+	return b.BuildBranching(nil, false, func(ctx context.Context, from Node, to Node) error {
+		return b.ConnectStandardNodesByETLName(ctx, etl, from, to)
+	})
+}
+
 // NewGseCustomStringConfigBuilder 创建GSE自定义字符串builder
 func NewGseCustomStringConfigBuilder(ctx context.Context, name string) (*GseCustomStringConfigBuilder, error) {
 	builder := NewConfigBuilder(ctx, name)
-	builder.PipeConfigInitFn = config.InitTSV2PipelineOptions
-	builder.TableConfigInitFn = config.InitTSV2ResultTableOptions
-
+	builder.PipeConfigInitFn = config.InitEventPipelineOption
+	builder.TableConfigInitFn = config.InitEventResultTableOption
 	return &GseCustomStringConfigBuilder{
 		ConfigBuilder: builder,
 	}, nil

@@ -147,6 +147,8 @@ func (r ResultTableSvc) CreateResultTable(
 			if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).IdEq(-bkBizId).One(&sp); err != nil {
 				return err
 			}
+			spaceTypeId = sp.SpaceTypeId
+			spaceId = sp.SpaceId
 		}
 		count, err := space.NewSpaceDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).FromAuthorizationEq(false).Count()
 		if err != nil {

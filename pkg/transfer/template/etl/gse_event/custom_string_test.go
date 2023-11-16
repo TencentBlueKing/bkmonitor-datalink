@@ -10,15 +10,17 @@
 package gse_event
 
 import (
+	"sync"
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/standard"
 	. "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
-	"github.com/golang/mock/gomock"
-	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/suite"
-	"sync"
-	"testing"
 )
 
 // ProcessSuite :

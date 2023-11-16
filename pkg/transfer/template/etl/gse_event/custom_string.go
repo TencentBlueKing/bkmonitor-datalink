@@ -11,14 +11,16 @@ package gse_event
 
 import (
 	"context"
+	"time"
+
+	"github.com/cstockton/go-conv"
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
-	"github.com/cstockton/go-conv"
-	"github.com/pkg/errors"
-	"time"
 )
 
 // CustomStringProcessor : 自定义字符串处理器

@@ -142,7 +142,7 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 			}
 			if len(resultErrors) > 0 {
 				s, _ := json.Marshal(resultErrors)
-				msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, error: %s", b, writeResult.Took, string(s))
+				msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, error: %s", b, len(resultErrors), string(s))
 				logging.MinuteErrorSampling(b.String(), msg)
 			}
 			count = len(writeResult.Items) - total // 成功写入的数据量

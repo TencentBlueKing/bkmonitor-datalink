@@ -14,69 +14,76 @@ import (
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/generator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 )
 
-func makeMetricsGenerator(gaugeCount, counterCount, histogramCount int) *generator.MetricsGenerator {
-	opts := define.MetricsOptions{
-		GaugeCount:     gaugeCount,
-		CounterCount:   counterCount,
-		HistogramCount: histogramCount,
-	}
-	opts.RandomAttributeKeys = attributeKeys
-	opts.RandomResourceKeys = resourceKeys
-	return generator.NewMetricsGenerator(opts)
-}
-
 func TestConvertGaugeMetrics(t *testing.T) {
 	opts := define.MetricsOptions{
 		GaugeCount: 1,
-		MetricName: "bk_apm_duration",
+		MetricName: "bkm.usage",
 		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"attr1": "attr1-value",
-				"attr2": "attr2-value",
-			},
-			Resources: map[string]string{
-				"res1": "res1-value",
-				"res2": "res2-value",
-			},
+			Attributes: map[string]string{"a1": "v1"},
+			Resources:  map[string]string{"r1": "v1"},
 		},
 	}
 
-	g := generator.NewMetricsGenerator(opts)
-	metrics := g.Generate()
-
-	events := make([]define.Event, 0)
-	gather := func(evts ...define.Event) {
-		events = append(events, evts...)
-	}
-	assert.Len(t, events, 0)
-
-	dp := testkits.FirstGaugeDataPoint(metrics)
-	dp.SetTimestamp(0)
-	NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
-
-	event := events[0]
-	event.Data()
-
-	assert.Equal(t, common.MapStr{
+	excepted := common.MapStr{
 		"metrics": map[string]float64{
-			"bk_apm_duration": float64(0),
+			"bkm_usage": float64(1024),
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"attr1": "attr1-value",
-			"attr2": "attr2-value",
-			"res1":  "res1-value",
-			"res2":  "res2-value",
+			"a1": "v1",
+			"r1": "v1",
 		},
 		"timestamp": int64(0),
-	}, event.Data())
-	assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	}
+
+	g := generator.NewMetricsGenerator(opts)
+
+	t.Run("DoubleValue", func(t *testing.T) {
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+
+		metrics := g.Generate()
+		dp := testkits.FirstGaugeDataPoint(metrics)
+		dp.SetTimestamp(0)
+		dp.SetDoubleVal(1024)
+		assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
+
+		NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		event := events[0]
+		event.Data()
+
+		assert.Equal(t, excepted, event.Data())
+		assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	})
+
+	t.Run("IntValue", func(t *testing.T) {
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+
+		metrics := g.Generate()
+		dp := testkits.FirstGaugeDataPoint(metrics)
+		dp.SetTimestamp(0)
+		dp.SetIntVal(1024)
+		assert.Equal(t, pmetric.NumberDataPointValueTypeInt, dp.ValueType())
+
+		NewCommonConverter().Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		event := events[0]
+		event.Data()
+
+		assert.Equal(t, excepted, event.Data())
+		assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	})
 }
 
 func TestConvertHistogramMetrics(t *testing.T) {
@@ -84,14 +91,8 @@ func TestConvertHistogramMetrics(t *testing.T) {
 		HistogramCount: 1,
 		MetricName:     "bk_apm_duration",
 		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"attr1": "attr1-value",
-				"attr2": "attr2-value",
-			},
-			Resources: map[string]string{
-				"res1": "res1-value",
-				"res2": "res2-value",
-			},
+			Attributes: map[string]string{"a1": "v1"},
+			Resources:  map[string]string{"r1": "v1"},
 		},
 	}
 
@@ -102,7 +103,6 @@ func TestConvertHistogramMetrics(t *testing.T) {
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-	assert.Len(t, events, 0)
 
 	dp := testkits.FirstHistogramPoint(metrics)
 	dp.SetTimestamp(0)
@@ -122,10 +122,8 @@ func TestConvertHistogramMetrics(t *testing.T) {
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"attr1": "attr1-value",
-			"attr2": "attr2-value",
-			"res1":  "res1-value",
-			"res2":  "res2-value",
+			"a1": "v1",
+			"r1": "v1",
 		},
 		"timestamp": int64(0),
 	}, event.Data())
@@ -137,25 +135,17 @@ func TestConvertSummaryMetrics(t *testing.T) {
 		SummaryCount: 1,
 		MetricName:   "bk_apm_duration",
 		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"attr1": "attr1-value",
-				"attr2": "attr2-value",
-			},
-			Resources: map[string]string{
-				"res1": "res1-value",
-				"res2": "res2-value",
-			},
+			Attributes: map[string]string{"a1": "v1"},
+			Resources:  map[string]string{"r1": "v1"},
 		},
 	}
 
 	g := generator.NewMetricsGenerator(opts)
 	metrics := g.Generate()
-
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		events = append(events, evts...)
 	}
-	assert.Len(t, events, 0)
 
 	dp := testkits.FirstSummaryPoint(metrics)
 	dp.SetTimestamp(0)
@@ -173,10 +163,8 @@ func TestConvertSummaryMetrics(t *testing.T) {
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"attr1": "attr1-value",
-			"attr2": "attr2-value",
-			"res1":  "res1-value",
-			"res2":  "res2-value",
+			"a1": "v1",
+			"r1": "v1",
 		},
 		"timestamp": int64(0),
 	}, event.Data())
@@ -188,51 +176,87 @@ func TestConvertSumMetrics(t *testing.T) {
 		CounterCount: 1,
 		MetricName:   "bk_apm_duration",
 		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"attr1": "attr1-value",
-				"attr2": "attr2-value",
-			},
-			Resources: map[string]string{
-				"res1": "res1-value",
-				"res2": "res2-value",
-			},
+			Attributes: map[string]string{"a1": "v1"},
+			Resources:  map[string]string{"r1": "v1"},
 		},
 	}
 
-	g := generator.NewMetricsGenerator(opts)
-	metrics := g.Generate()
-
-	events := make([]define.Event, 0)
-	gather := func(evts ...define.Event) {
-		events = append(events, evts...)
-	}
-	assert.Len(t, events, 0)
-
-	dp := testkits.FirstSumPoint(metrics)
-	dp.SetTimestamp(0)
-	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
-
-	event := events[0]
-	event.Data()
-
-	assert.Equal(t, common.MapStr{
+	excepted := common.MapStr{
 		"metrics": map[string]float64{
-			"bk_apm_duration": float64(0),
+			"bk_apm_duration": float64(1024),
 		},
 		"target": define.Identity(),
 		"dimension": map[string]string{
-			"attr1": "attr1-value",
-			"attr2": "attr2-value",
-			"res1":  "res1-value",
-			"res2":  "res2-value",
+			"a1": "v1",
+			"r1": "v1",
 		},
 		"timestamp": int64(0),
-	}, event.Data())
-	assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	}
+
+	g := generator.NewMetricsGenerator(opts)
+
+	t.Run("DoubleValue", func(t *testing.T) {
+		metrics := g.Generate()
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+
+		dp := testkits.FirstSumPoint(metrics)
+		dp.SetTimestamp(0)
+		dp.SetDoubleVal(1024)
+		assert.Equal(t, pmetric.NumberDataPointValueTypeDouble, dp.ValueType())
+
+		MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		event := events[0]
+		event.Data()
+
+		assert.Equal(t, excepted, event.Data())
+		assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	})
+
+	t.Run("IntValue", func(t *testing.T) {
+		metrics := g.Generate()
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+
+		dp := testkits.FirstSumPoint(metrics)
+		dp.SetTimestamp(0)
+		dp.SetIntVal(1024)
+		assert.Equal(t, pmetric.NumberDataPointValueTypeInt, dp.ValueType())
+
+		MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
+		event := events[0]
+		event.Data()
+
+		assert.Equal(t, excepted, event.Data())
+		assert.Equal(t, event.RecordType(), define.RecordMetrics)
+	})
+}
+
+type generatorConfig struct {
+	gauge     int
+	counter   int
+	histogram int
+	summary   int
+}
+
+func makeMetricsGenerator(conf generatorConfig) *generator.MetricsGenerator {
+	opts := define.MetricsOptions{
+		GaugeCount:     conf.gauge,
+		CounterCount:   conf.counter,
+		HistogramCount: conf.histogram,
+		SummaryCount:   conf.summary,
+	}
+	opts.RandomAttributeKeys = attributeKeys
+	opts.RandomResourceKeys = resourceKeys
+	return generator.NewMetricsGenerator(opts)
 }
 
 func BenchmarkMetricsConvert_10_Gauge_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(10, 0, 0)
+	g := makeMetricsGenerator(generatorConfig{gauge: 10})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -247,7 +271,7 @@ func BenchmarkMetricsConvert_10_Gauge_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_10_Counter_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 10, 0)
+	g := makeMetricsGenerator(generatorConfig{counter: 10})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -262,7 +286,22 @@ func BenchmarkMetricsConvert_10_Counter_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_10_Histogram_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 0, 10)
+	g := makeMetricsGenerator(generatorConfig{histogram: 10})
+	data := g.Generate()
+	record := define.Record{
+		RecordType:  define.RecordMetrics,
+		RequestType: define.RequestHttp,
+		Data:        data,
+	}
+
+	gather := func(evts ...define.Event) {}
+	for i := 0; i < b.N; i++ {
+		MetricsConverter.Convert(&record, gather)
+	}
+}
+
+func BenchmarkMetricsConvert_10_Summary_DataPoint(b *testing.B) {
+	g := makeMetricsGenerator(generatorConfig{summary: 10})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -277,7 +316,7 @@ func BenchmarkMetricsConvert_10_Histogram_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_100_Gauge_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(100, 0, 0)
+	g := makeMetricsGenerator(generatorConfig{gauge: 100})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -292,7 +331,7 @@ func BenchmarkMetricsConvert_100_Gauge_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_100_Counter_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 100, 0)
+	g := makeMetricsGenerator(generatorConfig{counter: 100})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -307,7 +346,22 @@ func BenchmarkMetricsConvert_100_Counter_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_100_Histogram_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 0, 100)
+	g := makeMetricsGenerator(generatorConfig{histogram: 100})
+	data := g.Generate()
+	record := define.Record{
+		RecordType:  define.RecordMetrics,
+		RequestType: define.RequestHttp,
+		Data:        data,
+	}
+
+	gather := func(evts ...define.Event) {}
+	for i := 0; i < b.N; i++ {
+		MetricsConverter.Convert(&record, gather)
+	}
+}
+
+func BenchmarkMetricsConvert_100_Summary_DataPoint(b *testing.B) {
+	g := makeMetricsGenerator(generatorConfig{summary: 100})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -322,7 +376,7 @@ func BenchmarkMetricsConvert_100_Histogram_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_1000_Gauge_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(1000, 0, 0)
+	g := makeMetricsGenerator(generatorConfig{gauge: 1000})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -337,7 +391,7 @@ func BenchmarkMetricsConvert_1000_Gauge_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_1000_Counter_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 1000, 0)
+	g := makeMetricsGenerator(generatorConfig{counter: 1000})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -352,7 +406,7 @@ func BenchmarkMetricsConvert_1000_Counter_DataPoint(b *testing.B) {
 }
 
 func BenchmarkMetricsConvert_1000_Histogram_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(0, 0, 1000)
+	g := makeMetricsGenerator(generatorConfig{histogram: 1000})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,
@@ -366,8 +420,8 @@ func BenchmarkMetricsConvert_1000_Histogram_DataPoint(b *testing.B) {
 	}
 }
 
-func BenchmarkMetricsConvert_1000_DataPoint(b *testing.B) {
-	g := makeMetricsGenerator(1000, 1000, 1000)
+func BenchmarkMetricsConvert_1000_Summary_DataPoint(b *testing.B) {
+	g := makeMetricsGenerator(generatorConfig{summary: 1000})
 	data := g.Generate()
 	record := define.Record{
 		RecordType:  define.RecordMetrics,

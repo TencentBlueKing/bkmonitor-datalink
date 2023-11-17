@@ -29,7 +29,11 @@ func TestConvertPingserverData(t *testing.T) {
 		RecordType: define.RecordPingserver,
 		Data:       pd,
 	}, func(evts ...define.Event) {
-		events = append(events, evts...)
+		for _, evt := range evts {
+			assert.Equal(t, define.RecordPingserver, evt.RecordType())
+			assert.Equal(t, int32(1001), evt.DataId())
+			events = append(events, evt)
+		}
 	})
 
 	assert.Len(t, events, 1)

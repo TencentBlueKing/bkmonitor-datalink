@@ -15,11 +15,21 @@ import (
 )
 
 func TestHook(t *testing.T) {
-	cfg := Config{OnFailure: OnFailureConfig{
-		Timeout: time.Second,
-		Scripts: []string{"echo"},
-	}}
+	t.Run("Normal", func(t *testing.T) {
+		cfg := Config{OnFailure: OnFailureConfig{
+			Timeout: time.Second,
+			Scripts: []string{"echo"},
+		}}
 
-	Register(cfg)
-	OnFailureHook()
+		Register(cfg)
+		OnFailureHook()
+	})
+
+	t.Run("Validate", func(t *testing.T) {
+		cfg := Config{OnFailure: OnFailureConfig{
+			Scripts: []string{"echo"},
+		}}
+
+		Register(cfg)
+	})
 }

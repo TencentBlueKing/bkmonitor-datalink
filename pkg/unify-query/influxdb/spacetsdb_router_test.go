@@ -93,7 +93,7 @@ func (s *TestSuite) TearDownTest() {
 
 func (s *TestSuite) TestReloadByKey() {
 	router := s.router
-	err := router.ReloadAllKey(s.ctx)
+	err := router.ReloadAllKey(s.ctx, true)
 	if err != nil {
 		panic(err)
 	}
@@ -102,7 +102,7 @@ func (s *TestSuite) TestReloadByKey() {
 	s.T().Logf("Space: %v\n", space)
 	assert.Equal(s.T(), space["script_hhb_test.group3"].Filters[0]["bk_biz_id"], "2")
 
-	rt := router.GetResultTable(s.ctx, "script_hhb_test.group3")
+	rt := router.GetResultTable(s.ctx, "script_hhb_test.group3", false)
 	s.T().Logf("ResultTable: %v\n", rt)
 	assert.Equal(s.T(), rt.DB, "script_hhb_test")
 
@@ -122,7 +122,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	var err error
 	router := s.router
 
-	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc__2")
+	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc_2")
 	if err != nil {
 		panic(err)
 	}
@@ -140,7 +140,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	if err != nil {
 		panic(err)
 	}
-	rt := router.GetResultTable(s.ctx, "script_hhb_test.group3")
+	rt := router.GetResultTable(s.ctx, "script_hhb_test.group3", false)
 	s.T().Logf("ResultTable: %v\n", rt)
 	assert.Equal(s.T(), rt.DB, "script_hhb_test")
 
@@ -164,7 +164,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 func (s *TestSuite) TestReloadKeyWithBigData() {
 	//s.SetupBigData()
 	router := s.router
-	err := router.LoadRouter(s.ctx, routerInfluxdb.ResultTableDetailKey)
+	err := router.LoadRouter(s.ctx, routerInfluxdb.ResultTableDetailKey, true)
 	if err != nil {
 		panic(err)
 	}

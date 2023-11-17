@@ -7,21 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package grpcmiddleware
+package utils
 
 import (
-	"google.golang.org/grpc"
+	"strings"
+	"unicode"
 )
 
-const (
-	// Note: grpc 默认配置 调整此参数请评估影响）
-	maxRequestBytes = 1024 * 1024 * 8 // 8MB
-)
-
-func init() {
-	Register("maxbytes", MaxBytes())
-}
-
-func MaxBytes() grpc.ServerOption {
-	return grpc.MaxRecvMsgSize(maxRequestBytes)
+func NormalizeName(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != ':' }), "_")
 }

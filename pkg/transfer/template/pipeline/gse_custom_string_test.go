@@ -10,7 +10,6 @@
 package pipeline_test
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 
@@ -55,7 +54,6 @@ func (s *GseCustomStringPipelineSuite) TestRun() {
 	pipe := s.BuildPipe(func(payload define.Payload) {
 		wg.Done()
 	}, func(result map[string]interface{}) {
-		fmt.Println("tttttttt", result)
 		wg.Done()
 		s.MapEqual(map[string]interface{}{
 			"dimensions": map[string]interface{}{

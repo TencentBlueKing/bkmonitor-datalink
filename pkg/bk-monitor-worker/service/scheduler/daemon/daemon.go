@@ -12,6 +12,7 @@ package daemon
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -58,7 +59,13 @@ var taskDefine = map[string]OperatorDefine{
 		if err != nil {
 			return nil, err
 		}
-		go op.Run()
+		runSuccessChan := make(chan bool, 1)
+		go op.Run(runSuccessChan)
+		runSuccess := <-runSuccessChan
+		close(runSuccessChan)
+		if !runSuccess {
+			return nil, errors.New("apm.pre_calculate failed to run")
+		}
 		return op, err
 	}},
 }

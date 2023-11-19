@@ -232,6 +232,7 @@ loop:
 			}
 		case <-p.ctx.Done():
 			logger.Infof("Storage proxy receive stop signal, data saving stopped.")
+			ticker.Stop()
 			break loop
 		}
 	}

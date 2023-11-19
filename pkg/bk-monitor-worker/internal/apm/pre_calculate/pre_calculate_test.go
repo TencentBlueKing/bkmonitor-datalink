@@ -28,8 +28,13 @@ func TestApmPreCalculateViaFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	go op.Run()
+	errChan := make(chan bool, 1)
+	go op.Run(errChan)
+	runSuccess := <-errChan
+	if !runSuccess {
+		logger.Fatal("failed to run")
+	}
+	close(errChan)
 	go op.WatchConnections(dataIdFilePath)
 
 	s := make(chan os.Signal)

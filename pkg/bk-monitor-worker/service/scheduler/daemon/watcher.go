@@ -92,6 +92,7 @@ func (d *DefaultWatcher) watchWorker() {
 			workerMarkMapping = currentMarkMapping
 		case <-d.ctx.Done():
 			logger.Info("DaemonTask [DefaultWatcher] worker watcher stopped")
+			ticker.Stop()
 			return
 		}
 	}
@@ -171,6 +172,7 @@ func (d *DefaultWatcher) watchTask() {
 			taskMarkMapping = currentTask
 		case <-d.ctx.Done():
 			logger.Info("Daemon task scheduler task-watcher stopped.")
+			ticker.Stop()
 			return
 		}
 	}
@@ -200,8 +202,8 @@ func (d *DefaultWatcher) handleDeleteTask(taskMark watchTaskMark) {
 func NewDefaultWatcher(ctx context.Context) Watcher {
 
 	options := DefaultWatcherOptions{
-		watchWorkerInterval: time.Duration(config.SchedulerDaemonTaskWorkerWatcherInterval) * time.Second,
-		watchTaskInterval:   time.Duration(config.SchedulerDaemonTaskTaskWatcherInterval) * time.Second,
+		watchWorkerInterval: config.SchedulerDaemonTaskWorkerWatcherInterval,
+		watchTaskInterval:   config.SchedulerDaemonTaskTaskWatcherInterval,
 	}
 
 	return &DefaultWatcher{

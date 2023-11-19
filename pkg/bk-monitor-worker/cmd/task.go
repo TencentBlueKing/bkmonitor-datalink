@@ -11,7 +11,6 @@ package cmd
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -52,7 +51,7 @@ func startTaskModule(cmd *cobra.Command, args []string) {
 	// 2. 周期任务调度器
 	periodicTaskScheduler, err := periodic.NewPeriodicTaskScheduler(ctx)
 	if err != nil {
-		log.Fatalf("failed to create period task scheduler: %s", err)
+		logger.Fatalf("failed to create period task scheduler: %s", err)
 	}
 	go periodicTaskScheduler.Run()
 

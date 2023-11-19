@@ -78,6 +78,7 @@ func (d *DefaultNumerator) start() {
 
 		case <-d.ctx.Done():
 			logger.Info("Daemon task-scheduler numerator stopped.")
+			ticker.Stop()
 			return
 		}
 	}

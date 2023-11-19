@@ -304,6 +304,7 @@ func (m *OverlapBloom) AddOverlap() {
 				break
 			}
 		case <-m.ctx.Done():
+			intervalTicker.Stop()
 			return
 		}
 	}
@@ -324,6 +325,7 @@ func (m *OverlapBloom) AutoReset() {
 			logger.Infof("auto reset release lock, move after to front, set after = null")
 			m.lock.Unlock()
 		case <-m.ctx.Done():
+			intervalTicker.Stop()
 			return
 		}
 	}

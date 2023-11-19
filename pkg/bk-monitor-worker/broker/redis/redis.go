@@ -14,7 +14,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"math"
 	"time"
 
@@ -66,7 +66,7 @@ func GetRDB() *RDB {
 		},
 	)
 	if err != nil {
-		log.Fatalf("failed to create redis broker client, error: %s", err)
+		logger.Fatalf("failed to create redis broker client, error: %s", err)
 	}
 
 	brokerInstance = &RDB{client: client, clock: timex.NewTimeClock()}

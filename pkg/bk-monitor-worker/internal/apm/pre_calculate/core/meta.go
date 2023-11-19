@@ -88,23 +88,22 @@ type TraceKafkaConfig struct {
 }
 
 var (
-	metadataOnce   sync.Once
 	centerInstance *MetadataCenter
 )
 
 // CreateMetadataCenter globally unique config provider
-func CreateMetadataCenter() {
-	metadataOnce.Do(func() {
-		consulClient, err := consul.GetInstance(context.Background())
-		if err != nil {
-			logger.Errorf("Failed to create consul client. error: %s", err)
-		}
-		centerInstance = &MetadataCenter{
-			mapping: &sync.Map{},
-			consul:  *consulClient,
-		}
-		logger.Infof("Create metadata-center successfully")
-	})
+func CreateMetadataCenter() error {
+	consulClient, err := consul.GetInstance(context.Background())
+	if err != nil {
+		logger.Errorf("Failed to create consul client. error: %s", err)
+		return err
+	}
+	centerInstance = &MetadataCenter{
+		mapping: &sync.Map{},
+		consul:  *consulClient,
+	}
+	logger.Infof("Create metadata-center successfully")
+	return nil
 }
 
 // AddDataIdAndInfo manually specify the configuration of dataid for testing

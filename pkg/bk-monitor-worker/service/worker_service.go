@@ -108,6 +108,7 @@ func (w *WorkerHealthMaintainer) Start() {
 			}
 		case <-w.ctx.Done():
 			logger.Infof("Worker health maintainer stopped.")
+			ticker.Stop()
 			return
 		}
 	}
@@ -116,8 +117,8 @@ func (w *WorkerHealthMaintainer) Start() {
 func NewWorkerHealthMaintainer(ctx context.Context, queues []string) (*WorkerHealthMaintainer, error) {
 
 	options := MaintainerOptions{
-		checkInternal: time.Duration(config.WorkerHealthCheckInterval) * time.Second,
-		infoTtl:       time.Duration(config.WorkerHealthCheckInfoDuration) * time.Second,
+		checkInternal: config.WorkerHealthCheckInterval,
+		infoTtl:       config.WorkerHealthCheckInfoDuration,
 	}
 
 	broker := rdb.GetRDB()

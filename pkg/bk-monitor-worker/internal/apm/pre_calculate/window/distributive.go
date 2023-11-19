@@ -228,6 +228,7 @@ func (w *DistributiveWindow) startWatch(errorReceiveChan chan<- error) {
 		select {
 		case <-w.ctx.Done():
 			w.logger.Info("trigger watch stopped.")
+			tick.Stop()
 			return
 		case <-tick.C:
 			for ob, _ := range w.observers {

@@ -41,7 +41,7 @@ type Builder interface {
 
 type PreCalculateProcessor interface {
 	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
-	Run()
+	Run(errorChan chan<- bool)
 	Stop(dataId string)
 
 	StartByDataId(ctx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption)
@@ -198,14 +198,19 @@ loop:
 			}
 		case <-ctx.Done():
 			logger.Infof("StartByDataId stopped.")
+			ticker.Stop()
 			break loop
 		}
 	}
 }
 
-func (p *Precalculate) Run() {
-	core.CreateMetadataCenter()
+func (p *Precalculate) Run(runSuccess chan<- bool) {
+	if err := core.CreateMetadataCenter(); err != nil {
+		runSuccess <- false
+		return
+	}
 	apmLogger.Infof("Pre-calculate is running...")
+	runSuccess <- true
 loop:
 	for {
 		select {

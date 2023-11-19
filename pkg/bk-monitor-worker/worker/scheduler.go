@@ -178,6 +178,7 @@ func (s *Scheduler) Run() error {
 		case <-ticker.C:
 			s.beat()
 		case <-s.ctx.Done():
+			ticker.Stop()
 			s.Shutdown()
 		}
 	}

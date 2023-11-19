@@ -16,7 +16,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"os"
@@ -184,11 +183,11 @@ func exportChart(x, y []float64, duration time.Duration, title string) {
 
 	file, err := os.Create("output.png")
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 	_, err = io.Copy(file, buffer)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 

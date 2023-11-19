@@ -11,7 +11,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 	"time"
@@ -148,24 +147,24 @@ var (
 	// WorkerConcurrency concurrency of worker task
 	WorkerConcurrency int
 	// WorkerHealthCheckInterval interval of worker report health status
-	WorkerHealthCheckInterval int
+	WorkerHealthCheckInterval time.Duration
 	// WorkerHealthCheckInfoDuration cache duration of worker info
-	WorkerHealthCheckInfoDuration int
+	WorkerHealthCheckInfoDuration time.Duration
 	// WorkerDaemonTaskMaintainerInterval check interval of task maintainer
-	WorkerDaemonTaskMaintainerInterval int
+	WorkerDaemonTaskMaintainerInterval time.Duration
 	// WorkerDaemonTaskRetryTolerateCount max retry of task
 	WorkerDaemonTaskRetryTolerateCount int
 	// WorkerDaemonTaskRetryTolerateInterval retry interval of failed task
-	WorkerDaemonTaskRetryTolerateInterval int
+	WorkerDaemonTaskRetryTolerateInterval time.Duration
 	// WorkerDaemonTaskRetryIntolerantFactor retry duration factor of failed task
 	WorkerDaemonTaskRetryIntolerantFactor int
 
 	// SchedulerDaemonTaskNumeratorInterval interval of scheduler numerator
-	SchedulerDaemonTaskNumeratorInterval int
+	SchedulerDaemonTaskNumeratorInterval time.Duration
 	// SchedulerDaemonTaskWorkerWatcherInterval interval of scheduler worker watcher
-	SchedulerDaemonTaskWorkerWatcherInterval int
+	SchedulerDaemonTaskWorkerWatcherInterval time.Duration
 	// SchedulerDaemonTaskTaskWatcherInterval interval of scheduler task watcher
-	SchedulerDaemonTaskTaskWatcherInterval int
+	SchedulerDaemonTaskTaskWatcherInterval time.Duration
 
 	// HttpGinMode http mode
 	HttpGinMode string
@@ -274,16 +273,20 @@ func initVariables() {
 	// WorkerConcurrency worker并发数量 0为使用CPU核数
 	WorkerConcurrency = GetValue("worker.concurrency", 0)
 	// WorkerHealthCheckInterval worker心跳上报时间间隔 单位: s
-	WorkerHealthCheckInterval = GetValue("worker.healthCheck.interval", 3)
+	WorkerHealthCheckInterval = GetValue("worker.healthCheck.interval", 3*time.Second, viper.GetDuration)
 	// WorkerHealthCheckInfoDuration worker心跳上报缓存过期时间 单位: s
-	WorkerHealthCheckInfoDuration = GetValue("worker.healthCheck.duration", 5)
+	WorkerHealthCheckInfoDuration = GetValue("worker.healthCheck.duration", 5*time.Second, viper.GetDuration)
 	// WorkerDaemonTaskMaintainerInterval worker常驻任务检测任务是否正常运行的间隔 单位: s
-	WorkerDaemonTaskMaintainerInterval = GetValue("worker.daemonTask.maintainer.interval", 1)
+	WorkerDaemonTaskMaintainerInterval = GetValue(
+		"worker.daemonTask.maintainer.interval", 1*time.Second, viper.GetDuration,
+	)
 	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试就不断动态增长
 	WorkerDaemonTaskRetryTolerateCount = GetValue("worker.daemonTask.maintainer.tolerateCount", 60)
 	// WorkerDaemonTaskRetryTolerateInterval worker常驻任务当任务执行失败并且重试次数未超过 WorkerDaemonTaskRetryTolerateCount 时
 	// 下次重试时间间隔
-	WorkerDaemonTaskRetryTolerateInterval = GetValue("worker.daemonTask.maintainer.tolerateInterval", 10)
+	WorkerDaemonTaskRetryTolerateInterval = GetValue(
+		"worker.daemonTask.maintainer.tolerateInterval", 10*time.Second, viper.GetDuration,
+	)
 	// WorkerDaemonTaskRetryIntolerantFactor worker常驻任务当任务重试次数超过 WorkerDaemonTaskRetryTolerateCount 时
 	// 下次重试按照Nx倍数增长 设置倍数因子
 	WorkerDaemonTaskRetryIntolerantFactor = GetValue("worker.daemonTask.maintainer.intolerantFactor", 2)
@@ -295,11 +298,17 @@ func initVariables() {
 		Scheduler常驻任务配置 ----- START
 	*/
 	// SchedulerDaemonTaskNumeratorInterval 定时检测当前常驻任务分派是否正确的时间间隔(默认每60秒检测一次)
-	SchedulerDaemonTaskNumeratorInterval = GetValue("scheduler.daemonTask.numerator.interval", 60)
+	SchedulerDaemonTaskNumeratorInterval = GetValue(
+		"scheduler.daemonTask.numerator.interval", 60*time.Second, viper.GetDuration,
+	)
 	// SchedulerDaemonTaskWorkerWatcherInterval 常驻任务功能监听worker队列变化的间隔 单位: s
-	SchedulerDaemonTaskWorkerWatcherInterval = GetValue("scheduler.daemonTask.watcher.workerWatchInterval", 1)
+	SchedulerDaemonTaskWorkerWatcherInterval = GetValue(
+		"scheduler.daemonTask.watcher.workerWatchInterval", 1*time.Second, viper.GetDuration,
+	)
 	// SchedulerDaemonTaskTaskWatcherInterval 常驻任务功能监听task队列变化的间隔 单位: s
-	SchedulerDaemonTaskTaskWatcherInterval = GetValue("scheduler.daemonTask.watcher.taskWatchInterval", 1)
+	SchedulerDaemonTaskTaskWatcherInterval = GetValue(
+		"scheduler.daemonTask.watcher.taskWatchInterval", 1*time.Second, viper.GetDuration,
+	)
 	/*
 		Scheduler常驻任务配置 ----- END
 	*/
@@ -369,7 +378,7 @@ func InitConfig() {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("read config file: %s error: %s", FilePath, err)
+		logger.Fatalf("read config file: %s error: %s", FilePath, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)

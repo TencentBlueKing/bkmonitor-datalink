@@ -203,11 +203,11 @@ func RemoveAllTask(c *gin.Context) {
 			return
 		}
 		Response(c, &gin.H{})
-		return
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
-		return
 	}
+
+	return
 }
 
 // RemoveTask 删除某个任务
@@ -243,11 +243,11 @@ func RemoveTask(c *gin.Context) {
 			"failed to remove TaskUniId: %s, not found in key: %s",
 			params.TaskUniId, common.DaemonTaskKey()),
 		)
-		return
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
-		return
 	}
+
+	return
 }
 
 // ListTask 获取broker中的任务列表
@@ -288,6 +288,6 @@ func ListTask(c *gin.Context) {
 		Response(c, &gin.H{"data": res})
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
-		return
 	}
+	return
 }

@@ -158,6 +158,7 @@ func (r *RunMaintainer) listenRunningState(taskUniId string, errorReceiveChan ch
 			retryTicker = &time.Ticker{}
 		case <-baseCtx.Done():
 			logger.Infof("[RetryListen] stopped.")
+			retryTicker.Stop()
 			return
 		}
 	}
@@ -192,9 +193,9 @@ func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMainta
 	}
 
 	options := RunMaintainerOptions{
-		checkInterval:         time.Duration(config.WorkerDaemonTaskMaintainerInterval) * time.Second,
+		checkInterval:         config.WorkerDaemonTaskMaintainerInterval,
 		RetryTolerateCount:    config.WorkerDaemonTaskRetryTolerateCount,
-		RetryTolerateInterval: time.Duration(config.WorkerDaemonTaskRetryTolerateInterval) * time.Second,
+		RetryTolerateInterval: config.WorkerDaemonTaskRetryTolerateInterval,
 		RetryIntolerantFactor: config.WorkerDaemonTaskRetryIntolerantFactor,
 	}
 

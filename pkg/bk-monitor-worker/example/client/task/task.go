@@ -10,7 +10,7 @@
 package task
 
 import (
-	"log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -29,17 +29,17 @@ func Add(i int) {
 
 	client, err := worker.GetClient()
 	if err != nil {
-		log.Fatalf("failed to create client: %s", err)
+		logger.Fatalf("failed to create client: %s", err)
 	}
 	defer client.Close()
 
 	task, err := NewAddTask(i)
 	if err != nil {
-		log.Fatalf("could not create task: %v", err)
+		logger.Fatalf("could not create task: %v", err)
 	}
 	info, err := client.Enqueue(task)
 	if err != nil {
-		log.Fatalf("could not enqueue task: %v", err)
+		logger.Fatalf("could not enqueue task: %v", err)
 	}
-	log.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
+	logger.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
 }

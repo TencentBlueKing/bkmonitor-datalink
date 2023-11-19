@@ -136,18 +136,18 @@ task:
   watcher:
     chanSize: 10
   healthCheck:
-    interval: 3
-    duration: 5
+    interval: 3s
+    duration: 5s
   daemonTask:
     maintainer:
-      interval: 1
+      interval: 1s
       tolerateCount: 60
-      tolerateInterval: 10
+      tolerateInterval: 10s
       intolerantFactor: 2
 scheduler:
   daemonTask:
     numerator:
-      interval: 60
+      interval: 60s
     watcher:
-      workerWatchInterval: 1
-      taskWatchInterval: 1
+      workerWatchInterval: 1s
+      taskWatchInterval: 1s

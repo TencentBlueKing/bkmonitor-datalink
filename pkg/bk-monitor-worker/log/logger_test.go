@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// TestLogger test logger write to file
 func TestLogger(t *testing.T) {
 	InitLogger()
 	// 测试打印日志

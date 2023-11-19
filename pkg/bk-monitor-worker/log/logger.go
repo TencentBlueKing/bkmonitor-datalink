@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// InitLogger logger initial
 func InitLogger() {
 	logger.SetOptions(logger.Options{
 		Stdout:     config.LoggerEnabledStdout,

@@ -10,9 +10,13 @@
 package config
 
 var (
-	MetadataMetricDimensionMetricKeyPrefix             string
-	MetadataMetricDimensionKeyPrefix                   string
-	MetadataMetricDimensionMaxMetricFetchStep          int
+	// MetadataMetricDimensionMetricKeyPrefix config of metadata.refreshMetric task
+	MetadataMetricDimensionMetricKeyPrefix string
+	// MetadataMetricDimensionKeyPrefix config of metadata.refreshMetric task
+	MetadataMetricDimensionKeyPrefix string
+	// MetadataMetricDimensionMaxMetricFetchStep config of metadata.refreshMetric task
+	MetadataMetricDimensionMaxMetricFetchStep int
+	// MetadataMetricDimensionTimeSeriesMetricExpiredDays config of metadata.refreshMetric task
 	MetadataMetricDimensionTimeSeriesMetricExpiredDays int
 )
 

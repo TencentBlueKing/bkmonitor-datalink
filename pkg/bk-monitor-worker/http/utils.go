@@ -19,7 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 )
 
-// BindJSON
+// BindJSON bind http params to obj
 func BindJSON(c *gin.Context, obj interface{}) error {
 	return c.ShouldBindWith(obj, binding.JSON)
 }

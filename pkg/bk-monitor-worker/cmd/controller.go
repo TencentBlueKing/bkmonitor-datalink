@@ -42,7 +42,7 @@ func startController(cmd *cobra.Command, args []string) {
 	config.InitConfig()
 	log.InitLogger()
 
-	r := service.NewHTTPService(true)
+	r := service.NewHTTPService()
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", config.HttpListenHost, config.HttpListenPort),
@@ -62,6 +62,7 @@ func startController(cmd *cobra.Command, args []string) {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
 			logger.Info("Bye")
+			srv.Close()
 			os.Exit(0)
 		}
 	}

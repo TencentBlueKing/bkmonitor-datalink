@@ -200,6 +200,7 @@ var (
 	SHA512 scram.HashGeneratorFcn = sha512.New
 )
 
+// SCRAMSHA512Client SHA 512 implements
 type SCRAMSHA512Client struct {
 	*scram.Client
 	*scram.ClientConversation

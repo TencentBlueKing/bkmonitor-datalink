@@ -54,6 +54,7 @@ func Context(ctx context.Context) Option {
 type notifyForm int
 
 const (
+	// KafkaNotifier notifier type: kafka
 	KafkaNotifier notifyForm = 1 << iota
 )
 

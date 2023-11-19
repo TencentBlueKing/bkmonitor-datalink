@@ -58,6 +58,7 @@ func BloomFpRate(s float64) BloomOption {
 	}
 }
 
+// NormalMemoryBloomConfig config of MemoryBloom
 func NormalMemoryBloomConfig(opts ...MemoryBloomOption) BloomOption {
 	return func(options *BloomOptions) {
 		opt := MemoryBloomOptions{}
@@ -68,6 +69,7 @@ func NormalMemoryBloomConfig(opts ...MemoryBloomOption) BloomOption {
 	}
 }
 
+// NormalOverlapMemoryBloomConfig config of OverlapBloom
 func NormalOverlapMemoryBloomConfig(opts ...OverlapBloomOption) BloomOption {
 	return func(options *BloomOptions) {
 		opt := OverlapBloomOptions{}
@@ -128,6 +130,9 @@ type MemoryBloomOptions struct {
 
 type MemoryBloomOption func(*MemoryBloomOptions)
 
+// MemoryBloomAutoClean Automatic filter clearing time.
+// Data will be clear every time.Duration to avoid excessive memory usage.
+// Specific config of MemoryBloom
 func MemoryBloomAutoClean(c int) MemoryBloomOption {
 	return func(options *MemoryBloomOptions) {
 		options.autoClean = time.Duration(c) * time.Minute
@@ -226,6 +231,10 @@ type OverlapBloomOptions struct {
 
 type OverlapBloomOption func(*OverlapBloomOptions)
 
+// OverlapBloomResetDuration Configure the occurrence interval of overlapping filters.
+// For example, if set 2 * time.Hour,
+// a post-chain instance is created whenever 1 hour(2h / 2) is reached.
+// When 2h are up, the post-chain instance is moved forward to clear data.
 func OverlapBloomResetDuration(d time.Duration) OverlapBloomOption {
 	return func(options *OverlapBloomOptions) {
 		options.resetDuration = d
@@ -348,6 +357,7 @@ type LayersBloomOptions struct {
 
 type LayersBloomOption func(*LayersBloomOptions)
 
+// Layers the number of layers of the multilayer filter.
 func Layers(s int) LayersBloomOption {
 	return func(options *LayersBloomOptions) {
 		if s > len(strategies) {
@@ -458,18 +468,24 @@ type LayersCapDecreaseBloomOptions struct {
 	divisor int
 }
 
+// CapDecreaseBloomCap The initial capacity of the overlap-decrement filter,
+// and the capacity of each layer will decrease by StorageBloomDecreaseDivisor.
+// For example, CapDecreaseBloomCap=100, CapDecreaseBloomDivisor=2, CapDecreaseBloomLayers=3,
+// then the first layer is 100 capacity, the second layer is 50, and the third layer is 25.
 func CapDecreaseBloomCap(c int) LayersCapDecreaseBloomOption {
 	return func(options *LayersCapDecreaseBloomOptions) {
 		options.cap = c
 	}
 }
 
+// CapDecreaseBloomLayers The number of layer of the overlap-decrement filter.
 func CapDecreaseBloomLayers(c int) LayersCapDecreaseBloomOption {
 	return func(options *LayersCapDecreaseBloomOptions) {
 		options.layers = c
 	}
 }
 
+// CapDecreaseBloomDivisor The divisor of the overlap-decrement filter.
 func CapDecreaseBloomDivisor(c int) LayersCapDecreaseBloomOption {
 	return func(options *LayersCapDecreaseBloomOptions) {
 		options.divisor = c

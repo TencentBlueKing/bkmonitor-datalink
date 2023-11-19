@@ -23,95 +23,172 @@ import (
 )
 
 var (
-	FilePath     = "./bmw.yaml"
+	// FilePath path of logger
+	FilePath = "./bmw.yaml"
+	// EnvKeyPrefix env prefix
 	EnvKeyPrefix = "bmw"
 
+	// TaskWatchChanSize Listen for the maximum number of concurrent tasks in the broker queue
 	TaskWatchChanSize int
 
+	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
-	LoggerLevel         string
-	Path                string
-	MaxSize             int
-	MaxAge              int
-	MaxBackups          int
+	// LoggerLevel level of logger
+	LoggerLevel string
+	// Path paths of log
+	Path string
+	// MaxSize max size of split log file
+	MaxSize int
+	// MaxAge max age of split log file
+	MaxAge int
+	// MaxBackups max backup of log file
+	MaxBackups int
 
-	BrokerRedisMode               string
+	// BrokerRedisMode redis mode
+	BrokerRedisMode string
+	// BrokerRedisSentinelMasterName broker redis mater name
 	BrokerRedisSentinelMasterName string
-	BrokerRedisSentinelAddress    []string
-	BrokerRedisSentinelPassword   string
-	BrokerRedisStandaloneHost     string
-	BrokerRedisStandalonePort     int
+	// BrokerRedisSentinelAddress redis address
+	BrokerRedisSentinelAddress []string
+	// BrokerRedisSentinelPassword password of broker redis
+	BrokerRedisSentinelPassword string
+	// BrokerRedisStandaloneHost host of standalone broker redis
+	BrokerRedisStandaloneHost string
+	// BrokerRedisStandalonePort port of standalone broker redis
+	BrokerRedisStandalonePort int
+	// BrokerRedisStandalonePassword password of standalone broker redis
 	BrokerRedisStandalonePassword string
-	BrokerRedisDatabase           int
-	BrokerRedisDialTimeout        time.Duration
-	BrokerRedisReadTimeout        time.Duration
+	// BrokerRedisDatabase db of broker redis
+	BrokerRedisDatabase int
+	// BrokerRedisDialTimeout broker redis dial timeout
+	BrokerRedisDialTimeout time.Duration
+	// BrokerRedisReadTimeout broker redis dial timeout
+	BrokerRedisReadTimeout time.Duration
 
-	StorageRedisMode               string
+	// StorageRedisMode mode of storage redis
+	StorageRedisMode string
+	// StorageRedisSentinelMasterName master name of storage redis
 	StorageRedisSentinelMasterName string
-	StorageRedisSentinelAddress    []string
-	StorageRedisSentinelPassword   string
-	StorageRedisStandaloneHost     string
-	StorageRedisStandalonePort     int
+	// StorageRedisSentinelAddress address of storage redis
+	StorageRedisSentinelAddress []string
+	// StorageRedisSentinelPassword password of storage redis
+	StorageRedisSentinelPassword string
+	// StorageRedisStandaloneHost host of storage redis
+	StorageRedisStandaloneHost string
+	// StorageRedisStandalonePort port of storage redis
+	StorageRedisStandalonePort int
+	// StorageRedisStandalonePassword password of storage redis
 	StorageRedisStandalonePassword string
-	StorageRedisDatabase           int
-	StorageRedisDialTimeout        time.Duration
-	StorageRedisReadTimeout        time.Duration
-	StorageRedisKeyPrefix          string
+	// StorageRedisDatabase db of storage redis
+	StorageRedisDatabase int
+	// StorageRedisDialTimeout storage redis dial timeout
+	StorageRedisDialTimeout time.Duration
+	// StorageRedisReadTimeout storage redis read timeout
+	StorageRedisReadTimeout time.Duration
+	// StorageRedisKeyPrefix storage prefix
+	StorageRedisKeyPrefix string
 
-	StorageDependentRedisMode               string
+	// StorageDependentRedisMode dependent redis mode
+	StorageDependentRedisMode string
+	// StorageDependentRedisSentinelMasterName dependent redis master name
 	StorageDependentRedisSentinelMasterName string
-	StorageDependentRedisSentinelAddress    []string
-	StorageDependentRedisSentinelPassword   string
-	StorageDependentRedisStandaloneHost     string
-	StorageDependentRedisStandalonePort     int
+	// StorageDependentRedisSentinelAddress dependent redis address
+	StorageDependentRedisSentinelAddress []string
+	//StorageDependentRedisSentinelPassword dependent redis password
+	StorageDependentRedisSentinelPassword string
+	// StorageDependentRedisStandaloneHost dependent redis host
+	StorageDependentRedisStandaloneHost string
+	// StorageDependentRedisStandalonePort dependent redis(standalone) port
+	StorageDependentRedisStandalonePort int
+	// StorageDependentRedisStandalonePassword dependent redis(standalone) password
 	StorageDependentRedisStandalonePassword string
-	StorageDependentRedisDatabase           int
-	StorageDependentRedisDialTimeout        time.Duration
-	StorageDependentRedisReadTimeout        time.Duration
+	// StorageDependentRedisDatabase dependent redis db
+	StorageDependentRedisDatabase int
+	// StorageDependentRedisDialTimeout dependent redis dial timeout
+	StorageDependentRedisDialTimeout time.Duration
+	// StorageDependentRedisReadTimeout dependent redis read timeout
+	StorageDependentRedisReadTimeout time.Duration
 
+	// StorageConsulPathPrefix prefix of consul
 	StorageConsulPathPrefix string
-	StorageConsulSrvName    string
-	StorageConsulAddress    string
-	StorageConsulPort       int
-	StorageConsulAddr       string
-	StorageConsulTag        []string
-	StorageConsulTll        string
+	// StorageConsulSrvName consul server name
+	StorageConsulSrvName string
+	// StorageConsulAddress consul address
+	StorageConsulAddress string
+	// StorageConsulPort consul port
+	StorageConsulPort int
+	// StorageConsulAddr consul address
+	StorageConsulAddr string
+	// StorageConsulTag tag of consul
+	StorageConsulTag []string
+	// StorageConsulTll consul ttl
+	StorageConsulTll string
 
-	StorageMysqlHost               string
-	StorageMysqlPort               int
-	StorageMysqlUser               string
-	StorageMysqlPassword           string
-	StorageMysqlDbName             string
-	StorageMysqlCharset            string
+	// StorageMysqlHost mysql host
+	StorageMysqlHost string
+	// StorageMysqlPort mysql port
+	StorageMysqlPort int
+	// StorageMysqlUser mysql user
+	StorageMysqlUser string
+	// StorageMysqlPassword mysql password
+	StorageMysqlPassword string
+	// StorageMysqlDbName mysql db
+	StorageMysqlDbName string
+	// StorageMysqlCharset mysql charset
+	StorageMysqlCharset string
+	// StorageMysqlMaxIdleConnections mysql max idle
 	StorageMysqlMaxIdleConnections int
+	// StorageMysqlMaxOpenConnections mysql max open size
 	StorageMysqlMaxOpenConnections int
-	StorageMysqlDebug              bool
+	// StorageMysqlDebug enabled mysql debug
+	StorageMysqlDebug bool
 
-	WorkerQueues                          []string
-	WorkerConcurrency                     int
-	WorkerHealthCheckInterval             int
-	WorkerHealthCheckInfoDuration         int
-	WorkerDaemonTaskMaintainerInterval    int
-	WorkerDaemonTaskRetryTolerateCount    int
+	// WorkerQueues worker listen queue(only valid in worker process)
+	WorkerQueues []string
+	// WorkerConcurrency concurrency of worker task
+	WorkerConcurrency int
+	// WorkerHealthCheckInterval interval of worker report health status
+	WorkerHealthCheckInterval int
+	// WorkerHealthCheckInfoDuration cache duration of worker info
+	WorkerHealthCheckInfoDuration int
+	// WorkerDaemonTaskMaintainerInterval check interval of task maintainer
+	WorkerDaemonTaskMaintainerInterval int
+	// WorkerDaemonTaskRetryTolerateCount max retry of task
+	WorkerDaemonTaskRetryTolerateCount int
+	// WorkerDaemonTaskRetryTolerateInterval retry interval of failed task
 	WorkerDaemonTaskRetryTolerateInterval int
+	// WorkerDaemonTaskRetryIntolerantFactor retry duration factor of failed task
 	WorkerDaemonTaskRetryIntolerantFactor int
 
-	SchedulerDaemonTaskNumeratorInterval     int
+	// SchedulerDaemonTaskNumeratorInterval interval of scheduler numerator
+	SchedulerDaemonTaskNumeratorInterval int
+	// SchedulerDaemonTaskWorkerWatcherInterval interval of scheduler worker watcher
 	SchedulerDaemonTaskWorkerWatcherInterval int
-	SchedulerDaemonTaskTaskWatcherInterval   int
+	// SchedulerDaemonTaskTaskWatcherInterval interval of scheduler task watcher
+	SchedulerDaemonTaskTaskWatcherInterval int
 
-	HttpGinMode      string
-	HttpListenHost   string
-	HttpListenPort   int
+	// HttpGinMode http mode
+	HttpGinMode string
+	// HttpListenHost http listen host
+	HttpListenHost string
+	// HttpListenPort http listen port
+	HttpListenPort int
+	// HttpEnabledPprof enabled http pprof
 	HttpEnabledPprof bool
 
+	// AesKey project aes key
 	AesKey string
 
-	TestStorageMysqlHost     string
-	TestStorageMysqlPort     int
-	TestStorageMysqlUser     string
+	// TestStorageMysqlHost test-mysql host
+	TestStorageMysqlHost string
+	// TestStorageMysqlPort test-mysql port
+	TestStorageMysqlPort int
+	// TestStorageMysqlUser test-mysql user
+	TestStorageMysqlUser string
+	// TestStorageMysqlPassword test-mysql password
 	TestStorageMysqlPassword string
-	TestStorageMysqlDbName   string
+	// TestStorageMysqlDbName test-mysql db name
+	TestStorageMysqlDbName string
 )
 
 func initVariables() {

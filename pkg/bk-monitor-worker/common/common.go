@@ -122,7 +122,7 @@ func WorkerKeyPrefix() string {
 	return "bmw:workers:"
 }
 
-// WorkerKeyQueuePrefix
+// WorkerKeyQueuePrefix prefix of worker listen queue
 func WorkerKeyQueuePrefix(queue string) string {
 	return fmt.Sprintf("%s%s", WorkerKeyPrefix(), queue)
 }

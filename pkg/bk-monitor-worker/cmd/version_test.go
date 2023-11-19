@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestVersion
+// TestVersion 测试version命令
 func TestVersion(t *testing.T) {
 	// 输出到标准输出
 	buf := new(bytes.Buffer)

@@ -31,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
+// TestExists test bloom-filter
 func TestExists(t *testing.T) {
 	sbf := boom.NewScalableBloomFilter(10000, 0.01, 0.8)
 	sbf.Add([]byte("00a03a4cce5618e6803d501a8b53f4d5"))
@@ -71,6 +72,7 @@ func TestKeyMd5(t *testing.T) {
 	fmt.Println("Shortened string:", shortStr, "len", len(shortStr))
 }
 
+// TestKeyBase64 test storage key
 func TestKeyBase64(t *testing.T) {
 	originalStr := "b55ad0120589eb93716f5e3e3bd2244e"
 
@@ -80,6 +82,7 @@ func TestKeyBase64(t *testing.T) {
 	fmt.Println("Shortened string:", encodedStr, "len", len(encodedStr))
 }
 
+// TestNormalBloom test MemoryBloom
 func TestNormalBloom(t *testing.T) {
 	var blooms []boom.Filter
 

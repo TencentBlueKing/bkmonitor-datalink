@@ -90,6 +90,7 @@ func RunTaskFailureCount(taskName string) error {
 	return nil
 }
 
+// RunTaskCostTime cost time of task
 func RunTaskCostTime(taskName string, startTime time.Time) error {
 	duringTime := time.Now().Sub(startTime).Seconds() * 1000
 	metric, err := taskCostTime.GetMetricWithLabelValues(taskName)

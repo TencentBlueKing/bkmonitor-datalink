@@ -23,21 +23,27 @@ import (
 type CacheType string
 
 var (
-	CacheTypeRedis  CacheType = "redis"
+	// CacheTypeRedis cache resource: redis
+	CacheTypeRedis CacheType = "redis"
+	// CacheTypeMemory cache resource: memory
 	CacheTypeMemory CacheType = "memory"
 )
 
 const (
+	// SaveTraceCache origin trace info cache action
 	SaveTraceCache Action = "saveTraceCache"
-	SaveTraceMeta  Action = "saveTraceMeta"
+	// SaveTraceMeta trace meta info cache action
+	SaveTraceMeta Action = "saveTraceMeta"
 )
 
+// CacheKey cache key format class
 type CacheKey struct {
 	Format func(bkBizId, appName, traceId string) string
 	Ttl    time.Duration
 }
 
 var (
+	// CacheTraceInfoKey origin trace info key instance
 	CacheTraceInfoKey = CacheKey{
 		Format: func(bkBizId, appName, traceId string) string {
 			return fmt.Sprintf("traceInfo:%s:%s:%s", bkBizId, appName, traceId)
@@ -46,18 +52,24 @@ var (
 	}
 )
 
+// CacheStorageData storage request of cache
 type CacheStorageData struct {
 	Key   string
 	Value []byte
 	Ttl   time.Duration
 }
 
+// CacheOperator cache interface
 type CacheOperator interface {
+	// Save saves cache request
 	Save(CacheStorageData) error
+	// SaveBatch batch save cache request
 	SaveBatch([]CacheStorageData) error
+	// Query query cache
 	Query(string) ([]byte, error)
 }
 
+// RedisCacheOptions resource: cache config
 type RedisCacheOptions struct {
 	mode             string
 	host             string

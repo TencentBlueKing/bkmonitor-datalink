@@ -62,6 +62,7 @@ type MetricOptions struct {
 	profileAppIdx  string
 }
 
+// EnabledMetricReport Whether to enable indicator reporting.
 func EnabledMetricReport(e bool) MetricOption {
 	return func(options *MetricOptions) {
 		if !e {
@@ -71,6 +72,7 @@ func EnabledMetricReport(e bool) MetricOption {
 	}
 }
 
+// MetricReportHost indicator report host
 func MetricReportHost(h string) MetricOption {
 	return func(options *MetricOptions) {
 		options.metricReportHost = h
@@ -83,24 +85,28 @@ func ReportMetrics(m ...metric) MetricOption {
 	}
 }
 
+// EnabledMetricReportInterval Indicator reporting interval.
 func EnabledMetricReportInterval(i time.Duration) MetricOption {
 	return func(options *MetricOptions) {
 		options.metricReportInterval = i
 	}
 }
 
+// MetricReportDataId indicator report data id
 func MetricReportDataId(d int) MetricOption {
 	return func(options *MetricOptions) {
 		options.metricsDataId = d
 	}
 }
 
+// MetricReportAccessToken indicator report access token
 func MetricReportAccessToken(d string) MetricOption {
 	return func(options *MetricOptions) {
 		options.metricsAccessToken = d
 	}
 }
 
+// EnabledProfileReport Whether to enable indicator reporting.
 func EnabledProfileReport(e bool) MetricOption {
 	return func(options *MetricOptions) {
 		if !e {
@@ -110,12 +116,14 @@ func EnabledProfileReport(e bool) MetricOption {
 	}
 }
 
+// ProfileAddress profile report host
 func ProfileAddress(h string) MetricOption {
 	return func(options *MetricOptions) {
 		options.profileAddress = h
 	}
 }
 
+// ProfileAppIdx app name of profile
 func ProfileAppIdx(h string) MetricOption {
 	return func(options *MetricOptions) {
 		if h != "" {

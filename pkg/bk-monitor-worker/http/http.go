@@ -28,7 +28,7 @@ func prometheusHandler() gin.HandlerFunc {
 }
 
 // NewHTTPService new a http service
-func NewHTTPService(enableApi bool) *gin.Engine {
+func NewHTTPService() *gin.Engine {
 	svr := gin.Default()
 	gin.SetMode(config.HttpGinMode)
 
@@ -37,16 +37,14 @@ func NewHTTPService(enableApi bool) *gin.Engine {
 		logger.Info("Pprof started")
 	}
 
-	if enableApi {
-		// 注册任务
-		svr.POST("/bmw/task/", CreateTask)
-		// 获取运行中的任务列表
-		svr.GET("/bmw/task/", ListTask)
-		// 删除任务
-		svr.DELETE("/bmw/task/", RemoveTask)
-		// 删除所有任务
-		svr.DELETE("/bmw/task/all", RemoveAllTask)
-	}
+	// 注册任务
+	svr.POST("/bmw/task/", CreateTask)
+	// 获取运行中的任务列表
+	svr.GET("/bmw/task/", ListTask)
+	// 删除任务
+	svr.DELETE("/bmw/task/", RemoveTask)
+	// 删除所有任务
+	svr.DELETE("/bmw/task/all", RemoveAllTask)
 
 	// metrics
 	svr.GET("/bmw/metrics", prometheusHandler())

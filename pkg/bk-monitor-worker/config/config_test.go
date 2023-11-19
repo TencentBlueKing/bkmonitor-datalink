@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestConfigParamsFromEnv
+// TestConfigParamsFromEnv Test config file
 func TestConfigParamsFromEnv(t *testing.T) {
 	FilePath = "../bmw.yaml"
 	InitConfig()

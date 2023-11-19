@@ -73,7 +73,7 @@ func GetRDB() *RDB {
 	return brokerInstance
 }
 
-// Open open a connection
+// Open opens a connection
 func (r *RDB) Open() error {
 	return nil
 }

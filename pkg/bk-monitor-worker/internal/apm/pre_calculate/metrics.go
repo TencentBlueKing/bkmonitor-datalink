@@ -177,7 +177,7 @@ func (r *MetricCollector) StartReport() {
 					return
 				default:
 					if err := r.trigger(); err != nil {
-						logger.Infof("failed to report metric, error: %s", err)
+						logger.Warnf("failed to report metric, error: %s", err)
 					}
 					time.Sleep(r.config.metricReportInterval)
 				}
@@ -210,29 +210,19 @@ func windowTraceAndSpanCountReporter(r *RunInstance, _ MetricOptions) (map[strin
 	return res, nil
 }
 
+func truncateToMinute(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, t.Location())
+}
+
 // esTraceCountReporter This is the test indicator. Do not use it in the production environment.
 // In order to check whether the trace count in pre-Calculate index is consistent with that in the original table.
 func esTraceCountReporter(r *RunInstance, o MetricOptions) (map[string]float64, error) {
 
 	now := time.Now()
 	// get the value within the range according to the reporting interval
-	previous := now.Add(-o.metricReportInterval)
-	startTime := time.Date(
-		previous.Year(),
-		previous.Month(),
-		previous.Day(),
-		previous.Hour(),
-		previous.Minute(), 0, 0,
-		previous.Location(),
-	)
-	endTime := time.Date(
-		now.Year(),
-		now.Month(),
-		now.Day(),
-		now.Hour(),
-		now.Minute(), 0, 0,
-		now.Location(),
-	)
+	startTime := truncateToMinute(now.Add(-o.metricReportInterval))
+	endTime := truncateToMinute(now)
+
 	baseInfo := core.GetMetadataCenter().GetBaseInfo(r.dataId)
 	aggsName := "unique_trace_ids_count"
 	res := make(map[string]float64)
@@ -274,11 +264,11 @@ func esTraceCountReporter(r *RunInstance, o MetricOptions) (map[string]float64, 
 	)
 	if traceErr != nil {
 		return res, fmt.Errorf("query OriginTraceES count failed, error: %s", traceErr)
-	} else {
-		traceEsCountM := traceEsCount.(map[string]int)
-		if len(traceEsCountM) != 0 {
-			res["traceEsCount"] = float64(traceEsCountM[aggsName])
-		}
+	}
+
+	traceEsCountM := traceEsCount.(map[string]int)
+	if len(traceEsCountM) != 0 {
+		res["traceEsCount"] = float64(traceEsCountM[aggsName])
 	}
 
 	saveEsCount, saveErr := r.proxy.Query(storage.QueryRequest{
@@ -300,11 +290,11 @@ func esTraceCountReporter(r *RunInstance, o MetricOptions) (map[string]float64, 
 	)
 	if saveErr != nil {
 		return res, fmt.Errorf("query PreCalTraceES count failed, error: %s", saveErr)
-	} else {
-		saveEsCountM := saveEsCount.(map[string]int)
-		if len(saveEsCountM) != 0 {
-			res["saveEsCount"] = float64(saveEsCountM[aggsName])
-		}
+	}
+
+	saveEsCountM := saveEsCount.(map[string]int)
+	if len(saveEsCountM) != 0 {
+		res["saveEsCount"] = float64(saveEsCountM[aggsName])
 	}
 
 	return res, nil

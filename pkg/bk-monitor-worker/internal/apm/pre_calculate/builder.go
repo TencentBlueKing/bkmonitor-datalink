@@ -12,6 +12,7 @@ package pre_calculate
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"net"
 	"net/http"
 	"sync"
@@ -235,12 +236,24 @@ func (p *Precalculate) Stop(dataId string) {
 	})
 }
 
-func (p *Precalculate) launch(parentCtx context.Context, dataId string, conf PrecalculateOption, errorReceiveChan chan<- error) {
+func (p *Precalculate) launch(
+	parentCtx context.Context, dataId string, conf PrecalculateOption, errorReceiveChan chan<- error,
+) {
+	defer runtimex.HandleCrashToChan(errorReceiveChan)
+
 	ctx, cancel := context.WithCancel(parentCtx)
 	runInstance := RunInstance{dataId: dataId, config: conf, ctx: ctx, cancel: cancel, errorReceiveChan: errorReceiveChan}
 
-	messageChan := runInstance.startNotifier()
-	saveReqChan := runInstance.startStorageBackend()
+	messageChan, err := runInstance.startNotifier()
+	if err != nil {
+		// go to defer and retry
+		panic(err)
+	}
+	saveReqChan, err := runInstance.startStorageBackend()
+	if err != nil {
+		panic(err)
+	}
+
 	runInstance.startWindowHandler(messageChan, saveReqChan, errorReceiveChan)
 
 	runInstance.startMetricReport(p.httpTransport)
@@ -264,10 +277,10 @@ type RunInstance struct {
 	metricCollector MetricCollector
 }
 
-func (p *RunInstance) startNotifier() <-chan []window.StandardSpan {
+func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.dataId)
 	groupId := "go-pre-calculate-worker-consumer"
-	n := notifier.NewNotifier(
+	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		append([]notifier.Option{
 			notifier.Context(p.ctx),
@@ -279,9 +292,13 @@ func (p *RunInstance) startNotifier() <-chan []window.StandardSpan {
 		}, p.config.notifierConfig...,
 		)...,
 	)
+	if err != nil {
+		return nil, err
+	}
+
 	p.notifier = n
 	go n.Start(p.errorReceiveChan)
-	return n.Spans()
+	return n.Spans(), nil
 }
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest, errorReceiveChan chan<- error) {
@@ -295,7 +312,7 @@ func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpa
 	p.windowHandler = operator
 }
 
-func (p *RunInstance) startStorageBackend() chan<- storage.SaveRequest {
+func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) {
 	traceEsConfig := core.GetMetadataCenter().GetTraceEsConfig(p.dataId)
 	saveEsConfig := core.GetMetadataCenter().GetSaveEsConfig(p.dataId)
 
@@ -318,12 +335,12 @@ func (p *RunInstance) startStorageBackend() chan<- storage.SaveRequest {
 	)
 	if err != nil {
 		apmLogger.Errorf("Storage fail to started, the calculated data may not be saved. error: %s", err)
-		return nil
+		return nil, err
 	}
 
 	proxy.Run(p.errorReceiveChan)
 	p.proxy = proxy
-	return proxy.SaveRequest()
+	return proxy.SaveRequest(), nil
 }
 
 func (p *RunInstance) startMetricReport(transport *http.Transport) {

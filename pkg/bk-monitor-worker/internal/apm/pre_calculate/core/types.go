@@ -104,14 +104,7 @@ func (s SpanKind) ToKindCategory() SpanKindCategory {
 
 // IsCalledKind determine whether span.kind is the called party or not
 func (s SpanKind) IsCalledKind() bool {
-	switch s {
-	case KindServer:
-		return true
-	case KindConsumer:
-		return true
-	default:
-		return false
-	}
+	return s == KindServer || s == KindConsumer
 }
 
 // CommonField span standard field enum.
@@ -145,139 +138,143 @@ const (
 	SourceOuter FiledSource = "outer"
 )
 
+func toAttributes(n string) string {
+	return fmt.Sprintf("%s.%s", SourceAttributes, n)
+}
+
+func toResource(n string) string {
+	return fmt.Sprintf("%s.%s", SourceResource, n)
+}
+
 var (
-	HttpHostField = CommonField{
-		SourceAttributes, "http.host", fmt.Sprintf("%s.%s", SourceAttributes, "http.host"),
-	}
-	HttpUrlField = CommonField{
-		SourceAttributes, "http.url", fmt.Sprintf("%s.%s", SourceAttributes, "http.url"),
-	}
+	HttpHostField    = CommonField{SourceAttributes, "http.host", toAttributes("http.host")}
+	HttpUrlField     = CommonField{SourceAttributes, "http.url", toAttributes("http.url")}
 	NetPeerNameField = CommonField{
-		SourceAttributes, "net.peer.name", fmt.Sprintf("%s.%s", SourceAttributes, "net.peer.name"),
+		SourceAttributes, "net.peer.name", toAttributes("net.peer.name"),
 	}
 	PeerServiceField = CommonField{
-		SourceAttributes, "peer.service", fmt.Sprintf("%s.%s", SourceAttributes, "peer.service"),
+		SourceAttributes, "peer.service", toAttributes("peer.service"),
 	}
 	HttpSchemeField = CommonField{
-		SourceAttributes, "http.scheme", fmt.Sprintf("%s.%s", SourceAttributes, "http.scheme"),
+		SourceAttributes, "http.scheme", toAttributes("http.scheme"),
 	}
 	HttpFlavorField = CommonField{
-		SourceAttributes, "http.flavor", fmt.Sprintf("%s.%s", SourceAttributes, "http.flavor"),
+		SourceAttributes, "http.flavor", toAttributes("http.flavor"),
 	}
 	HttpMethodField = CommonField{
 		SourceAttributes, "http.method",
-		fmt.Sprintf("%s.%s", SourceAttributes, "http.method"),
+		toAttributes("http.method"),
 	}
 	HttpStatusCodeField = CommonField{
 		SourceAttributes, "http.status_code",
-		fmt.Sprintf("%s.%s", SourceAttributes, "http.status_code"),
+		toAttributes("http.status_code"),
 	}
 
 	RpcMethodField = CommonField{
-		SourceAttributes, "rpc.method", fmt.Sprintf("%s.%s", SourceAttributes, "rpc.method"),
+		SourceAttributes, "rpc.method", toAttributes("rpc.method"),
 	}
 	RpcServiceField = CommonField{
-		SourceAttributes, "rpc.service", fmt.Sprintf("%s.%s", SourceAttributes, "rpc.service"),
+		SourceAttributes, "rpc.service", toAttributes("rpc.service"),
 	}
 	RpcSystemField = CommonField{
-		SourceAttributes, "rpc.system", fmt.Sprintf("%s.%s", SourceAttributes, "rpc.system"),
+		SourceAttributes, "rpc.system", toAttributes("rpc.system"),
 	}
 	RpcGrpcStatusCode = CommonField{
 		SourceAttributes, "rpc.grpc.status_code",
-		fmt.Sprintf("%s.%s", SourceAttributes, "rpc.grpc.status_code"),
+		toAttributes("rpc.grpc.status_code"),
 	}
 
 	DbNameField = CommonField{
-		SourceAttributes, "db.name", fmt.Sprintf("%s.%s", SourceAttributes, "db.name"),
+		SourceAttributes, "db.name", toAttributes("db.name"),
 	}
 	DbOperationField = CommonField{
-		SourceAttributes, "db.operation", fmt.Sprintf("%s.%s", SourceAttributes, "db.operation"),
+		SourceAttributes, "db.operation", toAttributes("db.operation"),
 	}
 	DbSystemField = CommonField{
-		SourceAttributes, "db.system", fmt.Sprintf("%s.%s", SourceAttributes, "db.system"),
+		SourceAttributes, "db.system", toAttributes("db.system"),
 	}
 	DbStatementField = CommonField{
 		SourceAttributes, "db.statement",
-		fmt.Sprintf("%s.%s", SourceAttributes, "db.statement"),
+		toAttributes("db.statement"),
 	}
 	DbTypeField = CommonField{
-		SourceAttributes, "db.type", fmt.Sprintf("%s.%s", SourceAttributes, "db.type"),
+		SourceAttributes, "db.type", toAttributes("db.type"),
 	}
 	DbInstanceField = CommonField{
-		SourceAttributes, "db.instance", fmt.Sprintf("%s.%s", SourceAttributes, "db.instance"),
+		SourceAttributes, "db.instance", toAttributes("db.instance"),
 	}
 
 	MessagingRabbitmqRoutingKeyField = CommonField{
 		SourceAttributes, "messaging.rabbitmq.routing_key",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.rabbitmq.routing_key"),
+		toAttributes("messaging.rabbitmq.routing_key"),
 	}
 	MessagingKafkaKeyField = CommonField{
 		SourceAttributes, "messaging.kafka.message_key",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.kafka.message_key"),
+		toAttributes("messaging.kafka.message_key"),
 	}
 	MessagingRocketmqKeyField = CommonField{
 		SourceAttributes, "messaging.rocketmq.message_keys",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.rocketmq.message_keys"),
+		toAttributes("messaging.rocketmq.message_keys"),
 	}
 
 	MessagingSystemField = CommonField{
 		SourceAttributes, "messaging.system",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.system"),
+		toAttributes("messaging.system"),
 	}
 	MessagingDestinationField = CommonField{
 		SourceAttributes, "messaging.destination",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.destination"),
+		toAttributes("messaging.destination"),
 	}
 	MessagingDestinationKindField = CommonField{
 		SourceAttributes, "messaging.destination_kind",
-		fmt.Sprintf("%s.%s", SourceAttributes, "messaging.destination_kind"),
+		toAttributes("messaging.destination_kind"),
 	}
 	CeleryActionField = CommonField{
-		SourceAttributes, "celery.action", fmt.Sprintf("%s.%s", SourceAttributes, "celery.action"),
+		SourceAttributes, "celery.action", toAttributes("celery.action"),
 	}
 	CeleryTaskNameField = CommonField{
 		SourceAttributes, "celery.task_name",
-		fmt.Sprintf("%s.%s", SourceAttributes, "celery.task_name"),
+		toAttributes("celery.task_name"),
 	}
 
 	ServiceNameField = CommonField{
-		SourceResource, "service.name", fmt.Sprintf("%s.%s", SourceResource, "service.name"),
+		SourceResource, "service.name", toResource("service.name"),
 	}
 	ServiceVersionField = CommonField{
 		SourceResource, "service.version",
-		fmt.Sprintf("%s.%s", SourceResource, "service.version"),
+		toResource("service.version"),
 	}
 	TelemetrySdkLanguageField = CommonField{
 		SourceResource, "telemetry.sdk.language",
-		fmt.Sprintf("%s.%s", SourceResource, "telemetry.sdk.language"),
+		toResource("telemetry.sdk.language"),
 	}
 	TelemetrySdkNameField = CommonField{
 		SourceResource, "telemetry.sdk.name",
-		fmt.Sprintf("%s.%s", SourceResource, "telemetry.sdk.name"),
+		toResource("telemetry.sdk.name"),
 	}
 	TelemetrySdkVersionField = CommonField{
 		SourceResource, "telemetry.sdk.version",
-		fmt.Sprintf("%s.%s", SourceResource, "telemetry.sdk.version"),
+		toResource("telemetry.sdk.version"),
 	}
 	ServiceNamespaceField = CommonField{
-		SourceResource, "service.namespace", fmt.Sprintf("%s.%s", SourceResource, "service.namespace"),
+		SourceResource, "service.namespace", toResource("service.namespace"),
 	}
 	ServiceInstanceIdField = CommonField{
 		SourceResource, "service.instance.id",
-		fmt.Sprintf("%s.%s", SourceResource, "service.instance.id"),
+		toResource("service.instance.id"),
 	}
 	NetHostIpField = CommonField{
-		SourceResource, "net.host.ip", fmt.Sprintf("%s.%s", SourceResource, "net.host.ip"),
+		SourceResource, "net.host.ip", toResource("net.host.ip"),
 	}
 	NetHostPortField = CommonField{
-		SourceResource, "net.host.port", fmt.Sprintf("%s.%s", SourceResource, "net.host.port"),
+		SourceResource, "net.host.port", toResource("net.host.port"),
 	}
 	NetHostnameField = CommonField{
-		SourceResource, "net.host.name", fmt.Sprintf("%s.%s", SourceResource, "net.host.name"),
+		SourceResource, "net.host.name", toResource("net.host.name"),
 	}
 	BkInstanceIdField = CommonField{
 		SourceResource, "bk.instance.id",
-		fmt.Sprintf("%s.%s", SourceResource, "bk.instance.id"),
+		toResource("bk.instance.id"),
 	}
 	KindField     = CommonField{SourceOuter, "kind", "kind"}
 	SpanNameField = CommonField{SourceOuter, "span_name", "span_name"}

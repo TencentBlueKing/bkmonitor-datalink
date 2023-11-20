@@ -8,6 +8,7 @@ require (
 	github.com/agiledragon/gomonkey/v2 v2.10.1
 	github.com/ahmetb/go-linq/v3 v3.2.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
+	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/bytedance/sonic v1.9.1
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/deckarep/golang-set v1.8.0

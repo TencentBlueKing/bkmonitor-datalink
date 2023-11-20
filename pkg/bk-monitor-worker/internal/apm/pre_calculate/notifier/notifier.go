@@ -59,13 +59,13 @@ const (
 )
 
 // NewNotifier create notifier
-func NewNotifier(form notifyForm, options ...Option) Notifier {
+func NewNotifier(form notifyForm, options ...Option) (Notifier, error) {
 
 	switch form {
 	case KafkaNotifier:
 		return newKafkaNotifier(options...)
 	default:
-		return newEmptyNotifier()
+		return emptyNotifierInstance, nil
 	}
 
 }
@@ -73,7 +73,7 @@ func NewNotifier(form notifyForm, options ...Option) Notifier {
 // An emptyNotifier for use when not specified
 var (
 	once                  sync.Once
-	emptyNotifierInstance Notifier
+	emptyNotifierInstance = newEmptyNotifier()
 )
 
 type emptyNotifier struct{}

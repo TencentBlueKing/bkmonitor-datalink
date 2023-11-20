@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
+	"github.com/avast/retry-go"
 )
 
 // set ttl
@@ -50,21 +51,35 @@ func GetRDB() *RDB {
 		return brokerInstance
 	}
 
-	client, err := redisUtils.NewRedisClient(
-		context.Background(),
-		&redisUtils.Option{
-			Mode:             config.BrokerRedisMode,
-			Host:             config.BrokerRedisStandaloneHost,
-			Port:             config.BrokerRedisStandalonePort,
-			Password:         config.BrokerRedisStandalonePassword,
-			SentinelAddress:  config.BrokerRedisSentinelAddress,
-			MasterName:       config.BrokerRedisSentinelMasterName,
-			SentinelPassword: config.BrokerRedisSentinelPassword,
-			Db:               config.BrokerRedisDatabase,
-			DialTimeout:      config.BrokerRedisDialTimeout,
-			ReadTimeout:      config.BrokerRedisReadTimeout,
+	var client redis.UniversalClient
+	var err error
+
+	err = retry.Do(
+		func() error {
+			client, err = redisUtils.NewRedisClient(
+				context.Background(),
+				&redisUtils.Option{
+					Mode:             config.BrokerRedisMode,
+					Host:             config.BrokerRedisStandaloneHost,
+					Port:             config.BrokerRedisStandalonePort,
+					Password:         config.BrokerRedisStandalonePassword,
+					SentinelAddress:  config.BrokerRedisSentinelAddress,
+					MasterName:       config.BrokerRedisSentinelMasterName,
+					SentinelPassword: config.BrokerRedisSentinelPassword,
+					Db:               config.BrokerRedisDatabase,
+					DialTimeout:      config.BrokerRedisDialTimeout,
+					ReadTimeout:      config.BrokerRedisReadTimeout,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			return nil
 		},
+		retry.Attempts(3),
+		retry.Delay(1*time.Second),
 	)
+
 	if err != nil {
 		logger.Fatalf("failed to create redis broker client, error: %s", err)
 	}

@@ -130,15 +130,12 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 	hashValue := xxhash.Sum64([]byte(uni))
 	a := int(hashValue) % 10
-	if a < 0 {
-		a = -a
-	}
 	return w.subWindows[a]
 }
 
 func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpts ...RuntimeConfigOption) {
 
-	for ob, _ := range w.observers {
+	for ob := range w.observers {
 		ob.assembleRuntimeConfig(runtimeOpts...)
 		for i := 0; i < w.config.concurrentProcessCount; i++ {
 			go ob.handleNotify(errorReceiveChan)

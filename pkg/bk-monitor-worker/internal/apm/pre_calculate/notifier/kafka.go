@@ -101,7 +101,9 @@ loop:
 }
 
 type consumeHandler struct {
-	spans chan []window.StandardSpan
+	spans   chan []window.StandardSpan
+	groupId string
+	topic   string
 }
 
 // Setup is run at the beginning of a new session, before ConsumeClaim.
@@ -126,7 +128,7 @@ func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 			session.MarkMessage(msg, "")
 			c.sendSpans(msg.Value)
 		case <-session.Context().Done():
-			logger.Infof("kafka consume handler session done")
+			logger.Infof("kafka consume handler session done. topic: %s groupId: %s", c.topic, c.groupId)
 			return nil
 		}
 	}
@@ -143,37 +145,41 @@ func (c consumeHandler) sendSpans(message []byte) {
 	c.spans <- res
 }
 
-func newKafkaNotifier(setters ...Option) Notifier {
+func newKafkaNotifier(setters ...Option) (Notifier, error) {
 
 	args := &Options{}
 
 	for _, setter := range setters {
 		setter(args)
 	}
-	kafkaConfig := args.kafkaConfig
+	config := args.kafkaConfig
 	logger.Infof(
 		"listen %s topic as groupId: %s, establish a kafka[%s(%s:%s)] connection",
-		kafkaConfig.KafkaTopic,
-		kafkaConfig.KafkaGroupId,
-		kafkaConfig.KafkaHost,
-		kafkaConfig.KafkaUsername,
-		kafkaConfig.KafkaPassword,
+		config.KafkaTopic,
+		config.KafkaGroupId,
+		config.KafkaHost,
+		config.KafkaUsername,
+		config.KafkaPassword,
 	)
-
-	authConfig := getConnectionSASLConfig(kafkaConfig.KafkaUsername, kafkaConfig.KafkaPassword)
-	group, err := sarama.NewConsumerGroup([]string{kafkaConfig.KafkaHost}, kafkaConfig.KafkaGroupId, authConfig)
+	authConfig := getConnectionSASLConfig(config.KafkaUsername, config.KafkaPassword)
+	group, err := sarama.NewConsumerGroup([]string{config.KafkaHost}, config.KafkaGroupId, authConfig)
 	if err != nil {
 		logger.Errorf(
 			"Failed to create a consumer group, topic: %s may not be consumed correctly. error: %s",
-			kafkaConfig.KafkaTopic, err,
+			config.KafkaTopic, err,
 		)
+		return nil, err
 	}
 	return &kafkaNotifier{
 		ctx:           args.ctx,
 		config:        args.kafkaConfig,
 		consumerGroup: group,
-		handler:       consumeHandler{spans: make(chan []window.StandardSpan, args.chanBufferSize)},
-	}
+		handler: consumeHandler{
+			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
+			groupId: config.KafkaGroupId,
+			topic:   config.KafkaTopic,
+		},
+	}, nil
 
 }
 

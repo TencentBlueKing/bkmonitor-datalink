@@ -57,7 +57,7 @@ func TestKeyHash(t *testing.T) {
 	traceId := "b55ad0120589eb93716f5e3e3bd2244e"
 	h.Write([]byte("b55ad0120589eb93716f5e3e3bd2244e"))
 	key := h.Sum(nil)
-	fmt.Printf("%s -> %d bytes", traceId, len(key))
+	t.Logf("%s -> %d bytes", traceId, len(key))
 }
 
 func TestKeyMd5(t *testing.T) {
@@ -67,8 +67,8 @@ func TestKeyMd5(t *testing.T) {
 	hash.Write([]byte(traceId))
 	shortStr := hex.EncodeToString(hash.Sum(nil))
 
-	fmt.Println("Original string:", traceId)
-	fmt.Println("Shortened string:", shortStr, "len", len(shortStr))
+	t.Log("Original string:", traceId)
+	t.Log("Shortened string:", shortStr, "len", len(shortStr))
 }
 
 // TestKeyBase64 test storage key
@@ -77,8 +77,8 @@ func TestKeyBase64(t *testing.T) {
 
 	encodedStr := base64.StdEncoding.EncodeToString([]byte(originalStr))
 
-	fmt.Println("Original string:", originalStr)
-	fmt.Println("Shortened string:", encodedStr, "len", len(encodedStr))
+	t.Log("Original string:", originalStr)
+	t.Log("Shortened string:", encodedStr, "len", len(encodedStr))
 }
 
 // TestNormalBloom test MemoryBloom
@@ -93,7 +93,7 @@ func TestNormalBloom(t *testing.T) {
 
 	for index, b := range blooms {
 		b.Add([]byte("b55ad0120589eb93716f5e3e3bd2244e"))
-		fmt.Println(index, " exist -> ", b.Test([]byte("b55ad0120589eb93716f5e3e3bd2244e")))
+		t.Log(index, " exist -> ", b.Test([]byte("b55ad0120589eb93716f5e3e3bd2244e")))
 	}
 }
 

@@ -29,27 +29,13 @@ type MetadataCenter struct {
 
 // ConsulInfo info of consul
 type ConsulInfo struct {
-	BkBizId     int             `json:"bk_biz_id"`
-	BkBizName   any             `json:"bk_biz_name"`
-	AppId       int             `json:"app_id"`
-	AppName     string          `json:"app_name"`
-	KafkaInfo   consulKafkaInfo `json:"kafka_info"`
-	TraceEsInfo consulEsInfo    `json:"trace_es_info"`
-	SaveEsInfo  consulEsInfo    `json:"save_es_info"`
-}
-
-type consulKafkaInfo struct {
-	Host     string `json:"host"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Topic    string `json:"topic"`
-}
-
-type consulEsInfo struct {
-	IndexName string `json:"index_name"`
-	Host      string `json:"host"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
+	BkBizId     int              `json:"bk_biz_id"`
+	BkBizName   any              `json:"bk_biz_name"`
+	AppId       int              `json:"app_id"`
+	AppName     string           `json:"app_name"`
+	KafkaInfo   TraceKafkaConfig `json:"kafka_info"`
+	TraceEsInfo TraceEsConfig    `json:"trace_es_info"`
+	SaveEsInfo  TraceEsConfig    `json:"save_es_info"`
 }
 
 // DataIdInfo global dataId info in pre-calculate
@@ -73,18 +59,18 @@ type BaseInfo struct {
 
 // TraceEsConfig es config
 type TraceEsConfig struct {
-	IndexName string
-	Host      string
-	Username  string
-	Password  string
+	IndexName string `json:"index_name"`
+	Host      string `json:"host"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
 }
 
 // TraceKafkaConfig kafka configuration for span
 type TraceKafkaConfig struct {
-	Topic    string
-	Host     string
-	Username string
-	Password string
+	Topic    string `json:"topic"`
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 var (
@@ -155,24 +141,9 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 		AppId:     strconv.Itoa(apmInfo.AppId),
 		AppName:   apmInfo.AppName,
 	}
-	info.TraceKafka = TraceKafkaConfig{
-		Topic:    apmInfo.KafkaInfo.Topic,
-		Host:     apmInfo.KafkaInfo.Host,
-		Username: apmInfo.KafkaInfo.Username,
-		Password: apmInfo.KafkaInfo.Password,
-	}
-	info.TraceEs = TraceEsConfig{
-		IndexName: apmInfo.TraceEsInfo.IndexName,
-		Host:      apmInfo.TraceEsInfo.Host,
-		Username:  apmInfo.TraceEsInfo.Username,
-		Password:  apmInfo.TraceEsInfo.Password,
-	}
-	info.SaveEs = TraceEsConfig{
-		IndexName: apmInfo.SaveEsInfo.IndexName,
-		Host:      apmInfo.SaveEsInfo.Host,
-		Username:  apmInfo.SaveEsInfo.Username,
-		Password:  apmInfo.SaveEsInfo.Password,
-	}
+	info.TraceKafka = apmInfo.KafkaInfo
+	info.TraceEs = apmInfo.TraceEsInfo
+	info.SaveEs = apmInfo.SaveEsInfo
 	return nil
 }
 

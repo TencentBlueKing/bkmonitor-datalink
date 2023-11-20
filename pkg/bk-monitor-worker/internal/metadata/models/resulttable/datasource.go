@@ -20,7 +20,7 @@ import (
 // DataSource datasource model
 // gen:qs
 type DataSource struct {
-	BkDataId          uint      `gorm:"primary_key;" json:"bk_data_id"`
+	BkDataId          uint      `gorm:"primary_key" json:"bk_data_id"`
 	Token             string    `gorm:"size:32" json:"token"`
 	DataName          string    `gorm:"size:128;index" json:"data_name"`
 	DataDescription   string    `gorm:"type:text;" json:"data_description"`

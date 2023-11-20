@@ -94,6 +94,11 @@ func AccessBkdataVm(ctx context.Context, t *task.Task) error {
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
 	}
+	logger.Infof("bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm", params.BkBizId, params.TableId, params.BkDataId)
+	if err := service.NewVmUtils().AccessBkdata(params.BkBizId, params.TableId, params.BkDataId); err != nil {
+		return fmt.Errorf("bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm failed, %v", params.BkBizId, params.TableId, params.BkDataId, err)
+	}
+	logger.Infof("bk_biz_id [%v] table_id [%s] data_id [%v] finish access bkdata vm", params.BkBizId, params.TableId, params.BkDataId)
 	return nil
 }
 

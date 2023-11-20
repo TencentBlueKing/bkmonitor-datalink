@@ -38,6 +38,20 @@ var (
 	GlobalTimeSeriesMetricExpiredDays int
 	// GlobalIsRestrictDsBelongSpace 是否限制数据源归属具体空间
 	GlobalIsRestrictDsBelongSpace bool
+	// GlobalDefaultBkdataBizId 接入计算平台使用的业务 ID
+	GlobalDefaultBkdataBizId int
+	// GlobalDefaultKafkaStorageClusterId 默认 kafka 存储集群ID
+	GlobalDefaultKafkaStorageClusterId uint
+	// GlobalBkdataKafkaBrokerUrl 与计算平台对接的消息队列BROKER地址
+	GlobalBkdataKafkaBrokerUrl string
+	// GlobalBkappDeployPlatform 监控平台版本
+	GlobalBkappDeployPlatform string
+	// GlobalBkdataRtIdPrefix 监控在计算平台的数据表前缀
+	GlobalBkdataRtIdPrefix string
+	// GlobalBkdataBkBizId 监控在计算平台使用的公共业务ID
+	GlobalBkdataBkBizId int
+	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
+	GlobalBkdataProjectMaintainer string
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -58,6 +72,12 @@ func initMetadataVariables() {
 
 	GlobalTimeSeriesMetricExpiredDays = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredDays", 30)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
+	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)
+	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
+	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")
+	GlobalBkdataRtIdPrefix = GetValue("taskConfig.metadata.global.bkdataRtIdPrefix", GlobalBkappDeployPlatform)
+	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
+	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 }

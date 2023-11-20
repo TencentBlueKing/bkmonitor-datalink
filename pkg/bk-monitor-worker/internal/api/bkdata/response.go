@@ -7,28 +7,16 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package bkdata
 
-type ApiCommonRespMeta struct {
-	Message string `json:"message"`
-	Result  bool   `json:"result"`
-	Code    int    `json:"code"`
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+
+type CreateDataHubResp struct {
+	define.ApiCommonRespMeta
+	Data CreateDataHubData `json:"data"`
 }
 
-// APICommonResp api通用返回结构体
-type APICommonResp struct {
-	ApiCommonRespMeta
-	Data interface{} `json:"data"`
-}
-
-// APICommonMapResp api通用返回结构体Map
-type APICommonMapResp struct {
-	ApiCommonRespMeta
-	Data map[string]interface{} `json:"data"`
-}
-
-// APICommonListResp api通用返回结构体List
-type APICommonListResp struct {
-	ApiCommonRespMeta
-	Data []interface{} `json:"data"`
+type CreateDataHubData struct {
+	RawDataId uint     `json:"raw_data_id"`
+	CleanRtId []string `json:"clean_rt_id"`
 }

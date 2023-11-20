@@ -24,6 +24,7 @@ var (
 	CreateEsStorageIndex = "async:create_es_storage_index"
 	PublishRedis         = "async:publish_redis"
 	PushSpaceToRedis     = "async:push_space_to_redis"
+	AccessBkdataVm       = "async:access_bkdata_vm"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
@@ -37,6 +38,9 @@ var (
 		},
 		PushSpaceToRedis: {
 			Handler: task.PushSpaceToRedis,
+		},
+		AccessBkdataVm: {
+			Handler: task.AccessBkdataVm,
 		},
 	}
 )

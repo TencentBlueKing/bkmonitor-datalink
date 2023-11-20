@@ -59,8 +59,19 @@ const (
 
 // ETLConfigType
 const (
+	// 多指标单表(system)
+	ETLConfigTypeBkSystemBasereport     = "bk_system_basereport"
+	ETLConfigTypeBkUptimecheckHeartbeat = "bk_uptimecheck_heartbeat"
+	ETLConfigTypeBkUptimecheckHttp      = "bk_uptimecheck_http"
+	ETLConfigTypeBkUptimecheckTcp       = "bk_uptimecheck_tcp"
+	ETLConfigTypeBkUptimecheckUdp       = "bk_uptimecheck_udp"
+	ETLConfigTypeBkSystemProcPort       = "bk_system_proc_port"
+	ETLConfigTypeBkSystemProc           = "bk_system_proc"
+	// 自定义多指标单表
 	ETLConfigTypeBkStandardV2TimeSeries = "bk_standard_v2_time_series"
-	ETLConfigTypeBkExporter             = "bk_exporter"
+	// 固定指标单表(metric_name)
+	ETLConfigTypeBkExporter = "bk_exporter"
+	ETLConfigTypeBkStandard = "bk_standard"
 )
 
 // ClusterStorageType
@@ -175,3 +186,24 @@ const (
 	SpaceTypeBKSAAS = "bksaas"
 	SpaceTypeAll    = "all"
 )
+
+// VM
+const (
+	VmRetentionTime            = "30d" // vm 数据默认保留时间
+	VmDataTypeUserCustom       = "user_custom"
+	VmDataTypeBcsClusterK8s    = "bcs_cluster_k8s"
+	VmDataTypeBcsClusterCustom = "bcs_cluster_custom"
+)
+
+// TimeStampLen
+const (
+	TimeStampLenSecondLen      = 10 // Unix Time Stamp(seconds)
+	TimeStampLenMillisecondLen = 13 // Unix Time Stamp(milliseconds)
+	TimeStampLenNanosecondLen  = 19 // Unix Time Stamp(nanosecond)
+)
+
+var TimeStampLenValeMap = map[int]string{
+	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",
+	TimeStampLenMillisecondLen: "Unix Time Stamp(milliseconds)",
+	TimeStampLenNanosecondLen:  "Unix Time Stamp(nanosecond)",
+}

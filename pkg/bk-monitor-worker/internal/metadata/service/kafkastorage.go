@@ -10,10 +10,19 @@
 package service
 
 import (
+	"fmt"
+
+	"github.com/pkg/errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+var KafkaTopicPrefixStorage = fmt.Sprintf("0%s_storage_", config.BkApiAppCode)
 
 // KafkaStorageSvc kafka storage service
 type KafkaStorageSvc struct {
@@ -56,5 +65,55 @@ func (a KafkaStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 
 // CreateTable 创建存储
 func (a KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+	storageConfig.SetDefault("partition", 1)
+	storageConfig.SetDefault("retention", 1800000)
+	storageConfig.SetDefault("useDefaultFormat", true)
+
+	storageClusterId, ok := storageConfig.GetUint("storageClusterId")
+	if !ok {
+		if id := config.GlobalDefaultKafkaStorageClusterId; id != 0 {
+			storageClusterId = id
+		} else {
+			var cluster storage.ClusterInfo
+			if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeKafka).IsDefaultClusterEq(true).One(&cluster); err != nil {
+				return err
+			}
+			storageClusterId = cluster.ClusterID
+		}
+	} else {
+		var cluster storage.ClusterInfo
+		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeKafka).ClusterIDEq(storageClusterId).One(&cluster); err != nil {
+			return errors.Wrapf(err, "query cluster_id [%v] failed", storageClusterId)
+		}
+	}
+	// 校验table_id， key是否存在冲突
+	count, err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).Count()
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return fmt.Errorf("result_table [%s] already has redis storage config, nothing will add", tableId)
+	}
+
+	// 如果未有指定key，则改为table_id
+	topic, ok := storageConfig.GetString("topic")
+	if !ok {
+		topic = tableId
+	}
+	// topic的构造为 ${prefix}_${key}
+	if yes, _ := storageConfig.GetBool("useDefaultFormat"); yes {
+		topic = fmt.Sprintf("%s_%s", KafkaTopicPrefixStorage, topic)
+	}
+	kafkaStorage := storage.KafkaStorage{
+		TableID:          tableId,
+		Topic:            topic,
+		Partition:        a.Partition,
+		StorageClusterID: storageClusterId,
+		Retention:        a.Retention,
+	}
+	if err := kafkaStorage.Create(mysql.GetDBSession().DB); err != nil {
+		return err
+	}
+	logger.Infof("table [%s] now has create kafka storage config", tableId)
 	return nil
 }

@@ -32,10 +32,10 @@ type BCSClusterInfo struct {
 	DomainName         string    `gorm:"size:512" json:"domain_name"`
 	Port               uint      `json:"port"`
 	ServerAddressPath  string    `gorm:"size:512" json:"server_address_path"`
-	ApiKeyType         string    `gorm:"size:128;default:authorization" json:"api_key_type"`
+	ApiKeyType         string    `gorm:"size:128" json:"api_key_type"`
 	ApiKeyContent      string    `gorm:"size:128" json:"api_key_content"`
-	ApiKeyPrefix       string    `gorm:"size:128;default:Bearer" json:"api_key_prefix"`
-	IsSkipSslVerify    bool      `gorm:"default:true" json:"is_skip_ssl_verify"`
+	ApiKeyPrefix       string    `gorm:"size:128" json:"api_key_prefix"`
+	IsSkipSslVerify    bool      `gorm:"column:is_skip_ssl_verify" json:"is_skip_ssl_verify"`
 	CertContent        *string   `json:"cert_content"`
 	K8sMetricDataID    uint      `gorm:"column:K8sMetricDataID" json:"K8sMetricDataID"`
 	CustomMetricDataID uint      `gorm:"column:CustomMetricDataID" json:"CustomMetricDataID"`
@@ -55,8 +55,14 @@ func (BCSClusterInfo) TableName() string {
 	return "metadata_bcsclusterinfo"
 }
 
-// BeforeCreate 新建前时间字段设置为当前时间
+// BeforeCreate 新建前时间字段设置为当前时间，配置默认值
 func (r *BCSClusterInfo) BeforeCreate(tx *gorm.DB) error {
+	if r.ApiKeyPrefix == "" {
+		r.ApiKeyPrefix = "Bearer"
+	}
+	if r.ApiKeyType == "" {
+		r.ApiKeyType = "authorization"
+	}
 	r.CreateTime = time.Now()
 	r.LastModifyTime = time.Now()
 	return nil

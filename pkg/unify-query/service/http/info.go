@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	headerutil "github.com/golang/gddo/httputil/header"
@@ -392,7 +393,7 @@ func HandleSpacePrint(c *gin.Context) {
 	res := ""
 	if refresh {
 		res += fmt.Sprintf("Refresh %s \n", typeKey)
-		err = router.LoadRouter(ctx, typeKey)
+		err = router.LoadRouter(ctx, typeKey, true)
 		if err != nil {
 			res += fmt.Sprintf("Error: %v\n", err)
 		}
@@ -430,7 +431,7 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 		}
 		res += fmt.Sprintln("--------------------------------")
 	}
-	val := router.Get(ctx, typeKey, hashKey, toCached)
+	val := router.Get(ctx, typeKey, hashKey, toCached, false)
 	if val != nil {
 		res += fmt.Sprintf("Count: %v\n", val.Length())
 		if content {
@@ -440,6 +441,57 @@ func HandleSpaceKeyPrint(c *gin.Context) {
 		res += fmt.Sprintf("Value: nil")
 	}
 	c.String(200, res)
+}
+
+func HandleTsDBPrint(c *gin.Context) {
+	ctx := c.Request.Context()
+	spaceId := c.Query("space_id")
+	tableId := structured.TableID(c.Query("table_id"))
+	fieldName := c.Query("field_name")
+
+	results := make([]string, 0)
+	option := structured.TsDBOption{
+		SpaceUid:  spaceId,
+		TableID:   tableId,
+		FieldName: fieldName,
+		IsRegexp:  false}
+	tsDBs, err := structured.GetTsDBList(ctx, &option)
+	results = append(results, fmt.Sprintf("GetTsDBList result: %v, err: %v", tsDBs, err))
+
+	router, err := influxdb.GetSpaceTsDbRouter()
+	if err != nil {
+		results = append(results, fmt.Sprintf("GetSpaceTsDbRouter err: %v", err))
+	}
+	space := router.GetSpace(ctx, spaceId)
+	if space == nil {
+		results = append(results, fmt.Sprintf("Space: %s, %v ", spaceId, space))
+	} else {
+		results = append(results, fmt.Sprintf("Space: %s, num: %v ", spaceId, len(space)))
+
+	}
+	rtIds := make([]string, 0)
+	if len(tableId) == 0 {
+		rtIds = router.GetFieldRelatedRts(ctx, fieldName)
+		results = append(results, fmt.Sprintf("FieldToResulTable: %s, %v", fieldName, rtIds))
+	} else {
+		if !strings.Contains(string(tableId), ".") {
+			rtIds = router.GetDataLabelRelatedRts(ctx, string(tableId))
+			results = append(results, fmt.Sprintf("DataLabelToResulTable: %s, %v", tableId, rtIds))
+		} else {
+			rtIds = append(rtIds, string(tableId))
+		}
+	}
+	for _, rtId := range rtIds {
+		if space != nil {
+			spaceRt, ok := space[rtId]
+			results = append(results, fmt.Sprintf("SpaceResultTable: %s, %v", rtId, spaceRt))
+			if ok {
+				rt := router.GetResultTable(ctx, rtId, true)
+				results = append(results, fmt.Sprintf("ResultTableDetail: %s, %+v", rtId, rt))
+			}
+		}
+	}
+	c.String(200, strings.Join(results, "\n\n"))
 }
 
 // HandleTsQueryInfosRequest 查询info数据接口

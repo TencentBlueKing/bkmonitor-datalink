@@ -131,16 +131,19 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 		}
 
 		if writeResult.Errors {
-			msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, response: %s", b, writeResult.Took, result)
-			logging.MinuteErrorSampling(b.String(), msg)
 			var total int
+			var resultErrors []*ESWriteResultError
 			for _, item := range writeResult.Items {
 				index := item.Index
 				if index.Error != nil {
 					total++
-					cause := index.Error.CausedBy
-					logging.Warnf("backend %v write %v to %v error %v:%v", b, index.ID, index.Index, cause.Type, cause.Reason)
+					resultErrors = append(resultErrors, index.Error)
 				}
+			}
+			if len(resultErrors) > 0 {
+				s, _ := json.Marshal(resultErrors)
+				msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, error: %s", b, len(resultErrors), string(s))
+				logging.MinuteErrorSampling(b.String(), msg)
 			}
 			count = len(writeResult.Items) - total // 成功写入的数据量
 		} else {

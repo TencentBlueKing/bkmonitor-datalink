@@ -7,21 +7,36 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package grpcmiddleware
+package utils
 
 import (
-	"google.golang.org/grpc"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-const (
-	// Note: grpc 默认配置 调整此参数请评估影响）
-	maxRequestBytes = 1024 * 1024 * 8 // 8MB
-)
+func TestNormalize(t *testing.T) {
+	type Case struct {
+		Input  string
+		Output string
+	}
 
-func init() {
-	Register("maxbytes", MaxBytes())
-}
+	cases := []Case{
+		{
+			Input:  "foo.bar",
+			Output: "foo_bar",
+		},
+		{
+			Input:  "foo.bar.zzz",
+			Output: "foo_bar_zzz",
+		},
+		{
+			Input:  "foo.bar..",
+			Output: "foo_bar",
+		},
+	}
 
-func MaxBytes() grpc.ServerOption {
-	return grpc.MaxRecvMsgSize(maxRequestBytes)
+	for _, c := range cases {
+		assert.Equal(t, c.Output, NormalizeName(c.Input))
+	}
 }

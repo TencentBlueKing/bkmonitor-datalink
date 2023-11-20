@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
@@ -111,3 +112,7 @@ func (c *Instance) Delete(key string) error {
 func (c *Instance) Close() error {
 	return nil
 }
+
+var (
+	NotFoundErr = errors.New("path not found")
+)

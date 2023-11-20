@@ -23,7 +23,9 @@ import (
 
 //go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo.go
 
-// ClusterInfo Event: cluster info model
+var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果表类型,vm类型结果表不写入consul
+
+// Event: cluster info model
 // gen:qs
 type ClusterInfo struct {
 	ClusterID                 uint      `gorm:"index" json:"cluster_id"`
@@ -57,7 +59,7 @@ type ClusterInfo struct {
 	ExtranetPort              uint      `gorm:"default:0" json:"extranet_port"`
 }
 
-// TableName : 用于设置表的别名
+// TableName: 用于设置表的别名
 func (ClusterInfo) TableName() string {
 	return "metadata_clusterinfo"
 }

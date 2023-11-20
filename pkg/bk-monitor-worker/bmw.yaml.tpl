@@ -59,6 +59,12 @@ store:
     charset: utf8
     maxIdleConnections: 10
     maxOpenConnections: 100
+  es:
+    es_retain_invalid_alias: false
+  bbolt:
+    defaultPath: "bolt.db"
+    defaultBuckName: "spaceBucket"
+    defaultSync: false
 log:
   enableStdout: true
   level: "info"
@@ -81,6 +87,13 @@ worker:
   queues:
     - default
 taskConfig:
+  common:
+    bkapi:
+      enabled: false
+      host: 127.0.0.1
+      stage: stag
+      appCode: appCode
+      appSecret: appSecret
   metadata:
     metricDimension:
       metricKeyPrefix: bkmonitor:metrics_

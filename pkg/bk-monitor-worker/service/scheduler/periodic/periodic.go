@@ -29,6 +29,9 @@ type PeriodicTask struct {
 var (
 	refreshTsMetric       = "periodic:metadata:refresh_ts_metric"
 	refreshEventDimension = "periodic:metadata:refresh_event_dimension"
+	refreshEsStorage      = "periodic:metadata:refresh_es_storage"
+	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
+	refreshDatasource     = "periodic:metadata:refresh_datasource"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -38,6 +41,18 @@ var (
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
 			Handler: metadataTask.RefreshEventDimension,
+		},
+		refreshEsStorage: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshESStorage,
+		},
+		refreshInfluxdbRoute: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshInfluxdbRoute,
+		},
+		refreshDatasource: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshDatasource,
 		},
 	}
 )

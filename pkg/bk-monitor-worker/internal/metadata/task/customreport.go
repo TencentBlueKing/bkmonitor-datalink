@@ -19,11 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	// Goroutine数限制
-	goroutineLimit = 10
-)
-
 // RefreshTimeSeriesMetric : update ts metrics from redis
 func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	defer func() {
@@ -34,7 +29,8 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	// funcName := runtimex.GetFuncName()
 	dbSession := mysql.GetDBSession()
 	qs := customreport.NewTimeSeriesGroupQuerySet(dbSession.DB)
-	qs = qs.IsEnableEq(true).IsDeleteEq(false)
+	// TODO: 暂时先关闭，需要在优化一下
+	qs = qs.IsEnableEq(true).IsDeleteEq(true)
 	// 过滤满足条件的记录
 	var tsGroupList []customreport.TimeSeriesGroup
 	if err := qs.All(&tsGroupList); err != nil {
@@ -72,7 +68,7 @@ func RefreshEventDimension(ctx context.Context, t *t.Task) error {
 		return err
 	}
 	wg := sync.WaitGroup{}
-	ch := make(chan bool, goroutineLimit)
+	ch := make(chan bool, GetGoroutineLimit("refresh_event_dimension"))
 	wg.Add(len(eventGroupList))
 	for _, eg := range eventGroupList {
 		ch <- true

@@ -142,6 +142,16 @@ var (
 	// StorageMysqlDebug enabled mysql debug
 	StorageMysqlDebug bool
 
+	// StorageEsUpdateTaskRetainInvalidAlias whether retain invalid alias
+	StorageEsUpdateTaskRetainInvalidAlias bool
+
+	// StorageBboltDefaultPath bbolt default path
+	StorageBboltDefaultPath string
+	// StorageBboltDefaultBucketName bbolt default bucket name
+	StorageBboltDefaultBucketName string
+	// StorageBboltDefaultSync bbolt default sync
+	StorageBboltDefaultSync bool
+
 	// WorkerQueues worker listen queue(only valid in worker process)
 	WorkerQueues []string
 	// WorkerConcurrency concurrency of worker task
@@ -177,6 +187,20 @@ var (
 
 	// AesKey project aes key
 	AesKey string
+
+	// BkApiEnabled enabled bk-apigw
+	BkApiEnabled bool
+	// BkApiUrl bk-apigw host
+	BkApiUrl string
+	// BkApiStage bk-apigw stage
+	BkApiStage string
+	// BkApiAppCode bk-apigw app code
+	BkApiAppCode string
+	// BkApiAppSecret bk-apigw app secret
+	BkApiAppSecret string
+
+	// GoroutineLimit max size of task goroutine
+	GoroutineLimit map[string]string
 
 	// TestStorageMysqlHost test-mysql host
 	TestStorageMysqlHost string
@@ -265,6 +289,12 @@ func initVariables() {
 	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
+	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.es_retain_invalid_alias", false)
+
+	StorageBboltDefaultPath = GetValue("store.bbolt.defaultPath", "bolt.db")
+	StorageBboltDefaultBucketName = GetValue("store.bbolt.defaultBuckName", "spaceBucket")
+	StorageBboltDefaultSync = GetValue("store.bbolt.defaultSync", false)
+
 	/*
 		Worker配置 ----- START
 	*/
@@ -272,11 +302,11 @@ func initVariables() {
 	WorkerQueues = GetValue("worker.queues", []string{"default"})
 	// WorkerConcurrency worker并发数量 0为使用CPU核数
 	WorkerConcurrency = GetValue("worker.concurrency", 0)
-	// WorkerHealthCheckInterval worker心跳上报时间间隔 单位: s
+	// WorkerHealthCheckInterval worker心跳上报时间间隔
 	WorkerHealthCheckInterval = GetValue("worker.healthCheck.interval", 3*time.Second, viper.GetDuration)
-	// WorkerHealthCheckInfoDuration worker心跳上报缓存过期时间 单位: s
+	// WorkerHealthCheckInfoDuration worker心跳上报缓存过期时间
 	WorkerHealthCheckInfoDuration = GetValue("worker.healthCheck.duration", 5*time.Second, viper.GetDuration)
-	// WorkerDaemonTaskMaintainerInterval worker常驻任务检测任务是否正常运行的间隔 单位: s
+	// WorkerDaemonTaskMaintainerInterval worker常驻任务检测任务是否正常运行的间隔
 	WorkerDaemonTaskMaintainerInterval = GetValue(
 		"worker.daemonTask.maintainer.interval", 1*time.Second, viper.GetDuration,
 	)
@@ -301,11 +331,11 @@ func initVariables() {
 	SchedulerDaemonTaskNumeratorInterval = GetValue(
 		"scheduler.daemonTask.numerator.interval", 60*time.Second, viper.GetDuration,
 	)
-	// SchedulerDaemonTaskWorkerWatcherInterval 常驻任务功能监听worker队列变化的间隔 单位: s
+	// SchedulerDaemonTaskWorkerWatcherInterval 常驻任务功能监听worker队列变化的间隔
 	SchedulerDaemonTaskWorkerWatcherInterval = GetValue(
 		"scheduler.daemonTask.watcher.workerWatchInterval", 1*time.Second, viper.GetDuration,
 	)
-	// SchedulerDaemonTaskTaskWatcherInterval 常驻任务功能监听task队列变化的间隔 单位: s
+	// SchedulerDaemonTaskTaskWatcherInterval 常驻任务功能监听task队列变化的间隔
 	SchedulerDaemonTaskTaskWatcherInterval = GetValue(
 		"scheduler.daemonTask.watcher.taskWatchInterval", 1*time.Second, viper.GetDuration,
 	)
@@ -319,6 +349,14 @@ func initVariables() {
 	HttpEnabledPprof = GetValue("service.http.enablePprof", true)
 
 	AesKey = GetValue("aes.key", "")
+
+	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
+	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "127.0.0.1")
+	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
+	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
+	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
+
+	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 
 	TestStorageMysqlHost = GetValue("test.store.mysql.host", "127.0.0.1")
 	TestStorageMysqlPort = GetValue("test.store.mysql.port", 3306)

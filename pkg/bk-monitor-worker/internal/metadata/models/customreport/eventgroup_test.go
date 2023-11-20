@@ -67,6 +67,7 @@ func TestEventGroup_GetESData(t *testing.T) {
 }
 
 func TestEventGroup_ModifyEventList(t *testing.T) {
+	config.InitConfig()
 	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
 		db, err := gorm.Open("mysql", fmt.Sprintf(
 			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",

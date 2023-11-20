@@ -14,21 +14,13 @@ import (
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
-	"github.com/spf13/viper"
 
+	projConfig "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var gseApi *bkgse.Client
-
-const (
-	BkApiBaseUrlPath       = "bk_api.api_url"
-	BkApiStagePath         = "bk_api.stage"
-	BkApiAppCodePath       = "bk_api.app_code"
-	BkApiAppSecretPath     = "bk_api.app_secret"
-	BkApiUseApiGatewayPath = "bk_api.use_api_gateway"
-)
 
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
@@ -36,27 +28,26 @@ func GetGseApi() (*bkgse.Client, error) {
 		return gseApi, nil
 	}
 	var config define.ClientConfigProvider
-	useApiGateWay := viper.GetBool(BkApiUseApiGatewayPath)
-	if useApiGateWay {
+	if projConfig.BkApiEnabled {
 		config = bkapi.ClientConfig{
-			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", viper.GetString(BkApiBaseUrlPath)),
-			Stage:         viper.GetString(BkApiStagePath),
-			AppCode:       viper.GetString(BkApiAppCodePath),
-			AppSecret:     viper.GetString(BkApiAppSecretPath),
+			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", projConfig.BkApiUrl),
+			Stage:         projConfig.BkApiStage,
+			AppCode:       projConfig.BkApiAppCode,
+			AppSecret:     projConfig.BkApiAppSecret,
 			JsonMarshaler: jsonx.Marshal,
 		}
 	} else {
 		config = bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", viper.GetString(BkApiBaseUrlPath)),
-			Stage:               viper.GetString(BkApiStagePath),
-			AppCode:             viper.GetString(BkApiAppCodePath),
-			AppSecret:           viper.GetString(BkApiAppSecretPath),
+			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", projConfig.BkApiUrl),
+			Stage:               projConfig.BkApiStage,
+			AppCode:             projConfig.BkApiAppCode,
+			AppSecret:           projConfig.BkApiAppSecret,
 			JsonMarshaler:       jsonx.Marshal,
 			AuthorizationParams: map[string]string{"bk_username": "admin"},
 		}
 	}
 
-	gseApi, err := bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	gseApi, err := bkgse.New(projConfig.BkApiEnabled, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
 	if err != nil {
 		return nil, err
 	}

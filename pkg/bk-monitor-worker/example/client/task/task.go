@@ -10,32 +10,36 @@
 package task
 
 import (
-	"log"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	worker "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var once sync.Once
 
+// Add task enqueue test
 func Add(i int) {
 	once.Do(func() {
 		// init the config path
-		config.ConfigPath = "../../dev_config.yaml"
+		config.FilePath = "../../dev_config.yaml"
 		config.InitConfig()
 	})
 
-	client, _ := worker.NewClient()
+	client, err := worker.GetClient()
+	if err != nil {
+		logger.Fatalf("failed to create client: %s", err)
+	}
 	defer client.Close()
 
 	task, err := NewAddTask(i)
 	if err != nil {
-		log.Fatalf("could not create task: %v", err)
+		logger.Fatalf("could not create task: %v", err)
 	}
 	info, err := client.Enqueue(task)
 	if err != nil {
-		log.Fatalf("could not enqueue task: %v", err)
+		logger.Fatalf("could not enqueue task: %v", err)
 	}
-	log.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
+	logger.Printf("enqueued task: id=%s queue=%s", info.ID, info.Queue)
 }

@@ -10,9 +10,9 @@
 package task
 
 import (
-	"fmt"
+	"strconv"
 
-	"github.com/spf13/viper"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 const (
@@ -20,10 +20,10 @@ const (
 )
 
 func GetGoroutineLimit(taskName string) int {
-	limit := viper.GetInt(fmt.Sprintf(GoroutineLimitPath, taskName))
-	if limit == 0 {
+	limit, exist := config.GoroutineLimit[taskName]
+	if !exist {
 		return 10
 	}
-
-	return limit
+	res, _ := strconv.Atoi(limit)
+	return res
 }

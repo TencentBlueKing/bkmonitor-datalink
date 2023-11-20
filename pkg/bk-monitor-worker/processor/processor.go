@@ -36,9 +36,8 @@ type Processor struct {
 	Broker broker.Broker
 	Clock  timex.Clock
 
-	Handler   Handler
-	BaseCtxFn func() context.Context
-
+	Handler     Handler
+	BaseCtxFn   func() context.Context
 	QueueConfig map[string]int
 
 	// orderedQueues is set only in strict-priority mode.
@@ -102,7 +101,7 @@ func NewProcessor(params ProcessorParams) *Processor {
 	}
 }
 
-// Note: stops only the "processor" goroutine, does not stop workers.
+// Stop Note: stops only the "processor" goroutine, does not stop workers.
 // It's safe to call this method multiple times.
 func (p *Processor) Stop() {
 	p.Once.Do(func() {
@@ -155,7 +154,7 @@ func (p *Processor) Exec() {
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
-			logger.Info("All queues are empty")
+			//logger.Info("All queues are empty")
 			time.Sleep(time.Second)
 			<-p.Sema // release token
 			return
@@ -270,7 +269,10 @@ func (p *Processor) MarkAsDone(l *common.Lease, msg *t.TaskMessage) {
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Done(ctx, msg)
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not remove task id=%s type=%q from %q err: %+v", msg.ID, msg.Kind, common.ActiveKey(msg.Queue), err)
+		errMsg := fmt.Sprintf(
+			"Could not remove task id=%s type=%q from %q err: %+v",
+			msg.ID, msg.Kind, common.ActiveKey(msg.Queue), err,
+		)
 		logger.Warnf("mark task done error, %s", errMsg)
 	}
 }
@@ -301,7 +303,10 @@ func (p *Processor) Retry(l *common.Lease, msg *t.TaskMessage, e error, isFailur
 	retryAt := time.Now().Add(d)
 	err := p.Broker.Retry(ctx, msg, retryAt, e.Error(), isFailure)
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not move task id=%s from %q to %q", msg.ID, common.ActiveKey(msg.Queue), common.RetryKey(msg.Queue))
+		errMsg := fmt.Sprintf(
+			"Could not move task id=%s from %q to %q",
+			msg.ID, common.ActiveKey(msg.Queue), common.RetryKey(msg.Queue),
+		)
 		logger.Warnf("retry task error, %s", errMsg)
 	}
 }
@@ -311,7 +316,10 @@ func (p *Processor) Archive(l *common.Lease, msg *t.TaskMessage, e error) {
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Archive(ctx, msg, e.Error())
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not move task id=%s from %q to %q", msg.ID, common.ActiveKey(msg.Queue), common.ArchivedKey(msg.Queue))
+		errMsg := fmt.Sprintf(
+			"Could not move task id=%s from %q to %q",
+			msg.ID, common.ActiveKey(msg.Queue), common.ArchivedKey(msg.Queue),
+		)
 		logger.Warnf("archive task error, %s", errMsg)
 	}
 }

@@ -13,13 +13,13 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	task "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/example/client/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/example/client/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
-	worker "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 )
 
 func main() {
-	config.ConfigPath = "../../dev_config.yaml"
+	config.FilePath = "../../dev_config.yaml"
 	config.InitConfig()
 
 	w, _ := worker.NewWorker(

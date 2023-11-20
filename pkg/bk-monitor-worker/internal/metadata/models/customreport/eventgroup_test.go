@@ -18,10 +18,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -69,13 +69,13 @@ func TestEventGroup_GetESData(t *testing.T) {
 func TestEventGroup_ModifyEventList(t *testing.T) {
 	config.InitConfig()
 	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open(viper.GetString("test.database.type"), fmt.Sprintf(
+		db, err := gorm.Open("mysql", fmt.Sprintf(
 			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			viper.GetString("test.database.user"),
-			viper.GetString("test.database.password"),
-			viper.GetString("test.database.host"),
-			viper.GetString("test.database.port"),
-			viper.GetString("test.database.db_name"),
+			config.TestStorageMysqlUser,
+			config.TestStorageMysqlPassword,
+			config.TestStorageMysqlHost,
+			config.TestStorageMysqlPort,
+			config.TestStorageMysqlDbName,
 		))
 		assert.Nil(t, err)
 		return &mysql.DBSession{DB: db}

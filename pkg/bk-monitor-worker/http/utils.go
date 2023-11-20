@@ -19,7 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 )
 
-// BindJSON
+// BindJSON bind http params to obj
 func BindJSON(c *gin.Context, obj interface{}) error {
 	return c.ShouldBindWith(obj, binding.JSON)
 }
@@ -59,7 +59,7 @@ func Response(c *gin.Context, h *gin.H) {
 	c.JSON(status, response)
 }
 
-// ResponseWithMessage 返回
+// ResponseWithMessage 返回数据
 func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...interface{}) {
 	response := &gin.H{
 		"result":  true,
@@ -70,7 +70,7 @@ func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...int
 	Response(c, response)
 }
 
-// BadReqResponse
+// BadReqResponse return a bad request response
 func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
 	response := &gin.H{
 		"result":  false,
@@ -80,7 +80,7 @@ func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
 	Response(c, response)
 }
 
-// ServerErrResponse
+// ServerErrResponse return a error response
 func ServerErrResponse(c *gin.Context, message string, v ...interface{}) {
 	response := &gin.H{
 		"result":  false,

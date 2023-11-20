@@ -7,4 +7,25 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package result
+package daemon
+
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+)
+
+func TestApmTaskUniId(t *testing.T) {
+
+	params := map[string]string{"data_id": "543713"}
+	data, _ := json.Marshal(params)
+	taskIns, _ := task.NewSerializerTask(task.Task{
+		Kind:    "daemon:apm:pre_calculate",
+		Payload: data,
+		Options: []task.Option{task.Queue("large-app-3")},
+	})
+	uniId := ComputeTaskUniId(*taskIns)
+	fmt.Printf("UniId: %s \n Payload: %s", uniId, taskIns.Payload)
+}

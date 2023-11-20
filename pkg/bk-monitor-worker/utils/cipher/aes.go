@@ -16,19 +16,13 @@ import (
 	"encoding/base64"
 	"strings"
 
-	"github.com/spf13/viper"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	AESKeyPath = "aes.key"
-	AESPrefix  = "aes_str:::"
+	AESPrefix = "aes_str:::"
 )
-
-func init() {
-	viper.SetDefault(AESKeyPath, "")
-}
 
 // AESDecrypt AES256解密
 func AESDecrypt(encryptedPwd string) string {
@@ -52,7 +46,7 @@ func AESDecrypt(encryptedPwd string) string {
 	}
 	// 获取iv
 	iv := base64Decoded[:aes.BlockSize]
-	key := sha256.Sum256([]byte(viper.GetString(AESKeyPath)))
+	key := sha256.Sum256([]byte(config.AesKey))
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Errorf("new cipher error, %s", err)

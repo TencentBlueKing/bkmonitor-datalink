@@ -14,13 +14,11 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/spf13/viper"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -148,7 +146,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	}
 
 	// 更新version
-	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix)
 	err = models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath)
 	if err != nil {
 		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)

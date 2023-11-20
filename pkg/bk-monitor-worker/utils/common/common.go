@@ -7,17 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package broker
+package common
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
-// ValidateQueueName validate queue name
-func ValidateQueueName(queueName string) error {
-	if len(strings.TrimSpace(queueName)) == 0 {
-		return fmt.Errorf("queue name is null")
+func GenerateProcessorId() string {
+	host, err := os.Hostname()
+	if err != nil {
+		host = "unknown-host"
 	}
-	return nil
+	return fmt.Sprintf("%s-%d-%v", host, os.Getpid(), strings.ReplaceAll(uuid.New().String(), "-", ""))
 }

@@ -12,8 +12,9 @@ package cipher
 import (
 	"testing"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 func TestAESDecrypt(t *testing.T) {
@@ -25,7 +26,7 @@ func TestAESDecrypt(t *testing.T) {
 		"aes_str:::dDFXjpGztB6DGLl6XzbKFStZF4WT4BXQMX8Edm/RAysSfG4OmtpI8OgyDH+EJG6L": "zRD6AqbG5XSBKzz0Flxf",
 		"aes_str:::X91jZcJtY5Yq3Y9oVZlHMqKwDakt950rV3IFY26YOXk=":                     "5gYTZqvd7Z7s",
 	}
-	viper.Set(AESKeyPath, "81be7fc6-5476-4934-9417-6d4d593728db")
+	config.AesKey = "81be7fc6-5476-4934-9417-6d4d593728db"
 	assert.Equal(t, "", AESDecrypt(""))
 	for encrypetd, plain := range encryptedAndPlainMap {
 		assert.Equal(t, plain, AESDecrypt(encrypetd))

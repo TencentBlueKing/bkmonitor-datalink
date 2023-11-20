@@ -47,7 +47,7 @@ func (f *Forwarder) Shutdown() {
 	f.done <- struct{}{}
 }
 
-// start goroutine.
+// Start goroutine.
 func (f *Forwarder) Start(wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {

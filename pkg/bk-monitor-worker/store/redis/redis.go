@@ -12,9 +12,9 @@ package redis
 import (
 	"context"
 	"fmt"
-	"github.com/avast/retry-go"
 	"time"
 
+	"github.com/avast/retry-go"
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"

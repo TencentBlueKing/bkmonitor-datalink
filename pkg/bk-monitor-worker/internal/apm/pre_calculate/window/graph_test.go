@@ -10,7 +10,7 @@
 package window
 
 import (
-	"fmt"
+	"github.com/stretchr/testify/assert"
 	"sort"
 	"testing"
 )
@@ -70,7 +70,13 @@ func TestSpanGraph(t *testing.T) {
 	graph.RefreshEdges()
 
 	nodeDegrees := graph.NodeDepths()
-	fmt.Printf("%v", nodeDegrees)
+	assert.Equal(t, "984e737f16c14b61", nodeDegrees[0].Node.SpanId)
+	assert.Equal(t, "fc931cd577c2b8d4", nodeDegrees[1].Node.SpanId)
+	assert.Equal(t, "2ef9eb548c622d19", nodeDegrees[2].Node.SpanId)
+	assert.Equal(t, "4b477f46b2298b0b", nodeDegrees[3].Node.SpanId)
 	sort.Slice(nodeDegrees, sortNode(nodeDegrees))
-	fmt.Printf("%v", nodeDegrees)
+	assert.Equal(t, "984e737f16c14b61", nodeDegrees[0].Node.SpanId)
+	assert.Equal(t, "fc931cd577c2b8d4", nodeDegrees[1].Node.SpanId)
+	assert.Equal(t, "2ef9eb548c622d19", nodeDegrees[2].Node.SpanId)
+	assert.Equal(t, "4b477f46b2298b0b", nodeDegrees[3].Node.SpanId)
 }

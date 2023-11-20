@@ -296,14 +296,11 @@ func (d *distributiveSubWindow) detectNotify() {
 
 	if len(expiredKeys) > 0 {
 		for _, k := range expiredKeys {
-			d.mLock.Lock()
-			v, exists := d.m.Load(k)
+			v, exists := d.m.LoadAndDelete(k)
 			if !exists {
 				d.logger.Errorf("An expired key[%s] was detected but does not exist in the mapping", k)
 				continue
 			}
-			d.m.Delete(k)
-			d.mLock.Unlock()
 			d.eventChan <- Event{v.(*CollectTrace)}
 		}
 	}
@@ -323,7 +320,7 @@ loop:
 }
 
 func (d *distributiveSubWindow) add(span StandardSpan) {
-
+	d.mLock.Lock()
 	value, exist := d.m.Load(span.TraceId)
 
 	if !exist {
@@ -347,4 +344,5 @@ func (d *distributiveSubWindow) add(span StandardSpan) {
 		d.runtimeStrategy.handleExist(&collect.Runtime, *collect)
 		d.m.Store(span.TraceId, collect)
 	}
+	d.mLock.Unlock()
 }

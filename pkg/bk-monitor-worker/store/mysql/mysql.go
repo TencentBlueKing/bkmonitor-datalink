@@ -19,26 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//const (
-//	mysqlHostPath    = "store.database.host"
-//	mysqlPortPath    = "store.database.port"
-//	mysqlUserPath    = "store.database.user"
-//	mysqlPWDPath     = "store.database.password"
-//	mysqlDBNamePath  = "store.database.db_name"
-//	mysqlCharset     = "store.database.charset"
-//	maxIdleConnsPath = "store.database.max_idle_conns"
-//	maxOpenConnsPath = "store.database.max_open_conns"
-//	debugModePath    = "store.database.debug_mode"
-//)
-//
-//func init() {
-//	viper.SetDefault(mysqlPortPath, 3306)
-//	viper.SetDefault(mysqlUserPath, "root")
-//	viper.SetDefault(maxIdleConnsPath, 10)
-//	viper.SetDefault(maxOpenConnsPath, 100)
-//	viper.SetDefault(debugModePath, false)
-//}
-
 // DBSession session of databases
 type DBSession struct {
 	DB *gorm.DB
@@ -94,7 +74,7 @@ func (db *DBSession) Open() error {
 	return nil
 }
 
-// Close close connection
+// Close closes connection
 func (db *DBSession) Close() error {
 	if db.DB != nil {
 		return db.DB.Close()

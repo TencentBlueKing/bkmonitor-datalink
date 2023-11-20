@@ -17,7 +17,6 @@ import (
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
 	jsoniter "github.com/json-iterator/go"
-	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -81,14 +80,11 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 				"this traceId: %s will be process as a new window. error: %s",
 			event.TraceId, err,
 		)
-		p.Process(receiver, event)
-	} else {
-		if exist {
-			existSpans := p.listSpanFromStorage(event)
-			p.revertToCollect(&event, existSpans)
-		}
-		p.Process(receiver, event)
+	} else if exist {
+		existSpans := p.listSpanFromStorage(event)
+		p.revertToCollect(&event, existSpans)
 	}
+	p.Process(receiver, event)
 }
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
@@ -140,7 +136,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		},
 	})
 	if err != nil {
-		log.Errorf(
+		p.logger.Errorf(
 			"Data whose traceId: %s fails to be obtained from ES. "+
 				"That data will be ignored, and result may be distorted. error: %s",
 			event.TraceId, err,

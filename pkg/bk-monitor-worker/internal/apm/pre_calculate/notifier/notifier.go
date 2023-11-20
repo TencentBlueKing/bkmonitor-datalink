@@ -11,7 +11,6 @@ package notifier
 
 import (
 	"context"
-	"sync"
 
 	"go.uber.org/zap"
 
@@ -72,7 +71,6 @@ func NewNotifier(form notifyForm, options ...Option) (Notifier, error) {
 
 // An emptyNotifier for use when not specified
 var (
-	once                  sync.Once
 	emptyNotifierInstance = newEmptyNotifier()
 )
 
@@ -87,11 +85,7 @@ func (e emptyNotifier) Spans() <-chan []window.StandardSpan {
 func (e emptyNotifier) Start(_ chan<- error) {}
 
 func newEmptyNotifier() Notifier {
-	once.Do(func() {
-		emptyNotifierInstance = emptyNotifier{}
-	})
-
-	return emptyNotifierInstance
+	return emptyNotifier{}
 }
 
 var logger = monitorLogger.With(

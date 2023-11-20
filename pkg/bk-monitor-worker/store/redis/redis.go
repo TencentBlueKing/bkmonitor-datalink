@@ -12,7 +12,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"sync"
+	"github.com/avast/retry-go"
 	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
@@ -34,33 +34,51 @@ type Instance struct {
 
 var (
 	storageRedisInstance *Instance
-	storageRedisOnce     sync.Once
 )
 
 // GetInstance get a redis instance
 func GetInstance(ctx context.Context) *Instance {
+	if storageRedisInstance != nil {
+		return storageRedisInstance
+	}
 
-	storageRedisOnce.Do(func() {
-		client, err := redisUtils.NewRedisClient(
-			ctx,
-			&redisUtils.Option{
-				Mode:             config.StorageRedisMode,
-				Host:             config.StorageRedisStandaloneHost,
-				Port:             config.StorageRedisStandalonePort,
-				SentinelAddress:  config.StorageRedisSentinelAddress,
-				MasterName:       config.StorageRedisSentinelMasterName,
-				SentinelPassword: config.StorageRedisSentinelPassword,
-				Password:         config.StorageRedisStandalonePassword,
-				Db:               config.StorageRedisDatabase,
-				DialTimeout:      config.StorageRedisDialTimeout,
-				ReadTimeout:      config.StorageRedisReadTimeout,
-			},
-		)
-		if err != nil {
-			logger.Errorf("Failed to create storageRedis, tasks stored in this redis may not be executed. error: %s", err)
-		}
-		storageRedisInstance = &Instance{ctx: ctx, Client: client}
-	})
+	var client goRedis.UniversalClient
+	var err error
+
+	err = retry.Do(
+		func() error {
+			client, err = redisUtils.NewRedisClient(
+				ctx,
+				&redisUtils.Option{
+					Mode:             config.StorageRedisMode,
+					Host:             config.StorageRedisStandaloneHost,
+					Port:             config.StorageRedisStandalonePort,
+					SentinelAddress:  config.StorageRedisSentinelAddress,
+					MasterName:       config.StorageRedisSentinelMasterName,
+					SentinelPassword: config.StorageRedisSentinelPassword,
+					Password:         config.StorageRedisStandalonePassword,
+					Db:               config.StorageRedisDatabase,
+					DialTimeout:      config.StorageRedisDialTimeout,
+					ReadTimeout:      config.StorageRedisReadTimeout,
+				},
+			)
+			if err != nil {
+				logger.Errorf(
+					"Failed to create storageRedis, "+
+						"tasks stored in this redis may not be executed. error: %s", err,
+				)
+				return err
+			}
+			return nil
+		},
+		retry.Attempts(3),
+		retry.Delay(1*time.Second),
+	)
+	if err != nil {
+		logger.Fatalf("failed to create redis storage client, error: %s", err)
+	}
+
+	storageRedisInstance = &Instance{ctx: ctx, Client: client}
 
 	return storageRedisInstance
 }

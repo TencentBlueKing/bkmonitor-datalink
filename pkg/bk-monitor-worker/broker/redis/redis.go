@@ -14,10 +14,10 @@ package redis
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"math"
 	"time"
 
+	"github.com/avast/retry-go"
 	redis "github.com/go-redis/redis/v8"
 	"github.com/spf13/cast"
 
@@ -26,8 +26,8 @@ import (
 	task "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
-	"github.com/avast/retry-go"
 )
 
 // set ttl

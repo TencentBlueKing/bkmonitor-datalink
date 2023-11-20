@@ -10,11 +10,11 @@
 package task
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	worker "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var once sync.Once

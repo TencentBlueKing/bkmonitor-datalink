@@ -27,9 +27,6 @@ var (
 	// EnvKeyPrefix env prefix
 	EnvKeyPrefix = "bmw"
 
-	// TaskWatchChanSize Listen for the maximum number of concurrent tasks in the broker queue
-	TaskWatchChanSize int
-
 	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
 	// LoggerLevel level of logger
@@ -169,6 +166,8 @@ var (
 	// WorkerDaemonTaskRetryIntolerantFactor retry duration factor of failed task
 	WorkerDaemonTaskRetryIntolerantFactor int
 
+	// SchedulerTaskWatchChanSize Listen for the maximum number of concurrent tasks in the broker queue
+	SchedulerTaskWatchChanSize int
 	// SchedulerDaemonTaskNumeratorInterval interval of scheduler numerator
 	SchedulerDaemonTaskNumeratorInterval time.Duration
 	// SchedulerDaemonTaskWorkerWatcherInterval interval of scheduler worker watcher
@@ -215,9 +214,6 @@ var (
 )
 
 func initVariables() {
-
-	// TaskWatchChanSize 调度器监听定时任务最大并发数量
-	TaskWatchChanSize = GetValue("task.watcher.chanSize", 10)
 
 	// LoggerEnabledStdout 是否开启日志文件输出
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)
@@ -310,7 +306,7 @@ func initVariables() {
 	WorkerDaemonTaskMaintainerInterval = GetValue(
 		"worker.daemonTask.maintainer.interval", 1*time.Second, viper.GetDuration,
 	)
-	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试就不断动态增长
+	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试间隔就不断动态增长
 	WorkerDaemonTaskRetryTolerateCount = GetValue("worker.daemonTask.maintainer.tolerateCount", 60)
 	// WorkerDaemonTaskRetryTolerateInterval worker常驻任务当任务执行失败并且重试次数未超过 WorkerDaemonTaskRetryTolerateCount 时
 	// 下次重试时间间隔
@@ -327,6 +323,8 @@ func initVariables() {
 	/*
 		Scheduler常驻任务配置 ----- START
 	*/
+	// SchedulerTaskWatchChanSize 调度器监听定时任务最大并发数量
+	SchedulerTaskWatchChanSize = GetValue("scheduler.watcher.chanSize", 10)
 	// SchedulerDaemonTaskNumeratorInterval 定时检测当前常驻任务分派是否正确的时间间隔(默认每60秒检测一次)
 	SchedulerDaemonTaskNumeratorInterval = GetValue(
 		"scheduler.daemonTask.numerator.interval", 60*time.Second, viper.GetDuration,

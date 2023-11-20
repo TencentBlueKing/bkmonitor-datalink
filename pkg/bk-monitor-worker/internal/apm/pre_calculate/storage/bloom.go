@@ -133,9 +133,9 @@ type MemoryBloomOption func(*MemoryBloomOptions)
 // MemoryBloomAutoClean Automatic filter clearing time.
 // Data will be clear every time.Duration to avoid excessive memory usage.
 // Specific config of MemoryBloom
-func MemoryBloomAutoClean(c int) MemoryBloomOption {
+func MemoryBloomAutoClean(c time.Duration) MemoryBloomOption {
 	return func(options *MemoryBloomOptions) {
-		options.autoClean = time.Duration(c) * time.Minute
+		options.autoClean = c
 	}
 }
 

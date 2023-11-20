@@ -68,7 +68,7 @@ var (
 	// StorageBloomNormalAutoClean Automatic filter clearing time.
 	// Data will be clear every time.Duration to avoid excessive memory usage.
 	// Specific config of storage.MemoryBloom
-	StorageBloomNormalAutoClean int
+	StorageBloomNormalAutoClean time.Duration
 	// StorageBloomNormalOverlapResetDuration Configure the occurrence interval of overlapping filters.
 	// For example, if set 2 * time.Hour,
 	// a post-chain instance is created whenever 1 hour(2h / 2) is reached.
@@ -108,7 +108,7 @@ func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 100000)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
-	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Second, viper.GetDuration)
+	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
 	WindowMaxDuration = GetValue("taskConfig.apmPreCalculate.window.maxDuration", 5*time.Minute, viper.GetDuration)
 	WindowExpireIntervalIncrement = GetValue("taskConfig.apmPreCalculate.window.expireIntervalIncrement", 60)
 	WindowNoDataMaxDuration = GetValue("taskConfig.apmPreCalculate.window.noDataMaxDuration", 2*time.Minute, viper.GetDuration)
@@ -126,7 +126,7 @@ func initApmVariables() {
 	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 500*time.Millisecond, viper.GetDuration)
 
 	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.01)
-	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*60)
+	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*time.Hour, viper.GetDuration)
 	StorageBloomNormalOverlapResetDuration = GetValue("taskConfig.apmPreCalculate.storage.bloom.normalOverlap.resetDuration", 2*time.Hour, viper.GetDuration)
 	StorageBloomLayersBloomLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.layersBloom.layers", 5)
 	StorageBloomDecreaseCap = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.cap", 100000000)

@@ -37,7 +37,7 @@ func (t *WatchService) StartWatch() {
 }
 
 func initConfig() WatchServiceOptions {
-	return WatchServiceOptions{watchChanSize: config.TaskWatchChanSize}
+	return WatchServiceOptions{watchChanSize: config.SchedulerTaskWatchChanSize}
 }
 
 func NewWatchService(ctx context.Context) *WatchService {

@@ -1455,6 +1455,43 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: "a",
 			},
 		},
+		"quantile and quantile_over_time": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `quantile(0.9, quantile_over_time(0.9, bkmonitor:metric[1m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "quantile_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
+							VargsList: []interface{}{
+								0.9,
+							},
+							Position: 1,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "quantile",
+								VArgsList: []interface{}{
+									0.9,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
 	}
 
 	for n, c := range testCase {

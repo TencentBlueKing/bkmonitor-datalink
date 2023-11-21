@@ -232,7 +232,9 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 				},
 			)
 		}
-		promBuffer = append(promBuffer, fieldList)
+		if len(fieldList) > 0 {
+			promBuffer = append(promBuffer, fieldList)
+		}
 	}
 	return promBuffer
 }

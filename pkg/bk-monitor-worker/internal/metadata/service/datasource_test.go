@@ -10,12 +10,9 @@
 package service
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey/v2"
-	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -23,24 +20,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestDataSourceSvc_ToJson(t *testing.T) {
-	config.InitConfig()
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			config.TestStorageMysqlUser,
-			config.TestStorageMysqlPassword,
-			config.TestStorageMysqlHost,
-			config.TestStorageMysqlPort,
-			config.TestStorageMysqlDbName,
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
-	defer patchDBSession.Reset()
-
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
 	ds := &resulttable.DataSource{
 		BkDataId:          99999,
 		Token:             "9e679720296f4ad7abf5ad95ac0acbdf",

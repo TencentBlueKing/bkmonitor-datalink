@@ -9,6 +9,8 @@
 
 package config
 
+import "github.com/spf13/viper"
+
 var (
 	// MetadataMetricDimensionMetricKeyPrefix config of metadata.refreshMetric task
 	MetadataMetricDimensionMetricKeyPrefix string
@@ -42,7 +44,7 @@ func initMetadataVariables() {
 	BcsEnableBcsGray = GetValue("taskConfig.metadata.bcs.enableBcsGray", false)
 	BcsGrayClusterIdList = GetValue("taskConfig.metadata.bcs.grayClusterIdList", []string{})
 	BcsClusterBkEnvLabel = GetValue("taskConfig.metadata.bcs.clusterBkEnvLabel", "")
-	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0))
+	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0), viper.GetUint)
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
-	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0))
+	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
 }

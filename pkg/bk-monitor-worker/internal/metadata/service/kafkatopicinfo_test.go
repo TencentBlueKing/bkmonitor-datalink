@@ -15,12 +15,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestKafkaTopicInfoSvc_CreateInfo(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	var bkDataId uint = 11223344
 	mysql.GetDBSession().DB.Delete(storage.KafkaTopicInfo{}, "bk_data_id = ?", bkDataId)

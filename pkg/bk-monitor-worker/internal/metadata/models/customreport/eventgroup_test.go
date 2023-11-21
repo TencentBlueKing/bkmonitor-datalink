@@ -21,12 +21,15 @@ import (
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestEventGroup_GetESData(t *testing.T) {
-	gomonkey.ApplyMethod(EventGroup{}, "GetESClient", func() (*elasticsearch.Elasticsearch, error) { return &elasticsearch.Elasticsearch{}, nil })
-	patchSearchWithBody := gomonkey.ApplyFunc(elasticsearch.Elasticsearch.SearchWithBody, func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
+	config.FilePath = "../../../../bmw.yaml"
+	mocker.PatchDBSession()
+	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "SearchWithBody", func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
 		all, _ := io.ReadAll(body)
 		input := string(all)
 		resp := &elasticsearch.Response{StatusCode: 200}
@@ -46,8 +49,10 @@ func TestEventGroup_GetESData(t *testing.T) {
 		}
 		return resp, nil
 	})
+	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "Ping", func(es elasticsearch.Elasticsearch) (*elasticsearch.Response, error) {
+		return nil, nil
+	})
 
-	defer patchSearchWithBody.Reset()
 	eg := EventGroup{
 		CustomGroupBase: CustomGroupBase{TableID: "gse_event_report_base"},
 		EventGroupID:    1,

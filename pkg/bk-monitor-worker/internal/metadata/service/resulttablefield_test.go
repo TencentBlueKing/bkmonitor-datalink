@@ -15,12 +15,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestResultTableFieldSvc_BatchGetFields(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
 	tableID := "test_table_001.base"
 	mocker.PatchDBSession()
 	f1 := resulttable.ResultTableField{

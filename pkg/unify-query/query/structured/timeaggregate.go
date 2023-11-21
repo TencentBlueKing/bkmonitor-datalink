@@ -57,10 +57,25 @@ func (m TimeAggregation) ToProm(expr parser.Expr) (*parser.Call, error) {
 			}
 		}
 
-		expr = &parser.SubqueryExpr{
-			Expr:  expr,
-			Range: window,
-			Step:  time.Duration(stepDur),
+		if v, ok := expr.(*parser.VectorSelector); ok {
+			expr = &parser.SubqueryExpr{
+				Expr: &parser.VectorSelector{
+					Name:          v.Name,
+					LabelMatchers: v.LabelMatchers,
+				},
+				Range:          window,
+				OriginalOffset: v.OriginalOffset,
+				Offset:         v.Offset,
+				Timestamp:      v.Timestamp,
+				StartOrEnd:     v.StartOrEnd,
+				Step:           time.Duration(stepDur),
+			}
+		} else {
+			expr = &parser.SubqueryExpr{
+				Expr:  expr,
+				Range: window,
+				Step:  time.Duration(stepDur),
+			}
 		}
 	} else {
 		expr = &parser.MatrixSelector{

@@ -15,8 +15,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +27,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 const (

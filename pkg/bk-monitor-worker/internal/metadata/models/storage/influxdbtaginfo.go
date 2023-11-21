@@ -16,8 +16,8 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -49,7 +49,7 @@ func (i InfluxdbTagInfo) GenerateTagKey() string {
 }
 
 func (InfluxdbTagInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, config.StorageConsulPathPrefix)
 }
 
 func (i InfluxdbTagInfo) RedisField() string {

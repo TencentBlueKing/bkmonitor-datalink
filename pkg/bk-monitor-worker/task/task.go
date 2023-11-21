@@ -22,6 +22,12 @@ type Task struct {
 	Options []Option
 }
 
+type SerializerTask struct {
+	Kind    string
+	Payload []byte
+	Options Options
+}
+
 // NewTask make a task
 func NewTask(kind string, payload []byte, opts ...Option) *Task {
 	return &Task{
@@ -29,6 +35,19 @@ func NewTask(kind string, payload []byte, opts ...Option) *Task {
 		Payload: payload,
 		Options: opts,
 	}
+}
+
+func NewSerializerTask(t Task) (*SerializerTask, error) {
+	options, err := ComposeOptions(t.Options...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SerializerTask{
+		Kind:    t.Kind,
+		Payload: t.Payload,
+		Options: options,
+	}, nil
 }
 
 // TaskInfo task detail

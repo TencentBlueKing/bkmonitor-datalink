@@ -14,8 +14,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/spf13/viper"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -39,7 +38,7 @@ func (InfluxdbClusterInfo) TableName() string {
 
 // ConsulPath 获取cluster_info的consul根路径
 func (InfluxdbClusterInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbClusterInfoConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.InfluxdbClusterInfoConsulPathTemplate, config.StorageConsulPathPrefix)
 }
 
 // RefreshInfluxdbClusterInfoConsulClusterConfig 更新influxDB集群信息到Consul中

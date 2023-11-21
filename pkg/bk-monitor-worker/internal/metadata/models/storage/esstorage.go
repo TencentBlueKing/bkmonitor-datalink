@@ -22,8 +22,8 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
@@ -34,12 +34,6 @@ import (
 )
 
 //go:generate goqueryset -in esstorage.go -out qs_esstorage_gen.go
-
-const ESRetainInvalidAliasPath = "elasticsearch_update_task.es_retain_invalid_alias"
-
-func init() {
-	viper.SetDefault(ESRetainInvalidAliasPath, true)
-}
 
 // ESStorage es storage model
 // gen:qs
@@ -1182,7 +1176,7 @@ func (e ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays 
 			datetimeStr := e.GetAliasDatetimeStr(aliasName)
 			if datetimeStr == "" {
 				// 匹配不上时间字符串的情况，一般是因为用户自行创建了别名
-				if viper.GetBool(ESRetainInvalidAliasPath) {
+				if config.StorageEsUpdateTaskRetainInvalidAlias {
 					// 保留不合法的别名，将该别名视为未过期
 					notExpiredAlias = append(notExpiredAlias, aliasName)
 					logger.Infof(

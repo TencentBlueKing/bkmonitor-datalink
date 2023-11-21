@@ -278,16 +278,34 @@ func New(text string) error { return errors.New(text) }
 // It is exported from this package for import convenience.
 func Is(err, target error) bool { return errors.Is(err, target) }
 
-// As finds the first error in err's chain that matches target, and if so, sets target to that error value and returns true.
+// As finds the first error in err's chain that matches target,
+// and if so, sets target to that error value and returns true.
 // Otherwise, it returns false.
 //
 // This function is the errors.As function from the standard library (https://golang.org/pkg/errors/#As).
 // It is exported from this package for import convenience.
 func As(err error, target interface{}) bool { return errors.As(err, target) }
 
-// Unwrap returns the result of calling the Unwrap method on err, if err's type contains an Unwrap method returning error.
+// Unwrap returns the result of calling the Unwrap method on err,
+// if err's type contains an Unwrap method returning error.
 // Otherwise, Unwrap returns nil.
 //
 // This function is the errors.Unwrap function from the standard library (https://golang.org/pkg/errors/#Unwrap).
 // It is exported from this package for import convenience.
 func Unwrap(err error) error { return errors.Unwrap(err) }
+
+// CombineErrors takes a slice of errors as input and combines all the error messages into a single error.
+// Each error message is separated by a newline character, making it easier to read and display.
+func CombineErrors(e []error) error {
+	if len(e) == 0 {
+		return nil
+	}
+
+	var errorMessages []string
+	for _, err := range e {
+		errorMessages = append(errorMessages, err.Error())
+	}
+
+	combinedMessage := strings.Join(errorMessages, "\n")
+	return errors.New(combinedMessage)
+}

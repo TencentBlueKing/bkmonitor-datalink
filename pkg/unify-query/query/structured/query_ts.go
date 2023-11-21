@@ -480,7 +480,7 @@ func (q *Query) BuildMetadataQuery(
 		}
 	}
 
-	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，例如 label_replace
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
 	for _, qc := range queryConditions {
 		for _, c := range qc {
 			if c.DimensionName == promql.MetricLabelName {

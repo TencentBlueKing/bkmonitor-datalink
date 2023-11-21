@@ -320,10 +320,14 @@ func makeInfluxQLList(
 		return nil, err
 	}
 	if len(condition) != 0 {
-		whereList.Append(
-			promql.AndOperator, promql.NewTextWhere(
-				promql.MakeOrExpression(structured.ConvertToPromBuffer(condition)),
-			))
+		influxdbCondition := structured.ConvertToPromBuffer(condition)
+		if len(influxdbCondition) > 0 {
+			whereList.Append(
+				promql.AndOperator, promql.NewTextWhere(
+					promql.MakeOrExpression(influxdbCondition),
+				))
+		}
+
 	}
 	// 增加时间维度查询，秒级转纳秒
 	if params.Start != "" && params.End != "" {

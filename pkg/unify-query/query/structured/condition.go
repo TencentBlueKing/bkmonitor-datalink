@@ -213,6 +213,11 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 		var fieldList []promql.ConditionField
 		fieldList = make([]promql.ConditionField, 0, len(buf))
 		for _, item := range buf {
+			// influxdb 不支持 __name__ 查询条件，先过滤掉
+			if item.DimensionName == promql.MetricLabelName {
+				continue
+			}
+
 			// contain和notcontiain，对应将operator转为eq和neq就行了,实际的信息以value为准即可
 			if item.Operator == Contains {
 				item.Operator = "eq"

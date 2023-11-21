@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -342,19 +343,6 @@ func (q *Query) BuildMetadataQuery(
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
-	// 增加查询条件
-	if len(queryConditions) > 0 {
-		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
-
-		whereList.Append(
-			promql.AndOperator,
-			promql.NewTextWhere(
-				promql.MakeOrExpression(
-					ConvertToPromBuffer(queryConditions),
-				),
-			),
-		)
-	}
 
 	db := tsDB.DB
 	storageID := tsDB.StorageID
@@ -379,6 +367,20 @@ func (q *Query) BuildMetadataQuery(
 			return nil, err
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
+	}
+
+	if len(queryConditions) > 0 {
+		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
+
+		// influxdb 查询特殊处理逻辑
+		whereList.Append(
+			promql.AndOperator,
+			promql.NewTextWhere(
+				promql.MakeOrExpression(
+					ConvertToPromBuffer(queryConditions),
+				),
+			),
+		)
 	}
 
 	switch tsDB.MeasurementType {
@@ -455,13 +457,40 @@ func (q *Query) BuildMetadataQuery(
 		)
 	}
 
+	// 用于 vm 的查询逻辑特殊处理
+	vmMetric := fmt.Sprintf("%s_%s", measurement, field)
 	metricsConditions := ConditionField{
 		DimensionName: promql.MetricLabelName,
 		Operator:      ConditionEqual,
-		Value:         []string{fmt.Sprintf("%s_%s", measurement, field)},
+		Value:         []string{vmMetric},
 	}
 	if q.IsRegexp {
 		metricsConditions.Operator = ConditionRegEqual
+	}
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+	for _, a := range q.AggregateMethodList {
+		switch a.Method {
+		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+		case "label_replace":
+			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+				}
+			}
+		}
+	}
+
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，例如 label_replace
+	for _, qc := range queryConditions {
+		for _, c := range qc {
+			if c.DimensionName == promql.MetricLabelName {
+				for ci, cv := range c.Value {
+					if strings.LastIndex(cv, field) < 0 {
+						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+					}
+				}
+			}
+		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面

@@ -70,6 +70,8 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
+
+	mock.SetRedisClient(ctx, "demo")
 	mock.SetSpaceTsDbMockData(ctx, path, bucket,
 		ir.SpaceInfo{
 			consul.VictoriaMetricsStorageType: ir.Space{
@@ -303,6 +305,18 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 	}, log.OtLogger)
 
+	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
+		Type: consul.VictoriaMetricsStorageType,
+		Instance: &victoriaMetrics.Instance{
+			Ctx:                  ctx,
+			Address:              "victoria_metric",
+			UriPath:              "api",
+			Curl:                 mockCurl,
+			InfluxCompatible:     true,
+			UseNativeOr:          true,
+			AuthenticationMethod: "token",
+		},
+	})
 	tsdb.SetStorage(strconv.FormatInt(victoriaMetricsStorageId, 10), &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
@@ -350,11 +364,11 @@ func TestQueryTs(t *testing.T) {
 		},
 		"test query by different metric dims": {
 			query: `{
-	"space_uid": "a_1068",
+	"space_uid": "influxdb",
 	"query_list": [{
 		"data_source": "",
 		"table_id": "",
-		"field_name": "container_cpu_usage_seconds_total",
+		"field_name": "bk_split_measurement",
 		"field_list": null,
 		"function": [{
 			"method": "max",
@@ -624,7 +638,7 @@ func TestVmQueryParams(t *testing.T) {
 			username: "vm-query-or-for-interval",
 			spaceUid: "vm-query",
 			promql:   `{"promql":"sum by(job, metric_name) (delta(label_replace({__name__=~\"container_cpu_.+_total\", __name__ !~ \".+_size_count\", __name__ !~ \".+_process_time_count\", job=\"metric-social-friends-forever\"}, \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\")[2m:]))","start":"1698147600","end":"1698151200","step":"60s","bk_biz_ids":null,"timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
-			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum by (job, metric_name) (label_replace(delta(a[2m:] offset 1ms), \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\"))","start":1698147600,"end":1698151200,"step":60},"result_table_group":{"a":["1_prom_computation_result"]},"metric_filter_condition":{"a":"result_table_id=\"1_prom_computation_result\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"cls-2\", job=\"metric-social-friends-forever\""},"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum by (job, metric_name) (delta(label_replace({__name__=~\"a\"} offset -59s999ms, \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count_value\")[2m:]))","start":1698147600,"end":1698151200,"step":60},"result_table_group":{"a":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"]},"metric_filter_condition":{"a":"result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"BCS-K8S-25428\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\" or result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"BCS-K8S-25430\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\" or result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"BCS-K8S-25429\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\""},"metric_alias_mapping":null}`,
 		},
 		{
 			username: "vm-query",
@@ -1233,7 +1247,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promql to struct with 1m:2m": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `count_over_time(bkmonitor:metric[1m:2m])`,
+				PromQL: `count_over_time(bkmonitor:metric[1m:2m] @ start() offset -59s999ms)`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `30s`,
@@ -1241,8 +1255,10 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
-						DataSource: `bkmonitor`,
-						FieldName:  `metric`,
+						AlignInfluxdbResult: true,
+						DataSource:          `bkmonitor`,
+						FieldName:           `metric`,
+						StartOrEnd:          parser.START,
 						TimeAggregation: structured.TimeAggregation{
 							Function:   "count_over_time",
 							Window:     "1m0s",
@@ -1267,7 +1283,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promql to struct with delta label_replace 1m:2m": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `sum by (job, metric_name) (delta(label_replace({__name__=~"bkmonitor:container_cpu_.+_total",job="metric-social-friends-forever"}, "metric_name", "$1", "__name__", "ffs_rest_(.*)_count")[2m:]))`,
+				PromQL: `sum by (job, metric_name) (delta(label_replace({__name__=~"bkmonitor:container_cpu_.+_total",job="metric-social-friends-forever"} @ start() offset -59s999ms, "metric_name", "$1", "__name__", "ffs_rest_(.*)_count")[2m:]))`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `30s`,
@@ -1275,9 +1291,11 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
-						DataSource: `bkmonitor`,
-						FieldName:  `container_cpu_.+_total`,
-						IsRegexp:   true,
+						DataSource:          `bkmonitor`,
+						FieldName:           `container_cpu_.+_total`,
+						IsRegexp:            true,
+						StartOrEnd:          parser.START,
+						AlignInfluxdbResult: true,
 						TimeAggregation: structured.TimeAggregation{
 							Function:   "delta",
 							Window:     "2m0s",

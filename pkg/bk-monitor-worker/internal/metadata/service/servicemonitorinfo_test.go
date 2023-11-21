@@ -10,37 +10,22 @@
 package service
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
-	"github.com/jinzhu/gorm"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestServiceMonitorInfoSvc_RefreshResource(t *testing.T) {
-	config.InitConfig()
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open(viper.GetString("test.database.type"), fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			viper.GetString("test.database.user"),
-			viper.GetString("test.database.password"),
-			viper.GetString("test.database.host"),
-			viper.GetString("test.database.port"),
-			viper.GetString("test.database.db_name"),
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
+	mocker.PatchDBSession()
 	var data = []byte(`{"apiVersion":"monitoring.coreos.com/v1","items":[{"apiVersion":"monitoring.coreos.com/v1","kind":"ServiceMonitor","metadata":{"annotations":{"meta.helm.sh/release-name":"bkbase-dgraph","meta.helm.sh/release-namespace":"bkbase"},"creationTimestamp":"2023-10-26T09:15:55Z","generation":1,"labels":{"app.kubernetes.io/managed-by":"Helm"},"managedFields":[{"apiVersion":"monitoring.coreos.com/v1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:annotations":{".":{},"f:meta.helm.sh/release-name":{},"f:meta.helm.sh/release-namespace":{}},"f:labels":{".":{},"f:app.kubernetes.io/managed-by":{}}},"f:spec":{".":{},"f:endpoints":{},"f:namespaceSelector":{".":{},"f:any":{}},"f:selector":{".":{},"f:matchLabels":{".":{},"f:app":{},"f:chart":{},"f:heritage":{},"f:release":{}}}}},"manager":"helm","operation":"Update","time":"2023-10-26T09:15:55Z"}],"name":"bkbase-dgraph-bkbase-dgr-alpha","namespace":"bkbase","resourceVersion":"10807858063","selfLink":"/apis/monitoring.coreos.com/v1/namespaces/bkbase/servicemonitors/bkbase-dgraph-bkbase-dgr-alpha","uid":"e09f8c99-01d8-42f4-8481-0b65a8dca90a"},"spec":{"endpoints":[{"interval":"15s","path":"/debug/prometheus_metrics","port":"alpha-http"}],"namespaceSelector":{"any":true},"selector":{"matchLabels":{"app":"bkbase-dgraph","chart":"bkbase-dgraph-0.0.9","heritage":"Helm","release":"bkbase-dgraph"}}}},{"apiVersion":"monitoring.coreos.com/v1","kind":"ServiceMonitor","metadata":{"annotations":{"meta.helm.sh/release-name":"bkbase-dgraph","meta.helm.sh/release-namespace":"bkbase"},"creationTimestamp":"2023-10-26T09:15:55Z","generation":1,"labels":{"app.kubernetes.io/managed-by":"Helm"},"managedFields":[{"apiVersion":"monitoring.coreos.com/v1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:annotations":{".":{},"f:meta.helm.sh/release-name":{},"f:meta.helm.sh/release-namespace":{}},"f:labels":{".":{},"f:app.kubernetes.io/managed-by":{}}},"f:spec":{".":{},"f:endpoints":{},"f:namespaceSelector":{".":{},"f:any":{}},"f:selector":{".":{},"f:matchLabels":{".":{},"f:app":{},"f:chart":{},"f:heritage":{},"f:release":{}}}}},"manager":"helm","operation":"Update","time":"2023-10-26T09:15:55Z"}],"name":"bkbase-dgraph-bkbase-dgr-zero","namespace":"bkbase","resourceVersion":"10807858054","selfLink":"/apis/monitoring.coreos.com/v1/namespaces/bkbase/servicemonitors/bkbase-dgraph-bkbase-dgr-zero","uid":"86525481-3a3b-466f-81ed-1cdc59b3c92b"},"spec":{"endpoints":[{"interval":"15s","path":"/debug/prometheus_metrics","port":"zero-http"}],"namespaceSelector":{"any":true},"selector":{"matchLabels":{"app":"bkbase-dgraph","chart":"bkbase-dgraph-0.0.9","heritage":"Helm","release":"bkbase-dgraph"}}}},{"apiVersion":"monitoring.coreos.com/v1","kind":"ServiceMonitor","metadata":{"annotations":{"meta.helm.sh/release-name":"bkbase-jobnavischeduler","meta.helm.sh/release-namespace":"bkbase"},"creationTimestamp":"2023-10-26T10:20:11Z","generation":1,"labels":{"app.kubernetes.io/managed-by":"Helm"},"managedFields":[{"apiVersion":"monitoring.coreos.com/v1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:annotations":{".":{},"f:meta.helm.sh/release-name":{},"f:meta.helm.sh/release-namespace":{}},"f:labels":{".":{},"f:app.kubernetes.io/managed-by":{}}},"f:spec":{".":{},"f:endpoints":{},"f:namespaceSelector":{".":{},"f:any":{}},"f:selector":{".":{},"f:matchLabels":{".":{},"f:app.kubernetes.io/service-type":{},"f:k8s-app":{},"f:meta.helm.sh/release-name":{}}}}},"manager":"helm","operation":"Update","time":"2023-10-26T10:20:11Z"}],"name":"bkbase-jobnavischeduler","namespace":"bkbase","resourceVersion":"10809974244","selfLink":"/apis/monitoring.coreos.com/v1/namespaces/bkbase/servicemonitors/bkbase-jobnavischeduler","uid":"6b788376-2566-42df-a852-d5ef20ceec2a"},"spec":{"endpoints":[{"interval":"20s","path":"/metrics?","port":"metrics"}],"namespaceSelector":{"any":true},"selector":{"matchLabels":{"app.kubernetes.io/service-type":"metrics","k8s-app":"bkbase-jobnavischeduler","meta.helm.sh/release-name":"bkbase-jobnavischeduler"}}}}],"kind":"ServiceMonitorList","metadata":{"continue":"","resourceVersion":"10995632417","selfLink":"/apis/monitoring.coreos.com/v1/servicemonitors"}}`)
 	patchListK8sResource := gomonkey.ApplyFunc(BcsClusterInfoSvc.ListK8sResource, func(b BcsClusterInfoSvc, group, version, resource string) (*unstructured.UnstructuredList, error) {
 		var target unstructured.UnstructuredList
@@ -48,7 +33,6 @@ func TestServiceMonitorInfoSvc_RefreshResource(t *testing.T) {
 		return &target, nil
 	})
 
-	defer patchDBSession.Reset()
 	defer patchListK8sResource.Reset()
 	var cloudId = 0
 	cluster := &bcs.BCSClusterInfo{

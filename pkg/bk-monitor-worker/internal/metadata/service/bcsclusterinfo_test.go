@@ -10,24 +10,20 @@
 package service
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
-	"github.com/jinzhu/gorm"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	k8sErr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
@@ -90,20 +86,8 @@ func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
-	config.InitConfig()
+	mocker.PatchDBSession()
 	var createCount, updateCount int
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open(viper.GetString("test.database.type"), fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			viper.GetString("test.database.user"),
-			viper.GetString("test.database.password"),
-			viper.GetString("test.database.host"),
-			viper.GetString("test.database.port"),
-			viper.GetString("test.database.db_name"),
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
 	var data = []byte(`{"apiVersion":"monitoring.bk.tencent.com/v1beta1","items":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"false","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"custommetricdataid","resourceVersion":"5719372880","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/custommetricdataid","uid":"2f2f4b12-e63f-49d8-83e2-dd0d79f9fa16"},"spec":{"dataID":1572865,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:04Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"event"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:04Z"}],"name":"k8seventdataid","resourceVersion":"5719372903","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8seventdataid","uid":"33482264-805f-40a2-9487-84e15887797a"},"spec":{"dataID":1572866,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"k8smetricdataid","resourceVersion":"5719372853","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8smetricdataid","uid":"fc006b95-9a97-4479-88c3-8d7a53500f00"},"spec":{"dataID":1572864,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}}],"kind":"DataIDList","metadata":{"continue":"","resourceVersion":"10899929740","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids"}}`)
 	patchListK8sResource := gomonkey.ApplyFunc(BcsClusterInfoSvc.ListK8sResource, func(b BcsClusterInfoSvc, group, version, resource string) (*unstructured.UnstructuredList, error) {
 		var target unstructured.UnstructuredList
@@ -139,7 +123,6 @@ func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
 		}
 
 	})
-	defer patchDBSession.Reset()
 	defer patchListK8sResource.Reset()
 	defer patchCreateK8sResource.Reset()
 	defer patchUpdateK8sResource.Reset()

@@ -18,6 +18,19 @@ var (
 	MetadataMetricDimensionMaxMetricFetchStep int
 	// MetadataMetricDimensionTimeSeriesMetricExpiredDays config of metadata.refreshMetric task
 	MetadataMetricDimensionTimeSeriesMetricExpiredDays int
+
+	// BcsEnableBcsGray  是否启用BCS集群灰度模式
+	BcsEnableBcsGray bool
+	// BcsGrayClusterIdList BCS集群灰度ID名单
+	BcsGrayClusterIdList []string
+	// BcsClusterBkEnvLabel BCS集群配置来源标签
+	BcsClusterBkEnvLabel string
+	// BcsKafkaStorageClusterId BCS kafka 存储集群ID
+	BcsKafkaStorageClusterId uint
+	// BcsInfluxdbDefaultProxyClusterNameForK8s influxdb proxy给k8s默认使用集群名
+	BcsInfluxdbDefaultProxyClusterNameForK8s string
+	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
+	BcsCustomEventStorageClusterId uint
 )
 
 func initMetadataVariables() {
@@ -25,4 +38,11 @@ func initMetadataVariables() {
 	MetadataMetricDimensionKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricDimensionKeyPrefix", "bkmonitor:metric_dimensions_")
 	MetadataMetricDimensionMaxMetricFetchStep = GetValue("taskConfig.metadata.metricDimension.maxMetricsFetchStep", 500)
 	MetadataMetricDimensionTimeSeriesMetricExpiredDays = GetValue("taskConfig.metadata.metricDimension.timeSeriesMetricExpiredDays", 30)
+
+	BcsEnableBcsGray = GetValue("taskConfig.metadata.bcs.enableBcsGray", false)
+	BcsGrayClusterIdList = GetValue("taskConfig.metadata.bcs.grayClusterIdList", []string{})
+	BcsClusterBkEnvLabel = GetValue("taskConfig.metadata.bcs.clusterBkEnvLabel", "")
+	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0))
+	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
+	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0))
 }

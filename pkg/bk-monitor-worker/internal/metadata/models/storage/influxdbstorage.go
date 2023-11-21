@@ -21,9 +21,8 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
@@ -64,7 +63,7 @@ func (InfluxdbStorage) TableName() string {
 
 // ConsulPath 获取router的consul根路径
 func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, config.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix)
 }
 
 // ConsulConfigPath 获取具体结果表router的consul配置路径
@@ -199,7 +198,7 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 		return err
 	}
 	if isVersionRefresh {
-		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf("%s/metadata/influxdb_info/version/", viper.GetString(consul.ConsulBasePath))); err != nil {
+		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf("%s/metadata/influxdb_info/version/", cfg.StorageConsulPathPrefix)); err != nil {
 			return err
 		}
 	}

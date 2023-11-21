@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -216,7 +216,7 @@ func (s ServiceMonitorInfoSvc) GetBkEnvLabel() (string, error) {
 	if cluster.BkEnv != nil && *cluster.BkEnv != "" {
 		return *cluster.BkEnv, nil
 	}
-	return viper.GetString(BcsClusterBkEnvLabelPath), nil
+	return cfg.BcsClusterBkEnvLabel, nil
 }
 
 // GetMonitorInfoConfig 构造bcs monitor info的config

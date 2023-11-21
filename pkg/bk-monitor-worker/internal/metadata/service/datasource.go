@@ -18,8 +18,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
@@ -156,7 +156,7 @@ func (d DataSourceSvc) makeToken() string {
 
 // ConsulPath 获取datasource的consul根路径
 func (DataSourceSvc) ConsulPath() string {
-	return fmt.Sprintf(models.DataSourceConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix)
 }
 
 // ConsulConfigPath 获取具体data_id的consul配置路径

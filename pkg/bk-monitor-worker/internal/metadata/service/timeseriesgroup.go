@@ -13,12 +13,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/viper"
-
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -47,7 +45,7 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 }
 
 func (s TimeSeriesGroupSvc) MetricConsulPath() string {
-	return fmt.Sprintf("%s/metadata/influxdb_metrics/%v/time_series_metric", viper.GetString(consul.ConsulBasePath), s.BkDataID)
+	return fmt.Sprintf("%s/metadata/influxdb_metrics/%v/time_series_metric", cfg.StorageConsulPathPrefix, s.BkDataID)
 }
 
 func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroupName, label, operator string, isSplitMeasurement bool, defaultStorageConfig map[string]interface{}, additionalOptions map[string][]string) (*customreport.TimeSeriesGroup, error) {

@@ -16,8 +16,8 @@ import (
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
-	"github.com/spf13/viper"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -41,16 +41,6 @@ var cmdbApi *cmdb.Client
 
 var nodemanApi *nodeman.Client
 
-const (
-	BkApiBaseUrlPath             = "bk_api.api_url"
-	BkApiStagePath               = "bk_api.stage"
-	BkApiAppCodePath             = "bk_api.app_code"
-	BkApiAppSecretPath           = "bk_api.app_secret"
-	BkApiUseApiGatewayPath       = "bk_api.use_api_gateway"
-	BkApiBcsApiGatewayDomainPath = "bk_api.bcs_api_gateway_domain"
-	BkApiBcsApiGatewayTokenPath  = "bk_api.bcs_api_gateway_token"
-)
-
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
 	muForGseApi.Lock()
@@ -59,21 +49,21 @@ func GetGseApi() (*bkgse.Client, error) {
 		return gseApi, nil
 	}
 	var config define.ClientConfigProvider
-	useApiGateWay := viper.GetBool(BkApiUseApiGatewayPath)
+	useApiGateWay := cfg.BkApiEnabled
 	if useApiGateWay {
 		config = bkapi.ClientConfig{
-			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", viper.GetString(BkApiBaseUrlPath)),
-			Stage:         viper.GetString(BkApiStagePath),
-			AppCode:       viper.GetString(BkApiAppCodePath),
-			AppSecret:     viper.GetString(BkApiAppSecretPath),
+			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", cfg.BkApiUrl),
+			Stage:         cfg.BkApiStage,
+			AppCode:       cfg.BkApiAppCode,
+			AppSecret:     cfg.BkApiAppSecret,
 			JsonMarshaler: jsonx.Marshal,
 		}
 	} else {
 		config = bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", viper.GetString(BkApiBaseUrlPath)),
-			Stage:               viper.GetString(BkApiStagePath),
-			AppCode:             viper.GetString(BkApiAppCodePath),
-			AppSecret:           viper.GetString(BkApiAppSecretPath),
+			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl),
+			Stage:               cfg.BkApiStage,
+			AppCode:             cfg.BkApiAppCode,
+			AppSecret:           cfg.BkApiAppSecret,
 			JsonMarshaler:       jsonx.Marshal,
 			AuthorizationParams: map[string]string{"bk_username": "admin"},
 		}
@@ -94,8 +84,8 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(viper.GetString(BkApiBcsApiGatewayDomainPath), "/")),
-		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", viper.GetString(BkApiBcsApiGatewayTokenPath))},
+		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/")),
+		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
 		JsonMarshaler:       jsonx.Marshal,
 	}
 	var err error
@@ -114,10 +104,10 @@ func GetCmdbApi() (*cmdb.Client, error) {
 		return cmdbApi, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", viper.GetString(BkApiBaseUrlPath)),
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl),
 		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-		AppCode:             viper.GetString(BkApiAppCodePath),
-		AppSecret:           viper.GetString(BkApiAppSecretPath),
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
 	}
 
@@ -137,10 +127,10 @@ func GetNodemanApi() (*nodeman.Client, error) {
 		return nodemanApi, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/nodeman/", viper.GetString(BkApiBaseUrlPath)),
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/nodeman/", cfg.BkApiUrl),
 		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
-		AppCode:             viper.GetString(BkApiAppCodePath),
-		AppSecret:           viper.GetString(BkApiAppSecretPath),
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
 		JsonMarshaler:       jsonx.Marshal,
 	}
 

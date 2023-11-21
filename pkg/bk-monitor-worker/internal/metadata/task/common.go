@@ -15,10 +15,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
-const (
-	GoroutineLimitPath = "service.worker.goroutine_limit.%s" // Goroutine数限制, 后面接任务名
-)
-
 func GetGoroutineLimit(taskName string) int {
 	limit, exist := config.GoroutineLimit[taskName]
 	if !exist {

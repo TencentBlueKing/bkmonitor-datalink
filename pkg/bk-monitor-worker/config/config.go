@@ -197,6 +197,10 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
+	// BkApiBcsApiGatewayDomain bk-apigw bcs domain
+	BkApiBcsApiGatewayDomain string
+	// BkApiBcsApiGatewayToken bk-apigw bcs token
+	BkApiBcsApiGatewayToken string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
@@ -285,7 +289,7 @@ func initVariables() {
 	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
-	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.es_retain_invalid_alias", false)
+	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.esRetainInvalidAlias", false)
 
 	StorageBboltDefaultPath = GetValue("store.bbolt.defaultPath", "bolt.db")
 	StorageBboltDefaultBucketName = GetValue("store.bbolt.defaultBuckName", "spaceBucket")
@@ -349,10 +353,12 @@ func initVariables() {
 	AesKey = GetValue("aes.key", "")
 
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
-	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "127.0.0.1")
+	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
+	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
+	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 

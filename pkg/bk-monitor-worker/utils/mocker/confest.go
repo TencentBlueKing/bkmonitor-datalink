@@ -14,7 +14,6 @@ import (
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/jinzhu/gorm"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -23,13 +22,13 @@ import (
 func PatchDBSession() *gomonkey.Patches {
 	config.InitConfig()
 	return gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open(viper.GetString("test.database.type"), fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			viper.GetString("test.database.user"),
-			viper.GetString("test.database.password"),
-			viper.GetString("test.database.host"),
-			viper.GetString("test.database.port"),
-			viper.GetString("test.database.db_name"),
+		db, err := gorm.Open("mysql", fmt.Sprintf(
+			"%s:%s@tcp(%s:%v)/%s?&parseTime=True&loc=Local",
+			config.TestStorageMysqlUser,
+			config.TestStorageMysqlPassword,
+			config.TestStorageMysqlHost,
+			config.TestStorageMysqlPort,
+			config.TestStorageMysqlDbName,
 		))
 		if err != nil {
 			panic(err)

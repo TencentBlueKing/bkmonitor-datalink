@@ -17,9 +17,8 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -129,7 +128,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.Status)
 	}
 	// 如果 BCS Token 变了需要刷新
-	apiKeyContent := viper.GetString(api.BkApiBcsApiGatewayTokenPath)
+	apiKeyContent := cfg.BkApiBcsApiGatewayToken
 	if bcsClusterInfo.ApiKeyContent != apiKeyContent {
 		bcsClusterInfo.ApiKeyContent = apiKeyContent
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.ApiKeyContent)

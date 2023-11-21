@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 	k8sErr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -30,6 +29,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -41,24 +41,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-const (
-	EnableBcsGrayPath                        = "bcs.enable_bcs_gray"                             // 是否启用BCS集群灰度模式
-	BcsGrayClusterIdListPath                 = "bcs.gray_cluster_id_list"                        // BCS集群灰度ID名单
-	BcsClusterBkEnvLabelPath                 = "bcs.cluster_bk_env_label"                        // BCS集群配置来源标签
-	BcsKafkaStorageClusterIdPath             = "bcs.kafka_storage_cluster_id"                    // BCS kafka 存储集群ID
-	BcsCustomEventStorageClusterId           = "bcs.custom_event_storage_cluster_id"             // 自定义上报存储集群ID
-	BcsInfluxdbDefaultProxyClusterNameForK8s = "bcs.influxdb_default_proxy_cluster_name_for_k8s" // influxdb proxy给k8s默认使用集群名
-)
-
-func init() {
-	viper.SetDefault(EnableBcsGrayPath, false)
-	viper.SetDefault(BcsGrayClusterIdListPath, []uint{})
-	viper.SetDefault(BcsClusterBkEnvLabelPath, "")
-	viper.SetDefault(BcsKafkaStorageClusterIdPath, 0)
-	viper.SetDefault(BcsInfluxdbDefaultProxyClusterNameForK8s, "default")
-	viper.SetDefault(BcsCustomEventStorageClusterId, 0)
-}
 
 var bcsDatasourceRegisterInfo = map[string]*DatasourceRegister{
 	models.BcsDataTypeK8sMetric: {
@@ -150,10 +132,10 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 // IsClusterIdInGray 判断cluster id是否在灰度配置中
 func (BcsClusterInfoSvc) IsClusterIdInGray(clusterId string) bool {
 	// 未启用灰度配置，全返回true
-	if !viper.GetBool(EnableBcsGrayPath) {
+	if !cfg.BcsEnableBcsGray {
 		return true
 	}
-	grayBcsClusterList := viper.GetStringSlice(BcsGrayClusterIdListPath)
+	grayBcsClusterList := cfg.BcsGrayClusterIdList
 
 	for _, id := range grayBcsClusterList {
 		if id == clusterId {
@@ -296,7 +278,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(viper.GetString(api.BkApiBcsApiGatewayDomainPath), "/"), clusterId, sourceType, field))
+	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/"), clusterId, sourceType, field))
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +287,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 		return nil, err
 	}
 	req.Header.Set("Content-type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", viper.GetString(api.BkApiBcsApiGatewayTokenPath)))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken))
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -377,7 +359,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 			fmt.Sprintf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId),
 		)
 	}
-	bcsUrl, err := url.ParseRequestURI(viper.GetString(api.BkApiBcsApiGatewayDomainPath))
+	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiGatewayDomain)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +369,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		port = 443
 	}
 
-	bkEnv := viper.GetString(BcsClusterBkEnvLabelPath)
+	bkEnv := cfg.BcsClusterBkEnvLabel
 	cluster := bcs.BCSClusterInfo{
 		ClusterID:         clusterId,
 		BCSApiClusterId:   clusterId,
@@ -397,7 +379,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		Port:              uint(port),
 		ServerAddressPath: "clusters",
 		ApiKeyType:        "authorization",
-		ApiKeyContent:     viper.GetString(api.BkApiBcsApiGatewayTokenPath),
+		ApiKeyContent:     cfg.BkApiBcsApiGatewayToken,
 		ApiKeyPrefix:      "Bearer",
 		Status:            models.BcsClusterStatusRunning,
 		IsSkipSslVerify:   true,
@@ -413,7 +395,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	// 注册6个必要的data_id和自定义事件及自定义时序上报内容
 	for usage, register := range bcsDatasourceRegisterInfo {
 		// 注册data_id
-		datasource, err := NewBcsClusterInfoSvc(&cluster).CreateDataSource(usage, register.EtlConfig, creator, viper.GetUint(BcsKafkaStorageClusterIdPath), "default")
+		datasource, err := NewBcsClusterInfoSvc(&cluster).CreateDataSource(usage, register.EtlConfig, creator, cfg.BcsKafkaStorageClusterId, "default")
 		if err != nil {
 			return nil, err
 		}
@@ -423,10 +405,10 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		var additionalOptions map[string][]string
 		if register.Usage == "metric" {
 			// 如果是指标的类型，需要考虑增加influxdb proxy的集群隔离配置
-			defaultStorageConfig = map[string]interface{}{"proxy_cluster_name": viper.GetString(BcsInfluxdbDefaultProxyClusterNameForK8s)}
+			defaultStorageConfig = map[string]interface{}{"proxy_cluster_name": cfg.BcsInfluxdbDefaultProxyClusterNameForK8s}
 			additionalOptions = map[string][]string{models.OptionCustomReportDimensionValues: bcs.DefaultServiceMonitorDimensionTerm}
 		} else {
-			defaultStorageConfig = map[string]interface{}{"cluster_id": viper.GetUint(BcsCustomEventStorageClusterId)}
+			defaultStorageConfig = map[string]interface{}{"cluster_id": cfg.BcsCustomEventStorageClusterId}
 			additionalOptions = map[string][]string{}
 		}
 		var bkDataId uint
@@ -508,7 +490,7 @@ func (b BcsClusterInfoSvc) CreateDataSource(usage, etlConfig, operator string, m
 		mqClusterId,
 		typeLabelDict[etlConfig],
 		transferClusterId,
-		viper.GetString(api.BkApiAppCodePath),
+		cfg.BkApiAppCode,
 	)
 	if err != nil {
 		return nil, err
@@ -680,7 +662,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 		return nil, errors.New("BCSClusterInfo obj can not be nil")
 	}
 
-	parsedUrl, err := url.Parse(viper.GetString(api.BkApiBcsApiGatewayDomainPath))
+	parsedUrl, err := url.Parse(cfg.BkApiBcsApiGatewayDomain)
 	if err == nil {
 		return nil, err
 	}
@@ -850,7 +832,7 @@ func (b BcsClusterInfoSvc) bkEnvLabel() string {
 	if b.BkEnv != nil {
 		return *b.BkEnv
 	}
-	return viper.GetString(BcsClusterBkEnvLabelPath)
+	return cfg.BcsClusterBkEnvLabel
 }
 
 // RefreshCommonResource 刷新内置公共dataid资源信息，追加部署的资源，更新未同步的资源

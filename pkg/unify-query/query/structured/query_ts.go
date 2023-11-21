@@ -353,12 +353,15 @@ func (q *Query) BuildMetadataQuery(
 	measurements = []string{measurement}
 
 	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
+	trace.InsertStringSliceIntoSpan("tsdb-field-list", tsDB.Field, span)
+	trace.InsertStringIntoSpan("tsdb-measurement-type", tsDB.MeasurementType, span)
 	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
-	trace.InsertStringIntoSpan("tsdb-db", db, span)
+	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
 	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
 	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
 	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
 	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
+	trace.InsertStringIntoSpan("tsdb-db", db, span)
 	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
 
 	if q.Offset != "" {
@@ -373,14 +376,18 @@ func (q *Query) BuildMetadataQuery(
 		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
 
 		// influxdb 查询特殊处理逻辑
-		whereList.Append(
-			promql.AndOperator,
-			promql.NewTextWhere(
-				promql.MakeOrExpression(
-					ConvertToPromBuffer(queryConditions),
+		influxdbConditions := ConvertToPromBuffer(queryConditions)
+		if len(influxdbConditions) > 0 {
+			whereList.Append(
+				promql.AndOperator,
+				promql.NewTextWhere(
+					promql.MakeOrExpression(
+						influxdbConditions,
+					),
 				),
-			),
-		)
+			)
+		}
+
 	}
 
 	switch tsDB.MeasurementType {

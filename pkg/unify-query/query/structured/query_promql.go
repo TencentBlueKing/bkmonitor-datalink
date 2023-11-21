@@ -14,7 +14,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -350,19 +349,13 @@ func vectorQuery(
 		query = new(Query)
 	}
 	conds := make([]ConditionField, 0)
-	route, err := MakeRouteFromLBMatchOrMetricName(e.LabelMatchers)
+	route, matchers, err := MetricsToRouter(e.LabelMatchers...)
 	if err != nil {
 		return query, err
 	}
+	query.IsRegexp = route.IsRegexp()
 
-	for _, label := range e.LabelMatchers {
-		if label.Name == labels.MetricName {
-			if label.Type == labels.MatchRegexp {
-				query.IsRegexp = true
-			}
-			continue
-		}
-
+	for _, label := range matchers {
 		// bk_database, bk_measurement 2个系统 label 需要过滤
 		if label.Name == bkDatabaseLabelName || label.Name == bkMeasurementLabelName {
 			continue

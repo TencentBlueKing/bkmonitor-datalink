@@ -98,6 +98,7 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 		RecordType:    define.RecordMetrics,
 		Data:          metrics,
 	}
+	prettyprint.Metrics(metrics)
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
@@ -137,6 +138,7 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 		RecordType:    define.RecordLogs,
 		Data:          logs,
 	}
+	prettyprint.Logs(logs)
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {

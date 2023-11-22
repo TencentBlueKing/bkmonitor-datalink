@@ -976,7 +976,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
-        - "license_checker/common"
+        #- "license_checker/common"
         #- "forwarder/traces"
         #- "sampler/status_code"
         - "resource_filter/assemble"

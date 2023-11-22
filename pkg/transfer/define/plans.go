@@ -9,7 +9,9 @@
 
 package define
 
-import "strings"
+import (
+	"strings"
+)
 
 // PairDispatchInfo pair从metadata分发到shadow路径的信息载体
 type PairDispatchInfo struct {

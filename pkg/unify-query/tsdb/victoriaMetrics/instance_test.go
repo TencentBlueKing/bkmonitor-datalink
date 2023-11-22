@@ -10,10 +10,14 @@
 package victoriaMetrics
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +27,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 const (
@@ -41,6 +47,133 @@ func mockData(ctx context.Context) {
 			},
 		},
 	})
+}
+
+var (
+	once     sync.Once
+	instance tsdb.Instance
+)
+
+func query(ctx context.Context, promql string, rts []string, data map[string]float64) error {
+	if len(rts) > 0 {
+		metadata.SetExpand(ctx, &metadata.VmExpand{
+			ResultTableGroup: map[string][]string{
+				"a": rts,
+			},
+		})
+		res, err := instance.Query(ctx, promql, time.Now())
+		if err != nil {
+			return err
+		}
+		if len(res) > 0 {
+			for _, r := range res {
+				var (
+					metric string
+					id     string
+				)
+				for _, l := range r.Metric {
+					switch {
+					case l.Name == "__name__":
+						metric = l.Value
+					case l.Name == "bcs_cluster_id":
+						id = l.Value
+					default:
+						panic(fmt.Sprintf("%s=%s", l.Name, l.Value))
+					}
+				}
+
+				if _, ok := data[metric+","+id]; !ok {
+					data[metric+","+id] = r.V
+				}
+			}
+
+			return nil
+		}
+	}
+	return fmt.Errorf("empty data in %+v", rts)
+}
+
+func TestPromQL(t *testing.T) {
+	ctx := mock.Init(context.Background())
+
+	once.Do(func() {
+		instance = &Instance{
+			ContentType:          "application/json",
+			Address:              "http://127.0.0.1",
+			UriPath:              "prod/v3/queryengine/query_sync",
+			Code:                 "bkmonitorv3",
+			Secret:               "",
+			Token:                "",
+			AuthenticationMethod: "token",
+			InfluxCompatible:     true,
+			UseNativeOr:          true,
+			Timeout:              time.Second * 30,
+			Curl: &curl.HttpCurl{
+				Log: log.OtLogger,
+			},
+		}
+	})
+
+	vectors := []string{
+		`kube_node_status_allocatable_cpu_cores_value`,
+		`kube_node_status_capacity_cpu_cores_value`,
+		//`kube_pod_container_resource_requests_value{resource="cpu"}`,
+		`kube_pod_container_resource_requests_cpu_cores_value`,
+		//`kube_pod_container_resource_limits_value{resource="cpu"}`,
+		`kube_pod_container_resource_limits_cpu_cores_value`,
+	}
+	dims := []string{
+		"bcs_cluster_id",
+		"__name__",
+	}
+
+	var (
+		data = make(map[string]float64)
+	)
+	f, err := os.Open("vmrt.list")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	batch := 100
+	br := bufio.NewReader(f)
+	rts := make([]string, 0, batch)
+	for {
+		rt, _, readErr := br.ReadLine()
+		if len(rt) > 0 {
+			rts = append(rts, string(rt))
+		}
+
+		if readErr != nil || len(rts) == batch {
+			promql := fmt.Sprintf(`sum({__name__=~"%s", result_table_id=~"%s"})`, strings.Join(vectors, "|"), strings.Join(rts, "|"))
+			if len(dims) > 0 {
+				promql = fmt.Sprintf(`%s by (%s)`, promql, strings.Join(dims, ", "))
+			}
+
+			err = query(ctx, promql, rts, data)
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+			}
+			rts = rts[:0]
+		}
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	file, err := os.Create("output.csv")
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	for k, v := range data {
+		_, err = file.WriteString(fmt.Sprintf("%s,%.f\n", k, v))
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+		}
+	}
 }
 
 func TestRealQueryRange(t *testing.T) {
@@ -71,8 +204,8 @@ func TestRealQueryRange(t *testing.T) {
 
 		Curl: &curl.HttpCurl{Log: log.OtLogger},
 
-		InfluxCompatible:          true,
-		UseNativeOr:               true,
+		InfluxCompatible: true,
+		UseNativeOr:      true,
 	}
 
 	testCase := map[string]struct {

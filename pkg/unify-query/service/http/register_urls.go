@@ -127,3 +127,17 @@ func registerSpacePrint(g *gin.Engine) {
 	g.GET(servicePath, HandleSpacePrint)
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
 }
+
+// registerSpaceKetPrint: /space_print
+func registerSpaceKeyPrint(g *gin.Engine) {
+	servicePath := viper.GetString(SpaceKeyPrintHandlePathConfigPath)
+	g.GET(servicePath, HandleSpaceKeyPrint)
+	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+}
+
+// registerTsDBPrint: /space_print
+func registerTsDBPrint(g *gin.Engine) {
+	servicePath := viper.GetString(TsDBPrintHandlePathConfigPath)
+	g.GET(servicePath, HandleTsDBPrint)
+	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+}

@@ -9,6 +9,8 @@
 
 package consul
 
-import "errors"
+import (
+	"errors"
+)
 
 var ErrWrongTTL = errors.New("wrong ttl")

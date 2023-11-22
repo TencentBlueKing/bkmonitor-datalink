@@ -38,6 +38,8 @@ type Pingserver struct {
 	done     chan struct{}
 	notifier *notifier.Notifier
 	patterns []string
+
+	createDetector func(addrs []*net.IPAddr, times int, timeout time.Duration) Detector
 }
 
 func New(conf *confengine.Config) (*Pingserver, error) {
@@ -63,9 +65,10 @@ func newPingserver(conf *confengine.Config) (*Pingserver, error) {
 
 	logger.Infof("pingserver found %d targets config", len(config.Sub.Targets))
 	ps := &Pingserver{
-		config:   config,
-		done:     make(chan struct{}, 1),
-		patterns: patterns,
+		config:         config,
+		done:           make(chan struct{}, 1),
+		patterns:       patterns,
+		createDetector: newDetector,
 	}
 	return ps, nil
 }
@@ -184,7 +187,7 @@ func (ps *Pingserver) batchPing(addrs []*net.IPAddr, timestamp int64) {
 // 单位时间内 一共两轮，每轮 ping 3 次，第一轮 rtt 为 3，第二轮 rtt 为 10，由这个配置决定 rollPingRTT
 func (ps *Pingserver) rollPing(addrs []*net.IPAddr, timestamp int64) {
 	for idx, rtt := range rollPingRTT {
-		pp := NewPingPong(addrs, ps.config.Sub.Times, time.Duration(rtt)*time.Second)
+		pp := ps.createDetector(addrs, ps.config.Sub.Times, time.Duration(rtt)*time.Second)
 		pp.Do()
 
 		results := pp.Result()

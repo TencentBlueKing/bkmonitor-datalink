@@ -9,7 +9,9 @@
 
 package pipeline
 
-import "sync"
+import (
+	"sync"
+)
 
 // 设置特殊 pipeline 的流量缩放比例
 var pipelineWeight = map[string]float64{

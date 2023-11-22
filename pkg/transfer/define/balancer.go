@@ -9,7 +9,9 @@
 
 package define
 
-import "time"
+import (
+	"time"
+)
 
 type BalanceAlgoType string
 

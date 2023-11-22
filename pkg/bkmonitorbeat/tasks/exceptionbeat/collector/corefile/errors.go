@@ -9,7 +9,9 @@
 
 package corefile
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrPatternDelimiter = errors.New("Invalid pattern delimiter")

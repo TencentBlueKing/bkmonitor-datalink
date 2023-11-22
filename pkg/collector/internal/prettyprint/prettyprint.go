@@ -13,6 +13,7 @@ import (
 	"runtime"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
@@ -38,6 +39,10 @@ func Pretty(rtype define.RecordType, data interface{}) {
 	case define.RecordMetrics:
 		pdMetrics := data.(pmetric.Metrics)
 		Metrics(pdMetrics)
+
+	case define.RecordLogs:
+		pdLogs := data.(plog.Logs)
+		Logs(pdLogs)
 	}
 }
 
@@ -47,8 +52,8 @@ func Traces(traces ptrace.Traces) {
 	}
 
 	foreach.SpansWithResourceAttrs(traces.ResourceSpans(), func(rsAttrs pcommon.Map, span ptrace.Span) {
-		logger.Debugf("Pretty/Tracing: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
-			rsAttrs,
+		logger.Debugf("Pretty/Traces: resource=%#v, traceID=%s, spanID=%s, spanName=%s, spanKind=%s, spanStatus=%s, spanAttributes=%#v",
+			rsAttrs.AsRaw(),
 			span.TraceID().HexString(),
 			span.SpanID().HexString(),
 			span.Name(),
@@ -65,10 +70,26 @@ func Metrics(metrics pmetric.Metrics) {
 	}
 
 	foreach.MetricsWithResourceAttrs(metrics.ResourceMetrics(), func(rsAttrs pcommon.Map, metric pmetric.Metric) {
-		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s",
-			rsAttrs,
+		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, unit=%s",
+			rsAttrs.AsRaw(),
 			metric.Name(),
 			metric.DataType().String(),
+			metric.Unit(),
+		)
+	})
+}
+
+func Logs(logs plog.Logs) {
+	if !onPretty() {
+		return
+	}
+
+	foreach.LogsWithResourceAttrs(logs.ResourceLogs(), func(rsAttrs pcommon.Map, logRecord plog.LogRecord) {
+		logger.Debugf("Pretty/Logs: resource=%#v, body=%s, logAttributes=%#v, logLevel=%s",
+			rsAttrs.AsRaw(),
+			logRecord.Body().AsString(),
+			logRecord.Attributes().AsRaw(),
+			logRecord.SeverityText(),
 		)
 	})
 }

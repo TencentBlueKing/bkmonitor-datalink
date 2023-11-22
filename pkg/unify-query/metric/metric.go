@@ -67,15 +67,6 @@ var (
 		},
 	)
 
-	tsDBAndTableIDRequestCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "unify_query",
-			Name:      "tsdb_table_id_request_count_total",
-			Help:      "request handled count",
-		},
-		[]string{"space_uid", "table_id", "tsdb_type", "query_type"},
-	)
-
 	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
@@ -106,11 +97,6 @@ func APIRequestSecond(ctx context.Context, duration time.Duration, params ...str
 	observe(ctx, metric, err, duration, params...)
 }
 
-func TsDBAndTableIDRequestCountInc(ctx context.Context, params ...string) {
-	metric, err := tsDBAndTableIDRequestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
-}
-
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
 	metric, err := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
 	observe(ctx, metric, err, duration, params...)
@@ -137,9 +123,15 @@ func gaugeSet(
 	metric.Set(value)
 }
 
-// handleCount
 func counterInc(
 	ctx context.Context, metric prometheus.Counter, err error, params ...string,
+) {
+	counterAdd(ctx, metric, 1, err, params...)
+}
+
+// handleCount
+func counterAdd(
+	ctx context.Context, metric prometheus.Counter, val float64, err error, params ...string,
 ) {
 	if err != nil {
 		log.Warnf(ctx, "metric counter:%v failed,error:%s", params, err)
@@ -150,7 +142,7 @@ func counterInc(
 	if sp.IsSampled() {
 		exemplarAdder, ok := metric.(prometheus.ExemplarAdder)
 		if ok {
-			exemplarAdder.AddWithExemplar(1, prometheus.Labels{
+			exemplarAdder.AddWithExemplar(val, prometheus.Labels{
 				"traceID": sp.TraceID().String(),
 				"spanID":  sp.SpanID().String(),
 			})
@@ -158,7 +150,7 @@ func counterInc(
 			log.Errorf(ctx, "metric type is wrong: %T, %v", metric, metric)
 		}
 	} else {
-		metric.Inc()
+		metric.Add(val)
 	}
 }
 
@@ -192,6 +184,6 @@ func observe(
 func init() {
 	prometheus.MustRegister(
 		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
-		tsDBAndTableIDRequestCount, tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
+		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo,
 	)
 }

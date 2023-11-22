@@ -19,15 +19,11 @@ import (
 
 	"github.com/prometheus/common/model"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetricsInstance"
 )
 
 // 返回结构化数据
@@ -111,98 +107,6 @@ func getTime(timestamp string) (time.Time, error) {
 		return time.Time{}, errors.New("parse time failed")
 	}
 	return time.Unix(int64(timeNum), 0), nil
-}
-
-func directlyQuery(
-	ctx context.Context, query *structured.CombinedQueryParams, spaceUid string,
-) (*PromData, error) {
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "directly-query")
-	if span != nil {
-		defer span.End()
-	}
-
-	info, err := getTimeInfo(query)
-	if err != nil {
-		return nil, err
-	}
-
-	queries := metadata.GetQueries(ctx)
-
-	trace.InsertStringIntoSpan("queries-data", queries.String(), span)
-
-	var instance tsdb.Instance
-	storage, err := tsdb.GetStorage(queries.DirectlyClusterID())
-	if err != nil {
-		return nil, err
-	}
-	if storage.Instance != nil {
-		instance = storage.Instance
-	} else {
-		curl := &curl.HttpCurl{Log: log.OtLogger}
-		address := fmt.Sprintf("%s/%s", storage.Address, storage.UriPath)
-		instance = victoriaMetricsInstance.NewInstance(ctx, address, storage.Timeout, curl)
-	}
-
-	promExpr, err := query.ToProm(ctx, &structured.Option{
-		IsOnlyParse: true,
-		SpaceUid:    spaceUid,
-	})
-	if err != nil {
-		return nil, err
-	}
-	oldStmt := promExpr.GetExpr().String()
-	trace.InsertStringIntoSpan("old-stmt", oldStmt, span)
-	sp := structured.NewStructParser(oldStmt)
-	_, err = sp.ParseNew()
-	if err != nil {
-		return nil, err
-	}
-
-	// 还原 count 计算方法
-	for _, rn := range queries.GetIsCountReferenceNameList() {
-		sp.ToggleCountAndSum(rn, structured.SumOverTime)
-	}
-
-	// 更新 metricName
-	sp.UpdateMetricName(queries.DirectlyMetricName(), queries.DirectlyLabelsMatcher())
-	stmt := sp.String()
-
-	trace.InsertStringIntoSpan("stmt", stmt, span)
-	trace.InsertStringIntoSpan("start", info.Start.String(), span)
-	trace.InsertStringIntoSpan("end", info.Stop.String(), span)
-	trace.InsertStringIntoSpan("step", info.Interval.String(), span)
-
-	log.Infof(ctx, "directly query old promql: %s", oldStmt)
-	log.Infof(ctx, "directly query new promql: %s", stmt)
-
-	metadata.SetExpand(ctx, &metadata.VmExpand{ResultTableGroup: queries.DirectlyResultTable()})
-
-	res, err := instance.QueryRange(ctx, stmt, info.Start, info.Stop, info.Interval)
-	if err != nil {
-		return nil, err
-	}
-
-	seriesNum := 0
-	pointsNum := 0
-
-	tables := promql.NewTables()
-	for index, series := range res {
-		tables.Add(promql.NewTable(index, series))
-
-		seriesNum++
-		pointsNum += len(series.Points)
-	}
-	resp := NewPromData(query.ResultColumns)
-	err = resp.Fill(tables)
-	if err != nil {
-		return nil, err
-	}
-
-	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("resp-points-num", pointsNum, span)
-
-	return resp, nil
-	return &PromData{}, nil
 }
 
 // HandleRawPromQuery

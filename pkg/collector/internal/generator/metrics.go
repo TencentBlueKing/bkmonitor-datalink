@@ -37,8 +37,8 @@ func NewMetricsGenerator(opts define.MetricsOptions) *MetricsGenerator {
 }
 
 func (g *MetricsGenerator) Generate() pmetric.Metrics {
-	md := pmetric.NewMetrics()
-	rs := md.ResourceMetrics().AppendEmpty()
+	pdMetrics := pmetric.NewMetrics()
+	rs := pdMetrics.ResourceMetrics().AppendEmpty()
 	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
 	g.resources.CopyTo(rs.Resource().Attributes())
 	for k, v := range g.opts.Resources {
@@ -110,11 +110,18 @@ func (g *MetricsGenerator) Generate() pmetric.Metrics {
 		dp := metric.Summary().DataPoints().AppendEmpty()
 		dp.SetTimestamp(pcommon.NewTimestampFromTime(now))
 		dp.SetSum(float64(i))
+
+		for j := 0; j < 6; j++ {
+			qua := dp.QuantileValues().AppendEmpty()
+			qua.SetQuantile(float64(j * 10))
+			qua.SetQuantile(float64(j))
+		}
+
 		g.attributes.CopyTo(dp.Attributes())
 		for k, v := range g.opts.Attributes {
 			dp.Attributes().UpsertString(k, v)
 		}
 	}
 
-	return md
+	return pdMetrics
 }

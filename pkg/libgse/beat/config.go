@@ -9,7 +9,9 @@
 
 package beat
 
-import "github.com/elastic/beats/libbeat/common"
+import (
+	"github.com/elastic/beats/libbeat/common"
+)
 
 // Config
 type Config = common.Config

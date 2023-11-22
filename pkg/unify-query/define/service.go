@@ -9,7 +9,9 @@
 
 package define
 
-import "context"
+import (
+	"context"
+)
 
 type Service interface {
 	Type() string

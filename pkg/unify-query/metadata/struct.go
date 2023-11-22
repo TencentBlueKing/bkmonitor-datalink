@@ -16,10 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -109,63 +110,6 @@ type Queries struct {
 	directlyResultTable   map[string][]string
 }
 
-func GetDruidQueryFeatureFlag(ctx context.Context) bool {
-	return true
-}
-
-func GetVMQueryOrFeatureFlag(ctx context.Context) bool {
-	var (
-		span oleltrace.Span
-		user = GetUser(ctx)
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-or-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
-
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query-or", false)
-	trace.InsertStringIntoSpan("vm-query-or-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
-
-	return status
-}
-
-func GetVMQueryFeatureFlag(ctx context.Context) bool {
-	var (
-		span oleltrace.Span
-		user = GetUser(ctx)
-	)
-
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
-
-	// 增加配置的特性开关
-	if GetQueryRouter().CheckVmQuery(ctx, user.SpaceUid) {
-		trace.InsertStringIntoSpan("vm-query-space-uid", "true", span)
-		return true
-	}
-
-	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
-		"name":     user.Name,
-		"source":   user.Source,
-		"spaceUid": user.SpaceUid,
-	})
-
-	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	trace.InsertStringIntoSpan("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
-
-	return status
-}
-
 // CheckDruidCheck 判断是否是查询 druid 数据
 func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 	// 判断是否打开 druid-query 特性开关
@@ -207,13 +151,58 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 				}
 
 				if druidCheckStatus {
-					if !query.IsSingleMetric {
-						query.IsSingleMetric = true
-						query.Measurement = query.Field
-						query.Field = StaticField
-					}
 					// 替换 vmrt 的值
-					query.VmRt = strings.Replace(query.VmRt, "_raw", "_cmdb", 1)
+					oldVmRT := query.VmRt
+					newVmRT := strings.Replace(oldVmRT, "_raw", "_cmdb", 1)
+
+					if newVmRT != oldVmRT {
+						query.VmRt = newVmRT
+					}
+
+					expr, err := metricsql.Parse(fmt.Sprintf(`{%s}`, query.VmCondition))
+					if err != nil {
+						log.Errorf(ctx, fmt.Sprintf("metricsql parse error: %s", err.Error()))
+						return false
+					}
+
+					me, ok := expr.(*metricsql.MetricExpr)
+					if ok {
+						var condition []byte
+						for i, f := range me.LabelFilterss {
+							var dst []byte
+							for j, l := range f {
+								if l.Label == "result_table_id" {
+									l.Value = strings.Replace(l.Value, oldVmRT, newVmRT, 1)
+								}
+
+								if !query.IsSingleMetric {
+									oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
+									newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
+
+									if l.Label == "__name__" {
+										l.Value = strings.Replace(l.Value, oldMetric, newMetric, 1)
+									}
+								}
+
+								if j == 0 {
+									dst = l.AppendString(dst)
+								} else {
+									dst = append(dst, ',')
+									dst = l.AppendString(dst)
+								}
+							}
+
+							if i == 0 {
+								condition = dst
+							} else {
+								condition = append(condition, " or "...)
+								condition = append(condition, dst...)
+							}
+						}
+						query.VmCondition = string(condition)
+					}
+
+					query.IsSingleMetric = true
 				}
 			}
 		}

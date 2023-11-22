@@ -1697,6 +1697,12 @@ bk-collector:
         - "traces_deriver/bucket"
         - "sampler/random"
 
+    - name: "metrics_pipeline/common"
+      type: "metrics"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"
       processors:

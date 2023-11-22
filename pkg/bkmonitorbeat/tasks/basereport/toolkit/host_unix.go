@@ -12,7 +12,9 @@
 
 package toolkit
 
-import "os"
+import (
+	"os"
+)
 
 func ListHosts() (string, error) {
 	bytes, err := os.ReadFile("/etc/hosts")

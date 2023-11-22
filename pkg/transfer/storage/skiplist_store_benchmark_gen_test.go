@@ -16,7 +16,9 @@
 
 package storage_test
 
-import "testing"
+import (
+	"testing"
+)
 
 // BenchmarkStoreSet_SkipList :
 func BenchmarkStoreSet_SkipList(b *testing.B) {

@@ -68,7 +68,7 @@ func (q *QueryRouter) Reload(ctx context.Context) error {
 func (q *QueryRouter) PublishVmQuery(ctx context.Context) error {
 	key := `bkmonitorv3:vm-query`
 	msg := fmt.Sprintf(`{"time":%d}`, time.Now().Unix())
-	log.Infof(ctx, "publish %s %s", key, msg)
+	log.Debugf(ctx, "publish %s %s", key, msg)
 	return redis.Client().Publish(ctx, key, msg).Err()
 }
 
@@ -105,7 +105,7 @@ func (q *QueryRouter) subVmQuerySpaceUid() error {
 	key := `bkmonitorv3:vm-query`
 	ch := redis.Client().Subscribe(q.ctx, key).Channel()
 
-	log.Infof(q.ctx, "sub vm query space uid %s", key)
+	log.Debugf(q.ctx, "sub vm query space uid %s", key)
 
 	q.wg.Add(1)
 	go func() {
@@ -127,7 +127,7 @@ func (q *QueryRouter) loadVmQuerySpaceUid() error {
 	key := `bkmonitorv3:vm-query:space_uid`
 	spaceUid, err := redis.Client().SMembers(q.ctx, key).Result()
 
-	log.Infof(q.ctx, "load vm query key :%s, space uid num: %d", key, len(spaceUid))
+	log.Debugf(q.ctx, "load vm query key :%s, space uid num: %d", key, len(spaceUid))
 
 	if err != nil {
 		return err

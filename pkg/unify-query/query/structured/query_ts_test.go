@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	omd "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -73,7 +75,7 @@ func (m *m) GetShards(ctx context.Context, clusterName, tagRouter, database stri
 }
 
 func (m *m) GetReadShardsByTimeRange(ctx context.Context, clusterName, tagRouter, database, retentionPolicy string, start int64, end int64) ([]*shard.Shard, error) {
-	log.Infof(ctx, "check offline data archive query: %s %s %s %s %d %d", clusterName, tagRouter, database, retentionPolicy, start, end)
+	log.Debugf(ctx, "check offline data archive query: %s %s %s %s %d %d", clusterName, tagRouter, database, retentionPolicy, start, end)
 	var shards = make([]*shard.Shard, 0, len(m.shard))
 	for _, sd := range m.shard {
 		// 验证 meta 字段
@@ -117,23 +119,34 @@ func TestQueryToMetric(t *testing.T) {
 	storageID := "2"
 	clusterName := "demo"
 
+	storageIdInt, _ := strconv.ParseInt(storageID, 10, 64)
+
 	ctx := context.Background()
 	mock.SetRedisClient(ctx, "test")
-
-	mock.SetSpaceAndProxyMockData(
-		ctx, "query_ts_test", "query_ts_test", spaceUid, &redis.TsDB{
-			TableID:         tableID,
-			Field:           []string{field, field01},
-			MeasurementType: redis.BKTraditionalMeasurement,
-			DataLabel:       dataLabel,
-		}, &ir.Proxy{
-			MeasurementType: redis.BKTraditionalMeasurement,
-			StorageID:       storageID,
-			ClusterName:     clusterName,
-			Db:              db,
-			Measurement:     measurement,
+	mock.SetSpaceTsDbMockData(
+		ctx,
+		"query_ts_test.db",
+		"query_ts_test",
+		ir.SpaceInfo{
+			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 		},
+		ir.ResultTableDetailInfo{
+			tableID: &ir.ResultTableDetail{
+				Fields:          []string{field, field01},
+				MeasurementType: redis.BKTraditionalMeasurement,
+				DataLabel:       dataLabel,
+				StorageId:       storageIdInt,
+				ClusterName:     clusterName,
+				DB:              db,
+				Measurement:     measurement,
+				TableId:         tableID,
+			},
+		},
+		nil, nil,
 	)
+	router, _ := influxdb.GetSpaceTsDbRouter()
+	ret := router.Print(ctx, "query_ts_test", false)
+	fmt.Println(ret)
 
 	var testCases = map[string]struct {
 		query  *Query
@@ -313,22 +326,28 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			mock.SetSpaceAndProxyMockData(
-				ctx, "query_ts_test", "query_ts_test", tc.spaceUid, &redis.TsDB{
-					TableID:         tc.tableID,
-					Field:           []string{tc.field},
-					MeasurementType: redis.BkSplitMeasurement,
-				}, &ir.Proxy{
-					MeasurementType: redis.BKTraditionalMeasurement,
-					StorageID:       tc.storageID,
-					ClusterName:     tc.clusterName,
-					TagsKey:         tc.tagsKey,
-					Db:              tc.db,
-					Measurement:     tc.measurement,
-					VmRt:            tc.vmRt,
+			stoIdInt, _ := strconv.ParseInt(tc.storageID, 10, 64)
+			mock.SetSpaceTsDbMockData(
+				ctx, "query_ts_test", "query_ts_test",
+				ir.SpaceInfo{
+					tc.spaceUid: ir.Space{
+						tc.tableID: &ir.SpaceResultTable{TableId: tc.tableID},
+					},
 				},
+				ir.ResultTableDetailInfo{
+					tc.tableID: &ir.ResultTableDetail{
+						Fields:          []string{tc.field},
+						MeasurementType: redis.BkSplitMeasurement,
+						StorageId:       stoIdInt,
+						ClusterName:     tc.clusterName,
+						TagsKey:         tc.tagsKey,
+						DB:              tc.db,
+						Measurement:     tc.measurement,
+						VmRt:            tc.vmRt,
+					},
+				},
+				nil, nil,
 			)
-
 			mockMd := &m{
 				shard: []*shard.Shard{
 					{

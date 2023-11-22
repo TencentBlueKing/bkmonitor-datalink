@@ -33,9 +33,9 @@ const (
 // 过滤条件，包含了字段描述以及条件的组合方式
 type Conditions struct {
 	// FieldList 查询条件
-	FieldList []ConditionField `json:"field_list"`
+	FieldList []ConditionField `json:"field_list,omitempty"`
 	// ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
-	ConditionList []string `json:"condition_list" example:"and"`
+	ConditionList []string `json:"condition_list,omitempty" example:"and"`
 }
 
 // AnalysisConditions
@@ -48,12 +48,12 @@ func (c *Conditions) AnalysisConditions() ([][]ConditionField, error) {
 
 	// 如果长度为0，直接返回
 	if len(c.FieldList) == 0 {
-		log.Infof(context.TODO(), "no conditionField, will return empty one.")
+		log.Debugf(context.TODO(), "no conditionField, will return empty one.")
 		return nil, nil
 	}
 
 	if len(c.FieldList)-1 != len(c.ConditionList) {
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"field list->[%d] and condition list length->[%d] not match, nothing will affected, return error.",
 			len(c.FieldList), len(c.ConditionList),
 		)
@@ -114,7 +114,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 
 	// 1. 判断请求是否为空，如果为空，则直接返回空的内容
 	if len(c.FieldList) == 0 {
-		log.Infof(context.TODO(), "field list is empty, nothing will return .")
+		log.Debugf(context.TODO(), "field list is empty, nothing will return .")
 		return nil, nil, nil
 	}
 
@@ -124,13 +124,13 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 	}
 
 	if totalBuffer == nil {
-		log.Infof(context.TODO(), "not condition need to return")
+		log.Debugf(context.TODO(), "not condition need to return")
 		return nil, nil, nil
 	}
 
 	// 2. 判断是否二维数组，如果是表示过滤存在or关系，需要往ctx中塞入新的过滤条件信息
 	if len(totalBuffer) >= 2 {
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"condition is more than two level with->[%d], it contains or conditions, will update context.",
 			len(totalBuffer),
 		)
@@ -142,7 +142,7 @@ func (c *Conditions) ToProm() ([]*labels.Matcher, [][]ConditionField, error) {
 		// 如果发现有任何一个条件是存在contains，那么将这个buffer内容放置在ctx中返回
 		// 这样做的原因是为了提高influxdb的实际查询效率，如果是使用正则的方式进行查询，效率会严重减低
 		if c.Operator == ConditionContains || c.Operator == ConditionNotContains {
-			log.Infof(context.TODO(), "found op->[%s] which cause contains op, will return the whole buffer in ctx.", c.Operator)
+			log.Debugf(context.TODO(), "found op->[%s] which cause contains op, will return the whole buffer in ctx.", c.Operator)
 
 			return nil, totalBuffer, nil
 		}
@@ -213,6 +213,11 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 		var fieldList []promql.ConditionField
 		fieldList = make([]promql.ConditionField, 0, len(buf))
 		for _, item := range buf {
+			// influxdb 不支持 __name__ 查询条件，先过滤掉
+			if item.DimensionName == promql.MetricLabelName {
+				continue
+			}
+
 			// contain和notcontiain，对应将operator转为eq和neq就行了,实际的信息以value为准即可
 			if item.Operator == Contains {
 				item.Operator = "eq"
@@ -227,7 +232,9 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 				},
 			)
 		}
-		promBuffer = append(promBuffer, fieldList)
+		if len(fieldList) > 0 {
+			promBuffer = append(promBuffer, fieldList)
+		}
 	}
 	return promBuffer
 }

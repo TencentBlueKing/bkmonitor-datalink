@@ -20,12 +20,20 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type testEvent struct {
+type testMetricsEvent struct {
 	define.CommonEvent
 }
 
-func (t testEvent) RecordType() define.RecordType {
+func (t testMetricsEvent) RecordType() define.RecordType {
 	return define.RecordPushGateway
+}
+
+type testTracesEvent struct {
+	define.CommonEvent
+}
+
+func (t testTracesEvent) RecordType() define.RecordType {
+	return define.RecordTraces
 }
 
 func TestQueueOut(t *testing.T) {
@@ -47,7 +55,7 @@ func TestQueueOut(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 10000; i++ {
-				queue.Put(&testEvent{
+				queue.Put(&testMetricsEvent{
 					CommonEvent: define.NewCommonEvent(define.Token{}, cloned, common.MapStr{"count": i}),
 				})
 			}
@@ -88,7 +96,7 @@ func TestQueueOutWithDelta(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
 				time.Sleep(time.Millisecond)
-				queue.Put(&testEvent{
+				queue.Put(&testTracesEvent{
 					CommonEvent: define.NewCommonEvent(define.Token{}, cloned, common.MapStr{"count": i}),
 				})
 			}
@@ -98,7 +106,7 @@ func TestQueueOutWithDelta(t *testing.T) {
 	var total int
 	for {
 		ms := <-queue.Pop()
-		v, _ := ms.GetValue("data")
+		v, _ := ms.GetValue("items")
 		data := v.([]common.MapStr)
 		total += len(data)
 		if total == 2000 {
@@ -133,7 +141,7 @@ func TestQueueFull(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			for k, v := range cases {
-				queue.Put(&testEvent{
+				queue.Put(&testMetricsEvent{
 					CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v}),
 				})
 			}
@@ -185,7 +193,7 @@ func TestQueueFullBatch(t *testing.T) {
 		for k, v := range cases {
 			events := make([]define.Event, 0)
 			for i := 0; i < 100; i++ {
-				evt := &testEvent{CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v})}
+				evt := &testMetricsEvent{CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v})}
 				events = append(events, evt)
 			}
 			queue.Put(events...)
@@ -236,7 +244,7 @@ func TestQueueTick(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 100; i++ {
 			for k, v := range cases {
-				queue.Put(&testEvent{
+				queue.Put(&testMetricsEvent{
 					CommonEvent: define.NewCommonEvent(define.Token{}, k, common.MapStr{"count": v}),
 				})
 			}
@@ -283,7 +291,7 @@ func TestQueueResize(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 120; i++ {
-			queue.Put(&testEvent{
+			queue.Put(&testMetricsEvent{
 				CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": i}),
 			})
 		}

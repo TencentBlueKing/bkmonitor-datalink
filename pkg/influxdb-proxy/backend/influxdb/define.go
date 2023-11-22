@@ -9,7 +9,9 @@
 
 package influxdb
 
-import "context"
+import (
+	"context"
+)
 
 // DataHandler :
 type DataHandler func(data string)

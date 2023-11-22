@@ -9,7 +9,9 @@
 
 package http
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+)
 
 func route(engine *gin.Engine) {
 	engine.GET("/ping", Ping)

@@ -9,7 +9,9 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type Http struct {
 	Host            string `yaml:"host"`

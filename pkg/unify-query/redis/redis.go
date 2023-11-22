@@ -51,7 +51,7 @@ func SetInstance(ctx context.Context, serviceName string, options *goRedis.Unive
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
-	log.Infof(ctx, "[redis] set instance %s, %+v", serviceName, options)
+	log.Debugf(ctx, "[redis] set instance %s, %+v", serviceName, options)
 	globalInstance, err = NewRedisInstance(ctx, serviceName, options)
 	if err != nil {
 		log.Errorf(ctx, "new redis instance error: %s", err)
@@ -64,19 +64,19 @@ var ServiceName = func() string {
 }
 
 var Ping = func(ctx context.Context) (string, error) {
-	log.Infof(ctx, "[redis] ping")
+	log.Debugf(ctx, "[redis] ping")
 	res := globalInstance.client.Ping(ctx)
 	return res.Result()
 }
 
 var Keys = func(ctx context.Context, pattern string) ([]string, error) {
-	log.Infof(ctx, "[redis] keys")
+	log.Debugf(ctx, "[redis] keys")
 	keys := globalInstance.client.Keys(ctx, pattern)
 	return keys.Result()
 }
 
 var HGetAll = func(ctx context.Context, key string) (map[string]string, error) {
-	log.Infof(ctx, "[redis] hgetall %s", key)
+	log.Debugf(ctx, "[redis] hgetall %s", key)
 	res := globalInstance.client.HGetAll(ctx, key)
 	return res.Result()
 }
@@ -85,7 +85,7 @@ var Set = func(ctx context.Context, key, val string, expiration time.Duration) (
 	if key == "" {
 		key = globalInstance.serviceName
 	}
-	log.Infof(ctx, "[redis] set %s", key)
+	log.Debugf(ctx, "[redis] set %s", key)
 	res := globalInstance.client.Set(ctx, key, val, expiration)
 	return res.Result()
 }
@@ -94,7 +94,7 @@ var Get = func(ctx context.Context, key string) (string, error) {
 	if key == "" {
 		key = globalInstance.serviceName
 	}
-	log.Infof(ctx, "[redis] get %s", key)
+	log.Debugf(ctx, "[redis] get %s", key)
 	res := globalInstance.client.Get(ctx, key)
 	return res.Result()
 }
@@ -103,19 +103,19 @@ var MGet = func(ctx context.Context, key string) ([]interface{}, error) {
 	if key == "" {
 		key = globalInstance.serviceName
 	}
-	log.Infof(ctx, "[redis] mget %s", key)
+	log.Debugf(ctx, "[redis] mget %s", key)
 	res := globalInstance.client.MGet(ctx, key)
 	return res.Result()
 }
 
 var SMembers = func(ctx context.Context, key string) ([]string, error) {
-	log.Infof(ctx, "[redis] smembers %s", key)
+	log.Debugf(ctx, "[redis] smembers %s", key)
 	res := globalInstance.client.SMembers(ctx, key)
 	return res.Result()
 }
 
 var Subscribe = func(ctx context.Context, channels ...string) <-chan *goRedis.Message {
-	log.Infof(ctx, "[redis] subscribe %s", channels)
+	log.Debugf(ctx, "[redis] subscribe %s", channels)
 	p := globalInstance.client.Subscribe(ctx, channels...)
 	return p.Channel()
 }

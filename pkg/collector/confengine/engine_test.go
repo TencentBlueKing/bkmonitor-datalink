@@ -23,6 +23,12 @@ func TestLoadConfigPath(t *testing.T) {
 	assert.NoError(t, config.Unpack(conf))
 }
 
+func TestLoadNotExistPath(t *testing.T) {
+	config, err := LoadConfigPath("./example/example.yml")
+	assert.Error(t, err)
+	assert.Nil(t, config)
+}
+
 func TestLoadConfigPattern(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		configs, err := LoadConfigPattern("../example/fixtures/report_v2*.yml")
@@ -49,8 +55,15 @@ func TestLoadContentFailed(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestMustLoadContentFailed(t *testing.T) {
+	assert.Panics(t, func() {
+		conf := MustLoadConfigContent("|{}")
+		assert.Nil(t, conf)
+	})
+}
+
 func TestLoadConfigPatterns(t *testing.T) {
-	configs := LoadConfigPatterns([]string{"../example/fixtures/report_v2*.yml"})
+	configs := LoadConfigPatterns([]string{"../example/fixtures/report_v2*.yml", "^.!.!"})
 	assert.Len(t, configs, 2)
 
 	for _, config := range configs {

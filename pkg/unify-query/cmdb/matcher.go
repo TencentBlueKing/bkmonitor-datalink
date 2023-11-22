@@ -9,7 +9,9 @@
 
 package cmdb
 
-import "github.com/prometheus/prometheus/model/labels"
+import (
+	"github.com/prometheus/prometheus/model/labels"
+)
 
 func (m Matcher) Rename() Matcher {
 	var nameMap = map[string]string{

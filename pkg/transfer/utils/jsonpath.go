@@ -9,7 +9,9 @@
 
 package utils
 
-import "github.com/oliveagle/jsonpath"
+import (
+	"github.com/oliveagle/jsonpath"
+)
 
 // JSONPath : Json
 type JSONPath struct {

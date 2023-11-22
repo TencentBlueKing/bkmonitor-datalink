@@ -231,7 +231,7 @@ func ReloadRouterInfo() (map[string][]*PipelineConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Infof(context.TODO(), "get meatadata path :%v", paths)
+	log.Debugf(context.TODO(), "get meatadata path :%v", paths)
 
 	pipelineConfMap := make(map[string][]*PipelineConfig, len(paths))
 
@@ -347,7 +347,7 @@ func DelayWatchPath(
 			case <-ticker.C:
 				// 延迟更新到点之后，并且监听consul的路径有发生变化
 				if updateAt.Add(delayT).Before(time.Now()) && needUpdate {
-					log.Infof(context.TODO(), "router path:[%s] update", path)
+					log.Debugf(context.TODO(), "router path:[%s] update", path)
 					// 正常来说 此值是有意义的，但是unify-query为触发事件全量更新，所以这里传什么其实无所谓
 					wrapCh <- cache
 					updateAt = time.Now()

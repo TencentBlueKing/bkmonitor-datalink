@@ -137,7 +137,8 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 		},
 		EventGroupName: customGroupName,
 	}
-	if err := eventGroup.Create(mysql.GetDBSession().DB); err != nil {
+	db := mysql.GetDBSession().DB
+	if err := eventGroup.Create(db); err != nil {
 		return nil, err
 	}
 	tsGroupSvc := NewEventGroupSvc(&eventGroup)
@@ -153,7 +154,7 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 	}
 
 	// 清除历史 DataSourceResultTable 数据
-	if err := mysql.GetDBSession().DB.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
+	if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
 		return nil, err
 	}
 	rtSvc := NewResultTableSvc(nil)
@@ -180,11 +181,14 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 	dsOptions := []map[string]string{
 		{"name": "flat_batch_key", "value": "data"},
 	}
+	tx := db.Begin()
 	for _, dsOption := range dsOptions {
-		if err := NewDataSourceOptionSvc(nil).CreateOption(bkDataId, dsOption["name"], dsOption["value"], "system"); err != nil {
+		if err := NewDataSourceOptionSvc(nil).CreateOption(bkDataId, dsOption["name"], dsOption["value"], "system", tx); err != nil {
+			db.Rollback()
 			return nil, err
 		}
 	}
+	db.Commit()
 	if err != nil {
 		return nil, err
 	}
@@ -270,9 +274,9 @@ func RefreshCustomReportConfig(bkBizId int) error {
 
 func getMaxVersion(defaultVersion string, versionList []string) string {
 	maxVersion := defaultVersion
-	for _, version := range versionList {
-		if compareVersion(maxVersion, version) < 0 {
-			maxVersion = version
+	for _, v := range versionList {
+		if compareVersion(maxVersion, v) < 0 {
+			maxVersion = v
 		}
 	}
 	return maxVersion

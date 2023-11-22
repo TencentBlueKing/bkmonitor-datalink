@@ -131,17 +131,19 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 	logger.Infof("data_id [%v] now is relate to its mq config id [%v]", ds.BkDataId, ds.MqConfigId)
 
 	// 判断是否NS支持的etl配置，如果是，则需要追加option内容
+	tx := db.Begin()
 	for _, etl := range NsTimestampEtlConfigList {
 		if etcConfig != etl {
 			continue
 		}
-		err := NewDataSourceOptionSvc(nil).CreateOption(ds.BkDataId, models.OptionTimestampUnit, "ms", operator)
+		err := NewDataSourceOptionSvc(nil).CreateOption(ds.BkDataId, models.OptionTimestampUnit, "ms", operator, tx)
 		if err != nil {
+			tx.Rollback()
 			return nil, err
 		}
 		logger.Infof("bk_data_id [%v] etl_config [%s] so is has now has option [%s] with value->[ms]", ds.BkDataId, etcConfig, models.OptionTimestampUnit)
 	}
-
+	tx.Commit()
 	// 触发consul刷新
 	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background())
 	if err != nil {

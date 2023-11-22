@@ -115,12 +115,14 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		{"name": "disable_metric_cutter", "value": "true"},
 		{"name": "flat_batch_key", "value": "data"},
 	}
+	tx := db.Begin()
 	for _, dsOption := range dsOptions {
-		if err := NewDataSourceOptionSvc(nil).CreateOption(bkDataId, dsOption["name"], dsOption["value"], "system"); err != nil {
+		if err := NewDataSourceOptionSvc(nil).CreateOption(bkDataId, dsOption["name"], dsOption["value"], "system", tx); err != nil {
+			tx.Rollback()
 			return nil, err
 		}
 	}
-
+	tx.Commit()
 	if err != nil {
 		return nil, err
 	}

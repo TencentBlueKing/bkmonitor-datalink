@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -47,8 +49,11 @@ func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, er
 	return optionData, nil
 }
 
-func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interface{}, creator string) error {
-	db := mysql.GetDBSession().DB
+func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interface{}, creator string, db *gorm.DB) error {
+	if db == nil {
+		db = mysql.GetDBSession().DB
+	}
+
 	count, err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(bkDataId).NameEq(name).Count()
 	if err != nil {
 		return err

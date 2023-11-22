@@ -15,7 +15,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-//go:generate goqueryset -in datasource.go -out qs_datasource.go
+//go:generate goqueryset -in datasource.go -out qs_datasource_gen.go
 
 // DataSource datasource model
 // gen:qs

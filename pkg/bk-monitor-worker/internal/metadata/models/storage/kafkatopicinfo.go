@@ -9,17 +9,18 @@
 
 package storage
 
-//go:generate goqueryset -in kafkatopicinfo.go -out qs_kafkatopicinfo.go
+//go:generate goqueryset -in kafkatopicinfo.go -out qs_kafkatopicinfo_gen.go
 
 // KafkaTopicInfo kafka topic info model
 // gen:qs
 type KafkaTopicInfo struct {
+	Id            uint   `gorm:"primary_key" json:"id"`
 	BkDataId      uint   `gorm:"unique;" json:"bk_data_id"`
 	Topic         string `gorm:"size:128" json:"topic"`
 	Partition     int    `gorm:"column:partition" json:"partition"`
-	BatchSize     int64  `gorm:"column:batch_size" json:"batch_size"`
-	FlushInterval int64  `gorm:"column:flush_interval" json:"flush_interval"`
-	ConsumeRate   int64  `gorm:"column:consume_rate" json:"consume_rate"`
+	BatchSize     *int64 `gorm:"column:batch_size" json:"batch_size"`
+	FlushInterval *int64 `gorm:"column:flush_interval" json:"flush_interval"`
+	ConsumeRate   *int64 `gorm:"column:consume_rate" json:"consume_rate"`
 }
 
 // TableName 用于设置表的别名

@@ -22,7 +22,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
@@ -33,7 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage.go
+//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage_gen.go
 
 // InfluxdbStorage influxdb storage model
 // gen:qs
@@ -48,7 +48,7 @@ type InfluxdbStorage struct {
 	DownSampleDurationTime    string `gorm:"size:32" json:"down_sample_duration_time"`
 	ProxyClusterName          string `gorm:"size:128;default:default" json:"proxy_cluster_name"`
 	UseDefaultRp              bool   `gorm:"default:true" json:"use_default_rp"`
-	EnableRefreshRp           bool   `gorm:"default:true" json:"enable_refresh_rp"`
+	EnableRefreshRp           bool   `gorm:"column:enable_refresh_rp" json:"enable_refresh_rp"`
 	PartitionTag              string `gorm:"size:128" json:"partition_tag"`
 	VmTableId                 string `gorm:"vm_table_id;size:128" json:"vm_table_id"`
 	InfluxdbProxyStorageId    uint   `gorm:"influxdb_proxy_storage_id" json:"influxdb_proxy_storage_id"`
@@ -63,7 +63,7 @@ func (InfluxdbStorage) TableName() string {
 
 // ConsulPath 获取router的consul根路径
 func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, config.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix)
 }
 
 // ConsulConfigPath 获取具体结果表router的consul配置路径
@@ -175,7 +175,7 @@ func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) erro
 }
 
 // RefreshConsulClusterConfig 更新influxDB结果表信息到consul中
-func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool) error {
+func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool, isVersionRefresh bool) error {
 	consulClient, err := consul.GetInstance(ctx)
 	if err != nil {
 		return err
@@ -196,6 +196,11 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 	err = i.PushRedisData(ctx, isPublish)
 	if err != nil {
 		return err
+	}
+	if isVersionRefresh {
+		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf("%s/metadata/influxdb_info/version/", cfg.StorageConsulPathPrefix)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -415,7 +420,7 @@ func RefreshInfluxdbStorageConsulClusterConfig(ctx context.Context, objs *[]Infl
 				<-ch
 				wg.Done()
 			}()
-			err := s.RefreshConsulClusterConfig(ctx, false)
+			err := s.RefreshConsulClusterConfig(ctx, false, false)
 			if err != nil {
 				logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", s.TableID, err)
 			} else {
@@ -426,7 +431,7 @@ func RefreshInfluxdbStorageConsulClusterConfig(ctx context.Context, objs *[]Infl
 	wg.Wait()
 	// 最后一个进行publish
 	last := (*objs)[len(*objs)-1]
-	err := last.RefreshConsulClusterConfig(ctx, true)
+	err := last.RefreshConsulClusterConfig(ctx, true, false)
 	if err != nil {
 		logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", last.TableID, err)
 	} else {

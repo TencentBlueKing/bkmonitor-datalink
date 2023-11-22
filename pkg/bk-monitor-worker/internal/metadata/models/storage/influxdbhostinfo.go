@@ -27,7 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbhostinfo.go -out qs_influxdbhostinfo.go
+//go:generate goqueryset -in influxdbhostinfo.go -out qs_influxdbhostinfo_gen.go
 
 // InfluxdbHostInfo influxdb host info model
 // gen:qs

@@ -19,7 +19,6 @@ import (
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -28,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 var ess = ESStorage{
@@ -47,23 +47,11 @@ var ess = ESStorage{
 
 // TestESStorage_IndexBody 从db中构造index的body
 func TestESStorage_IndexBody(t *testing.T) {
-	config.InitConfig()
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			config.TestStorageMysqlUser,
-			config.TestStorageMysqlPassword,
-			config.TestStorageMysqlHost,
-			config.TestStorageMysqlPort,
-			config.TestStorageMysqlDbName,
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
+	config.FilePath = "../../../../bmw.yaml"
+	mocker.PatchDBSession()
 	patchESVersion := gomonkey.ApplyFunc(ESStorage.GetEsVersion, func(storage ESStorage) string {
 		return "7"
 	})
-	defer patchDBSession.Reset()
 	defer patchESVersion.Reset()
 
 	// 初始化测试数据
@@ -195,4 +183,7 @@ func TestESStorage_isIndexExist(t *testing.T) {
 	exist, err = ess.isIndexExist(context.TODO(), ess.searchFormatV1(), ess.IndexReV1())
 	assert.Nil(t, err)
 	assert.False(t, exist)
+	indexExist, err := ess.CheckIndexExist(context.TODO())
+	assert.Nil(t, err)
+	assert.True(t, indexExist)
 }

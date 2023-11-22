@@ -20,7 +20,7 @@ const VERSION = "2023092718195302"
 // Client for bkapi bk_gse
 type Client struct {
 	define.BkApiClient
-	UseApiGateway bool
+	useApiGateway bool
 }
 
 // New bk_gse client
@@ -30,14 +30,14 @@ func New(useApiGateway bool, configProvider define.ClientConfigProvider, opts ..
 		return nil, err
 	}
 
-	return &Client{BkApiClient: client, UseApiGateway: useApiGateway}, nil
+	return &Client{BkApiClient: client, useApiGateway: useApiGateway}, nil
 }
 
 // AddRoute for bkapi resource add_route
 // 注册数据路由
 func (c *Client) AddRoute(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/add_route"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_add_route"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -51,7 +51,7 @@ func (c *Client) AddRoute(opts ...define.OperationOption) define.Operation {
 // 添加数据入库的消息队列，第三方服务配置
 func (c *Client) AddStreamto(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/add_streamto"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_add_streamto"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -65,7 +65,7 @@ func (c *Client) AddStreamto(opts ...define.OperationOption) define.Operation {
 // 删除路由
 func (c *Client) DeleteRoute(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/delete_route"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_delete_route"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -79,7 +79,7 @@ func (c *Client) DeleteRoute(opts ...define.OperationOption) define.Operation {
 // 删除数据路由入库配置
 func (c *Client) DeleteStreamto(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/delete_streamto"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_delete_streamto"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -93,7 +93,7 @@ func (c *Client) DeleteStreamto(opts ...define.OperationOption) define.Operation
 // 查询进程状态信息
 func (c *Client) GetProcStatus(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/get_proc_status"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "get_proc_status"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -117,7 +117,7 @@ func (c *Client) ListAgentState(opts ...define.OperationOption) define.Operation
 // 查询数据路由配置信息
 func (c *Client) QueryRoute(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/query_route"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_query_route"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -131,7 +131,7 @@ func (c *Client) QueryRoute(opts ...define.OperationOption) define.Operation {
 // 查询数据入库消息队列或第三方平台的配置
 func (c *Client) QueryStreamto(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/query_streamto"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_query_streamto"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -145,7 +145,7 @@ func (c *Client) QueryStreamto(opts ...define.OperationOption) define.Operation 
 // 更新路由配置
 func (c *Client) UpdateRoute(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/update_route"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_update_route"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -159,7 +159,7 @@ func (c *Client) UpdateRoute(opts ...define.OperationOption) define.Operation {
 // 更新数据路由入库配置
 func (c *Client) UpdateStreamto(opts ...define.OperationOption) define.Operation {
 	path := "/api/v2/data/update_streamto"
-	if !c.UseApiGateway {
+	if !c.useApiGateway {
 		path = "config_update_streamto"
 	}
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{

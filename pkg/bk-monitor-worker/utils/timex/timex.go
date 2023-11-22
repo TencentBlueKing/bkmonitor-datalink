@@ -60,6 +60,9 @@ func ParsePyDateFormat(dataFormat string) string {
 	dataFormat = strings.ReplaceAll(dataFormat, "%y", "06")
 	dataFormat = strings.ReplaceAll(dataFormat, "%m", "01")
 	dataFormat = strings.ReplaceAll(dataFormat, "%d", "02")
+	dataFormat = strings.ReplaceAll(dataFormat, "%H", "15")
+	dataFormat = strings.ReplaceAll(dataFormat, "%M", "04")
+	dataFormat = strings.ReplaceAll(dataFormat, "%s", "05")
 	return dataFormat
 }
 

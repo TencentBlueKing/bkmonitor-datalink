@@ -11,45 +11,133 @@ package api
 
 import (
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 
-	projConfig "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
+var muForGseApi sync.Mutex
+
+var muForBcsClusterManager sync.Mutex
+
+var muForCmdbApi sync.Mutex
+
+var muForNodemanApi sync.Mutex
+
 var gseApi *bkgse.Client
+
+var bcsClusterManager *bcsclustermanager.Client
+
+var cmdbApi *cmdb.Client
+
+var nodemanApi *nodeman.Client
 
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
+	muForGseApi.Lock()
+	defer muForGseApi.Unlock()
 	if gseApi != nil {
 		return gseApi, nil
 	}
 	var config define.ClientConfigProvider
-	if projConfig.BkApiEnabled {
+	useApiGateWay := cfg.BkApiEnabled
+	if useApiGateWay {
 		config = bkapi.ClientConfig{
-			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", projConfig.BkApiUrl),
-			Stage:         projConfig.BkApiStage,
-			AppCode:       projConfig.BkApiAppCode,
-			AppSecret:     projConfig.BkApiAppSecret,
+			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", cfg.BkApiUrl),
+			Stage:         cfg.BkApiStage,
+			AppCode:       cfg.BkApiAppCode,
+			AppSecret:     cfg.BkApiAppSecret,
 			JsonMarshaler: jsonx.Marshal,
 		}
 	} else {
 		config = bkapi.ClientConfig{
-			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", projConfig.BkApiUrl),
-			Stage:               projConfig.BkApiStage,
-			AppCode:             projConfig.BkApiAppCode,
-			AppSecret:           projConfig.BkApiAppSecret,
+			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/gse/", cfg.BkApiUrl),
+			Stage:               cfg.BkApiStage,
+			AppCode:             cfg.BkApiAppCode,
+			AppSecret:           cfg.BkApiAppSecret,
 			JsonMarshaler:       jsonx.Marshal,
 			AuthorizationParams: map[string]string{"bk_username": "admin"},
 		}
 	}
-
-	gseApi, err := bkgse.New(projConfig.BkApiEnabled, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	var err error
+	gseApi, err = bkgse.New(useApiGateWay, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
 	if err != nil {
 		return nil, err
 	}
 	return gseApi, nil
+}
+
+// GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
+func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
+	muForBcsClusterManager.Lock()
+	defer muForBcsClusterManager.Unlock()
+	if bcsClusterManager != nil {
+		return bcsClusterManager, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/")),
+		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
+		JsonMarshaler:       jsonx.Marshal,
+	}
+	var err error
+	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return bcsClusterManager, nil
+}
+
+// GetCmdbApi 获取CmdbApi客户端
+func GetCmdbApi() (*cmdb.Client, error) {
+	muForCmdbApi.Lock()
+	defer muForCmdbApi.Unlock()
+	if bcsClusterManager != nil {
+		return cmdbApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	cmdbApi, err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return cmdbApi, nil
+}
+
+// GetNodemanApi NodemanApi
+func GetNodemanApi() (*nodeman.Client, error) {
+	muForNodemanApi.Lock()
+	defer muForNodemanApi.Unlock()
+	if nodemanApi != nil {
+		return nodemanApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/nodeman/", cfg.BkApiUrl),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	nodemanApi, err = nodeman.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return nodemanApi, nil
 }

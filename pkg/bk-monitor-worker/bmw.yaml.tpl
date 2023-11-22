@@ -74,7 +74,7 @@ store:
       - bmw
     ttl: ""
   es:
-    es_retain_invalid_alias: false
+    esRetainInvalidAlias: false
   bbolt:
     defaultPath: "bolt.db"
     defaultBuckName: "spaceBucket"
@@ -101,7 +101,7 @@ test:
       port: 3306
       user: root
       password: 123456
-      dbName: your-testDbName
+      dbName: bkmonitor_api
 
 # ================================ worker配置  ===================================
 worker:
@@ -130,6 +130,8 @@ taskConfig:
       stage: stag
       appCode: appCode
       appSecret: appSecret
+      bcsApiGatewayDomain: ""
+      bcsApiGatewayToken: ""
   # metadata: metadata任务配置
   metadata:
     metricDimension:
@@ -137,6 +139,12 @@ taskConfig:
       metricDimensionKeyPrefix: bkmonitor:metric_dimensions_
       maxMetricsFetchStep: 500
       timeSeriesMetricExpiredDays: 30
+    bcs:
+      enableBcsGray: false
+      clusterBkEnvLabel: ""
+      kafkaStorageClusterId: 0
+      influxdb_default_proxy_cluster_name_for_k8s: "default"
+      custom_event_storage_cluster_id: 0
   # apmPreCalculate: apm预计算配置
   apmPreCalculate:
     notifier:

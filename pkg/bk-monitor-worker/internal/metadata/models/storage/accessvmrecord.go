@@ -21,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in accessvmrecord.go -out qs_accessvmrecord.go
+//go:generate goqueryset -in accessvmrecord.go -out qs_accessvmrecord_gen.go
 
 // AccessVMRecord access vm record model
 // gen:qs
@@ -44,7 +44,7 @@ func (AccessVMRecord) TableName() string {
 // RefreshVmRouter 更新 vm router
 func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
 	var db, measurement string
-	splits := strings.SplitN(a.ResultTableId, ".", 1)
+	splits := strings.SplitN(a.ResultTableId, ".", 2)
 	if len(splits) != 2 {
 		logger.Errorf("table_id: %s not split by '.'", a.ResultTableId)
 	}

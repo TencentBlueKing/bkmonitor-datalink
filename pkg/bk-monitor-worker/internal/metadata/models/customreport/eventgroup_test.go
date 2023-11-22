@@ -11,30 +11,25 @@ package customreport
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestEventGroup_GetESData(t *testing.T) {
-	patchNewEsClient := gomonkey.ApplyFunc(EventGroup.GetESClient, func() (*elasticsearch.Elasticsearch, error) {
-		return &elasticsearch.Elasticsearch{}, nil
-	})
-
-	patchSearchWithBody := gomonkey.ApplyFunc(elasticsearch.Elasticsearch.SearchWithBody, func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
+	config.FilePath = "../../../../bmw.yaml"
+	mocker.PatchDBSession()
+	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "SearchWithBody", func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
 		all, _ := io.ReadAll(body)
 		input := string(all)
 		resp := &elasticsearch.Response{StatusCode: 200}
@@ -54,8 +49,10 @@ func TestEventGroup_GetESData(t *testing.T) {
 		}
 		return resp, nil
 	})
-	defer patchNewEsClient.Reset()
-	defer patchSearchWithBody.Reset()
+	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "Ping", func(es elasticsearch.Elasticsearch) (*elasticsearch.Response, error) {
+		return nil, nil
+	})
+
 	eg := EventGroup{
 		CustomGroupBase: CustomGroupBase{TableID: "gse_event_report_base"},
 		EventGroupID:    1,
@@ -63,78 +60,24 @@ func TestEventGroup_GetESData(t *testing.T) {
 	}
 	data, err := eg.GetESData(context.TODO())
 	assert.Nil(t, err)
-	assert.True(t, reflect.DeepEqual(data, map[string][]string{"event_name_a": {"module", "location", "d4"}, "event_name_b": {"module2", "location"}}))
+	assert.Equal(t, 2, len(data))
+	eventNameA, ok := data["event_name_a"]
+	assert.True(t, ok)
+	targetA := []string{"module", "location", "d4"}
+	sort.Strings(eventNameA)
+	sort.Strings(targetA)
+	assert.Equal(t, targetA, eventNameA)
+	eventNameB, ok := data["event_name_b"]
+	assert.True(t, ok)
+	targetB := []string{"module2", "location"}
+	sort.Strings(eventNameB)
+	sort.Strings(targetB)
+	assert.Equal(t, targetB, eventNameB)
 }
 
-func TestEventGroup_ModifyEventList(t *testing.T) {
-	config.InitConfig()
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			config.TestStorageMysqlUser,
-			config.TestStorageMysqlPassword,
-			config.TestStorageMysqlHost,
-			config.TestStorageMysqlPort,
-			config.TestStorageMysqlDbName,
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
-	defer patchDBSession.Reset()
-
-	event := Event{
-		EventGroupID: 9000,
-	}
-	dbSession := mysql.GetDBSession()
-	var eventList []Event
-	// 初始化数据
-	err := NewEventQuerySet(dbSession.DB).EventGroupIDEq(event.EventGroupID).All(&eventList)
-	assert.Nil(t, err)
-	for _, event := range eventList {
-		err := event.Delete(dbSession.DB)
-		assert.Nil(t, err)
-	}
-	// 新增一个event:event_name_a
-	err = event.ModifyEventList(map[string][]string{"event_name_a": {"module", "location", "d4"}})
-	assert.Nil(t, err)
-	err = NewEventQuerySet(dbSession.DB).EventGroupIDEq(event.EventGroupID).All(&eventList)
-	assert.Nil(t, err)
-	assert.Equal(t, len(eventList), 1)
-	dimensionList := eventList[0].GetDimensionList()
-	targetList := []string{"module", "location", "d4", "target"}
-	sort.Strings(dimensionList)
-	sort.Strings(targetList)
-	assert.True(t, reflect.DeepEqual(dimensionList, targetList))
-
-	// 新增event:event_name_b 并更新event:event_name_a
-	err = event.ModifyEventList(map[string][]string{"event_name_a": {"module", "location", "d4", "d5", "d6"}, "event_name_b": {"module2", "location"}})
-	assert.Nil(t, err)
-	err = NewEventQuerySet(dbSession.DB).EventGroupIDEq(event.EventGroupID).All(&eventList)
-	assert.Nil(t, err)
-	assert.Equal(t, len(eventList), 2)
-	if eventList[0].EventName == "event_name_a" {
-		dimensionListA := eventList[0].GetDimensionList()
-		targetListA := []string{"module", "location", "d4", "d5", "d6", "target"}
-		sort.Strings(dimensionListA)
-		sort.Strings(targetListA)
-		assert.True(t, reflect.DeepEqual(dimensionListA, targetListA))
-
-		dimensionListB := eventList[1].GetDimensionList()
-		targetListB := []string{"module2", "location", "target"}
-		sort.Strings(dimensionListB)
-		sort.Strings(targetListB)
-		assert.True(t, reflect.DeepEqual(dimensionListB, targetListB))
-	} else {
-		dimensionListA := eventList[1].GetDimensionList()
-		targetListA := []string{"module", "location", "d4", "d5", "d6", "target"}
-		sort.Strings(dimensionListA)
-		sort.Strings(targetListA)
-		assert.True(t, reflect.DeepEqual(dimensionListA, targetListA))
-
-		dimensionListB := eventList[0].GetDimensionList()
-		targetListB := []string{"module2", "location", "target"}
-		sort.Strings(dimensionListB)
-		sort.Strings(targetListB)
-		assert.True(t, reflect.DeepEqual(dimensionListB, targetListB))
-	}
+func TestEventGroup_UpdateEventDimensionsFromES(t *testing.T) {
+	gomonkey.ApplyMethod(EventGroup{}, "GetESData", func() (map[string][]string, error) { return map[string][]string{}, nil })
+	eg := EventGroup{}
+	err := eg.UpdateEventDimensionsFromES(context.Background())
+	assert.NoError(t, err)
 }

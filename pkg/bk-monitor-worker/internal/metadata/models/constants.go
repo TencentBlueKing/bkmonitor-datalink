@@ -14,15 +14,38 @@ const (
 	ResultTableLabelOther = "others"
 	// ResultTableFieldTagMetric 指标字段
 	ResultTableFieldTagMetric = "metric"
+	// ResultTableFieldTagDimension dimension
+	ResultTableFieldTagDimension = "dimension"
+	// ResultTableFieldTagTimestamp timestamp
+	ResultTableFieldTagTimestamp = "timestamp"
+
+	// ResultTableFieldTypeInt int type
+	ResultTableFieldTypeInt = "int"
 	// ResultTableFieldTypeFloat float type
 	ResultTableFieldTypeFloat = "float"
 	// ResultTableFieldTypeString string type
 	ResultTableFieldTypeString = "string"
-	// ResultTableFieldTagDimension dimension
-	ResultTableFieldTagDimension = "dimension"
+	// ResultTableFieldTypeObject object type
+	ResultTableFieldTypeObject = "object"
+	// ResultTableFieldTypeBoolean boolean type
+	ResultTableFieldTypeBoolean = "boolean"
+	// ResultTableFieldTypeTimestamp timestamp type
+	ResultTableFieldTypeTimestamp = "timestamp"
 
 	// EventTargetDimensionName target维度
 	EventTargetDimensionName = "target"
+
+	ResultTableSchemaTypeFree    = "free"
+	ResultTableSchemaTypeDynamic = "dynamic"
+	ResultTableSchemaTypeFixed   = "fixed"
+)
+
+// ResultTableFieldOption
+const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdb专用，表示字段是否不必写入到influxdb
+
+// ResultTableOption
+const (
+	OptionCustomReportDimensionValues = "dimension_values"
 )
 
 // ClusterStorageType
@@ -30,6 +53,9 @@ const (
 	StorageTypeInfluxdb = "influxdb"
 	StorageTypeKafka    = "kafka"
 	StorageTypeES       = "elasticsearch"
+	StorageTypeRedis    = "redis"
+	StorageTypeBkdata   = "bkdata"
+	StorageTypeArgus    = "argus"
 	StorageTypeVM       = "victoria_metrics"
 )
 
@@ -50,6 +76,55 @@ const (
 	QueryVmStorageRouterKey       = "query_vm_router"      // 查询 vm 存储的路由信息
 )
 
+// bcs cluster
+const (
+	BcsClusterStatusRunning         = "running"                   // 集群状态running
+	BcsClusterStatusDeleted         = "deleted"                   // 集群状态deleted
+	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
+	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
+	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据
+	BcsResourceGroupName            = "monitoring.bk.tencent.com" // 容器资源组名
+	BcsResourceVersion              = "v1beta1"                   // 容器资源版本号
+	BcsResourceDataIdResourceKind   = "DataID"                    // data_id注入资源类型
+	BcsResourceDataIdResourcePlural = "dataids"                   // data_id注入类型查询名
+	BcsMonitorResourceGroupName     = "monitoring.coreos.com"     // monitor资源组名
+	BcsMonitorResourceVersion       = "v1"                        // monitor资源版本号
+	BcsPodMonitorResourcePlural     = "podmonitors"               // pod monitor注入类型查询名
+	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
+	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
+	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
+)
+
+// Label
+const (
+	LabelTypeSource      = "source_label"
+	LabelTypeResultTable = "result_table_label"
+	LabelTypeType        = "type_label"
+)
+
+const (
+	TSGroupDefaultMeasurement = "__default__"
+)
+
+// ReplaceConfig
+const (
+	ReplaceTypesMetric          = "metric"
+	ReplaceTypesDimension       = "dimension"
+	ReplaceCustomLevelsCluster  = "cluster"
+	ReplaceCustomLevelsResource = "resource"
+)
+
+// Datasource
+const (
+	MinDataId = 1500000 // DATA_ID最小值
+	MaxDataId = 2097151 // DATA_ID最大值
+)
+
+// DataSourceOption
+const (
+	OptionTimestampUnit = "timestamp_precision"
+)
+
 // root consul path template
 const (
 	DataSourceConsulPathTemplate          = "%s/metadata/v1"                         // DataSource的consul根路径
@@ -58,4 +133,16 @@ const (
 	InfluxdbHostInfoConsulPathTemplate    = "%s/metadata/influxdb_info/host_info"    // InfluxdbHostInfo的consul根路径
 	InfluxdbTagInfoConsulPathTemplate     = "%s/metadata/influxdb_info/tag_info"     // InfluxdbTagInfo的consul根路径
 	InfluxdbInfoVersionConsulPathTemplate = "%s/metadata/influxdb_info/version/"     // InfluxdbInfoVersion的consul路径
+)
+
+const RecommendedBkCollectorVersion = "0.16.1061" // 推荐的bkcollector版本
+
+// subscription config
+const (
+	BkMonitorProxyListenPort = 10205      // bk_monitor_proxy 自定义上报服务监听的端口
+	MaxDataIdThroughPut      = 1000       // 单个dataid最大的上报频率(条/min)
+	MaxFutureTimeOffset      = 3600       // 支持的最大未来时间，超过这个偏移值，则丢弃
+	MaxReqThroughPut         = 4000       // 最大的请求数
+	MaxReqLength             = 500 * 1024 // 最大请求Body大小，500KB
+
 )

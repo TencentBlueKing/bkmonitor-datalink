@@ -10,6 +10,12 @@
 package service
 
 import (
+	"fmt"
+	"time"
+
+	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
@@ -41,4 +47,36 @@ func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, er
 		optionData[option.Name] = value
 	}
 	return optionData, nil
+}
+
+func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interface{}, creator string, db *gorm.DB) error {
+	if db == nil {
+		db = mysql.GetDBSession().DB
+	}
+
+	count, err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(bkDataId).NameEq(name).Count()
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return fmt.Errorf("bk_data_id [%v] already has option [%s]", bkDataId, name)
+	}
+	valueStr, valueType, err := models.ParseOptionValue(value)
+	if err != nil {
+		return err
+	}
+	dso := resulttable.DataSourceOption{
+		OptionBase: models.OptionBase{
+			ValueType:  valueType,
+			Value:      valueStr,
+			Creator:    creator,
+			CreateTime: time.Now(),
+		},
+		BkDataId: bkDataId,
+		Name:     name,
+	}
+	if err := dso.Create(db); err != nil {
+		return err
+	}
+	return nil
 }

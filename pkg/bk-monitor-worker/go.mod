@@ -3,10 +3,10 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 go 1.19
 
 require (
-	github.com/IBM/sarama v1.41.2
+	github.com/IBM/sarama v1.42.1
 	github.com/RedisBloom/redisbloom-go v1.0.0
 	github.com/TencentBlueKing/bk-apigateway-sdks v0.1.16
-	github.com/agiledragon/gomonkey/v2 v2.10.1
+	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/ahmetb/go-linq/v3 v3.2.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
 	github.com/avast/retry-go v3.0.0+incompatible
@@ -24,13 +24,15 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/golang/protobuf v1.5.3
 	github.com/gomodule/redigo v1.8.9
-	github.com/google/uuid v1.2.0
+	github.com/google/uuid v1.3.0
 	github.com/grafana/pyroscope-go v1.0.4
 	github.com/hashicorp/consul/api v1.20.0
+	github.com/hashicorp/go-version v1.2.1
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/jinzhu/gorm v1.9.16
 	github.com/json-iterator/go v1.1.12
 	github.com/minio/highwayhash v1.0.2
+	github.com/nsf/jsondiff v0.0.0-20230430225905-43f6cf3098c1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.13.0
@@ -46,9 +48,11 @@ require (
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/zap v1.24.0
-	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
+	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/yaml.v3 v3.0.1
+	k8s.io/apimachinery v0.28.3
+	k8s.io/client-go v0.28.3
 )
 
 require (
@@ -69,13 +73,16 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.2 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
+	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.14.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.4 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
@@ -105,8 +112,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nbio/st v0.0.0-20140626010706-e9e8d9816f32 // indirect
-	github.com/onsi/ginkgo/v2 v2.7.0 // indirect
-	github.com/onsi/gomega v1.25.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.8 // indirect
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -125,16 +130,27 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/arch v0.3.0 // indirect
-	golang.org/x/crypto v0.13.0 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/image v0.11.0 // indirect
-	golang.org/x/net v0.15.0 // indirect
-	golang.org/x/sys v0.12.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/oauth2 v0.8.0 // indirect
+	golang.org/x/sys v0.14.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
+	golang.org/x/time v0.3.0 // indirect
+	google.golang.org/appengine v1.6.7 // indirect
 	gopkg.in/h2non/gentleman.v2 v2.0.5 // indirect
+	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gotest.tools/v3 v3.5.0 // indirect
+	k8s.io/klog/v2 v2.100.1 // indirect
+	k8s.io/utils v0.0.0-20230406110748-d93618cff8a2 // indirect
 	logur.dev/logur v0.17.0 // indirect
+	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
+	sigs.k8s.io/structured-merge-diff/v4 v4.2.3 // indirect
+	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
 require (

@@ -10,7 +10,14 @@
 package service
 
 import (
+	"context"
+	"fmt"
+	"strings"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // InfluxdbStorageSvc influxdb storage service
@@ -42,4 +49,96 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		},
 	}
 	return consulConfig, nil
+}
+
+// CreateTable 创建存储
+func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+	var influxdbProxyStorageId *uint
+	var proxyClusterName *string
+	var storageClusterId *uint
+
+	if value, ok := storageConfig.GetUint("influxdb_proxy_storage_id"); ok {
+		influxdbProxyStorageId = &value
+	}
+	if value, ok := storageConfig.GetString("proxy_cluster_name"); ok {
+		proxyClusterName = &value
+	}
+	if value, ok := storageConfig.GetUint("storage_cluster_id"); ok {
+		storageClusterId = &value
+	}
+	influxdbStorage, err := NewInfluxdbProxyStorageSvc(nil).GetInfluxdbStorage(influxdbProxyStorageId, proxyClusterName, storageClusterId)
+	if err != nil {
+		return err
+	}
+	influxdbProxyStorageId = &influxdbStorage.ID
+	proxyClusterName = &influxdbStorage.InstanceClusterName
+	storageClusterId = &influxdbStorage.ProxyClusterId
+	// 校验后端是否存在
+	db := mysql.GetDBSession().DB
+	count, err := storage.NewInfluxdbClusterInfoQuerySet(db).ClusterNameEq(*proxyClusterName).Count()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
+	}
+	// 如果未有指定对应的结果表及数据库，则从table_id中分割获取
+	split := strings.Split(tableId, ".")
+	database := split[0]
+	realTableName := split[1]
+	// InfluxDB不需要实际创建结果表，只需要创建一条DB记录即可
+	UseDefaultRp, ok := storageConfig.GetBool("use_default_rp")
+	if !ok {
+		UseDefaultRp = true
+	}
+	EnableRefreshRp, ok := storageConfig.GetBool("enable_refresh_rp")
+	if !ok {
+		EnableRefreshRp = true
+	}
+	SourceDurationTime, ok := storageConfig.GetString("source_duration_time")
+	if !ok {
+		SourceDurationTime = "30d"
+	}
+	DownSampleTable, _ := storageConfig.GetString("down_sample_table")
+	DownSampleGap, _ := storageConfig.GetString("down_sample_gap")
+	DownSampleDurationTime, _ := storageConfig.GetString("down_sample_duration_time")
+	PartitionTag, _ := storageConfig.GetString("partition_tag")
+	VmTableId, _ := storageConfig.GetString("vm_table_id")
+
+	influxdb := storage.InfluxdbStorage{
+		TableID:                tableId,
+		StorageClusterID:       *storageClusterId,
+		RealTableName:          realTableName,
+		Database:               database,
+		ProxyClusterName:       *proxyClusterName,
+		InfluxdbProxyStorageId: *influxdbProxyStorageId,
+		UseDefaultRp:           UseDefaultRp,
+		EnableRefreshRp:        EnableRefreshRp,
+		SourceDurationTime:     SourceDurationTime,
+		DownSampleTable:        DownSampleTable,
+		DownSampleGap:          DownSampleGap,
+		DownSampleDurationTime: DownSampleDurationTime,
+		PartitionTag:           PartitionTag,
+		VmTableId:              VmTableId,
+	}
+	if err := influxdb.Create(db); err != nil {
+		return err
+	}
+	logger.Infof("result_table [%s] now has create influxDB storage", influxdb.TableID)
+	if isSyncDb {
+		if err := NewInfluxdbStorageSvc(&influxdb).syncDb(); err != nil {
+			return err
+		}
+	}
+
+	// 刷新一次结果表的路由信息至consul中, 由于是创建结果表，必须强行刷新到consul配置中
+	if err := influxdb.RefreshConsulClusterConfig(context.Background(), true, true); err != nil {
+		return err
+	}
+	logger.Infof("result_table [%s] all database create is done", influxdb.TableID)
+	return nil
+}
+
+func (k InfluxdbStorageSvc) syncDb() error {
+	return k.CreateDatabase()
 }

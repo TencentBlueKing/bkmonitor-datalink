@@ -15,7 +15,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-//go:generate goqueryset -in essnapshot.go -out qs_essnapshot.go
+//go:generate goqueryset -in essnapshot.go -out qs_essnapshot_gen.go
 
 // EsSnapshot es snapshot model
 // gen:qs

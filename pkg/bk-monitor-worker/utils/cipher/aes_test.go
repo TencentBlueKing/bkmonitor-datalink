@@ -19,7 +19,9 @@ import (
 
 func TestAESDecrypt(t *testing.T) {
 	var encryptedAndPlainMap = map[string]string{
-		"abcde": "abcde",
+		"":              "",
+		"abcde":         "abcde",
+		"aes_str:::abc": "",
 		"aes_str:::AMfpKHYB8nEMAbS/4x4MPzg5watAX8JpPDSQMkltziE=":                     "",
 		"aes_str:::QdT4DdT038nMxHdJ4T3vho2IMhAQhwVDf3f970qXc4o=":                     "",
 		"aes_str:::srCvsNoBIUsCtBfqASIAcTlQThp3GVHqu726bvhpVjo=":                     "5gYTZqvd7Z7s",

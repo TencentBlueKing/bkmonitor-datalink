@@ -9,14 +9,6 @@
 
 package bkgse
 
-// APICommonResp api通用返回结构体
-type APICommonResp struct {
-	Message string      `json:"message"`
-	Result  bool        `json:"result"`
-	Code    int         `json:"code"`
-	Data    interface{} `json:"data"`
-}
-
 // QueryRouteDataResp query_route返回结构体
 type QueryRouteDataResp struct {
 	Metadata      GSEMetadata   `json:"metadata"`

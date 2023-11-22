@@ -10,13 +10,22 @@
 package service
 
 import (
-	"errors"
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ResultTableSvc result table service
@@ -32,10 +41,11 @@ func NewResultTableSvc(obj *resulttable.ResultTable) ResultTableSvc {
 
 // RealStorageList 获取结果表的所有实际存储对象
 func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
+	db := mysql.GetDBSession().DB
 	var storageList []Storage
 	// es storage
 	var esStorage storage.ESStorage
-	if err := storage.NewESStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&esStorage); err != nil {
+	if err := storage.NewESStorageQuerySet(db).TableIDEq(r.TableId).One(&esStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -44,7 +54,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// influxdb storage
 	var influxdbStorage storage.InfluxdbStorage
-	if err := storage.NewInfluxdbStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&influxdbStorage); err != nil {
+	if err := storage.NewInfluxdbStorageQuerySet(db).TableIDEq(r.TableId).One(&influxdbStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -53,7 +63,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// kafka storage
 	var kafkaStorage storage.KafkaStorage
-	if err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&kafkaStorage); err != nil {
+	if err := storage.NewKafkaStorageQuerySet(db).TableIDEq(r.TableId).One(&kafkaStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -62,7 +72,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// redis storage
 	var redisStorage storage.RedisStorage
-	if err := storage.NewRedisStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&redisStorage); err != nil {
+	if err := storage.NewRedisStorageQuerySet(db).TableIDEq(r.TableId).One(&redisStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -71,7 +81,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// argus storage
 	var argusStorage storage.ArgusStorage
-	if err := storage.NewArgusStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&argusStorage); err != nil {
+	if err := storage.NewArgusStorageQuerySet(db).TableIDEq(r.TableId).One(&argusStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -80,4 +90,258 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 
 	return storageList, nil
+}
+
+// 判断label是否真实存在的配置，不存在则返回err
+func (r ResultTableSvc) preCheckLabel(label string) error {
+	count, err := resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("label [%s] is not exists as a rt label", label)
+	}
+	return nil
+}
+
+// 获取dataSource，不存在则返回err
+func (r ResultTableSvc) getDataSource(bkDataId uint) (*resulttable.DataSource, error) {
+	var ds resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).One(&ds); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return nil, fmt.Errorf("bk_data_id [%v] is not exists", bkDataId)
+		}
+		return nil, err
+	}
+	return &ds, nil
+}
+
+// 判断rt是否已经存在，存在则返回err
+func (r ResultTableSvc) preCheckResultTable(tableId string) error {
+	count, err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).Count()
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return fmt.Errorf("table_id [%s] is already exist", tableId)
+	}
+	return nil
+}
+
+// 根据业务id处理DS
+func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataSource) error {
+	db := mysql.GetDBSession().DB
+	var spaceTypeId, spaceId string
+	// 业务为0时更新数据源为平台级
+	if bkBizId == 0 {
+		ds.IsPlatformDataId = true
+		if err := ds.Update(db, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
+			return err
+		}
+	} else {
+		// 当业务不为 0 时，进行空间和数据源的关联
+		if bkBizId > 0 {
+			spaceTypeId = "bkcc"
+			spaceId = strconv.Itoa(bkBizId)
+		} else {
+			var sp space.Space
+			if err := space.NewSpaceQuerySet(db).IdEq(-bkBizId).One(&sp); err != nil {
+				return err
+			}
+			spaceTypeId = sp.SpaceTypeId
+			spaceId = sp.SpaceId
+		}
+		count, err := space.NewSpaceDataSourceQuerySet(db).BkDataIdEq(ds.BkDataId).FromAuthorizationEq(false).Count()
+		if err != nil {
+			return err
+		}
+		// data id 已有所属记录，则不处理
+		if count == 0 {
+			sds := space.SpaceDataSource{
+				SpaceTypeId:       spaceTypeId,
+				SpaceId:           spaceId,
+				BkDataId:          ds.BkDataId,
+				FromAuthorization: false,
+			}
+			if err := sds.Create(db); err != nil {
+				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", ds.BkDataId, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (r ResultTableSvc) CreateResultTable(
+	bkDataId uint,
+	bkBizId int,
+	tableId string,
+	tableNameZh string,
+	isCustomTable bool,
+	schemaType string,
+	operator string,
+	defaultStorage string,
+	defaultStorageConfig map[string]interface{},
+	fieldList []map[string]interface{},
+	isTimeFieldOnly bool,
+	timeOption map[string]interface{},
+	label string,
+	option map[string]interface{},
+) error {
+	tableId = strings.ToLower(tableId)
+	// 判断label是否真实存在的配置
+	if err := r.preCheckLabel(label); err != nil {
+		return err
+	}
+	// 获取dataSource
+	ds, err := r.getDataSource(bkDataId)
+	if err != nil {
+		return err
+	}
+	// 若rt已经存在，存在则返回err
+	if err := r.preCheckResultTable(tableId); err != nil {
+		return err
+	}
+	// 根据业务id处理DataSource
+	if err := r.dealDataSourceByBizId(bkBizId, ds); err != nil {
+		return err
+	}
+
+	// 创建逻辑结果表内容
+	rt := resulttable.ResultTable{
+		TableId:        tableId,
+		TableNameZh:    tableNameZh,
+		IsCustomTable:  isCustomTable,
+		SchemaType:     schemaType,
+		DefaultStorage: defaultStorage,
+		Creator:        operator,
+		CreateTime:     time.Now(),
+		LastModifyUser: operator,
+		LastModifyTime: time.Now(),
+		BkBizId:        bkBizId,
+		IsDeleted:      false,
+		Label:          label,
+		IsEnable:       true,
+		DataLabel:      "",
+	}
+	db := mysql.GetDBSession().DB
+	if err := rt.Create(db); err != nil {
+		return err
+	}
+
+	// 创建结果表的option内容如果option为非空
+	if err := NewResultTableOptionSvc(nil).BulkCreateOptions(tableId, option, operator); err != nil {
+		return err
+	}
+
+	// 创建新的字段信息，同时追加默认的字段
+	if err := NewResultTableFieldSvc(nil).BulkCreateDefaultFields(tableId, timeOption, isTimeFieldOnly); err != nil {
+		return err
+	}
+
+	// 批量创建 field 数据
+	for _, field := range fieldList {
+		var isConfigByUser bool
+		isConfigByUserInterface, ok := field["is_config_by_user"]
+		if ok {
+			isConfigByUser = isConfigByUserInterface.(bool)
+		} else {
+			if operator == "system" {
+				isConfigByUser = true
+			}
+		}
+		field["operator"] = operator
+		field["is_config_by_user"] = isConfigByUser
+	}
+	rtSvc := NewResultTableSvc(&rt)
+	if err := rtSvc.BulkCreateFields(fieldList, false, true); err != nil {
+		return err
+	}
+
+	// 创建data_id和该结果表的关系
+	dsrt := resulttable.DataSourceResultTable{
+		BkDataId:   bkDataId,
+		TableId:    tableId,
+		Creator:    operator,
+		CreateTime: time.Now(),
+	}
+	if err := dsrt.Create(db); err != nil {
+		return err
+	}
+	logger.Infof("result_table [%s] now has relate to bk_data [%v]", tableId, bkDataId)
+
+	// 创建实际结果表
+	if err := rtSvc.CreateStorage(rt.DefaultStorage, true, defaultStorageConfig); err != nil {
+		return err
+	}
+	logger.Infof("result_table [%s] has create real storage on type [%s]", tableId, rt.DefaultStorage)
+
+	// 更新数据写入 consul
+	if err := rtSvc.RefreshEtlConfig(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// BulkCreateFields 批量创建新的字段
+func (r ResultTableSvc) BulkCreateFields(fieldList []map[string]interface{}, isEtlRefresh bool, isForceAdd bool) error {
+	if !isForceAdd && r.SchemaType == models.ResultTableSchemaTypeFixed {
+		return fmt.Errorf("result_table [%s] schema type is set, no field can be added", r.TableId)
+	}
+	if err := NewResultTableFieldSvc(nil).BulkCreateFields(r.TableId, fieldList); err != nil {
+		return err
+	}
+	if isEtlRefresh {
+		if err := r.RefreshEtlConfig(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateStorage 创建结果表的一个实际存储
+func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, storageConfig map[string]interface{}) error {
+	var s Storage
+	switch defaultStorage {
+	case models.StorageTypeES:
+		s = NewEsStorageSvc(nil)
+	case models.StorageTypeInfluxdb:
+		s = NewInfluxdbStorageSvc(nil)
+	case models.StorageTypeRedis:
+		s = NewRedisStorageSvc(nil)
+	case models.StorageTypeKafka:
+		s = NewKafkaStorageSvc(nil)
+	case models.StorageTypeArgus:
+		s = NewArgusStorageSvc(nil)
+	default:
+		return fmt.Errorf("storage [%s] now is not supported", defaultStorage)
+	}
+	if err := s.CreateTable(r.TableId, isSyncDb, optionx.NewOptions(storageConfig)); err != nil {
+		return err
+	}
+	logger.Infof("result_table [%s] has create real storage on type [%s]", r.TableId, defaultStorage)
+
+	if isSyncDb {
+		if err := r.RefreshEtlConfig(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RefreshEtlConfig 更新ETL配置，确保其符合当前数据库配置
+func (r ResultTableSvc) RefreshEtlConfig() error {
+	db := mysql.GetDBSession().DB
+	var dsrt resulttable.DataSourceResultTable
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).TableIdEq(r.TableId).One(&dsrt); err != nil {
+		return err
+	}
+	var ds resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(dsrt.BkDataId).One(&ds); err != nil {
+		return err
+	}
+	if err := NewDataSourceSvc(&ds).RefreshConsulConfig(context.TODO()); err != nil {
+		return err
+	}
+	logger.Infof("table_id [%s] refresh etl config success", r.TableId)
+	return nil
 }

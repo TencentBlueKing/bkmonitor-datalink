@@ -96,7 +96,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/client_golang v1.13.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
-	github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20200313005456-10cdbea86bc0 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/spf13/cobra v1.6.1 // indirect

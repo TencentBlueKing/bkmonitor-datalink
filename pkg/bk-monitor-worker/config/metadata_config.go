@@ -33,6 +33,14 @@ var (
 	BcsInfluxdbDefaultProxyClusterNameForK8s string
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
+
+	// GlobalTimeSeriesMetricExpiredDays 自定义指标过期时间
+	GlobalTimeSeriesMetricExpiredDays int
+	// GlobalIsRestrictDsBelongSpace 是否限制数据源归属具体空间
+	GlobalIsRestrictDsBelongSpace bool
+
+	// SpaceRedisKey redis 中空间的 key
+	SpaceRedisKey string
 )
 
 func initMetadataVariables() {
@@ -47,4 +55,9 @@ func initMetadataVariables() {
 	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0), viper.GetUint)
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
+
+	GlobalTimeSeriesMetricExpiredDays = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredDays", 30)
+	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
+
+	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 }

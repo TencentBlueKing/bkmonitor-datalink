@@ -19,9 +19,8 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/globalconfig"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
@@ -34,14 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-const (
-	SpaceRedisKeyPath = "space.redis_key"
-)
-
-func init() {
-	viper.SetDefault(SpaceRedisKeyPath, "bkmonitorv3:spaces")
-}
 
 var SkipDataIdListForBkcc = []uint{1110000}
 
@@ -136,13 +127,13 @@ func (s SpaceRedisSvc) PushAndPublishAllSpace(spaceTypeId, spaceId string, isPub
 		return errors.Wrapf(err, "get redis client error, %v", err)
 	}
 	// 推送空间数据到 redis，用于创建时，推送失败或者没有推送的场景
-	if err := client.SAdd(viper.GetString(SpaceRedisKeyPath), spaceUidList...); err != nil {
+	if err := client.SAdd(cfg.SpaceRedisKey, spaceUidList...); err != nil {
 		return err
 	}
 
 	// 参数指定是否需要发布通知
 	if isPublish {
-		redisKey := viper.GetString(SpaceRedisKeyPath)
+		redisKey := cfg.SpaceRedisKey
 		for _, spaceUid := range spaceUidList {
 			if err := client.Publish(redisKey, spaceUid); err != nil {
 				return err
@@ -167,7 +158,7 @@ func NewSpacePusher() *SpacePusher {
 }
 
 func (s *SpacePusher) getSpaceDetailKey(spaceTypeId, spaceId string) string {
-	return fmt.Sprintf("%s:%s__%s", viper.GetString(SpaceRedisKeyPath), spaceTypeId, spaceId)
+	return fmt.Sprintf("%s:%s__%s", cfg.SpaceRedisKey, spaceTypeId, spaceId)
 }
 
 // PushBkccTypeSpace 推送业务类型的空间
@@ -768,7 +759,7 @@ func (s *SpacePusher) getTableFieldByTableId() (map[string][]string, error) {
 	// 通过结果表属性过滤相应数据
 	otherTableIdList = slicex.StringSet2List(slicex.StringList2Set(otherTableIdList).Union(slicex.StringList2Set(whiteTableIdList)))
 	// 针对自定义时序，按照时间过滤数据
-	beginTime := time.Now().UTC().AddDate(0, 0, -viper.GetInt(globalconfig.TimeSeriesMetricExpiredDaysPath))
+	beginTime := time.Now().UTC().AddDate(0, 0, -cfg.GlobalTimeSeriesMetricExpiredDays)
 	var tsmList []customreport.TimeSeriesMetric
 	if len(tsGroupIdList) != 0 {
 		if err := customreport.NewTimeSeriesMetricQuerySet(mysql.GetDBSession().DB).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
@@ -843,7 +834,7 @@ func (s *SpacePusher) isNeedAddFilter(measurementType, spaceTypeId, spaceId stri
 		}
 	}
 	// 为防止查询范围放大，先功能开关控制，针对归属到具体空间的数据源，不需要添加过滤条件
-	if !viper.GetBool(globalconfig.IsRestrictDsBelongSpacePath) && (ds.SpaceTypeId == fmt.Sprintf("%s__%s", spaceTypeId, spaceId)) {
+	if !cfg.GlobalIsRestrictDsBelongSpace && (ds.SpaceTypeId == fmt.Sprintf("%s__%s", spaceTypeId, spaceId)) {
 		return false, nil
 	}
 	// 如果不是自定义时序或exporter，则不需要关注类似的情况，必须增加过滤条件

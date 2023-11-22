@@ -15,8 +15,8 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -122,7 +122,7 @@ func PublishRedis(ctx context.Context, t *task.Task) error {
 		if err != nil {
 			return errors.Wrapf(err, "get redis client error, %v", err)
 		}
-		if err := client.Publish(viper.GetString(service.SpaceRedisKeyPath), []string{spaceUid}); err != nil {
+		if err := client.Publish(cfg.SpaceRedisKey, []string{spaceUid}); err != nil {
 			return err
 		}
 		logger.Infof("%s push and publish %s finished", spaceUid)
@@ -159,7 +159,7 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 		return errors.Wrapf(err, "get redis client error, %v", err)
 	}
 	spaceUid := fmt.Sprintf("%s__%s", params.SpaceType, params.SpaceId)
-	if err := client.SAdd(viper.GetString(service.SpaceRedisKeyPath), spaceUid); err != nil {
+	if err := client.SAdd(cfg.SpaceRedisKey, spaceUid); err != nil {
 		return errors.Wrapf(err, "async task push space to redis error, %s", err)
 	}
 	return nil

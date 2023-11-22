@@ -91,23 +91,8 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	return storageList, nil
 }
 
-func (r ResultTableSvc) CreateResultTable(
-	bkDataId uint,
-	bkBizId int,
-	tableId string,
-	tableNameZh string,
-	isCustomTable bool,
-	schemaType string,
-	operator string,
-	defaultStorage string,
-	defaultStorageConfig map[string]interface{},
-	fieldList []map[string]interface{},
-	isTimeFieldOnly bool,
-	timeOption map[string]interface{},
-	label string,
-	option map[string]interface{},
-) error {
-	// 判断label是否真实存在的配置
+// 判断label是否真实存在的配置，不存在则返回err
+func (r ResultTableSvc) preCheckLabel(label string) error {
 	count, err := resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
 	if err != nil {
 		return err
@@ -115,23 +100,37 @@ func (r ResultTableSvc) CreateResultTable(
 	if count == 0 {
 		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
-	tableId = strings.ToLower(tableId)
-	// 判断data_source是否存在
+	return nil
+}
+
+// 获取dataSource，不存在则返回err
+func (r ResultTableSvc) getDataSource(bkDataId uint) (*resulttable.DataSource, error) {
 	var ds resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).One(&ds); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
-			return fmt.Errorf("bk_data_id [%v] is not exists", bkDataId)
+			return nil, fmt.Errorf("bk_data_id [%v] is not exists", bkDataId)
 		}
-		return err
+		return nil, err
 	}
-	count, err = resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).Count()
+	return &ds, nil
+}
+
+// 判断rt是否已经存在，存在则返回err
+func (r ResultTableSvc) preCheckResultTable(tableId string) error {
+	count, err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).Count()
 	if err != nil {
 		return err
 	}
 	if count != 0 {
 		return fmt.Errorf("table_id [%s] is already exist", tableId)
 	}
+	return nil
+}
+
+// 根据业务id处理DS
+func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataSource) error {
 	var spaceTypeId, spaceId string
+	// 业务为0时更新数据源为平台级
 	if bkBizId == 0 {
 		ds.IsPlatformDataId = true
 		if err := ds.Update(mysql.GetDBSession().DB, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
@@ -150,7 +149,7 @@ func (r ResultTableSvc) CreateResultTable(
 			spaceTypeId = sp.SpaceTypeId
 			spaceId = sp.SpaceId
 		}
-		count, err := space.NewSpaceDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).FromAuthorizationEq(false).Count()
+		count, err := space.NewSpaceDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(ds.BkDataId).FromAuthorizationEq(false).Count()
 		if err != nil {
 			return err
 		}
@@ -159,14 +158,52 @@ func (r ResultTableSvc) CreateResultTable(
 			sds := space.SpaceDataSource{
 				SpaceTypeId:       spaceTypeId,
 				SpaceId:           spaceId,
-				BkDataId:          bkDataId,
+				BkDataId:          ds.BkDataId,
 				FromAuthorization: false,
 			}
 			if err := sds.Create(mysql.GetDBSession().DB); err != nil {
-				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", bkDataId, err)
+				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", ds.BkDataId, err)
 			}
 		}
 	}
+	return nil
+}
+
+func (r ResultTableSvc) CreateResultTable(
+	bkDataId uint,
+	bkBizId int,
+	tableId string,
+	tableNameZh string,
+	isCustomTable bool,
+	schemaType string,
+	operator string,
+	defaultStorage string,
+	defaultStorageConfig map[string]interface{},
+	fieldList []map[string]interface{},
+	isTimeFieldOnly bool,
+	timeOption map[string]interface{},
+	label string,
+	option map[string]interface{},
+) error {
+	tableId = strings.ToLower(tableId)
+	// 判断label是否真实存在的配置
+	if err := r.preCheckLabel(label); err != nil {
+		return err
+	}
+	// 获取dataSource
+	ds, err := r.getDataSource(bkDataId)
+	if err != nil {
+		return err
+	}
+	// 若rt已经存在，存在则返回err
+	if err := r.preCheckResultTable(tableId); err != nil {
+		return err
+	}
+	// 根据业务id处理DataSource
+	if err := r.dealDataSourceByBizId(bkBizId, ds); err != nil {
+		return err
+	}
+
 	// 创建逻辑结果表内容
 	rt := resulttable.ResultTable{
 		TableId:        tableId,
@@ -187,15 +224,17 @@ func (r ResultTableSvc) CreateResultTable(
 	if err := rt.Create(mysql.GetDBSession().DB); err != nil {
 		return err
 	}
-	rtSvc := NewResultTableSvc(&rt)
+
 	// 创建结果表的option内容如果option为非空
 	if err := NewResultTableOptionSvc(nil).BulkCreateOptions(tableId, option, operator); err != nil {
 		return err
 	}
+
 	// 创建新的字段信息，同时追加默认的字段
 	if err := NewResultTableFieldSvc(nil).BulkCreateDefaultFields(tableId, timeOption, isTimeFieldOnly); err != nil {
 		return err
 	}
+
 	// 批量创建 field 数据
 	for _, field := range fieldList {
 		var isConfigByUser bool
@@ -210,25 +249,29 @@ func (r ResultTableSvc) CreateResultTable(
 		field["operator"] = operator
 		field["is_config_by_user"] = isConfigByUser
 	}
+	rtSvc := NewResultTableSvc(&rt)
 	if err := rtSvc.BulkCreateFields(fieldList, false, true); err != nil {
 		return err
 	}
+
+	// 创建data_id和该结果表的关系
 	dsrt := resulttable.DataSourceResultTable{
 		BkDataId:   bkDataId,
 		TableId:    tableId,
 		Creator:    operator,
 		CreateTime: time.Now(),
 	}
-	// 创建data_id和该结果表的关系
 	if err := dsrt.Create(mysql.GetDBSession().DB); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] now has relate to bk_data [%v]", tableId, bkDataId)
+
 	// 创建实际结果表
 	if err := rtSvc.CreateStorage(rt.DefaultStorage, true, defaultStorageConfig); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] has create real storage on type [%s]", tableId, rt.DefaultStorage)
+
 	// 更新数据写入 consul
 	if err := rtSvc.RefreshEtlConfig(); err != nil {
 		return err

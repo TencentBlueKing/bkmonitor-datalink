@@ -49,15 +49,16 @@ func NewDataSourceSvc(obj *resulttable.DataSource) DataSourceSvc {
 }
 
 func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLabel string, mqCluster uint, typeLabel, transferClusterId, sourceSystem string) (*resulttable.DataSource, error) {
+	db := mysql.GetDBSession().DB
 	// 判断两个使用到的标签是否存在
-	count, err := resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelIdEq(sourceLabel).LabelTypeEq(models.LabelTypeSource).Count()
+	count, err := resulttable.NewLabelQuerySet(db).LabelIdEq(sourceLabel).LabelTypeEq(models.LabelTypeSource).Count()
 	if err != nil {
 		return nil, err
 	}
 	if count == 0 {
 		return nil, fmt.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
 	}
-	count, err = resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
+	count, err = resulttable.NewLabelQuerySet(db).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +67,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 	}
 	// 判断参数是否符合预期
 	// 数据源名称是否重复
-	count, err = resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).DataNameEq(dataName).Count()
+	count, err = resulttable.NewDataSourceQuerySet(db).DataNameEq(dataName).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +77,12 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 	// 如果集群信息无提供，则使用默认的MQ集群信息
 	var mqClusterObj storage.ClusterInfo
 	if mqCluster == 0 {
-		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeKafka).
+		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeKafka).
 			IsDefaultClusterEq(true).One(&mqClusterObj); err != nil {
 			return nil, err
 		}
 	} else {
-		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(mqCluster).One(&mqClusterObj); err != nil {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(mqCluster).One(&mqClusterObj); err != nil {
 			return nil, err
 		}
 	}
@@ -113,7 +114,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		SpaceTypeId:       "all",
 		SpaceUid:          "",
 	}
-	if err := ds.Create(mysql.GetDBSession().DB); err != nil {
+	if err := ds.Create(db); err != nil {
 		return nil, err
 	}
 	logger.Infof("data_id [%v] data_name [%s] by operator [%s] now is pre-create.", ds.BkDataId, ds.DataName, ds.Creator)
@@ -123,7 +124,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	ds.MqConfigId = mqConfig.Id
-	err = ds.Update(mysql.GetDBSession().DB, resulttable.DataSourceDBSchema.MqConfigId)
+	err = ds.Update(db, resulttable.DataSourceDBSchema.MqConfigId)
 	if err != nil {
 		return nil, err
 	}

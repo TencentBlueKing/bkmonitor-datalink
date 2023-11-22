@@ -210,7 +210,7 @@ func (s ResultTableFieldSvc) BulkCreateDefaultFields(tableId string, timeOption 
 		return err
 	}
 	// 当前cmdb_level默认都不需要写入influxdb, 防止维度增长问题
-	if err := NewResultTableFieldOptionSvc(nil).CreateOption(tableId, "bk_cmdb_level", models.RTFOInfluxdbDisabled, true, "system"); err != nil {
+	if err := NewResultTableFieldOptionSvc(nil).CreateOption(tableId, "bk_cmdb_level", models.RTFOInfluxdbDisabled, true, "system", nil); err != nil {
 		return err
 	}
 	logger.Infof(fmt.Sprintf("all default field is created for table->[%s]", tableId))
@@ -222,8 +222,9 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 	if err != nil {
 		return err
 	}
+	db := mysql.GetDBSession().DB
 	var rtfList []resulttable.ResultTableField
-	if err := resulttable.NewResultTableFieldQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).FieldNameIn(fieldNameList...).All(&rtfList); err != nil {
+	if err := resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tableId).FieldNameIn(fieldNameList...).All(&rtfList); err != nil {
 		return err
 	}
 	if len(rtfList) != 0 {
@@ -233,6 +234,7 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 		}
 		return fmt.Errorf("field [%s] is exists under table [%s]", names, tableId)
 	}
+	tx := db.Begin()
 	for _, field := range fields {
 		description, _ := field["description"].(string)
 		unit, _ := field["unit"].(string)
@@ -256,16 +258,19 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 			AliasName:      aliasName,
 			IsDisabled:     false,
 		}
-		if err := rtf.Create(mysql.GetDBSession().DB); err != nil {
+		if err := rtf.Create(tx); err != nil {
+			tx.Rollback()
 			return err
 		}
 	}
 	logger.Infof("new field [%s] is create for table->[%s]", strings.Join(fieldNameList, ","), tableId)
 	for _, option := range optionData {
-		if err := NewResultTableFieldOptionSvc(nil).CreateOption(tableId, option["field_name"].(string), option["name"].(string), option["value"], option["creator"].(string)); err != nil {
+		if err := NewResultTableFieldOptionSvc(nil).CreateOption(tableId, option["field_name"].(string), option["name"].(string), option["value"], option["creator"].(string), tx); err != nil {
+			tx.Rollback()
 			return err
 		}
 	}
+	tx.Commit()
 	return nil
 }
 

@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -52,7 +54,10 @@ func (ResultTableFieldOptionSvc) BathFieldOption(tableIdList []string) (map[stri
 	return optionData, nil
 }
 
-func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, name string, value interface{}, creator string) error {
+func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, name string, value interface{}, creator string, db *gorm.DB) error {
+	if db == nil {
+		db = mysql.GetDBSession().DB
+	}
 	count, err := resulttable.NewResultTableFieldOptionQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).FieldNameEq(fieldName).NameEq(name).Count()
 	if err != nil {
 		return err

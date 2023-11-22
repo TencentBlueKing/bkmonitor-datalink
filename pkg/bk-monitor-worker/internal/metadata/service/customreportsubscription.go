@@ -179,7 +179,8 @@ func (CustomReportSubscriptionSvc) GetCustomEventConfig(bkBizId *int, pluginName
 		BkBizIdStr = strconv.Itoa(*bkBizId)
 	}
 	logger.Infof("get custom event config, bk_biz_id [%v]", BkBizIdStr)
-	eventGroupQS := customreport.NewEventGroupQuerySet(mysql.GetDBSession().DB).IsEnableEq(true).IsDeleteEq(false)
+	db := mysql.GetDBSession().DB
+	eventGroupQS := customreport.NewEventGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
 	if bkBizId != nil {
 		eventGroupQS = eventGroupQS.BkBizIDEq(*bkBizId)
 	}
@@ -197,7 +198,7 @@ func (CustomReportSubscriptionSvc) GetCustomEventConfig(bkBizId *int, pluginName
 
 	// 从数据库查询到bk_biz_id到自定义上报配置的数据
 	var dsList []resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
 		return nil, err
 	}
 	var dsMap = make(map[uint]resulttable.DataSource)
@@ -260,7 +261,8 @@ func (CustomReportSubscriptionSvc) GetCustomTSConfig(bkBizId *int, pluginName st
 		BkBizIdStr = strconv.Itoa(*bkBizId)
 	}
 	logger.Infof("get custom ts config, bk_biz_id [%v]", BkBizIdStr)
-	tsGroupQS := customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).IsEnableEq(true).IsDeleteEq(false)
+	db := mysql.GetDBSession().DB
+	tsGroupQS := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
 	if bkBizId != nil {
 		tsGroupQS = tsGroupQS.BkBizIDEq(*bkBizId)
 	}
@@ -278,7 +280,7 @@ func (CustomReportSubscriptionSvc) GetCustomTSConfig(bkBizId *int, pluginName st
 
 	// 从数据库查询到bk_biz_id到自定义上报配置的数据
 	var dsList []resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
 		return nil, err
 	}
 	var dsMap = make(map[uint]resulttable.DataSource)
@@ -414,6 +416,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 }
 
 func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]interface{}, bkBizId int, pluginName string, bkDataId uint) error {
+	db := mysql.GetDBSession().DB
 	nodemanApi, err := api.GetNodemanApi()
 	if err != nil {
 		return err
@@ -421,7 +424,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	// 若订阅存在则判定是否更新，若不存在则创建
 	// 使用proxy下发bk_data_id为默认值0，一个业务下的多个data_id对应一个订阅
 	var subscrip customreport.CustomReportSubscription
-	if err := customreport.NewCustomReportSubscriptionQuerySet(mysql.GetDBSession().DB).BkBizIdEq(bkBizId).BkDataIDEq(bkDataId).One(&subscrip); err != nil {
+	if err := customreport.NewCustomReportSubscriptionQuerySet(db).BkBizIdEq(bkBizId).BkDataIDEq(bkDataId).One(&subscrip); err != nil {
 		if !gorm.IsRecordNotFoundError(err) {
 			return err
 		}
@@ -476,7 +479,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 			logger.Infof("update subscription successful, result [%s]", resp.Message)
 
 			subscrip.Config = string(newConfigBytes)
-			if err := subscrip.Update(mysql.GetDBSession().DB, customreport.CustomReportSubscriptionDBSchema.Config); err != nil {
+			if err := subscrip.Update(db, customreport.CustomReportSubscriptionDBSchema.Config); err != nil {
 				return err
 			}
 		}
@@ -508,7 +511,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		BkDataID:       bkDataId,
 		Config:         newConfig,
 	}
-	if err := newSub.Create(mysql.GetDBSession().DB); err != nil {
+	if err := newSub.Create(db); err != nil {
 		return err
 	}
 	var installResp define.APICommonResp

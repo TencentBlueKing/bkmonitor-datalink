@@ -6,7 +6,7 @@ require (
 	github.com/IBM/sarama v1.42.1
 	github.com/RedisBloom/redisbloom-go v1.0.0
 	github.com/TencentBlueKing/bk-apigateway-sdks v0.1.16
-	github.com/agiledragon/gomonkey/v2 v2.10.1
+	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/ahmetb/go-linq/v3 v3.2.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
 	github.com/avast/retry-go v3.0.0+incompatible

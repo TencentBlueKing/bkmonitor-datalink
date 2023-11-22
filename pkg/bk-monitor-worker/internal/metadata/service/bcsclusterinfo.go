@@ -348,8 +348,8 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	if err != nil {
 		return nil, err
 	}
-
-	count, err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(clusterId).Count()
+	db := mysql.GetDBSession().DB
+	count, err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(clusterId).Count()
 	if err != nil {
 		return nil, err
 	}
@@ -387,8 +387,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		Creator:           creator,
 		LastModifyUser:    creator,
 	}
-
-	if err := cluster.Create(mysql.GetDBSession().DB); err != nil {
+	if err := cluster.Create(db); err != nil {
 		return nil, err
 	}
 	logger.Infof("cluster [%s] create database record success", cluster.ClusterID)
@@ -458,7 +457,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 			cluster.K8sEventDataID = bkDataId
 		}
 	}
-	if err := cluster.Update(mysql.GetDBSession().DB, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
+	if err := cluster.Update(db, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
 		bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
 		return nil, err
 	}

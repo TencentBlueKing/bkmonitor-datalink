@@ -126,33 +126,41 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 	if findString := regexp.MustCompile(`^\d+$`).FindString(nowStr); findString == "" {
 		return fmt.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
 	}
-	// 	断言配置参数设置默认值
+	// 	获取配置参数或使用默认值
+	// 切分时间间隔
 	sliceSize, ok := storageConfig.GetUint("slice_size")
 	if !ok {
 		sliceSize = 500
 	}
+	// 切分时间间隔
 	sliceGap, ok := storageConfig.GetInt("slice_gap")
 	if !ok {
 		sliceGap = 120
 	}
+	// 保留时间
 	retention, ok := storageConfig.GetInt("retention")
 	if !ok {
 		retention = 30
 	}
+	// 暖数据执行分配的等待天数
 	warmPhaseDays, _ := storageConfig.GetInt("warm_phase_days")
+	// 时区设置，默认零时区
 	timeZone, _ := storageConfig.GetInt8("time_zone")
 	enableCreateIndex, ok := storageConfig.GetBool("enable_create_index")
 	if !ok {
 		enableCreateIndex = true
 	}
+	// index创建配置
 	indexSettingsMap, ok := storageConfig.GetStringMap("index_settings")
 	if !ok {
 		indexSettingsMap = make(map[string]interface{})
 	}
+	// index创建时的mapping配置
 	mappingSettingsMap, _ := storageConfig.GetStringMap("mapping_settings")
 	if !ok {
 		mappingSettingsMap = make(map[string]interface{})
 	}
+	// 暖数据切换配置，当 warm_phase_days > 0 时，此项必填
 	warmPhaseSettings, _ := storageConfig.GetStringMap("warm_phase_settings")
 	if !ok {
 		warmPhaseSettings = make(map[string]interface{})

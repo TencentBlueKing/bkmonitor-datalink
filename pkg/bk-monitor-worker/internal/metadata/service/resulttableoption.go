@@ -77,8 +77,9 @@ func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string
 		return nil
 	}
 	// 判断是否存在
+	db := mysql.GetDBSession().DB
 	var existOptions []resulttable.ResultTableOption
-	if err := resulttable.NewResultTableOptionQuerySet(mysql.GetDBSession().DB).
+	if err := resulttable.NewResultTableOptionQuerySet(db).
 		TableIDEq(tableId).NameIn(optionNameList...).All(&existOptions); err != nil {
 		return err
 	}
@@ -89,12 +90,14 @@ func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string
 		}
 		return fmt.Errorf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ","))
 	}
-
+	tx := db.Begin()
 	for _, option := range rtoList {
-		if err := option.Create(mysql.GetDBSession().DB); err != nil {
+		if err := option.Create(tx); err != nil {
+			tx.Rollback()
 			return err
 		}
 	}
+	tx.Commit()
 	logger.Infof("table_id [%s] now has options [%#v]", tableId, options)
 	return nil
 }

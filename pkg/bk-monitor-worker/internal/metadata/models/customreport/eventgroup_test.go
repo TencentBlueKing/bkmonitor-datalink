@@ -74,3 +74,10 @@ func TestEventGroup_GetESData(t *testing.T) {
 	sort.Strings(targetB)
 	assert.Equal(t, targetB, eventNameB)
 }
+
+func TestEventGroup_UpdateEventDimensionsFromES(t *testing.T) {
+	gomonkey.ApplyMethod(EventGroup{}, "GetESData", func() (map[string][]string, error) { return map[string][]string{}, nil })
+	eg := EventGroup{}
+	err := eg.UpdateEventDimensionsFromES(context.Background())
+	assert.NoError(t, err)
+}

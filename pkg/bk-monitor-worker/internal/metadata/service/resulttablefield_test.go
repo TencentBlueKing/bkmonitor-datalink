@@ -43,10 +43,11 @@ func TestResultTableFieldSvc_BatchGetFields(t *testing.T) {
 		LastModifyTime: time.Now(),
 		IsDisabled:     false,
 	}
-	mysql.GetDBSession().DB.Delete(&f1, "table_id = ?", tableID)
-	err := f1.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	db.Delete(&f1, "table_id = ?", tableID)
+	err := f1.Create(db)
 	assert.NoError(t, err)
-	err = f2.Create(mysql.GetDBSession().DB)
+	err = f2.Create(db)
 	assert.NoError(t, err)
 	fields, err := NewResultTableFieldSvc(nil).BatchGetFields([]string{tableID}, false)
 	assert.NoError(t, err)

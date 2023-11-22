@@ -41,10 +41,11 @@ func NewResultTableSvc(obj *resulttable.ResultTable) ResultTableSvc {
 
 // RealStorageList 获取结果表的所有实际存储对象
 func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
+	db := mysql.GetDBSession().DB
 	var storageList []Storage
 	// es storage
 	var esStorage storage.ESStorage
-	if err := storage.NewESStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&esStorage); err != nil {
+	if err := storage.NewESStorageQuerySet(db).TableIDEq(r.TableId).One(&esStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -53,7 +54,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// influxdb storage
 	var influxdbStorage storage.InfluxdbStorage
-	if err := storage.NewInfluxdbStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&influxdbStorage); err != nil {
+	if err := storage.NewInfluxdbStorageQuerySet(db).TableIDEq(r.TableId).One(&influxdbStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -62,7 +63,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// kafka storage
 	var kafkaStorage storage.KafkaStorage
-	if err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&kafkaStorage); err != nil {
+	if err := storage.NewKafkaStorageQuerySet(db).TableIDEq(r.TableId).One(&kafkaStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -71,7 +72,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// redis storage
 	var redisStorage storage.RedisStorage
-	if err := storage.NewRedisStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&redisStorage); err != nil {
+	if err := storage.NewRedisStorageQuerySet(db).TableIDEq(r.TableId).One(&redisStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -80,7 +81,7 @@ func (r ResultTableSvc) RealStorageList() ([]Storage, error) {
 	}
 	// argus storage
 	var argusStorage storage.ArgusStorage
-	if err := storage.NewArgusStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(r.TableId).One(&argusStorage); err != nil {
+	if err := storage.NewArgusStorageQuerySet(db).TableIDEq(r.TableId).One(&argusStorage); err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -129,11 +130,12 @@ func (r ResultTableSvc) preCheckResultTable(tableId string) error {
 
 // 根据业务id处理DS
 func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataSource) error {
+	db := mysql.GetDBSession().DB
 	var spaceTypeId, spaceId string
 	// 业务为0时更新数据源为平台级
 	if bkBizId == 0 {
 		ds.IsPlatformDataId = true
-		if err := ds.Update(mysql.GetDBSession().DB, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
+		if err := ds.Update(db, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
 			return err
 		}
 	} else {
@@ -143,13 +145,13 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 			spaceId = strconv.Itoa(bkBizId)
 		} else {
 			var sp space.Space
-			if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).IdEq(-bkBizId).One(&sp); err != nil {
+			if err := space.NewSpaceQuerySet(db).IdEq(-bkBizId).One(&sp); err != nil {
 				return err
 			}
 			spaceTypeId = sp.SpaceTypeId
 			spaceId = sp.SpaceId
 		}
-		count, err := space.NewSpaceDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(ds.BkDataId).FromAuthorizationEq(false).Count()
+		count, err := space.NewSpaceDataSourceQuerySet(db).BkDataIdEq(ds.BkDataId).FromAuthorizationEq(false).Count()
 		if err != nil {
 			return err
 		}
@@ -161,7 +163,7 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 				BkDataId:          ds.BkDataId,
 				FromAuthorization: false,
 			}
-			if err := sds.Create(mysql.GetDBSession().DB); err != nil {
+			if err := sds.Create(db); err != nil {
 				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", ds.BkDataId, err)
 			}
 		}
@@ -221,7 +223,8 @@ func (r ResultTableSvc) CreateResultTable(
 		IsEnable:       true,
 		DataLabel:      "",
 	}
-	if err := rt.Create(mysql.GetDBSession().DB); err != nil {
+	db := mysql.GetDBSession().DB
+	if err := rt.Create(db); err != nil {
 		return err
 	}
 
@@ -261,7 +264,7 @@ func (r ResultTableSvc) CreateResultTable(
 		Creator:    operator,
 		CreateTime: time.Now(),
 	}
-	if err := dsrt.Create(mysql.GetDBSession().DB); err != nil {
+	if err := dsrt.Create(db); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] now has relate to bk_data [%v]", tableId, bkDataId)
@@ -327,12 +330,13 @@ func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, stor
 
 // RefreshEtlConfig 更新ETL配置，确保其符合当前数据库配置
 func (r ResultTableSvc) RefreshEtlConfig() error {
+	db := mysql.GetDBSession().DB
 	var dsrt resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(r.TableId).One(&dsrt); err != nil {
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).TableIdEq(r.TableId).One(&dsrt); err != nil {
 		return err
 	}
 	var ds resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(dsrt.BkDataId).One(&ds); err != nil {
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(dsrt.BkDataId).One(&ds); err != nil {
 		return err
 	}
 	if err := NewDataSourceSvc(&ds).RefreshConsulConfig(context.TODO()); err != nil {

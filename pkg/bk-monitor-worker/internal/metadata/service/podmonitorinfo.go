@@ -49,9 +49,9 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 		name := res.GetName()
 		resourceNameList = append(resourceNameList, fmt.Sprintf("%s_%s", namespace, name))
 	}
-
+	db := mysql.GetDBSession().DB
 	var existMonitorInfo []bcs.PodMonitorInfo
-	if err := bcs.NewPodMonitorInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(clusterSvc.ClusterID).All(&existMonitorInfo); err != nil {
+	if err := bcs.NewPodMonitorInfoQuerySet(db).ClusterIDEq(clusterSvc.ClusterID).All(&existMonitorInfo); err != nil {
 		return err
 	}
 	// db中存在的namespace_name
@@ -92,7 +92,7 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 				ResourceCreateTime: time.Now(),
 			},
 		}
-		if err := podMonitor.Create(mysql.GetDBSession().DB); err != nil {
+		if err := podMonitor.Create(db); err != nil {
 			return err
 		}
 		// 新增的记录起来
@@ -118,7 +118,7 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 	}
 	// 删除已经不存在的resource映射
 	if len(needDeleteIdList) != 0 {
-		if err := mysql.GetDBSession().DB.Delete(&bcs.PodMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
+		if err := db.Delete(&bcs.PodMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
 			return err
 		}
 		logger.Infof("cluster [%s] delete monitor info [%s] records [%s] success", clusterSvc.ClusterID, models.BcsPodMonitorResourcePlural, strings.Join(needDeleteNameList, ","))

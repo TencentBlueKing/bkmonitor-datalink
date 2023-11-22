@@ -195,8 +195,9 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 
 // PreCheck 参数检查
 func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName string, bkBizId int) error {
+	db := mysql.GetDBSession().DB
 	// 确认label是否存在
-	count, err := resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
+	count, err := resulttable.NewLabelQuerySet(db).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
 	if err != nil {
 		return err
 	}
@@ -204,7 +205,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	// 判断同一个data_id是否已经被其他事件绑定了
-	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkDataIDEq(bkDataId).Count()
+	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkDataIDEq(bkDataId).Count()
 	if err != nil {
 		return err
 	}
@@ -212,7 +213,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return fmt.Errorf("bk_data_id [%v] is already used by other custom group, use it first", bkDataId)
 	}
 	// 判断同一个业务下是否有重名的custom_group_name
-	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
+	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
 	if err != nil {
 		return err
 	}

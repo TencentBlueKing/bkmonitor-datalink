@@ -71,7 +71,8 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		},
 		TimeSeriesGroupName: customGroupName,
 	}
-	if err := tsGroup.Create(mysql.GetDBSession().DB); err != nil {
+	db := mysql.GetDBSession().DB
+	if err := tsGroup.Create(db); err != nil {
 		return nil, err
 	}
 	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup)
@@ -85,7 +86,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		option[k] = v
 	}
 	// 清除历史 DataSourceResultTable 数据
-	if err := mysql.GetDBSession().DB.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
+	if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
 		return nil, err
 	}
 	rtSvc := NewResultTableSvc(nil)
@@ -131,8 +132,9 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 
 // PreCheck 参数检查
 func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName string, bkBizId int) error {
+	db := mysql.GetDBSession().DB
 	// 确认label是否存在
-	count, err := resulttable.NewLabelQuerySet(mysql.GetDBSession().DB).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
+	count, err := resulttable.NewLabelQuerySet(db).LabelTypeEq(models.LabelTypeResultTable).LabelIdEq(label).Count()
 	if err != nil {
 		return err
 	}
@@ -140,7 +142,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return fmt.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	// 判断同一个data_id是否已经被其他事件绑定了
-	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkDataIDEq(bkDataId).Count()
+	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkDataIDEq(bkDataId).Count()
 	if err != nil {
 		return err
 	}
@@ -148,7 +150,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return fmt.Errorf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId)
 	}
 	// 判断同一个业务下是否有重名的custom_group_name
-	count, err = customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
+	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
 	if err != nil {
 		return err
 	}

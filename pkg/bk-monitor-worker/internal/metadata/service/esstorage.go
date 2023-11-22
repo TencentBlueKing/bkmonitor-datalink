@@ -91,16 +91,17 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 
 // CreateTable 创建存储
 func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+	db := mysql.GetDBSession().DB
 	// 判断是否需要使用默认集群信息
 	var clusterId uint
 	if id, ok := storageConfig.GetUint("cluster_id"); !ok {
 		var clusterInfo storage.ClusterInfo
-		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeES).IsDefaultClusterEq(true).One(&clusterInfo); err != nil {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeES).IsDefaultClusterEq(true).One(&clusterInfo); err != nil {
 			return err
 		}
 		clusterId = clusterInfo.ClusterID
 	} else {
-		count, err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(id).Count()
+		count, err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(id).Count()
 		if err != nil {
 			return err
 		}
@@ -109,7 +110,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 		}
 	}
 	// 校验table_id， key是否存在冲突
-	count, err := storage.NewESStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).Count()
+	count, err := storage.NewESStorageQuerySet(db).TableIDEq(tableId).Count()
 	if err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 		MappingSettings:   mappingSettingsMapStr,
 		StorageClusterID:  clusterId,
 	}
-	if err := ess.Create(mysql.GetDBSession().DB); err != nil {
+	if err := ess.Create(db); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] now has es_storage will try to create index", tableId)

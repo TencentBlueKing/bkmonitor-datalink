@@ -36,8 +36,9 @@ func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
 		Creator:          "system",
 		GseStreamToId:    -1,
 	}
-	mysql.GetDBSession().DB.Delete(&clusterInfo, "cluster_id = ?", 99)
-	err := clusterInfo.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	db.Delete(&clusterInfo, "cluster_id = ?", 99)
+	err := clusterInfo.Create(db)
 	assert.NoError(t, err)
 	ks := &storage.KafkaStorage{
 		TableID:          "kafka_table_id",

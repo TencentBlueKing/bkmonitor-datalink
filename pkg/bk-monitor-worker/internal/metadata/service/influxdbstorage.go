@@ -74,7 +74,8 @@ func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageCo
 	proxyClusterName = &influxdbStorage.InstanceClusterName
 	storageClusterId = &influxdbStorage.ProxyClusterId
 	// 校验后端是否存在
-	count, err := storage.NewInfluxdbClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterNameEq(*proxyClusterName).Count()
+	db := mysql.GetDBSession().DB
+	count, err := storage.NewInfluxdbClusterInfoQuerySet(db).ClusterNameEq(*proxyClusterName).Count()
 	if err != nil {
 		return err
 	}
@@ -120,7 +121,7 @@ func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageCo
 		PartitionTag:           PartitionTag,
 		VmTableId:              VmTableId,
 	}
-	if err := influxdb.Create(mysql.GetDBSession().DB); err != nil {
+	if err := influxdb.Create(db); err != nil {
 		return err
 	}
 	logger.Infof("result_table [%s] now has create influxDB storage", influxdb.TableID)

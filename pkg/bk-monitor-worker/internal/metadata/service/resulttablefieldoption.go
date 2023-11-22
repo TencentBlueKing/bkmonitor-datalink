@@ -58,7 +58,7 @@ func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, 
 	if db == nil {
 		db = mysql.GetDBSession().DB
 	}
-	count, err := resulttable.NewResultTableFieldOptionQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).FieldNameEq(fieldName).NameEq(name).Count()
+	count, err := resulttable.NewResultTableFieldOptionQuerySet(db).TableIDEq(tableId).FieldNameEq(fieldName).NameEq(name).Count()
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, 
 		FieldName: fieldName,
 		Name:      name,
 	}
-	if err := rtfo.Create(mysql.GetDBSession().DB); err != nil {
+	if err := rtfo.Create(db); err != nil {
 		return err
 	}
 	return nil

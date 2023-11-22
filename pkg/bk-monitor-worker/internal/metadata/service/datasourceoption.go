@@ -48,7 +48,8 @@ func (DataSourceOptionSvc) GetOptions(bkDataId uint) (map[string]interface{}, er
 }
 
 func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interface{}, creator string) error {
-	count, err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).NameEq(name).Count()
+	db := mysql.GetDBSession().DB
+	count, err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(bkDataId).NameEq(name).Count()
 	if err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interf
 		BkDataId: bkDataId,
 		Name:     name,
 	}
-	if err := dso.Create(mysql.GetDBSession().DB); err != nil {
+	if err := dso.Create(db); err != nil {
 		return err
 	}
 	return nil

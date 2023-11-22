@@ -42,11 +42,15 @@ func LimitRate(n int) {
 	globalFlowLimiter.Consume(n)
 }
 
+// FlowLimiter 流量限流器
 type FlowLimiter struct {
+	n       int
 	name    string
 	limiter *rate.Limiter
 }
 
+// bytesRatio 等比缩小 b，即 1KB 表示 1 个 token
+// 最少保证有 1 个 token
 func bytesRatio(b int) int {
 	n := b / 1024
 	if n <= 0 {
@@ -57,10 +61,11 @@ func bytesRatio(b int) int {
 
 // NewFlowLimiter 流控实现
 func NewFlowLimiter(name string, bytesRate int) *FlowLimiter {
-	r := bytesRatio(bytesRate)
+	n := bytesRatio(bytesRate)
 	fr := &FlowLimiter{
+		n:       n,
 		name:    name,
-		limiter: rate.NewLimiter(rate.Limit(r), r),
+		limiter: rate.NewLimiter(rate.Limit(n), n),
 	}
 	return fr
 }
@@ -69,6 +74,12 @@ func NewFlowLimiter(name string, bytesRate int) *FlowLimiter {
 func (fr *FlowLimiter) Consume(n int) {
 	now := time.Now()
 	tokens := bytesRatio(n)
+
+	// 确保不能超过 limiter/burst 否则会触发无限等待
+	if tokens > fr.n {
+		tokens = fr.n
+	}
+
 	time.Sleep(fr.limiter.ReserveN(now, tokens).DelayFrom(now))
 
 	MonitorFlowBytes.WithLabelValues(fr.name).Add(float64(n))

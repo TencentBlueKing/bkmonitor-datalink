@@ -10,13 +10,12 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/shirou/gopsutil/v3/net"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -31,42 +30,53 @@ type Params struct {
 }
 
 var (
-	once        sync.Once
-	instancedIP string
+	once     sync.Once
+	localIPs []string
 )
 
-// get instance ip
-func getInstanceip() (string, error) {
-	interfaceStatList, err := net.Interfaces()
-	if err != nil {
-		log.Errorf(context.TODO(), "failed to get instance ip,error:%v", err)
-		return "", err
-	}
-	addrList := interfaceStatList[len(interfaceStatList)-1]
-	if len(addrList.Addrs) > 0 {
-		return addrList.Addrs[len(addrList.Addrs)-1].Addr, nil
-	}
-	return "", nil
-}
-
 // get instance ip single pass
-func singleGetInstance() string {
+func getIPs() []string {
 	once.Do(func() {
-		instancedIP, _ = getInstanceip()
+		interfaces, _ := net.Interfaces()
+		for _, i := range interfaces {
+			adders, err := i.Addrs()
+			if err != nil {
+				continue
+			}
+
+			for _, addr := range adders {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+
+				if ip == nil || ip.IsLoopback() {
+					continue
+				}
+				ip = ip.To4()
+				if ip == nil {
+					continue
+				}
+				localIPs = append(localIPs, ip.String())
+			}
+		}
 	})
-	return instancedIP
+	return localIPs
 }
 
 // Timer 进行请求处理时间记录
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			ctx        = c.Request.Context()
-			span       oleltrace.Span
-			start      = time.Now()
-			instanceIP = singleGetInstance()
-			source     = c.Request.Header.Get(metadata.BkQuerySourceHeader)
-			spaceUid   = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			ctx      = c.Request.Context()
+			span     oleltrace.Span
+			start    = time.Now()
+			ips      = getIPs()
+			source   = c.Request.Header.Get(metadata.BkQuerySourceHeader)
+			spaceUid = c.Request.Header.Get(metadata.SpaceUIDHeader)
 		)
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
 
@@ -77,7 +87,8 @@ func Timer(p *Params) gin.HandlerFunc {
 
 		if span != nil {
 			defer func() {
-				trace.InsertStringIntoSpan("instance-ip", instanceIP, span)
+
+				trace.InsertStringSliceIntoSpan("local-ips", ips, span)
 
 				sub := time.Since(start)
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)

@@ -9,7 +9,9 @@
 
 package objectsref
 
-import "time"
+import (
+	"time"
+)
 
 // RelabelConfig relabel 配置 遵循 prometheus 规则
 type RelabelConfig struct {

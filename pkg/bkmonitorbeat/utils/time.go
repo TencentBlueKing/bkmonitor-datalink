@@ -9,7 +9,9 @@
 
 package utils
 
-import "time"
+import (
+	"time"
+)
 
 func GetDurationSecondsSince(t time.Time) float64 {
 	return float64(time.Since(t)) / float64(time.Second)

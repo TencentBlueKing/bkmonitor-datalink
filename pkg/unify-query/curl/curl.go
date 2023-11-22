@@ -60,7 +60,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
-	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
+	c.Log.Ctx(ctx).Debug(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {

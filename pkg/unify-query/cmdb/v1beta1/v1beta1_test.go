@@ -186,7 +186,12 @@ func mockData(ctx context.Context) *curl.TestCurl {
 
 	metadata.GetQueryRouter().MockSpaceUid(consul.VictoriaMetricsStorageType)
 
-	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
+	vmStorageID := "1"
+	vmStorageIDInt := int64(1)
+	influxdbStorageID := "2"
+	influxdbStorageIDInt := int64(2)
+
+	tsdb.SetStorage(vmStorageID, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
 			Ctx:                  ctx,
@@ -197,7 +202,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 			AuthenticationMethod: "token",
 		},
 	})
-	tsdb.SetStorage(consul.InfluxDBStorageType, &tsdb.Storage{
+	tsdb.SetStorage(influxdbStorageID, &tsdb.Storage{
 		Type: consul.InfluxDBStorageType,
 		Instance: tsdbInfluxdb.NewInstance(
 			context.TODO(),
@@ -213,33 +218,47 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		),
 	})
 	mock.SetRedisClient(ctx, "test_model")
-	mock.SetSpaceAndProxyMockData(ctx, "v1beat1_test", "v1beat1_test", consul.InfluxDBStorageType, &redis.TsDB{
-		TableID:         "db.measurement",
-		Field:           []string{"node_with_system_relation", "node_with_pod_relation"},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters:         []redis.Filter{},
-		SegmentedEnable: false,
-		DataLabel:       "datalabel",
-	}, &ir.Proxy{
-		StorageID:   consul.InfluxDBStorageType,
-		Db:          "2_bkmonitor_time_series_1572864",
-		Measurement: "__default__",
-	})
-
-	mock.SetSpaceAndProxyMockData(ctx, "v1beat1_test", "v1beat1_test", consul.VictoriaMetricsStorageType, &redis.TsDB{
-		TableID:         "db_vm.measurement",
-		Field:           []string{"node_with_system_relation", "node_with_pod_relation"},
-		MeasurementType: redis.BkSplitMeasurement,
-		Filters:         []redis.Filter{},
-		SegmentedEnable: false,
-		DataLabel:       "datalabel",
-	}, &ir.Proxy{
-		StorageID:   consul.VictoriaMetricsStorageType,
-		Db:          "db_vm",
-		Measurement: "__default__",
-		VmRt:        "2_bkmonitor_time_series_1572864_vm_rt",
-	})
-
+	mock.SetSpaceTsDbMockData(
+		ctx, "v1beat1_test", "v1beat1_test",
+		ir.SpaceInfo{
+			consul.InfluxDBStorageType: ir.Space{
+				"db.measurement": &ir.SpaceResultTable{
+					TableId: "db.measurement",
+					Filters: []map[string]string{},
+				},
+			},
+			consul.VictoriaMetricsStorageType: ir.Space{
+				"db_vm.measurement": &ir.SpaceResultTable{
+					TableId: "db_vm.measurement",
+					Filters: []map[string]string{},
+				},
+			},
+		},
+		ir.ResultTableDetailInfo{
+			"db.measurement": &ir.ResultTableDetail{
+				Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
+				MeasurementType: redis.BkSplitMeasurement,
+				DataLabel:       "datalabel",
+				StorageId:       influxdbStorageIDInt,
+				DB:              "2_bkmonitor_time_series_1572864",
+				Measurement:     "__default__",
+			},
+			"db_vm.measurement": &ir.ResultTableDetail{
+				Fields:          []string{"node_with_system_relation", "node_with_pod_relation"},
+				MeasurementType: redis.BkSplitMeasurement,
+				DataLabel:       "datalabel",
+				StorageId:       vmStorageIDInt,
+				DB:              "db_vm",
+				Measurement:     "__default__",
+				VmRt:            "2_bkmonitor_time_series_1572864_vm_rt",
+			},
+		},
+		ir.FieldToResultTable{
+			"node_with_system_relation": ir.ResultTableList{"db.measurement", "db_vm.measurement"},
+			"node_with_pod_relation":    ir.ResultTableList{"db.measurement", "db_vm.measurement"},
+		},
+		nil,
+	)
 	return mockCurl
 }
 

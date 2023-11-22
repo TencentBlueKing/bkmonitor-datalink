@@ -153,7 +153,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 	trace.InsertIntIntoSpan("sql-nums", len(sqlInfos), span)
 	trace.InsertIntIntoSpan("query-max-goroutine", perQueryMaxGoroutine, span)
 
-	log.Infof(ctx, "query sql async length:%d", length)
+	log.Debugf(ctx, "query sql async length:%d", length)
 
 	go func() {
 		defer func() { recvDone <- struct{}{} }()
@@ -203,7 +203,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 				if tables != nil && tables.Length() > 0 {
 
 					trace.InsertIntIntoSpan(fmt.Sprintf("table_num_%d", i), len(tables.Tables), span)
-					log.Infof(ctx,
+					log.Debugf(ctx,
 						"influxdb query info async:db:[%s], sql:[%s], table:[%d]", db, sql, len(tables.Tables),
 					)
 
@@ -231,7 +231,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 	trace.InsertIntIntoSpan("total_table_num", totalTables.Length(), span)
 
-	log.Infof(ctx, "influxdb query info async:%v, query total cost:%s", sqlInfos, time.Since(start))
+	log.Debugf(ctx, "influxdb query info async:%v, query total cost:%s", sqlInfos, time.Since(start))
 
 	// return mergeTablesInfo(totalTables), nil
 	// totalTables 后续的处理中有做Fill调整格式，同时做了去重。这里暂时先不做去重
@@ -264,7 +264,7 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 	trace.InsertIntIntoSpan("sql-nums", len(sqlInfos), span)
 	trace.InsertIntIntoSpan("query-max-goroutine", perQueryMaxGoroutine, span)
 
-	log.Infof(ctx, "query sql async length:%d", length)
+	log.Debugf(ctx, "query sql async length:%d", length)
 
 	go func() {
 		defer func() { recvDone <- struct{}{} }()

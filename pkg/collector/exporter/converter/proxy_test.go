@@ -30,7 +30,12 @@ func TestConvertProxyData(t *testing.T) {
 		RecordType: define.RecordProxy,
 		Data:       pd,
 	}, func(evts ...define.Event) {
-		events = append(events, evts...)
+		for i := 0; i < len(evts); i++ {
+			evt := evts[i]
+			assert.Equal(t, define.RecordProxy, evt.RecordType())
+			assert.Equal(t, int32(1001), evt.DataId())
+			events = append(events, evt)
+		}
 	})
 
 	assert.Len(t, events, 1)

@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsDBInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
@@ -120,8 +119,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		defer span.End()
 	}
 
-	user := metadata.GetUser(ctx)
-
 	go func() {
 		defer func() {
 			recvDone <- struct{}{}
@@ -158,10 +155,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType, span)
 				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB, span)
 				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt, span)
-
-				metric.TsDBAndTableIDRequestCountInc(
-					ctx, user.SpaceUid, query.qry.TableID, query.instance.GetInstanceType(), "query_ts",
-				)
 
 				setCh <- query.instance.QueryRaw(ctx, query.qry, hints, matchers...)
 				return
@@ -230,7 +223,6 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 		defer span.End()
 	}
 
-	user := metadata.GetUser(ctx)
 	referenceName := ""
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
@@ -256,14 +248,6 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 			return nil, nil, err
 		}
 
-		for _, ref := range queryReference {
-			for _, qry := range ref.QueryList {
-				metric.TsDBAndTableIDRequestCountInc(
-					ctx, user.SpaceUid, qry.TableID, instance.GetInstanceType(), "label_values",
-				)
-			}
-		}
-
 		lbl, err := instance.LabelValues(ctx, nil, name, q.min, q.max, matchers...)
 		if err != nil {
 			return nil, nil, err
@@ -274,10 +258,6 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 	} else {
 		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
-
-			metric.TsDBAndTableIDRequestCountInc(
-				ctx, user.SpaceUid, query.qry.TableID, query.instance.GetInstanceType(), "label_values",
-			)
 			lbl, err := query.instance.LabelValues(ctx, query.qry, name, q.min, q.max, matchers...)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
@@ -312,7 +292,6 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 		defer span.End()
 	}
 
-	user := metadata.GetUser(ctx)
 	referenceName := ""
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
@@ -338,14 +317,6 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 			return nil, nil, err
 		}
 
-		for _, ref := range queryReference {
-			for _, qry := range ref.QueryList {
-				metric.TsDBAndTableIDRequestCountInc(
-					ctx, user.SpaceUid, qry.TableID, instance.GetInstanceType(), "label_names",
-				)
-			}
-		}
-
 		lbl, err := instance.LabelNames(ctx, nil, q.min, q.max, matchers...)
 		if err != nil {
 			return nil, nil, err
@@ -356,10 +327,6 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 	} else {
 		queryList := q.getQueryList(referenceName)
 		for _, query := range queryList {
-			metric.TsDBAndTableIDRequestCountInc(
-				ctx, user.SpaceUid, query.qry.TableID, query.instance.GetInstanceType(), "label_names",
-			)
-
 			lbl, err := query.instance.LabelNames(ctx, query.qry, q.min, q.max, matchers...)
 			if err != nil {
 				return nil, nil, err
@@ -405,6 +372,12 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		return storage.Instance
 	}
 
+	trace.InsertStringIntoSpan("stroage-type", storage.Type, span)
+	trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
+	trace.InsertStringIntoSpan("storage-address", storage.Address, span)
+	trace.InsertStringIntoSpan("storage-uri-path", storage.UriPath, span)
+	trace.InsertStringIntoSpan("storage-password", storage.Password, span)
+
 	curl := &curl.HttpCurl{Log: log.OtLogger}
 	switch storage.Type {
 	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
@@ -445,15 +418,8 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 		instance = tsDBInfluxdb.NewInstance(ctx, insOption)
 
-		trace.InsertStringIntoSpan("instance-type", instance.GetInstanceType(), span)
-		trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
 		trace.InsertStringIntoSpan("cluster-name", qry.ClusterName, span)
 		trace.InsertStringIntoSpan("tag-keys", fmt.Sprintf("%+v", qry.TagsKey), span)
-
-		trace.InsertStringIntoSpan("storage-address", storage.Address, span)
-		trace.InsertStringIntoSpan("storage-uripath", storage.UriPath, span)
-		trace.InsertStringIntoSpan("storage-password", storage.Password, span)
-
 		trace.InsertStringIntoSpan("ins-option", fmt.Sprintf("%+v", insOption), span)
 	default:
 		return nil

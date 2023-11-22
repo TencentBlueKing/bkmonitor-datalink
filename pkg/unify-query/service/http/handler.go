@@ -29,7 +29,6 @@ import (
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -153,8 +152,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 		res any
 
-		user = metadata.GetUser(ctx)
-
 		lookBackDelta time.Duration
 
 		promQL parser.Expr
@@ -226,14 +223,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
 			return nil, err
 		}
-
-		for _, ref := range queryReference {
-			for _, qry := range ref.QueryList {
-				metric.TsDBAndTableIDRequestCountInc(
-					ctx, user.SpaceUid, qry.TableID, instance.GetInstanceType(), "query_ts",
-				)
-			}
-		}
 	} else {
 		err = metadata.SetQueryReference(ctx, queryReference)
 
@@ -255,7 +244,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
 
 	if query.Instant {

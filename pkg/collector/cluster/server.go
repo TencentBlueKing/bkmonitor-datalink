@@ -11,7 +11,6 @@ package cluster
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
@@ -116,7 +115,7 @@ func Forward(ctx context.Context, req *pb.ForwardRequest) (*pb.ForwardReply, err
 
 		code, processorName, err := validatePreCheckProcessors(r)
 		if err != nil {
-			err = fmt.Errorf("failed to run pre-check processors, code=%d, ip=%v, error %s", code, ip, err)
+			err = errors.Wrapf(err, "failed to run pre-check processors, code=%d, ip=%s", code, ip)
 			logger.Warn(err)
 			DefaultMetricMonitor.IncFailedCheckFailedCounter(processorName, r.Token.Original, int(code))
 			return &pb.ForwardReply{Message: "FAILED"}, err

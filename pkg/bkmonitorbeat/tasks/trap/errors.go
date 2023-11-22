@@ -9,7 +9,9 @@
 
 package trap
 
-import "errors"
+import (
+	"errors"
+)
 
 // ErrWrongVersion :
 var (

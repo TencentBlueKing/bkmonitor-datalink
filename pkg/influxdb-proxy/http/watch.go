@@ -84,20 +84,20 @@ func (httpService *Service) refreshAllServiceWithoutLock(flowLog *logging.Entry)
 		}
 		// return err
 	}
+	// 加载主机异常会回滚为先前的数据
 	err = backend.Refresh()
 	if err != nil {
 		flowLog.Errorf("backendManage Refresh failed,error:%s", err)
-		return err
 	}
+	// 加载主机异常会回滚为先前的数据
+	// 如果 backend 数据成功，但是集群失败，只是影响查不到数据
 	err = cluster.Refresh()
 	if err != nil {
 		flowLog.Errorf("clusterManage Refresh failed,error:%s", err)
-		return err
 	}
 	err = route.Refresh()
 	if err != nil {
 		flowLog.Errorf("route Refresh failed,error:%s", err)
-		return err
 	}
 	// refreshAllService执行成功,表明三个模块的服务正确启动，此时状态位为true
 	err = httpService.switchAvailable(httpService.address, true)

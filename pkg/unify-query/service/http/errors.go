@@ -9,7 +9,9 @@
 
 package http
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrReqAnalysis = errors.New("analysis request body failed")

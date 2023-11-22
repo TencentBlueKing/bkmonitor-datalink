@@ -4,7 +4,9 @@
 
 package errors
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestErrorDebugString(t *testing.T) {
 	tests := []struct {

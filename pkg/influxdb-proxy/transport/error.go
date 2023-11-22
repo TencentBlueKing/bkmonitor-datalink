@@ -9,7 +9,9 @@
 
 package transport
 
-import "errors"
+import (
+	"errors"
+)
 
 var (
 	ErrQueryFailed            = errors.New("query failed")

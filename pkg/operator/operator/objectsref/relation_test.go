@@ -9,7 +9,9 @@
 
 package objectsref
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestMetricsToPrometheusFormat(t *testing.T) {
 	t.Run("", func(t *testing.T) {

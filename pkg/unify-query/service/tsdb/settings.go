@@ -9,7 +9,9 @@
 
 package tsdb
 
-import "time"
+import (
+	"time"
+)
 
 const (
 	InfluxDBPerQueryMaxGoroutineConfigPath = "influxdb.per_query_max_goroutine" // 单指标查询的最多并查询数

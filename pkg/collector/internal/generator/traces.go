@@ -69,8 +69,8 @@ func NewTracesGenerator(opts define.TracesOptions) *TracesGenerator {
 }
 
 func (g *TracesGenerator) Generate() ptrace.Traces {
-	td := ptrace.NewTraces()
-	rs := td.ResourceSpans().AppendEmpty()
+	pdTraces := ptrace.NewTraces()
+	rs := pdTraces.ResourceSpans().AppendEmpty()
 	rs.Resource().Attributes().UpsertString("service.name", "generator.service")
 	g.resources.CopyTo(rs.Resource().Attributes())
 	for k, v := range g.opts.Resources {
@@ -100,7 +100,7 @@ func (g *TracesGenerator) Generate() ptrace.Traces {
 			link.SetTraceID(random.TraceID())
 		}
 	}
-	return td
+	return pdTraces
 }
 
 func FromJsonToTraces(b []byte) (ptrace.Traces, error) {

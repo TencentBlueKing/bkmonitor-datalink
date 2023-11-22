@@ -9,7 +9,9 @@
 
 package main
 
-import "encoding/gob"
+import (
+	"encoding/gob"
+)
 
 func init() {
 	gob.Register([]interface{}{})

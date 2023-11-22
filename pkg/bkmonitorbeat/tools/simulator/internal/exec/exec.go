@@ -9,7 +9,9 @@
 
 package exec
 
-import "log"
+import (
+	"log"
+)
 
 const (
 	execScript = "script"

@@ -21,7 +21,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 )
 
 // 服务侧初始化flux实例使用
@@ -95,14 +94,14 @@ func (s *Service) Reload(ctx context.Context) {
 		log.Errorf(context.TODO(), "start loop reload downsampled info failed,err:%s", err)
 	}
 
-	err = s.reloadSpaceRouter(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload space router failed,err:%s", err)
-	}
-
 	err = s.reloadInfluxDBRouter(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload influxdb router failed,err:%s", err)
+	}
+
+	err = s.reloadSpaceTsDbRouter(s.ctx)
+	if err != nil {
+		log.Errorf(context.TODO(), "start loop reload space tsDB router failed, err: %s", err)
 	}
 
 	log.Warnf(context.TODO(), "influxdb service reloaded or start success.")
@@ -284,10 +283,10 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 				if err != nil {
 					log.Errorf(ctx, err.Error())
 				}
-				log.Infof(ctx, "time ticker reload")
+				log.Infof(ctx, "ir reload all key time ticker reload")
 			case msg := <-ch:
 				ir.ReloadByKey(ctx, msg.Payload)
-				log.Infof(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
+				log.Debugf(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
 			}
 		}
 	}()
@@ -295,13 +294,18 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) reloadSpaceRouter(ctx context.Context) error {
-	err := inner.Reload(ctx)
+// reloadInfluxDBRouter 重新加载 SpaceTsDbRouter
+func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
+	ir, err := inner.SetSpaceTsDbRouter(ctx, SpaceRouterBboltPath, SpaceRouterBboltBucketName, SpaceRouterPrefix, SpaceRouterBboltWriteBatchSize)
+	if err != nil {
+		return err
+	}
+	err = ir.ReloadAllKey(ctx, false)
 	if err != nil {
 		return err
 	}
 
-	ch := redis.SubscribeSpace(ctx)
+	ch := ir.RouterSubscribe(ctx)
 	s.wg.Add(1)
 	go func() {
 		ticker := time.NewTicker(RouterInterval)
@@ -310,19 +314,26 @@ func (s *Service) reloadSpaceRouter(ctx context.Context) error {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Warnf(ctx, "space router loop exit")
+				log.Warnf(ctx, "[SpaceTSDB Router] Loop exit")
 				return
-			// 订阅 redis
+				// 订阅 redis
 			case <-ticker.C:
-				inner.Reload(ctx)
-				log.Infof(ctx, "time ticker reload")
+				err = ir.ReloadAllKey(ctx, true)
+				if err != nil {
+					log.Errorf(ctx, "[SpaceTSDB Router] TimeTicker reload with error, %v", err)
+				} else {
+					log.Infof(ctx, "[SpaceTSDB Router] TimeTicker reload")
+				}
 			case msg := <-ch:
-				inner.ReloadSpace(ctx, msg.Payload)
-				log.Infof(ctx, "subscribe msg: %s, space: %s", msg.String(), msg.Payload)
+				err = ir.ReloadByChannel(ctx, msg.Channel, msg.Payload)
+				if err != nil {
+					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
+				} else {
+					log.Infof(ctx, "[SpaceTSDB Router] Subscribe msg: %s, key: %s", msg.String(), msg.Payload)
+				}
 			}
 		}
 	}()
-
 	return nil
 }
 

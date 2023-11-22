@@ -9,6 +9,8 @@
 
 package decoder
 
-import "errors"
+import (
+	"errors"
+)
 
 var ErrDecoderNotFound = errors.New("decoder not found")

@@ -88,7 +88,7 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span olel
 		)
 	}
 
-	prefix := "vm-data"
+	prefix := "response-"
 	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
 	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
 	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
@@ -311,8 +311,7 @@ func (i *Instance) vmQuery(
 	trace.InsertStringIntoSpan("query-username", user.Name, span)
 	trace.InsertStringIntoSpan("query-address", i.Address, span)
 	trace.InsertStringIntoSpan("query-uri-path", i.UriPath, span)
-	trace.InsertStringIntoSpan("query-sql", sql, span)
-	log.Infof(ctx,
+	log.Debugf(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
 		address, body, sql,
 	)
@@ -336,8 +335,6 @@ func (i *Instance) vmQuery(
 	}
 
 	queryCost := time.Since(startAnaylize)
-	trace.InsertStringIntoSpan("query-cost", queryCost.String(), span)
-
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, consul.VictoriaMetricsStorageType,
 	)
@@ -370,7 +367,6 @@ func (i *Instance) QueryRange(
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
@@ -378,8 +374,6 @@ func (i *Instance) QueryRange(
 	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
 		return promql.Matrix{}, nil
 	}
-
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -455,8 +449,6 @@ func (i *Instance) Query(
 		return promql.Vector{}, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
-
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
@@ -522,7 +514,6 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 	if vmExpand == nil {
 		return nil, nil
 	}
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -679,11 +670,10 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	if vmExpand == nil {
+	// 检查 vmExpand 以及 vmExpand.ResultTableGroup 不能为空
+	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 {
 		return nil, nil
 	}
-
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -728,6 +718,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
 		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
 		metricName = referenceName
+
 	} else {
 		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
 			metricName = m

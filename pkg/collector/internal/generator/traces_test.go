@@ -7,26 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package victoriaMetricsInstance
+package generator
 
-type Metric map[string]string
+import (
+	"testing"
 
-type Series struct {
-	Metric Metric          `json:"metric"`
-	Value  []interface{}   `json:"value,omitempty"`
-	Values [][]interface{} `json:"values,omitempty"`
-}
+	"github.com/stretchr/testify/assert"
 
-// Data 查询返回结构体
-type Data struct {
-	Status string `json:"status"`
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+)
 
-	ErrorType string `json:"errorType,omitempty"`
-	Error     string `json:"error,omitempty"`
+func TestTraces(t *testing.T) {
+	g := NewTracesGenerator(define.TracesOptions{
+		GeneratorOptions: define.GeneratorOptions{
+			RandomAttributeKeys: []string{"attr1", "attr2"},
+			RandomResourceKeys:  []string{"res1", "res2"},
+			Resources:           map[string]string{"foo": "bar"},
+			Attributes:          map[string]string{"hello": "mando"},
+		},
+		SpanCount:  10,
+		SpanKind:   1,
+		EventCount: 1,
+		LinkCount:  1,
+	})
 
-	IsPartial bool `json:"isPartial,omitempty"`
-	Data      struct {
-		ResultType string   `json:"resultType"`
-		Result     []Series `json:"result"`
-	} `json:"data,omitempty"`
+	data := g.Generate()
+	assert.NotNil(t, data)
 }

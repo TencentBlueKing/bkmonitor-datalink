@@ -9,7 +9,9 @@
 
 package tasks
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const (
 	StatefulSetTaskSecretPrefix = "statefulset-worker"

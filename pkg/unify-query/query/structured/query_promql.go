@@ -14,7 +14,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -184,9 +183,11 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 	for _, group := range sp.vecGroups {
 		query := &Query{}
 		var (
-			window time.Duration
+			window     time.Duration
+			isSubQuery bool
+			step       string
 		)
-		for _, node := range group.Nodes {
+		for nodeIndex, node := range group.Nodes {
 			switch e := node.(type) {
 			// 一个 vecGroup 里有且仅有一个 *parser.VectorSelector Node
 			case *parser.VectorSelector:
@@ -198,7 +199,9 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				window = e.Range
 			case *parser.SubqueryExpr:
 				window = e.Range
-				query.Step = e.Step.String()
+				step = e.Step.String()
+				isSubQuery = true
+
 				query.Offset = e.Offset.String()
 				var offset string
 				if e.OriginalOffset < 0 {
@@ -216,7 +219,6 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 				query.Timestamp = e.Timestamp
 				query.StartOrEnd = e.StartOrEnd
 				query.VectorOffset = e.Offset
-				query.IsSubQuery = true
 			case *parser.Call:
 				// 判断是否存在 matrix，是则写入到 timeAggregation
 				var (
@@ -254,9 +256,14 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 					}
 
 					timeAggregation := TimeAggregation{
-						Function: e.Func.Name,
-						Window:   Window(window.String()),
-						Position: position,
+						Function:   e.Func.Name,
+						Window:     Window(window.String()),
+						Position:   position,
+						IsSubQuery: isSubQuery,
+
+						// 节点位置，用于还原 promql 的定位
+						NodeIndex: nodeIndex,
+						Step:      step,
 					}
 					if len(vargsList) > 0 {
 						timeAggregation.VargsList = vargsList
@@ -342,19 +349,13 @@ func vectorQuery(
 		query = new(Query)
 	}
 	conds := make([]ConditionField, 0)
-	route, err := MakeRouteFromLBMatchOrMetricName(e.LabelMatchers)
+	route, matchers, err := MetricsToRouter(e.LabelMatchers...)
 	if err != nil {
 		return query, err
 	}
+	query.IsRegexp = route.IsRegexp()
 
-	for _, label := range e.LabelMatchers {
-		if label.Name == labels.MetricName {
-			if label.Type == labels.MatchRegexp {
-				query.IsRegexp = true
-			}
-			continue
-		}
-
+	for _, label := range matchers {
 		// bk_database, bk_measurement 2个系统 label 需要过滤
 		if label.Name == bkDatabaseLabelName || label.Name == bkMeasurementLabelName {
 			continue

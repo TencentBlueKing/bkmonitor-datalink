@@ -9,7 +9,9 @@
 
 package base
 
-import "errors"
+import (
+	"errors"
+)
 
 // base 包的错误信息
 var (

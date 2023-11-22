@@ -9,7 +9,9 @@
 
 package common
 
-import "time"
+import (
+	"time"
+)
 
 // 默认队列名
 const (

@@ -9,7 +9,9 @@
 
 package decoder
 
-import "context"
+import (
+	"context"
+)
 
 // 不要重新生成，原来生成的不支持chunked，已经修改了
 //go:generate msgp

@@ -141,7 +141,7 @@ func (e *endpointSet) Update(ctx context.Context) {
 			continue
 		}
 
-		log.Infof(ctx, "delete endpoint %s with address: %s, protocol: %s", addr, er.address, er.protocol)
+		log.Debugf(ctx, "delete endpoint %s with address: %s, protocol: %s", addr, er.address, er.protocol)
 		er.Close()
 		delete(endpoints, addr)
 	}
@@ -151,12 +151,12 @@ func (e *endpointSet) Update(ctx context.Context) {
 			continue
 		}
 
-		log.Infof(ctx, "connect endpoint %s with address: %s, protocol: %s", addr, er.address, er.protocol)
+		log.Debugf(ctx, "connect endpoint %s with address: %s, protocol: %s", addr, er.address, er.protocol)
 		endpoints[addr] = er
 	}
 
 	if len(endpoints) > 0 {
-		log.Infof(ctx, "old: %+v(%d) => new: %+v(%d)", endpoints, len(endpoints), activeEndpoints, len(activeEndpoints))
+		log.Debugf(ctx, "old: %+v(%d) => new: %+v(%d)", endpoints, len(endpoints), activeEndpoints, len(activeEndpoints))
 
 		e.endpointsMtx.Lock()
 		e.endpoints = endpoints

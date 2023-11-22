@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	maxRequestBytes = 1024 * 1024 * 4 // 4MB（grpc 默认配置 调整此参数请评估影响）
+	// Note: grpc 默认配置 调整此参数请评估影响）
+	maxRequestBytes = 1024 * 1024 * 8 // 8MB
 )
 
 func init() {

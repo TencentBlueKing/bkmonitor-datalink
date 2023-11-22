@@ -19,6 +19,7 @@ const (
 	SpaceActionDelete = "delete"
 	SpaceActionRead   = "read"
 	SpaceActionWrite  = "write"
+	SpaceActionCreate = "create"
 
 	SpaceTypeBolt  = "bolt"
 	SpaceTypeCache = "cache"
@@ -31,13 +32,18 @@ var (
 			Name:      "space_request_total",
 			Help:      "space request total",
 		},
-		[]string{"space_uid", "type", "action"},
+		[]string{"key", "type", "action"},
 	)
 )
 
 func SpaceRequestCountInc(ctx context.Context, params ...string) {
 	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric, err, params...)
+}
+
+func SpaceRequestCountAdd(ctx context.Context, val float64, params ...string) {
+	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
+	counterAdd(ctx, metric, val, err, params...)
 }
 
 func init() {

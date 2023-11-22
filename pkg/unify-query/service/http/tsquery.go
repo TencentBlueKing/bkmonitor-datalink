@@ -385,15 +385,6 @@ func handleTSQuery(
 		return nil, err
 	}
 
-	// 判断是否是直查类型
-	queries := metadata.GetQueries(ctx)
-	if ok, err1 := queries.IsDirectly(); ok {
-		if err1 != nil {
-			return nil, err1
-		}
-		return directlyQuery(ctx, query, spaceUid)
-	}
-
 	var respData *PromData
 	respData, err = HandleRawPromQuery(ctx, stmt, query)
 	if err != nil {

@@ -9,7 +9,9 @@
 
 package elasticsearch
 
-import "github.com/mitchellh/mapstructure"
+import (
+	"github.com/mitchellh/mapstructure"
+)
 
 // ApplyFields
 func ApplyFields(request interface{}, fields map[string]interface{}) error {

@@ -51,15 +51,38 @@ processor:
                 - "attributes.http.server_name"
                 - "attributes.net.host.name"
 `
-	psc := processor.MustLoadConfigs(content)
-	obj, err := NewFactory(psc[0].Config, nil)
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "traces_deriver/duration"
+    config:
+      operations:
+        - type: "duration"
+          metric_name: "bk_apm_duration"
+          rules:
+            - kind: "SPAN_KIND_CLIENT"
+              predicate_key: "attributes.http.method"
+              dimensions:
+                - "resource.bk.instance.id"
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
 	factory := obj.(*tracesDeriver)
 	assert.NoError(t, err)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	assert.Equal(t, mainConf, factory.MainConfig())
 
 	var c Config
-	err = mapstructure.Decode(psc[0].Config, &c)
-	assert.NoError(t, err)
+	assert.NoError(t, mapstructure.Decode(mainConf, &c))
 
 	assert.Equal(t, define.ProcessorTracesDeriver, factory.Name())
 	assert.True(t, factory.IsDerived())
@@ -71,7 +94,7 @@ processor:
 	})
 	assert.NoError(t, err)
 
-	factory.Reload(psc[0].Config, nil)
-	assert.Equal(t, psc[0].Config, factory.MainConfig())
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
 	factory.Clean()
 }

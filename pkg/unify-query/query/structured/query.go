@@ -176,8 +176,6 @@ type QueryParams struct {
 	// OrderBy 弃用字段
 	OrderBy OrderBy `json:"order_by" swaggerignore:"true"`
 
-	IsSubQuery bool `json:"-"`
-
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
 }
@@ -260,9 +258,7 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 
 		queryInfo *promql.QueryInfo
 
-		window  time.Duration
-		step    time.Duration
-		stepDur model.Duration
+		step time.Duration
 
 		dTmp model.Duration
 
@@ -340,44 +336,12 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 
 	// 传入了window，则进行window计算
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
-		window, err = q.TimeAggregation.Window.ToTime()
-		if err != nil {
-			return nil, err
-		}
-
-		if q.IsSubQuery {
-			if q.Step != "" {
-				stepDur, err = model.ParseDuration(q.Step)
-				if err != nil {
-					return nil, err
-				}
-			}
-
-			result.Expr = &parser.SubqueryExpr{
-				Expr: &parser.VectorSelector{
-					Name:          realMetricName,
-					LabelMatchers: labelList,
-				},
-				Range:          window,
-				OriginalOffset: originalOffset,
-				Offset:         q.VectorOffset,
-				Timestamp:      q.Timestamp,
-				StartOrEnd:     q.StartOrEnd,
-				Step:           time.Duration(stepDur),
-			}
-		} else {
-			result.Expr = &parser.MatrixSelector{
-				VectorSelector: result.Expr,
-				Range:          window,
-			}
-		}
-
 		result.Expr, err = q.TimeAggregation.ToProm(result.Expr)
 		if err != nil {
 			log.Errorf(context.TODO(), "failed to parse window function for->[%s]", err)
 			return nil, err
 		}
-		log.Infof(context.TODO(), "function->[%s] with window->[%s]will add to expr",
+		log.Debugf(context.TODO(), "function->[%s] with window->[%s]will add to expr",
 			q.TimeAggregation.Function, q.TimeAggregation.Window)
 	}
 
@@ -393,7 +357,7 @@ func (q *QueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, e
 			Dimensions: method.Dimensions,
 			Without:    method.Without,
 		})
-		log.Infof(context.TODO(),
+		log.Debugf(context.TODO(),
 			"function->[%s] args->[%s] dimension->[%s] is add to list.", method.Method, method.VArgsList, method.Dimensions,
 		)
 	}

@@ -224,7 +224,9 @@ func (sp *structParser) parseNew() (CombinedQueryParams, error) {
 	for _, group := range sp.vecGroups {
 		params := &QueryParams{}
 		var (
-			window time.Duration
+			window     time.Duration
+			isSubQuery bool
+			step       string
 		)
 		for _, node := range group.Nodes {
 			switch e := node.(type) {
@@ -238,7 +240,6 @@ func (sp *structParser) parseNew() (CombinedQueryParams, error) {
 				window = e.Range
 			case *parser.SubqueryExpr:
 				window = e.Range
-				params.Step = e.Step.String()
 				params.Offset = e.Offset.String()
 				var offset string
 				if e.OriginalOffset < 0 {
@@ -256,7 +257,9 @@ func (sp *structParser) parseNew() (CombinedQueryParams, error) {
 				params.Timestamp = e.Timestamp
 				params.StartOrEnd = e.StartOrEnd
 				params.VectorOffset = e.Offset
-				params.IsSubQuery = true
+
+				isSubQuery = true
+				step = e.Step.String()
 			case *parser.Call:
 				// 判断是否存在 matrix，是则写入到 timeAggregation
 				var (
@@ -295,9 +298,11 @@ func (sp *structParser) parseNew() (CombinedQueryParams, error) {
 					}
 
 					timeAggregation := TimeAggregation{
-						Function: e.Func.Name,
-						Window:   Window(window.String()),
-						Position: position,
+						Function:   e.Func.Name,
+						Window:     Window(window.String()),
+						Position:   position,
+						IsSubQuery: isSubQuery,
+						Step:       step,
 					}
 					if len(vargsList) > 0 {
 						timeAggregation.VargsList = vargsList
@@ -468,7 +473,7 @@ func (sp *structParser) splitVecGroups() error {
 				} else {
 					start = l[len(r)-1]
 				}
-				log.Infof(context.TODO(), "%s => [%d:%d] %s\n", oldStr, start, end, sp.q[start:end])
+				log.Debugf(context.TODO(), "%s => [%d:%d] %s\n", oldStr, start, end, sp.q[start:end])
 			}
 
 			group = append(group, node)

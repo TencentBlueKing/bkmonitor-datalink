@@ -23,11 +23,11 @@ type ProcessorMonitor struct {
 
 var (
 	// MonitorFrontendKafka 前端 kafka 来源
-	MonitorFrontendKafka = prometheus.NewCounterVec(prometheus.CounterOpts{
+	MonitorFrontendKafka = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: AppName,
 		Name:      "pipeline_frontend_kafka",
 		Help:      "Frontend kafka cluster",
-	}, []string{"id", "cluster", "kafka"})
+	}, []string{"id", "cluster", "kafka", "topic"})
 
 	// MonitorFrontendHandled pipeline 前端处理计数器
 	MonitorFrontendHandled = prometheus.NewCounterVec(prometheus.CounterOpts{

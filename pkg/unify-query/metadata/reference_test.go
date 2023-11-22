@@ -16,18 +16,20 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type checkExpected struct {
-	ok        bool
-	vmRtGroup map[string][]string
-	metricMap map[string]string
+	ok           bool
+	vmRtGroup    map[string][]string
+	vmConditions map[string]string
 }
 
 func TestCheckVmQuery(t *testing.T) {
 	ctx := context.Background()
 
 	InitMetadata()
+	log.InitTestLogger()
 
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
@@ -94,6 +96,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_net_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_net_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -116,11 +119,11 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_net_cmdb",
 					},
 				},
@@ -138,8 +141,9 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:               "usage",
 							IsSingleMetric:      false,
 							VmRt:                "100147_ieod_system_net_raw",
-							Condition:           "(bk_inst_id='test' and bk_obj_id='demo') and bk_biz_id='test'",
+							Condition:           "(bk_inst_id='test' and bk_obj_id='demo') or bk_biz_id='test-1'",
 							AggregateMethodList: []AggrMethod{},
+							VmCondition:         `result_table_id="100147_ieod_system_net_raw", __name__="cpu_detail_usage", bk_inst_id="test", bk_obj_id="demo" or result_table_id="100147_ieod_system_net_raw", __name__="cpu_detail_usage", bk_biz_id="test-1"`,
 						},
 					},
 					ReferenceName: refNameA,
@@ -147,11 +151,11 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value",bk_inst_id="test",bk_obj_id="demo" or result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value",bk_biz_id="test-1"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_net_cmdb",
 					},
 				},
@@ -169,6 +173,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_net_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_net_raw", __name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -190,11 +195,11 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_net_cmdb",
 					},
 				},
@@ -212,6 +217,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -229,6 +235,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
 							Condition:      "bk_obj_id = '1' and bk_inst_id = '2'",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage",bk_obj_id="1",bk_inst_id="2"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name:       "sum",
@@ -242,11 +249,11 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value" or result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value",bk_obj_id="1",bk_inst_id="2"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_detail_cmdb",
 						"100147_ieod_system_summary_cmdb",
 					},
@@ -265,6 +272,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -280,6 +288,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -295,11 +304,11 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					"a": "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value" or result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_detail_cmdb",
 						"100147_ieod_system_summary_cmdb",
 					},
@@ -318,6 +327,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -333,6 +343,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -348,13 +359,13 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "cpu_summary_usage",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="cpu_detail_usage" or result_table_id="100147_ieod_system_summary_cmdb",__name__="cpu_summary_usage"`,
 				},
 				vmRtGroup: map[string][]string{
-					"cpu_summary_usage": {
-						"100147_ieod_system_detail_raw",
-						"100147_ieod_system_summary_raw",
+					refNameA: {
+						"100147_ieod_system_detail_cmdb",
+						"100147_ieod_system_summary_cmdb",
 					},
 				},
 			},
@@ -371,6 +382,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -392,6 +404,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -408,13 +421,15 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
-					refNameB: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value"`,
+					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_detail_cmdb",
+					},
+					refNameB: {
 						"100147_ieod_system_summary_cmdb",
 					},
 				},
@@ -432,6 +447,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="cpu_detail_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -460,6 +476,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -483,20 +500,22 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 			expected: checkExpected{
 				ok: true,
-				metricMap: map[string]string{
-					refNameA: "usage_value",
-					refNameB: "usage_value",
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value"`,
+					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
 				vmRtGroup: map[string][]string{
-					"usage_value": {
+					refNameA: {
 						"100147_ieod_system_detail_cmdb",
+					},
+					refNameB: {
 						"100147_ieod_system_summary_cmdb",
 					},
 				},
 			},
 		},
 		{
-			name:     "测试多指标不符合的 druid-query 查询",
+			name:     "测试多指标符合的 druid 和 vm 混合查询",
 			spaceUid: "druid-query",
 			ref: QueryReference{
 				refNameA: &QueryMetric{
@@ -505,8 +524,9 @@ func TestCheckVmQuery(t *testing.T) {
 							DB:             "system",
 							Measurement:    "cpu_detail",
 							Field:          "usage",
-							IsSingleMetric: false,
+							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name:       "sum",
@@ -525,6 +545,7 @@ func TestCheckVmQuery(t *testing.T) {
 							Field:          "usage",
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 							AggregateMethodList: []AggrMethod{
 								{
 									Name: "sum",
@@ -540,7 +561,78 @@ func TestCheckVmQuery(t *testing.T) {
 				},
 			},
 			expected: checkExpected{
-				ok: false,
+				ok: true,
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
+					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
+				},
+				vmRtGroup: map[string][]string{
+					refNameA: {
+						"100147_ieod_system_detail_raw",
+					},
+					refNameB: {
+						"100147_ieod_system_summary_cmdb",
+					},
+				},
+			},
+		},
+		{
+			name:     "测试多指标不符合的 vm 查询",
+			spaceUid: "vm-query",
+			ref: QueryReference{
+				refNameA: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:             "system",
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							IsSingleMetric: true,
+							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
+							AggregateMethodList: []AggrMethod{
+								{
+									Name:       "sum",
+									Dimensions: []string{},
+								},
+							},
+						},
+					},
+					ReferenceName: refNameA,
+				},
+				refNameB: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:             "system",
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							IsSingleMetric: true,
+							VmRt:           "100147_ieod_system_summary_raw",
+							VmCondition:    `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
+							AggregateMethodList: []AggrMethod{
+								{
+									Name:       "sum",
+									Dimensions: []string{},
+								},
+							},
+						},
+					},
+					ReferenceName: refNameB,
+				},
+			},
+			expected: checkExpected{
+				ok: true,
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
+					refNameB: `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
+				},
+				vmRtGroup: map[string][]string{
+					refNameA: {
+						"100147_ieod_system_detail_raw",
+					},
+					refNameB: {
+						"100147_ieod_system_summary_raw",
+					},
+				},
 			},
 		},
 	}
@@ -554,8 +646,8 @@ func TestCheckVmQuery(t *testing.T) {
 			ok, vmExpand, err := tc.ref.CheckVmQuery(ctx)
 			assert.Nil(t, err)
 			assert.Equal(t, tc.expected.ok, ok)
-			if tc.expected.metricMap != nil {
-				assert.Equal(t, tc.expected.metricMap, vmExpand.MetricAliasMapping)
+			if tc.expected.vmConditions != nil {
+				assert.Equal(t, tc.expected.vmConditions, vmExpand.MetricFilterCondition)
 			}
 			if tc.expected.vmRtGroup != nil {
 				assert.Equal(t, tc.expected.vmRtGroup, vmExpand.ResultTableGroup)

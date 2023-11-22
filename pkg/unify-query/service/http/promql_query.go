@@ -22,7 +22,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -265,16 +264,6 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 				}
 			}
 		}
-	}
-
-	// 判断是否是直查类型
-	queries := metadata.GetQueries(ctx)
-	if ok, err1 := queries.IsDirectly(); ok {
-		if err1 != nil {
-			return nil, err1
-		}
-		log.Infof(ctx, "directly query %v", ok)
-		return directlyQuery(ctx, &qstruct, spaceUid)
 	}
 
 	promExpr, err := qstruct.ToProm(ctx, &structured.Option{

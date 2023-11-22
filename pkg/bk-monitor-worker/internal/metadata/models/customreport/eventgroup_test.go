@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
@@ -22,7 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
@@ -52,9 +56,30 @@ func TestEventGroup_GetESData(t *testing.T) {
 	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "Ping", func(es elasticsearch.Elasticsearch) (*elasticsearch.Response, error) {
 		return nil, nil
 	})
+	db := mysql.GetDBSession().DB
+	tableId := "gse_event_report_base"
 
+	clusterInfo := storage.ClusterInfo{
+		ClusterID:        99,
+		ClusterType:      models.StorageTypeES,
+		CreateTime:       time.Now(),
+		LastModifyTime:   time.Now(),
+		RegisteredSystem: "_default",
+		Creator:          "system",
+		GseStreamToId:    -1,
+	}
+	db.Delete(&clusterInfo, "cluster_id = ?", clusterInfo.ClusterID)
+	err := clusterInfo.Create(db)
+	assert.NoError(t, err)
+	ess := storage.ESStorage{
+		TableID:          tableId,
+		StorageClusterID: clusterInfo.ClusterID,
+	}
+	db.Delete(&ess, "table_id = ?", ess.TableID)
+	err = ess.Create(db)
+	assert.NoError(t, err)
 	eg := EventGroup{
-		CustomGroupBase: CustomGroupBase{TableID: "gse_event_report_base"},
+		CustomGroupBase: CustomGroupBase{TableID: tableId},
 		EventGroupID:    1,
 		EventGroupName:  "eg_name",
 	}

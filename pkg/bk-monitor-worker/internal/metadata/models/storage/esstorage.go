@@ -38,14 +38,14 @@ import (
 // ESStorage es storage model
 // gen:qs
 type ESStorage struct {
-	TableID           string                       `json:"table_id" gorm:"index;size:128"`
-	DateFormat        string                       `json:"date_format" gorm:"size:64;default:%Y%m%d%H"`
-	SliceSize         uint                         `json:"slice_size" gorm:"default:500"`
-	SliceGap          int                          `json:"slice_gap" gorm:"default:120"`
-	Retention         int                          `json:"retention" gorm:"default:30"`
+	TableID           string                       `json:"table_id" gorm:"primary_key;size:128"`
+	DateFormat        string                       `json:"date_format" gorm:"size:64"`
+	SliceSize         uint                         `json:"slice_size" gorm:"column:slice_size"`
+	SliceGap          int                          `json:"slice_gap" gorm:"column:slice_gap"`
+	Retention         int                          `json:"retention" gorm:"column:retention"`
 	WarmPhaseDays     int                          `json:"warm_phase_days" gorm:"column:warm_phase_days"`
 	WarmPhaseSettings string                       `json:"warm_phase_settings" gorm:"warm_phase_settings"`
-	TimeZone          int8                         `json:"time_zone" gorm:"default:0"`
+	TimeZone          int8                         `json:"time_zone" gorm:"column:time_zone"`
 	IndexSettings     string                       `json:"index_settings" gorm:"index_settings"`
 	MappingSettings   string                       `json:"mapping_settings" gorm:"mapping_settings"`
 	StorageClusterID  uint                         `json:"storage_cluster_id" gorm:"autoUpdateTime"`
@@ -55,6 +55,21 @@ type ESStorage struct {
 // TableName 用于设置表的别名
 func (ESStorage) TableName() string {
 	return "metadata_esstorage"
+}
+
+// BeforeCreate 默认值
+func (b *ESStorage) BeforeCreate(tx *gorm.DB) error {
+	if b.DateFormat == "" {
+		b.DateFormat = "%Y%m%d%H"
+	}
+	if b.SliceSize == 0 {
+		b.SliceSize = 500
+	}
+	if b.SliceGap == 0 {
+		b.SliceGap = 120
+	}
+
+	return nil
 }
 
 // GetDateFormat 解析python日期格式化字符串返回go类型的格式化字符串

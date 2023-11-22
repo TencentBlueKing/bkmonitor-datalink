@@ -9,6 +9,8 @@
 
 package storage
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+
 //go:generate goqueryset -in influxdbproxystorage.go -out qs_influxdbproxystorage_gen.go
 
 // InfluxdbProxyStorage influxdb proxy storage model
@@ -19,6 +21,7 @@ type InfluxdbProxyStorage struct {
 	InstanceClusterName string `gorm:"size:128" json:"instance_cluster_name"`
 	ServiceName         string `gorm:"size:64" json:"service_name"`
 	IsDefault           bool   `gorm:"default:false" json:"is_default"`
+	models.BaseModel
 }
 
 // TableName 用于设置表的别名

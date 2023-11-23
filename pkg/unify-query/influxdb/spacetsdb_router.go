@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -83,19 +84,18 @@ func GetSpaceTsDbRouter() (*SpaceTsDbRouter, error) {
 
 // BatchItemMeta 一个批次每个元素的更新情况
 type BatchItemMeta struct {
-	key         string
-	originBytes []byte
-	updateBytes []byte
+	key string
+	val influxdb.GenericValue
 }
 
 func (m *BatchItemMeta) Print() string {
-	return fmt.Sprintf("Meta{key=%s, origin=%s, update=%s}", m.key, string(m.originBytes), string(m.updateBytes))
+	return fmt.Sprintf("Meta{key=%s, update=%s}", m.key, m.val.Print())
 }
 
 func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entities []influxdb.GenericKV, once bool, printBytes bool) error {
 	keys := make([][]byte, 0)
 	values := make([][]byte, 0)
-	batchItems := make([]BatchItemMeta, 0)
+	batchItems := make([]*BatchItemMeta, 0)
 	createdCount := 0
 	updatedCount := 0
 	for _, entity := range entities {
@@ -129,7 +129,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 		} else {
 			updatedCount += 1
 		}
-		batchItems = append(batchItems, BatchItemMeta{key: k, originBytes: rawV, updateBytes: v})
+		batchItems = append(batchItems, &BatchItemMeta{key: k, val: entity.Val})
 		keys = append(keys, kvstore.String2byte(k))
 		values = append(values, v)
 	}
@@ -143,15 +143,23 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 	if err != nil {
 		return err
 	}
+	// 记录更新日志
+	log.Infof(ctx, "[SpaceTSDB] Write count in kvStorage, once=%v, key=%s, %d created, %d updated", once, stoPrefix, createdCount, updatedCount)
+	// 按照类型记录更新情况
 	metric.SpaceRequestCountAdd(ctx, float64(createdCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionCreate)
 	metric.SpaceRequestCountAdd(ctx, float64(updatedCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionWrite)
-	// 更新成功则清理对应的缓存
+	// 更新成功的对象，需要进行额外操作
+	// 1. 清理对应的缓存
+	// 2. 针对 ResultTableDetail 记录元数据情况
+	// 3. 打印更新的对象内容
 	for _, item := range batchItems {
 		r.cache.Del(item.key)
-	}
-	log.Infof(ctx, "[SpaceTSDB] Write count in kvStorage, once=%v, key=%s, %d created, %d updated", once, stoPrefix, createdCount, updatedCount)
-	if printBytes {
-		for _, item := range batchItems {
+		if rt, ok := item.val.(*influxdb.ResultTableDetail); ok {
+			metric.ResultTableInfoSet(
+				ctx, float64(len(rt.Fields)), rt.TableId, strconv.FormatInt(rt.DataId, 10), rt.MeasurementType,
+				rt.VmRt, rt.BcsClusterID)
+		}
+		if printBytes {
 			log.Infof(ctx, "[SpaceTSDB] Write content in kvStorage, once=%v, %s", once, item.Print())
 		}
 	}

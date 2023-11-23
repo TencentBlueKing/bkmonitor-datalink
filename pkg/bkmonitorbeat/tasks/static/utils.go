@@ -13,6 +13,7 @@ import (
 	"context"
 	"math/rand"
 	"net"
+	"runtime"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -175,6 +176,15 @@ var GetCPUStatus = func(ctx context.Context) (*CPU, error) {
 		model = "unknown"
 	} else {
 		model = infos[0].ModelName
+	}
+
+	// gopsutil cpu 返回的信息 在不同平台不一样 需要进行区别操作
+	if runtime.GOOS == "windows" {
+		n := 0
+		for _, info := range infos {
+			n += int(info.Cores) // NumberOfLogicalProcessors
+		}
+		total = n
 	}
 	return &CPU{Total: total, Model: model}, nil
 }

@@ -108,6 +108,10 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 			metricNames = append(metricNames, f)
 		}
 	}
+	// 如果字段都不匹配到目标字段，则非目标结果表
+	if len(metricNames) == 0 {
+		return tsDBs
+	}
 
 	if !defaultTsDB.IsSplit() {
 		defaultMetricNames = metricNames
@@ -130,6 +134,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 			}
 		}
 	}
+	// 如果这里出现指标列表为空，则说明指标都有独立的配置，不需要将默认的结果表配置写入
 	if len(defaultMetricNames) > 0 {
 		defaultTsDB.ExpandMetricNames = defaultMetricNames
 		tsDBs = append(tsDBs, &defaultTsDB)
@@ -200,15 +205,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = true
-
-		if fieldNameExp == nil {
-			_tIDs := s.router.GetFieldRelatedRts(s.ctx, fieldName)
-			if _tIDs != nil {
-				tableIDs = _tIDs
-			}
-		} else {
-			tableIDs = s.GetSpaceRtIDs()
-		}
+		tableIDs = s.GetSpaceRtIDs()
 	}
 
 	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)

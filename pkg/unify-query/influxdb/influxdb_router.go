@@ -24,7 +24,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -338,13 +337,6 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 	}
 	res += fmt.Sprintln("----------------------------------------")
 
-	res += fmt.Sprintln("queryRouterInfo")
-	for k, v := range r.queryRouterInfo {
-		s, _ = json.Marshal(v)
-		res += fmt.Sprintf("%s => %s\n", k, s)
-	}
-	res += fmt.Sprintln("----------------------------------------")
-
 	res += fmt.Sprintln("hostStatusInfo")
 	for k, v := range r.hostStatusInfo {
 		s, _ = json.Marshal(v)
@@ -362,13 +354,12 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 
 func (r *Router) loadRouter(ctx context.Context, key string) error {
 	var (
-		clusterInfo     influxdb.ClusterInfo
-		hostInfo        influxdb.HostInfo
-		tagInfo         influxdb.TagInfo
-		proxyInfo       influxdb.ProxyInfo
-		hostStatusInfo  influxdb.HostStatusInfo
-		queryRouterInfo influxdb.QueryRouterInfo
-		err             error
+		clusterInfo    influxdb.ClusterInfo
+		hostInfo       influxdb.HostInfo
+		tagInfo        influxdb.TagInfo
+		proxyInfo      influxdb.ProxyInfo
+		hostStatusInfo influxdb.HostStatusInfo
+		err            error
 	)
 
 	if r.router == nil {
@@ -396,22 +387,6 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		proxyInfo, err = r.router.GetProxyInfo(ctx)
 		if err == nil {
 			r.proxyInfo = proxyInfo
-		}
-	case influxdb.QueryRouterInfoKey:
-		queryRouterInfo, err = r.router.GetQueryRouterInfo(ctx)
-		if err == nil {
-			for k, v := range queryRouterInfo {
-				var value = float64(0)
-				if v.VmTableId != "" {
-					value = 1
-				}
-
-				metric.ResultTableInfoSet(
-					ctx, value, k, v.BkBizId, v.DataId, v.MeasurementType, v.VmTableId,
-					v.BcsClusterId, fmt.Sprintf("%v", v.IsInfluxdbDisabled),
-				)
-			}
-			r.queryRouterInfo = queryRouterInfo
 		}
 	case influxdb.HostStatusInfoKey:
 		hostStatusInfo, err = r.router.GetHostStatusInfo(ctx)

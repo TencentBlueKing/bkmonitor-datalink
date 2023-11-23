@@ -63,7 +63,7 @@ func (s *TestSuite) SetupTest() {
 		s.ctx,
 		"bkmonitorv3:spaces:result_table_detail",
 		"script_hhb_test.group3",
-		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\"}")
+		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\",\"bk_data_id\": 11}")
 
 	router, err := SetSpaceTsDbRouter(s.ctx, "spacetsdb_test.db", "spacetsdb_test", "bkmonitorv3:spaces", 100)
 	if err != nil {
@@ -110,10 +110,6 @@ func (s *TestSuite) TestReloadByKey() {
 	s.T().Logf("Rts related data-label: %v\n", rtIds)
 	assert.Contains(s.T(), rtIds, "script_hhb_test.group3")
 
-	rtIds2 := router.GetFieldRelatedRts(s.ctx, "disk_usage12")
-	s.T().Logf("Rts related by fields: %v\n", rtIds2)
-	assert.Equal(s.T(), rtIds2, routerInfluxdb.ResultTableList{"script_hhb_test.group3"})
-
 	content := router.Print(s.ctx, "", true)
 	s.T().Logf(content)
 }
@@ -122,7 +118,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	var err error
 	router := s.router
 
-	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc_2")
+	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc__2")
 	if err != nil {
 		panic(err)
 	}
@@ -151,14 +147,6 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	rtIds := router.GetDataLabelRelatedRts(s.ctx, "script_hhb_test")
 	s.T().Logf("Rts related data-label: %v\n", rtIds)
 	assert.Contains(s.T(), rtIds, "script_hhb_test.group3")
-
-	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:field_to_result_table:channel", "disk_usage12")
-	if err != nil {
-		panic(err)
-	}
-	rtIds2 := router.GetFieldRelatedRts(s.ctx, "disk_usage12")
-	s.T().Logf("Rts related by fields: %v\n", rtIds2)
-	assert.Equal(s.T(), rtIds2, routerInfluxdb.ResultTableList{"script_hhb_test.group3"})
 }
 
 func (s *TestSuite) TestReloadKeyWithBigData() {

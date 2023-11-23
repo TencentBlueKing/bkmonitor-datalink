@@ -37,7 +37,7 @@ const (
 )
 
 var (
-	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey, QueryRouterInfoKey}
+	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey}
 	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey}
 	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey}
 )

@@ -50,6 +50,7 @@ type ResultTableDetail struct {
 	BcsClusterID    string   `json:"bcs_cluster_id"`
 	DataLabel       string   `json:"data_label"`
 	TagsKey         []string `json:"tags_key"`
+	DataId          int64    `json:"bk_data_id"`
 }
 
 func (ss StableSpace) Len() int {

@@ -63,7 +63,7 @@ func (s *TestSuite) SetupTest() {
 		s.ctx,
 		"bkmonitorv3:spaces:result_table_detail",
 		"script_hhb_test.group3",
-		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\"}")
+		"{\"storage_id\":2,\"cluster_name\":\"default\",\"db\":\"script_hhb_test\",\"measurement\":\"group3\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"disk_usage30\",\"disk_usage8\",\"disk_usage27\",\"disk_usage4\",\"disk_usage24\",\"disk_usage11\",\"disk_usage7\",\"disk_usage5\",\"disk_usage20\",\"disk_usage25\",\"disk_usage10\",\"disk_usage6\",\"disk_usage19\",\"disk_usage18\",\"disk_usage17\",\"disk_usage15\",\"disk_usage22\",\"disk_usage28\",\"disk_usage21\",\"disk_usage26\",\"disk_usage13\",\"disk_usage14\",\"disk_usage12\",\"disk_usage23\",\"disk_usage3\",\"disk_usage16\",\"disk_usage9\"],\"measurement_type\":\"bk_exporter\",\"bcs_cluster_id\":\"\",\"data_label\":\"script_hhb_test\",\"bk_data_id\": 11}")
 
 	router, err := SetSpaceTsDbRouter(s.ctx, "spacetsdb_test.db", "spacetsdb_test", "bkmonitorv3:spaces", 100)
 	if err != nil {

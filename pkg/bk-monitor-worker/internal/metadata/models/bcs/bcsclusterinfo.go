@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 )
 
 //go:generate goqueryset -in bcsclusterinfo.go -out qs_bcsclusterinfo_gen.go
@@ -62,6 +64,9 @@ func (r *BCSClusterInfo) BeforeCreate(tx *gorm.DB) error {
 	}
 	if r.ApiKeyType == "" {
 		r.ApiKeyType = "authorization"
+	}
+	if r.Status == "" {
+		r.Status = models.BcsClusterStatusRunning
 	}
 	r.CreateTime = time.Now()
 	r.LastModifyTime = time.Now()

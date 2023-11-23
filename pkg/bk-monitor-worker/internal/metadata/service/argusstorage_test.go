@@ -10,28 +10,42 @@
 package service
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
-func TestKafkaTopicInfoSvc_CreateInfo(t *testing.T) {
+func TestArgusStorage_ConsulConfig(t *testing.T) {
 	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
-	var bkDataId uint = 11223344
-	mysql.GetDBSession().DB.Delete(storage.KafkaTopicInfo{}, "bk_data_id = ?", bkDataId)
-	topicInfo, err := NewKafkaTopicInfoSvc(nil).CreateInfo(bkDataId, "", 0, nil, nil, nil)
+	db := mysql.GetDBSession().DB
+	cluster := storage.ClusterInfo{
+		ClusterID:   100,
+		ClusterName: "argus_storage_100",
+		ClusterType: models.StorageTypeArgus,
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err := cluster.Create(db)
 	assert.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("0bkmonitor_%v0", bkDataId), topicInfo.Topic)
-	assert.Equal(t, 1, topicInfo.Partition)
-	// exist error
-	_, err = KafkaTopicInfoSvc{nil}.CreateInfo(bkDataId, "", 2, nil, nil, nil)
-	assert.Error(t, err)
+	as := storage.ArgusStorage{
+		TableID:          "argus_storage_test",
+		StorageClusterID: cluster.ClusterID,
+		TenantId:         "1",
+	}
+	db.Delete(&as, "table_id = ?", as.TableID)
+	err = as.Create(db)
+	assert.NoError(t, err)
 
+	svc := NewArgusStorageSvc(&as)
+	consulConfig, err := svc.ConsulConfig()
+	assert.NoError(t, err)
+	assert.Equal(t, as.TenantId, consulConfig.StorageConfig["tenant_id"])
+	assert.Equal(t, models.StorageTypeArgus, consulConfig.ClusterType)
+	assert.Equal(t, as.StorageClusterID, consulConfig.ClusterConfig.ClusterId)
 }

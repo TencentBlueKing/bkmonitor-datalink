@@ -9,14 +9,26 @@
 
 package bkdata
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+type CommonBkdataRespMeta struct {
+	Message string      `json:"message"`
+	Result  bool        `json:"result"`
+	Code    string      `json:"code"`
+	Errors  interface{} `json:"errors"`
+}
 
 type CreateDataHubResp struct {
-	define.ApiCommonRespMeta
+	CommonBkdataRespMeta
 	Data CreateDataHubData `json:"data"`
 }
 
 type CreateDataHubData struct {
 	RawDataId uint     `json:"raw_data_id"`
 	CleanRtId []string `json:"clean_rt_id"`
+}
+
+type AccessDeployPlanResp struct {
+	CommonBkdataRespMeta
+	Data struct {
+		RawDataId int `json:"raw_data_id"`
+	} `json:"data"`
 }

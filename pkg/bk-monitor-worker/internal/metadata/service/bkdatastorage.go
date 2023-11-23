@@ -18,7 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -37,6 +37,9 @@ func NewBkDataStorageSvc(obj *storage.BkDataStorage) BkDataStorageSvc {
 }
 
 func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error {
+	if s.BkDataStorage == nil {
+		return errors.New("BkDataStorage obj can not be nil")
+	}
 	var kafkaStorage storage.KafkaStorage
 	if err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB.New()).TableIDEq(rt.TableId).One(&kafkaStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
@@ -73,6 +76,8 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	rawDataName := fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, rtId)
 
 	params := map[string]interface{}{
+		"bk_app_code":   config.BkApiAppCode,
+		"bk_username":   "admin",
 		"data_scenario": "queue",
 		"bk_biz_id":     config.GlobalBkdataBkBizId,
 		"description":   "",
@@ -111,16 +116,16 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	if err != nil {
 		return err
 	}
-	var resp define.APICommonMapResp
+	var resp bkdata.AccessDeployPlanResp
 	if _, err := bkdataApi.AccessDeployPlan().SetBody(params).SetResult(&resp).Request(); err != nil {
 		return errors.Wrapf(err, "access to bkdata failed, params [%#v]", params)
 	}
-	logger.Infof("access to bkdata, result [%#v]", resp)
-	id, ok := resp.Data["raw_data_id"].(float64)
-	if !ok {
-		return fmt.Errorf("parse AccessDeployPlan resp error, %v", err)
+	s.RawDataID = resp.Data.RawDataId
+	if s.RawDataID == 0 {
+		return fmt.Errorf("access to bkdata failed, %s", resp.Message)
 	}
-	s.RawDataID = int(id)
+	logger.Infof("access to bkdata, result [%#v]", resp)
+
 	if err := s.Update(mysql.GetDBSession().DB, storage.BkDataStorageDBSchema.RawDataID); err != nil {
 		return err
 	}

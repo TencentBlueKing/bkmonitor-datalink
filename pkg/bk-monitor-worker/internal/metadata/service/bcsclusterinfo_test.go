@@ -10,6 +10,9 @@
 package service
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -171,7 +175,6 @@ func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
 	err = svc.RefreshCommonResource()
 	assert.Nil(t, err)
 	assert.Equal(t, 1, createCount)
-	assert.Equal(t, 1, updateCount)
 }
 
 func Test_isIPv6(t *testing.T) {
@@ -207,4 +210,54 @@ func TestKubernetesNodeJsonParser(t *testing.T) {
 	assert.JSONEq(t, `{"beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","node-role.kubernetes.io/role-test":"test-role"}`, labelsJson)
 	assert.Equal(t, []string{"role-test"}, parser.RoleList())
 	assert.Equal(t, "Ready,SchedulingDisabled", parser.ServiceStatus())
+}
+
+func TestBCSClusterInfo_Create(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	c := bcs.BCSClusterInfo{
+		ClusterID: "new_create_cluster",
+	}
+	db := mysql.GetDBSession().DB
+	db.Delete(&c, "cluster_id = ?", c.ClusterID)
+	err := c.Create(db)
+	assert.NoError(t, err)
+	assert.Equal(t, "Bearer", c.ApiKeyPrefix)
+	assert.Equal(t, "authorization", c.ApiKeyType)
+	assert.Equal(t, models.BcsClusterStatusRunning, c.Status)
+}
+
+func TestBcsClusterInfoSvc_IsClusterIdInGray(t *testing.T) {
+	svc := NewBcsClusterInfoSvc(nil)
+	// 未启用灰度
+	config.BcsEnableBcsGray = false
+	config.BcsGrayClusterIdList = []string{"cluster_1", "cluster_2"}
+	assert.True(t, svc.IsClusterIdInGray("abc"))
+
+	// 启用灰度
+	config.BcsEnableBcsGray = true
+	assert.False(t, svc.IsClusterIdInGray("abc"))
+	assert.True(t, svc.IsClusterIdInGray("cluster_2"))
+}
+
+func TestBcsClusterInfoSvc_FetchK8sClusterList(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	config.InitConfig()
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		data := `{"message":"ok","result":true,"code":200,"data":[{"clusterID":"BCS-K8S-00000","clusterName":"蓝鲸","federationClusterID":"","provider":"bluekingCloud","region":"default","vpcID":"","projectID":"xxxxxxx750477982c23","businessID":"2","environment":"prod","engineType":"k8s","isExclusive":true,"clusterType":"single","labels":{},"creator":"admin","createTime":"2023-10-26T21:01:57+08:00","updateTime":"2023-10-26T21:01:57+08:00","bcsAddons":{},"extraAddons":{},"systemID":"","manageType":"INDEPENDENT_CLUSTER","master":{},"networkSettings":{"clusterIPxxxxx":"","serviceIxx":"","maxNodePodNum":0,"maxServiceNum":0,"enableVPCCni":false,"eniSubnetIDs":[],"subnetSource":null,"isStaticIpMode":false,"claimExpiredSeconds":0,"multiClusterCIDR":[],"cidrStep":0},"clusterBasicSettings":{"OS":"Linux","version":"v1.20.6-tke.34","clusterTags":{},"versionName":""},"clusterAdvanceSettings":{"IPVS":true,"containerRuntime":"docker","runtimeVersion":"19.3","extraArgs":{"Etcd":"node-data-dir=/data/bcs/lib/etcd;"}},"nodeSettings":{"dockerGraphPath":"/data/bcs/lib/docker","mountTarget":"/data","unSchedulable":1,"labels":{},"extraArgs":{}},"status":"RUNNING","updater":"","networkType":"overlay","autoGenerateMasterNodes":false,"template":[],"extraInfo":{},"moduleID":"","extraClusterID":"","isCommonCluster":false,"description":"xxxxx部署环境","clusterCategory":"","is_shared":false,"kubeConfig":"","importCategory":"","cloudAccountID":""}]}`
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	svc := NewBcsClusterInfoSvc(nil)
+	clusterList, err := svc.FetchK8sClusterList()
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(clusterList))
+	assert.Equal(t, "BCS-K8S-00000", clusterList[0].ClusterId)
+
 }

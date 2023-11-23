@@ -60,7 +60,7 @@ func TestVmUtils_getVmCluster(t *testing.T) {
 		ClusterType:      models.StorageTypeVM,
 		IsDefaultCluster: true,
 	}
-	mysql.GetDBSession().DB.Delete(&cluster, "cluster_type = ? and is_default_cluster = ?", cluster.ClusterType, cluster.IsDefaultCluster)
+	mysql.GetDBSession().DB.Delete(&cluster, "cluster_type = ? and is_default_cluster = ? or cluster_name = ?", cluster.ClusterType, cluster.IsDefaultCluster, cluster.ClusterName)
 	err := cluster.Create(mysql.GetDBSession().DB)
 	assert.NoError(t, err)
 	c, err := NewVmUtils().getVmCluster("", "", 0)

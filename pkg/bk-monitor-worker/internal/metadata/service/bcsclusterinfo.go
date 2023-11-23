@@ -39,6 +39,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -92,9 +93,18 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 		return nil, err
 	}
 	var clusterList []BcsClusterInfo
-	for _, cluster := range resp.Data {
-		clusterId := (cluster["clusterID"]).(string)
-		businessID := (cluster["businessID"]).(string)
+	for _, clusterMap := range resp.Data {
+		cluster := optionx.NewOptions(clusterMap)
+		clusterId, ok := cluster.GetString("clusterID")
+		if !ok {
+			logger.Warnf("get clusterID failed, %#v", clusterMap)
+			continue
+		}
+		businessID, ok := cluster.GetString("businessID")
+		if !ok {
+			logger.Warnf("get businessID failed, %#v", clusterMap)
+			continue
+		}
 		// 根据灰度配置只同步指定集群ID的集群
 		if !b.IsClusterIdInGray(clusterId) {
 			continue
@@ -110,19 +120,25 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 		if exist {
 			continue
 		}
+		clusterName, _ := cluster.GetString("clusterName")
+		projectID, _ := cluster.GetString("projectID")
+		createTime, _ := cluster.GetString("createTime")
+		updateTime, _ := cluster.GetString("updateTime")
+		status, _ := cluster.GetString("status")
+		environment, _ := cluster.GetString("environment")
 
 		clusterList = append(clusterList, BcsClusterInfo{
 			BkBizId:      businessID,
 			ClusterId:    clusterId,
 			BcsClusterId: clusterId,
 			Id:           clusterId,
-			Name:         (cluster["clusterName"]).(string),
-			ProjectId:    (cluster["projectID"]).(string),
+			Name:         clusterName,
+			ProjectId:    projectID,
 			ProjectName:  "",
-			CreatedAt:    (cluster["createTime"]).(string),
-			UpdatedAt:    (cluster["updateTime"]).(string),
-			Status:       (cluster["status"]).(string),
-			Environment:  (cluster["environment"]).(string),
+			CreatedAt:    createTime,
+			UpdatedAt:    updateTime,
+			Status:       status,
+			Environment:  environment,
 		})
 	}
 

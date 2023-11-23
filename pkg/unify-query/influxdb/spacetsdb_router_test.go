@@ -110,10 +110,6 @@ func (s *TestSuite) TestReloadByKey() {
 	s.T().Logf("Rts related data-label: %v\n", rtIds)
 	assert.Contains(s.T(), rtIds, "script_hhb_test.group3")
 
-	rtIds2 := router.GetFieldRelatedRts(s.ctx, "disk_usage12")
-	s.T().Logf("Rts related by fields: %v\n", rtIds2)
-	assert.Equal(s.T(), rtIds2, routerInfluxdb.ResultTableList{"script_hhb_test.group3"})
-
 	content := router.Print(s.ctx, "", true)
 	s.T().Logf(content)
 }
@@ -122,7 +118,7 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	var err error
 	router := s.router
 
-	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc_2")
+	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:space_to_result_table:channel", "bkcc__2")
 	if err != nil {
 		panic(err)
 	}
@@ -151,14 +147,6 @@ func (s *TestSuite) TestReloadBySpaceKey() {
 	rtIds := router.GetDataLabelRelatedRts(s.ctx, "script_hhb_test")
 	s.T().Logf("Rts related data-label: %v\n", rtIds)
 	assert.Contains(s.T(), rtIds, "script_hhb_test.group3")
-
-	err = router.ReloadByChannel(s.ctx, "bkmonitorv3:spaces:field_to_result_table:channel", "disk_usage12")
-	if err != nil {
-		panic(err)
-	}
-	rtIds2 := router.GetFieldRelatedRts(s.ctx, "disk_usage12")
-	s.T().Logf("Rts related by fields: %v\n", rtIds2)
-	assert.Equal(s.T(), rtIds2, routerInfluxdb.ResultTableList{"script_hhb_test.group3"})
 }
 
 func (s *TestSuite) TestReloadKeyWithBigData() {

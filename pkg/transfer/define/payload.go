@@ -20,10 +20,11 @@ import (
 
 // BasePayload :
 type BasePayload struct {
-	sn   int
-	meta *sync.Map
-	Data []byte
-	t    time.Time
+	sn    int
+	meta  *sync.Map
+	Data  []byte
+	t     time.Time
+	batch bool
 }
 
 func (p BasePayload) copy() *BasePayload {
@@ -144,6 +145,14 @@ func (p *JSONPayload) From(v interface{}) error {
 	}
 	p.Data = js
 	return err
+}
+
+func (p *JSONPayload) MarkBatch(b bool) {
+	p.batch = b
+}
+
+func (p *JSONPayload) IfBatch() bool {
+	return p.batch
 }
 
 // DerivePayload

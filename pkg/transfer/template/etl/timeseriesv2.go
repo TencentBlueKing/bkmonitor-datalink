@@ -38,6 +38,7 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 		return
 	}
 
+	var batch []*define.ETLRecord
 	for _, item := range records.Data {
 		// 通过 bkmonitorproxy 上报过来只有 timestamp 字段
 		if item.Timestamp == nil || *item.Timestamp == 0.0 {
@@ -62,16 +63,18 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 		}
 		record.Dimensions["target"] = item.Target
 
-		output, err := define.DerivePayload(d, record)
-		if err != nil {
-			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
-			return
-		}
-
-		outputChan <- output
+		batch = append(batch, record)
 		p.CounterSuccesses.Inc()
 	}
+
+	output, err := define.DerivePayload(d, batch)
+	if err != nil {
+		p.CounterFails.Inc()
+		logging.Warnf("%v create payload error %v: %v", p, err, d)
+		return
+	}
+	output.MarkBatch(true)
+	outputChan <- output
 }
 
 func NewTimeseriesPre(ctx context.Context, name, timeUnit string) (*TimeseriesV2Pre, error) {

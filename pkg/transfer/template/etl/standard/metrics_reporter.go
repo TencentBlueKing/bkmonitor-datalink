@@ -170,22 +170,50 @@ func (ds *DimensionStore) GetOrMergeDimensions(metric string, remoteDimensions D
 	return ret
 }
 
-func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, _ chan<- error) {
+func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 	p.once.Do(func() {
 		p.start()
 	})
 
-	// 即使失败也应将数据传回 metrics processor 非关键路径
-	defer func() {
-		outputChan <- d
-	}()
-
-	var record define.ETLRecord
-	if err := d.To(&record); err != nil {
-		logging.Errorf("payload %v to recorder failed: %v", d, err)
-		p.CounterFails.Inc()
-		return
+	// 如果为 batch 模式，则表示需要展开 records 数组
+	if d.IfBatch() {
+		var records []define.ETLRecord
+		if err := d.To(&records); err != nil {
+			logging.Errorf("payload %v to recorder failed: %v", d, err)
+			p.CounterFails.Inc()
+			return
+		}
+		for i := 0; i < len(records); i++ {
+			record := records[i]
+			p.process(d, &record, outputChan, killChan)
+		}
+	} else {
+		p.process(d, nil, outputChan, killChan)
 	}
+}
+
+func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRecord, outputChan chan<- define.Payload, _ chan<- error) {
+	p.once.Do(func() {
+		p.start()
+	})
+
+	var err error
+	output := d
+
+	// batch 模式 需要 derive 出新的 payload
+	// 确保给到 backend 的时候保持兼容
+	if record != nil {
+		output, err = define.DerivePayload(d, record)
+		if err != nil {
+			p.CounterFails.Inc()
+			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			return
+		}
+	}
+
+	defer func() {
+		outputChan <- output
+	}()
 
 	var gotNewDimensions bool
 	now := timeUnix()

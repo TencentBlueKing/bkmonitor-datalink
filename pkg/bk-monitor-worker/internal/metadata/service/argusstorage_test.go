@@ -12,6 +12,7 @@ package service
 import (
 	"testing"
 
+	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -35,15 +36,14 @@ func TestArgusStorage_ConsulConfig(t *testing.T) {
 	assert.NoError(t, err)
 	as := storage.ArgusStorage{
 		TableID:          "argus_storage_test",
-		StorageClusterID: cluster.ClusterID,
+		StorageClusterID: 123,
 		TenantId:         "1",
 	}
-	db.Delete(&as, "table_id = ?", as.TableID)
-	err = as.Create(db)
-	assert.NoError(t, err)
-
 	svc := NewArgusStorageSvc(&as)
 	consulConfig, err := svc.ConsulConfig()
+	assert.Error(t, gorm.ErrRecordNotFound, err)
+	as.StorageClusterID = cluster.ClusterID
+	consulConfig, err = svc.ConsulConfig()
 	assert.NoError(t, err)
 	assert.Equal(t, as.TenantId, consulConfig.StorageConfig["tenant_id"])
 	assert.Equal(t, models.StorageTypeArgus, consulConfig.ClusterType)

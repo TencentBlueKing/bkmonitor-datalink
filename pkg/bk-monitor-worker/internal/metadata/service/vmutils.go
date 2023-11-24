@@ -338,6 +338,8 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	if err != nil {
 		return nil, err
 	}
+	cleanData["bk_app_code"] = cfg.BkApiAppCode
+	cleanData["bk_username"] = "admin"
 	cleanData["bk_biz_id"] = cfg.GlobalDefaultBkdataBizId
 	cleanData["raw_data_id"] = bkBaseData.RawDataID
 	cleanData["clean_config_name"] = rawDataName
@@ -359,6 +361,8 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	bkbaseResultTableId := resp.Data["result_table_id"]
 	// 启动
 	if _, err := bkdataApi.StartDatabusCleans().SetBody(map[string]interface{}{
+		"bk_app_code":     cfg.BkApiAppCode,
+		"bk_username":     "admin",
 		"result_table_id": bkbaseResultTableId,
 		"storages":        []string{"kafka"},
 	}).Request(); err != nil {
@@ -366,6 +370,8 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	}
 	// 接入 vm
 	storageParams, err := NewBkDataStorageWithDataID(bkBaseData.RawDataID, rawDataName, vmClusterName, "").Value()
+	storageParams["bk_app_code"] = cfg.BkApiAppCode
+	storageParams["bk_username"] = "admin"
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +407,11 @@ func (s VmUtils) refineBkdataKafkaInfo() (uint, string, error) {
 		return 0, "", err
 	}
 	var resp define.APICommonResp
-	if _, err := bkdataApi.GetKafkaInfo().SetResult(&resp).Request(); err != nil {
+	if _, err := bkdataApi.GetKafkaInfo().SetQueryParams(map[string]string{
+		"bk_app_code": cfg.BkApiAppCode,
+		"bk_username": "admin",
+		"tag":         "bkmonitor_outer",
+	}).SetResult(&resp).Request(); err != nil {
 		return 0, "", err
 	}
 	bkdataKafkaDataList, ok := resp.Data.([]interface{})
@@ -490,6 +500,8 @@ func (a BkDataAccessor) create() (*bkdata.CreateDataHubData, error) {
 
 	var resp bkdata.CreateDataHubResp
 	if _, err := bkdataApi.CreateDataHub().SetBody(map[string]interface{}{
+		"bk_app_code": cfg.BkApiAppCode,
+		"bk_username": "admin",
 		"common": map[string]interface{}{
 			"bk_biz_id":     a.BkBizId,
 			"data_scenario": "custom",

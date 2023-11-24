@@ -39,32 +39,32 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 		return
 	}
 
-	for _, orgRec := range records.Data {
+	for _, item := range records.Data {
 		// 通过 bkmonitorproxy 上报过来只有 timestamp 字段
-		if orgRec.Timestamp == nil || *orgRec.Timestamp == 0.0 {
+		if item.Timestamp == nil || *item.Timestamp == 0.0 {
 			p.CounterFails.Inc()
-			logging.Warnf("%v time series orgRec time is empty: %v", p, d)
+			logging.Warnf("%v time series item time is empty: %v", p, d)
 			return
 		}
 
-		tempTime := conv.Int64(*orgRec.Timestamp)
-		etlRec := &define.ETLRecord{
+		tempTime := conv.Int64(*item.Timestamp)
+		record := &define.ETLRecord{
 			Time:    &tempTime,
-			Metrics: orgRec.Metrics,
+			Metrics: item.Metrics,
 		}
 
 		if p.timeUnit != "" {
-			newTs := utils.ConvertTimeUnitAs(*etlRec.Time, p.timeUnit)
-			etlRec.Time = &newTs
+			newTs := utils.ConvertTimeUnitAs(*record.Time, p.timeUnit)
+			record.Time = &newTs
 		}
 
-		etlRec.Dimensions = orgRec.Dimension
-		if etlRec.Dimensions == nil {
-			etlRec.Dimensions = make(map[string]interface{})
+		record.Dimensions = item.Dimension
+		if record.Dimensions == nil {
+			record.Dimensions = make(map[string]interface{})
 		}
-		etlRec.Dimensions["target"] = orgRec.Target
+		record.Dimensions["target"] = item.Target
 
-		output, err := define.DerivePayload(d, orgRec)
+		output, err := define.DerivePayload(d, record)
 		if err != nil {
 			p.CounterFails.Inc()
 			logging.Warnf("%v create payload error %v: %v", p, err, d)

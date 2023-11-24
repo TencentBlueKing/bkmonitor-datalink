@@ -12,7 +12,6 @@ package etl
 import (
 	"context"
 
-	"github.com/cstockton/go-conv"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -47,9 +46,8 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 			return
 		}
 
-		tempTime := conv.Int64(*item.Timestamp)
 		record := &define.ETLRecord{
-			Time:    &tempTime,
+			Time:    item.Timestamp,
 			Metrics: item.Metrics,
 		}
 

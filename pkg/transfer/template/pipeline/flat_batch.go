@@ -23,7 +23,7 @@ const (
 
 // NewFlatBatchPipeline : 被init调用
 func NewFlatBatchPipeline(ctx context.Context, name string) (define.Pipeline, error) {
-	builder, err := pipeline.NewTSConfigBuilder(ctx, name)
+	builder, err := pipeline.NewFlatBatchConfigBuilder(ctx, name)
 	if err != nil {
 		return nil, err
 	}

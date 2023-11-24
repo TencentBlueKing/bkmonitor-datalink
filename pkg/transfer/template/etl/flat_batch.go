@@ -39,19 +39,21 @@ func (p *FlatBatchPre) Process(d define.Payload, outputChan chan<- define.Payloa
 	err := d.To(&batch)
 	if err != nil {
 		p.CounterFails.Inc()
-		logging.Warnf("%v convert payload %#v error %v", p, d, err)
+		logging.Errorf("%v convert payload %#v error %v", p, d, err)
 		return
 	}
 
 	obj, ok := batch[batchKey]
 	if !ok {
-		logging.Warnf("%v no 'items' field in flat.batch %v", p, batch)
+		p.CounterFails.Inc()
+		logging.Errorf("%v no 'items' field in flat.batch %v", p, batch)
 		return
 	}
 
 	items, ok := obj.([]interface{})
 	if !ok {
-		logging.Warnf("%v got unexpected type %T", p, obj)
+		p.CounterFails.Inc()
+		logging.Errorf("%v got unexpected type %T", p, obj)
 		return
 	}
 

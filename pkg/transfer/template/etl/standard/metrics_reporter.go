@@ -28,7 +28,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/storage"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 const (
@@ -37,7 +36,6 @@ const (
 	redisDimensionPrefix   = "bkmonitor:metric_dimensions_"
 	dimensionValuesOpt     = "dimension_values"
 	metricNameRegexOpt     = "metric_name_regex"
-	enableMetricSampling   = "enable_metric_sampling"
 )
 
 var (
@@ -83,7 +81,6 @@ type MetricsReportProcessor struct {
 	metricStore      map[string]float64
 	dimensionStore   *DimensionStore
 	dimensionUpdated chan struct{}
-	enableSampling   bool
 }
 
 type Label struct {
@@ -173,36 +170,15 @@ func (ds *DimensionStore) GetOrMergeDimensions(metric string, remoteDimensions D
 	return ret
 }
 
-// needToHandle 判断是否需要处理指标数据 有两种情况会开启：
-//
-//  1. Index <= 0
-//     保证只有一个实例（0-INDEX）会运行上报进程 减低对 redis 的读写压力
-//     需要注意的是 数据分发到多个实例时 如果存在上报量极少的指标 很可能不会一开始就发现指标
-//     但如果指标能够周期上报的话 那问题不大
-//     非 Passer 类型 index 默认值为 0
-//
-//  2. !enableSampling
-//     关闭指标采样 默认就会处理所有的指标
-func (p *MetricsReportProcessor) needToHandle() bool {
-	return p.Index() <= 0 || !p.enableSampling
-}
-
 func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, _ chan<- error) {
 	p.once.Do(func() {
-		if p.needToHandle() {
-			p.start()
-		}
+		p.start()
 	})
 
 	// 即使失败也应将数据传回 metrics processor 非关键路径
 	defer func() {
 		outputChan <- d
 	}()
-
-	if !p.needToHandle() {
-		p.CounterSuccesses.Inc()
-		return
-	}
 
 	var record define.ETLRecord
 	if err := d.To(&record); err != nil {
@@ -486,11 +462,6 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 		}
 	}
 
-	// 是否开启采样
-	// 开启采样指概率性收集指标元信息（默认为 false）即收集所有
-	pipelineOpts := utils.NewMapHelper(pipelineConfig.Option)
-	enableSampling, _ := pipelineOpts.GetBool(enableMetricSampling)
-
 	processor := &MetricsReportProcessor{
 		ctx:               ctx,
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
@@ -501,7 +472,6 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 		dimensionUpdated:  make(chan struct{}, 1),
 		metricStore:       make(map[string]float64),
 		dimensionStore:    NewDimensionStore(),
-		enableSampling:    enableSampling,
 	}
 	return processor
 }

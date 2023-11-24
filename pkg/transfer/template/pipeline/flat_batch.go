@@ -16,11 +16,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
-const (
-	// FlatBatchPipeName :
-	FlatBatchPipeName = "flat.batch"
-)
-
 // NewFlatBatchPipeline : 被init调用
 func NewFlatBatchPipeline(ctx context.Context, name string) (define.Pipeline, error) {
 	builder, err := pipeline.NewFlatBatchConfigBuilder(ctx, name)
@@ -29,7 +24,7 @@ func NewFlatBatchPipeline(ctx context.Context, name string) (define.Pipeline, er
 	}
 
 	pipe, err := builder.BuildBranchingWithGluttonous(nil, func(subCtx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(subCtx, "flat", from, to, "flat-batch")
+		return builder.ConnectStandardNodesByETLName(subCtx, "flat_batch_pre", from, to)
 	})
 	return pipe, err
 }

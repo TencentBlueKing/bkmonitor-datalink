@@ -24,8 +24,7 @@ type StandardV2TSConfigBuilder struct {
 
 func (b *StandardV2TSConfigBuilder) getStandardProcessors() []string {
 	processors := []string{
-		"flat-batch",
-		"timestamp_converter",
+		"timeseries_v2_pre",
 		"metrics_reporter",
 	}
 

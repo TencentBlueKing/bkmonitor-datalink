@@ -46,21 +46,35 @@ func (p *FlatBatchPre) Process(d define.Payload, outputChan chan<- define.Payloa
 	obj, ok := batch[batchKey]
 	if !ok {
 		p.CounterFails.Inc()
-		logging.Errorf("%v no 'items' field in flat.batch %v", p, batch)
+		logging.Warnf("%v no 'items' field in flat.batch %v", p, batch)
 		return
 	}
 
 	items, ok := obj.([]interface{})
 	if !ok {
 		p.CounterFails.Inc()
-		logging.Errorf("%v got unexpected type %T", p, obj)
+		logging.Warnf("%v got unexpected type %T", p, obj)
 		return
 	}
 
 	containers := make([]etl.Container, 0, len(items))
 	for i := 0; i < len(items); i++ {
 		container := batch.Copy()
-		_ = container.Put(batchKey, items[i])
+
+		var attrs map[string]interface{}
+		switch value := items[i].(type) {
+		case etl.Container:
+			attrs = etl.ContainerToMap(value)
+		case map[string]interface{}:
+			attrs = value
+		default:
+			logging.Warnf("%v got unexpected container type %T", p, items[i])
+			continue
+		}
+
+		for key, value := range attrs {
+			_ = container.Put(key, value)
+		}
 		containers = append(containers, container)
 	}
 

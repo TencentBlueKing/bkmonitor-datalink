@@ -147,14 +147,6 @@ func (p *JSONPayload) From(v interface{}) error {
 	return err
 }
 
-func (p *JSONPayload) MarkBatch(b bool) {
-	p.batch = b
-}
-
-func (p *JSONPayload) IfBatch() bool {
-	return p.batch
-}
-
 // DerivePayload
 func DerivePayload(payload Payload, v interface{}) (derived Payload, err error) {
 	switch t := payload.(type) {

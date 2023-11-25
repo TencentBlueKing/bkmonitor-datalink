@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package standard
+package etl
 
 import (
 	"context"
@@ -171,25 +171,7 @@ func (ds *DimensionStore) GetOrMergeDimensions(metric string, remoteDimensions D
 }
 
 func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	p.once.Do(func() {
-		p.start()
-	})
-
-	// 如果为 batch 模式，则表示需要展开 records 数组
-	if d.IfBatch() {
-		var records []define.ETLRecord
-		if err := d.To(&records); err != nil {
-			logging.Errorf("payload %v to recorder failed: %v", d, err)
-			p.CounterFails.Inc()
-			return
-		}
-		for i := 0; i < len(records); i++ {
-			record := records[i]
-			p.process(d, &record, outputChan, killChan)
-		}
-	} else {
-		p.process(d, nil, outputChan, killChan)
-	}
+	p.process(d, nil, outputChan, killChan)
 }
 
 func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRecord, outputChan chan<- define.Payload, _ chan<- error) {
@@ -197,23 +179,18 @@ func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRec
 		p.start()
 	})
 
-	var err error
-	output := d
-
-	// batch 模式 需要 derive 出新的 payload
-	// 确保给到 backend 的时候保持兼容
-	if record != nil {
-		output, err = define.DerivePayload(d, record)
-		if err != nil {
+	// 通过 Process 函数入口进来的，仍旧需要序列化一遍，得到 Record 结构体
+	// 兼容原有逻辑
+	if record == nil {
+		if err := d.To(&record); err != nil {
 			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			logging.Errorf("payload %v to record failed: %v", d, err)
 			return
 		}
+		defer func() {
+			outputChan <- d
+		}()
 	}
-
-	defer func() {
-		outputChan <- output
-	}()
 
 	var gotNewDimensions bool
 	now := timeUnix()

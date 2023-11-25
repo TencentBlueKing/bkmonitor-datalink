@@ -52,11 +52,6 @@ type Payload interface {
 	SetTime(t time.Time)
 	// GetTime gets the time received
 	GetTime() time.Time
-
-	// MarkBatch 标记是否为批量模式
-	MarkBatch(bool)
-	// IfBatch 返回是否为批量模式
-	IfBatch() bool
 }
 
 type payloadCopier interface {

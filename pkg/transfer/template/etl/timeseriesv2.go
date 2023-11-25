@@ -25,8 +25,9 @@ type TimeseriesV2Pre struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
 
-	ctx      context.Context
-	timeUnit string
+	ctx             context.Context
+	timeUnit        string
+	metricsReporter *MetricsReportProcessor
 }
 
 func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
@@ -38,7 +39,6 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 		return
 	}
 
-	var batch []*define.ETLRecord
 	for _, item := range records.Data {
 		// 通过 bkmonitorproxy 上报过来只有 timestamp 字段
 		if item.Timestamp == nil || *item.Timestamp == 0.0 {
@@ -63,31 +63,30 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 		}
 		record.Dimensions["target"] = item.Target
 
-		batch = append(batch, record)
+		p.metricsReporter.process(d, record, outputChan, killChan)
+		output, err := define.DerivePayload(d, record)
+		if err != nil {
+			p.CounterFails.Inc()
+			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			return
+		}
+		outputChan <- output
 		p.CounterSuccesses.Inc()
 	}
-
-	output, err := define.DerivePayload(d, batch)
-	if err != nil {
-		p.CounterFails.Inc()
-		logging.Warnf("%v create payload error %v: %v", p, err, d)
-		return
-	}
-	output.MarkBatch(true)
-	outputChan <- output
 }
 
-func NewTimeseriesPre(ctx context.Context, name, timeUnit string) (*TimeseriesV2Pre, error) {
+func NewTimeseriesPre(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Pre, error) {
 	return &TimeseriesV2Pre{
 		ctx:               ctx,
 		timeUnit:          timeUnit,
+		metricsReporter:   metricReporter,
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
 	}, nil
 }
 
 func init() {
-	define.RegisterDataProcessor("timeseries_v2_pre", func(ctx context.Context, name string) (define.DataProcessor, error) {
+	define.RegisterDataProcessor("timeseries_v2_handler", func(ctx context.Context, name string) (define.DataProcessor, error) {
 		pipe := config.PipelineConfigFromContext(ctx)
 		if pipe == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")
@@ -100,6 +99,15 @@ func init() {
 		if rt == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
 		}
-		return NewTimeseriesPre(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit)
+
+		if config.FromContext(ctx) == nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "config is empty")
+		}
+
+		metricReporter, err := NewMetricsReportProcessor(ctx, pipe.FormatName(rt.FormatName(name)))
+		if err != nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
+		}
+		return NewTimeseriesPre(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit, metricReporter)
 	})
 }

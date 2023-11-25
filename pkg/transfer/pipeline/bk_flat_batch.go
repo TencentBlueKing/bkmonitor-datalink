@@ -11,9 +11,6 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
-
-	"github.com/emirpasic/gods/sets/hashset"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
@@ -23,15 +20,7 @@ type FlatBatchConfigBuilder struct {
 	*ConfigBuilder
 }
 
-func (b *FlatBatchConfigBuilder) GetStandardPrepareProcessors(pipe *config.PipelineConfig, rt *config.MetaResultTableConfig) []string {
-	processors := make([]string, 0)
-	if rt != nil && rt.ResultTable != "" {
-		processors = append(processors, "ts_format")
-	}
-	return processors
-}
-
-func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.PipelineConfig, rt *config.MetaResultTableConfig, frontNode ...string) []string {
+func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.PipelineConfig, rt *config.MetaResultTableConfig) []string {
 	processors := make([]string, 0)
 
 	helper := utils.NewMapHelper(pipe.Option)
@@ -40,22 +29,20 @@ func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.
 		processors = append(processors, "encoding")
 	}
 
-	for _, node := range frontNode {
-		processors = append(processors, node)
-	}
-
 	processors = append(processors, etl)
-	processors = append(processors, b.GetStandardPrepareProcessors(pipe, rt)...)
+	if rt != nil && rt.ResultTable != "" {
+		processors = append(processors, "ts_format")
+	}
 
 	return processors
 }
 
-func (b *FlatBatchConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node, frontNode ...string) error {
+func (b *FlatBatchConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node) error {
 	nodes := []Node{from}
 
 	pipe := config.PipelineConfigFromContext(ctx)
 	rt := config.ResultTableConfigFromContext(ctx)
-	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(name, pipe, rt, frontNode...)...)
+	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(name, pipe, rt)...)
 	if err != nil {
 		return err
 	}
@@ -64,26 +51,6 @@ func (b *FlatBatchConfigBuilder) ConnectStandardNodesByETLName(ctx context.Conte
 	nodes = append(nodes, to)
 	b.ConnectNodes(nodes...)
 	return nil
-}
-
-func (b *FlatBatchConfigBuilder) ConnectStandardNodes(ctx context.Context, from Node, to Node) error {
-	rt := config.ResultTableConfigFromContext(ctx)
-	return b.ConnectStandardNodesByETLName(ctx, rt.MappingResultTable(), from, to)
-}
-
-func (b *FlatBatchConfigBuilder) BuildBranchingFor(table ...string) (*Pipeline, error) {
-	tables := hashset.New()
-	for _, name := range table {
-		tables.Add(name)
-	}
-
-	return b.BuildBranchingWithGluttonous(nil, func(ctx context.Context, from Node, to Node) error {
-		rt := config.ResultTableConfigFromContext(ctx)
-		if !tables.Contains(rt.MappingResultTable()) {
-			return fmt.Errorf("%v not supported", rt.MappingResultTable())
-		}
-		return b.ConnectStandardNodes(ctx, from, to)
-	})
 }
 
 func NewFlatBatchConfigBuilder(ctx context.Context, name string) (*FlatBatchConfigBuilder, error) {

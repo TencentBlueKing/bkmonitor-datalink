@@ -17,12 +17,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 )
 
-// StandardV2TSConfigBuilder
 type StandardV2TSConfigBuilder struct {
 	*ConfigBuilder
 }
 
-// ConnectStandardNodesByETLName
 func (b *StandardV2TSConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, from Node, to Node) error {
 	nodes := []Node{from}
 	standards, err := b.GetDataProcessors(ctx, "timeseries_v2_handler")
@@ -36,7 +34,6 @@ func (b *StandardV2TSConfigBuilder) ConnectStandardNodesByETLName(ctx context.Co
 	return nil
 }
 
-// NewStandardV2TSConfigBuilder
 func NewStandardV2TSConfigBuilder(ctx context.Context, name string) (*StandardV2TSConfigBuilder, error) {
 	builder := NewConfigBuilder(ctx, name)
 	builder.PipeConfigInitFn = config.InitTSV2PipelineOptions

@@ -17,7 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
 )
 
-// NewSchema
 func NewSchema(ctx context.Context) (etl.Schema, error) {
 	rt := config.ResultTableConfigFromContext(ctx)
 	builder := etl.NewContainerSchemaBuilder()

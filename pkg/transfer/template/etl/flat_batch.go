@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
-type FlatBatchPre struct {
+type FlatBatchHandler struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
 
@@ -34,7 +34,7 @@ const (
 	batchKey = "items"
 )
 
-func (p *FlatBatchPre) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 	batch := etl.NewMapContainer()
 	err := d.To(&batch)
 	if err != nil {
@@ -119,13 +119,13 @@ func (p *FlatBatchPre) Process(d define.Payload, outputChan chan<- define.Payloa
 	}
 }
 
-func NewFlatBatchPre(ctx context.Context, name string) (*FlatBatchPre, error) {
+func NewFlatBatchHandler(ctx context.Context, name string) (*FlatBatchHandler, error) {
 	schema, err := NewSchema(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return &FlatBatchPre{
+	return &FlatBatchHandler{
 		ctx:               ctx,
 		schema:            schema,
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
@@ -144,6 +144,6 @@ func init() {
 		if rt == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
 		}
-		return NewFlatBatchPre(ctx, pipe.FormatName(rt.FormatName(name)))
+		return NewFlatBatchHandler(ctx, pipe.FormatName(rt.FormatName(name)))
 	})
 }

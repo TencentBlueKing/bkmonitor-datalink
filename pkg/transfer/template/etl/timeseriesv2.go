@@ -75,7 +75,12 @@ func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define
 	}
 }
 
-func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Handler, error) {
+func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string) (*TimeseriesV2Handler, error) {
+	metricReporter, err := NewMetricsReportProcessor(ctx, name)
+	if err != nil {
+		return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
+	}
+
 	return &TimeseriesV2Handler{
 		ctx:               ctx,
 		timeUnit:          timeUnit,
@@ -104,10 +109,6 @@ func init() {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "config is empty")
 		}
 
-		metricReporter, err := NewMetricsReportProcessor(ctx, pipe.FormatName(rt.FormatName(name)))
-		if err != nil {
-			return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
-		}
-		return NewTimeseriesV2Handler(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit, metricReporter)
+		return NewTimeseriesV2Handler(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit)
 	})
 }

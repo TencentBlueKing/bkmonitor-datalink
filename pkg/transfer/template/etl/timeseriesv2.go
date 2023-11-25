@@ -75,7 +75,7 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 	}
 }
 
-func NewTimeseriesPre(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Pre, error) {
+func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Pre, error) {
 	return &TimeseriesV2Pre{
 		ctx:               ctx,
 		timeUnit:          timeUnit,
@@ -108,6 +108,6 @@ func init() {
 		if err != nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
 		}
-		return NewTimeseriesPre(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit, metricReporter)
+		return NewTimeseriesV2Handler(ctx, pipe.FormatName(rt.FormatName(name)), timeUnit, metricReporter)
 	})
 }

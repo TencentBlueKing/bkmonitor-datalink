@@ -134,7 +134,7 @@ func NewFlatBatchHandler(ctx context.Context, name string) (*FlatBatchHandler, e
 }
 
 func init() {
-	define.RegisterDataProcessor("flat-batch-handler", func(ctx context.Context, name string) (define.DataProcessor, error) {
+	define.RegisterDataProcessor("flat_batch_handler", func(ctx context.Context, name string) (define.DataProcessor, error) {
 		pipe := config.PipelineConfigFromContext(ctx)
 		if pipe == nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")

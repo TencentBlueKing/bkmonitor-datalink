@@ -24,7 +24,7 @@ func NewFlatBatchPipeline(ctx context.Context, name string) (define.Pipeline, er
 	}
 
 	return builder.BuildBranchingWithGluttonous(nil, func(subCtx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(subCtx, "flat-batch-handler", from, to)
+		return builder.ConnectStandardNodesByETLName(subCtx, "flat_batch_handler", from, to)
 	})
 }
 

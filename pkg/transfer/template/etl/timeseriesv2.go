@@ -21,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
-type TimeseriesV2Pre struct {
+type TimeseriesV2Handler struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
 
@@ -30,7 +30,7 @@ type TimeseriesV2Pre struct {
 	metricsReporter *MetricsReportProcessor
 }
 
-func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 	records := &define.CustomTimeseries{}
 	err := d.To(records)
 	if err != nil {
@@ -75,8 +75,8 @@ func (p *TimeseriesV2Pre) Process(d define.Payload, outputChan chan<- define.Pay
 	}
 }
 
-func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Pre, error) {
-	return &TimeseriesV2Pre{
+func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string, metricReporter *MetricsReportProcessor) (*TimeseriesV2Handler, error) {
+	return &TimeseriesV2Handler{
 		ctx:               ctx,
 		timeUnit:          timeUnit,
 		metricsReporter:   metricReporter,

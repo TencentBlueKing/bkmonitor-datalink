@@ -182,14 +182,14 @@ func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRec
 	// 通过 Process 函数入口进来的，仍旧需要序列化一遍，得到 Record 结构体
 	// 兼容原有逻辑
 	if record == nil {
+		defer func() {
+			outputChan <- d
+		}()
 		if err := d.To(&record); err != nil {
 			p.CounterFails.Inc()
 			logging.Errorf("payload %v to record failed: %v", d, err)
 			return
 		}
-		defer func() {
-			outputChan <- d
-		}()
 	}
 
 	var gotNewDimensions bool

@@ -20,7 +20,7 @@ type FlatBatchConfigBuilder struct {
 	*ConfigBuilder
 }
 
-func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.PipelineConfig, rt *config.MetaResultTableConfig) []string {
+func (b *FlatBatchConfigBuilder) GetStandardProcessors(pipe *config.PipelineConfig, rt *config.MetaResultTableConfig) []string {
 	processors := make([]string, 0)
 
 	helper := utils.NewMapHelper(pipe.Option)
@@ -29,7 +29,7 @@ func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.
 		processors = append(processors, "encoding")
 	}
 
-	processors = append(processors, etl)
+	processors = append(processors, "flat_batch_handler")
 	if rt != nil && rt.ResultTable != "" {
 		processors = append(processors, "ts_format")
 	}
@@ -37,12 +37,12 @@ func (b *FlatBatchConfigBuilder) GetStandardProcessors(etl string, pipe *config.
 	return processors
 }
 
-func (b *FlatBatchConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node) error {
+func (b *FlatBatchConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, from Node, to Node) error {
 	nodes := []Node{from}
 
 	pipe := config.PipelineConfigFromContext(ctx)
 	rt := config.ResultTableConfigFromContext(ctx)
-	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(name, pipe, rt)...)
+	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(pipe, rt)...)
 	if err != nil {
 		return err
 	}

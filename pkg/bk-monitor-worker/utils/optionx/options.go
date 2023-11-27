@@ -47,6 +47,11 @@ func (o *Options) GetUint(key string) (uint, bool) {
 	return value, ok
 }
 
+func (o *Options) GetUintsSlice(key string) ([]uint, bool) {
+	value, ok := o.params[key].([]uint)
+	return value, ok
+}
+
 func (o *Options) GetInt(key string) (int, bool) {
 	value, ok := o.params[key].(int)
 	return value, ok
@@ -107,6 +112,15 @@ func (o *Options) Set(key string, value interface{}) {
 		o.params = make(map[string]interface{})
 	}
 	o.params[key] = value
+}
+
+func (o *Options) SetDefault(key string, value interface{}) {
+	if o.params == nil {
+		o.params = make(map[string]interface{})
+	}
+	if _, ok := o.params[key]; !ok {
+		o.params[key] = value
+	}
 }
 
 func (o *Options) AllKeys() []string {

@@ -228,11 +228,11 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 		return err
 	}
 	if len(rtfList) != 0 {
-		var names string
+		var names []string
 		for _, rtf := range rtfList {
-			names = names + "," + rtf.FieldName
+			names = append(names, rtf.FieldName)
 		}
-		return fmt.Errorf("field [%s] is exists under table [%s]", names, tableId)
+		return fmt.Errorf("field [%s] is exists under table [%s]", strings.Join(names, ","), tableId)
 	}
 	tx := db.Begin()
 	for _, field := range fields {

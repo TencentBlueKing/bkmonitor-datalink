@@ -39,6 +39,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -249,12 +250,12 @@ func (b BcsClusterInfoSvc) FetchK8sNodeListByCluster(bcsClusterId string) ([]K8s
 
 	var result []K8sNodeInfo
 	for _, node := range nodes {
-		parser := KubernetesNodeJsonParser{node.Data}
+		parser := KubernetesNodeJsonParser{node}
 		var nodeIp = parser.NodeIp()
 		var name = parser.Name()
 		result = append(result, K8sNodeInfo{
 			BcsClusterId:  bcsClusterId,
-			Node:          node.Data,
+			Node:          node,
 			Name:          name,
 			Taints:        parser.TaintLabels(),
 			NodeRoles:     parser.RoleList(),
@@ -266,14 +267,14 @@ func (b BcsClusterInfoSvc) FetchK8sNodeListByCluster(bcsClusterId string) ([]K8s
 			EndpointCount: parser.GetEndpointsCount(endpoints),
 			PodCount:      statistics[nodeIp],
 			CreatedAt:     *parser.CreationTimestamp(),
-			Age:           strconv.FormatInt(int64(parser.Age()), 10), //todo humanize
+			Age:           parser.Age().String(), //todo humanize
 		})
 	}
 	return result, nil
 }
 
 // 获取bcs storage
-func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([]FetchBcsStorageRespData, error) {
+func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([]NodeInfo, error) {
 	urlTemplate := "%s/bcsapi/v4/storage/k8s/dynamic/all_resources/clusters/%s/%s?field=%s"
 	client := &http.Client{
 		Timeout: 5 * time.Second,
@@ -494,7 +495,7 @@ func (b BcsClusterInfoSvc) CreateDataSource(usage, etlConfig, operator string, m
 	if err != nil {
 		return nil, err
 	}
-	logger.Infof("data_source [%s] is create by etl_config [%s] for cluster_id [%s]", dataSource.BkDataId, etlConfig, b.ClusterID)
+	logger.Infof("data_source [%v] is create by etl_config [%s] for cluster_id [%s]", dataSource.BkDataId, etlConfig, b.ClusterID)
 	return dataSource, nil
 }
 
@@ -947,12 +948,7 @@ type K8sNodeInfo struct {
 // FetchBcsStorageResp FetchBcsStorage的返回对象
 type FetchBcsStorageResp struct {
 	define.ApiCommonRespMeta
-	Data []FetchBcsStorageRespData `json:"data"`
-}
-
-type FetchBcsStorageRespData struct {
-	Id   string   `json:"_id"`
-	Data NodeInfo `json:"data"`
+	Data []NodeInfo `json:"data"`
 }
 
 type KubernetesNodeJsonParser struct {
@@ -1028,23 +1024,28 @@ func (k KubernetesNodeJsonParser) ServiceStatus() string {
 	return strings.Join(statusList, ",")
 }
 
-func (k KubernetesNodeJsonParser) GetEndpointsCount(endpoints []FetchBcsStorageRespData) int {
+func (k KubernetesNodeJsonParser) GetEndpointsCount(endpoints []NodeInfo) int {
 	var count = 0
 	for _, endpoint := range endpoints {
-		for _, subset := range endpoint.Data.Subsets {
+		for _, subset := range endpoint.Subsets {
 			var addressCount int
 			addressInterface, ok := subset["addresses"]
 			if !ok {
 				continue
 			}
-			addressList := addressInterface.([]interface{})
+			addressList, ok := addressInterface.([]interface{})
+			if !ok {
+				continue
+			}
 			for _, addressInterface := range addressList {
-				address := addressInterface.(map[string]interface{})
-				nodeName := address["nodeName"]
-				if nodeName == nil {
+
+				addressMap, ok := addressInterface.(map[string]interface{})
+				if !ok {
 					continue
 				}
-				if k.Name() == nodeName.(string) {
+				address := optionx.NewOptions(addressMap)
+				nodeName, _ := address.GetString("nodeName")
+				if k.Name() == nodeName {
 					addressCount += 1
 				}
 			}
@@ -1052,7 +1053,7 @@ func (k KubernetesNodeJsonParser) GetEndpointsCount(endpoints []FetchBcsStorageR
 			if !ok {
 				continue
 			}
-			ports := portsInterface.([]interface{})
+			ports, _ := portsInterface.([]interface{})
 			count += addressCount * len(ports)
 		}
 	}
@@ -1074,20 +1075,21 @@ func (k KubernetesNodeJsonParser) TaintLabels() []string {
 	if !ok {
 		return labels
 	}
-
-	for _, taintInterface := range taintsInterface.([]interface{}) {
-		taint := taintInterface.(map[string]interface{})
-		key, ok := taint["key"].(string)
+	taints, ok := taintsInterface.([]interface{})
+	if !ok {
+		return labels
+	}
+	for _, taintInterface := range taints {
+		taint, ok := taintInterface.(map[string]interface{})
 		if !ok {
-			key = ""
+			continue
 		}
-		value, ok := taint["value"].(string)
-		if !ok {
-			value = ""
-		}
-		effect, ok := taint["effect"].(string)
-		if !ok {
-			effect = ""
+		t := optionx.NewOptions(taint)
+		key, _ := t.GetString("key")
+		value, _ := t.GetString("value")
+		effect, _ := t.GetString("effect")
+		if key == "" && value == "" && effect == "" {
+			continue
 		}
 		labels = append(labels, fmt.Sprintf("%v=%v:%v", key, value, effect))
 	}

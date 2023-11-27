@@ -145,7 +145,6 @@ func (p *PerformanceIoProcessor) Process(d define.Payload, outputChan chan<- def
 
 	if bizID, err := root.Get(define.RecordBizID); err == nil {
 		if _, ok := p.DisabledBizIDs[conv.String(bizID)]; ok {
-			p.CounterSkip.Inc()
 			return
 		}
 	}

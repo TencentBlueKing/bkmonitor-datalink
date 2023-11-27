@@ -227,7 +227,6 @@ func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, 
 	}
 
 	if p.rejectField(record.Key) {
-		p.CounterSkip.Inc()
 		return
 	}
 

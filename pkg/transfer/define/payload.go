@@ -20,11 +20,10 @@ import (
 
 // BasePayload :
 type BasePayload struct {
-	sn    int
-	meta  *sync.Map
-	Data  []byte
-	t     time.Time
-	batch bool
+	sn   int
+	meta *sync.Map
+	Data []byte
+	t    time.Time
 }
 
 func (p BasePayload) copy() *BasePayload {

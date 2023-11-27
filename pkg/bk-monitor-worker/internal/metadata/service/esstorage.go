@@ -106,7 +106,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 			return err
 		}
 		if count == 0 {
-			return fmt.Errorf("cluster_id [%v] is not exists or is not redis cluster", clusterId)
+			return fmt.Errorf("cluster_id [%v] is not exists or is not es cluster", clusterId)
 		}
 	}
 	// 校验table_id， key是否存在冲突

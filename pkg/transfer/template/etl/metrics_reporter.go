@@ -185,11 +185,13 @@ func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRec
 		defer func() {
 			outputChan <- d
 		}()
-		if err := d.To(&record); err != nil {
+		var dst define.ETLRecord
+		if err := d.To(&dst); err != nil {
 			p.CounterFails.Inc()
 			logging.Errorf("payload %v to record failed: %v", d, err)
 			return
 		}
+		record = &dst
 	}
 
 	var gotNewDimensions bool

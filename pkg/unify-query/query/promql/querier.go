@@ -12,7 +12,6 @@ package promql
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -113,7 +112,6 @@ func (i *InfluxdbQuerier) selectFn(hints *storage.SelectHints, matchers ...*labe
 	}
 
 	key = selectKey(sqlInfos)
-	trace.InsertStringIntoSpan("select-fn-key", key, span)
 
 	ch := i.g.DoChan(key, func() (interface{}, error) {
 		var (
@@ -134,7 +132,6 @@ func (i *InfluxdbQuerier) selectFn(hints *storage.SelectHints, matchers ...*labe
 	case <-ticker.C:
 		return nil, ErrTimeout
 	case ret = <-ch:
-		trace.InsertStringIntoSpan("select-fn-shared", fmt.Sprintf("%v", ret.Shared), span)
 		if ret.Err != nil {
 			return nil, ret.Err
 		}

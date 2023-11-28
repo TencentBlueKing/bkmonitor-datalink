@@ -219,6 +219,10 @@ func (s ResultTableFieldSvc) BulkCreateDefaultFields(tableId string, timeOption 
 
 func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[string]interface{}) error {
 	fields, fieldNameList, optionData, err := s.composeData(tableId, fieldList)
+	if len(fieldList) == 0 {
+		logger.Warnf("create fields for table [%s] skip, got no filed", tableId)
+		return nil
+	}
 	if err != nil {
 		return err
 	}

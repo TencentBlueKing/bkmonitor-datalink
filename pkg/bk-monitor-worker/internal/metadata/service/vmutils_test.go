@@ -133,22 +133,25 @@ func TestVmUtils_getTimestampLen(t *testing.T) {
 }
 
 func TestVmUtils_AccessBkdata(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	cfg.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	db := mysql.GetDBSession().DB
+	defer db.Close()
 	cluster := storage.ClusterInfo{
 		ClusterName:      "testVmCluster",
 		ClusterType:      models.StorageTypeVM,
 		IsDefaultCluster: true,
 	}
-	mysql.GetDBSession().DB.Delete(&cluster, "cluster_type = ? and is_default_cluster = ?", cluster.ClusterType, cluster.IsDefaultCluster)
-	err := cluster.Create(mysql.GetDBSession().DB)
+	db.Delete(&cluster, "cluster_type = ? and is_default_cluster = ?", cluster.ClusterType, cluster.IsDefaultCluster)
+	err := cluster.Create(db)
 	assert.NoError(t, err)
 
 	ds := resulttable.DataSource{
 		DataName: "testDataName",
 		BkDataId: 198888,
 	}
-	mysql.GetDBSession().DB.Delete(&ds)
-	err = ds.Create(mysql.GetDBSession().DB)
+	db.Delete(&ds)
+	err = ds.Create(db)
 	assert.NoError(t, err)
 
 	funcPatch := gomonkey.ApplyFunc(VmUtils.AccessVmByKafka, func(s VmUtils, tableId, rawDataName, vmClusterName string, timestampLen int) (map[string]interface{}, error) {
@@ -166,16 +169,16 @@ func TestVmUtils_AccessBkdata(t *testing.T) {
 		SpaceId:     "2233",
 		IsBcsValid:  false,
 	}
-	mysql.GetDBSession().DB.Delete(&sp, "space_type_id = ? and space_id = ?", sp.SpaceTypeId, sp.SpaceId)
-	err = sp.Create(mysql.GetDBSession().DB)
+	db.Delete(&sp, "space_type_id = ? and space_id = ?", sp.SpaceTypeId, sp.SpaceId)
+	err = sp.Create(db)
 	assert.NoError(t, err)
-	mysql.GetDBSession().DB.Delete(&space.SpaceVmInfo{}, "space_type = ? and space_id = ?", sp.SpaceTypeId, sp.SpaceId)
+	db.Delete(&space.SpaceVmInfo{}, "space_type = ? and space_id = ?", sp.SpaceTypeId, sp.SpaceId)
 	bkBizId := 2233
 	tableId := "test_table_id"
-	mysql.GetDBSession().DB.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", tableId)
+	db.Delete(&storage.AccessVMRecord{}, "result_table_id = ?", tableId)
 	err = NewVmUtils().AccessBkdata(bkBizId, tableId, ds.BkDataId)
 	assert.NoError(t, err)
 	var record storage.AccessVMRecord
-	err = storage.NewAccessVMRecordQuerySet(mysql.GetDBSession().DB).ResultTableIdEq(tableId).BkBaseDataIdEq(ds.BkDataId).One(&record)
+	err = storage.NewAccessVMRecordQuerySet(db).ResultTableIdEq(tableId).BkBaseDataIdEq(ds.BkDataId).One(&record)
 	assert.NoError(t, err)
 }

@@ -47,27 +47,45 @@ func TestResultTableSvc_CreateResultTable(t *testing.T) {
 		}, nil
 	})
 	db := mysql.GetDBSession().DB
-	var dataId uint = 1900000
+	defer db.Close()
+	var dataId uint = 1800000
 	// 跳过此dataid的推送
 	IgnoreConsulSyncDataIdList = append(IgnoreConsulSyncDataIdList, dataId)
 	tableId := "create_rt_table_id_test.base"
 	ds := resulttable.DataSource{
 		BkDataId:          dataId,
-		DataName:          "create_rt",
+		DataName:          "create_rt_ts",
 		SourceSystem:      "bkmonitor",
 		IsEnable:          true,
 		TransferClusterId: "default",
 	}
-	db.Delete(&ds, "bk_data_ID = ?", ds.BkDataId)
+	influxdbClusterInfo := storage.InfluxdbClusterInfo{
+		HostName:     "127.0.0.1:12345",
+		ClusterName:  "default",
+		HostReadable: true,
+	}
+	db.Delete(&influxdbClusterInfo, "host_name = ?", influxdbClusterInfo.HostName)
+	err := influxdbClusterInfo.Create(db)
+	assert.NoError(t, err)
+	p := storage.InfluxdbProxyStorage{
+		ProxyClusterId:      2,
+		InstanceClusterName: "name",
+		ServiceName:         "svc_name",
+		IsDefault:           true,
+	}
+	db.Delete(&p, "instance_cluster_name = ?", p.InstanceClusterName)
+	err = p.Create(db)
+	assert.NoError(t, err)
+	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
 	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableId)
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tableId)
 	db.Delete(&resulttable.ResultTableFieldOption{}, "table_id = ?", tableId)
 	db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", ds.BkDataId)
 	db.Delete(&space.SpaceDataSource{}, "bk_data_id = ?", ds.BkDataId)
 	db.Delete(&storage.InfluxdbStorage{}, "table_id = ?", tableId)
-	err := ds.Create(db)
+	err = ds.Create(db)
 	assert.NoError(t, err)
-	err = NewResultTableSvc(nil).CreateResultTable(dataId, 2, tableId, tableId, true, models.ResultTableSchemaTypeFree, "test", models.StorageTypeInfluxdb, nil, nil, false, nil, "other_rt", nil)
+	err = NewResultTableSvc(nil).CreateResultTable(dataId, 2, tableId, tableId, true, models.ResultTableSchemaTypeFree, "test", models.StorageTypeInfluxdb, nil, TSStorageFieldList, false, nil, "other_rt", nil)
 	assert.NoError(t, err)
 	var rt resulttable.ResultTable
 	err = resulttable.NewResultTableQuerySet(db).TableIdEq(tableId).One(&rt)
@@ -78,5 +96,76 @@ func TestResultTableSvc_CreateResultTable(t *testing.T) {
 	var st storage.InfluxdbStorage
 	err = storage.NewInfluxdbStorageQuerySet(db).TableIDEq(tableId).One(&st)
 	assert.NoError(t, err)
+	var rtf resulttable.ResultTableField
+	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tableId).FieldNameEq("target").One(&rtf)
+	assert.NoError(t, err)
+}
 
+func TestResultTableSvc_CreateResultTable_for_event(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	gomonkey.ApplyPrivateMethod(InfluxdbStorageSvc{}, "syncDb", func(_ InfluxdbStorageSvc) error { return nil })
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		var data string
+		if strings.Contains(req.URL.Path, "v1/kv") {
+			data = fmt.Sprintf(`{"message":"ok","result":true,"code":0,"data":{}`)
+		}
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	db := mysql.GetDBSession().DB
+	var dataId uint = 1900000
+	// 跳过此dataid的推送
+	IgnoreConsulSyncDataIdList = append(IgnoreConsulSyncDataIdList, dataId)
+	tableId := "create_rt_table_id_test_event.base"
+	ds := resulttable.DataSource{
+		BkDataId:          dataId,
+		DataName:          "create_rt_event",
+		SourceSystem:      "bkmonitor",
+		IsEnable:          true,
+		TransferClusterId: "default",
+	}
+	cluster := storage.ClusterInfo{
+		ClusterName:      "es_test_default",
+		ClusterType:      models.StorageTypeES,
+		DomainName:       "127.0.0.1",
+		Port:             9200,
+		IsDefaultCluster: true,
+		Schema:           "http",
+		Version:          "7",
+		RegisteredSystem: "bkmonitor",
+	}
+	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
+	err := cluster.Create(db)
+	assert.NoError(t, err)
+	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
+	db.Delete(&resulttable.ResultTable{}, "table_id = ?", tableId)
+	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tableId)
+	db.Delete(&resulttable.ResultTableFieldOption{}, "table_id = ?", tableId)
+	db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", ds.BkDataId)
+	db.Delete(&space.SpaceDataSource{}, "bk_data_id = ?", ds.BkDataId)
+	db.Delete(&storage.ESStorage{}, "table_id = ?", tableId)
+	err = ds.Create(db)
+	assert.NoError(t, err)
+	err = NewResultTableSvc(nil).CreateResultTable(dataId, 2, tableId, tableId, true, models.ResultTableSchemaTypeFree, "test", models.StorageTypeES, map[string]interface{}{"enable_create_index": false}, EventStorageFieldList, false, nil, "other_rt", nil)
+	assert.NoError(t, err)
+	var rt resulttable.ResultTable
+	err = resulttable.NewResultTableQuerySet(db).TableIdEq(tableId).One(&rt)
+	assert.NoError(t, err)
+	var rtds resulttable.DataSourceResultTable
+	err = resulttable.NewDataSourceResultTableQuerySet(db).BkDataIdEq(dataId).TableIdEq(tableId).One(&rtds)
+	assert.NoError(t, err)
+	var st storage.ESStorage
+	err = storage.NewESStorageQuerySet(db).TableIDEq(tableId).One(&st)
+	assert.NoError(t, err)
+	var rtfList []resulttable.ResultTableField
+	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tableId).FieldNameIn("event", "target", "dimensions", "event_name").All(&rtfList)
+	assert.NoError(t, err)
+	assert.Equal(t, 4, len(rtfList))
 }

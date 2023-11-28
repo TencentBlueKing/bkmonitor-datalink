@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -24,7 +25,9 @@ import (
 )
 
 func TestSpacePusher_getDataIdByCluster(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	cfg.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	db := mysql.GetDBSession().DB
 	cluster := &bcs.BCSClusterInfo{
 		ClusterID:          "BCS-K8S-00000",
 		BCSApiClusterId:    "BCS-K8S-00000",
@@ -47,8 +50,8 @@ func TestSpacePusher_getDataIdByCluster(t *testing.T) {
 		LastModifyTime:     time.Now(),
 		LastModifyUser:     "system",
 	}
-	mysql.GetDBSession().DB.Delete(cluster, "cluster_id=?", cluster.ClusterID)
-	err := cluster.Create(mysql.GetDBSession().DB)
+	db.Delete(cluster, "cluster_id=?", cluster.ClusterID)
+	err := cluster.Create(db)
 	assert.NoError(t, err)
 	pusher := NewSpacePusher()
 	clusterDataIdMap, err := pusher.getDataIdByCluster(cluster.ClusterID)
@@ -58,8 +61,9 @@ func TestSpacePusher_getDataIdByCluster(t *testing.T) {
 
 func TestSpacePusher_isNeedAddFilter(t *testing.T) {
 	var defaultDataId uint = 1234567
-
-	defer mocker.PatchDBSession().Reset()
+	cfg.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	db := mysql.GetDBSession().DB
 	ds := resulttable.DataSource{
 		BkDataId:         defaultDataId,
 		Token:            "xxx",
@@ -70,8 +74,8 @@ func TestSpacePusher_isNeedAddFilter(t *testing.T) {
 		SpaceTypeId:      "bkcc",
 		SpaceUid:         "bkcc__2",
 	}
-	mysql.GetDBSession().DB.Delete(ds)
-	err := ds.Create(mysql.GetDBSession().DB)
+	db.Delete(ds)
+	err := ds.Create(db)
 	assert.NoError(t, err)
 
 	pusher := NewSpacePusher()
@@ -95,15 +99,17 @@ func TestSpacePusher_isNeedAddFilter(t *testing.T) {
 }
 
 func TestSpacePusher_getData(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	cfg.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
 	sdr := space.SpaceDataSource{
 		SpaceTypeId:       "bkcc",
 		SpaceId:           "123",
 		BkDataId:          1002,
 		FromAuthorization: false,
 	}
-	mysql.GetDBSession().DB.Delete(sdr, "space_type_id = ? and space_id = ?", sdr.SpaceTypeId, sdr.SpaceId)
-	err := sdr.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	db.Delete(sdr, "space_type_id = ? and space_id = ?", sdr.SpaceTypeId, sdr.SpaceId)
+	err := sdr.Create(db)
 	assert.NoError(t, err)
 	pusher := NewSpacePusher()
 	err = pusher.getData("bkcc", "123", "", nil)

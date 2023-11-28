@@ -724,10 +724,11 @@ func (s *SpacePusher) getMeasurementType(schemaType string, isSplitMeasurement, 
 
 // 获取结果表属性
 func (s *SpacePusher) getTableFieldByTableId() (map[string][]string, error) {
+	db := mysql.GetDBSession().DB
 	// 针对黑白名单，如果不是自动发现，则不采用最后更新时间过滤
 	var rtoList []resulttable.ResultTableOption
 	if len(s.tableIdList) != 0 {
-		if err := resulttable.NewResultTableOptionQuerySet(mysql.GetDBSession().DB).TableIDIn(s.tableIdList...).NameEq(models.OptionEnableFieldBlackList).ValueEq("false").All(&rtoList); err != nil {
+		if err := resulttable.NewResultTableOptionQuerySet(db).TableIDIn(s.tableIdList...).NameEq(models.OptionEnableFieldBlackList).ValueEq("false").All(&rtoList); err != nil {
 			return nil, err
 		}
 	}
@@ -742,7 +743,7 @@ func (s *SpacePusher) getTableFieldByTableId() (map[string][]string, error) {
 	// 针对自定义时序，过滤掉历史废弃的指标，时间在`TIME_SERIES_METRIC_EXPIRED_DAYS`的为有效数据, 其它类型直接获取所有指标和维度
 	// 获取时序的结果表
 	var tsGroupList []customreport.TimeSeriesGroup
-	if err := customreport.NewTimeSeriesGroupQuerySet(mysql.GetDBSession().DB).TableIDIn(tableIdList...).All(&tsGroupList); err != nil {
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).TableIDIn(tableIdList...).All(&tsGroupList); err != nil {
 		return nil, err
 	}
 	// 获取时序的结果表及关联的group id
@@ -762,7 +763,7 @@ func (s *SpacePusher) getTableFieldByTableId() (map[string][]string, error) {
 	beginTime := time.Now().UTC().AddDate(0, 0, -cfg.GlobalTimeSeriesMetricExpiredDays)
 	var tsmList []customreport.TimeSeriesMetric
 	if len(tsGroupIdList) != 0 {
-		if err := customreport.NewTimeSeriesMetricQuerySet(mysql.GetDBSession().DB).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
+		if err := customreport.NewTimeSeriesMetricQuerySet(db).GroupIDIn(tsGroupIdList...).LastModifyTimeGte(beginTime).All(&tsmList); err != nil {
 			return nil, err
 		}
 	}
@@ -777,7 +778,7 @@ func (s *SpacePusher) getTableFieldByTableId() (map[string][]string, error) {
 	// 其它则获取所有指标数据
 	var otherRTFList []resulttable.ResultTableField
 	if len(otherTableIdList) != 0 {
-		if err := resulttable.NewResultTableFieldQuerySet(mysql.GetDBSession().DB).TableIDIn(otherTableIdList...).TagEq(models.ResultTableFieldTagMetric).All(&otherRTFList); err != nil {
+		if err := resulttable.NewResultTableFieldQuerySet(db).TableIDIn(otherTableIdList...).TagEq(models.ResultTableFieldTagMetric).All(&otherRTFList); err != nil {
 			return nil, err
 		}
 	}
@@ -823,9 +824,10 @@ func (s *SpacePusher) getSegmentedOptionByTableId() (map[string]bool, error) {
 
 // 判断是否需要添加filter
 func (s *SpacePusher) isNeedAddFilter(measurementType, spaceTypeId, spaceId string, dataId uint) (bool, error) {
+	db := mysql.GetDBSession().DB
 	// 防止脏数据导致查询不到异常抛出的情况
 	var ds resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(dataId).One(&ds); err != nil {
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(dataId).One(&ds); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("query datasource [%v] error, %v", dataId, err)
 			return true, nil
@@ -862,7 +864,7 @@ func (s *SpacePusher) isNeedAddFilter(measurementType, spaceTypeId, spaceId stri
 	}
 
 	var sds space.SpaceDataSource
-	if err := space.NewSpaceDataSourceQuerySet(mysql.GetDBSession().DB).SpaceTypeIdEq(spaceTypeId).SpaceIdEq(spaceId).BkDataIdEq(dataId).One(&sds); err != nil {
+	if err := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(spaceTypeId).SpaceIdEq(spaceId).BkDataIdEq(dataId).One(&sds); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("SpaceDataSource space [%s__%s], data_id [%v] not found", spaceTypeId, spaceId, dataId)
 			return true, nil

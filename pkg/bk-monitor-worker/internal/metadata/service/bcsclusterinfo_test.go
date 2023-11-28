@@ -369,19 +369,32 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 	bkBizId := "2"
 	projectId := "project_id_xxxxx"
 	var initChannelId uint = 1999900
+	c := storage.ClusterInfo{
+		ClusterID:        1,
+		ClusterName:      "kafka_default_test",
+		ClusterType:      models.StorageTypeKafka,
+		DomainName:       "127.0.0.1",
+		Port:             9096,
+		IsDefaultCluster: true,
+		GseStreamToId:    0,
+	}
+	c.Delete(db)
+	err := c.Create(db)
+	assert.NoError(t, err)
 	db.Delete(&bcs.BCSClusterInfo{}, "cluster_id = ?", clusterID)
 	db.Delete(&resulttable.DataSource{}, fmt.Sprintf("data_name like '%%%s%%'", clusterID))
 	db.Delete(&storage.KafkaTopicInfo{}, "bk_data_id > ?", initChannelId)
 	db.Delete(&resulttable.DataSourceOption{}, "bk_data_id > ?", initChannelId)
 	db.Delete(&customreport.TimeSeriesGroup{}, fmt.Sprintf("time_series_group_name like '%%%s%%'", clusterID))
 	db.Delete(&customreport.EventGroup{}, "bk_data_id > ?", initChannelId)
-	gomonkey.ApplyMethodReturn(DataSourceSvc{}, "RefreshOuterConfig", nil)
-	gomonkey.ApplyMethodReturn(ResultTableSvc{}, "CreateResultTable", nil)
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "add_route") {
 			initChannelId += 1
 			data = fmt.Sprintf(`{"message":"ok","result":true,"code":0,"data":{"channel_id":%v}}`, initChannelId)
+		}
+		if strings.Contains(req.URL.Path, "query_route") {
+			data = `{"message":"ok","result":true,"code":0}`
 		}
 		body := io.NopCloser(strings.NewReader(data))
 		return &http.Response{
@@ -392,7 +405,10 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
-
+	patch := gomonkey.ApplyMethod(ResultTableSvc{}, "CreateResultTable", func(ResultTableSvc, uint, int, string, string, bool, string, string, string, map[string]interface{}, []map[string]interface{}, bool, map[string]interface{}, string, map[string]interface{}) error {
+		return nil
+	})
+	defer patch.Reset()
 	cluster, err := NewBcsClusterInfoSvc(nil).RegisterCluster(bkBizId, clusterID, projectId, "test")
 	assert.NoError(t, err)
 	dataIdList := []uint{cluster.K8sMetricDataID, cluster.CustomMetricDataID, cluster.K8sEventDataID}

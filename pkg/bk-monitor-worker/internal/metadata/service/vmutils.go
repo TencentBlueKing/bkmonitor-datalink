@@ -51,13 +51,14 @@ func NewVmUtils() VmUtils {
 func (s VmUtils) AccessBkdata(bkBizId int, tableId string, bkDataId uint) error {
 	// 仅针对接入 influxdb 类型
 	// 查询空间信息
+	db := mysql.GetDBSession().DB
 	var spaceTypeId, spaceId string
 	if bkBizId > 0 {
 		spaceTypeId = "bkcc"
 		spaceId = strconv.Itoa(bkBizId)
 	} else {
 		var sp space.Space
-		if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).IdEq(-bkBizId).One(&sp); err != nil {
+		if err := space.NewSpaceQuerySet(db).IdEq(-bkBizId).One(&sp); err != nil {
 			// 0 业务没有空间信息，不需要查询或者创建空间及空间关联的 vm
 			if !gorm.IsRecordNotFoundError(err) {
 				return err
@@ -70,14 +71,14 @@ func (s VmUtils) AccessBkdata(bkBizId int, tableId string, bkDataId uint) error 
 	var spaceVmInfo space.SpaceVmInfo
 	if spaceTypeId != "" && spaceId != "" {
 		// 如果不在空间接入 vm 的记录中，则创建记录
-		if err := space.NewSpaceVmInfoQuerySet(mysql.GetDBSession().DB).SpaceTypeEq(spaceTypeId).SpaceIDEq(spaceId).One(&spaceVmInfo); err != nil {
+		if err := space.NewSpaceVmInfoQuerySet(db).SpaceTypeEq(spaceTypeId).SpaceIDEq(spaceId).One(&spaceVmInfo); err != nil {
 			if !gorm.IsRecordNotFoundError(err) {
 				return err
 			}
 		}
 		if spaceVmInfo.ID == 0 {
 			var cluster storage.ClusterInfo
-			if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeVM).IsDefaultClusterEq(true).One(&cluster); err != nil {
+			if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeVM).IsDefaultClusterEq(true).One(&cluster); err != nil {
 				return errors.Wrapf(err, "cluster type [%s] not found default cluster", models.StorageTypeVM)
 			}
 			spaceVmInfo = space.SpaceVmInfo{
@@ -86,14 +87,14 @@ func (s VmUtils) AccessBkdata(bkBizId int, tableId string, bkDataId uint) error 
 				VMClusterID:     cluster.ClusterID,
 				VMRetentionTime: models.VmRetentionTime,
 			}
-			if err := spaceVmInfo.Create(mysql.GetDBSession().DB); err != nil {
+			if err := spaceVmInfo.Create(db); err != nil {
 				return err
 			}
 		}
 	}
 	// 检查是否已经写入 kafka storage
 	var record storage.AccessVMRecord
-	if err := storage.NewAccessVMRecordQuerySet(mysql.GetDBSession().DB).ResultTableIdEq(tableId).One(&record); err == nil {
+	if err := storage.NewAccessVMRecordQuerySet(db).ResultTableIdEq(tableId).One(&record); err == nil {
 		// 如果已经存在，认为已经接入 vm，则直接返回
 		return nil
 	} else if !gorm.IsRecordNotFoundError(err) {
@@ -165,7 +166,7 @@ func (s VmUtils) AccessBkdata(bkBizId int, tableId string, bkDataId uint) error 
 		BkBaseDataId:     vmDataId,
 		VmResultTableId:  cleanRtId,
 	}
-	if err := avmr.Create(mysql.GetDBSession().DB); err != nil {
+	if err := avmr.Create(db); err != nil {
 		logger.Errorf("create AccessVMRecord error for access vm: %v", err)
 	}
 	return nil
@@ -196,10 +197,11 @@ func (s VmUtils) getDataTypeCluster(dataId uint) (map[string]string, error) {
 
 // 获取 vm 集群
 func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*storage.ClusterInfo, error) {
+	db := mysql.GetDBSession().DB
 	// 如果 vm 集群ID存在，直接查询到对应的集群
 	if vmClusterId != 0 {
 		var cluster storage.ClusterInfo
-		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeVM).ClusterIDEq(vmClusterId).One(&cluster); err != nil {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeVM).ClusterIDEq(vmClusterId).One(&cluster); err != nil {
 			return nil, errors.Wrapf(err, "not found vm cluster [%v], %v", vmClusterId, err)
 		}
 		return &cluster, nil
@@ -208,7 +210,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 	// 如果 vm 集群ID不存在，查询空间是否已经接入过，如果已经接入过，则可以直接获取
 	if spaceTypeId != "" && spaceId != "" {
 		var spaceVmInfo space.SpaceVmInfo
-		if err := space.NewSpaceVmInfoQuerySet(mysql.GetDBSession().DB).SpaceTypeEq(spaceTypeId).SpaceIDEq(spaceId).One(&spaceVmInfo); err != nil {
+		if err := space.NewSpaceVmInfoQuerySet(db).SpaceTypeEq(spaceTypeId).SpaceIDEq(spaceId).One(&spaceVmInfo); err != nil {
 			if !gorm.IsRecordNotFoundError(err) {
 				return nil, err
 			}
@@ -217,7 +219,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 			logger.Warnf("space_type [%s] space_id [%s] not access vm", spaceTypeId, spaceId)
 		} else {
 			var cluster storage.ClusterInfo
-			if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(spaceVmInfo.VMClusterID).One(&cluster); err != nil {
+			if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(spaceVmInfo.VMClusterID).One(&cluster); err != nil {
 				return nil, errors.Wrapf(err, "space_type [%s] space_id [%s] not found vm cluster, %v", spaceTypeId, spaceId, err)
 			}
 			return &cluster, nil
@@ -226,7 +228,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 
 	// 没有接入过，获取默认 VM 集群
 	var cluster storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeVM).IsDefaultClusterEq(true).One(&cluster); err != nil {
+	if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeVM).IsDefaultClusterEq(true).One(&cluster); err != nil {
 		return nil, errors.Wrapf(err, "not found default vm cluster, %v", err)
 	}
 	return &cluster, nil
@@ -287,9 +289,10 @@ func (s VmUtils) getTimestampLen(dataId uint, etcConfig string) (int, error) {
 
 // AccessVmByKafka 通过 kafka 配置接入 vm
 func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, timestampLen int) (map[string]interface{}, error) {
+	db := mysql.GetDBSession().DB
 	kafkaStorageExist := true
 	var kafkaStorage storage.KafkaStorage
-	if err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).One(&kafkaStorage); err != nil {
+	if err := storage.NewKafkaStorageQuerySet(db).TableIDEq(tableId).One(&kafkaStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Infof("kafka storage for table_id [%s] not found", tableId)
 			kafkaStorageExist = false
@@ -311,18 +314,18 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	}
 	// 创建清洗和入库 vm
 	var bkBaseData storage.BkDataStorage
-	if err := storage.NewBkDataStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).One(&bkBaseData); err != nil {
+	if err := storage.NewBkDataStorageQuerySet(db).TableIDEq(tableId).One(&bkBaseData); err != nil {
 		if !gorm.IsRecordNotFoundError(err) {
 			return nil, err
 		}
 		bkBaseData.TableID = tableId
-		if err := bkBaseData.Create(mysql.GetDBSession().DB); err != nil {
+		if err := bkBaseData.Create(db); err != nil {
 			return nil, err
 		}
 	}
 	if bkBaseData.RawDataID == -1 {
 		var rt resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).One(&rt); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).TableIdEq(tableId).One(&rt); err != nil {
 			return nil, err
 		}
 		if err := NewBkDataStorageSvc(&bkBaseData).CreateDatabusClean(&rt); err != nil {
@@ -330,7 +333,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 		}
 	}
 	// 重新读取一遍数据
-	if err := storage.NewBkDataStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).One(&bkBaseData); err != nil {
+	if err := storage.NewBkDataStorageQuerySet(db).TableIDEq(tableId).One(&bkBaseData); err != nil {
 		return nil, err
 	}
 	rawDataName, _ = s.getBkbaseDataNameAndTopic(tableId)

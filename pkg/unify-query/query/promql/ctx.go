@@ -11,7 +11,6 @@ package promql
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -86,7 +85,7 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 	trace.InsertIntIntoSpan("result_table_num", len(queryInfo.TsDBs), span)
 
 	queryList := make(metadata.QueryList, 0, len(queryInfo.TsDBs))
-	for i, tsDB := range queryInfo.TsDBs {
+	for _, tsDB := range queryInfo.TsDBs {
 		var (
 			field     string
 			whereList = NewWhereList()
@@ -102,9 +101,6 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 				},
 			}
 		)
-
-		tsDBStr, _ := json.Marshal(tsDB)
-		trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%d", i), string(tsDBStr), span)
 
 		db := tsDB.DB
 		measurement := tsDB.Measurement
@@ -246,7 +242,7 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 	trace.InsertIntIntoSpan("result_table_num", len(tableInfos), span)
 
 	queryList := make(metadata.QueryList, 0, len(tableInfos))
-	for i, tableInfo := range tableInfos {
+	for _, tableInfo := range tableInfos {
 		var (
 			db          = tableInfo.DB
 			clusterID   = tableInfo.ClusterID
@@ -301,9 +297,6 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		query.Field = field
 		query.Condition = whereList.String()
 
-		queryStr, _ := json.Marshal(query)
-		trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%d", i), string(queryStr), span)
-
 		log.Debugf(ctx, "query_info: %+v", query)
 		queryList = append(queryList, query)
 	}
@@ -346,9 +339,6 @@ func QueryInfoIntoContext(ctx context.Context, referenceName, metricName string,
 	}
 
 	queries.Query[referenceName] = queryMetric
-
-	queryMetricStr, _ := json.Marshal(queryMetric)
-	trace.InsertStringIntoSpan(fmt.Sprintf("reference_%s", referenceName), string(queryMetricStr), span)
 
 	err = metadata.SetQueries(ctx, queries)
 	return ctx, err

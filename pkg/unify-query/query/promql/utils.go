@@ -461,11 +461,6 @@ func generateSQL(
 		defer span.End()
 	}
 
-	trace.InsertStringIntoSpan("generate-sql-field", field, span)
-	trace.InsertStringIntoSpan("generate-sql-aggregation", aggregation, span)
-	trace.InsertStringIntoSpan("generate-sql-window", window.String(), span)
-	trace.InsertStringIntoSpan("generate-sql-where-list", whereList.String(), span)
-
 	rpName, field, newAggregation = GetRp(ctx, db, measurement, field, aggregation, window, whereList)
 	// 根据RP重新生成measurement
 	if rpName != "" {
@@ -473,10 +468,6 @@ func generateSQL(
 	} else {
 		measurement = fmt.Sprintf("\"%s\"", measurement)
 	}
-
-	trace.InsertStringIntoSpan("generate-sql-rp-name", rpName, span)
-	trace.InsertStringIntoSpan("generate-sql-new-field", field, span)
-	trace.InsertStringIntoSpan("generate-sql-new-aggregation", newAggregation, span)
 
 	// 存在聚合条件，需要增加聚合
 	if newAggregation != "" {
@@ -511,10 +502,6 @@ func generateSQL(
 	} else {
 		aggField = fmt.Sprintf("\"%s\"", field)
 	}
-
-	// 由于此处存在聚合，所以可以直接使用influxdb的limit能力
-	trace.InsertStringIntoSpan("generate-sql-is-with-group-by", fmt.Sprintf("%v", isWithGroupBy), span)
-	trace.InsertStringIntoSpan("generate-sql-is-count-group", fmt.Sprintf("%v", isCountGroup), span)
 
 	whereString := ""
 	if len(whereList.whereList) > 0 {

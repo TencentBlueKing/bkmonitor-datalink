@@ -113,10 +113,6 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 	// influxdb会包括最后一个点 [start, end], 而promql是 [start, end)后面是开区间，这里保持对齐，故意-1ns
 
 	endTime := end.Add(-1 * time.Millisecond)
-	trace.InsertStringIntoSpan("query-range-promQL", q, span)
-	trace.InsertStringIntoSpan("query-range-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-range-end", endTime.String(), span)
-	trace.InsertStringIntoSpan("query-range-interval", interval.String(), span)
 
 	opt := &promql.QueryOpts{}
 	query, err := GlobalEngine.NewRangeQuery(querier, opt, q, start, endTime, interval)
@@ -128,7 +124,6 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 	// 计算查询时间
 	startAnaylize := time.Now()
 	duration = startAnaylize.Sub(startQuery)
-	trace.InsertStringIntoSpan("query-range-query-cost", duration.String(), span)
 	log.Debugf(ctx, "prom range query:%s, query cost:%s", q, duration)
 
 	err = result.Err
@@ -153,7 +148,6 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 
 	// 计算分析时间
 	duration = time.Since(startAnaylize)
-	trace.InsertStringIntoSpan("query-range-analyzer-cost", duration.String(), span)
 	log.Debugf(ctx, "prom range query:%s, anaylize cost:%s", q, time.Since(startAnaylize))
 
 	return tables, nil

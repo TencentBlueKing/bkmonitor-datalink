@@ -187,8 +187,6 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 		defer span.End()
 	}
 
-	trace.InsertStringIntoSpan("cluster-name", clusterName, span)
-
 	if clusterHostList, ok := r.clusterInfo[clusterName]; ok {
 		hostList = clusterHostList.HostList
 		for _, h := range clusterHostList.UnreadableHostList {
@@ -196,17 +194,11 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 		}
 	}
 
-	trace.InsertStringSliceIntoSpan("all-host-list", hostList, span)
-	trace.InsertStringIntoSpan("unread-host", fmt.Sprintf("%+v", unReadHost), span)
-
 	if len(tagsKey) > 0 {
 		hostList, err = r.getReadHostByTagsKey(ctx, tagsKey, clusterName, db, measurement, condition)
 		if err != nil {
 			return nil, err
 		}
-
-		trace.InsertStringIntoSpan("tags-key", fmt.Sprintf("%+v", tagsKey), span)
-		trace.InsertStringSliceIntoSpan("tag-host-list", hostList, span)
 	}
 
 	for _, h := range hostList {
@@ -252,15 +244,10 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 		hostMapInc[k]++
 		index = int(math.Mod(float64(hostMapInc[k]), float64(len(hosts))))
 
-		trace.InsertStringIntoSpan("host-map-inc", fmt.Sprintf("%+v", hostMapInc), span)
-		trace.InsertIntIntoSpan("host-map-index", index, span)
-		trace.InsertStringSliceIntoSpan("read-host-list", readHost, span)
-
 		hostMapLock.Unlock()
 	}
 
 	if index < len(hosts) {
-		trace.InsertStringIntoSpan("return-host", hosts[index].DomainName, span)
 		return hosts[index], nil
 	} else {
 		return nil, fmt.Errorf("backend index is error: %d > %d, %s", index, len(hosts), logInfo)
@@ -469,8 +456,6 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 		}
 	}
 
-	trace.InsertStringIntoSpan("all-host-list", fmt.Sprintf("%+v", allHostList), span)
-
 	// 判断是否有 tagKey
 	var buf bytes.Buffer
 	buf.WriteString(clusterName + "/" + db + "/" + measurement + "/")
@@ -480,28 +465,20 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 		return nil, err
 	}
 	buf.WriteString(tagRouter)
-	trace.InsertStringIntoSpan("check-tag-key", buf.String(), span)
 
 	var (
 		tagHostList []string
 		hostList    []string
 	)
 
-	trace.InsertStringIntoSpan("check-tag-key", buf.String(), span)
-
 	// 判断是否命中tag条件
 	if tag, ok := r.tagInfo[buf.String()]; ok {
 		tagHostList = tag.HostList
-
-		trace.InsertStringIntoSpan("tag-info-list-key", fmt.Sprintf("%+v", tagHostList), span)
 	} else {
 		// 使用默认配置
 		defaultTagKey := fmt.Sprintf("%s/%s", clusterName, DefaultTagKey)
 		if tag, ok = r.tagInfo[defaultTagKey]; ok {
 			tagHostList = tag.HostList
-
-			trace.InsertStringIntoSpan("tag-info-default-key", defaultTagKey, span)
-			trace.InsertStringIntoSpan("tag-info-list-default", fmt.Sprintf("%+v", tagHostList), span)
 		} else {
 			return nil, fmt.Errorf("default tag is empty: %v with: %s", r.tagInfo, defaultTagKey)
 		}
@@ -513,8 +490,6 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 			hostList = append(hostList, h)
 		}
 	}
-
-	trace.InsertStringIntoSpan("return-host-list", fmt.Sprintf("%+v", hostList), span)
 
 	if len(hostList) == 0 {
 		return nil, fmt.Errorf("empty influxdb host in %s, all backend: %+v", buf.String(), allHostList)

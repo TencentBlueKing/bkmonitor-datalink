@@ -22,7 +22,7 @@ import (
 // NewProcessor :
 func NewFlatProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
 	pipe := config.PipelineConfigFromContext(ctx)
-	schema, err := NewSchema(ctx)
+	schema, err := template.NewSchema(ctx)
 	if err != nil {
 		return nil, err
 	}

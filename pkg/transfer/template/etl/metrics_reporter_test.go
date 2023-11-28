@@ -7,19 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package standard
+package etl_test
 
 import (
 	"context"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
 )
 
 func pipelineContext() (context.Context, context.CancelFunc) {
@@ -29,7 +29,7 @@ func pipelineContext() (context.Context, context.CancelFunc) {
 		ResultTableList: []*config.MetaResultTableConfig{
 			{
 				Option: map[string]interface{}{
-					dimensionValuesOpt: []string{"k1", "k2", "k1/k2"},
+					"dimension_values": []string{"k1", "k2", "k1/k2"},
 				},
 			},
 		},
@@ -53,9 +53,9 @@ func (m *mockRedisKVImpl) ZAddBatch(k string, v map[string]float64) error {
 
 func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 	assert.Equal(m.T, "bkmonitor:metric_dimensions_0", k)
-	items := map[string]DimensionsEntity{
+	items := map[string]etl.DimensionsEntity{
 		"byte_total": {
-			Dimensions: map[string]*DimensionItem{
+			Dimensions: map[string]*etl.DimensionItem{
 				"k1": {
 					LastUpdateTime: 1670243190,
 					Values:         []string{"v1"},
@@ -68,7 +68,7 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 		},
 
 		"mem_pct": {
-			Dimensions: map[string]*DimensionItem{
+			Dimensions: map[string]*etl.DimensionItem{
 				"k1": {
 					LastUpdateTime: 1670243190,
 					Values:         []string{"v2"},
@@ -85,7 +85,7 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 		},
 
 		"usage": {
-			Dimensions: map[string]*DimensionItem{
+			Dimensions: map[string]*etl.DimensionItem{
 				"k1": {
 					LastUpdateTime: 1670243190,
 					Values:         []string{"v1", "v3"},
@@ -108,7 +108,7 @@ func (m *mockRedisKVImpl) HSetBatch(k string, v map[string]string) error {
 
 	for metric, content := range v {
 		item := items[metric]
-		var entity DimensionsEntity
+		var entity etl.DimensionsEntity
 		assert.NoError(m.T, json.Unmarshal([]byte(content), &entity))
 		for d := range item.Dimensions {
 			sort.Strings(item.Dimensions[d].Values)
@@ -130,53 +130,28 @@ func (m *mockRedisKVImpl) HGetBatch(k string, v []string) ([]interface{}, error)
 	return ret, nil
 }
 
-func TestMetricsReporter(t *testing.T) {
-	timeUnix = func() int64 { return 1670243190 }
-	ctx, cancel := pipelineContext()
-	processor := newMetricsReportProcessor(ctx, "metrics_reporter")
-	processor.redisStore = &mockRedisKVImpl{T: t}
-
-	ch := make(chan define.Payload, 1)
-	go func() {
-		for range ch {
-		}
-	}()
-
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k1":"v1","k2":"foo"},"time":1670243190}`), 0), ch, nil)
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k1":"v3"},"time":1670243190}`), 0), ch, nil)
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k2":"v4"},"time":1670243190}`), 0), ch, nil)
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"usage":1.0},"dimensions":{"k3":"v5"},"time":1670243190}`), 0), ch, nil) // k3 不配置采集规则
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"mem_pct":1.0},"dimensions":{"k1":"v2","k2":"v2"},"time":1670243190}`), 0), ch, nil)
-	processor.Process(define.NewJSONPayloadFrom([]byte(`{"metrics":{"byte_total":1.0},"dimensions":{"k1":"v1","k3":"v3"},"time":1670243190}`), 0), ch, nil)
-
-	time.Sleep(syncPeriod)
-	cancel()
-	close(ch)
-	time.Sleep(syncPeriod)
-}
-
 func TestDimensionStoreGet(t *testing.T) {
-	store := NewDimensionStore()
-	assert.False(t, store.Set("usage", Label{Name: "label1", Value: "value1"}))
-	assert.True(t, store.Set("usage", Label{Name: "label1", Value: "value1"}))
-	assert.False(t, store.Set("usage", Label{Name: "label1", Value: "value2"}))
+	store := etl.NewDimensionStore()
+	assert.False(t, store.Set("usage", etl.Label{Name: "label1", Value: "value1"}))
+	assert.True(t, store.Set("usage", etl.Label{Name: "label1", Value: "value1"}))
+	assert.False(t, store.Set("usage", etl.Label{Name: "label1", Value: "value2"}))
 	m := store.GetOrMergeDimensions("usage", nil)
 
 	sort.Strings(m["label1"].Values)
 	assert.Equal(t, m["label1"].Values, []string{"value1", "value2"})
 
-	m = store.GetOrMergeDimensions("usage", DimensionMap{"label1": &DimensionItem{Values: []string{"value3"}}})
+	m = store.GetOrMergeDimensions("usage", etl.DimensionMap{"label1": &etl.DimensionItem{Values: []string{"value3"}}})
 	sort.Strings(m["label1"].Values)
 	assert.Equal(t, m["label1"].Values, []string{"value1", "value2", "value3"})
 
-	store = NewDimensionStore()
-	m = store.GetOrMergeDimensions("usage", DimensionMap{"label1": &DimensionItem{Values: []string{"value3"}}})
+	store = etl.NewDimensionStore()
+	m = store.GetOrMergeDimensions("usage", etl.DimensionMap{"label1": &etl.DimensionItem{Values: []string{"value3"}}})
 	assert.Equal(t, m["label1"].Values, []string{"value3"})
 
-	store = NewDimensionStore()
-	store.Set("usage1", Label{Name: "label1", Value: "value1"})
-	store.Set("usage2", Label{Name: "label2", Value: "value5"})
-	m = store.GetOrMergeDimensions("usage1", DimensionMap{"label1": &DimensionItem{Values: []string{"value3"}}})
+	store = etl.NewDimensionStore()
+	store.Set("usage1", etl.Label{Name: "label1", Value: "value1"})
+	store.Set("usage2", etl.Label{Name: "label2", Value: "value5"})
+	m = store.GetOrMergeDimensions("usage1", etl.DimensionMap{"label1": &etl.DimensionItem{Values: []string{"value3"}}})
 	sort.Strings(m["label1"].Values)
 	assert.Equal(t, m["label1"].Values, []string{"value1", "value3"})
 	m = store.GetOrMergeDimensions("usage2", nil)

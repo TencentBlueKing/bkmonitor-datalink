@@ -13,6 +13,7 @@ import (
 	"context"
 
 	"github.com/cstockton/go-conv"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -21,25 +22,62 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
-// PayloadDecoder :
-type Decoder func(d define.Payload) ([]etl.Container, error)
-
-// RecordProcessor :
-type RecordProcessor struct {
+type FlatBatchHandler struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
-	Decode Decoder
-	schema etl.Transformer
+
+	ctx    context.Context
+	schema etl.Schema
 }
 
-// Process : process json data
-func (p *RecordProcessor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	containers, err := p.Decode(d)
+const (
+	batchKey = "items"
+)
+
+func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	batch := etl.NewMapContainer()
+	err := d.To(&batch)
 	if err != nil {
-		logging.MinuteErrorfSampling(p.String(), "%v load %#v error %v", p, d, err)
 		p.CounterFails.Inc()
+		logging.Errorf("%v convert payload %#v error %v", p, d, err)
 		return
 	}
+
+	obj, ok := batch[batchKey]
+	if !ok {
+		p.CounterFails.Inc()
+		logging.Warnf("%v no 'items' field in flat.batch %v", p, batch)
+		return
+	}
+
+	items, ok := obj.([]interface{})
+	if !ok {
+		p.CounterFails.Inc()
+		logging.Warnf("%v got unexpected type %T", p, obj)
+		return
+	}
+
+	containers := make([]etl.Container, 0, len(items))
+	for i := 0; i < len(items); i++ {
+		container := batch.Copy()
+
+		var attrs map[string]interface{}
+		switch value := items[i].(type) {
+		case etl.Container:
+			attrs = etl.ContainerToMap(value)
+		case map[string]interface{}:
+			attrs = value
+		default:
+			logging.Warnf("%v got unexpected container type %T", p, items[i])
+			continue
+		}
+
+		for key, value := range attrs {
+			_ = container.Put(key, value)
+		}
+		containers = append(containers, container)
+	}
+
 	if len(containers) == 0 {
 		logging.Debugf("%v loaded an empty payload %v", p, d)
 		p.CounterFails.Inc()
@@ -80,29 +118,31 @@ func (p *RecordProcessor) Process(d define.Payload, outputChan chan<- define.Pay
 	}
 }
 
-// NewRecordProcessor :
-func NewRecordProcessor(name string, pipeConfig *config.PipelineConfig, schema etl.Transformer) *RecordProcessor {
-	return NewRecordProcessorWithDecoderFn(name, pipeConfig, schema, etl.NewPayloadDecoder().Decode)
-}
-
-func NewRecordProcessorWithContext(ctx context.Context, name string, pipeConfig *config.PipelineConfig, schema etl.Transformer) *RecordProcessor {
-	recordProcessor := NewRecordProcessorWithDecoderFn(name, pipeConfig, schema, etl.NewPayloadDecoder().Decode)
-	recordProcessor.DisabledBizIDs = config.ResultTableConfigFromContext(ctx).DisabledBizID()
-	return recordProcessor
-}
-
-func NewRecordProcessorWithDecoderFnWithContext(ctx context.Context, name string, pipeConfig *config.PipelineConfig, schema etl.Transformer, fn Decoder) *RecordProcessor {
-	recordProcessor := NewRecordProcessorWithDecoderFn(name, pipeConfig, schema, fn)
-	recordProcessor.DisabledBizIDs = config.ResultTableConfigFromContext(ctx).DisabledBizID()
-	return recordProcessor
-}
-
-// NewRecordProcessorWithDecoderFn :
-func NewRecordProcessorWithDecoderFn(name string, pipeConfig *config.PipelineConfig, schema etl.Transformer, fn Decoder) *RecordProcessor {
-	return &RecordProcessor{
-		BaseDataProcessor: define.NewBaseDataProcessor(name),
-		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, pipeConfig),
-		schema:            schema,
-		Decode:            fn,
+func NewFlatBatchHandler(ctx context.Context, name string) (*FlatBatchHandler, error) {
+	schema, err := NewSchema(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	return &FlatBatchHandler{
+		ctx:               ctx,
+		schema:            schema,
+		BaseDataProcessor: define.NewBaseDataProcessor(name),
+		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
+	}, nil
+}
+
+func init() {
+	define.RegisterDataProcessor("flat_batch_handler", func(ctx context.Context, name string) (define.DataProcessor, error) {
+		pipe := config.PipelineConfigFromContext(ctx)
+		if pipe == nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "pipeline config is empty")
+		}
+
+		rt := config.ResultTableConfigFromContext(ctx)
+		if rt == nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "result table is empty")
+		}
+		return NewFlatBatchHandler(ctx, pipe.FormatName(rt.FormatName(name)))
+	})
 }

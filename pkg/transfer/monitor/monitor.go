@@ -23,19 +23,14 @@ var (
 type CounterMixin struct {
 	CounterSuccesses prometheus.Counter
 	CounterFails     prometheus.Counter
-	CounterSkip      prometheus.Counter
 }
 
-func NewCounterMixin(successes, fails prometheus.Counter, skip ...prometheus.Counter) *CounterMixin {
+func NewCounterMixin(successes, fails prometheus.Counter) *CounterMixin {
 	mixin := &CounterMixin{
 		CounterSuccesses: successes,
 		CounterFails:     fails,
 	}
 
-	// 只取第一个
-	if len(skip) > 0 {
-		mixin.CounterSkip = skip[0]
-	}
 	return mixin
 }
 

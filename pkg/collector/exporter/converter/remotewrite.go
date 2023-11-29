@@ -11,9 +11,9 @@ package converter
 
 import (
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define/prompb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
@@ -59,7 +59,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 			pm := promMapper{
 				Metrics:    common.MapStr{name: sample.GetValue()},
 				Target:     define.Identity(),
-				Timestamp:  sample.GetTimestampMs(),
+				Timestamp:  sample.GetTimestamp(),
 				Dimensions: utils.CloneMap(dims),
 			}
 			events = append(events, c.ToEvent(record.Token, dataId, pm.AsMapStr()))
@@ -70,7 +70,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 	}
 }
 
-func (c remoteWriteConverter) extractNameDimensions(labels []*prompb.LabelPair) (string, map[string]string) {
+func (c remoteWriteConverter) extractNameDimensions(labels []prompb.Label) (string, map[string]string) {
 	dims := make(map[string]string)
 	var name string
 	for _, label := range labels {

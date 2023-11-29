@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package auto_test
+package etl_test
 
 import (
 	"testing"
@@ -16,8 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
-	template "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/auto"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
 )
 
@@ -55,9 +54,9 @@ func (s *ProcessorSuite) SetupTest() {
 
 // TestAsSimpleFlatProcessor
 func (s *ProcessorSuite) TestAsSimpleFlatProcessor() {
-	schema, err := auto.NewSchema(s.CTX)
+	schema, err := etl.NewSchema(s.CTX)
 	s.NoError(err)
-	processor := template.NewRecordProcessor("x", s.PipelineConfig, schema)
+	processor := etl.NewRecordProcessor("x", s.PipelineConfig, schema)
 
 	s.Run(`{"time": 1574233401, "key": "x", "value": 1}`, processor, func(result map[string]interface{}) {
 		s.EqualRecord(result, map[string]interface{}{
@@ -74,9 +73,9 @@ func (s *ProcessorSuite) TestAsSimpleFlatProcessor() {
 
 // TestTimeAliasFlatProcessor
 func (s *ProcessorSuite) TestTimeAliasFlatProcessor() {
-	schema, err := auto.NewSchema(s.CTX)
+	schema, err := etl.NewSchema(s.CTX)
 	s.NoError(err)
-	processor := template.NewRecordProcessor("x", s.PipelineConfig, schema)
+	processor := etl.NewRecordProcessor("x", s.PipelineConfig, schema)
 	s.T().Logf("option %#v", s.ResultTableConfig.Option)
 
 	s.Run(`{"timestamp": 1574233401, "key": "x", "value": 1}`, processor, func(result map[string]interface{}) {
@@ -109,9 +108,9 @@ func (s *ProcessorSuite) TestAsBeatsFlatProcessor() {
 		},
 	)
 
-	schema, err := auto.NewSchema(s.CTX)
+	schema, err := etl.NewSchema(s.CTX)
 	s.NoError(err)
-	processor := template.NewRecordProcessor("x", s.PipelineConfig, schema)
+	processor := etl.NewRecordProcessor("x", s.PipelineConfig, schema)
 
 	s.Run(`{"time": 1574233401, "key": "x", "value": 1, "ip": "127.0.0.1", "cloudid": 0}`, processor, func(result map[string]interface{}) {
 		s.EqualRecord(result, map[string]interface{}{
@@ -145,9 +144,9 @@ func (s *ProcessorSuite) TestPreparePlugin() {
 		},
 	})
 
-	schema, err := auto.NewSchema(s.CTX)
+	schema, err := etl.NewSchema(s.CTX)
 	s.NoError(err)
-	processor := template.NewRecordProcessor("x", s.PipelineConfig, schema)
+	processor := etl.NewRecordProcessor("x", s.PipelineConfig, schema)
 
 	s.Run(`{"time": 1574233401, "key": "x", "value": "{\"data\": 1}", "ip": "127.0.0.1", "cloudid": 0}`, processor, func(result map[string]interface{}) {
 		s.EqualRecord(result, map[string]interface{}{

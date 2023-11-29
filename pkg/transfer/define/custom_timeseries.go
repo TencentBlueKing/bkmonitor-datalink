@@ -7,4 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package testsuite
+package define
+
+type CustomTimeseriesRecord struct {
+	Target    string                 `json:"target"`
+	Metrics   map[string]interface{} `json:"metrics"`
+	Dimension map[string]interface{} `json:"dimension"`
+	Timestamp *int64                 `json:"timestamp"`
+}
+
+type CustomTimeseries struct {
+	Data []CustomTimeseriesRecord `json:"data"`
+}

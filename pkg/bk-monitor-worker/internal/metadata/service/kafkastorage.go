@@ -22,8 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var KafkaTopicPrefixStorage = fmt.Sprintf("0%s_storage_", config.BkApiAppCode)
-
 // KafkaStorageSvc kafka storage service
 type KafkaStorageSvc struct {
 	*storage.KafkaStorage
@@ -64,9 +62,9 @@ func (a KafkaStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (a KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
-	storageConfig.SetDefault("partition", 1)
-	storageConfig.SetDefault("retention", 1800000)
+func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+	storageConfig.SetDefault("partition", uint(1))
+	storageConfig.SetDefault("retention", int64(1800000))
 	storageConfig.SetDefault("useDefaultFormat", true)
 
 	storageClusterId, ok := storageConfig.GetUint("storageClusterId")
@@ -102,14 +100,17 @@ func (a KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfi
 	}
 	// topic的构造为 ${prefix}_${key}
 	if yes, _ := storageConfig.GetBool("useDefaultFormat"); yes {
+		var KafkaTopicPrefixStorage = fmt.Sprintf("0%s_storage_", config.BkApiAppCode)
 		topic = fmt.Sprintf("%s_%s", KafkaTopicPrefixStorage, topic)
 	}
+	partition, _ := storageConfig.GetUint("partition")
+	retention, _ := storageConfig.GetInt64("retention")
 	kafkaStorage := storage.KafkaStorage{
 		TableID:          tableId,
 		Topic:            topic,
-		Partition:        a.Partition,
+		Partition:        partition,
 		StorageClusterID: storageClusterId,
-		Retention:        a.Retention,
+		Retention:        retention,
 	}
 	if err := kafkaStorage.Create(mysql.GetDBSession().DB); err != nil {
 		return err

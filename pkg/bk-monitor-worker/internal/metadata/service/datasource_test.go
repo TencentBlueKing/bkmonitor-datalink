@@ -10,12 +10,17 @@
 package service
 
 import (
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -84,4 +89,42 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	marshalString, err := jsonx.MarshalString(dsConfig)
 	assert.Nil(t, err)
 	assert.True(t, len(marshalString) != 0)
+}
+
+func TestDataSourceSvc_AddBuiltInChannelIdToGse(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	db := mysql.GetDBSession().DB
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		data := `{"message":"ok","result":true,"code":0,"data":{}}`
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	cluster := storage.ClusterInfo{
+		ClusterName:   "kafka_test_cluster",
+		ClusterType:   models.StorageTypeKafka,
+		DomainName:    "127.0.0.1",
+		Port:          9096,
+		GseStreamToId: 0,
+	}
+	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
+	err := cluster.Create(db)
+	assert.NoError(t, err)
+	topic := storage.KafkaTopicInfo{
+		BkDataId:  1199999,
+		Topic:     "test_kafka_topic_1",
+		Partition: 1,
+	}
+	db.Delete(&topic)
+	err = topic.Create(db)
+	assert.NoError(t, err)
+	ds := resulttable.DataSource{BkDataId: 1199999, MqClusterId: cluster.ClusterID}
+	err = NewDataSourceSvc(&ds).AddBuiltInChannelIdToGse()
+	assert.NoError(t, err)
 }

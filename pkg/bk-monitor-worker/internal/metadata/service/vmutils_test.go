@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
 
 func TestVmUtils_getDataTypeCluster(t *testing.T) {
@@ -186,4 +187,58 @@ func TestVmUtils_AccessBkdata(t *testing.T) {
 	var record storage.AccessVMRecord
 	err = storage.NewAccessVMRecordQuerySet(db).ResultTableIdEq(tableId).BkBaseDataIdEq(ds.BkDataId).One(&record)
 	assert.NoError(t, err)
+}
+
+func TestBkDataStorageWithDataID_Value(t *testing.T) {
+	rawDataId := 180000
+	resultTableName := "rt_name_for_test"
+	clusterName := "cluster_name_for_test"
+	bkDataStorage := NewBkDataStorageWithDataID(rawDataId, resultTableName, clusterName, "")
+	value, err := bkDataStorage.Value()
+	assert.NoError(t, err)
+	assert.Equal(t, rawDataId, value["raw_data_id"])
+	assert.Equal(t, "clean", value["data_type"])
+	assert.Equal(t, resultTableName, value["result_table_name"])
+	assert.Equal(t, resultTableName, value["result_table_name_alias"])
+	assert.Equal(t, "vm", value["storage_type"])
+	assert.Equal(t, models.VmRetentionTime, value["expires"])
+	fields, ok := value["fields"].([]map[string]interface{})
+	assert.True(t, ok)
+	var fieldNames []string
+	for _, f := range fields {
+		nameI := f["field_name"]
+		name, _ := nameI.(string)
+		fieldNames = append(fieldNames, name)
+	}
+	assert.ElementsMatch(t, []string{"time", "value", "metric", "dimensions"}, fieldNames)
+	assert.Equal(t, clusterName, value["storage_cluster"])
+	assert.Equal(t, map[string]interface{}{"schemaless": true}, value["config"])
+}
+
+func TestBkDataClean_Value(t *testing.T) {
+	rawDataName := "data_name_for_test"
+	resultTableName := "rt_name_for_test"
+	bkBizId := 2
+	bkDataClean := NewBkDataClean(rawDataName, resultTableName, bkBizId, 0)
+	value, err := bkDataClean.Value()
+	assert.NoError(t, err)
+	jsonConfigI, ok := value["json_config"]
+	assert.True(t, ok)
+	jsonConfig, ok := jsonConfigI.(map[string]interface{})
+	assert.True(t, ok)
+	confI, ok := jsonConfig["conf"]
+	assert.True(t, ok)
+	conf, ok := confI.(map[string]interface{})
+	assert.True(t, ok)
+	c := optionx.NewOptions(conf)
+	timeFormat, ok := c.Get("time_format")
+	assert.True(t, ok)
+	assert.Equal(t, models.TimeStampLenValeMap[models.TimeStampLenMillisecondLen], timeFormat)
+	timestampLen, ok := c.Get("timestamp_len")
+	assert.True(t, ok)
+	assert.Equal(t, float64(models.TimeStampLenMillisecondLen), timestampLen)
+	assert.Equal(t, rawDataName, value["result_table_name"])
+	assert.Equal(t, resultTableName, value["result_table_name_alias"])
+	assert.Equal(t, fmt.Sprintf("%v_%s", bkBizId, rawDataName), value["processing_id"])
+	fmt.Println(value)
 }

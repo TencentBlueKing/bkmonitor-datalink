@@ -77,3 +77,65 @@ func TestServiceMonitorInfoSvc_RefreshResource(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(results))
 }
+func TestShouldRefreshOwnDataId(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	should, err := ShouldRefreshOwnDataId(&bcs.BCSResource{})
+	assert.NoError(t, err)
+	assert.True(t, should)
+	should, err = ShouldRefreshOwnDataId(&bcs.BCSResource{IsCommonDataId: true, ClusterID: "not_exist_cluster"})
+	assert.NoError(t, err)
+	assert.False(t, should)
+
+}
+
+func TestServiceMonitorInfoSvc_GetConfigName(t *testing.T) {
+	config.FilePath = "../../../bmw.yaml"
+	mocker.PatchDBSession()
+	db := mysql.GetDBSession().DB
+	defer db.Close()
+
+	var cloudId = 0
+	cluster := &bcs.BCSClusterInfo{
+		ClusterID:          "BCS-K8S-00000",
+		BCSApiClusterId:    "BCS-K8S-00000",
+		BkBizId:            2,
+		BkCloudId:          &cloudId,
+		ProjectId:          "xxxxx",
+		Status:             "",
+		DomainName:         "www.xxx.com",
+		Port:               80,
+		ServerAddressPath:  "clusters",
+		ApiKeyType:         "authorization",
+		ApiKeyContent:      "xxxxxx",
+		ApiKeyPrefix:       "Bearer",
+		IsSkipSslVerify:    true,
+		K8sMetricDataID:    1572864,
+		CustomMetricDataID: 1572865,
+		K8sEventDataID:     1572866,
+		Creator:            "system",
+		CreateTime:         time.Now(),
+		LastModifyTime:     time.Now(),
+		LastModifyUser:     "system",
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err := cluster.Create(db)
+	assert.NoError(t, err)
+	smi := &bcs.ServiceMonitorInfo{
+		BCSResource: bcs.BCSResource{
+			ClusterID:          cluster.ClusterID,
+			Name:               "servicetest",
+			IsCustomResource:   false,
+			IsCommonDataId:     false,
+			RecordCreateTime:   time.Now(),
+			ResourceCreateTime: time.Now(),
+		},
+	}
+	configName, err := NewServiceMonitorInfoSvc(smi).GetConfigName()
+	assert.NoError(t, err)
+	assert.Equal(t, "custom-metric-servicetest-system", configName)
+	config.BcsClusterBkEnvLabel = "bcsLabel"
+	configName, err = NewServiceMonitorInfoSvc(smi).GetConfigName()
+	assert.NoError(t, err)
+	assert.Equal(t, "bcsLabel-custom-metric-servicetest-system", configName)
+}

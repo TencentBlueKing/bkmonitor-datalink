@@ -90,7 +90,7 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
 	db := mysql.GetDBSession().DB
 	// 判断是否需要使用默认集群信息
 	var clusterId uint

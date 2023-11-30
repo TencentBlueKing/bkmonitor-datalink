@@ -499,7 +499,13 @@ func (a BkDataAccessor) create() (*bkdata.CreateDataHubData, error) {
 		return nil, err
 	}
 	clean, err := a.Clean()
+	if err != nil {
+		return nil, err
+	}
 	s, err := a.Storage()
+	if err != nil {
+		return nil, err
+	}
 
 	var resp bkdata.CreateDataHubResp
 	if _, err := bkdataApi.CreateDataHub().SetBody(map[string]interface{}{
@@ -721,11 +727,14 @@ type BkDataStorage struct {
 }
 
 func (b BkDataStorage) Value() ([]map[string]interface{}, error) {
-
-	return []map[string]interface{}{{"result_table_name": b.BkTableId,
-		"storage_type":    "vm",
-		"expires":         b.Expires,
-		"storage_cluster": b.VmCluster}}, nil
+	return []map[string]interface{}{
+		{
+			"result_table_name": b.BkTableId,
+			"storage_type":      "vm",
+			"expires":           b.Expires,
+			"storage_cluster":   b.VmCluster,
+		},
+	}, nil
 }
 
 func NewBkDataStorageWithDataID(rawDataId int, resultTableName, vmCluster, expires string) *BkDataStorageWithDataID {

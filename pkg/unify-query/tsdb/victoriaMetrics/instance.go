@@ -370,6 +370,7 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
+	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 
 	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
 		return promql.Matrix{}, nil

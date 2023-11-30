@@ -46,6 +46,7 @@ func TestResultTableFieldSvc_BatchGetFields(t *testing.T) {
 		IsDisabled:     false,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&f1, "table_id = ?", tableID)
 	err := f1.Create(db)
 	assert.NoError(t, err)
@@ -60,6 +61,7 @@ func TestResultTableFieldSvc_BulkCreateDefaultFields(t *testing.T) {
 	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	rt := resulttable.ResultTable{
 		TableId:        "test_result_table_for_default_fields",
 		TableNameZh:    "test_result_table_for_default_fields",

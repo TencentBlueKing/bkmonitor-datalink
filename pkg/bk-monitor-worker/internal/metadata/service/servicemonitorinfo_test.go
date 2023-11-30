@@ -60,6 +60,7 @@ func TestServiceMonitorInfoSvc_RefreshResource(t *testing.T) {
 		LastModifyUser:     "system",
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&bcs.ServiceMonitorInfo{}, "cluster_id = ?", cluster.ClusterID)
 	svc := NewBcsClusterInfoSvc(cluster)
 	err := NewServiceMonitorInfoSvc(nil).RefreshResource(&svc, cluster.K8sMetricDataID)

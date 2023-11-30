@@ -43,6 +43,7 @@ func TestEsStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&clusterInfo, "cluster_id = ?", 99)
 	err := clusterInfo.Create(db)
 	assert.NoError(t, err)

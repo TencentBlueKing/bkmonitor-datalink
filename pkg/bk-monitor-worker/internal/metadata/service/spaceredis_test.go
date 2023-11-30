@@ -28,6 +28,7 @@ func TestSpacePusher_getDataIdByCluster(t *testing.T) {
 	cfg.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	cluster := &bcs.BCSClusterInfo{
 		ClusterID:          "BCS-K8S-00000",
 		BCSApiClusterId:    "BCS-K8S-00000",
@@ -64,6 +65,7 @@ func TestSpacePusher_isNeedAddFilter(t *testing.T) {
 	cfg.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	ds := resulttable.DataSource{
 		BkDataId:         defaultDataId,
 		Token:            "xxx",
@@ -108,6 +110,7 @@ func TestSpacePusher_getData(t *testing.T) {
 		FromAuthorization: false,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(sdr, "space_type_id = ? and space_id = ?", sdr.SpaceTypeId, sdr.SpaceId)
 	err := sdr.Create(db)
 	assert.NoError(t, err)

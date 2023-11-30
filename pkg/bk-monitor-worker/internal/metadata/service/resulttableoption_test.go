@@ -25,6 +25,7 @@ func TestResultTableOptionSvc_BulkCreateOptions(t *testing.T) {
 	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	rt := resulttable.ResultTable{
 		TableId:        "test_table_for_rto",
 		TableNameZh:    "test_table_for_rto",

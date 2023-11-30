@@ -120,6 +120,7 @@ func TestResultTableSvc_CreateResultTable_for_event(t *testing.T) {
 		}, nil
 	})
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	var dataId uint = 1900000
 	// 跳过此dataid的推送
 	IgnoreConsulSyncDataIdList = append(IgnoreConsulSyncDataIdList, dataId)

@@ -60,6 +60,7 @@ func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
 		}, nil
 	})
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	cluster := &bcs.BCSClusterInfo{
 		ClusterID:          "BCS-K8S-00000",
 		BCSApiClusterId:    "BCS-K8S-00000",
@@ -288,6 +289,7 @@ func TestBCSClusterInfo_Create(t *testing.T) {
 		ClusterID: "new_create_cluster",
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&c, "cluster_id = ?", c.ClusterID)
 	err := c.Create(db)
 	assert.NoError(t, err)
@@ -365,6 +367,7 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	clusterID := "BCS-K8S-00001"
 	bkBizId := "2"
 	projectId := "project_id_xxxxx"

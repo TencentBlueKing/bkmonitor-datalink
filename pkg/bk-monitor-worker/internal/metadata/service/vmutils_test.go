@@ -27,14 +27,16 @@ import (
 )
 
 func TestVmUtils_getDataTypeCluster(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	mocker.PatchDBSession()
 	cluster := bcs.BCSClusterInfo{
 		ClusterID:          "",
 		K8sMetricDataID:    299991,
 		CustomMetricDataID: 299992,
 	}
-	mysql.GetDBSession().DB.Delete(&cluster, "K8sMetricDataID = ? or CustomMetricDataID = ?", cluster.K8sMetricDataID, cluster.CustomMetricDataID)
-	err := cluster.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	defer db.Close()
+	db.Delete(&cluster, "K8sMetricDataID = ? or CustomMetricDataID = ?", cluster.K8sMetricDataID, cluster.CustomMetricDataID)
+	err := cluster.Create(db)
 	assert.NoError(t, err)
 	dataMap, err := NewVmUtils().getDataTypeCluster(299991)
 	assert.NoError(t, err)
@@ -42,7 +44,7 @@ func TestVmUtils_getDataTypeCluster(t *testing.T) {
 	assert.Equal(t, "", dataMap["bcs_cluster_id"])
 
 	cluster.ClusterID = "test_cluster_id"
-	err = cluster.Update(mysql.GetDBSession().DB, bcs.BCSClusterInfoDBSchema.ClusterID)
+	err = cluster.Update(db, bcs.BCSClusterInfoDBSchema.ClusterID)
 	assert.NoError(t, err)
 	dataMap, err = NewVmUtils().getDataTypeCluster(299991)
 	assert.Equal(t, models.VmDataTypeBcsClusterK8s, dataMap["data_type"])
@@ -60,8 +62,10 @@ func TestVmUtils_getVmCluster(t *testing.T) {
 		ClusterType:      models.StorageTypeVM,
 		IsDefaultCluster: true,
 	}
-	mysql.GetDBSession().DB.Delete(&cluster, "cluster_type = ? and is_default_cluster = ? or cluster_name = ?", cluster.ClusterType, cluster.IsDefaultCluster, cluster.ClusterName)
-	err := cluster.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	defer db.Close()
+	db.Delete(&cluster, "cluster_type = ? and is_default_cluster = ? or cluster_name = ?", cluster.ClusterType, cluster.IsDefaultCluster, cluster.ClusterName)
+	err := cluster.Create(db)
 	assert.NoError(t, err)
 	c, err := NewVmUtils().getVmCluster("", "", 0)
 	assert.NoError(t, err)
@@ -76,8 +80,8 @@ func TestVmUtils_getVmCluster(t *testing.T) {
 		SpaceID:     "123",
 		VMClusterID: cluster.ClusterID,
 	}
-	mysql.GetDBSession().DB.Delete(&svi, "space_type = ? and space_id = ?", "bkcc", "123")
-	err = svi.Create(mysql.GetDBSession().DB)
+	db.Delete(&svi, "space_type = ? and space_id = ?", "bkcc", "123")
+	err = svi.Create(db)
 	assert.NoError(t, err)
 	c3, err := NewVmUtils().getVmCluster("bkcc", "123", 0)
 	assert.NoError(t, err)
@@ -107,12 +111,13 @@ func TestVmUtils_getBkbaseDataNameAndTopic(t *testing.T) {
 }
 
 func TestVmUtils_getTimestampLen(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	mocker.PatchDBSession()
 	ds := resulttable.DataSource{
 		BkDataId: 198877,
 	}
-	mysql.GetDBSession().DB.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
-	err := ds.Create(mysql.GetDBSession().DB)
+	db := mysql.GetDBSession().DB
+	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
+	err := ds.Create(db)
 	assert.NoError(t, err)
 	// default
 	timestampLen, err := NewVmUtils().getTimestampLen(0, "")

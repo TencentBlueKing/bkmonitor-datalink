@@ -26,6 +26,7 @@ func TestArgusStorage_ConsulConfig(t *testing.T) {
 	config.FilePath = "../../../bmw.yaml"
 	mocker.PatchDBSession()
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	cluster := storage.ClusterInfo{
 		ClusterID:   100,
 		ClusterName: "argus_storage_100",

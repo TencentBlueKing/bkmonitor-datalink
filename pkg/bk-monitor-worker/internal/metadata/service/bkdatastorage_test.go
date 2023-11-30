@@ -52,6 +52,7 @@ func TestBkDataStorageSvc_CreateDatabusClean(t *testing.T) {
 	mocker.PatchDBSession()
 
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	tableId := "bk_data_test_table_id3"
 	bds := storage.BkDataStorage{
 		TableID:   tableId,

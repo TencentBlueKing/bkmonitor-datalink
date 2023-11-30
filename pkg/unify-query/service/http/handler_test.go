@@ -1360,7 +1360,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promq to struct with topk": {
 			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `topk($1, bkmonitor:metric)`,
+				PromQL: `topk(1, bkmonitor:metric)`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
@@ -1505,6 +1505,90 @@ func TestStructAndPromQLConvert(t *testing.T) {
 								},
 							},
 						},
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"nodeIndex 3 with sum": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `increase(sum by (deployment_environment, result_table_id) (bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"})[2m:])`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						TableID:    "5000575_bkapm_metric_tgf_server_gs_cn_idctest.__default__",
+						FieldName:  "trace_additional_duration_count",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "deployment_environment",
+									Value:         []string{"g-5"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:   "increase",
+							Window:     "2m0s",
+							NodeIndex:  3,
+							IsSubQuery: true,
+							Step:       "0s",
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "sum",
+								Dimensions: []string{
+									"deployment_environment", "result_table_id",
+								},
+							},
+						},
+						Offset: "0s",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"nodeIndex 2 with sum": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (deployment_environment, result_table_id) (increase(bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"}[2m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						TableID:    "5000575_bkapm_metric_tgf_server_gs_cn_idctest.__default__",
+						FieldName:  "trace_additional_duration_count",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "deployment_environment",
+									Value:         []string{"g-5"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "increase",
+							Window:    "2m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "sum",
+								Dimensions: []string{
+									"deployment_environment", "result_table_id",
+								},
+							},
+						},
+						Offset: "",
 					},
 				},
 				MetricMerge: "a",

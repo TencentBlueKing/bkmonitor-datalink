@@ -628,8 +628,12 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		OriginalOffset: originalOffset,
 	}
 
-	timeIdx := 0
+	timeIdx := -1
+	funcNums := len(q.AggregateMethodList)
+
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
+		funcNums += 1
+
 		// 拼接时间聚合函数，NodeIndex 的数据如下：
 		// count_over_time(metric[1m:2m])：vector -> subQuery -> call： nodeIndex 为 2
 		// sum by(job, metric_name) (delta(label_replace(metric, "")[1m:]))：vector -> call -> subQuery -> call -> aggr：nodeIndex 为 3
@@ -638,24 +642,26 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		timeIdx = q.TimeAggregation.NodeIndex - 2
 		// 增加小于 0 的场景兼容默认值为空的情况
 		if timeIdx <= 0 {
-			result, err = q.TimeAggregation.ToProm(result)
-			if err != nil {
-				return nil, err
-			}
+			timeIdx = 0
 		}
 	}
 
-	for idx, method := range q.AggregateMethodList {
-		if timeIdx > 0 && idx == timeIdx {
+	for idx := 0; idx < funcNums; idx++ {
+		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		if result, err = method.ToProm(result); err != nil {
-			log.Errorf(ctx, "failed to translate function for->[%s]", err)
-			return nil, err
+		} else {
+			methodIdx := idx
+			if timeIdx > -1 && methodIdx >= timeIdx {
+				methodIdx -= 1
+			}
+			method := q.AggregateMethodList[methodIdx]
+			if result, err = method.ToProm(result); err != nil {
+				log.Errorf(ctx, "failed to translate function for->[%s]", err)
+				return nil, err
+			}
 		}
 	}
 

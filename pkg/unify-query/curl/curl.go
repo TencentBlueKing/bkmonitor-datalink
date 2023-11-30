@@ -60,8 +60,6 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
-	c.Log.Ctx(ctx).Debug(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
-
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
 		c.Log.Ctx(ctx).Error(fmt.Sprintf("client new request error:%s", err))
@@ -75,7 +73,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-method", method, span)
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
-	trace.InsertStringIntoSpan("req-http-body", string(opt.Body), span)
+	//trace.InsertStringIntoSpan("req-http-body", string(opt.Body), span)
+
+	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] %s", method, opt.UrlPath))
 
 	key := fmt.Sprintf("%s%s", opt.UrlPath, opt.Body)
 	for k, v := range opt.Headers {

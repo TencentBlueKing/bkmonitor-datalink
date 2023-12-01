@@ -38,9 +38,13 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		return
 	}
 
+	if record.Values == nil {
+		p.CounterFails.Inc()
+		return
+	}
+
 	var eventRecords []EventRecord
 
-	var event BaseEvent
 	for _, value := range record.Values {
 		extra := value.Extra
 		if extra == nil {
@@ -61,14 +65,12 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 			parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
 			if err != nil {
 				p.CounterFails.Inc()
-				return
+				continue
 			}
 			timestamp := float64(parse.UnixMilli())
 			eventRecord.Timestamp = &timestamp
+			eventRecords = append(eventRecords, eventRecord)
 		}
-
-		eventRecords = append(eventRecords, event.Flat()...)
-		event = nil
 	}
 
 	// 补充业务ID

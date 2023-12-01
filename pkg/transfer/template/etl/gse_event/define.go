@@ -12,6 +12,8 @@ package gse_event
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/cstockton/go-conv"
 )
 
@@ -53,11 +55,32 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 	var records []EventRecord
 	var target string
 	for _, host := range e.Hosts {
-
-		if host.AgentID == "" {
+		dimensions := make(map[string]interface{})
+		ip, cloudID := "", "0"
+		if host.AgentID != "" {
 			target = host.AgentID
-		} else {
+			if strings.Contains(target, ":") {
+				ipAndAgentID := strings.Split(target, ":")
+				ip = ipAndAgentID[1]
+				cloudID = ipAndAgentID[0]
+			} else {
+				dimensions["bk_agent_id"] = host.AgentID
+			}
+		}
+
+		if host.IP != "" {
 			target = fmt.Sprintf("%d:%s", host.CloudID, host.IP)
+			ip = host.IP
+			cloudID = conv.String(host.CloudID)
+		} else {
+			continue
+		}
+
+		if ip != "" {
+			dimensions["ip"] = ip
+			dimensions["bk_target_ip"] = ip
+			dimensions["bk_target_cloud_id"] = cloudID
+			dimensions["bk_cloud_id"] = cloudID
 		}
 
 		records = append(records, EventRecord{
@@ -66,13 +89,7 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 			Event: map[string]interface{}{
 				"content": "agent_lost",
 			},
-			EventDimension: map[string]interface{}{
-				"bk_target_cloud_id": conv.String(host.CloudID),
-				"bk_target_ip":       host.IP,
-				"ip":                 host.IP,
-				"bk_cloud_id":        conv.String(host.CloudID),
-				"bk_agent_id":        host.AgentID,
-			},
+			EventDimension: dimensions,
 		})
 	}
 	return records

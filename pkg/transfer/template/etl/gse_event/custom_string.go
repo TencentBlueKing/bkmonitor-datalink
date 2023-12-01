@@ -11,6 +11,7 @@ package gse_event
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cstockton/go-conv"
@@ -48,14 +49,6 @@ type CustomStringEvent struct {
 	Values  []string `json:"_value_"`
 }
 
-type EventRecord struct {
-	EventName      string                 `json:"event_name"`
-	Event          map[string]interface{} `json:"event"`
-	EventDimension map[string]interface{} `json:"dimension"`
-	Target         string                 `json:"target"`
-	Timestamp      *float64               `json:"timestamp"`
-}
-
 func (p *CustomStringProcessor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 	record := new(CustomStringEvent)
 	err := d.To(record)
@@ -72,7 +65,7 @@ func (p *CustomStringProcessor) Process(d define.Payload, outputChan chan<- defi
 
 	event := new(EventRecord)
 	event.EventName = "custom_string"
-	event.Target = record.IP
+	event.Target = fmt.Sprintf("%s:%d", record.IP, record.CloudID)
 
 	// 根据IP和云区域ID获取业务ID
 	store := define.StoreFromContext(p.ctx)

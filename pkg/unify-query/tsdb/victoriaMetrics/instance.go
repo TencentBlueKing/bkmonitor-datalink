@@ -324,6 +324,7 @@ func (i *Instance) vmQuery(
 			Headers: map[string]string{
 				ContentType: i.ContentType,
 			},
+			Timeout: i.Timeout,
 		},
 	)
 	if err != nil {

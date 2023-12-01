@@ -74,8 +74,6 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
 
-	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] url: %s, body: %s", method, opt.UrlPath, opt.Body))
-
 	key := fmt.Sprintf("%s%s", opt.UrlPath, opt.Body)
 	for k, v := range opt.Headers {
 		key = fmt.Sprintf("%s%s%s", key, k, v)

@@ -182,7 +182,31 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 	return all
 }
 
-func (c AllConditions) VMString(vMResultTable string) (string, int) {
+func (c AllConditions) BkSql() string {
+	vmLabels := make([]string, 0, len(c))
+	num := 0
+	for _, cond := range c {
+		labels := make([]string, 0, len(cond)+1)
+
+		for _, f := range cond {
+			switch f.Operator {
+			case ConditionContains:
+
+			}
+
+			nf := f.ContainsToPromReg()
+			val := strings.ReplaceAll(nf.Value[0], `\`, `\\`)
+			labels = append(labels, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
+		}
+
+		num += len(cond)
+		vmLabels = append(vmLabels, strings.Join(labels, `, `))
+	}
+
+	return strings.Join(vmLabels, ` or `)
+}
+
+func (c AllConditions) Vm(vMResultTable string) (string, int) {
 	vmLabels := make([]string, 0, len(c))
 	num := 0
 	for _, cond := range c {

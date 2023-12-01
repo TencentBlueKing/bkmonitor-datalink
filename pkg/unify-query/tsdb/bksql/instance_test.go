@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -32,35 +33,72 @@ func TestInstance_QueryRaw(t *testing.T) {
 		IntervalTime: 3e2 * time.Millisecond,
 		Timeout:      3e1 * time.Second,
 		Client:       cli,
-		Limit:        1e6,
 		Tolerance:    5,
 	}
-
-	query := &metadata.Query{
-		Measurement:    "132_bcs_lol_service_status_new2",
-		Field:          "status_flag",
-		BkSqlCondition: "host LIKE '%30'",
-	}
 	end := time.Now()
-	start := end.Add(time.Minute * -30)
 
-	hints := &storage.SelectHints{
-		Start: start.UnixMilli(),
-		End:   end.UnixMilli(),
+	for idx, c := range []struct {
+		query *metadata.Query
+		hints *storage.SelectHints
+	}{
+		{
+			query: &metadata.Query{
+				Measurement:    "132_hander_opmon_avg",
+				Field:          "value",
+				BkSqlCondition: "instance = '5744'",
+			},
+			hints: &storage.SelectHints{
+				Start: end.Add(time.Minute * -5).UnixMilli(),
+				End:   end.UnixMilli(),
+			},
+		},
+		{
+			query: &metadata.Query{
+				Measurement:    "132_hander_opmon_avg",
+				Field:          "value",
+				BkSqlCondition: "instance = '5744' OR instance = '11211'",
+				AggregateMethodList: []metadata.AggrMethod{
+					{
+						Name:       "sum",
+						Dimensions: []string{"instance", "application"},
+					},
+				},
+			},
+			hints: &storage.SelectHints{
+				Start: end.Add(time.Minute * -30).UnixMilli(),
+				End:   end.UnixMilli(),
+				Step:  120000,
+				Func:  "count_over_time",
+				Range: 60000,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			ss := ins.QueryRaw(ctx, c.query, c.hints)
+			for ss.Next() {
+				series := ss.At()
+				lbs := series.Labels()
+				it := series.Iterator(nil)
+				fmt.Printf("%s\n", lbs)
+				fmt.Printf("------------------------------------------------\n")
+				for it.Next() == chunkenc.ValFloat {
+					ts, val := it.At()
+					fmt.Printf("%g %d\n", val, ts)
+				}
+				if it.Err() != nil {
+					panic(it.Err())
+				}
+			}
+
+			if ws := ss.Warnings(); len(ws) > 0 {
+				panic(ws)
+			}
+
+			if ss.Err() != nil {
+				panic(ss.Err())
+			}
+		})
 	}
-
-	rs := ins.QueryRaw(ctx, query, hints)
-	for {
-		if rs.Err() != nil {
-			panic(rs.Err())
-		}
-		if !rs.Next() {
-			return
-		}
-
-		fmt.Println(rs.At())
-	}
-
 }
 
 func TestInstance_bkSql(t *testing.T) {

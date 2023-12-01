@@ -555,7 +555,8 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
+	query.BkSqlCondition = allCondition.BkSql()
+	query.VmCondition, query.VmConditionNum = allCondition.Vm(vmRt)
 
 	return query, nil
 }

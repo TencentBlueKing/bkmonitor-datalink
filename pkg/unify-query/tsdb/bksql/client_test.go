@@ -35,10 +35,10 @@ var (
 
 func mockClient() *Client {
 	once.Do(func() {
-		url = "http://127.0.0.1"
-		code = "code"
-		token = ""
+		url = ""
+		code = ""
 		secret = ""
+		token = ""
 
 		client = &Client{
 			Address:                    url,

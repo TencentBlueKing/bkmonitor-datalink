@@ -277,11 +277,6 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 	)
 
 	measurement = query.Measurement
-
-	if i.Limit <= 0 {
-		// 确保一定有值
-		i.Limit = 2e5
-	}
 	limit = i.Limit + i.Tolerance
 
 	// 判断是否需要提前聚合
@@ -296,7 +291,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 		timeGrouping := fmt.Sprintf("minute%d", int(window.Minutes()))
 		groupList = append(groupList, timeGrouping)
 
-		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, %s, MAX(%s) AS %s", strings.ToUpper(newFuncName), query.Field, query.Field, strings.Join(groupList, ", "), dtEventTimeStamp, dtEventTimeStamp)
+		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, %s, MAX(%s) AS %s", strings.ToUpper(newFuncName), query.Field, query.Field, strings.Join(dims, ", "), dtEventTimeStamp, dtEventTimeStamp)
 	} else {
 		aggField = "*"
 	}
@@ -322,6 +317,11 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	if hints.Start > hints.End || hints.Start == 0 {
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %d, end: %d ", hints.Start, hints.End))
+	}
+
+	// 确保一定有值
+	if i.Limit <= 0 {
+		i.Limit = 2e5
 	}
 
 	sql := i.bkSql(ctx, query, hints, matchers...)

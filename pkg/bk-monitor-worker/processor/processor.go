@@ -185,6 +185,7 @@ func (p *Processor) Exec() {
 			}
 
 			resCh := make(chan error, 1)
+			beginTime := time.Now()
 			go func() {
 				// task run count
 				metrics.RunTaskCount(msg.Kind)
@@ -202,18 +203,21 @@ func (p *Processor) Exec() {
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
+				metrics.RunTaskFailureCount(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
+				metrics.RunTaskFailureCount(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
 				if resErr != nil {
+					metrics.RunTaskFailureCount(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
 				}
-
+				metrics.RunTaskCostTime(msg.Kind, beginTime)
 				metrics.RunTaskSuccessCount(msg.Kind)
 				p.HandleSucceededMessage(lease, msg)
 			}

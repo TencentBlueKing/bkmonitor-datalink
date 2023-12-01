@@ -16,18 +16,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
 
-// NewGseCustomStringPipeline
+// NewGseSystemEventPipeline
 func NewGseSystemEventPipeline(ctx context.Context, name string) (define.Pipeline, error) {
 	builder, err := pipeline.NewGseSystemEventConfigBuilder(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	return builder.BuildBranchingWithGluttonous(nil, func(ctx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(ctx, TypeGseCustomString, from, to)
+		return builder.ConnectStandardNodesByETLName(ctx, TypeGseSystemEvent, from, to)
 	})
 }
 
-const TypeGseSystemEvent = "bk_gse_custom_string"
+const TypeGseSystemEvent = "bk_gse_system_event"
 
 func init() {
 	define.RegisterPipeline(TypeGseSystemEvent, NewGseSystemEventPipeline)

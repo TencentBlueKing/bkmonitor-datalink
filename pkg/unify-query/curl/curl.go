@@ -60,6 +60,10 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
+	if opt.UrlPath == "" {
+		return nil, fmt.Errorf("url is emtpy")
+	}
+
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
 		c.Log.Ctx(ctx).Error(fmt.Sprintf("client new request error:%s", err))

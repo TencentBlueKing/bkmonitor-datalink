@@ -11,7 +11,6 @@ package gse_event
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"time"
 
 	"github.com/cstockton/go-conv"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 )
@@ -75,8 +75,11 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 	// 补充业务ID
 	for _, eventRecord := range eventRecords {
-		ip := eventRecord.EventDimension["ip"].(string)
-		cloudID := eventRecord.EventDimension["bk_cloud_id"].(string)
+		ipDimension, ok := eventRecord.EventDimension["ip"]
+		cloudIDDimension, ok := eventRecord.EventDimension["bk_cloud_id"]
+
+		ip, _ := ipDimension.(string)
+		cloudID, _ := cloudIDDimension.(string)
 
 		// IP为空则不处理
 		if ip == "" || cloudID == "" {

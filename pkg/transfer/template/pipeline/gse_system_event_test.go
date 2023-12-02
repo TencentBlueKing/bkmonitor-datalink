@@ -64,13 +64,13 @@ func (s *GseSystemEventPipelineSuite) TestRun() {
 					"ip":                 "127.0.0.1",
 					"bk_cloud_id":        "0",
 				},
-				"event_name": "agent_lost",
+				"event_name": "AgentLost",
 				"target":     "0:127.0.0.1",
 			},
 			"time": float64(1551511764000),
 			"metrics": map[string]interface{}{
 				"event": map[string]interface{}{
-					"content": "agent_lost",
+					"content": "AgentLost",
 				},
 			},
 		}, result)

@@ -84,10 +84,10 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 		dimensions["bk_cloud_id"] = cloudID
 
 		records = append(records, EventRecord{
-			EventName: "agent_lost",
+			EventName: "AgentLost",
 			Target:    target,
 			Event: map[string]interface{}{
-				"content": "agent_lost",
+				"content": "AgentLost",
 			},
 			EventDimension: dimensions,
 		})
@@ -107,12 +107,26 @@ type CorefileEvent struct {
 }
 
 func (e *CorefileEvent) Flat() []EventRecord {
+	var content string
+
+	if e.Executable != "" {
+		content = fmt.Sprintf("process %s ", e.Executable)
+	} else {
+		content = "process "
+	}
+
+	content += fmt.Sprintf("create corefile at %s", e.Corefile)
+
+	if e.Signal != "" {
+		content += fmt.Sprintf("by signal %s", e.Signal)
+	}
+
 	return []EventRecord{
 		{
-			EventName: "corefile",
+			EventName: "CoreFile",
 			Target:    fmt.Sprintf("%d:%s", e.CloudID, e.Host),
 			Event: map[string]interface{}{
-				"content": "corefile",
+				"content": content,
 			},
 			EventDimension: map[string]interface{}{
 				"bk_target_cloud_id": conv.String(e.CloudID),
@@ -141,7 +155,7 @@ type DiskFullEvent struct {
 func (e *DiskFullEvent) Flat() []EventRecord {
 	return []EventRecord{
 		{
-			EventName: "disk_full",
+			EventName: "DiskFull",
 			Target:    fmt.Sprintf("%d:%s", e.CloudID, e.Host),
 			Event: map[string]interface{}{
 				"content": "disk_full",
@@ -174,7 +188,7 @@ func (e *DiskReadonlyEvent) Flat() []EventRecord {
 	events := make([]EventRecord, 0)
 	for _, ro := range e.Ro {
 		events = append(events, EventRecord{
-			EventName: "disk_readonly",
+			EventName: "DiskReadonly",
 			Target:    fmt.Sprintf("%d:%s", e.CloudID, e.Host),
 			Event: map[string]interface{}{
 				"content": "disk_readonly",
@@ -208,7 +222,7 @@ type OOMEvent struct {
 func (e *OOMEvent) Flat() []EventRecord {
 	return []EventRecord{
 		{
-			EventName: "oom",
+			EventName: "OOM",
 			Target:    fmt.Sprintf("%d:%s", e.CloudID, e.Host),
 			Event: map[string]interface{}{
 				"content": "oom",
@@ -229,20 +243,20 @@ func (e *OOMEvent) Flat() []EventRecord {
 	}
 }
 
-// PingLostEvent : ping不可达事件
-type PingLostEvent struct {
+// PingUnreachableEvent : ping不可达事件
+type PingUnreachableEvent struct {
 	Hosts   []string `json:"iplist"`
 	CloudID int      `json:"cloudid"`
 }
 
-func (e *PingLostEvent) Flat() []EventRecord {
+func (e *PingUnreachableEvent) Flat() []EventRecord {
 	events := make([]EventRecord, 0)
 	for _, host := range e.Hosts {
 		events = append(events, EventRecord{
-			EventName: "ping_lost",
+			EventName: "PingUnreachable",
 			Target:    fmt.Sprintf("%d:%s", e.CloudID, host),
 			Event: map[string]interface{}{
-				"content": "ping_lost",
+				"content": "ping_unreachable",
 			},
 			EventDimension: map[string]interface{}{
 				"bk_target_cloud_id": conv.String(e.CloudID),
@@ -299,7 +313,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 		event = corefileEvent
 	case 8:
 		// ping
-		pingEvent := new(PingLostEvent)
+		pingEvent := new(PingUnreachableEvent)
 		err = json.Unmarshal(data, pingEvent)
 		if err != nil {
 			break

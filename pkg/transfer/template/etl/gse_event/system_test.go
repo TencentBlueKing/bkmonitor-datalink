@@ -10,15 +10,17 @@
 package gse_event
 
 import (
+	"sync"
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/standard"
 	. "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
-	"github.com/golang/mock/gomock"
-	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/suite"
-	"sync"
-	"testing"
 )
 
 type SystemEventSuite struct {
@@ -92,7 +94,7 @@ func (s *SystemEventSuite) TestUsage() {
 		{
 			`{
 				"server": "",
-				"time": "%04d-%02d-%02d %02d:%02d:%02d",
+				"time": "2019-03-02 15:29:24",
 				"timezone": 0,
 				"utctime": "2019-03-02 15:29:24",
 				"utctime2": "2019-03-02 07:29:24",
@@ -131,7 +133,7 @@ func (s *SystemEventSuite) TestUsage() {
 		{
 			`{
 				"server": "",
-				"time": "%04d-%02d-%02d %02d:%02d:%02d",
+				"time": "2019-03-02 15:29:24",
 				"timezone": 0,
 				"utctime": "2019-03-02 15:29:24",
 				"utctime2": "2019-03-02 07:29:24",
@@ -171,7 +173,7 @@ func (s *SystemEventSuite) TestUsage() {
 		{
 			`{
 				"server": "",
-				"time": "%04d-%02d-%02d %02d:%02d:%02d",
+				"time": "2019-03-02 15:29:24",
 				"timezone": 0,
 				"utctime": "2019-03-02 15:29:24",
 				"utctime2": "2019-03-02 07:29:24",

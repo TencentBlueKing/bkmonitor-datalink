@@ -132,9 +132,9 @@ func (s *FTAPipelineSuite) TestRun() {
 		delete(result, "bk_clean_time")
 
 		// 排序
-		tags := result["tags"].([]map[string]string)
+		tags := result["tags"].([]interface{})
 		sort.SliceStable(tags, func(i, j int) bool {
-			return tags[i]["key"] < tags[j]["key"]
+			return tags[i].(map[string]string)["key"] < tags[j].(map[string]string)["key"]
 		})
 		result["tags"] = tags
 

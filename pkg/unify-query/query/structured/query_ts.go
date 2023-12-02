@@ -203,7 +203,7 @@ type Query struct {
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
 	FieldList []string `json:"field_list" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
 	// AggregateMethodList 维度聚合函数
-	AggregateMethodList []AggregateMethod `json:"function"`
+	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法
 	TimeAggregation TimeAggregation `json:"time_aggregation"`
 	// ReferenceName 别名，用于表达式计算
@@ -270,6 +270,34 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
 		MetricName:    metricName,
+	}
+
+	// 判断是否查询非路由 tsdb
+	if q.DataSource != "" {
+		// 如果是 BkSql 查询无需获取 tsdb 路由关系
+		if q.DataSource == BkData {
+			allConditions, err := q.Conditions.AnalysisConditions()
+			if err != nil {
+				return nil, err
+			}
+
+			qry := &metadata.Query{
+				StorageID:           consul.BkSqlStorageType,
+				Measurement:         string(q.TableID),
+				Field:               q.FieldName,
+				AggregateMethodList: q.AggregateMethodList.ToQry(),
+				BkSqlCondition:      allConditions.BkSql(),
+			}
+
+			trace.InsertStringIntoSpan("query-storage-id", qry.StorageID, span)
+			trace.InsertStringIntoSpan("query-measurement", qry.Measurement, span)
+			trace.InsertStringIntoSpan("query-field", qry.Field, span)
+			trace.InsertStringIntoSpan("query-aggr-method-list", fmt.Sprintf("%+v", qry.AggregateMethodList), span)
+			trace.InsertStringIntoSpan("query-bk-sql-condition", qry.BkSqlCondition, span)
+
+			queryMetric.QueryList = []*metadata.Query{qry}
+			return queryMetric, nil
+		}
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
@@ -387,7 +415,6 @@ func (q *Query) BuildMetadataQuery(
 				),
 			)
 		}
-
 	}
 
 	switch tsDB.MeasurementType {
@@ -555,7 +582,6 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.BkSqlCondition = allCondition.BkSql()
 	query.VmCondition, query.VmConditionNum = allCondition.Vm(vmRt)
 
 	return query, nil

@@ -28,6 +28,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 	var testCases = []struct {
 		condition Conditions
 		result    []int
+		vm        string
+		sql       string
 		err       error
 	}{
 		// 长度不匹配
@@ -52,87 +54,103 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionNotContains,
 					Value:         []string{"abc"},
 				}},
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
+			sql:    `(test1 = 'abc' AND test1 != 'abc')`,
+			vm:     `result_table_id="table_id", test1="abc", test1!="abc"`,
 		},
 		// 简单的or拼接
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionRegEqual,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionNotRegEqual,
+					Value:         []string{"b", "c", "d"},
 				}},
 				ConditionList: []string{"or"},
 			},
 			result: []int{1, 1},
+			sql:    `(test1 REGEXP 'abc') OR ((test1 NOT REGEXP 'b' OR test1 NOT REGEXP 'c' OR test1 NOT REGEXP 'd'))`,
+			vm:     `result_table_id="table_id", test1=~"abc" or result_table_id="table_id", test1!~"b|c|d"`,
 		},
 		// and和or混合
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionContains,
+					Value:         []string{"abc", "bcd"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionContains,
+					Value:         []string{"abc", "ggg"},
 				}},
 				ConditionList: []string{"and", "or"},
 			},
 			result: []int{2, 1},
+			vm:     `result_table_id="table_id", test1="abc", test1=~"^(abc|bcd)$" or result_table_id="table_id", test1=~"^(abc|ggg)$"`,
+			sql:    `(test1 = 'abc' AND (test1 = 'abc' OR test1 = 'bcd')) OR ((test1 = 'abc' OR test1 = 'ggg'))`,
 		},
 		// and和or混合
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}},
 				ConditionList: []string{"or", "and"},
 			},
 			result: []int{1, 2},
+			vm:     `result_table_id="table_id", test1="abc" or result_table_id="table_id", test1="abc", test1="abc"`,
+			sql:    `(test1 = 'abc') OR (test1 = 'abc' AND test1 = 'abc')`,
 		},
 	}
 
-	for _, testCase := range testCases {
-		testResult, err := testCase.condition.AnalysisConditions()
-		if testCase.err != nil {
-			assert.NotNil(t, err)
-			continue
-		}
+	for idx, testCase := range testCases {
+		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			testResult, err := testCase.condition.AnalysisConditions()
+			if testCase.err != nil {
+				assert.NotNil(t, err)
+				return
+			}
 
-		assert.Equal(t, len(testCase.result), len(testResult), "assert row")
-		for row, columnLength := range testCase.result {
-			assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
-		}
+			assert.Equal(t, len(testCase.result), len(testResult), "assert row")
+			for row, columnLength := range testCase.result {
+				assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
+			}
 
+			vmCondition, _ := testResult.Vm("table_id")
+			assert.Equal(t, testCase.vm, vmCondition)
+
+			sqlCondtion := testResult.BkSql()
+			assert.Equal(t, testCase.sql, sqlCondtion)
+
+		})
 	}
 }
 

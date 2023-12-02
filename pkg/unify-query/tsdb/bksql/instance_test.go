@@ -135,7 +135,7 @@ func TestInstance_bkSql(t *testing.T) {
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx := mock.Init(context.Background())
-			sql := ins.bkSql(ctx, c.query, c.hints)
+			sql, _ := ins.bkSql(ctx, c.query, c.hints)
 			assert.Equal(t, sql, c.sql)
 		})
 	}

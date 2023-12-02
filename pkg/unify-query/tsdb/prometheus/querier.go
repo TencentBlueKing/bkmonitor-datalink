@@ -125,7 +125,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		}()
 		var sets []storage.SeriesSet
 		for s := range setCh {
-			if s != nil && s.Err() == nil {
+			if s != nil {
 				sets = append(sets, s)
 			}
 		}

@@ -29,6 +29,13 @@ const (
 	ConditionNotContains = "ncontains"
 )
 
+const (
+	SqlEqual    = "="
+	SqlNotEqual = "!="
+	SqlReg      = "REGEXP"
+	SqlNotReg   = "NOT REGEXP"
+)
+
 // 特殊处理的字段
 const (
 	BizID     = "bk_biz_id"
@@ -87,6 +94,29 @@ func (c *ConditionField) ToPromOperator() labels.MatchType {
 		log.Errorf(context.TODO(), "failed to translate op->[%s] to prom op.Will return default op", c.Operator)
 		return labels.MatchEqual
 	}
+}
+
+func (c *ConditionField) BkSql() *ConditionField {
+	if len(c.Value) == 0 {
+		return nil
+	}
+
+	switch c.Operator {
+	case ConditionEqual:
+		c.Operator = SqlEqual
+	case ConditionNotEqual:
+		c.Operator = SqlNotEqual
+	case ConditionContains:
+		c.Operator = SqlEqual
+	case ConditionNotContains:
+		c.Operator = SqlNotEqual
+	case ConditionRegEqual:
+		c.Operator = SqlReg
+	case ConditionNotRegEqual:
+		c.Operator = SqlNotReg
+	}
+
+	return c
 }
 
 // ContainsToPromReg 将结构化查询中的contains条件改为 正则 "x|y" 的方式

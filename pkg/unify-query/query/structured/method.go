@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var AggregateMap = map[string]parser.ItemType{
@@ -36,6 +37,21 @@ var AggregateMap = map[string]parser.ItemType{
 
 // 参数组合
 type Args map[string]string
+
+// 聚合方法列表
+type AggregateMethodList []AggregateMethod
+
+func (a AggregateMethodList) ToQry() []metadata.AggrMethod {
+	aml := make([]metadata.AggrMethod, 0, len(a))
+	for _, aggr := range a {
+		aml = append(aml, metadata.AggrMethod{
+			Name:       aggr.Method,
+			Dimensions: aggr.Dimensions,
+			Without:    aggr.Without,
+		})
+	}
+	return aml
+}
 
 // 聚合方法
 type AggregateMethod struct {

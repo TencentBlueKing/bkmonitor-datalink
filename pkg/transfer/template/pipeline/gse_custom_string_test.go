@@ -64,7 +64,7 @@ func (s *GseCustomStringPipelineSuite) TestRun() {
 					"ip":                 "127.0.0.1",
 					"bk_cloud_id":        "0",
 				},
-				"event_name": "custom_string",
+				"event_name": "CustomString",
 				"target":     "0:127.0.0.1",
 			},
 			"time": float64(1551511764000),

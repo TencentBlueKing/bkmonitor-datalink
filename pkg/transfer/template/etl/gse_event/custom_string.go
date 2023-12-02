@@ -64,7 +64,7 @@ func (p *CustomStringProcessor) Process(d define.Payload, outputChan chan<- defi
 	}
 
 	event := new(EventRecord)
-	event.EventName = "custom_string"
+	event.EventName = "CustomString"
 	event.Target = fmt.Sprintf("%d:%s", record.CloudID, record.IP)
 
 	// 根据IP和云区域ID获取业务ID

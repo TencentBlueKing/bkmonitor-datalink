@@ -10,10 +10,13 @@
 package metrics
 
 import (
-	"time"
+	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -90,16 +93,74 @@ func RunTaskFailureCount(taskName string) error {
 	return nil
 }
 
-// RunTaskCostTime cost time of task
-func RunTaskCostTime(taskName string, startTime time.Time) error {
-	duringTime := time.Now().Sub(startTime).Seconds() * 1000
+// RunTaskCostTime cost time of task, duration(ms)
+func RunTaskCostTime(taskName string, duration float64) error {
 	metric, err := taskCostTime.GetMetricWithLabelValues(taskName)
 	if err != nil {
 		logger.Errorf("prom get metric failed: %s", err)
 		return err
 	}
-	metric.Set(duringTime)
+	metric.Set(duration)
 	return nil
+}
+
+type Metric struct {
+	TaskName   string  `json:"task_name"`
+	Value      float64 `json:"value"`
+	MetricType string  `json:"metric_type"`
+}
+
+// PublishMetric 将metrics发布到redis
+func PublishMetric(m Metric) {
+	redis := rdb.GetRDB()
+	data, err := jsonx.MarshalString(m)
+	if err != nil {
+		logger.Errorf("marshal metrics [%v] failed, %v", m, err)
+		return
+	}
+	if err := redis.Client().Publish(context.Background(), config.BrokerRedisMetricPublishKey, data).Err(); err != nil {
+		logger.Errorf("publish metrics [%v] failed, %v", data, err)
+	}
+}
+
+// SubscribeMetric 通过redis订阅metrics并注册到普罗
+func SubscribeMetric(ctx context.Context) {
+	redis := rdb.GetRDB()
+	sub := redis.Client().Subscribe(ctx, config.BrokerRedisMetricPublishKey)
+	for {
+		select {
+		case msg := <-sub.Channel():
+			var m Metric
+			err := jsonx.UnmarshalString(msg.Payload, &m)
+			if err != nil {
+				logger.Errorf("unmarshal metric [%s] failed, %v", msg.Payload, err)
+				continue
+			}
+			switch m.MetricType {
+			case "RegisterTaskCount":
+				err = RegisterTaskCount(m.TaskName)
+			case "EnqueueTaskCount":
+				err = EnqueueTaskCount(m.TaskName)
+			case "RunTaskCount":
+				err = RunTaskCount(m.TaskName)
+			case "RunTaskSuccessCount":
+				err = RunTaskSuccessCount(m.TaskName)
+			case "RunTaskFailureCount":
+				err = RunTaskFailureCount(m.TaskName)
+			case "RunTaskCostTime":
+				err = RunTaskCostTime(m.TaskName, m.Value)
+			default:
+				logger.Errorf("not support metric type, %s", m.MetricType)
+			}
+			if err != nil {
+				logger.Errorf("record metrics failed, %v", err)
+			}
+		case <-ctx.Done():
+			logger.Infof("metric subscribe stopped")
+			return
+		}
+	}
+
 }
 
 var Registry *prometheus.Registry

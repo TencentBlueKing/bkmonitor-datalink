@@ -47,9 +47,10 @@ func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
 	splits := strings.SplitN(a.ResultTableId, ".", 2)
 	if len(splits) != 2 {
 		logger.Errorf("table_id: %s not split by '.'", a.ResultTableId)
+	} else {
+		db = splits[0]
+		measurement = splits[1]
 	}
-	db = splits[0]
-	measurement = splits[1]
 	varMap := map[string]interface{}{
 		"storageID":   strconv.Itoa(int(a.StorageClusterID)),
 		"table_id":    a.ResultTableId,

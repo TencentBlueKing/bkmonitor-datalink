@@ -34,6 +34,7 @@ var (
 	refreshDatasource     = "periodic:metadata:refresh_datasource"
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
 	RefreshBcsMonitorInfo = "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshBkccSpaceName  = "periodic:metadata:refresh_bkcc_space_name"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -63,6 +64,10 @@ var (
 		RefreshBcsMonitorInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMonitorInfo,
+		},
+		RefreshBkccSpaceName: {
+			Cron:    "30 3 * * *",
+			Handler: metadataTask.RefreshBkccSpaceName,
 		},
 	}
 )

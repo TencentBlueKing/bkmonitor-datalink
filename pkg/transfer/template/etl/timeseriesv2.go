@@ -55,12 +55,11 @@ func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define
 	// 兼容逻辑
 	// 日志指标上报存在一种看起来像自定义指标但实际上又不是自定义指标的数据格式
 	for i := 0; i < len(records.Data); i++ {
-		item := records.Data[i]
-		if item.Timestamp == nil {
-			item.Timestamp = records.Timestamp
+		if records.Data[i].Timestamp == nil {
+			records.Data[i].Timestamp = records.Timestamp
 		}
-		if item.Target == "" {
-			item.Target = records.Target
+		if records.Data[i].Target == "" {
+			records.Data[i].Target = records.Target
 		}
 	}
 

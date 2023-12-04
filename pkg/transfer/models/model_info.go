@@ -12,8 +12,9 @@ package models
 import (
 	"bytes"
 	"fmt"
-	"github.com/cstockton/go-conv"
 	"time"
+
+	"github.com/cstockton/go-conv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 )
@@ -172,7 +173,7 @@ func (h *CCAgentHostInfo) GetInfo() CCTemplateInfo {
 }
 
 func (h *CCAgentHostInfo) GetStoreKey() string {
-	return fmt.Sprintf("%s-%d-%s", AgentHostInfoStorePrefix, h.AgentID)
+	return fmt.Sprintf("%s-%s", AgentHostInfoStorePrefix, h.AgentID)
 }
 
 // LoadByBytes : format is "bk_biz_id:cloud_id:ip"

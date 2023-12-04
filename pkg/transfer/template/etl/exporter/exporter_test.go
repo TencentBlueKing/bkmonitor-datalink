@@ -144,26 +144,29 @@ func (s *ExporterMetricsFilterProcessorSuite) TestUsage() {
 		wg.Done()
 	}()
 
-	t := s.T()
 	counter := map[string]int{}
 	for output := range outputChan {
-		t.Logf("%v\n", output)
 		data := make(map[string]interface{})
 		s.NoError(output.To(&data))
-		if data["key"] == "consul_net_node_latency_p75" {
+
+		metrics := data["metrics"].(map[string]interface{})
+		for k := range metrics {
+			counter[k]++
+		}
+
+		if _, ok := metrics["consul_net_node_latency_p75"]; ok {
 			s.Equal(1549437716.0, data["time"])
 		} else {
 			s.Equal(1695023812.0, data["time"])
 		}
-		counter[data["key"].(string)]++
+
 		s.NotPanics(func() {
-			dimensions := data["labels"].(map[string]interface{})
+			dimensions := data["dimensions"].(map[string]interface{})
 			s.Equal("0", dimensions[define.RecordCloudIDFieldName])
 			s.Equal("0", dimensions[define.RecordSupplierIDFieldName])
 			s.Equal("127.0.0.1", dimensions[define.RecordIPFieldName])
 			s.True(len(dimensions) > 3)
-
-			s.NotNil(data["value"])
+			s.NotNil(data["metrics"])
 		})
 	}
 	wg.Wait()

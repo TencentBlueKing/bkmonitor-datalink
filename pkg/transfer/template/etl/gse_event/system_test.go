@@ -36,7 +36,15 @@ func (s *SystemEventSuite) runCase(input string, pass bool, dimensions map[strin
 			Topo:  []map[string]string{},
 		},
 	}
+	agentHostInfo := models.CCAgentHostInfo{
+		IP:      "127.0.0.1",
+		CloudID: 0,
+		AgentID: "demo",
+		BizID:   2,
+	}
 	s.StoreHost(&hostInfo).AnyTimes()
+	s.StoreAgentHost(&agentHostInfo).AnyTimes()
+
 	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
 
 	t := s.T()
@@ -91,6 +99,46 @@ func (s *SystemEventSuite) TestUsage() {
 	}{
 		{`{}`, false, nil, 0},
 		// 测试正常的输入内容
+		{
+			`{
+				"server": "",
+				"time": "2019-03-02 15:29:24",
+				"timezone": 0,
+				"utctime": "2019-03-02 15:29:24",
+				"utctime2": "2019-03-02 07:29:24",
+				"value": [
+					{
+						"event_desc": "",
+						"event_raw_id": 0,
+						"event_time": "2019-03-02 07:29:24",
+						"event_source_system": "",
+						"event_title": "",
+						"event_type": "gse_basic_alarm_type",
+						"extra": {
+							"type": 2,
+							"count": 0,
+							"host": [
+								{
+									"bizid": 0,
+									"agent_id": "demo"
+								}
+							]
+						}
+					}
+				]
+			}`,
+			true,
+			// dimensions
+			map[string]interface{}{
+				"bk_target_cloud_id": "0",
+				"bk_target_ip":       "127.0.0.1",
+				"ip":                 "127.0.0.1",
+				"bk_cloud_id":        "0",
+				"bk_biz_id":          "2",
+				"bk_agent_id":        "demo",
+			},
+			1,
+		},
 		{
 			`{
 				"server": "",

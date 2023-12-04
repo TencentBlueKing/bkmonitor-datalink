@@ -75,32 +75,51 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 	// 补充业务ID
 	for _, eventRecord := range eventRecords {
-		ipDimension, ok := eventRecord.EventDimension["ip"]
-		cloudIDDimension, ok := eventRecord.EventDimension["bk_cloud_id"]
+		ipDimension, _ := eventRecord.EventDimension["ip"]
+		cloudIDDimension, _ := eventRecord.EventDimension["bk_cloud_id"]
+		agentIdDimension, _ := eventRecord.EventDimension["bk_agent_id"]
 
 		ip, _ := ipDimension.(string)
 		cloudID, _ := cloudIDDimension.(string)
+		agentId, _ := agentIdDimension.(string)
 
-		// IP为空则不处理
-		if ip == "" || cloudID == "" {
-			continue
-		}
-
-		// 根据IP和云区域ID获取业务ID
+		var bkBizID int
 		store := define.StoreFromContext(p.ctx)
-		modelInfo := &models.CCHostInfo{IP: conv.String(ip), CloudID: conv.Int(cloudID)}
-		err = modelInfo.LoadStore(store)
-		if err != nil {
+		if agentId != "" {
+			// 根据agentId获取业务ID
+			modelInfo := &models.CCAgentHostInfo{
+				AgentID: agentId,
+			}
+			if err = modelInfo.LoadStore(store); err == nil {
+				bkBizID = modelInfo.BizID
+				ip = modelInfo.IP
+				cloudID = conv.String(modelInfo.CloudID)
+			}
+		}
+
+		if bkBizID == 0 && ip != "" && cloudID != "" {
+			// 根据IP和云区域ID获取业务ID
+			modelInfo := &models.CCHostInfo{IP: conv.String(ip), CloudID: conv.Int(cloudID)}
+			if err = modelInfo.LoadStore(store); err == nil {
+				bkBizID = modelInfo.BizID[0]
+			}
+		}
+
+		// 业务ID为空则不处理
+		if bkBizID == 0 {
 			p.CounterFails.Inc()
 			continue
 		}
 
-		ccTopo, ok := modelInfo.GetInfo().(*models.CCTopoBaseModelInfo)
-		if !ok {
-			p.CounterFails.Inc()
-			continue
+		eventRecord.EventDimension["bk_biz_id"] = conv.String(bkBizID)
+
+		if _, exists := eventRecord.EventDimension["bk_target_ip"]; !exists {
+			eventRecord.EventDimension["bk_target_ip"] = ip
+			eventRecord.EventDimension["bk_target_cloud_id"] = cloudID
+			eventRecord.EventDimension["ip"] = ip
+			eventRecord.EventDimension["bk_cloud_id"] = cloudID
 		}
-		eventRecord.EventDimension["bk_biz_id"] = conv.String(ccTopo.BizID[0])
+
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
 			p.CounterFails.Inc()

@@ -209,7 +209,6 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 		hostLost       int64
 		instanceLost   int64
 		instanceUpdate int64
-		deDuplication  sync.Map
 	)
 
 	type tempCache = struct {
@@ -244,18 +243,6 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 				hostInfo.Topo = value.Topo
 				hostInfo.DbmMeta = value.Host.DbmMeta
 				hostInfo.DevxMeta = value.Host.DevxMeta
-				if v, ok := deDuplication.Load(hostInfo.GetStoreKey()); ok {
-					if cache, ok := v.(tempCache); ok {
-						// 利用deDuplication 做去重操作
-						hostInfo.BizID = utils.RemoveRepByLoopInt(append(hostInfo.BizID, cache.BizID...))
-						hostInfo.Topo = utils.RemoveRepByLoopMapString(append(hostInfo.Topo, cache.Topo...))
-					}
-				}
-				deDuplication.Store(hostInfo.GetStoreKey(), tempCache{
-					HostKey: hostInfo.GetStoreKey(),
-					BizID:   hostInfo.BizID,
-					Topo:    hostInfo.Topo,
-				})
 				logging.Debugf("[%s] host info before dump %v", hostInfo.IP, hostInfo.CCTopoBaseModelInfo)
 
 				err = hostInfo.Dump(store, expires)
@@ -264,22 +251,27 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 					atomic.AddInt64(&hostLost, 1)
 					continue
 				}
+
+				// 以缓存agent id为key，存储host信息
+				hostAgentInfo := models.CCAgentHostInfo{
+					AgentID: value.Host.BkAgentID,
+					BizID:   value.BizID,
+					IP:      value.Host.BKHostInnerIP,
+					CloudID: value.Host.BKCloudID,
+				}
+				err = hostAgentInfo.Dump(store, expires)
+				if err != nil {
+					logging.Errorf("unable to dump store %v", err)
+					atomic.AddInt64(&hostLost, 1)
+					continue
+				}
+
 				atomic.AddInt64(&hostUpdate, 1)
+
 			case *models.CCInstanceInfo:
 				instanceInfo.InstanceID = value.Host.BKHostInnerIP
 				instanceInfo.BizID = []int{value.BizID}
 				instanceInfo.Topo = value.Topo
-				if v, ok := deDuplication.Load(instanceInfo.GetStoreKey()); ok {
-					if cache, ok := v.(tempCache); ok {
-						instanceInfo.BizID = utils.RemoveRepByLoopInt(append(instanceInfo.BizID, cache.BizID...))
-						instanceInfo.Topo = utils.RemoveRepByLoopMapString(append(instanceInfo.Topo, cache.Topo...))
-					}
-				}
-				deDuplication.Store(instanceInfo.GetStoreKey(), tempCache{
-					HostKey: instanceInfo.GetStoreKey(),
-					BizID:   instanceInfo.BizID,
-					Topo:    instanceInfo.Topo,
-				})
 				err = instanceInfo.Dump(store, expires)
 
 				if err != nil {

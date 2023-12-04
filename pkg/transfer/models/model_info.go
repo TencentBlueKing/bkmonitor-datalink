@@ -10,7 +10,9 @@
 package models
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/cstockton/go-conv"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -18,8 +20,9 @@ import (
 
 // HostInfoStorePrefix:
 var (
-	HostInfoStorePrefix     = "model-host"
-	InstanceInfoStorePrefix = "model-instance"
+	HostInfoStorePrefix      = "model-host"
+	AgentHostInfoStorePrefix = "model-agent-host"
+	InstanceInfoStorePrefix  = "model-instance"
 )
 
 // cc k-v 存储
@@ -155,4 +158,53 @@ func (i *CCInstanceInfo) Dump(store define.Store, expires time.Duration) error {
 		return err
 	}
 	return store.PutCache(i.GetStoreKey(), data, expires)
+}
+
+type CCAgentHostInfo struct {
+	AgentID string `json:"bk_agent_id"`
+	IP      string `json:"bk_host_innerip"`
+	CloudID int    `json:"bk_cloud_id"`
+	BizID   int    `json:"bk_biz_id"`
+}
+
+func (h *CCAgentHostInfo) GetInfo() CCTemplateInfo {
+	return h
+}
+
+func (h *CCAgentHostInfo) GetStoreKey() string {
+	return fmt.Sprintf("%s-%d-%s", AgentHostInfoStorePrefix, h.AgentID)
+}
+
+// LoadByBytes : format is "bk_biz_id:cloud_id:ip"
+func (h *CCAgentHostInfo) LoadByBytes(data []byte) error {
+	parts := bytes.Split(data, []byte(":"))
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid data format: %s", string(data))
+	}
+
+	h.BizID = conv.Int(string(parts[0]))
+	h.CloudID = conv.Int(string(parts[1]))
+	h.IP = string(parts[2])
+	return nil
+}
+
+func (h *CCAgentHostInfo) LoadStore(store define.Store) error {
+	data, err := store.Get(h.GetStoreKey())
+	if err != nil {
+		return err
+	}
+	return h.LoadByBytes(data)
+}
+
+func (h *CCAgentHostInfo) LoadStoreKey(store define.Store, key string) error {
+	data, err := store.Get(key)
+	if err != nil {
+		return err
+	}
+	return h.LoadByBytes(data)
+}
+
+func (h *CCAgentHostInfo) Dump(store define.Store, expires time.Duration) error {
+	data := []byte(fmt.Sprintf("%d:%d:%s", h.BizID, h.CloudID, h.IP))
+	return store.PutCache(h.GetStoreKey(), data, expires)
 }

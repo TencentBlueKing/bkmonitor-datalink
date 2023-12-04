@@ -66,22 +66,23 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 			} else {
 				dimensions["bk_agent_id"] = host.AgentID
 			}
+		} else if host.IP != "" {
+			target = fmt.Sprintf("%d:%s", host.CloudID, host.IP)
+		} else {
+			continue
 		}
 
-		if ip == "" && host.IP != "" {
-			target = fmt.Sprintf("%d:%s", host.CloudID, host.IP)
+		if host.IP != "" {
 			ip = host.IP
 			cloudID = conv.String(host.CloudID)
 		}
 
-		if ip == "" {
-			continue
+		if ip != "" {
+			dimensions["ip"] = ip
+			dimensions["bk_target_ip"] = ip
+			dimensions["bk_target_cloud_id"] = cloudID
+			dimensions["bk_cloud_id"] = cloudID
 		}
-
-		dimensions["ip"] = ip
-		dimensions["bk_target_ip"] = ip
-		dimensions["bk_target_cloud_id"] = cloudID
-		dimensions["bk_cloud_id"] = cloudID
 
 		records = append(records, EventRecord{
 			EventName: "AgentLost",

@@ -75,10 +75,6 @@ store:
     ttl: ""
   es:
     esRetainInvalidAlias: false
-  bbolt:
-    defaultPath: "bolt.db"
-    defaultBuckName: "spaceBucket"
-    defaultSync: false
 
 # ================================ 日志配置  ===================================
 log:

@@ -21,6 +21,19 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+type CustomTimeseriesRecord struct {
+	Target    string                 `json:"target"`
+	Metrics   map[string]interface{} `json:"metrics"`
+	Dimension map[string]interface{} `json:"dimension"`
+	Timestamp *int64                 `json:"timestamp"`
+}
+
+type CustomTimeseries struct {
+	Data      []CustomTimeseriesRecord `json:"data"`
+	Target    string                   `json:"target"`
+	Timestamp *int64                   `json:"timestamp"`
+}
+
 type TimeseriesV2Handler struct {
 	*define.BaseDataProcessor
 	*define.ProcessorMonitor
@@ -31,12 +44,24 @@ type TimeseriesV2Handler struct {
 }
 
 func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	records := &define.CustomTimeseries{}
+	records := &CustomTimeseries{}
 	err := d.To(records)
 	if err != nil {
 		p.CounterFails.Inc()
 		logging.Warnf("%v convert payload %#v error %v", p, d, err)
 		return
+	}
+
+	// 兼容逻辑
+	// 日志指标上报存在一种看起来像自定义指标但实际上又不是自定义指标的数据格式
+	for i := 0; i < len(records.Data); i++ {
+		item := records.Data[i]
+		if item.Timestamp == nil {
+			item.Timestamp = records.Timestamp
+		}
+		if item.Target == "" {
+			item.Target = records.Target
+		}
 	}
 
 	for _, item := range records.Data {

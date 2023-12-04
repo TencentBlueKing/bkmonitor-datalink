@@ -211,12 +211,6 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 		instanceUpdate int64
 	)
 
-	type tempCache = struct {
-		HostKey string
-		BizID   []int
-		Topo    []map[string]string
-	}
-
 	t := time.Now()
 	logging.Debugf("starting cc cache")
 	loadStore := func(monitor esb.CCSearchHostResponseDataV3Monitor, ccInfo models.CCInfo) error {

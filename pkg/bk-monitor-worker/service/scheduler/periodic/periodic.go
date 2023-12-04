@@ -13,7 +13,7 @@ import (
 	"context"
 	"sync"
 
-	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
+	exampleTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/example"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
@@ -34,35 +34,40 @@ var (
 	refreshDatasource     = "periodic:metadata:refresh_datasource"
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
 	RefreshBcsMonitorInfo = "periodic:metadata:refresh_bcs_monitor_info"
+	PeriodicHandleExampleTask = "periodic:example:exampleTask"
 
 	periodicTasksDefine = map[string]PeriodicTask{
-		refreshTsMetric: {
-			Cron:    "*/2 * * * *",
-			Handler: metadataTask.RefreshTimeSeriesMetric,
-		},
-		refreshEventDimension: {
-			Cron:    "*/3 * * * *",
-			Handler: metadataTask.RefreshEventDimension,
-		},
-		refreshEsStorage: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshESStorage,
-		},
-		refreshInfluxdbRoute: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshInfluxdbRoute,
-		},
-		refreshDatasource: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshDatasource,
-		},
-		//DiscoverBcsClusters: {
-		//	Cron:    "*/10 * * * *",
-		//	Handler: metadataTask.DiscoverBcsClusters,
-		//},
-		RefreshBcsMonitorInfo: {
-			Cron:    "*/10 * * * *",
-			Handler: metadataTask.RefreshBcsMonitorInfo,
+		// refreshTsMetric: {
+		// 	Cron:    "*/2 * * * *",
+		// 	Handler: metadataTask.RefreshTimeSeriesMetric,
+		// },
+		// refreshEventDimension: {
+		// 	Cron:    "*/3 * * * *",
+		// 	Handler: metadataTask.RefreshEventDimension,
+		// },
+		// refreshEsStorage: {
+		// 	Cron:    "*/10 * * * *",
+		// 	Handler: metadataTask.RefreshESStorage,
+		// },
+		// refreshInfluxdbRoute: {
+		// 	Cron:    "*/10 * * * *",
+		// 	Handler: metadataTask.RefreshInfluxdbRoute,
+		// },
+		// refreshDatasource: {
+		// 	Cron:    "*/10 * * * *",
+		// 	Handler: metadataTask.RefreshDatasource,
+		// },
+		// //DiscoverBcsClusters: {
+		// //	Cron:    "*/10 * * * *",
+		// //	Handler: metadataTask.DiscoverBcsClusters,
+		// //},
+		// RefreshBcsMonitorInfo: {
+		// 	Cron:    "*/10 * * * *",
+		// 	Handler: metadataTask.RefreshBcsMonitorInfo,
+		// },
+		PeriodicHandleExampleTask: {
+			Cron:    "*/1 * * * *",
+			Handler: exampleTask.PeriodicHandleExampleTask,
 		},
 	}
 )

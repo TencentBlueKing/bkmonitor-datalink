@@ -34,32 +34,21 @@ const (
 	batchKey = "items"
 )
 
-func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	batch := etl.NewMapContainer()
-	err := d.To(&batch)
-	if err != nil {
-		p.CounterFails.Inc()
-		logging.Errorf("%v convert payload %#v error %v", p, d, err)
-		return
-	}
-
-	obj, ok := batch[batchKey]
+// extractFromItems 从 items field 里面提取 containers
+func (p *FlatBatchHandler) extractFromItems(originMap etl.MapContainer) ([]etl.Container, bool) {
+	obj, ok := originMap[batchKey]
 	if !ok {
-		p.CounterFails.Inc()
-		logging.Warnf("%v no 'items' field in flat.batch %v", p, batch)
-		return
+		return nil, false
 	}
 
 	items, ok := obj.([]interface{})
 	if !ok {
-		p.CounterFails.Inc()
-		logging.Warnf("%v got unexpected type %T", p, obj)
-		return
+		return nil, false
 	}
 
 	containers := make([]etl.Container, 0, len(items))
 	for i := 0; i < len(items); i++ {
-		container := batch.Copy()
+		container := originMap.Copy()
 
 		var attrs map[string]interface{}
 		switch value := items[i].(type) {
@@ -78,6 +67,30 @@ func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Pa
 		containers = append(containers, container)
 	}
 
+	return containers, true
+}
+
+func (p *FlatBatchHandler) extractContainers(originMap etl.MapContainer) []etl.Container {
+	// 优先尝试从 items 里面提取
+	containers, ok := p.extractFromItems(originMap)
+	if ok {
+		return containers
+	}
+
+	// 提取不到再尝试走原始 map（日志聚类）
+	return []etl.Container{originMap}
+}
+
+func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	originMap := etl.NewMapContainer()
+	err := d.To(&originMap)
+	if err != nil {
+		p.CounterFails.Inc()
+		logging.Errorf("%v convert payload %#v error %v", p, d, err)
+		return
+	}
+
+	containers := p.extractContainers(originMap)
 	if len(containers) == 0 {
 		logging.Debugf("%v loaded an empty payload %v", p, d)
 		p.CounterFails.Inc()

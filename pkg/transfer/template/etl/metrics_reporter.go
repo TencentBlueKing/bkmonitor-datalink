@@ -40,7 +40,7 @@ const (
 
 var (
 	metricNamePattern = regexp.MustCompile(defaultMetricNameRegex)
-	reconcilePeriod   = time.Duration(60+rand.Intn(10)) * time.Minute // reconcile 周期为 1h+[0, 10)m
+	reconcilePeriod   = time.Duration(7200+rand.Intn(10)) * time.Minute // reconcile 周期为 5d+[0, 10)m
 	timeUnix          = func() int64 { return time.Now().Unix() }
 	syncPeriod        = time.Second * 5
 )

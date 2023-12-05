@@ -74,7 +74,7 @@ func initConfiguration(c define.Configuration) {
 	c.SetDefault(ConfKeyEventBufferSize, 32)
 	c.SetDefault(ConfKeyDispatchRetries, 3)
 	c.SetDefault(ConfKeyShadowCopyBufferSize, 0)
-	c.SetDefault(ConfKeyDispatchDelay, "15")
+	c.SetDefault(ConfKeyDispatchDelay, "3s")
 	c.SetDefault(ConfKeyDispatchInterval, "10m")
 	c.SetDefault(ConfKeyAuthBasicUser, cfg.HttpAuth.Username)
 	c.SetDefault(ConfKeyAuthBasicPassword, cfg.HttpAuth.Password)

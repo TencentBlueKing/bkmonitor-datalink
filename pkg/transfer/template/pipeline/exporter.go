@@ -31,7 +31,7 @@ func NewExporterPipeline(ctx context.Context, name string) (define.Pipeline, err
 	}
 
 	pipe, err := builder.BuildBranchingWithGluttonous(nil, func(subCtx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(subCtx, "exporter-filter", from, to)
+		return builder.ConnectStandardNodesByETLName(subCtx, "exporter", from, to, "exporter-filter")
 	})
 	return pipe, err
 }

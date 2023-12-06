@@ -33,6 +33,12 @@ var (
 	BcsInfluxdbDefaultProxyClusterNameForK8s string
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
+	// QueryVMSpaceUidList 通过 vm 查询的空间列表
+	QueryVMSpaceUidList []string
+	// QueryVMSpaceUidListKey 通过 vm 查询的空间列表推送redis的key
+	QueryVMSpaceUidListKey string
+	// QueryVMSpaceUidChannelKey 通过 vm 查询的空间列表redis发布通道key
+	QueryVMSpaceUidChannelKey string
 )
 
 func initMetadataVariables() {
@@ -47,4 +53,8 @@ func initMetadataVariables() {
 	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0), viper.GetUint)
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
+
+	QueryVMSpaceUidList = GetValue("taskConfig.metadata.queryVMSpaceUidList", []string{})
+	QueryVMSpaceUidListKey = GetValue("taskConfig.metadata.queryVMSpaceUidListKey", "bkmonitorv3:vm-query:space_uid")
+	QueryVMSpaceUidChannelKey = GetValue("taskConfig.metadata.QueryVMSpaceUidChannelKey", "bkmonitorv3:vm-query")
 }

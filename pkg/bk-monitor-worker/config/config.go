@@ -60,6 +60,8 @@ var (
 	BrokerRedisDialTimeout time.Duration
 	// BrokerRedisReadTimeout broker redis dial timeout
 	BrokerRedisReadTimeout time.Duration
+	// BrokerRedisMetricPublishKey key for metrics publish/subscribe
+	BrokerRedisMetricPublishKey string
 
 	// StorageRedisMode mode of storage redis
 	StorageRedisMode string
@@ -247,6 +249,7 @@ func initVariables() {
 	BrokerRedisDatabase = GetValue("broker.redis.db", 0)
 	BrokerRedisDialTimeout = GetValue("broker.redis.dialTimeout", 10*time.Second, viper.GetDuration)
 	BrokerRedisReadTimeout = GetValue("broker.redis.readTimeout", 10*time.Second, viper.GetDuration)
+	BrokerRedisMetricPublishKey = GetValue("broker.redis.metricPublishKey", "bmw_metric_publish")
 
 	/* Storage Redis 配置 */
 	StorageRedisMode = GetValue("store.redis.mode", "standalone")

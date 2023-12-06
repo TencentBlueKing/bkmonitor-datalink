@@ -678,7 +678,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 	}
 
 	parsedUrl, err := url.Parse(cfg.BkApiBcsApiGatewayDomain)
-	if err == nil {
+	if err != nil {
 		return nil, err
 	}
 	scm := parsedUrl.Scheme

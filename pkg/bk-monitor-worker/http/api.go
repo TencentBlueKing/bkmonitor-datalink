@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type taskOptions struct {
@@ -77,9 +76,11 @@ func CreateTask(c *gin.Context) {
 	// 如果是异步任务，则直接写入到队列，然后执行任务
 	// 如果是常驻任务，则直接写入到常驻任务队列中即可
 	kind := params.Kind
-	if err = metrics.RegisterTaskCount(kind); err != nil {
-		logger.Errorf("Report task count metric failed: %s", err)
-	}
+	metrics.PublishMetric(metrics.Metric{
+		TaskName:   kind,
+		Value:      1,
+		MetricType: "RegisterTaskCount",
+	})
 	// 组装 task
 	newedTask := &task.Task{
 		Kind:    kind,

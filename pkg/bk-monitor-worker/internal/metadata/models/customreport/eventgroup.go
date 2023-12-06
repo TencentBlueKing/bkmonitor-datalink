@@ -77,6 +77,9 @@ func (eg EventGroup) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 
 func (eg EventGroup) GetESData(ctx context.Context) (map[string][]string, error) {
 	client, err := eg.GetESClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// 获取当前index下，所有的event_name集合
 	resp, err := client.SearchWithBody(
 		ctx,

@@ -11,10 +11,10 @@ package task
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -29,7 +29,7 @@ type UserInfo struct {
 
 // NewAddTask NewEmailDeliveryTask
 func NewAddTask(userID int) (*task.Task, error) {
-	payload, err := json.Marshal(UserInfo{UserID: userID})
+	payload, err := jsonx.Marshal(UserInfo{UserID: userID})
 	if err != nil {
 		fmt.Println(err)
 		return nil, err
@@ -40,7 +40,7 @@ func NewAddTask(userID int) (*task.Task, error) {
 // HandleTask mock handle task
 func HandleTask(ctx context.Context, t *task.Task) error {
 	var p UserInfo
-	if err := json.Unmarshal(t.Payload, &p); err != nil {
+	if err := jsonx.Unmarshal(t.Payload, &p); err != nil {
 		return fmt.Errorf("json.Unmarshal failed: %v", err)
 	}
 	//逻辑处理start...

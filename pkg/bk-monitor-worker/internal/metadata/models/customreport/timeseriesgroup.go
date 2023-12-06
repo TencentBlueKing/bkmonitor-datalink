@@ -11,7 +11,6 @@ package customreport
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -23,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -164,7 +164,7 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 			}
 			// 解析
 			var dimensionsMap map[string]interface{}
-			if err := json.Unmarshal([]byte(fmt.Sprint(dimension)), &dimensionsMap); err != nil {
+			if err := jsonx.Unmarshal([]byte(fmt.Sprint(dimension)), &dimensionsMap); err != nil {
 				logger.Errorf("failed to parse dimension from dimensions info, dimension: %v", dimension)
 				continue
 			}

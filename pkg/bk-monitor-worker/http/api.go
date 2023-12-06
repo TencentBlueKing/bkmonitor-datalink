@@ -11,7 +11,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -24,6 +23,7 @@ import (
 	storeRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -68,7 +68,7 @@ func CreateTask(c *gin.Context) {
 		return
 	}
 	// compose task
-	payload, err := json.Marshal(params.Payload)
+	payload, err := jsonx.Marshal(params.Payload)
 	if err != nil {
 		ServerErrResponse(c, "json marshal error: %v", err)
 		return
@@ -178,7 +178,7 @@ func enqueueDaemonTask(t *task.Task) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(serializerTask)
+	data, err := jsonx.Marshal(serializerTask)
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func RemoveTask(c *gin.Context) {
 		}
 		for _, i := range tasks {
 			var item task.SerializerTask
-			if err = json.Unmarshal([]byte(i), &item); err != nil {
+			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
 				return
 			}
@@ -265,13 +265,13 @@ func ListTask(c *gin.Context) {
 		var res []daemonTaskItem
 		for _, i := range tasks {
 			var item task.SerializerTask
-			if err = json.Unmarshal([]byte(i), &item); err != nil {
+			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
 				return
 			}
 
 			var payload map[string]any
-			if err = json.Unmarshal(item.Payload, &payload); err != nil {
+			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
 				return
 			}

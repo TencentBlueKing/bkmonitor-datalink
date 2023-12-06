@@ -11,6 +11,8 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
@@ -47,8 +50,22 @@ func startWorker(cmd *cobra.Command, args []string) {
 	defer runtimex.HandleCrash()
 
 	config.InitConfig()
+	// 初始化日志
 	log.InitLogger()
 
+	r := bmwHttp.NewProfHttpService()
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", config.WorkerListenHost, config.WorkerListenPort),
+		Handler: r,
+	}
+	logger.Infof("Starting HTTP server at %s:%d", config.WorkerListenHost, config.WorkerListenPort)
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("listen addr error, %v", err)
+		}
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// 1. 启动worker服务
@@ -68,6 +85,7 @@ func startWorker(cmd *cobra.Command, args []string) {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
 			cancel()
+			srv.Close()
 			logger.Info("Bye")
 			os.Exit(0)
 		}

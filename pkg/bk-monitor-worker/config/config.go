@@ -177,14 +177,20 @@ var (
 	// SchedulerDaemonTaskTaskWatcherInterval interval of scheduler task watcher
 	SchedulerDaemonTaskTaskWatcherInterval time.Duration
 
-	// HttpGinMode http mode
-	HttpGinMode string
-	// HttpListenHost http listen host
-	HttpListenHost string
-	// HttpListenPort http listen port
-	HttpListenPort int
-	// HttpEnabledPprof enabled http pprof
-	HttpEnabledPprof bool
+	// GinMode http mode
+	GinMode string
+	// TaskListenHost http listen host
+	TaskListenHost string
+	// TaskListenPort http listen port
+	TaskListenPort int
+	// ControllerListenHost http listen host
+	ControllerListenHost string
+	// TaskListenPort http listen port
+	ControllerListenPort int
+	// TaskListenHost http listen host
+	WorkerListenHost string
+	// TaskListenPort http listen port
+	WorkerListenPort int
 
 	// AesKey project aes key
 	AesKey string
@@ -348,10 +354,13 @@ func initVariables() {
 		Scheduler常驻任务配置 ----- END
 	*/
 
-	HttpGinMode = GetValue("service.http.mode", "release")
-	HttpListenHost = GetValue("service.http.listen", "127.0.0.1")
-	HttpListenPort = GetValue("service.http.port", 10213)
-	HttpEnabledPprof = GetValue("service.http.enablePprof", true)
+	GinMode = GetValue("service.mode", "release")
+	TaskListenHost = GetValue("service.task.listen", "127.0.0.1")
+	TaskListenPort = GetValue("service.task.port", 10211)
+	ControllerListenHost = GetValue("service.controller.listen", "127.0.0.1")
+	ControllerListenPort = GetValue("service.controller.port", 10212)
+	WorkerListenHost = GetValue("service.worker.listen", "127.0.0.1")
+	WorkerListenPort = GetValue("service.worker.port", 10213)
 
 	AesKey = GetValue("aes.key", "")
 

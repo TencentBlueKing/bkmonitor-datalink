@@ -300,10 +300,6 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 			if err != nil {
 				return nil, err
 			}
-			if !metadata.GetVMQueryOrFeatureFlag(ctx) {
-				referenceNameMetric = vmExpand.MetricAliasMapping
-				referenceNameLabelMatcher = vmExpand.LabelsMatcher
-			}
 
 			metadata.SetExpand(ctx, vmExpand)
 			instance = prometheus.GetInstance(ctx, &metadata.Query{

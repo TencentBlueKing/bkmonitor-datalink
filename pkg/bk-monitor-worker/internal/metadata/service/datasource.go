@@ -339,7 +339,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		},
 	}).SetResult(&resp).Request()
 	if err != nil {
-		logger.Errorf("data_id [%v] query gse route failed, error: %v", err)
+		logger.Errorf("data_id [%v] query gse route failed, error: %v", d.BkDataId, err)
 		return err
 	}
 	if resp.Data == nil {

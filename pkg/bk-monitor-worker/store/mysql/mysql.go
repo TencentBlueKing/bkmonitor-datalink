@@ -11,6 +11,7 @@ package mysql
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
@@ -26,16 +27,21 @@ type DBSession struct {
 
 var dbSession *DBSession
 
+var once sync.Once
+
 func GetDBSession() *DBSession {
 	if dbSession != nil {
 		return dbSession
 	}
-	dbSession = &DBSession{}
-	err := dbSession.Open()
-	if err != nil {
-		logger.Errorf("connection mysql error, %v", err)
-		panic(err)
-	}
+	once.Do(func() {
+		session := &DBSession{}
+		err := session.Open()
+		if err != nil {
+			logger.Errorf("connection mysql error, %v", err)
+			panic(err)
+		}
+		dbSession = session
+	})
 	return dbSession
 }
 

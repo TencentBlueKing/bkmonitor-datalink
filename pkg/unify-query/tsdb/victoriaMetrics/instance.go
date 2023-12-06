@@ -373,9 +373,11 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Matrix{}, nil
 	}
+
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -395,20 +397,9 @@ func (i *Instance) QueryRange(
 			End:   end.Unix(),
 			Step:  int64(step.Seconds()),
 		},
-	}
-
-	// or 语法查询特性开关
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQueryRange.UseNativeOr = i.UseNativeOr
-		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQueryRange.ResultTableGroup = metricResultTableGroup
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
 	sql, err := json.Marshal(paramsQueryRange)
@@ -447,9 +438,11 @@ func (i *Instance) Query(
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
 	}
+
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -467,20 +460,9 @@ func (i *Instance) Query(
 			Time:    end.Unix(),
 			Timeout: int64(i.Timeout.Seconds()),
 		},
-	}
-
-	// or 语法查询特性开关
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQuery.MetricAliasMapping = vmExpand.MetricAliasMapping
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -521,6 +503,8 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
 		APIType:          APILabelValues,
@@ -529,18 +513,9 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		}{
 			Label: name,
 		},
-	}
-
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.UseNativeOr = i.UseNativeOr
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -586,19 +561,6 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
-	referenceName := ""
-	metricName := ""
-	var labelMatchers []*labels.Matcher
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	if referenceName == "" {
-		return nil, fmt.Errorf("reference name is empty: %v", matchers)
-	}
-
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.InfluxCompatible,
 		APIType:          APILabelNames,
@@ -610,32 +572,13 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			Start: start.Unix(),
 			End:   end.Unix(),
 		},
-	}
-
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.UseNativeOr = i.UseNativeOr
-		paramsQuery.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-		metricName = referenceName
-	} else {
-		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
-			metricName = m
-		}
-		if l, ok := vmExpand.LabelsMatcher[referenceName]; ok {
-			labelMatchers = l
-		}
-
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
 	vector := &parser.VectorSelector{
-		Name:          metricName,
-		LabelMatchers: labelMatchers,
+		LabelMatchers: matchers,
 	}
 	paramsQuery.APIParams.Match = vector.String()
 
@@ -673,7 +616,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	vmExpand = metadata.GetExpand(ctx)
 
 	// 检查 vmExpand 以及 vmExpand.ResultTableGroup 不能为空
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return nil, nil
 	}
 
@@ -681,14 +624,13 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 	trace.InsertStringIntoSpan("query-name", name, span)
 	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
 	referenceName := ""
-	metricName := ""
-	var labelMatchers []*labels.Matcher
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
 			referenceName = m.Value
@@ -710,36 +652,15 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		}{
 			Start: start.Unix(),
 			End:   end.Unix(),
+			Step:  end.Unix() - start.Unix(),
 		},
-	}
-
-	paramsQueryRange.APIParams.Step = paramsQueryRange.APIParams.End - paramsQueryRange.APIParams.Start
-
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQueryRange.UseNativeOr = i.UseNativeOr
-		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
-		metricName = referenceName
-
-	} else {
-		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
-			metricName = m
-		}
-		if l, ok := vmExpand.LabelsMatcher[referenceName]; ok {
-			labelMatchers = l
-		}
-
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQueryRange.ResultTableGroup = metricResultTableGroup
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
 	vector := &parser.VectorSelector{
-		Name:          metricName,
-		LabelMatchers: labelMatchers,
+		LabelMatchers: matchers,
 	}
 	expr := &parser.AggregateExpr{
 		Op:       parser.COUNT,

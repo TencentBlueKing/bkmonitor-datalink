@@ -34,9 +34,8 @@ type ParamsQueryRange struct {
 		End   int64  `json:"end"`
 		Step  int64  `json:"step"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsQuery struct {
@@ -48,9 +47,8 @@ type ParamsQuery struct {
 		Time    int64  `json:"time"`
 		Timeout int64  `json:"timeout"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsSeries struct {
@@ -62,9 +60,8 @@ type ParamsSeries struct {
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsLabelName struct {
@@ -76,9 +73,8 @@ type ParamsLabelName struct {
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsLabelValues struct {
@@ -88,9 +84,8 @@ type ParamsLabelValues struct {
 	APIParams        struct {
 		Label string `json:"label"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type Metric map[string]string

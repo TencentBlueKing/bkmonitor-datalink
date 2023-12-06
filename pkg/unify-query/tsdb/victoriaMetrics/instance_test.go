@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -38,14 +39,7 @@ const (
 
 func mockData(ctx context.Context) {
 	metadata.SetExpand(ctx, &metadata.VmExpand{
-		ResultTableGroup: map[string][]string{
-			"container_cpu_system_seconds_total_value": {
-				"vm1",
-			},
-			"kube_pod_container_resource_limits_value": {
-				"vm1",
-			},
-		},
+		ResultTableList: []string{"vm1"},
 	})
 }
 
@@ -57,9 +51,7 @@ var (
 func query(ctx context.Context, promql string, rts []string, data map[string]float64) error {
 	if len(rts) > 0 {
 		metadata.SetExpand(ctx, &metadata.VmExpand{
-			ResultTableGroup: map[string][]string{
-				"a": rts,
-			},
+			ResultTableList: rts,
 		})
 		res, err := instance.Query(ctx, promql, time.Now())
 		if err != nil {
@@ -215,11 +207,8 @@ func TestRealQueryRange(t *testing.T) {
 		"test_1": {
 			q: `count(a) by (ip, api)`,
 			e: &metadata.VmExpand{
-				ResultTableGroup: map[string][]string{
-					a: {"2_vm_pushgateway_unify_query_metrics"},
-				},
-				MetricAliasMapping: map[string]string{
-					a: "unify_query_api_request_total_value",
+				ResultTableList: []string{
+					"2_vm_pushgateway_unify_query_metrics",
 				},
 				// condition 需要进行二次转义
 				MetricFilterCondition: map[string]string{
@@ -362,5 +351,137 @@ func TestInstance_QueryRange_Url(t *testing.T) {
 
 		})
 	}
+}
 
+func mockInstance(ctx context.Context) {
+	instance = &Instance{
+		Ctx:                  ctx,
+		ContentType:          "application/json",
+		Address:              "http://127.0.0.1",
+		UriPath:              "query_sync",
+		Code:                 "bkmonitorv3",
+		Secret:               "",
+		Token:                "",
+		AuthenticationMethod: "token",
+		InfluxCompatible:     true,
+		UseNativeOr:          true,
+		Timeout:              time.Minute,
+		Curl:                 &curl.HttpCurl{Log: log.OtLogger},
+	}
+}
+
+var (
+	end   = time.Now()
+	start = end.Add(-10 * time.Minute)
+	step  = time.Minute
+
+	rts = []string{"100147_vm_100768_bkmonitor_time_series_560915"}
+)
+
+func TestInstance_QueryRange(t *testing.T) {
+	ctx := mock.Init(context.Background())
+	mockInstance(ctx)
+
+	for i, c := range []struct {
+		promQL  string
+		filters map[string]string
+	}{
+		{
+			promQL: `count(a[1m] offset -59s999ms) by (bcs_cluster_id)`,
+			filters: map[string]string{
+				`a`: `result_table_id="100147_vm_100768_bkmonitor_time_series_560915", __name__="container_cpu_usage_seconds_total_value", bcs_cluster_id="BCS-K8S-41264"`,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			metadata.SetExpand(ctx, &metadata.VmExpand{
+				ResultTableList:       rts,
+				MetricFilterCondition: c.filters,
+			})
+			res, err := instance.QueryRange(ctx, c.promQL, start, end, step)
+			assert.Nil(t, err)
+			log.Infof(ctx, "%+v", res)
+		})
+	}
+}
+
+func TestInstance_Query(t *testing.T) {
+	ctx := mock.Init(context.Background())
+	mockInstance(ctx)
+
+	for i, c := range []struct {
+		promQL  string
+		filters map[string]string
+	}{
+		{
+			promQL: `count(a[1m] offset -59s999ms) by (bcs_cluster_id)`,
+			filters: map[string]string{
+				`a`: `result_table_id="100147_vm_100768_bkmonitor_time_series_560915", __name__="container_cpu_usage_seconds_total_value", bcs_cluster_id="BCS-K8S-41264"`,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			metadata.SetExpand(ctx, &metadata.VmExpand{
+				ResultTableList:       rts,
+				MetricFilterCondition: c.filters,
+			})
+			res, err := instance.Query(ctx, c.promQL, end)
+			assert.Nil(t, err)
+			log.Infof(ctx, "%+v", res)
+		})
+	}
+}
+
+func TestInstance_LabelNames(t *testing.T) {
+	ctx := mock.Init(context.Background())
+	mockInstance(ctx)
+
+	lbl, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, "a")
+
+	for i, c := range []struct {
+		filters map[string]string
+	}{
+		{
+			filters: map[string]string{
+				`a`: `result_table_id="100147_vm_100768_bkmonitor_time_series_560915", __name__="container_cpu_usage_seconds_total_value", bcs_cluster_id="BCS-K8S-41264"`,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			metadata.SetExpand(ctx, &metadata.VmExpand{
+				ResultTableList:       rts,
+				MetricFilterCondition: c.filters,
+			})
+			res, err := instance.LabelNames(ctx, nil, start, end, lbl)
+			assert.Nil(t, err)
+			log.Infof(ctx, "%+v", res)
+		})
+	}
+}
+
+func TestInstance_LabelValues(t *testing.T) {
+	ctx := mock.Init(context.Background())
+	mockInstance(ctx)
+
+	lbl, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, "a")
+
+	for i, c := range []struct {
+		filters map[string]string
+	}{
+		{
+			filters: map[string]string{
+				`a`: `result_table_id="100147_vm_100768_bkmonitor_time_series_560915", __name__="container_cpu_usage_seconds_total_value", bcs_cluster_id="BCS-K8S-41264"`,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			metadata.SetExpand(ctx, &metadata.VmExpand{
+				ResultTableList:       rts,
+				MetricFilterCondition: c.filters,
+			})
+			res, err := instance.LabelValues(ctx, nil, "namespace", start, end, lbl)
+			assert.Nil(t, err)
+			log.Infof(ctx, "%+v", res)
+		})
+	}
 }

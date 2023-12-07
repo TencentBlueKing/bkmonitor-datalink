@@ -218,13 +218,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		err  error
 		ok   bool
 
-		vmExpand = &VmExpand{
-			MetricAliasMapping:    make(map[string]string),
-			MetricFilterCondition: make(map[string]string),
-			ResultTableGroup:      make(map[string][]string),
-			LabelsMatcher:         make(map[string][]*labels.Matcher),
-			ConditionNum:          0,
-		}
+		vmExpand = &VmExpand{}
 	)
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
 	if span != nil {
@@ -239,8 +233,6 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	if !vmQueryFeatureFlag && !druidQueryStatus {
 		return ok, vmExpand, err
 	}
-
-	isOrQuery := false
 
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
@@ -264,20 +256,11 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 				// 开启 vm rt 才进行 vm 查询
 				if query.VmRt != "" {
-					if query.IsHasOr {
-						isOrQuery = query.IsHasOr
-					}
-
 					if query.VmCondition != "" {
 						vmConditions[query.VmCondition] = struct{}{}
 					}
 
 					vmExpand.ConditionNum += query.VmConditionNum
-
-					// labels matcher 不支持 or 语法，所以只取一个
-					if len(query.LabelsMatcher) > 0 {
-						vmExpand.LabelsMatcher[referenceName] = query.LabelsMatcher
-					}
 
 					// 获取 vm 对应的 rt 列表
 					vmRts[query.VmRt] = struct{}{}
@@ -292,31 +275,24 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 				}
 
 				metricFilterCondition = fmt.Sprintf(`%s`, strings.Join(vmc, ` or `))
-				if len(vmConditions) > 1 {
-					isOrQuery = true
-				}
 			}
 
 			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
-			vmExpand.MetricAliasMapping[referenceName] = metricName
 
 			if len(vmRts) == 0 {
 				err = fmt.Errorf("vm query result table is empty %s", metricName)
 				break
 			}
 
-			if vmExpand.ResultTableGroup[referenceName] == nil {
-				vmExpand.ResultTableGroup[referenceName] = make([]string, 0)
-			}
+			vmExpand.ResultTableList = make([]string, 0, len(vmRts))
+
 			for k := range vmRts {
-				vmExpand.ResultTableGroup[referenceName] = append(vmExpand.ResultTableGroup[referenceName], k)
+				vmExpand.ResultTableList = append(vmExpand.ResultTableList, k)
 			}
 
-			sort.Strings(vmExpand.ResultTableGroup[referenceName])
+			sort.Strings(vmExpand.ResultTableList)
 		}
 	}
-
-	trace.InsertStringIntoSpan("vm-query-or", fmt.Sprintf("%v", isOrQuery), span)
 
 	ok = true
 	return ok, vmExpand, err

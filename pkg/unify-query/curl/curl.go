@@ -14,11 +14,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -35,6 +37,8 @@ type Options struct {
 
 	UserName string
 	Password string
+
+	Timeout time.Duration
 }
 
 type Curl interface {
@@ -58,6 +62,11 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 
 	client := http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Timeout:   opt.Timeout,
+	}
+
+	if opt.UrlPath == "" {
+		return nil, fmt.Errorf("url is emtpy")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
@@ -74,13 +83,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
 
-	c.Log.Ctx(ctx).Info(fmt.Sprintf("[%s] url: %s, body: %s", method, opt.UrlPath, opt.Body))
-
-	key := fmt.Sprintf("%s%s", opt.UrlPath, opt.Body)
 	for k, v := range opt.Headers {
-		key = fmt.Sprintf("%s%s%s", key, k, v)
-		req.Header.Set(k, v)
+		if k != "" && v != "" {
+			req.Header.Set(k, v)
+		}
 	}
+
+	log.Debugf(ctx, "%s", opt.Body)
 
 	return client.Do(req)
 }

@@ -218,7 +218,9 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		err  error
 		ok   bool
 
-		vmExpand = &VmExpand{}
+		vmExpand = &VmExpand{
+			MetricFilterCondition: make(map[string]string),
+		}
 	)
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
 	if span != nil {

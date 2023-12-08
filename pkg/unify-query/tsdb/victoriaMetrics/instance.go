@@ -694,7 +694,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		}{
 			Start: start.Unix(),
 			End:   end.Unix(),
-			Step:  end.Unix() - start.Unix(),
+			Step:  60,
 		},
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,

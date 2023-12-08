@@ -281,6 +281,7 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 			for _, ql := range qm.QueryList {
 				ql.Condition, _ = getConditions(ConditionOption{matchers: indexMatchers})
 				ql.VmCondition, ql.VmConditionNum = getConditions(ConditionOption{
+					vmRt:        ql.VmRt,
 					measurement: ql.Measurement,
 					field:       ql.Field,
 					matchers:    indexMatchers,

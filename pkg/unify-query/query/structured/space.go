@@ -94,6 +94,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		DB:              rtDetail.DB,
 		Measurement:     rtDetail.Measurement,
 		VmRt:            rtDetail.VmRt,
+		StorageName:     rtDetail.StorageName,
 		MetricName:      fieldName,
 	}
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤

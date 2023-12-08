@@ -269,10 +269,8 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 					// 获取 vm 对应的 rt 列表
 					vmRts[query.VmRt] = struct{}{}
 
-					// 获取 vm 对应的 clusterName
-					if query.StorageName != "" {
-						vmClusterNames[query.StorageName] = struct{}{}
-					}
+					// 获取 vm 对应的 clusterName，因为存在混用的情况，所以也需要把空也放到里面
+					vmClusterNames[query.StorageName] = struct{}{}
 				}
 			}
 

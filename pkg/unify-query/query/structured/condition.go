@@ -183,35 +183,47 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 }
 
 func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {
-	vmLabels := make([]string, 0, len(c))
+	var (
+		defaultLabels = make([]string, 0)
+		and           = ", "
+		or            = " or "
+	)
+
+	if vmRt != "" {
+		defaultLabels = append(defaultLabels, fmt.Sprintf(`result_table_id %s "%s"`, promql.EqualOperator, vmRt))
+	}
+	if metric != "" {
+		operator := promql.EqualOperator
+		if isRegexp {
+			operator = promql.RegexpOperator
+		}
+
+		defaultLabels = append(defaultLabels, fmt.Sprintf(fmt.Sprintf(`%s %s "%s"`, labels.MetricName, operator, metric)))
+	}
+
+	if len(c) == 0 {
+		return strings.Join(defaultLabels, and), len(defaultLabels)
+	}
+
 	num := 0
+	vmLabels := make([]string, len(c))
+
 	for _, cond := range c {
-		lbl := make([]string, 0)
-		if vmRt != "" {
-			num++
-			lbl = append(lbl, fmt.Sprintf(`result_table_id %s "%s"`, promql.EqualOperator, vmRt))
-		}
-		if metric != "" {
-			num++
-			operator := promql.EqualOperator
-			if isRegexp {
-				operator = promql.RegexpOperator
-			}
-
-			lbl = append(lbl, fmt.Sprintf(`%s %s "%s"`, labels.MetricName, operator, metric))
-		}
-
+		lbl := make([]string, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
 			val := strings.ReplaceAll(nf.Value[0], `\`, `\\`)
 			lbl = append(lbl, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
 		}
+		for _, dl := range defaultLabels {
+			lbl = append(lbl, dl)
+		}
 
-		num += len(cond)
-		vmLabels = append(vmLabels, strings.Join(lbl, `, `))
+		num += len(lbl)
+		vmLabels = append(vmLabels, strings.Join(lbl, and))
 	}
 
-	return strings.Join(vmLabels, ` or `), num
+	return strings.Join(vmLabels, or), num
 }
 
 // ConvertToPromBuffer

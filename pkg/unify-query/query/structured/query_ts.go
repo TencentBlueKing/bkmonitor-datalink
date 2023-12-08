@@ -359,6 +359,7 @@ func (q *Query) BuildMetadataQuery(
 	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
 	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
 	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-storge-name", storageName, span)
 	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
 	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
 	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
@@ -551,6 +552,27 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+
+	trace.InsertStringIntoSpan("query-source-type", query.SourceType, span)
+	trace.InsertStringIntoSpan("query-table-id", query.TableID, span)
+	trace.InsertStringIntoSpan("query-db", query.DB, span)
+	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
+	trace.InsertStringSliceIntoSpan("query-measurements", query.Measurements, span)
+	trace.InsertStringIntoSpan("query-field", query.Field, span)
+	trace.InsertStringSliceIntoSpan("query-fields", query.Fields, span)
+	trace.InsertStringIntoSpan("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo), span)
+	trace.InsertStringIntoSpan("query-timezone", query.Timezone, span)
+	trace.InsertStringIntoSpan("query-condition", query.Condition, span)
+	trace.InsertStringIntoSpan("query-vm-condition", query.VmCondition, span)
+	trace.InsertIntIntoSpan("query-vm-condition-num", query.VmConditionNum, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+
+	trace.InsertStringIntoSpan("query-storage-type", query.StorageType, span)
+	trace.InsertStringIntoSpan("query-storage-name", query.StorageName, span)
+
+	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
+	trace.InsertStringSliceIntoSpan("query-tag-keys", query.TagsKey, span)
+	trace.InsertStringIntoSpan("query-vm-rt", query.VmRt, span)
 
 	return query, nil
 }

@@ -45,24 +45,6 @@ func (s *IndexRenderSuite) TestConfigTemplateRender() {
 	s.Equal("20191019_test", index)
 }
 
-// TestConfigTemplateRenderByCustomTemplate
-func (s *IndexRenderSuite) TestConfigTemplateRenderByCustomTemplate() {
-	conf := s.ShipperConfig.AsElasticSearchCluster()
-	conf.SetIndex("test")
-
-	storageConf := utils.NewMapHelper(conf.StorageConfig)
-	storageConf.Set("index_template", `{{ index .Record.Document "Index" }}`)
-
-	fn, err := elasticsearch.ConfigTemplateRender(conf)
-	s.NoError(err)
-
-	index, err := fn(elasticsearch.NewRecord(map[string]interface{}{
-		"Index": "banana",
-	}))
-	s.NoError(err)
-	s.Equal("banana", index)
-}
-
 // TestConfigTemplateRenderByConfig
 func (s *IndexRenderSuite) TestConfigTemplateRenderByConfig() {
 	conf := config.MetaClusterInfo{

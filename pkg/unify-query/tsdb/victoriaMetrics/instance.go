@@ -231,6 +231,16 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
 		)
 	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
 	lbsMap := make(map[string]struct{}, 0)
 	for _, d := range resp.Data.List {
 		for _, v := range d.Data {
@@ -252,6 +262,16 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	if resp.Code != OK {
 		return nil, fmt.Errorf("%s", resp.Message)
 	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {
 		series = append(series, d.Data...)
@@ -311,7 +331,8 @@ func (i *Instance) vmQuery(
 	trace.InsertStringIntoSpan("query-username", user.Name, span)
 	trace.InsertStringIntoSpan("query-address", i.Address, span)
 	trace.InsertStringIntoSpan("query-uri-path", i.UriPath, span)
-	log.Debugf(ctx,
+
+	log.Infof(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
 		address, body, sql,
 	)
@@ -377,7 +398,8 @@ func (i *Instance) QueryRange(
 		return promql.Matrix{}, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -400,6 +422,10 @@ func (i *Instance) QueryRange(
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQueryRange.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQueryRange)
@@ -442,7 +468,8 @@ func (i *Instance) Query(
 		return promql.Vector{}, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -463,6 +490,10 @@ func (i *Instance) Query(
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -503,7 +534,8 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
@@ -516,6 +548,10 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -551,7 +587,8 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -575,6 +612,10 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	vector := &parser.VectorSelector{
@@ -624,7 +665,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 	trace.InsertStringIntoSpan("query-name", name, span)
 	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
@@ -657,6 +699,10 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
+	}
+
+	if vmExpand.ClusterName != "" {
+		paramsQueryRange.ClusterName = vmExpand.ClusterName
 	}
 
 	vector := &parser.VectorSelector{

@@ -82,14 +82,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-method", method, span)
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
+	log.Infof(ctx, "%s", opt.Body)
 
 	for k, v := range opt.Headers {
 		if k != "" && v != "" {
 			req.Header.Set(k, v)
 		}
 	}
-
-	log.Debugf(ctx, "%s", opt.Body)
 
 	return client.Do(req)
 }

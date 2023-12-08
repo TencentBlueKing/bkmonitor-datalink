@@ -13,4 +13,5 @@ type VmExpand struct {
 	ResultTableList       []string
 	MetricFilterCondition map[string]string
 	ConditionNum          int
+	ClusterName           string
 }

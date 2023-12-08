@@ -38,7 +38,7 @@ type EventTypeData struct {
 	Type int `json:"type"`
 }
 
-type BaseEvent interface {
+type EventRecordFlatter interface {
 	Flat() []EventRecord
 }
 
@@ -271,7 +271,7 @@ func (e *PingUnreachableEvent) Flat() []EventRecord {
 }
 
 func parseSystemEvent(data json.RawMessage) []EventRecord {
-	var event BaseEvent
+	var event EventRecordFlatter
 	eventType := new(EventTypeData)
 	err := json.Unmarshal(data, eventType)
 	if err != nil {

@@ -60,14 +60,15 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		if eventTime == "" {
 			eventTime = record.Time
 		}
+		// 时间格式转换
+		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
+		if err != nil {
+			p.CounterFails.Inc()
+			continue
+		}
+		timestamp := float64(parse.UnixMilli())
+
 		for _, eventRecord := range newEventRecords {
-			// 时间格式转换
-			parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
-			if err != nil {
-				p.CounterFails.Inc()
-				continue
-			}
-			timestamp := float64(parse.UnixMilli())
 			eventRecord.Timestamp = &timestamp
 			eventRecords = append(eventRecords, eventRecord)
 		}

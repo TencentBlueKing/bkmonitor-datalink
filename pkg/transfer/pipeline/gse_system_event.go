@@ -11,10 +11,11 @@ package pipeline
 
 import (
 	"context"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 )
 
 // 用于处理gse事件格式
@@ -23,15 +24,9 @@ type GseSystemEventConfigBuilder struct {
 	*ConfigBuilder
 }
 
-func (b *GseSystemEventConfigBuilder) GetStandardProcessors(_ string, _ *config.PipelineConfig, _ *config.MetaResultTableConfig) []string {
-	processors := []string{"gse_system_event", "event_v2_standard", "event_v2_handler"}
-	return processors
-}
-
 func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node) error {
 	nodes := []Node{from}
 
-	pipe := config.PipelineConfigFromContext(ctx)
 	rt := config.ResultTableConfigFromContext(ctx)
 
 	// 事件内容强制要求为动态类型
@@ -39,7 +34,7 @@ func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.
 		return errors.WithMessagef(define.ErrOperationForbidden, "event schema should be free")
 	}
 
-	standards, err := b.GetDataProcessors(ctx, b.GetStandardProcessors(name, pipe, rt)...)
+	standards, err := b.GetDataProcessors(ctx, "gse_system_event", "event_v2_standard", "event_v2_handler")
 	if err != nil {
 		return err
 	}

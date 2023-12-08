@@ -7,31 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package prompb
+package utils
 
 import (
-	"io"
+	"bytes"
+	"os"
+	"testing"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/golang/snappy"
+	"github.com/stretchr/testify/assert"
 )
 
-func DecodeWriteRequest(r io.Reader) (*WriteRequest, int, error) {
-	compressed, err := io.ReadAll(r)
-	if err != nil {
-		return nil, 0, err
-	}
-	size := len(compressed)
+func TestCodec(t *testing.T) {
+	buf := &bytes.Buffer{}
+	content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
+	assert.NoError(t, err)
+	buf.Write(content)
 
-	reqBuf, err := snappy.Decode(nil, compressed)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	var req WriteRequest
-	if err := proto.Unmarshal(reqBuf, &req); err != nil {
-		return nil, 0, err
-	}
-
-	return &req, size, nil
+	_, size, err := DecodeWriteRequest(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, 9979, size)
 }

@@ -18,12 +18,12 @@ import (
 
 // NewGseCustomStringPipeline
 func NewGseCustomStringPipeline(ctx context.Context, name string) (define.Pipeline, error) {
-	builder, err := pipeline.NewGseCustomStringConfigBuilder(ctx, name)
+	builder, err := pipeline.NewGseSystemEventConfigBuilder(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	return builder.BuildBranchingWithGluttonous(nil, func(ctx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(ctx, TypeGseCustomString, from, to)
+		return builder.ConnectStandardNodesByETLName(ctx, "gse_custom_string", from, to)
 	})
 }
 

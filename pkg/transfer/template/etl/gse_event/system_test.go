@@ -27,7 +27,7 @@ type SystemEventSuite struct {
 	StoreSuite
 }
 
-func (s *SystemEventSuite) runCase(input string, pass bool, dimensions map[string]interface{}, outputCount int) {
+func (s *SystemEventSuite) runCase(input string, pass bool, eventName string, dimensions map[string]interface{}, target string, outputCount int) {
 	hostInfo := models.CCHostInfo{
 		IP:      "127.0.0.1",
 		CloudID: 0,
@@ -76,9 +76,23 @@ func (s *SystemEventSuite) runCase(input string, pass bool, dimensions map[strin
 		outputCount--
 		var record standard.EventRecord
 		s.NoError(output.To(&record))
+
+		// 检查维度
 		if !cmp.Equal(dimensions, record.EventDimension) {
 			diff := cmp.Diff(dimensions, record.EventDimension)
 			s.FailNow("dimensions differ: %#v", diff)
+		}
+
+		// 检查target
+		if !cmp.Equal(target, record.Target) {
+			diff := cmp.Diff(target, record.Target)
+			s.FailNow("target differ: %#v", diff)
+		}
+
+		// 检查event_name
+		if !cmp.Equal(eventName, record.EventName) {
+			diff := cmp.Diff(eventName, record.EventName)
+			s.FailNow("event_name differ: %#v", diff)
 		}
 	}
 
@@ -94,10 +108,12 @@ func (s *SystemEventSuite) TestUsage() {
 	cases := []struct {
 		input       string
 		pass        bool
+		eventName   string
 		dimensions  map[string]interface{}
+		target      string
 		outputCount int
 	}{
-		{`{}`, false, nil, 0},
+		{`{}`, false, "", nil, "", 0},
 		// 测试正常的输入内容
 		{
 			`{
@@ -128,6 +144,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"AgentLost",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -137,6 +154,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"bk_biz_id":          "2",
 				"bk_agent_id":        "demo",
 			},
+			"demo",
 			1,
 		},
 		{
@@ -168,6 +186,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"AgentLost",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -176,6 +195,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"bk_cloud_id":        "0",
 				"bk_biz_id":          "2",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -208,6 +228,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"AgentLost",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -216,6 +237,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"bk_cloud_id":        "0",
 				"bk_biz_id":          "2",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -247,8 +269,10 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			false,
+			"",
 			// dimensions
 			map[string]interface{}{},
+			"",
 			0,
 		},
 		{
@@ -282,6 +306,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"CoreFile",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -295,6 +320,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"corefile":           "/data/corefile/core_101041_2018-03-10",
 				"filesize":           "0",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -331,6 +357,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"timezone":8
 			}`,
 			true,
+			"DiskFull",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -342,6 +369,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"file_system":        "/dev/vda1",
 				"fstype":             "ext4",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -377,6 +405,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"timezone":8
 			}`,
 			true,
+			"DiskReadonly",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -388,6 +417,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"fs":                 "tmpfs",
 				"type":               "tmpfs",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -423,6 +453,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"OOM",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -437,6 +468,7 @@ func (s *SystemEventSuite) TestUsage() {
 				"task":               "process_name",
 				"constraint":         "CONSTRAINT_MEMCG",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 		{
@@ -464,6 +496,7 @@ func (s *SystemEventSuite) TestUsage() {
 				]
 			}`,
 			true,
+			"PingUnreachable",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -472,11 +505,12 @@ func (s *SystemEventSuite) TestUsage() {
 				"bk_cloud_id":        "0",
 				"bk_biz_id":          "2",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 	}
 	for _, c := range cases {
-		s.runCase(c.input, c.pass, c.dimensions, c.outputCount)
+		s.runCase(c.input, c.pass, c.eventName, c.dimensions, c.target, c.outputCount)
 	}
 }
 

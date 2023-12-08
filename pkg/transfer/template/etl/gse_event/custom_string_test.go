@@ -28,7 +28,7 @@ type CustomStringSuite struct {
 	StoreSuite
 }
 
-func (s *CustomStringSuite) runCase(input string, pass bool, dimensions map[string]interface{}, outputCount int) {
+func (s *CustomStringSuite) runCase(input string, pass bool, eventName string, dimensions map[string]interface{}, target string, outputCount int) {
 	hostInfo := models.CCHostInfo{
 		IP:      "127.0.0.1",
 		CloudID: 0,
@@ -69,9 +69,23 @@ func (s *CustomStringSuite) runCase(input string, pass bool, dimensions map[stri
 		outputCount--
 		var record standard.EventRecord
 		s.NoError(output.To(&record))
+
+		// 检查维度
 		if !cmp.Equal(dimensions, record.EventDimension) {
 			diff := cmp.Diff(dimensions, record.EventDimension)
 			s.FailNow("dimensions differ: %#v", diff)
+		}
+
+		// 检查target
+		if !cmp.Equal(target, record.Target) {
+			diff := cmp.Diff(target, record.Target)
+			s.FailNow("target differ: %#v", diff)
+		}
+
+		// 检查event_name
+		if !cmp.Equal(eventName, record.EventName) {
+			diff := cmp.Diff(eventName, record.EventName)
+			s.FailNow("event_name differ: %#v", diff)
 		}
 	}
 
@@ -82,15 +96,17 @@ func (s *CustomStringSuite) runCase(input string, pass bool, dimensions map[stri
 	wg.Wait()
 }
 
-// TestUsage :
+// TestUsage : 测试用例
 func (s *CustomStringSuite) TestUsage() {
 	cases := []struct {
 		input       string
 		pass        bool
+		eventName   string
 		dimensions  map[string]interface{}
+		target      string
 		outputCount int
 	}{
-		{`{}`, false, nil, 0},
+		{`{}`, false, "", nil, "", 0},
 		// 测试正常的输入内容
 		{
 			`{
@@ -102,6 +118,7 @@ func (s *CustomStringSuite) TestUsage() {
 			   "_value_" : [ "This service is offline" ]
 			}`,
 			true,
+			"CustomString",
 			// dimensions
 			map[string]interface{}{
 				"bk_target_cloud_id": "0",
@@ -110,11 +127,12 @@ func (s *CustomStringSuite) TestUsage() {
 				"bk_cloud_id":        "0",
 				"bk_biz_id":          "2",
 			},
+			"0:127.0.0.1",
 			1,
 		},
 	}
 	for _, c := range cases {
-		s.runCase(c.input, c.pass, c.dimensions, c.outputCount)
+		s.runCase(c.input, c.pass, c.eventName, c.dimensions, c.target, c.outputCount)
 	}
 }
 

@@ -23,7 +23,7 @@ func NewGseSystemEventPipeline(ctx context.Context, name string) (define.Pipelin
 		return nil, err
 	}
 	return builder.BuildBranchingWithGluttonous(nil, func(ctx context.Context, from pipeline.Node, to pipeline.Node) error {
-		return builder.ConnectStandardNodesByETLName(ctx, TypeGseSystemEvent, from, to)
+		return builder.ConnectStandardNodesByETLName(ctx, "gse_system_event", from, to)
 	})
 }
 

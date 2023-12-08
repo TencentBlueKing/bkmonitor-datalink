@@ -24,7 +24,7 @@ type GseSystemEventConfigBuilder struct {
 	*ConfigBuilder
 }
 
-func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, name string, from Node, to Node) error {
+func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.Context, processor string, from Node, to Node) error {
 	nodes := []Node{from}
 
 	rt := config.ResultTableConfigFromContext(ctx)
@@ -34,7 +34,7 @@ func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.
 		return errors.WithMessagef(define.ErrOperationForbidden, "event schema should be free")
 	}
 
-	standards, err := b.GetDataProcessors(ctx, "gse_system_event", "event_v2_standard", "event_v2_handler")
+	standards, err := b.GetDataProcessors(ctx, processor, "event_v2_standard", "event_v2_handler")
 	if err != nil {
 		return err
 	}
@@ -43,12 +43,6 @@ func (b *GseSystemEventConfigBuilder) ConnectStandardNodesByETLName(ctx context.
 	nodes = append(nodes, to)
 	b.ConnectNodes(nodes...)
 	return nil
-}
-
-func (b *GseSystemEventConfigBuilder) BuildStandardBranchingByETLName(etl string) (*Pipeline, error) {
-	return b.BuildBranching(nil, false, func(ctx context.Context, from Node, to Node) error {
-		return b.ConnectStandardNodesByETLName(ctx, etl, from, to)
-	})
 }
 
 // NewGseSystemEventConfigBuilder 创建gse事件builder

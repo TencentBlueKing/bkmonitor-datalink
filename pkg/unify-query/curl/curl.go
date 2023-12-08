@@ -82,7 +82,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-method", method, span)
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
-	log.Infof(ctx, "%s", opt.Body)
+	log.Infof(ctx, "curl request: %s[%s] headers:%s body:%s", method, opt.UrlPath, fmt.Sprintf("%+v", opt.Headers), opt.Body)
 
 	for k, v := range opt.Headers {
 		if k != "" && v != "" {

@@ -240,13 +240,13 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		return ok, vmExpand, err
 	}
 
+	var (
+		vmRts          = make(map[string]struct{})
+		vmClusterNames = make(map[string]struct{})
+	)
+
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
-			var (
-				vmRts          = make(map[string]struct{})
-				vmClusterNames = make(map[string]struct{})
-			)
-
 			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
 
 			vmConditions := make(map[string]struct{})
@@ -294,22 +294,22 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%s_cluster_name", referenceName), fmt.Sprintf("%+v", vmClusterNames), span)
 
-			// 当所有的 vm 集群都一样的时候，才进行传递
-			if len(vmClusterNames) == 1 {
-				for k := range vmClusterNames {
-					vmExpand.ClusterName = k
-				}
-			}
-
-			vmExpand.ResultTableList = make([]string, 0, len(vmRts))
-
-			for k := range vmRts {
-				vmExpand.ResultTableList = append(vmExpand.ResultTableList, k)
-			}
-
-			sort.Strings(vmExpand.ResultTableList)
 		}
 	}
+
+	// 当所有的 vm 集群都一样的时候，才进行传递
+	if len(vmClusterNames) == 1 {
+		for k := range vmClusterNames {
+			vmExpand.ClusterName = k
+		}
+	}
+
+	vmExpand.ResultTableList = make([]string, 0, len(vmRts))
+	for k := range vmRts {
+		vmExpand.ResultTableList = append(vmExpand.ResultTableList, k)
+	}
+
+	sort.Strings(vmExpand.ResultTableList)
 
 	ok = true
 	return ok, vmExpand, err

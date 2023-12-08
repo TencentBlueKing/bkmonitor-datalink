@@ -190,7 +190,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 	)
 
 	if vmRt != "" {
-		defaultLabels = append(defaultLabels, fmt.Sprintf(`result_table_id %s "%s"`, promql.EqualOperator, vmRt))
+		defaultLabels = append(defaultLabels, fmt.Sprintf(`result_table_id%s"%s"`, promql.EqualOperator, vmRt))
 	}
 	if metric != "" {
 		operator := promql.EqualOperator
@@ -198,7 +198,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 			operator = promql.RegexpOperator
 		}
 
-		defaultLabels = append(defaultLabels, fmt.Sprintf(fmt.Sprintf(`%s %s "%s"`, labels.MetricName, operator, metric)))
+		defaultLabels = append(defaultLabels, fmt.Sprintf(fmt.Sprintf(`%s%s"%s"`, labels.MetricName, operator, metric)))
 	}
 
 	if len(c) == 0 {

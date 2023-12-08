@@ -15,8 +15,7 @@ import (
 	"strings"
 
 	dto "github.com/prometheus/client_model/go"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define/prompb"
+	"github.com/prometheus/prometheus/prompb"
 )
 
 const (
@@ -128,7 +127,7 @@ type PushGatewayData struct {
 }
 
 type RemoteWriteData struct {
-	Timeseries []*prompb.TimeSeries
+	Timeseries []prompb.TimeSeries
 }
 
 type ProxyData struct {

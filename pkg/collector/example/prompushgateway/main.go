@@ -13,6 +13,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -74,14 +77,24 @@ func main() {
 	pusher := push.New("localhost:4318", name).Gatherer(register).Grouping("instance", "my.host.ip").Grouping("biz", "mando")
 	pusher.Client(&bkClient{})
 
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
 	// pusher.Format(expfmt.FmtText)
-	ticker := time.Tick(10 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		<-ticker
-		if err := pusher.Push(); err != nil {
-			log.Println("failed to push records to the server, error:", err)
-			continue
+		select {
+		case <-ticker.C:
+			if err := pusher.Push(); err != nil {
+				log.Println("failed to push records to the server, error:", err)
+				continue
+			}
+			log.Println("push records to the server")
+
+		case <-sigCh:
+			return
 		}
-		log.Println("push records to the server successfully")
 	}
 }

@@ -10,10 +10,12 @@
 package converter
 
 import (
+	"math"
 	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/prometheus/prometheus/model/value"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
@@ -92,6 +94,10 @@ func toFloatValue(dp pmetric.NumberDataPoint) float64 {
 	case pmetric.NumberDataPointValueTypeInt:
 		val = float64(dp.IntVal())
 	}
+
+	if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+		val = math.Float64frombits(value.StaleNaN)
+	}
 	return val
 }
 
@@ -128,20 +134,24 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
-		m := otMetricMapper{
-			Metric:     pdMetric.Name() + "_sum",
-			Value:      dp.Sum(),
-			Dimensions: dimensions,
-			Time:       dp.Timestamp().AsTime(),
-		}
-		items = append(items, m.AsMapStr())
 
+		// 当且仅当 Sum 存在时才追加 _sum 指标
+		if dp.HasSum() {
+			m := otMetricMapper{
+				Metric:     pdMetric.Name() + "_sum",
+				Value:      dp.Sum(),
+				Dimensions: dimensions,
+				Time:       dp.Timestamp().AsTime(),
+			}
+			items = append(items, m.AsMapStr())
+		}
+
+		// 追加 _count 指标
 		if !utils.IsValidUint64(dp.Count()) {
 			DefaultMetricMonitor.IncConverterFailedCounter(define.RecordMetrics, dataId)
 			continue
 		}
-
-		m = otMetricMapper{
+		m := otMetricMapper{
 			Metric:     pdMetric.Name() + "_count",
 			Value:      float64(dp.Count()),
 			Dimensions: dimensions,
@@ -149,24 +159,41 @@ func (c metricsConverter) convertHistogramMetrics(dataId int32, pdMetric pmetric
 		}
 		items = append(items, m.AsMapStr())
 
-		if len(dp.MExplicitBounds()) != len(dp.MBucketCounts()) {
-			return items
-		}
-
+		// 追加 buckets 指标
 		bounds := dp.MExplicitBounds()
 		bucketCounts := dp.MBucketCounts()
-		for j := 0; j < len(dp.MExplicitBounds()); j++ {
+		var cumulativeCount uint64
+		for j := 0; j < len(bounds) && j < len(bucketCounts); j++ {
+			cumulativeCount += bucketCounts[j]
+			val := float64(cumulativeCount)
+			if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+				val = math.Float64frombits(value.StaleNaN)
+			}
+
 			additional := map[string]string{
 				"le": strconv.FormatFloat(bounds[j], 'f', -1, 64),
 			}
 			m = otMetricMapper{
 				Metric:     pdMetric.Name() + "_bucket",
-				Value:      float64(bucketCounts[j]),
+				Value:      val,
 				Dimensions: utils.MergeReplaceMaps(additional, dimensions),
 				Time:       dp.Timestamp().AsTime(),
 			}
 			items = append(items, m.AsMapStr())
 		}
+
+		// 追加 +Inf bucket
+		val := float64(dp.Count())
+		if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+			val = math.Float64frombits(value.StaleNaN)
+		}
+		m = otMetricMapper{
+			Metric:     pdMetric.Name() + "_bucket",
+			Value:      val,
+			Dimensions: utils.MergeReplaceMaps(map[string]string{"le": "+Inf"}, dimensions),
+			Time:       dp.Timestamp().AsTime(),
+		}
+		items = append(items, m.AsMapStr())
 	}
 	return items
 }

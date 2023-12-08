@@ -106,28 +106,88 @@ func TestConvertHistogramMetrics(t *testing.T) {
 
 	dp := testkits.FirstHistogramPoint(metrics)
 	dp.SetTimestamp(0)
-	dp.SetMExplicitBounds([]float64{1, 2, 3, 4})
+	dp.SetMExplicitBounds([]float64{1, 2, 3})
 	dp.SetMBucketCounts([]uint64{4, 3, 2, 1})
-	dp.SetSum(10)
-	dp.SetCount(1)
+	dp.SetSum(100)
+	dp.SetCount(10)
 
 	MetricsConverter.Convert(&define.Record{RecordType: define.RecordMetrics, Data: metrics}, gather)
-
-	event := events[0]
-	event.Data()
-
-	assert.Equal(t, common.MapStr{
-		"metrics": map[string]float64{
-			"bk_apm_duration_sum": float64(10),
+	excepted := []common.MapStr{
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_sum": float64(100),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+			},
+			"timestamp": int64(0),
 		},
-		"target": define.Identity(),
-		"dimension": map[string]string{
-			"a1": "v1",
-			"r1": "v1",
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_count": float64(10),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+			},
+			"timestamp": int64(0),
 		},
-		"timestamp": int64(0),
-	}, event.Data())
-	assert.Equal(t, event.RecordType(), define.RecordMetrics)
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_bucket": float64(4),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+				"le": "1",
+			},
+			"timestamp": int64(0),
+		},
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_bucket": float64(7),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+				"le": "2",
+			},
+			"timestamp": int64(0),
+		},
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_bucket": float64(9),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+				"le": "3",
+			},
+			"timestamp": int64(0),
+		},
+		{
+			"metrics": map[string]float64{
+				"bk_apm_duration_bucket": float64(10),
+			},
+			"target": define.Identity(),
+			"dimension": map[string]string{
+				"a1": "v1",
+				"r1": "v1",
+				"le": "+Inf",
+			},
+			"timestamp": int64(0),
+		},
+	}
+
+	for index, m := range excepted {
+		assert.Equal(t, m, events[index].Data())
+	}
 }
 
 func TestConvertSummaryMetrics(t *testing.T) {

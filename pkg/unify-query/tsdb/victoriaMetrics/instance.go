@@ -683,6 +683,12 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, fmt.Errorf("reference name is empty: %v", matchers)
 	}
 
+	// 如果使用 end - start 作为 step，查询的时候会多查一倍的数据点数用作计算，所以这里使用 / 2
+	step := (end.Unix() - start.Unix()) / 2
+	if step < 60 {
+		step = 60
+	}
+
 	paramsQueryRange := &ParamsQueryRange{
 		InfluxCompatible: i.InfluxCompatible,
 		APIType:          APIQueryRange,
@@ -694,7 +700,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		}{
 			Start: start.Unix(),
 			End:   end.Unix(),
-			Step:  60,
+			Step:  step,
 		},
 		UseNativeOr:           i.UseNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,

@@ -12,12 +12,15 @@ package task
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
@@ -102,42 +105,76 @@ func AccessBkdataVm(ctx context.Context, t *task.Task) error {
 	return nil
 }
 
-// PublishRedisParams PublishRedis 任务入参
-type PublishRedisParams struct {
-	SpaceTypeId string `json:"space_type_id"`
-	SpaceId     string `json:"space_id"`
-	TableId     string `json:"table_id"`
+// PushAndPublishSpaceRouterParams PushAndPublishSpaceRouter 任务入参
+type PushAndPublishSpaceRouterParams struct {
+	SpaceType   string   `json:"space_type"`
+	SpaceId     string   `json:"space_id"`
+	TableIdList []string `json:"table_id_list"`
 }
 
-// PublishRedis 通知 redis 数据更新
-func PublishRedis(ctx context.Context, t *task.Task) error {
-	var params PublishRedisParams
+// PushAndPublishSpaceRouter 推送并发布空间路由功能
+func PushAndPublishSpaceRouter(ctx context.Context, t *task.Task) error {
+	var params PushAndPublishSpaceRouterParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
 	}
 
-	svc := service.NewSpaceRedisSvc(GetGoroutineLimit("publish_redis"))
-	// 如果指定空间，则更新空间信息
-	if params.SpaceTypeId != "" && params.SpaceId != "" {
-		if err := svc.PushRedisData(params.SpaceTypeId, params.SpaceId, "", params.TableId); err != nil {
-			return errors.Wrapf(err, "push space redis data error, %v", err)
-		}
-		spaceUid := fmt.Sprintf("%s__%s", params.SpaceTypeId, params.SpaceId)
-		client, err := dependentredis.GetInstance(ctx)
+	logger.Infof("start to push and publish space_type [%s], space_id [%s] router", params.SpaceType, params.SpaceId)
+	svc := service.NewSpaceRedisSvc(GetGoroutineLimit("push_and_publish_space_router"))
+	// 获取空间下的结果表，如果不存在，则获取空间下的所有
+	if len(params.TableIdList) == 0 {
+		tableDataIdMap, err := svc.GetSpaceTableIdDataId(params.SpaceType, params.SpaceId, nil, nil, nil)
 		if err != nil {
-			return errors.Wrapf(err, "get redis client error, %v", err)
+			return errors.Wrapf(err, "get space table id dataid failed, %v", err)
 		}
-		if err := client.Publish(cfg.SpaceRedisKey, []string{spaceUid}); err != nil {
-			return err
+		for tableId := range tableDataIdMap {
+			params.TableIdList = append(params.TableIdList, tableId)
 		}
-		logger.Infof("%s push and publish %s finished", spaceUid)
-		return nil
 	}
 
-	if err := svc.PushAndPublishAllSpace("", "", true); err != nil {
+	// 更新数据
+	pusher := service.NewSpacePusherV2()
+	if err := pusher.PushDataLabelTableIds(nil, params.TableIdList, true); err != nil {
 		return err
 	}
-	logger.Infof("push and publish all space finished")
+	if err := pusher.PushTableIdDetail(params.TableIdList, true); err != nil {
+		return err
+	}
+
+	// 更新空间下的结果表相关数据
+	db := mysql.GetDBSession().DB
+	if params.SpaceType != "" && params.SpaceId != "" {
+		// 更新相关数据到 redis
+		if err := pusher.PushSpaceTableIds(params.SpaceType, params.SpaceId, true); err != nil {
+			return err
+		}
+	} else {
+		// NOTE: 现阶段仅针对 bkcc 类型做处理
+		var spList []space.Space
+		if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).Select(space.SpaceDBSchema.SpaceId).All(&spList); err != nil {
+			return err
+		}
+		wg := &sync.WaitGroup{}
+		ch := make(chan bool, GetGoroutineLimit("push_and_publish_space_router"))
+		wg.Add(len(spList))
+		for _, sp := range spList {
+			ch <- true
+			go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+				defer func() {
+					<-ch
+					wg.Done()
+				}()
+				if err := pusher.PushSpaceTableIds(models.SpaceTypeBKCC, sp.SpaceId, false); err != nil {
+					logger.Errorf("push space [%s__%s] to redis error, %s", models.SpaceTypeBKCC, sp.SpaceTypeId, err)
+				} else {
+					logger.Infof("push space [%s__%s] to redis success", models.SpaceTypeBKCC, sp.SpaceTypeId)
+				}
+				return
+			}(sp, wg, ch)
+		}
+		wg.Wait()
+	}
+	logger.Infof("push and publish space_type: %s, space_id: %s router successfully", params.SpaceType, params.SpaceId)
 	return nil
 }
 

@@ -33,7 +33,7 @@ type ResultTable struct {
 	IsDeleted      bool      `gorm:"is_deleted" json:"is_deleted"`
 	Label          string    `gorm:"label;size:128" json:"label"`
 	IsEnable       bool      `gorm:"is_enable;default:true" json:"is_enable"`
-	DataLabel      string    `gorm:"data_label;size:128" json:"data_label"`
+	DataLabel      *string   `gorm:"data_label;size:128" json:"data_label"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

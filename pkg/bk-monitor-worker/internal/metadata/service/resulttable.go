@@ -222,7 +222,7 @@ func (r ResultTableSvc) CreateResultTable(
 		IsDeleted:      false,
 		Label:          label,
 		IsEnable:       true,
-		DataLabel:      "",
+		DataLabel:      nil,
 	}
 	db := mysql.GetDBSession().DB
 	if err := rt.Create(db); err != nil {
@@ -347,6 +347,7 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 	return nil
 }
 
+// IsDisableMetricCutter 获取结果表是否禁用切分模块
 func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
 	var dsrt resulttable.DataSourceResultTable
 	if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).One(&dsrt); err != nil {
@@ -369,4 +370,49 @@ func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
 		return false, err
 	}
 	return value, nil
+}
+
+// GetTableIdCutter 批量获取结果表是否禁用切分模块
+func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool, error) {
+	db := mysql.GetDBSession().DB
+	var dsrtList []resulttable.DataSourceResultTable
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(tableIdList...).All(&dsrtList); err != nil {
+		return nil, err
+	}
+	tableIdDataIdMap := make(map[string]uint)
+	var dataIdList []uint
+	for _, dsrt := range dsrtList {
+		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
+		dataIdList = append(dataIdList, dsrt.BkDataId)
+	}
+
+	var dsoList []resulttable.DataSourceOption
+	if len(dataIdList) != 0 {
+		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(dataIdList...).NameEq(models.OptionDisableMetricCutter).All(&dsoList); err != nil {
+			return nil, err
+		}
+	}
+	dataIdOptionMap := make(map[uint]bool)
+	for _, dso := range dsoList {
+		var value bool
+		if err := jsonx.UnmarshalString(dso.Value, &value); err != nil {
+			dataIdOptionMap[dso.BkDataId] = false
+			continue
+		}
+		dataIdOptionMap[dso.BkDataId] = value
+	}
+
+	// 组装数据
+	tableIdCutter := make(map[string]bool)
+	for _, tableId := range tableIdList {
+		bkdataId, ok := tableIdDataIdMap[tableId]
+		if !ok {
+			// 默认为 False
+			tableIdCutter[tableId] = false
+			continue
+		}
+		tableIdCutter[tableId] = dataIdOptionMap[bkdataId]
+	}
+
+	return tableIdCutter, nil
 }

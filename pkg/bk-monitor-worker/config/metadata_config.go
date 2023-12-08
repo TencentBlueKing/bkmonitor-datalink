@@ -9,7 +9,11 @@
 
 package config
 
-import "github.com/spf13/viper"
+import (
+	"fmt"
+
+	"github.com/spf13/viper"
+)
 
 var (
 	// MetadataMetricDimensionMetricKeyPrefix config of metadata.refreshMetric task
@@ -34,8 +38,8 @@ var (
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
 
-	// GlobalTimeSeriesMetricExpiredDays 自定义指标过期时间
-	GlobalTimeSeriesMetricExpiredDays int
+	// GlobalTimeSeriesMetricExpiredSeconds 自定义指标过期时间
+	GlobalTimeSeriesMetricExpiredSeconds int
 	// GlobalIsRestrictDsBelongSpace 是否限制数据源归属具体空间
 	GlobalIsRestrictDsBelongSpace bool
 	// GlobalDefaultBkdataBizId 接入计算平台使用的业务 ID
@@ -55,6 +59,16 @@ var (
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
+	// DataLabelToResultTableKey 数据标签关联的结果表key
+	DataLabelToResultTableKey string
+	// DataLabelToResultTableChannel 数据标签关联的结果表channel
+	DataLabelToResultTableChannel string
+	// ResultTableDetailKey 结果表详情key
+	ResultTableDetailKey string
+	// ResultTableDetailChannel 结果表详情channel
+	ResultTableDetailChannel string
+	// SpaceToResultTableChannel 空间关联的结果表channel
+	SpaceToResultTableChannel string
 )
 
 func initMetadataVariables() {
@@ -70,7 +84,7 @@ func initMetadataVariables() {
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
 
-	GlobalTimeSeriesMetricExpiredDays = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredDays", 30)
+	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
@@ -80,4 +94,9 @@ func initMetadataVariables() {
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
+	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
+	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
+	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
+	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
+	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 }

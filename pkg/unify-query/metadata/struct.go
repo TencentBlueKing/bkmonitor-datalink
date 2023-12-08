@@ -290,10 +290,10 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 				break
 			}
 
-			trace.InsertStringIntoSpan(fmt.Sprintf("result_table_%s_cluster_name", referenceName), fmt.Sprintf("%+v", vmClusterNames), span)
-
 		}
 	}
+
+	trace.InsertStringIntoSpan("vm_expand_cluster_name", fmt.Sprintf("%+v", vmClusterNames), span)
 
 	// 当所有的 vm 集群都一样的时候，才进行传递
 	if len(vmClusterNames) == 1 {

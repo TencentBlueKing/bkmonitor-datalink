@@ -391,6 +391,14 @@ bk-collector:
           keys:
             - "resource.bk.data.token"
 
+    # ResourceFilter: 资源过滤处理器
+    - name: "resource_filter/metrics"
+      config:
+        assemble:
+        drop:
+          keys:
+            - "resource.bk.data.token"
+            - "resource.process.pid"
 
     # Sampler: 采样处理器
     # StatusCode
@@ -1030,7 +1038,7 @@ bk-collector:
       type: "metrics"
       processors:
         - "token_checker/aes256"
-        - "resource_filter/drop_token"
+        - "resource_filter/metrics"
 #        - "rate_limiter/token_bucket"
 #        - "metrics_filter/drop"
 #        - "resource_filter/add"

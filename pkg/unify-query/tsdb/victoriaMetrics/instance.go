@@ -683,8 +683,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, fmt.Errorf("reference name is empty: %v", matchers)
 	}
 
-	// 如果使用 end - start 作为 step，查询的时候会多查一倍的数据点数用作计算，所以这里使用 / 2
-	step := (end.Unix() - start.Unix()) / 2
+	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
+	step := (end.Unix() - start.Unix()) / 10
 	if step < 60 {
 		step = 60
 	}

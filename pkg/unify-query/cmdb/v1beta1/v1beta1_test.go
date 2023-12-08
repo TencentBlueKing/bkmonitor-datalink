@@ -60,7 +60,7 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"cluster", "container", "container_cpu", "container_network", "deamonset", "deployment", "job", "namespace", "node", "pod", "replicaset", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"cluster", "deamonset", "deployment", "namespace", "node", "pod", "replicaset", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
@@ -107,28 +107,14 @@ func TestModel_GetPaths(t *testing.T) {
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
-				"container":      "container-1",
 			},
-			source: "container",
+			source: "pod",
 			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
-				"container":      "container-1",
 			},
-			error: fmt.Errorf("container => multi_cluster error: target vertex not reachable from source"),
-		},
-		"cls to ns": {
-			target: "pod",
-			matcher: cmdb.Matcher{
-				"bcs_cluster_id": "cls",
-				"demo":           "1",
-			},
-			source: "cluster",
-			indexMatcher: cmdb.Matcher{
-				"bcs_cluster_id": "cls",
-			},
-			expected: `[[{"V":["cluster","node"]},{"V":["node","pod"]}]]`,
+			error: fmt.Errorf("pod => multi_cluster error: target vertex not reachable from source"),
 		},
 		"node to system": {
 			target: "system",
@@ -186,12 +172,11 @@ func mockData(ctx context.Context) *curl.TestCurl {
 
 	metadata.GetQueryRouter().MockSpaceUid(consul.VictoriaMetricsStorageType)
 
-	vmStorageID := "1"
 	vmStorageIDInt := int64(1)
 	influxdbStorageID := "2"
 	influxdbStorageIDInt := int64(2)
 
-	tsdb.SetStorage(vmStorageID, &tsdb.Storage{
+	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
 			Ctx:                  ctx,

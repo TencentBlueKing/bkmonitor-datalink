@@ -84,15 +84,15 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 		wg.Add(len(spList))
 		for _, sp := range spList {
 			ch <- true
-			go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+			func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
 				defer func() {
 					<-ch
 					wg.Done()
 				}()
 				if err := pusher.PushSpaceTableIds(models.SpaceTypeBKCC, sp.SpaceId, false); err != nil {
-					logger.Errorf("push space [%s__%s] to redis error, %s", models.SpaceTypeBKCC, sp.SpaceTypeId, err)
+					logger.Errorf("push space [%s__%s] to redis error, %s", models.SpaceTypeBKCC, sp.SpaceId, err)
 				} else {
-					logger.Infof("push space [%s__%s] to redis success", models.SpaceTypeBKCC, sp.SpaceTypeId)
+					logger.Infof("push space [%s__%s] to redis success", models.SpaceTypeBKCC, sp.SpaceId)
 				}
 				return
 			}(sp, wg, ch)
@@ -110,7 +110,7 @@ func NewSpacePusher() *SpacePusher {
 }
 
 // GetSpaceTableIdDataId 获取空间下的结果表和数据源信息
-func (SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdList []string, excludeDataIdList []uint, options *optionx.Options) (map[string]uint, error) {
+func (s SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdList []string, excludeDataIdList []uint, options *optionx.Options) (map[string]uint, error) {
 	if options == nil {
 		options = optionx.NewOptions(nil)
 	}
@@ -147,7 +147,7 @@ func (SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdList 
 	}
 	// 过滤包含全局空间级的数据源
 	if includePlatformDataId, _ := options.GetBool("includePlatformDataId"); includePlatformDataId {
-		dataIds, err := NewSpacePusher().getPlatformDataIds(spaceType)
+		dataIds, err := s.getPlatformDataIds(spaceType)
 		if err != nil {
 			return nil, err
 		}

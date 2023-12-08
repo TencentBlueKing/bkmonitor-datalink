@@ -636,7 +636,7 @@ func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, err
 		if currentTime.After(*maxDatetimeObject) {
 			maxDatetimeObject = currentTime
 			maxIndex = currentIndex
-			logger.Debugf("index [%s] current time [%s] is newer than max time [%s] will use it and reset count [%s]",
+			logger.Debugf("index [%s] current time [%s] is newer than max time [%s] will use it and reset count [%v]",
 				statIndexName,
 				currentDatetimeStr,
 				maxDatetimeObject.Format(e.GetDateFormat()),
@@ -648,7 +648,7 @@ func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, err
 		if currentTime.Equal(*maxDatetimeObject) && currentIndex > maxIndex {
 			maxIndex = currentIndex
 			logger.Debugf(
-				"index [%s] current time [%s] found newer index [%s] will use it", statIndexName, maxDatetimeObject.Format(e.GetDateFormat()), currentIndex,
+				"index [%s] current time [%s] found newer index [%v] will use it", statIndexName, maxDatetimeObject.Format(e.GetDateFormat()), currentIndex,
 			)
 		}
 	}

@@ -122,8 +122,7 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 	if !ok {
 		dateformat = "%Y%m%d%H"
 	}
-	dateformat = timex.ParsePyDateFormat(dateformat)
-	nowStr := time.Now().Format(dateformat)
+	nowStr := time.Now().Format(timex.ParsePyDateFormat(dateformat))
 	if findString := regexp.MustCompile(`^\d+$`).FindString(nowStr); findString == "" {
 		return fmt.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
 	}

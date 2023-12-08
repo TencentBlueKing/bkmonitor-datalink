@@ -206,10 +206,10 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 	}
 
 	num := 0
-	vmLabels := make([]string, len(c))
+	vmLabels := make([]string, 0, len(c))
 
 	for _, cond := range c {
-		lbl := make([]string, len(cond)+len(defaultLabels))
+		lbl := make([]string, 0, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
 			val := strings.ReplaceAll(nf.Value[0], `\`, `\\`)

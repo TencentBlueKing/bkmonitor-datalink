@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define/prompb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 )
 
 func TestConvert(t *testing.T) {
@@ -26,7 +26,7 @@ func TestConvert(t *testing.T) {
 	assert.NoError(t, err)
 	buf.Write(content)
 
-	wr, size, err := prompb.DecodeWriteRequest(buf)
+	wr, size, err := utils.DecodeWriteRequest(buf)
 	assert.NoError(t, err)
 	assert.Equal(t, 9979, size)
 
@@ -46,4 +46,7 @@ func TestConvert(t *testing.T) {
 	}, gather)
 
 	assert.Equal(t, 455, len(events))
+	for i := 0; i < len(events); i++ {
+		t.Logf("event(%d) = %+v", i, events[i].Data())
+	}
 }

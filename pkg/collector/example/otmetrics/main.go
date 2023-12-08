@@ -65,6 +65,8 @@ func main() {
 		controller.WithExporter(exporter),
 		controller.WithCollectPeriod(3*time.Second),
 		controller.WithResource(resource.NewSchemaless(attribute.String("bk.data.token", token))),
+		controller.WithResource(resource.NewSchemaless(attribute.String("process.pid", "1024"))),
+		controller.WithResource(resource.NewSchemaless(attribute.String("process.name", "hello-world"))),
 	)
 	if err := cont.Start(context.Background()); err != nil {
 		log.Fatalln("failed to start the metric controller:", err)

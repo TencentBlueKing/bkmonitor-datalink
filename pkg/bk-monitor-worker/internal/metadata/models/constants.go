@@ -185,6 +185,10 @@ const (
 	SpaceTypeBKCI   = "bkci"
 	SpaceTypeBKSAAS = "bksaas"
 	SpaceTypeAll    = "all"
+
+	Bkci1001TableIdPrefix = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
+	Dbm1001TableIdPrefix  = "dbm_system."  // 1001 仅允许访问 dbm 相关结果表的前缀
+	SystemTableIdPrefix   = "system."
 )
 
 // VM

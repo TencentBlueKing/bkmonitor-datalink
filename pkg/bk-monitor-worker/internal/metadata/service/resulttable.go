@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -385,7 +386,7 @@ func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool,
 		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
 		dataIdList = append(dataIdList, dsrt.BkDataId)
 	}
-
+	dataIdList = slicex.UintSet2List(slicex.UintList2Set(dataIdList))
 	var dsoList []resulttable.DataSourceOption
 	if len(dataIdList) != 0 {
 		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(dataIdList...).NameEq(models.OptionDisableMetricCutter).All(&dsoList); err != nil {

@@ -56,6 +56,8 @@ var (
 	GlobalBkdataBkBizId int
 	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
 	GlobalBkdataProjectMaintainer string
+	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
+	GlobalAccessDbmRtSpaceUid []string
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -67,6 +69,8 @@ var (
 	ResultTableDetailKey string
 	// ResultTableDetailChannel 结果表详情channel
 	ResultTableDetailChannel string
+	// SpaceToResultTableKey 空间关联的结果表key
+	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
 )
@@ -92,11 +96,13 @@ func initMetadataVariables() {
 	GlobalBkdataRtIdPrefix = GetValue("taskConfig.metadata.global.bkdataRtIdPrefix", GlobalBkappDeployPlatform)
 	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
+	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
+	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
 }

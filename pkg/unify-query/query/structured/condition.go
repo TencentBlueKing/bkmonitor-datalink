@@ -182,24 +182,33 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 	return all
 }
 
-func (c AllConditions) VMString(vMResultTable string) (string, int) {
+func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {
 	vmLabels := make([]string, 0, len(c))
 	num := 0
 	for _, cond := range c {
-		labels := make([]string, 0, len(cond)+1)
-		if vMResultTable != "" {
+		lbl := make([]string, 0)
+		if vmRt != "" {
 			num++
-			labels = append(labels, fmt.Sprintf(`result_table_id="%s"`, vMResultTable))
+			lbl = append(lbl, fmt.Sprintf(`result_table_id %s "%s"`, promql.EqualOperator, vmRt))
+		}
+		if metric != "" {
+			num++
+			operator := promql.EqualOperator
+			if isRegexp {
+				operator = promql.RegexpOperator
+			}
+
+			lbl = append(lbl, fmt.Sprintf(`%s %s "%s"`, labels.MetricName, operator, metric))
 		}
 
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
 			val := strings.ReplaceAll(nf.Value[0], `\`, `\\`)
-			labels = append(labels, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
+			lbl = append(lbl, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
 		}
 
 		num += len(cond)
-		vmLabels = append(vmLabels, strings.Join(labels, `, `))
+		vmLabels = append(vmLabels, strings.Join(lbl, `, `))
 	}
 
 	return strings.Join(vmLabels, ` or `), num

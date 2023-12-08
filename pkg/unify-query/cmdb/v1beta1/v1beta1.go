@@ -279,8 +279,12 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 
 		for _, qm := range queryReference {
 			for _, ql := range qm.QueryList {
-				ql.Condition, _ = getConditions("", indexMatchers...)
-				ql.VmCondition, ql.VmConditionNum = getConditions(ql.VmRt, indexMatchers...)
+				ql.Condition, _ = getConditions(ConditionOption{matchers: indexMatchers})
+				ql.VmCondition, ql.VmConditionNum = getConditions(ConditionOption{
+					measurement: ql.Measurement,
+					field:       ql.Field,
+					matchers:    indexMatchers,
+				})
 				ql.LabelsMatcher = labelsMatcher
 			}
 		}
@@ -361,10 +365,18 @@ func (r *model) getIndexMatcher(ctx context.Context, resource cmdb.Resource, mat
 	return indexMatcher, nil
 }
 
-func getConditions(vmResultTable string, matchers ...cmdb.Matcher) (string, int) {
-	condition := make(structured.AllConditions, 0, len(matchers))
+type ConditionOption struct {
+	vmRt        string
+	measurement string
+	field       string
+	isRegexp    bool
+	matchers    cmdb.Matchers
+}
+
+func getConditions(opt ConditionOption) (string, int) {
+	condition := make(structured.AllConditions, 0, len(opt.matchers))
 	conditionNum := 0
-	for _, m := range matchers {
+	for _, m := range opt.matchers {
 		conditionField := make([]structured.ConditionField, 0, len(m))
 		for k, v := range m {
 			conditionField = append(conditionField, structured.ConditionField{
@@ -377,8 +389,13 @@ func getConditions(vmResultTable string, matchers ...cmdb.Matcher) (string, int)
 		condition = append(condition, conditionField)
 	}
 
-	if vmResultTable != "" {
-		return condition.VMString(vmResultTable)
+	if opt.vmRt != "" {
+		var vmMetric string
+		if opt.measurement != "" {
+			vmMetric = fmt.Sprintf("%s_%s", opt.measurement, opt.field)
+		}
+
+		return condition.VMString(opt.vmRt, vmMetric, opt.isRegexp)
 	} else {
 		return promql.MakeOrExpression(structured.ConvertToPromBuffer(condition)), conditionNum
 	}

@@ -466,19 +466,9 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	// 用于 vm 的查询逻辑特殊处理
-	var metricsConditions []ConditionField
+	var vmMetric string
 	if measurement != "" {
-		metricsConditions = make([]ConditionField, 0, 1)
-		vmMetric := fmt.Sprintf("%s_%s", measurement, field)
-		condition := ConditionField{
-			DimensionName: promql.MetricLabelName,
-			Operator:      ConditionEqual,
-			Value:         []string{vmMetric},
-		}
-		if q.IsRegexp {
-			condition.Operator = ConditionRegEqual
-		}
-		metricsConditions = append(metricsConditions, condition)
+		vmMetric = fmt.Sprintf("%s_%s", measurement, field)
 	}
 
 	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
@@ -509,11 +499,6 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
-
-	// 合并指标到 condition 里面
-	if len(metricsConditions) > 0 {
-		allCondition = MergeConditionField(allCondition, [][]ConditionField{metricsConditions})
-	}
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -565,7 +550,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
 
 	return query, nil
 }

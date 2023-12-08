@@ -1,10 +1,15 @@
 # ================================ Http配置  ===================================
 service:
-  http:
-    mode: release
+  mode: release
+  task:
+    listen: 127.0.0.1
+    port: 10211
+  controller:
+    listen: 127.0.0.1
+    port: 10212
+  worker:
     listen: 127.0.0.1
     port: 10213
-    enabledPprof: true
 
 # ================================ Broker配置  ===================================
 broker:

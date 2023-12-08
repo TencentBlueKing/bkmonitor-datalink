@@ -16,7 +16,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func prometheusHandler() gin.HandlerFunc {
@@ -29,13 +28,7 @@ func prometheusHandler() gin.HandlerFunc {
 
 // NewHTTPService new a http service
 func NewHTTPService() *gin.Engine {
-	svr := gin.Default()
-	gin.SetMode(config.HttpGinMode)
-
-	if config.HttpEnabledPprof {
-		pprof.Register(svr)
-		logger.Info("Pprof started")
-	}
+	svr := NewProfHttpService()
 
 	// 注册任务
 	svr.POST("/bmw/task/", CreateTask)
@@ -48,6 +41,17 @@ func NewHTTPService() *gin.Engine {
 
 	// metrics
 	svr.GET("/bmw/metrics", prometheusHandler())
+
+	return svr
+}
+
+
+// NewProfHttpService new a pprof service
+func NewProfHttpService() *gin.Engine {
+	svr := gin.Default()
+	gin.SetMode(config.GinMode)
+
+	pprof.Register(svr)
 
 	return svr
 }

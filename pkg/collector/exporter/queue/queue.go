@@ -52,3 +52,11 @@ func NewMetricsMapStr(dataId int32, data []common.MapStr) common.MapStr {
 		"data":    data,
 	}
 }
+
+// NewProfilesMapStr 代表着性能分析类型数据
+func NewProfilesMapStr(dataId int32, data []common.MapStr) common.MapStr {
+	return common.MapStr{
+		"dataid": dataId,
+		"data":   data,
+	}
+}

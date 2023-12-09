@@ -346,6 +346,7 @@ func (q *Query) BuildMetadataQuery(
 
 	db := tsDB.DB
 	storageID := tsDB.StorageID
+	storageName := tsDB.StorageName
 	clusterName := tsDB.ClusterName
 	tagKeys := tsDB.TagsKey
 	vmRt := tsDB.VmRt
@@ -357,7 +358,8 @@ func (q *Query) BuildMetadataQuery(
 	trace.InsertStringIntoSpan("tsdb-measurement-type", tsDB.MeasurementType, span)
 	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
 	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
-	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-storage-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-storage-name", storageName, span)
 	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
 	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
 	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
@@ -465,15 +467,11 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	// 用于 vm 的查询逻辑特殊处理
-	vmMetric := fmt.Sprintf("%s_%s", measurement, field)
-	metricsConditions := ConditionField{
-		DimensionName: promql.MetricLabelName,
-		Operator:      ConditionEqual,
-		Value:         []string{vmMetric},
+	var vmMetric string
+	if measurement != "" {
+		vmMetric = fmt.Sprintf("%s_%s", measurement, field)
 	}
-	if q.IsRegexp {
-		metricsConditions.Operator = ConditionRegEqual
-	}
+
 	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
 	for _, a := range q.AggregateMethodList {
 		switch a.Method {
@@ -502,9 +500,6 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
-
-	// 合并指标到 condition 里面
-	allCondition = MergeConditionField(allCondition, [][]ConditionField{{metricsConditions}})
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -549,13 +544,35 @@ func (q *Query) BuildMetadataQuery(
 	query.DB = db
 	query.Measurement = measurement
 	query.VmRt = vmRt
+	query.StorageName = storageName
 	query.Field = field
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+
+	trace.InsertStringIntoSpan("query-source-type", query.SourceType, span)
+	trace.InsertStringIntoSpan("query-table-id", query.TableID, span)
+	trace.InsertStringIntoSpan("query-db", query.DB, span)
+	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
+	trace.InsertStringSliceIntoSpan("query-measurements", query.Measurements, span)
+	trace.InsertStringIntoSpan("query-field", query.Field, span)
+	trace.InsertStringSliceIntoSpan("query-fields", query.Fields, span)
+	trace.InsertStringIntoSpan("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo), span)
+	trace.InsertStringIntoSpan("query-timezone", query.Timezone, span)
+	trace.InsertStringIntoSpan("query-condition", query.Condition, span)
+	trace.InsertStringIntoSpan("query-vm-condition", query.VmCondition, span)
+	trace.InsertIntIntoSpan("query-vm-condition-num", query.VmConditionNum, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+
+	trace.InsertStringIntoSpan("query-storage-type", query.StorageType, span)
+	trace.InsertStringIntoSpan("query-storage-name", query.StorageName, span)
+
+	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
+	trace.InsertStringSliceIntoSpan("query-tag-keys", query.TagsKey, span)
+	trace.InsertStringIntoSpan("query-vm-rt", query.VmRt, span)
 
 	return query, nil
 }

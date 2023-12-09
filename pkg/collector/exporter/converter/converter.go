@@ -90,6 +90,8 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 		ProxyConverter.Convert(record, f)
 	case define.RecordPingserver:
 		PingserverConverter.Convert(record, f)
+	case define.RecordProfiles:
+		ProfilesConverter.Convert(record, f)
 	}
 }
 

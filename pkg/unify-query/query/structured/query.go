@@ -54,19 +54,21 @@ const (
 	bkDatabaseLabelName    = "bk_database"    // argus/prom 存储, db 名对应的 label 名称
 	bkMeasurementLabelName = "bk_measurement" // argus/prom 存储, 表名对应的 label 名称
 
-	BkMonitor = "bkmonitor"
-	Custom    = "custom"
-	BkData    = "bkdata"
-	BkLog     = "bklog"
-	BkApm     = "bkapm"
+	BkMonitorAlisa = "bk_monitor"
+	BkMonitor      = "bkmonitor"
+	Custom         = "custom"
+	BkData         = "bkdata"
+	BkLog          = "bklog"
+	BkApm          = "bkapm"
 )
 
 var dataSourceMap = map[string]struct{}{
-	BkMonitor: {},
-	Custom:    {},
-	BkData:    {},
-	BkLog:     {},
-	BkApm:     {},
+	BkMonitorAlisa: {},
+	BkMonitor:      {},
+	Custom:         {},
+	BkData:         {},
+	BkLog:          {},
+	BkApm:          {},
 }
 
 // ToProm 结构化数据 -> promql -> 判断查询

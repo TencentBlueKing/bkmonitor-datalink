@@ -76,6 +76,18 @@ func TestAes256Decoder(t *testing.T) {
 			},
 		},
 		{
+			Input: "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw==",
+			Token: define.Token{
+				Original:       "Ymtia2JrYmtia2JrYmtia/0ZJ3tXGU6OT2oEqyruVbvWr0kNl7AzgSWPsnVzNBYWRULf8XE/mtQBHLas+jYCrw==",
+				TracesDataId:   1001,
+				MetricsDataId:  1002,
+				LogsDataId:     1003,
+				ProfilesDataId: 1004,
+				BizId:          2,
+				AppName:        "oneapm-appname",
+			},
+		},
+		{
 			Input:     "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfR",
 			Token:     define.Token{},
 			ErrPrefix: "crypto/cipher: input not full blocks",

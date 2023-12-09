@@ -142,6 +142,10 @@ func (r *Receiver) ready() {
 			if GetComponentConfig().Skywalking.Enabled {
 				f()
 			}
+		case define.SourcePyroscope:
+			if GetComponentConfig().Pyroscope.Enabled {
+				f()
+			}
 		}
 	}
 }

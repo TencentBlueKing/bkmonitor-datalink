@@ -13,6 +13,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
+
 	"github.com/cstockton/go-conv"
 	"github.com/pkg/errors"
 
@@ -76,13 +78,10 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 	// 补充业务ID
 	for _, eventRecord := range eventRecords {
-		ipDimension, _ := eventRecord.EventDimension["ip"]
-		cloudIDDimension, _ := eventRecord.EventDimension["bk_cloud_id"]
-		agentIdDimension, _ := eventRecord.EventDimension["bk_agent_id"]
-
-		ip, _ := ipDimension.(string)
-		cloudID, _ := cloudIDDimension.(string)
-		agentId, _ := agentIdDimension.(string)
+		dimensions := utils.NewMapHelper(eventRecord.EventDimension)
+		ip, _ := dimensions.GetString("ip")
+		cloudID, _ := dimensions.GetString("bk_cloud_id")
+		agentId, _ := dimensions.GetString("bk_agent_id")
 
 		var bkBizID int
 		store := define.StoreFromContext(p.ctx)

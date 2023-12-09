@@ -15,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/cstockton/go-conv"
+
+	customjson "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 )
 
 type EventRecord struct {
@@ -273,7 +275,7 @@ func (e *PingUnreachableEvent) Flat() []EventRecord {
 func parseSystemEvent(data json.RawMessage) []EventRecord {
 	var event EventRecordFlatter
 	eventType := new(EventTypeData)
-	err := json.Unmarshal(data, eventType)
+	err := customjson.Unmarshal(data, eventType)
 	if err != nil {
 		return nil
 	}
@@ -283,7 +285,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 2:
 		// agent失联事件
 		agentLostEvent := new(AgentLostEvent)
-		err = json.Unmarshal(data, agentLostEvent)
+		err = customjson.Unmarshal(data, agentLostEvent)
 		if err != nil {
 			break
 		}
@@ -291,7 +293,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 3:
 		// disk readonly
 		diskReadonlyEvent := new(DiskReadonlyEvent)
-		err = json.Unmarshal(data, diskReadonlyEvent)
+		err = customjson.Unmarshal(data, diskReadonlyEvent)
 		if err != nil {
 			break
 		}
@@ -299,7 +301,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 6:
 		// disk full
 		diskFullEvent := new(DiskFullEvent)
-		err = json.Unmarshal(data, diskFullEvent)
+		err = customjson.Unmarshal(data, diskFullEvent)
 		if err != nil {
 			break
 		}
@@ -307,7 +309,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 7:
 		// corefile
 		corefileEvent := new(CorefileEvent)
-		err = json.Unmarshal(data, corefileEvent)
+		err = customjson.Unmarshal(data, corefileEvent)
 		if err != nil {
 			break
 		}
@@ -315,7 +317,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 8:
 		// ping
 		pingEvent := new(PingUnreachableEvent)
-		err = json.Unmarshal(data, pingEvent)
+		err = customjson.Unmarshal(data, pingEvent)
 		if err != nil {
 			break
 		}
@@ -323,7 +325,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 9:
 		// oom
 		oomEvent := new(OOMEvent)
-		err = json.Unmarshal(data, oomEvent)
+		err = customjson.Unmarshal(data, oomEvent)
 		if err != nil {
 			break
 		}

@@ -49,7 +49,7 @@ var EventStorageTimeOption = map[string]interface{}{
 
 var EventStorageEventOption = map[string]interface{}{
 	"es_type": "object",
-	"es_format": map[string]interface{}{
+	"es_properties": map[string]interface{}{
 		"content": map[string]interface{}{
 			"type": "text",
 		},

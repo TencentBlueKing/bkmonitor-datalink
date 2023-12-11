@@ -361,13 +361,73 @@ func MetricsCutterHandler(record *define.ETLRecord, next define.ETLRecordHandler
 	return nil
 }
 
-func TransferRecordCutterByExtraMetaCreator(store define.Store, enable bool) define.ETLRecordChainingHandler {
-	if !enable {
+func tryDecodeExtraMeta(s string) ([]map[string]string, error) {
+	type V1Meta struct {
+		Common map[string]string   `json:"common"`
+		Custom []map[string]string `json:"custom"`
+	}
+
+	parseV0Meta := func(b []byte) ([]map[string]string, error) {
+		ret := make([]map[string]string, 0)
+		err := json.Unmarshal(b, &ret)
+		if err != nil {
+			return nil, err
+		}
+		return ret, nil
+	}
+
+	parseV1Meta := func(b []byte) ([]map[string]string, error) {
+		var v1Meta V1Meta
+		if err := json.Unmarshal(b, &v1Meta); err != nil {
+			return nil, err
+		}
+		ret := make([]map[string]string, 0)
+		for _, custom := range v1Meta.Custom {
+			item := make(map[string]string)
+			for k, v := range custom {
+				item[k] = v
+			}
+			for k, v := range v1Meta.Common {
+				item[k] = v
+			}
+			ret = append(ret, item)
+		}
+		return ret, nil
+	}
+
+	type tryV1 struct {
+		Version string `json:"version"`
+	}
+
+	var tryv1 tryV1
+	var ret []map[string]string
+
+	// 尝试用最小代价解析 version 字段，判断其是否为 v1 格式
+	// 不同版本格式
+	// v0: []map[string]string
+	// v1: V1Meta
+	err := json.Unmarshal([]byte(s), &tryv1)
+	if err == nil && tryv1.Version == "v1" {
+		ret, err = parseV1Meta([]byte(s))
+	} else {
+		ret, err = parseV0Meta([]byte(s))
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	if len(ret) <= 0 {
+		return nil, errors.New("empty extra meta record items")
+	}
+	return ret, nil
+}
+
+func TransferRecordCutterByExtraMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+	if !enabled {
 		return nil
 	}
 
 	return func(record *define.ETLRecord, next define.ETLRecordHandler) error {
-		items := make([]map[string]string, 0)
 		body, err := fetchExtraMetaResponseStore(record, store)
 		if err != nil {
 			return errors.Wrap(err, "failed to fetch extra meta response")
@@ -377,13 +437,9 @@ func TransferRecordCutterByExtraMetaCreator(store define.Store, enable bool) def
 			return errors.New("empty extra meta response")
 		}
 
-		err = json.Unmarshal([]byte(body), &items)
+		items, err := tryDecodeExtraMeta(body)
 		if err != nil {
-			return errors.Wrap(err, "failed to decode extra-meta field or empty items")
-		}
-
-		if len(items) <= 0 {
-			return errors.New("empty extra meta record items")
+			return err
 		}
 
 		// 维度补充

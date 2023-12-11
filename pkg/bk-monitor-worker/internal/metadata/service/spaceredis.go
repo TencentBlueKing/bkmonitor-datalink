@@ -42,6 +42,9 @@ type SpaceRedisSvc struct {
 }
 
 func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
+	if goroutineLimit <= 0 {
+		goroutineLimit = 10
+	}
 	return SpaceRedisSvc{goroutineLimit: goroutineLimit}
 }
 
@@ -84,7 +87,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 		wg.Add(len(spList))
 		for _, sp := range spList {
 			ch <- true
-			func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+			go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
 				defer func() {
 					<-ch
 					wg.Done()
@@ -271,7 +274,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		return nil
 	}
 	var tableIds []string
-	for tableId, _ := range tableIdDetail {
+	for tableId := range tableIdDetail {
 		tableIds = append(tableIds, tableId)
 	}
 	db := mysql.GetDBSession().DB

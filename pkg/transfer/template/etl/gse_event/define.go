@@ -269,7 +269,10 @@ func (e *PingUnreachableEvent) Flat() []EventRecord {
 func parseSystemEvent(data interface{}) []EventRecord {
 	var event EventRecordFlatter
 	var err error
-	dataMap := data.(map[string]interface{})
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return nil
+	}
 	eventType, ok := dataMap["type"].(float64)
 	if !ok {
 		return nil

@@ -10,13 +10,12 @@
 package gse_event
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/cstockton/go-conv"
 
-	customjson "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 )
 
 type EventRecord struct {
@@ -31,8 +30,8 @@ type EventRecord struct {
 type SystemEventData struct {
 	Time   string `json:"utctime2"`
 	Values []struct {
-		EventTime string          `json:"event_time"`
-		Extra     json.RawMessage `json:"extra"`
+		EventTime string      `json:"event_time"`
+		Extra     interface{} `json:"extra"`
 	} `json:"value"`
 }
 
@@ -272,10 +271,11 @@ func (e *PingUnreachableEvent) Flat() []EventRecord {
 	return events
 }
 
-func parseSystemEvent(data json.RawMessage) []EventRecord {
+func parseSystemEvent(data interface{}) []EventRecord {
 	var event EventRecordFlatter
 	eventType := new(EventTypeData)
-	err := customjson.Unmarshal(data, eventType)
+	dataBytes := data.([]byte)
+	err := json.Unmarshal(dataBytes, eventType)
 	if err != nil {
 		return nil
 	}
@@ -285,7 +285,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 2:
 		// agent失联事件
 		agentLostEvent := new(AgentLostEvent)
-		err = customjson.Unmarshal(data, agentLostEvent)
+		err = json.Unmarshal(dataBytes, agentLostEvent)
 		if err != nil {
 			break
 		}
@@ -293,7 +293,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 3:
 		// disk readonly
 		diskReadonlyEvent := new(DiskReadonlyEvent)
-		err = customjson.Unmarshal(data, diskReadonlyEvent)
+		err = json.Unmarshal(dataBytes, diskReadonlyEvent)
 		if err != nil {
 			break
 		}
@@ -301,7 +301,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 6:
 		// disk full
 		diskFullEvent := new(DiskFullEvent)
-		err = customjson.Unmarshal(data, diskFullEvent)
+		err = json.Unmarshal(dataBytes, diskFullEvent)
 		if err != nil {
 			break
 		}
@@ -309,7 +309,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 7:
 		// corefile
 		corefileEvent := new(CorefileEvent)
-		err = customjson.Unmarshal(data, corefileEvent)
+		err = json.Unmarshal(dataBytes, corefileEvent)
 		if err != nil {
 			break
 		}
@@ -317,7 +317,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 8:
 		// ping
 		pingEvent := new(PingUnreachableEvent)
-		err = customjson.Unmarshal(data, pingEvent)
+		err = json.Unmarshal(dataBytes, pingEvent)
 		if err != nil {
 			break
 		}
@@ -325,7 +325,7 @@ func parseSystemEvent(data json.RawMessage) []EventRecord {
 	case 9:
 		// oom
 		oomEvent := new(OOMEvent)
-		err = customjson.Unmarshal(data, oomEvent)
+		err = json.Unmarshal(dataBytes, oomEvent)
 		if err != nil {
 			break
 		}

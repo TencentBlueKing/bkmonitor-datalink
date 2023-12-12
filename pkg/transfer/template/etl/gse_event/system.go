@@ -13,8 +13,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
-
 	"github.com/cstockton/go-conv"
 	"github.com/pkg/errors"
 
@@ -23,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 // SystemEventProcessor : 自定义字符串处理器

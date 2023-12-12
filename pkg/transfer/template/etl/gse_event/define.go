@@ -14,8 +14,7 @@ import (
 	"strings"
 
 	"github.com/cstockton/go-conv"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
+	"github.com/mitchellh/mapstructure"
 )
 
 type EventRecord struct {
@@ -35,10 +34,6 @@ type SystemEventData struct {
 	} `json:"value"`
 }
 
-type EventTypeData struct {
-	Type int `json:"type"`
-}
-
 type EventRecordFlatter interface {
 	Flat() []EventRecord
 }
@@ -46,10 +41,10 @@ type EventRecordFlatter interface {
 // AgentLostEvent : agent失联事件
 type AgentLostEvent struct {
 	Hosts []struct {
-		IP      string `json:"ip"`
-		CloudID int    `json:"cloudid"`
-		AgentID string `json:"agent_id"`
-	} `json:"host"`
+		IP      string `json:"ip" mapstructure:"ip"`
+		CloudID int    `json:"cloudid" mapstructure:"cloudid"`
+		AgentID string `json:"agent_id" mapstructure:"agent_id"`
+	} `json:"host" mapstructure:"host"`
 }
 
 func (e *AgentLostEvent) Flat() []EventRecord {
@@ -97,18 +92,18 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 	return records
 }
 
-// CorefileEvent : corefile事件
-type CorefileEvent struct {
-	Host           string `json:"host"`
-	CloudID        int    `json:"cloudid"`
-	Executable     string `json:"executable"`
-	ExecutablePath string `json:"executable_path"`
-	Signal         string `json:"signal"`
-	Corefile       string `json:"corefile"`
-	Filesize       string `json:"filesize"`
+// CoreFileEvent : core file事件
+type CoreFileEvent struct {
+	Host           string `json:"host" mapstructure:"host"`
+	CloudID        int    `json:"cloudid" mapstructure:"cloudid"`
+	Executable     string `json:"executable" mapstructure:"executable"`
+	ExecutablePath string `json:"executable_path" mapstructure:"executable_path"`
+	Signal         string `json:"signal" mapstructure:"signal"`
+	Corefile       string `json:"corefile" mapstructure:"corefile"`
+	Filesize       string `json:"filesize" mapstructure:"filesize"`
 }
 
-func (e *CorefileEvent) Flat() []EventRecord {
+func (e *CoreFileEvent) Flat() []EventRecord {
 	var content string
 
 	if e.Executable != "" {
@@ -147,11 +142,11 @@ func (e *CorefileEvent) Flat() []EventRecord {
 
 // DiskFullEvent : 磁盘满事件
 type DiskFullEvent struct {
-	Host       string `json:"host"`
-	CloudID    int    `json:"cloudid"`
-	Disk       string `json:"disk"`
-	FileSystem string `json:"file_system"`
-	FsType     string `json:"fstype"`
+	Host       string `json:"host" mapstructure:"host"`
+	CloudID    int    `json:"cloudid" mapstructure:"cloudid"`
+	Disk       string `json:"disk" mapstructure:"disk"`
+	FileSystem string `json:"file_system" mapstructure:"file_system"`
+	FsType     string `json:"fstype" mapstructure:"fstype"`
 }
 
 func (e *DiskFullEvent) Flat() []EventRecord {
@@ -177,13 +172,13 @@ func (e *DiskFullEvent) Flat() []EventRecord {
 
 // DiskReadonlyEvent : 磁盘只读事件
 type DiskReadonlyEvent struct {
-	Host    string `json:"host"`
-	CloudID int    `json:"cloudid"`
+	Host    string `json:"host" mapstructure:"host"`
+	CloudID int    `json:"cloudid" mapstructure:"cloudid"`
 	Ro      []struct {
-		Position string `json:"position"`
-		Fs       string `json:"fs"`
-		Type     string `json:"type"`
-	} `json:"ro"`
+		Position string `json:"position" mapstructure:"position"`
+		Fs       string `json:"fs" mapstructure:"fs"`
+		Type     string `json:"type" mapstructure:"type"`
+	} `json:"ro" mapstructure:"ro"`
 }
 
 func (e *DiskReadonlyEvent) Flat() []EventRecord {
@@ -211,14 +206,14 @@ func (e *DiskReadonlyEvent) Flat() []EventRecord {
 
 // OOMEvent : OOM事件
 type OOMEvent struct {
-	Host       string `json:"host"`
-	CloudID    int    `json:"cloudid"`
-	Process    string `json:"process"`
-	Message    string `json:"message"`
-	OOMMemcg   string `json:"oom_memcg"`
-	TaskMemcg  string `json:"task_memcg"`
-	Task       string `json:"task"`
-	Constraint string `json:"constraint"`
+	Host       string `json:"host" mapstructure:"host"`
+	CloudID    int    `json:"cloudid" mapstructure:"cloudid"`
+	Process    string `json:"process" mapstructure:"process"`
+	Message    string `json:"message" mapstructure:"message"`
+	OOMMemcg   string `json:"oom_memcg" mapstructure:"oom_memcg"`
+	TaskMemcg  string `json:"task_memcg" mapstructure:"task_memcg"`
+	Task       string `json:"task" mapstructure:"task"`
+	Constraint string `json:"constraint" mapstructure:"constraint"`
 }
 
 func (e *OOMEvent) Flat() []EventRecord {
@@ -247,8 +242,8 @@ func (e *OOMEvent) Flat() []EventRecord {
 
 // PingUnreachableEvent : ping不可达事件
 type PingUnreachableEvent struct {
-	Hosts   []string `json:"iplist"`
-	CloudID int      `json:"cloudid"`
+	Hosts   []string `json:"iplist" mapstructure:"iplist"`
+	CloudID int      `json:"cloudid" mapstructure:"cloudid"`
 }
 
 func (e *PingUnreachableEvent) Flat() []EventRecord {
@@ -273,66 +268,48 @@ func (e *PingUnreachableEvent) Flat() []EventRecord {
 
 func parseSystemEvent(data interface{}) []EventRecord {
 	var event EventRecordFlatter
-	eventType := new(EventTypeData)
-	dataBytes := data.([]byte)
-	err := json.Unmarshal(dataBytes, eventType)
-	if err != nil {
+	var err error
+	dataMap := data.(map[string]interface{})
+	eventType, ok := dataMap["type"].(float64)
+	if !ok {
 		return nil
 	}
 
 	// 根据事件类型转换为不同的事件
-	switch eventType.Type {
+	switch eventType {
 	case 2:
 		// agent失联事件
-		agentLostEvent := new(AgentLostEvent)
-		err = json.Unmarshal(dataBytes, agentLostEvent)
-		if err != nil {
-			break
-		}
-		event = agentLostEvent
+		var agentLostEvent AgentLostEvent
+		err = mapstructure.Decode(dataMap, &agentLostEvent)
+		event = &agentLostEvent
 	case 3:
 		// disk readonly
-		diskReadonlyEvent := new(DiskReadonlyEvent)
-		err = json.Unmarshal(dataBytes, diskReadonlyEvent)
-		if err != nil {
-			break
-		}
-		event = diskReadonlyEvent
+		var diskReadonlyEvent DiskReadonlyEvent
+		err = mapstructure.Decode(dataMap, &diskReadonlyEvent)
+		event = &diskReadonlyEvent
 	case 6:
 		// disk full
-		diskFullEvent := new(DiskFullEvent)
-		err = json.Unmarshal(dataBytes, diskFullEvent)
-		if err != nil {
-			break
-		}
-		event = diskFullEvent
+		var diskFullEvent DiskFullEvent
+		err = mapstructure.Decode(dataMap, &diskFullEvent)
+		event = &diskFullEvent
 	case 7:
-		// corefile
-		corefileEvent := new(CorefileEvent)
-		err = json.Unmarshal(dataBytes, corefileEvent)
-		if err != nil {
-			break
-		}
-		event = corefileEvent
+		// core file
+		var coreFileEvent CoreFileEvent
+		err = mapstructure.Decode(dataMap, &coreFileEvent)
+		event = &coreFileEvent
 	case 8:
 		// ping
-		pingEvent := new(PingUnreachableEvent)
-		err = json.Unmarshal(dataBytes, pingEvent)
-		if err != nil {
-			break
-		}
-		event = pingEvent
+		var pingUnreachableEvent PingUnreachableEvent
+		err = mapstructure.Decode(dataMap, &pingUnreachableEvent)
+		event = &pingUnreachableEvent
 	case 9:
 		// oom
-		oomEvent := new(OOMEvent)
-		err = json.Unmarshal(dataBytes, oomEvent)
-		if err != nil {
-			break
-		}
-		event = oomEvent
+		var oomEvent OOMEvent
+		err = mapstructure.Decode(dataMap, &oomEvent)
+		event = &oomEvent
 	}
 
-	if event == nil {
+	if err != nil || event == nil {
 		return nil
 	}
 

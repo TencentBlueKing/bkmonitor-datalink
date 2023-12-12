@@ -42,11 +42,11 @@ func (r Records) AsBody() (io.Reader, error) {
 // ESRecord
 type Record struct {
 	Meta     map[string]interface{}
-	Document interface{}
+	Document map[string]interface{}
 }
 
 // NewRecord
-func NewRecord(document interface{}) *Record {
+func NewRecord(document map[string]interface{}) *Record {
 	return &Record{
 		Meta:     make(map[string]interface{}),
 		Document: document,

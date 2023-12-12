@@ -149,7 +149,6 @@ func (p *PerformanceInodeProcessor) Process(d define.Payload, outputChan chan<- 
 
 	if bizID, err := root.Get("bizid"); err == nil {
 		if _, ok := p.DisabledBizIDs[conv.String(bizID)]; ok {
-			p.CounterSkip.Inc()
 			return
 		}
 	}

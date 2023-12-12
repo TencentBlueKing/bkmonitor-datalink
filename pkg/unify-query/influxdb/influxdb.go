@@ -188,11 +188,6 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 					return
 				}
 
-				trace.InsertStringIntoSpan(fmt.Sprintf("cluster_id_%d", i), clusterID, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("db_%d", i), db, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("sql_%d", i), sql, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("metric_name_%d", i), metricName, span)
-
 				tables, err := instance.QueryInfos(ctx, metricName, db, sql, precision, limit)
 				if err != nil {
 					log.Errorf(ctx, "query failed,db:%s,sql:%s,error:%s", db, sql, err)
@@ -302,11 +297,6 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 					log.Errorf(ctx, fmt.Sprintf("%s [%v]", err.Error(), sqlInfo))
 					return
 				}
-
-				trace.InsertStringIntoSpan(fmt.Sprintf("cluster_id_%d", i), clusterID, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("db_%d", i), db, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("sql_%d", i), sql, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("metric_name_%d", i), metricName, span)
 
 				// 增加序号维度，以区分不同db（tableID）出来的数据
 				expandMap := make(map[string]string)

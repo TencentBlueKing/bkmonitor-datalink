@@ -21,7 +21,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
@@ -254,15 +253,7 @@ func (b *Backend) SendMsg(payload define.Payload) {
 		b.frontendDeltaObserver.Observe(t.Sub(at).Seconds())
 	}
 
-	switch b.ETLConfig {
-	// 当时自定义时序类型的时候 需要丢弃 dimensions/timestamp 维度 使用 ETLConfig 转换
-	case "bk_standard_v2_time_series":
-		message, err = json.Marshal(etlRecord)
-		// 其余情况使用 payload 自带转换方式
-	default:
-		err = payload.To(&message)
-	}
-
+	err = payload.To(&message)
 	if err != nil {
 		logging.Warnf("%v load %#v error %v", b, payload, err)
 		b.CounterFails.Inc()

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -342,22 +343,10 @@ func (q *Query) BuildMetadataQuery(
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
-	// 增加查询条件
-	if len(queryConditions) > 0 {
-		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
-
-		whereList.Append(
-			promql.AndOperator,
-			promql.NewTextWhere(
-				promql.MakeOrExpression(
-					ConvertToPromBuffer(queryConditions),
-				),
-			),
-		)
-	}
 
 	db := tsDB.DB
 	storageID := tsDB.StorageID
+	storageName := tsDB.StorageName
 	clusterName := tsDB.ClusterName
 	tagKeys := tsDB.TagsKey
 	vmRt := tsDB.VmRt
@@ -365,12 +354,16 @@ func (q *Query) BuildMetadataQuery(
 	measurements = []string{measurement}
 
 	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
+	trace.InsertStringSliceIntoSpan("tsdb-field-list", tsDB.Field, span)
+	trace.InsertStringIntoSpan("tsdb-measurement-type", tsDB.MeasurementType, span)
 	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
-	trace.InsertStringIntoSpan("tsdb-db", db, span)
-	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
+	trace.InsertStringIntoSpan("tsdb-storage-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-storage-name", storageName, span)
 	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
 	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
 	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
+	trace.InsertStringIntoSpan("tsdb-db", db, span)
 	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
 
 	if q.Offset != "" {
@@ -379,6 +372,24 @@ func (q *Query) BuildMetadataQuery(
 			return nil, err
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
+	}
+
+	if len(queryConditions) > 0 {
+		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
+
+		// influxdb 查询特殊处理逻辑
+		influxdbConditions := ConvertToPromBuffer(queryConditions)
+		if len(influxdbConditions) > 0 {
+			whereList.Append(
+				promql.AndOperator,
+				promql.NewTextWhere(
+					promql.MakeOrExpression(
+						influxdbConditions,
+					),
+				),
+			)
+		}
+
 	}
 
 	switch tsDB.MeasurementType {
@@ -455,20 +466,40 @@ func (q *Query) BuildMetadataQuery(
 		)
 	}
 
-	metricsConditions := ConditionField{
-		DimensionName: promql.MetricLabelName,
-		Operator:      ConditionEqual,
-		Value:         []string{fmt.Sprintf("%s_%s", measurement, field)},
+	// 用于 vm 的查询逻辑特殊处理
+	var vmMetric string
+	if measurement != "" {
+		vmMetric = fmt.Sprintf("%s_%s", measurement, field)
 	}
-	if q.IsRegexp {
-		metricsConditions.Operator = ConditionRegEqual
+
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+	for _, a := range q.AggregateMethodList {
+		switch a.Method {
+		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+		case "label_replace":
+			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+				}
+			}
+		}
+	}
+
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
+	for _, qc := range queryConditions {
+		for _, c := range qc {
+			if c.DimensionName == promql.MetricLabelName {
+				for ci, cv := range c.Value {
+					if strings.LastIndex(cv, field) < 0 {
+						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+					}
+				}
+			}
+		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
-
-	// 合并指标到 condition 里面
-	allCondition = MergeConditionField(allCondition, [][]ConditionField{{metricsConditions}})
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -513,13 +544,35 @@ func (q *Query) BuildMetadataQuery(
 	query.DB = db
 	query.Measurement = measurement
 	query.VmRt = vmRt
+	query.StorageName = storageName
 	query.Field = field
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+
+	trace.InsertStringIntoSpan("query-source-type", query.SourceType, span)
+	trace.InsertStringIntoSpan("query-table-id", query.TableID, span)
+	trace.InsertStringIntoSpan("query-db", query.DB, span)
+	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
+	trace.InsertStringSliceIntoSpan("query-measurements", query.Measurements, span)
+	trace.InsertStringIntoSpan("query-field", query.Field, span)
+	trace.InsertStringSliceIntoSpan("query-fields", query.Fields, span)
+	trace.InsertStringIntoSpan("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo), span)
+	trace.InsertStringIntoSpan("query-timezone", query.Timezone, span)
+	trace.InsertStringIntoSpan("query-condition", query.Condition, span)
+	trace.InsertStringIntoSpan("query-vm-condition", query.VmCondition, span)
+	trace.InsertIntIntoSpan("query-vm-condition-num", query.VmConditionNum, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+
+	trace.InsertStringIntoSpan("query-storage-type", query.StorageType, span)
+	trace.InsertStringIntoSpan("query-storage-name", query.StorageName, span)
+
+	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
+	trace.InsertStringSliceIntoSpan("query-tag-keys", query.TagsKey, span)
+	trace.InsertStringIntoSpan("query-vm-rt", query.VmRt, span)
 
 	return query, nil
 }
@@ -592,8 +645,12 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		OriginalOffset: originalOffset,
 	}
 
-	timeIdx := 0
+	timeIdx := -1
+	funcNums := len(q.AggregateMethodList)
+
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
+		funcNums += 1
+
 		// 拼接时间聚合函数，NodeIndex 的数据如下：
 		// count_over_time(metric[1m:2m])：vector -> subQuery -> call： nodeIndex 为 2
 		// sum by(job, metric_name) (delta(label_replace(metric, "")[1m:]))：vector -> call -> subQuery -> call -> aggr：nodeIndex 为 3
@@ -602,24 +659,26 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		timeIdx = q.TimeAggregation.NodeIndex - 2
 		// 增加小于 0 的场景兼容默认值为空的情况
 		if timeIdx <= 0 {
-			result, err = q.TimeAggregation.ToProm(result)
-			if err != nil {
-				return nil, err
-			}
+			timeIdx = 0
 		}
 	}
 
-	for idx, method := range q.AggregateMethodList {
-		if timeIdx > 0 && idx == timeIdx {
+	for idx := 0; idx < funcNums; idx++ {
+		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		if result, err = method.ToProm(result); err != nil {
-			log.Errorf(ctx, "failed to translate function for->[%s]", err)
-			return nil, err
+		} else {
+			methodIdx := idx
+			if timeIdx > -1 && methodIdx >= timeIdx {
+				methodIdx -= 1
+			}
+			method := q.AggregateMethodList[methodIdx]
+			if result, err = method.ToProm(result); err != nil {
+				log.Errorf(ctx, "failed to translate function for->[%s]", err)
+				return nil, err
+			}
 		}
 	}
 

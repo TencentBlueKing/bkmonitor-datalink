@@ -37,9 +37,9 @@ const (
 )
 
 var (
-	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey, QueryRouterInfoKey}
-	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, FieldToResultTableKey, ResultTableDetailKey}
-	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, FieldToResultTableChannelKey, ResultTableDetailChannelKey}
+	AllKey           = []string{ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey}
+	SpaceAllKey      = []string{SpaceToResultTableKey, DataLabelToResultTableKey, ResultTableDetailKey}
+	SpaceChannelKeys = []string{SpaceToResultTableChannelKey, DataLabelToResultTableChannelKey, ResultTableDetailChannelKey}
 )
 
 type Router interface {

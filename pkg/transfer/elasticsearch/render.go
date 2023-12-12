@@ -10,9 +10,6 @@
 package elasticsearch
 
 import (
-	"bytes"
-	"strings"
-	"text/template"
 	"time"
 
 	"github.com/pkg/errors"
@@ -30,25 +27,6 @@ func FixedIndexRender(name string) IndexRenderFn {
 	}
 }
 
-// TemplateRender
-func TemplateRender(tmpl *template.Template, context interface{}) IndexRenderFn {
-	return func(record *Record) (index string, err error) {
-		buf := bytes.NewBuffer(nil)
-		defer utils.RecoverError(func(e error) {
-			err = e
-			logging.Errorf("render index with context %#v error %v", context, e)
-		})
-		err = tmpl.Execute(buf, struct {
-			Record  *Record
-			Context interface{}
-		}{
-			Record:  record,
-			Context: context,
-		})
-		return buf.String(), err
-	}
-}
-
 // ConfigTemplateRender
 func ConfigTemplateRender(config *config.ElasticSearchMetaClusterInfo) (IndexRenderFn, error) {
 	storageConf := utils.NewMapHelper(config.StorageConfig)
@@ -58,33 +36,17 @@ func ConfigTemplateRender(config *config.ElasticSearchMetaClusterInfo) (IndexRen
 	field := storageConf.GetOrDefault("index_datetime_field", "time").(string)
 	timezone := int(storageConf.GetOrDefault("index_datetime_timezone", 0.0).(float64))
 	format := storageConf.GetOrDefault("index_datetime_format", "20060102").(string)
-	timeTemplate := storageConf.GetOrDefault(
-		"index_datetime_template",
-		`{{ format_time ( index .Record.Document ( index .Context "field" ) ) ( index .Context "format" ) ( index .Context "timezone" ) }}`,
-	).(string)
-	stringTemplate := storageConf.GetOrDefault("index_template", strings.Join(
-		[]string{timeTemplate, index}, separator,
-	)).(string)
 
-	tmpl, err := template.New(index).Funcs(template.FuncMap{
-		"format_time": func(v interface{}, format string, timezone *time.Location) string {
-			tm, err := utils.ParseTime(v)
-			if err != nil {
-				logging.Warnf("parse time %v error %v, use local time instead", v, err)
-				tm = time.Now()
-			}
-			return tm.In(timezone).Format(format)
-		},
-	}).Parse(stringTemplate)
-	if err != nil {
-		return nil, err
-	}
+	return func(record *Record) (string, error) {
+		tm, err := utils.ParseTime(record.Document[field])
+		if err != nil {
+			logging.Warnf("parse time %v error %v, use local time instead", tm, err)
+			tm = time.Now()
+		}
 
-	return TemplateRender(tmpl, map[string]interface{}{
-		"field":    field,
-		"format":   format,
-		"timezone": utils.ParseFixedTimeZone(timezone),
-	}), nil
+		s := tm.In(utils.ParseFixedTimeZone(timezone)).Format(format) + separator + index
+		return s, nil
+	}, nil
 }
 
 // TimeBasedIndexAliasRender
@@ -98,12 +60,7 @@ func TimeBasedIndexAliasRender(config *config.ElasticSearchMetaClusterInfo) (Ind
 	}
 
 	return func(record *Record) (s string, e error) {
-		values, ok := record.Document.(map[string]interface{})
-		if !ok {
-			return "", errors.Wrapf(define.ErrType, "document type %T", record.Document)
-		}
-
-		value, ok := values[field]
+		value, ok := record.Document[field]
 		if !ok {
 			return "", errors.Wrapf(define.ErrKey, "document field %s not found", field)
 		}

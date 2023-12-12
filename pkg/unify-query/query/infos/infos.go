@@ -250,7 +250,6 @@ func makeInfluxQLListBySpaceUid(
 				sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 				sqlInfo.ClusterID = storageID
 				sqlInfo.MetricName = metricName
-				trace.InsertStringIntoSpan(fmt.Sprintf("query-info-sql-info-sql-%s", measurement), sqlInfo.SQL, span)
 				if err != nil {
 					return influxQLList, err
 				}
@@ -283,7 +282,6 @@ func makeInfluxQLListBySpaceUid(
 			sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 			sqlInfo.ClusterID = storageID
 			sqlInfo.MetricName = metricName
-			trace.InsertStringIntoSpan(fmt.Sprintf("query-info-sql-info-sql-%s", measurement), sqlInfo.SQL, span)
 			if err != nil {
 				return influxQLList, err
 			}
@@ -320,10 +318,14 @@ func makeInfluxQLList(
 		return nil, err
 	}
 	if len(condition) != 0 {
-		whereList.Append(
-			promql.AndOperator, promql.NewTextWhere(
-				promql.MakeOrExpression(structured.ConvertToPromBuffer(condition)),
-			))
+		influxdbCondition := structured.ConvertToPromBuffer(condition)
+		if len(influxdbCondition) > 0 {
+			whereList.Append(
+				promql.AndOperator, promql.NewTextWhere(
+					promql.MakeOrExpression(influxdbCondition),
+				))
+		}
+
 	}
 	// 增加时间维度查询，秒级转纳秒
 	if params.Start != "" && params.End != "" {
@@ -411,7 +413,6 @@ func makeInfluxQLList(
 				sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 				sqlInfo.ClusterID = tableID.ClusterID
 				sqlInfo.MetricName = metricName
-				trace.InsertStringIntoSpan(fmt.Sprintf("query-info-sql-info-sql-%s", measurement), sqlInfo.SQL, span)
 				if err != nil {
 					return influxQLList, err
 				}
@@ -443,18 +444,11 @@ func makeInfluxQLList(
 			sqlInfo, err = generateSQL(ctx, infoType, db, measurement, field, newWhereList, params.Slimit, limit)
 			sqlInfo.ClusterID = tableID.ClusterID
 			sqlInfo.MetricName = metricName
-			trace.InsertStringIntoSpan(fmt.Sprintf("query-info-sql-info-sql-%s", measurement), sqlInfo.SQL, span)
 			if err != nil {
 				return influxQLList, err
 			}
 			influxQLList = append(influxQLList, sqlInfo)
 		}
-
-		trace.InsertStringIntoSpan("query-info-info-type", string(infoType), span)
-		trace.InsertStringIntoSpan("query-info0db", db, span)
-		trace.InsertIntIntoSpan("query-info-slimit", params.Slimit, span)
-		trace.InsertIntIntoSpan("query-info-limit", limit, span)
-		trace.InsertIntIntoSpan("query-info-default-limit", defaultLimit, span)
 	}
 
 	return influxQLList, err

@@ -7,12 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package auto
+package utils
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
+import (
+	"bytes"
+	"os"
+	"testing"
 
-// NewPayloadDecoder
-func NewPayloadDecoder() *etl.PayloadDecoder {
-	return etl.NewPayloadDecoder().
-		GroupSplitHandler(false, "group_info")
+	"github.com/stretchr/testify/assert"
+)
+
+func TestCodec(t *testing.T) {
+	buf := &bytes.Buffer{}
+	content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
+	assert.NoError(t, err)
+	buf.Write(content)
+
+	_, size, err := DecodeWriteRequest(buf)
+	assert.NoError(t, err)
+	assert.Equal(t, 9979, size)
 }

@@ -70,6 +70,8 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
+
+	mock.SetRedisClient(ctx, "demo")
 	mock.SetSpaceTsDbMockData(ctx, path, bucket,
 		ir.SpaceInfo{
 			consul.VictoriaMetricsStorageType: ir.Space{
@@ -303,6 +305,18 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 	}, log.OtLogger)
 
+	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
+		Type: consul.VictoriaMetricsStorageType,
+		Instance: &victoriaMetrics.Instance{
+			Ctx:                  ctx,
+			Address:              "victoria_metric",
+			UriPath:              "api",
+			Curl:                 mockCurl,
+			InfluxCompatible:     true,
+			UseNativeOr:          true,
+			AuthenticationMethod: "token",
+		},
+	})
 	tsdb.SetStorage(strconv.FormatInt(victoriaMetricsStorageId, 10), &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
@@ -350,11 +364,11 @@ func TestQueryTs(t *testing.T) {
 		},
 		"test query by different metric dims": {
 			query: `{
-	"space_uid": "a_1068",
+	"space_uid": "influxdb",
 	"query_list": [{
 		"data_source": "",
 		"table_id": "",
-		"field_name": "container_cpu_usage_seconds_total",
+		"field_name": "bk_split_measurement",
 		"field_list": null,
 		"function": [{
 			"method": "max",
@@ -612,43 +626,43 @@ func TestVmQueryParams(t *testing.T) {
 			username: "vm-query",
 			spaceUid: consul.VictoriaMetricsStorageType,
 			query:    `{"query_list":[{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and", "and"]}},{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":false,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(bk_split_measurement_value{bcs_cluster_id=~\"cls-2\",bcs_cluster_id=~\"cls-2\",bk_biz_id=\"100801\",bk_split_measurement=\"bk_split_measurement\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(bk_split_measurement_value{bk_split_measurement=\"bk_split_measurement\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"bk_split_measurement_value":["victoria_metrics"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["victoria_metrics"],"metric_filter_condition":{"a":"bk_split_measurement=\"bk_split_measurement\", bcs_cluster_id=~\"cls-2\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\"","b":"bk_split_measurement=\"bk_split_measurement\", result_table_id=\"victoria_metrics\", __name__=\"bk_split_measurement_value\""}}`,
 		},
 		{
 			username: "vm-query-or",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"container_cpu_usage_seconds_total","field_list":null,"function":[{"method":"sum","without":false,"dimensions":[],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"count_over_time","window":"60s","position":0,"vargs_list":null},"reference_name":"a","dimensions":[],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"bk_biz_id","value":["7"],"op":"contains"},{"field_name":"ip","value":["127.0.0.1","127.0.0.2"],"op":"contains"},{"field_name":"ip","value":["[a-z]","[A-Z]"],"op":"req"},{"field_name":"api","value":["/metrics"],"op":"ncontains"},{"field_name":"bk_biz_id","value":["7"],"op":"contains"},{"field_name":"api","value":["/metrics"],"op":"contains"}],"condition_list":["and","and","and","or","and"]},"keep_columns":["_time","a"]}],"metric_merge":"a","result_columns":null,"start_time":"1697458200","end_time":"1697461800","step":"60s","down_sample_range":"3s","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
-			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum(count_over_time(a[1m] offset -59s999ms))","start":1697458200,"end":1697461800,"step":60},"result_table_group":{"a":["1_prom_computation_result"]},"metric_filter_condition":{"a":"result_table_id=\"1_prom_computation_result\", __name__=\"container_cpu_usage_seconds_total_value\", bcs_cluster_id=\"cls-2\", bk_biz_id=\"7\", ip=~\"198\\\\.0\\\\.0\\\\.1|198\\\\.0\\\\.0\\\\.2\", ip=~\"[a-z]|[A-Z]\", api!=\"/metrics\" or result_table_id=\"1_prom_computation_result\", __name__=\"container_cpu_usage_seconds_total_value\", bcs_cluster_id=\"cls-2\", bk_biz_id=\"7\", api=\"/metrics\""},"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum(count_over_time(a[1m] offset -59s999ms))","start":1697458200,"end":1697461800,"step":60},"result_table_list":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"],"metric_filter_condition":{"a":"bcs_cluster_id=\"BCS-K8S-25429\", bk_biz_id=\"7\", ip=~\"^(127\\\\.0\\\\.0\\\\.1|127\\\\.0\\\\.0\\\\.2)$\", ip=~\"[a-z]|[A-Z]\", api!=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25429\", bk_biz_id=\"7\", api=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25428\", bk_biz_id=\"7\", ip=~\"^(127\\\\.0\\\\.0\\\\.1|127\\\\.0\\\\.0\\\\.2)$\", ip=~\"[a-z]|[A-Z]\", api!=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25428\", bk_biz_id=\"7\", api=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", bk_biz_id=\"7\", ip=~\"^(127\\\\.0\\\\.0\\\\.1|127\\\\.0\\\\.0\\\\.2)$\", ip=~\"[a-z]|[A-Z]\", api!=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", bk_biz_id=\"7\", api=\"/metrics\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\""}}`,
 		},
 		{
 			username: "vm-query-or-for-interval",
 			spaceUid: "vm-query",
 			promql:   `{"promql":"sum by(job, metric_name) (delta(label_replace({__name__=~\"container_cpu_.+_total\", __name__ !~ \".+_size_count\", __name__ !~ \".+_process_time_count\", job=\"metric-social-friends-forever\"}, \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\")[2m:]))","start":"1698147600","end":"1698151200","step":"60s","bk_biz_ids":null,"timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
-			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","api_params":{"query":"sum by (job, metric_name) (label_replace(delta(a[2m:] offset 1ms), \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count\"))","start":1698147600,"end":1698151200,"step":60},"result_table_group":{"a":["1_prom_computation_result"]},"metric_filter_condition":{"a":"result_table_id=\"1_prom_computation_result\", __name__=~\"container_cpu_.+_total_value\", bcs_cluster_id=\"cls-2\", job=\"metric-social-friends-forever\""},"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (job, metric_name) (delta(label_replace({__name__=~\"a\"} offset -59s999ms, \"metric_name\", \"$1\", \"__name__\", \"ffs_rest_(.*)_count_value\")[2m:]))","start":1698147600,"end":1698151200,"step":60},"result_table_list":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"],"metric_filter_condition":{"a":"bcs_cluster_id=\"BCS-K8S-25428\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=~\"container_cpu_.+_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=~\"container_cpu_.+_total_value\" or bcs_cluster_id=\"BCS-K8S-25429\", __name__!~\".+_size_count_value\", __name__!~\".+_process_time_count_value\", job=\"metric-social-friends-forever\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=~\"container_cpu_.+_total_value\""}}`,
 		},
 		{
 			username: "vm-query",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["or", "and"]}},{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":false,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(container_cpu_usage_seconds_total_value{bcs_cluster_id=\"cls-2\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(container_cpu_usage_seconds_total_value{bcs_cluster_id=\"cls-2\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"container_cpu_usage_seconds_total_value":["1_prom_computation_result"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"],"metric_filter_condition":{"a":"bcs_cluster_id=\"BCS-K8S-25428\", bcs_cluster_id=~\"cls-2\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25428\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", bcs_cluster_id=~\"cls-2\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25429\", bcs_cluster_id=~\"cls-2\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25429\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\"","b":"bcs_cluster_id=\"BCS-K8S-25429\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25428\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\""}}`,
 		},
 		{
 			username: "vm-query",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bcs_cluster_id","value":["cls-2"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and","and"]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":false,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(metric_value{bcs_cluster_id=\"cls\",bcs_cluster_id=~\"cls-2\",bcs_cluster_id=~\"cls-2\",bk_biz_id=\"100801\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(metric_value{bcs_cluster_id=\"cls\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"metric_value":["table_id"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["vm_rt"],"metric_filter_condition":{"a":"bcs_cluster_id=\"cls\", bcs_cluster_id=~\"cls-2\", bcs_cluster_id=~\"cls-2\", bk_biz_id=\"100801\", result_table_id=\"vm_rt\", __name__=\"metric_value\"","b":"bcs_cluster_id=\"cls\", result_table_id=\"vm_rt\", __name__=\"metric_value\""}}`,
 		},
 		{
 			username: "vm-query",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"namespace","value":["ns"],"op":"contains"}],"condition_list":[]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":false,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(metric_value{bcs_cluster_id=\"cls\",namespace=\"ns\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(metric_value{bcs_cluster_id=\"cls\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"metric_value":["table_id"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["vm_rt"],"metric_filter_condition":{"a":"bcs_cluster_id=\"cls\", namespace=\"ns\", result_table_id=\"vm_rt\", __name__=\"metric_value\"","b":"bcs_cluster_id=\"cls\", result_table_id=\"vm_rt\", __name__=\"metric_value\""}}`,
 		},
 		{
 			username: "vm-query-fuzzy-name",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"me.*","is_regexp":true,"function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"namespace","value":["ns"],"op":"contains"}],"condition_list":[]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
-			params:   `{"influx_compatible":true,"use_native_or":false,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(me.*_value{bcs_cluster_id=\"cls\",namespace=\"ns\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(metric_value{bcs_cluster_id=\"cls\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"me.*_value":["table_id"],"metric_value":["table_id"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time({__name__=~\"a\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["vm_rt"],"metric_filter_condition":{"a":"bcs_cluster_id=\"cls\", namespace=\"ns\", result_table_id=\"vm_rt\", __name__=~\"me.*_value\"","b":"bcs_cluster_id=\"cls\", result_table_id=\"vm_rt\", __name__=\"metric_value\""}}`,
 		},
 	}
 
@@ -1233,7 +1247,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promql to struct with 1m:2m": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `count_over_time(bkmonitor:metric[1m:2m])`,
+				PromQL: `count_over_time(bkmonitor:metric[1m:2m] @ start() offset -59s999ms)`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `30s`,
@@ -1241,8 +1255,10 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
-						DataSource: `bkmonitor`,
-						FieldName:  `metric`,
+						AlignInfluxdbResult: true,
+						DataSource:          `bkmonitor`,
+						FieldName:           `metric`,
+						StartOrEnd:          parser.START,
 						TimeAggregation: structured.TimeAggregation{
 							Function:   "count_over_time",
 							Window:     "1m0s",
@@ -1267,7 +1283,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promql to struct with delta label_replace 1m:2m": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `sum by (job, metric_name) (delta(label_replace({__name__=~"bkmonitor:container_cpu_.+_total",job="metric-social-friends-forever"}, "metric_name", "$1", "__name__", "ffs_rest_(.*)_count")[2m:]))`,
+				PromQL: `sum by (job, metric_name) (delta(label_replace({__name__=~"bkmonitor:container_cpu_.+_total",job="metric-social-friends-forever"} @ start() offset -59s999ms, "metric_name", "$1", "__name__", "ffs_rest_(.*)_count")[2m:]))`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `30s`,
@@ -1275,9 +1291,11 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
-						DataSource: `bkmonitor`,
-						FieldName:  `container_cpu_.+_total`,
-						IsRegexp:   true,
+						DataSource:          `bkmonitor`,
+						FieldName:           `container_cpu_.+_total`,
+						IsRegexp:            true,
+						StartOrEnd:          parser.START,
+						AlignInfluxdbResult: true,
 						TimeAggregation: structured.TimeAggregation{
 							Function:   "delta",
 							Window:     "2m0s",
@@ -1342,7 +1360,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promq to struct with topk": {
 			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `topk($1, bkmonitor:metric)`,
+				PromQL: `topk(1, bkmonitor:metric)`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
@@ -1450,6 +1468,127 @@ func TestStructAndPromQLConvert(t *testing.T) {
 							},
 						},
 						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"quantile and quantile_over_time": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `quantile(0.9, quantile_over_time(0.9, bkmonitor:metric[1m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						FieldName:  "metric",
+						Conditions: structured.Conditions{
+							FieldList:     []structured.ConditionField{},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "quantile_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
+							VargsList: []interface{}{
+								0.9,
+							},
+							Position: 1,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "quantile",
+								VArgsList: []interface{}{
+									0.9,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"nodeIndex 3 with sum": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `increase(sum by (deployment_environment, result_table_id) (bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"})[2m:])`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						TableID:    "5000575_bkapm_metric_tgf_server_gs_cn_idctest.__default__",
+						FieldName:  "trace_additional_duration_count",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "deployment_environment",
+									Value:         []string{"g-5"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:   "increase",
+							Window:     "2m0s",
+							NodeIndex:  3,
+							IsSubQuery: true,
+							Step:       "0s",
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "sum",
+								Dimensions: []string{
+									"deployment_environment", "result_table_id",
+								},
+							},
+						},
+						Offset: "0s",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"nodeIndex 2 with sum": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `sum by (deployment_environment, result_table_id) (increase(bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"}[2m]))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource: "bkmonitor",
+						TableID:    "5000575_bkapm_metric_tgf_server_gs_cn_idctest.__default__",
+						FieldName:  "trace_additional_duration_count",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "deployment_environment",
+									Value:         []string{"g-5"},
+									Operator:      "eq",
+								},
+							},
+							ConditionList: []string{},
+						},
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "increase",
+							Window:    "2m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "sum",
+								Dimensions: []string{
+									"deployment_environment", "result_table_id",
+								},
+							},
+						},
+						Offset: "",
 					},
 				},
 				MetricMerge: "a",

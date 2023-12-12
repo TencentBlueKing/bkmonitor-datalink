@@ -195,9 +195,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	query.Timezone = timezone
 
-	qrStr, _ := json.Marshal(queryReference)
-	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
-
 	referenceNameMetric := make(map[string]string, len(query.QueryList))
 	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
 
@@ -209,10 +206,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	if ok {
 		if err != nil {
 			return nil, err
-		}
-		if !metadata.GetVMQueryOrFeatureFlag(ctx) {
-			referenceNameMetric = vmExpand.MetricAliasMapping
-			referenceNameLabelMatcher = vmExpand.LabelsMatcher
 		}
 
 		metadata.SetExpand(ctx, vmExpand)

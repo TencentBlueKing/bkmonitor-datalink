@@ -20,9 +20,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -34,7 +35,7 @@ func init() {
 var controllerCmd = &cobra.Command{
 	Use:   "controller",
 	Short: "bk monitor worker controller",
-	Long:  "worker module for blueking monitor worker",
+	Long:  "controller module for blueking monitor worker",
 	Run:   startController,
 }
 
@@ -42,31 +43,48 @@ func startController(cmd *cobra.Command, args []string) {
 	defer runtimex.HandleCrash()
 
 	config.InitConfig()
+	// 初始化日志
 	log.InitLogger()
 
-	r := service.NewHTTPService()
+	r := bmwHttp.NewProfHttpService()
 
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", config.HttpListenHost, config.HttpListenPort),
+		Addr:    fmt.Sprintf("%s:%d", config.ControllerListenHost, config.ControllerListenPort),
 		Handler: r,
 	}
-	logger.Infof("Starting HTTP server at %s:%d", config.HttpListenHost, config.HttpListenPort)
+	logger.Infof("Starting HTTP server at %s:%d", config.ControllerListenHost, config.ControllerListenPort)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	go metrics.SubscribeMetric(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// 1. 任务监听器
+	taskWatcher := periodic.NewWatchService(ctx)
+	go taskWatcher.StartWatch()
+
+	// 2. 周期任务调度器
+	periodicTaskScheduler, err := periodic.NewPeriodicTaskScheduler(ctx)
+	if err != nil {
+		logger.Fatalf("failed to create period task scheduler: %s", err)
+	}
+	go periodicTaskScheduler.Run()
+
+	// 3. 常驻任务调度器
+	daemonTaskScheduler := daemon.NewDaemonTaskScheduler(ctx)
+	go daemonTaskScheduler.Run()
+
+	logger.Infof("Task module started.")
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			logger.Info("Bye")
-			cancelFunc()
+			cancel()
 			srv.Close()
+			logger.Info("Bye")
 			os.Exit(0)
 		}
 	}

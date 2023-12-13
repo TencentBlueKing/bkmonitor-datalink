@@ -11,13 +11,13 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 // MetadataCenter The configuration center uses dataId as the key and stores basic information,
@@ -122,7 +122,7 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	}
 
 	var apmInfo ConsulInfo
-	if err = json.Unmarshal(bytesData, &apmInfo); err != nil {
+	if err = jsonx.Unmarshal(bytesData, &apmInfo); err != nil {
 		return fmt.Errorf("failed to parse value to ApmInfo, value: %s. error: %s", bytesData, err)
 	}
 

@@ -10,17 +10,17 @@
 package daemon
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 func TestApmTaskUniId(t *testing.T) {
 
 	params := map[string]string{"data_id": "543713"}
-	data, _ := json.Marshal(params)
+	data, _ := jsonx.Marshal(params)
 	taskIns, _ := task.NewSerializerTask(task.Task{
 		Kind:    "daemon:apm:pre_calculate",
 		Payload: data,

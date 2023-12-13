@@ -114,26 +114,11 @@ const (
 	PipelineConfigCacheFieldRefreshPeriodKey = "cache_field_refresh_period"
 
 	// 故障自愈
-	// PipelineConfigOptFTARawDataKey: 原始事件数据存放的Key
-	PipelineConfigOptFTARawDataKey = "raw_data_key"
-	// PipelineConfigOptFTADefaultRawDataKey: 原始事件数据存放的Key默认值
-	PipelineConfigOptFTADefaultRawDataKey = "data"
-	// PipelineConfigOptFTADataFormatKey: 原始事件数据格式的Key
-	PipelineConfigOptFTADataFormatKey = "source_format"
-	// PipelineConfigOptFTADefaultDataFormat: 原始事件数据默认格式
-	PipelineConfigOptFTADefaultDataFormat = "json"
-	// PipelineConfigOptFTARawEventKey: 数据经反序列化之后理后存放的Key
-	PipelineConfigOptFTARawEventKey = "data"
-	// PipelineConfigOptFTAEventPathKey: 用户指定的事件数据所在路径
-	PipelineConfigOptFTAEventPathKey = "events_path"
-	// PipelineConfigOptFTAMultipleEventsKey: 是否为批量事件的配置Key
-	PipelineConfigOptFTAMultipleEventsKey = "multiple_events"
-	// PipelineConfigOptFTAFieldMappingKey: 字段映射配置Key
+
+	// PipelineConfigOptFTAFieldMappingKey 字段映射配置Key
 	PipelineConfigOptFTAFieldMappingKey = "normalization_config"
-	// PipelineConfigOptFTAAlertsKey: 告警名称配置Key
+	// PipelineConfigOptFTAAlertsKey 告警名称配置Key
 	PipelineConfigOptFTAAlertsKey = "alert_config"
-	// PipelineConfigOptFTAAlertNameKey: 事件数据的告警名称Key
-	PipelineConfigOptFTAAlertNameKey = "__bk_alert_name__"
 )
 
 // MetaResultTableConfig 专用
@@ -306,9 +291,7 @@ func InitTSV2ResultTableOptions(rt *MetaResultTableConfig) {
 func InitFTAPipelineOptions(pipe *PipelineConfig) {
 	InitPipelineOptions(pipe)
 	helper := utils.NewMapHelper(pipe.Option)
-	helper.SetDefault(PipelineConfigOptFTARawDataKey, PipelineConfigOptFTADefaultRawDataKey)
-	helper.SetDefault(PipelineConfigOptFTADataFormatKey, PipelineConfigOptFTADefaultDataFormat)
-	helper.SetDefault(PipelineConfigOptFTAMultipleEventsKey, false)
+	helper.SetDefault(PipelineConfigOptFlatBatchKey, "data")
 }
 
 // InitFTAResultTableOptions

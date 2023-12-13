@@ -32,9 +32,9 @@ const (
 	RuleMethodRegex = "reg"
 )
 
-// Trigger: 告警匹配触发器
+// Trigger 告警匹配触发器
 type Trigger struct {
-	Rules      []*Rule `json:"rules"`
+	Rules      []*Rule `json:"rules" mapstructure:"rules"`
 	ruleGroups [][]*Rule
 }
 
@@ -60,7 +60,7 @@ func (t *Trigger) Init() error {
 	return nil
 }
 
-// IsMatch: 判断当前数据是否满足匹配规则
+// IsMatch 判断当前数据是否满足匹配规则
 func (t *Trigger) IsMatch(actual interface{}) bool {
 	var isMatch bool
 
@@ -94,12 +94,12 @@ func (t *Trigger) IsMatch(actual interface{}) bool {
 	return false
 }
 
-// Rule: 单条匹配规则
+// Rule 单条匹配规则
 type Rule struct {
-	Key       string   `json:"key"`
-	Value     []string `json:"value"`
-	Method    string   `json:"method"`
-	Condition string   `json:"condition"`
+	Key       string   `json:"key" mapstructure:"key"`
+	Value     []string `json:"value" mapstructure:"value"`
+	Method    string   `json:"method" mapstructure:"method"`
+	Condition string   `json:"condition" mapstructure:"condition"`
 	searcher  *jmespath.JMESPath
 	matcher   Matcher
 }

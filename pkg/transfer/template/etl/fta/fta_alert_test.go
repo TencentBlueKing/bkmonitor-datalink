@@ -26,8 +26,24 @@ type AlertFTATest struct {
 // TestEvent
 func (s *AlertFTATest) TestEvent() {
 	s.CTX = testsuite.PipelineConfigStringInfoContext(
-		s.CTX, s.PipelineConfig, `{
-			"option": {
+		s.CTX, s.PipelineConfig,
+		`{
+			"etl_config":"bk_fta_event",
+			"option":{
+				"fta_clean_configs": [
+					{
+						"alert_config": [
+							{
+								"name": "CPU",
+								"rules": [{"key": "event.name","value": ["^CPU"],"method": "reg","condition": ""}]
+							},
+							{
+								"name": "Test"
+							}
+						],
+						"rules": [{"key": "event.type","value": ["aaa"],"method": "eq","condition": ""}]
+					}
+				],
 				"alert_config": [
 					{
 						"name": "CPU Usage",
@@ -60,51 +76,155 @@ func (s *AlertFTATest) TestEvent() {
 					{
 						"name": "Default"
 					}
+				],
+				"multiple_events":false,
+				"normalization_config":[
+					{
+						"field":"target",
+						"expr":"event.dimensions[?field=='ip'].value | [0]"
+					},
+					{
+						"field":"tags",
+						"expr":"merge(event.tag, event.dimensions[?field=='device_name'].{device: value} | [0])"
+					},
+					{
+						"field":"time",
+						"expr":"event.report_time"
+					},
+					{
+						"field":"alert_name",
+						"expr":"event.name"
+					},
+					{
+						"field":"event_id",
+						"expr":"event.id"
+					}
 				]
-			}
+			},
+			"result_table_list":[
+				{
+					"schema_type":"free",
+					"shipper_list":[
+						{
+							"cluster_config":{
+								"domain_name":"kafka.service.consul",
+								"port":9092
+							},
+							"storage_config":{
+								"topic":"test_topic"
+							},
+							"cluster_type":"kafka"
+						}
+					],
+					"result_table":"base",
+					"field_list":[
+						{
+							"type": "string",
+							"is_config_by_user": true,
+							"field_name": "alert_name"
+						},
+						{
+							"type": "string",
+							"is_config_by_user": true,
+							"field_name": "event_id"
+						},
+						{
+							"type": "string",
+							"is_config_by_user": true,
+							"field_name": "target"
+						},
+						{
+							"type":"object",
+							"is_config_by_user": true,
+							"field_name":"tags"
+						},
+						{
+							"type":"string",
+							"is_config_by_user": true,
+							"field_name":"description"
+						},
+						{
+							"type":"int",
+							"is_config_by_user": true,
+							"field_name":"severity"
+						},
+						{
+							"type": "timestamp",
+							"is_config_by_user": true,
+							"field_name": "time",
+							"option": {
+								"time_format": "datetime",
+								"time_zone": 8
+							}
+						}
+					]
+				}
+			]
 		}`,
 	)
 
 	processor, err := fta.NewAlertFTAProcessor(s.CTX, "test")
 
 	s.NoError(err)
-	s.Run(`{"event": {"name": "CPU 使用率告警"}, "metric_id": "system.cpu.usage", "alert_name": "xxx"}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "CPU使用率", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
 		processor,
 		func(result map[string]interface{}) {
+			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
-				"event": map[string]interface{}{
-					"name": "CPU 使用率告警",
+				"tags": []interface{}{
+					map[string]interface{}{
+						"key":   "device",
+						"value": "cpu0",
+					},
 				},
-				"metric_id":         "system.cpu.usage",
-				"__bk_alert_name__": "CPU Usage",
-				"alert_name":        "xxx",
+				"target":         "127.0.0.1",
+				"alert_name":     "CPU Usage",
+				"time":           1616059807.0,
+				"bk_ingest_time": 1618210322.0,
+				"event_id":       "123",
+				"plugin_id":      "bkplugin",
 			}, result)
 		},
 	)
 
-	s.Run(`{"event": {"name": "内存使用率告警"}, "metric_id": "system.mem.usage", "alert_name": "xxx"}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
 		processor,
 		func(result map[string]interface{}) {
+			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
-				"event": map[string]interface{}{
-					"name": "内存使用率告警",
+				"tags": []interface{}{
+					map[string]interface{}{
+						"key":   "device",
+						"value": "cpu0",
+					},
 				},
-				"metric_id":         "system.mem.usage",
-				"__bk_alert_name__": "MEM Usage",
-				"alert_name":        "xxx",
+				"target":         "127.0.0.1",
+				"alert_name":     "Default",
+				"time":           1616059807.0,
+				"bk_ingest_time": 1618210322.0,
+				"event_id":       "123",
+				"plugin_id":      "bkplugin",
 			}, result)
 		},
 	)
 
-	s.Run(`{"event": {"name": "内存使用率告警"}, "metric_id": "system.mem"}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "type": "aaa", "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
 		processor,
 		func(result map[string]interface{}) {
+			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
-				"event": map[string]interface{}{
-					"name": "内存使用率告警",
+				"tags": []interface{}{
+					map[string]interface{}{
+						"key":   "device",
+						"value": "cpu0",
+					},
 				},
-				"metric_id":         "system.mem",
-				"__bk_alert_name__": "Default",
+				"target":         "127.0.0.1",
+				"alert_name":     "Test",
+				"time":           1616059807.0,
+				"bk_ingest_time": 1618210322.0,
+				"event_id":       "123",
+				"plugin_id":      "bkplugin",
 			}, result)
 		},
 	)

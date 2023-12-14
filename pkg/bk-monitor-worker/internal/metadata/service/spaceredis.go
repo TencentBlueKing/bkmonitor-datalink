@@ -49,7 +49,7 @@ func NewSpaceRedisSvc(goroutineLimit int) SpaceRedisSvc {
 }
 
 func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tableIdList []string) error {
-	logger.Infof("start to push and publish space_type [%s], space_id [%s] router", spaceType, spaceId)
+	logger.Infof("start to push and publish space_type [%s], space_id [%s] table_ids [%v] router", spaceType, spaceId, tableIdList)
 	pusher := NewSpacePusher()
 	// 获取空间下的结果表，如果不存在，则获取空间下的所有
 	if len(tableIdList) == 0 {
@@ -93,7 +93,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 					wg.Done()
 				}()
 				if err := pusher.PushSpaceTableIds(models.SpaceTypeBKCC, sp.SpaceId, false); err != nil {
-					logger.Errorf("push space [%s__%s] to redis error, %s", models.SpaceTypeBKCC, sp.SpaceId, err)
+					logger.Errorf("push space [%s__%s] to redis error, %v", models.SpaceTypeBKCC, sp.SpaceId, err)
 				} else {
 					logger.Infof("push space [%s__%s] to redis success", models.SpaceTypeBKCC, sp.SpaceId)
 				}
@@ -381,9 +381,18 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 			TagsKey:                tagsKey,
 		}
 	}
+	// 获取vm集群名信息
+	var vmCLusterList []storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).Select(storage.ClusterInfoDBSchema.ClusterID, storage.ClusterInfoDBSchema.ClusterName).ClusterTypeEq(models.StorageTypeVM).All(&vmCLusterList); err != nil {
+		return nil, err
+	}
+	vmClusterIdNameMap := make(map[uint]string)
+	for _, c := range vmCLusterList {
+		vmClusterIdNameMap[c.ClusterID] = c.ClusterName
+	}
 
 	var vmRecordList []storage.AccessVMRecord
-	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.StorageClusterID, storage.AccessVMRecordDBSchema.VmResultTableId)
+	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId)
 	if len(tableIdList) != 0 {
 		// 如果结果表存在，则过滤指定的结果表
 		qs2 = qs2.ResultTableIdIn(tableIdList...)
@@ -393,7 +402,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	}
 	vmTableMap := make(map[string]map[string]interface{})
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId}
+		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId]}
 	}
 
 	// 获取proxy关联的集群信息
@@ -413,6 +422,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 
 		tableIdInfo[tableId] = map[string]interface{}{
 			"storage_id":   storageCluster.ProxyClusterId,
+			"storage_name": "",
 			"cluster_name": storageCluster.InstanceClusterName,
 			"db":           detail.Database,
 			"measurement":  detail.RealTableName,
@@ -424,6 +434,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	for tableId, detail := range vmTableMap {
 		if _, ok := tableIdInfo[tableId]; ok {
 			tableIdInfo[tableId]["vm_rt"] = detail["vm_rt"]
+			tableIdInfo[tableId]["storage_name"] = detail["storage_name"]
 		} else {
 			detail["cluster_name"] = ""
 			detail["db"] = ""

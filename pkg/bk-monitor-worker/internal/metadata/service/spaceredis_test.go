@@ -145,10 +145,18 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	err = iTable.Create(db)
 	assert.NoError(t, err)
 
+	cluster := storage.ClusterInfo{
+		ClusterName: "vm_cluster_abc",
+		ClusterType: models.StorageTypeVM,
+	}
+	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
+	err = cluster.Create(db)
+	assert.NoError(t, err)
 	vmTableName := "vm_table_name"
 	vmTable := storage.AccessVMRecord{
 		ResultTableId:   vmTableName,
 		VmResultTableId: "vm_result_table_id",
+		VmClusterId:     cluster.ClusterID,
 	}
 	db.Delete(&vmTable)
 	err = vmTable.Create(db)
@@ -159,10 +167,10 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	assert.Equal(t, 2, len(data))
 	vmData, err := jsonx.MarshalString(data[vmTableName])
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"","db":"","measurement":"","tags_key":[],"vm_rt":"vm_result_table_id"}`, vmData)
+	assert.JSONEq(t, `{"cluster_name":"","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"vm_rt":"vm_result_table_id"}`, vmData)
 	itableData, err := jsonx.MarshalString(data[itableName])
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"instance_cluster_name","db":"dbname","measurement":"i_table_test","storage_id":2,"tags_key":["t1","t2"],"vm_rt":""}`, itableData)
+	assert.JSONEq(t, `{"cluster_name":"instance_cluster_name","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":""}`, itableData)
 }
 
 func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {

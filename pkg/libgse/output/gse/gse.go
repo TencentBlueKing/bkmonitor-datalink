@@ -223,7 +223,7 @@ func (c *Output) slowPublish(batch publisher.Batch) error {
 func (c *Output) fastPublish(batch publisher.Batch) error {
 	events := batch.Events()
 
-	worker := make(chan struct{}, 4) // 够用
+	worker := make(chan struct{}, 4) // 4 个并发足以让 gse 嗷嗷叫了
 	wg := sync.WaitGroup{}
 	for i := range events {
 		if events[i].Content.Fields == nil {

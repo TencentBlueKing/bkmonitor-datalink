@@ -350,8 +350,9 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 
 // IsDisableMetricCutter 获取结果表是否禁用切分模块
 func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
+	db := mysql.GetDBSession().DB
 	var dsrt resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(tableId).One(&dsrt); err != nil {
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).TableIdEq(tableId).One(&dsrt); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			return false, nil
 		} else {
@@ -359,7 +360,7 @@ func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
 		}
 	}
 	var dso resulttable.DataSourceOption
-	if err := resulttable.NewDataSourceOptionQuerySet(mysql.GetDBSession().DB).BkDataIdEq(dsrt.BkDataId).NameEq(models.OptionDisableMetricCutter).One(&dso); err != nil {
+	if err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(dsrt.BkDataId).NameEq(models.OptionDisableMetricCutter).One(&dso); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			return false, nil
 		} else {

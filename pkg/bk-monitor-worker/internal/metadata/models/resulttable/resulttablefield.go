@@ -24,7 +24,7 @@ type ResultTableField struct {
 	TableID        string    `json:"table_id" gorm:"size:128;unique"`
 	FieldName      string    `json:"field_name" gorm:"size:255;unique"`
 	FieldType      string    `json:"field_type" gorm:"size:32"`
-	Description    string    `json:"description" sql:"type:text"`
+	Description    string    `json:"description" gorm:"type:text"`
 	Unit           string    `json:"unit" gorm:"size:32"`
 	Tag            string    `json:"tag" gorm:"size:16"`
 	IsConfigByUser bool      `json:"is_config_by_user"`

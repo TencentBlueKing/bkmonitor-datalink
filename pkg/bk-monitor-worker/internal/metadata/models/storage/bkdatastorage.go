@@ -20,7 +20,7 @@ import (
 type BkDataStorage struct {
 	TableID             string `gorm:"column:table_id;primaryKey" json:"table_id"`
 	RawDataID           int    `gorm:"column:raw_data_id" json:"raw_data_id"`
-	EtlJSONConfig       string `gorm:"column:etl_json_config" json:"etl_json_config"`
+	EtlJSONConfig       string `gorm:"column:etl_json_config;type:text" json:"etl_json_config"`
 	BkDataResultTableID string `gorm:"column:bk_data_result_table_id" json:"bk_data_result_table_id"`
 }
 

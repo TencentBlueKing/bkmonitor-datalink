@@ -231,13 +231,13 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 		"space_type_id":       d.SpaceTypeId,
 		"space_uid":           d.SpaceUid,
 	}
-
+	db := mysql.GetDBSession().DB
 	// 获取ResultTable的配置
 	if withRtInfo {
 		var resultTableInfoList []interface{}
 		var resultTableIdList []string
 		var dataSourceRtList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).
 			BkDataIdEq(d.BkDataId).All(&dataSourceRtList); err != nil {
 			return nil, err
 		}
@@ -248,7 +248,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 			resultTableIdList = append(resultTableIdList, t.TableId)
 		}
 		var resultTableList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdIn(resultTableIdList...).
+		if err := resulttable.NewResultTableQuerySet(db).TableIdIn(resultTableIdList...).
 			IsDeletedEq(false).IsEnableEq(true).All(&resultTableList); err != nil {
 			return nil, err
 		}

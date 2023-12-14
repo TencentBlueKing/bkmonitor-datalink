@@ -40,8 +40,9 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	if s.BkDataStorage == nil {
 		return errors.New("BkDataStorage obj can not be nil")
 	}
+	db := mysql.GetDBSession().DB
 	var kafkaStorage storage.KafkaStorage
-	if err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB.New()).TableIDEq(rt.TableId).One(&kafkaStorage); err != nil {
+	if err := storage.NewKafkaStorageQuerySet(db.New()).TableIDEq(rt.TableId).One(&kafkaStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("result table [%s] data not write into mq", rt.TableId)
 		}
@@ -126,7 +127,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	}
 	logger.Infof("access to bkdata, result [%#v]", resp)
 
-	if err := s.Update(mysql.GetDBSession().DB, storage.BkDataStorageDBSchema.RawDataID); err != nil {
+	if err := s.Update(db, storage.BkDataStorageDBSchema.RawDataID); err != nil {
 		return err
 	}
 	return nil

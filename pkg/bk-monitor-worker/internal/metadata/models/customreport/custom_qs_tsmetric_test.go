@@ -23,7 +23,7 @@ import (
 func TestTimeSeriesMetric_CustomUpdate(t *testing.T) {
 	config.FilePath = "../../../../bmw.yaml"
 	mocker.PatchDBSession()
-
+	db := mysql.GetDBSession().DB
 	tsm := TimeSeriesMetric{
 		TableID:        "table_id_test",
 		FieldName:      "field_name_test",
@@ -32,16 +32,16 @@ func TestTimeSeriesMetric_CustomUpdate(t *testing.T) {
 		LastIndex:      0,
 		Label:          "123",
 	}
-	mysql.GetDBSession().DB.Delete(&tsm, "group_id = ?", 0)
-	err := tsm.Create(mysql.GetDBSession().DB)
+	db.Delete(&tsm, "group_id = ?", 0)
+	err := tsm.Create(db)
 	assert.NoError(t, err)
 	tsm.TableID = "table_id_test_new"
 	tsm.FieldName = "field_name_test_new"
 	tsm.Label = "new_label"
-	err = tsm.CustomUpdate(mysql.GetDBSession().DB, TimeSeriesMetricDBSchema.TableID, TimeSeriesMetricDBSchema.FieldName)
+	err = tsm.CustomUpdate(db, TimeSeriesMetricDBSchema.TableID, TimeSeriesMetricDBSchema.FieldName)
 	assert.NoError(t, err)
 	var newTsm TimeSeriesMetric
-	err = NewTimeSeriesMetricQuerySet(mysql.GetDBSession().DB).TableIDEq("table_id_test_new").One(&newTsm)
+	err = NewTimeSeriesMetricQuerySet(db).TableIDEq("table_id_test_new").One(&newTsm)
 	assert.NoError(t, err)
 	assert.Equal(t, tsm.TableID, newTsm.TableID)
 	assert.Equal(t, tsm.FieldName, newTsm.FieldName)

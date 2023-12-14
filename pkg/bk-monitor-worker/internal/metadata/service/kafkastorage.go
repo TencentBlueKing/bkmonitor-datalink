@@ -66,26 +66,26 @@ func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig 
 	storageConfig.SetDefault("partition", uint(1))
 	storageConfig.SetDefault("retention", int64(1800000))
 	storageConfig.SetDefault("useDefaultFormat", true)
-
+	db := mysql.GetDBSession().DB
 	storageClusterId, ok := storageConfig.GetUint("storageClusterId")
 	if !ok {
 		if id := config.GlobalDefaultKafkaStorageClusterId; id != 0 {
 			storageClusterId = id
 		} else {
 			var cluster storage.ClusterInfo
-			if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeKafka).IsDefaultClusterEq(true).One(&cluster); err != nil {
+			if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeKafka).IsDefaultClusterEq(true).One(&cluster); err != nil {
 				return err
 			}
 			storageClusterId = cluster.ClusterID
 		}
 	} else {
 		var cluster storage.ClusterInfo
-		if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterTypeEq(models.StorageTypeKafka).ClusterIDEq(storageClusterId).One(&cluster); err != nil {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeKafka).ClusterIDEq(storageClusterId).One(&cluster); err != nil {
 			return errors.Wrapf(err, "query cluster_id [%v] failed", storageClusterId)
 		}
 	}
 	// 校验table_id， key是否存在冲突
-	count, err := storage.NewKafkaStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(tableId).Count()
+	count, err := storage.NewKafkaStorageQuerySet(db).TableIDEq(tableId).Count()
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig 
 		StorageClusterID: storageClusterId,
 		Retention:        retention,
 	}
-	if err := kafkaStorage.Create(mysql.GetDBSession().DB); err != nil {
+	if err := kafkaStorage.Create(db); err != nil {
 		return err
 	}
 	logger.Infof("table [%s] now has create kafka storage config", tableId)

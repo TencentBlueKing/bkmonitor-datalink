@@ -42,9 +42,9 @@ func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 		return errors.New("params table_id can not be empty")
 	}
 	logger.Infof("table_id: %s start to create es index", params.TableId)
-
+	db := mysql.GetDBSession().DB
 	var esStorage storage.ESStorage
-	if err := storage.NewESStorageQuerySet(mysql.GetDBSession().DB).TableIDEq(params.TableId).One(&esStorage); err != nil {
+	if err := storage.NewESStorageQuerySet(db).TableIDEq(params.TableId).One(&esStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Infof("query ESStorage by table_id [%s] not exist", params.TableId)
 			return nil
@@ -67,7 +67,7 @@ func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 	}
 	// 创建完 ES 相关配置后，需要刷新consul
 	var rt resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdEq(params.TableId).One(&rt); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).TableIdEq(params.TableId).One(&rt); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("query ResultTable by table_id [%s] not exist ", params.TableId)
 		}

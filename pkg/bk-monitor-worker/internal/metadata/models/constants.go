@@ -119,7 +119,7 @@ const (
 	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
 	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
 	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
-	BcsClusterTypeSingle            = "single"                    // 独享集群类型
+	BcsClusterTypeSingle            = "single"                    // 独占集群类型
 	BcsClusterTypeShared            = "shared"                    // 共享集群类型
 )
 

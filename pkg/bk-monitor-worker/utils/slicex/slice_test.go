@@ -10,9 +10,13 @@
 package slicex
 
 import (
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 // TestRemoveItem
@@ -39,4 +43,28 @@ func TestRemoveDuplicate(t *testing.T) {
 
 	stringList := []string{"1", "2", "3", "4", "1", "2"}
 	assert.ElementsMatch(t, []string{"1", "2", "3", "4"}, RemoveDuplicate(stringList))
+}
+
+func TestChunkSlice(t *testing.T) {
+	for size := 0; size < 28; size++ {
+		var bigSlice []int
+		for i := 0; i < 25; i++ {
+			bigSlice = append(bigSlice, i)
+		}
+		result := ChunkSlice(bigSlice, size)
+		var realSize int
+		if size > 0 {
+			realSize = size
+		} else {
+			realSize = cfg.DefaultDBFilterSize
+		}
+		targetLen := int(math.Ceil(float64(len(bigSlice)) / float64(realSize)))
+		assert.Equalf(t, targetLen, len(result), fmt.Sprintf("size:%v", realSize))
+		var all []int
+		for _, ls := range result {
+			all = append(all, ls...)
+		}
+		assert.ElementsMatch(t, all, bigSlice)
+	}
+
 }

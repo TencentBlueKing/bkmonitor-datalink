@@ -121,12 +121,16 @@ func (s SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLis
 	db := mysql.GetDBSession().DB
 	if len(tableIdList) != 0 {
 		var dsrtList []resulttable.DataSourceResultTable
-		qs := resulttable.NewDataSourceResultTableQuerySet(db).TableIdIn(tableIdList...)
-		if len(excludeDataIdList) != 0 {
-			qs = qs.BkDataIdNotIn(excludeDataIdList...)
-		}
-		if err := qs.All(&dsrtList); err != nil {
-			return nil, err
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []resulttable.DataSourceResultTable
+			qs := resulttable.NewDataSourceResultTableQuerySet(db).TableIdIn(chunkTableIdList...)
+			if len(excludeDataIdList) != 0 {
+				qs = qs.BkDataIdNotIn(excludeDataIdList...)
+			}
+			if err := qs.All(&tempList); err != nil {
+				return nil, err
+			}
+			dsrtList = append(dsrtList, tempList...)
 		}
 		dataMap := make(map[string]uint)
 		for _, dsrt := range dsrtList {
@@ -187,13 +191,18 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 	// 过滤掉结果表数据标签为空或者为 None 的记录
 	var rtList []resulttable.ResultTable
 	if len(tableIds) != 0 {
-		qs := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.TableId).TableIdIn(tableIds...).DataLabelNe("").DataLabelIsNotNull()
-		if len(dataLabelList) != 0 {
-			qs = qs.DataLabelIn(dataLabelList...)
+		for _, chunkTableIds := range slicex.ChunkSlice(tableIds, 0) {
+			var tempList []resulttable.ResultTable
+			qs := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.TableId).TableIdIn(chunkTableIds...).DataLabelNe("").DataLabelIsNotNull()
+			if len(dataLabelList) != 0 {
+				qs = qs.DataLabelIn(dataLabelList...)
+			}
+			if err := qs.All(&tempList); err != nil {
+				return err
+			}
+			rtList = append(rtList, tempList...)
 		}
-		if err := qs.All(&rtList); err != nil {
-			return err
-		}
+
 	}
 	dlRtsMap := make(map[string][]string)
 	for _, rt := range rtList {
@@ -230,22 +239,30 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
 	// 过滤写入 influxdb 的结果表
 	var influxdbStorageList []storage.InfluxdbStorage
-	qs := storage.NewInfluxdbStorageQuerySet(db).Select(storage.InfluxdbStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		qs = qs.TableIDIn(tableIdList...)
-	}
-	if err := qs.All(&influxdbStorageList); err != nil {
-		return nil, err
+	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []storage.InfluxdbStorage
+		qs := storage.NewInfluxdbStorageQuerySet(db).Select(storage.InfluxdbStorageDBSchema.TableID)
+		if len(tableIdList) != 0 {
+			qs = qs.TableIDIn(chunkTableIdList...)
+		}
+		if err := qs.All(&tempList); err != nil {
+			return nil, err
+		}
+		influxdbStorageList = append(influxdbStorageList, tempList...)
 	}
 
 	// 过滤写入 vm 的结果表
 	var vmRecordList []storage.AccessVMRecord
-	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId)
-	if len(tableIdList) != 0 {
-		qs2 = qs2.ResultTableIdIn(tableIdList...)
-	}
-	if err := qs2.All(&vmRecordList); err != nil {
-		return nil, err
+	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []storage.AccessVMRecord
+		qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId)
+		if len(tableIdList) != 0 {
+			qs2 = qs2.ResultTableIdIn(chunkTableIdList...)
+		}
+		if err := qs2.All(&tempList); err != nil {
+			return nil, err
+		}
+		vmRecordList = append(vmRecordList, tempList...)
 	}
 
 	var tableIds []string
@@ -360,14 +377,21 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	db := mysql.GetDBSession().DB
 
 	var influxdbStorageList []storage.InfluxdbStorage
-	qs := storage.NewInfluxdbStorageQuerySet(db)
 	if len(tableIdList) != 0 {
 		// 如果结果表存在，则过滤指定的结果表
-		qs = qs.TableIDIn(tableIdList...)
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.InfluxdbStorage
+			if err := storage.NewInfluxdbStorageQuerySet(db).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+				return nil, err
+			}
+			influxdbStorageList = append(influxdbStorageList, tempList...)
+		}
+	} else {
+		if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
+			return nil, err
+		}
 	}
-	if err := qs.All(&influxdbStorageList); err != nil {
-		return nil, err
-	}
+
 	influxdbTableMap := make(map[string]InfluxdbTableData)
 	for _, i := range influxdbStorageList {
 		tagsKey := make([]string, 0)
@@ -392,13 +416,19 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	}
 
 	var vmRecordList []storage.AccessVMRecord
-	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId)
 	if len(tableIdList) != 0 {
 		// 如果结果表存在，则过滤指定的结果表
-		qs2 = qs2.ResultTableIdIn(tableIdList...)
-	}
-	if err := qs2.All(&vmRecordList); err != nil {
-		return nil, err
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.AccessVMRecord
+			if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId).ResultTableIdIn(chunkTableIdList...).All(&tempList); err != nil {
+				return nil, err
+			}
+			vmRecordList = append(vmRecordList, tempList...)
+		}
+	} else {
+		if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId, storage.AccessVMRecordDBSchema.VmClusterId, storage.AccessVMRecordDBSchema.VmResultTableId).All(&vmRecordList); err != nil {
+			return nil, err
+		}
 	}
 	vmTableMap := make(map[string]map[string]interface{})
 	for _, record := range vmRecordList {
@@ -455,9 +485,14 @@ func (s SpacePusher) getMeasurementTypeByTableId(tableIdList []string, tableList
 	db := mysql.GetDBSession().DB
 	// 过滤对应关系，用以进行判断单指标单表、多指标单表
 	var rtoList []resulttable.ResultTableOption
-	if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(tableIdList...).NameEq(models.OptionIsSplitMeasurement).All(&rtoList); err != nil {
-		return nil, err
+	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []resulttable.ResultTableOption
+		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(chunkTableIdList...).NameEq(models.OptionIsSplitMeasurement).All(&tempList); err != nil {
+			return nil, err
+		}
+		rtoList = append(rtoList, tempList...)
 	}
+
 	rtoMap := make(map[string]bool)
 	for _, rto := range rtoList {
 		var value bool
@@ -1203,8 +1238,12 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	var dataIdList []uint
 	if len(tableIdList) != 0 {
 		var dsrtList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(tableIdList...).All(&dsrtList); err != nil {
-			return nil, err
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []resulttable.DataSourceResultTable
+			if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(chunkTableIdList...).All(&tempList); err != nil {
+				return nil, err
+			}
+			dsrtList = append(dsrtList, tempList...)
 		}
 		for _, dsrt := range dsrtList {
 			dataIdList = append(dataIdList, dsrt.BkDataId)

@@ -378,21 +378,28 @@ func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
 func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool, error) {
 	db := mysql.GetDBSession().DB
 	var dsrtList []resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(tableIdList...).All(&dsrtList); err != nil {
-		return nil, err
+	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []resulttable.DataSourceResultTable
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
+			return nil, err
+		}
+		dsrtList = append(dsrtList, tempList...)
 	}
+
 	tableIdDataIdMap := make(map[string]uint)
 	var dataIdList []uint
 	for _, dsrt := range dsrtList {
 		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
 		dataIdList = append(dataIdList, dsrt.BkDataId)
 	}
-	dataIdList = slicex.UintSet2List(slicex.UintList2Set(dataIdList))
+	dataIdList = slicex.RemoveDuplicate(dataIdList)
 	var dsoList []resulttable.DataSourceOption
-	if len(dataIdList) != 0 {
-		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(dataIdList...).NameEq(models.OptionDisableMetricCutter).All(&dsoList); err != nil {
+	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
+		var tempList []resulttable.DataSourceOption
+		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(chunkDataIds...).NameEq(models.OptionDisableMetricCutter).All(&tempList); err != nil {
 			return nil, err
 		}
+		dsoList = append(dsoList, tempList...)
 	}
 	dataIdOptionMap := make(map[uint]bool)
 	for _, dso := range dsoList {

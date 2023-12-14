@@ -120,12 +120,30 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 		if exist {
 			continue
 		}
-		clusterName, _ := cluster.GetString("clusterName")
-		projectID, _ := cluster.GetString("projectID")
-		createTime, _ := cluster.GetString("createTime")
-		updateTime, _ := cluster.GetString("updateTime")
-		status, _ := cluster.GetString("status")
-		environment, _ := cluster.GetString("environment")
+		clusterName, ok := cluster.GetString("clusterName")
+		if !ok {
+			return nil, fmt.Errorf("can not get clusterName")
+		}
+		projectID, ok := cluster.GetString("projectID")
+		if !ok {
+			return nil, fmt.Errorf("can not get projectID")
+		}
+		createTime, ok := cluster.GetString("createTime")
+		if !ok {
+			return nil, fmt.Errorf("can not get createTime")
+		}
+		updateTime, ok := cluster.GetString("updateTime")
+		if !ok {
+			return nil, fmt.Errorf("can not get updateTime")
+		}
+		status, ok := cluster.GetString("status")
+		if !ok {
+			return nil, fmt.Errorf("can not get status")
+		}
+		environment, ok := cluster.GetString("environment")
+		if !ok {
+			return nil, fmt.Errorf("can not get environment")
+		}
 
 		clusterList = append(clusterList, BcsClusterInfo{
 			BkBizId:      businessID,

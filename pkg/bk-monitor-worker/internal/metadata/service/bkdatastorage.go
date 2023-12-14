@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -69,11 +70,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	KafkaConsumerGroupName := GenBkdataRtIdWithoutBizId(rt.TableId)
 	// 计算平台要求，raw_data_name不能超过50个字符
 	rtId := strings.ReplaceAll(rt.TableId, ".", "__")
-	index := len(rtId) - 50
-	if index < 0 {
-		index = 0
-	}
-	rtId = rtId[index:]
+	rtId = stringx.LimitLengthSuffix(rtId, 50)
 	rawDataName := fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, rtId)
 
 	params := map[string]interface{}{
@@ -135,11 +132,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 
 func GenBkdataRtIdWithoutBizId(tableId string) string {
 	tableIdConv := strings.ReplaceAll(tableId, ".", "_")
-	index := len(tableIdConv) - 32
-	if index < 0 {
-		index = 0
-	}
-	tableIdConv = tableIdConv[index:]
+	tableIdConv = stringx.LimitLengthSuffix(tableIdConv, 32)
 	rtId := strings.ToLower(fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, tableIdConv))
 	return strings.TrimLeft(rtId, "_")
 }

@@ -156,7 +156,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("DiscoverBcsClusters Runtime panic caught: %v", err)
+			logger.Errorf("RefreshBcsMonitorInfo Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -216,6 +216,47 @@ func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 		}(&cluster, wg, ch)
 	}
 	wg.Wait()
+	return nil
+
+}
+
+// RefreshBcsInfo 刷新bcs_info到consul
+func RefreshBcsInfo(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBcsInfo Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start to refresh resources")
+	var bcsClusterInfoList []bcs.BCSClusterInfo
+	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+		return err
+	}
+
+	wg := &sync.WaitGroup{}
+	goroutineLimit := GetGoroutineLimit("refresh_bcs_info")
+	ch := make(chan bool, goroutineLimit)
+	wg.Add(len(bcsClusterInfoList))
+	for _, cluster := range bcsClusterInfoList {
+		ch <- true
+		func(cluster *bcs.BCSClusterInfo, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			if err := service.NewBcsClusterInfoSvc(cluster).RefreshAllToConsul(ctx); err != nil {
+				logger.Errorf("refresh bcs [%s] resource to consul failed, %s", cluster.ClusterID, err)
+				return
+			}
+			logger.Infof("refresh bcs [%s] resource to consul done", cluster.ClusterID)
+		}(&cluster, wg, ch)
+	}
+	wg.Wait()
+	// 清理到期的回溯索引
+	svc := service.NewEsSnapshotRestoreSvc(nil)
+	if err := svc.CleanAllExpiredRestore(ctx, goroutineLimit); err != nil {
+		logger.Errorf("clean all expired restore failed, %v", err)
+	}
 	return nil
 
 }

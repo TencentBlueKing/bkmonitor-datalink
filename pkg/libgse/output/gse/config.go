@@ -41,6 +41,7 @@ type Config struct {
 	MsgQueueSize   uint32        `config:"mqsize"`
 	Endpoint       string        `config:"endpoint"`
 	WriteTimeout   time.Duration `config:"writetimeout"` // unit: second
+	FastMode       bool          `config:"fastmode"`
 
 	BKAddressing BKAddressingType `config:"bk_addressing"`
 	HostIP       string           `config:"hostip"`

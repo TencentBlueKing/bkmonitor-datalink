@@ -471,7 +471,7 @@ func (s SpacePusher) getMeasurementTypeByTableId(tableIdList []string, tableList
 	for _, bkDataId := range tableDataIdMap {
 		bkDataIdList = append(bkDataIdList, bkDataId)
 	}
-	bkDataIdList = slicex.UintSet2List(slicex.UintList2Set(bkDataIdList))
+	bkDataIdList = slicex.RemoveDuplicate(bkDataIdList)
 	// 过滤数据源对应的 etl_config
 	dataIdEtlMap := make(map[uint]string)
 	var dsList []resulttable.DataSource
@@ -557,7 +557,7 @@ func (s SpacePusher) composeTableIdFields(tableIds []string) (map[string][]strin
 	for _, o := range rtoList {
 		whiteTableIdList = append(whiteTableIdList, o.TableID)
 	}
-	whiteTableIdList = slicex.StringSet2List(slicex.StringList2Set(whiteTableIdList))
+	whiteTableIdList = slicex.RemoveDuplicate(whiteTableIdList)
 	// 剩余的结果表，需要判断是否时序的，然后根据过期时间过滤数据
 
 	logger.Infof("white table_id list: %v", whiteTableIdList)

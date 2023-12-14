@@ -23,3 +23,20 @@ func TestRemoveItem(t *testing.T) {
 	dstSlice := RemoveItem(srcSlice, "b")
 	assert.Equal(t, expectedSlice, dstSlice)
 }
+
+func TestRemoveDuplicate(t *testing.T) {
+	float64List := []float64{1.1, 2.2, 3.3, 4.4, 2.2, 1.1}
+	assert.ElementsMatch(t, []float64{1.1, 2.2, 3.3, 4.4}, RemoveDuplicate(float64List))
+
+	float32List := []float32{1.1, 2.2, 3.3, 4.4, 2.2, 1.1}
+	assert.ElementsMatch(t, []float32{1.1, 2.2, 3.3, 4.4}, RemoveDuplicate(float32List))
+
+	int64List := []int64{1, 2, 3, 4, 2, 1}
+	assert.ElementsMatch(t, []int64{1, 2, 3, 4}, RemoveDuplicate(int64List))
+
+	uintList := []uint{1, 2, 3, 4, 2, 1}
+	assert.ElementsMatch(t, []uint{1, 2, 3, 4}, RemoveDuplicate(uintList))
+
+	stringList := []string{"1", "2", "3", "4", "1", "2"}
+	assert.ElementsMatch(t, []string{"1", "2", "3", "4"}, RemoveDuplicate(stringList))
+}

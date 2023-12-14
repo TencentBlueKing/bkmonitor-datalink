@@ -42,7 +42,7 @@ const (
 	// PluginIDField 插件ID字段
 	PluginIDField = "plugin_id"
 	// CleanConfigField 清洗配置字段
-	CleanConfigField = "fta_clean_configs"
+	CleanConfigField = "clean_configs"
 )
 
 // Alert 告警名称匹配规则

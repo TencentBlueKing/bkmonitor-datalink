@@ -59,10 +59,8 @@ var MarshalFunc = json.Marshal
 
 // Output : gse output, for libbeat output
 type Output struct {
-	cli *gse.GseClient
-	aif *AgentInfoFetcher
-
-	sig      chan struct{}
+	cli      *gse.GseClient
+	aif      *AgentInfoFetcher
 	fastMode bool
 }
 
@@ -114,7 +112,6 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 		cli:      cli,
 		aif:      fetcher,
 		fastMode: c.FastMode,
-		sig:      make(chan struct{}, 1), // 发送 gse 需要串行，所以 cap 只能为 1
 	}
 
 	// start gse client
@@ -169,7 +166,6 @@ func MakeGSEWithoutCheckConn(im outputs.IndexManager, beat beat.Info, stats outp
 		cli:      cli,
 		aif:      fetcher,
 		fastMode: c.FastMode,
-		sig:      make(chan struct{}, 1),
 	}
 
 	go func() {
@@ -286,7 +282,6 @@ func (c *Output) PublishEvent(event *publisher.Event) error {
 	}
 
 	data, err = c.AddEventAttachInfo(dataid, data)
-
 	if err != nil {
 		return err
 	}
@@ -411,12 +406,6 @@ func RegisterSendHook(f func(int32, float64)) { sendHook = f }
 // fastMode 使得调度器有机会并发执行 Marshal 函数（CPU 热点）
 // 但是发送给 gse 的逻辑必须串行 否则数据会串流
 func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
-	if c.fastMode {
-		defer func() {
-			<-c.sig
-		}()
-	}
-
 	// change data to json format
 	buf, err := MarshalFunc(data)
 	if err != nil {
@@ -426,10 +415,6 @@ func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
 	}
 	if sendHook != nil {
 		sendHook(dataid, float64(len(buf)))
-	}
-
-	if c.fastMode {
-		c.sig <- struct{}{}
 	}
 
 	// new dynamic msg

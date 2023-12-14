@@ -1396,15 +1396,15 @@ func (e *ESStorage) CleanIndexV2(ctx context.Context) error {
 			// 如果存在已过期的别名，则将别名删除
 			if len(expiredAlias) != 0 {
 				logger.Infof(
-					"table_id [%s] delete_alias_list [%s] is not empty will delete the alias.", e.TableID, alias["expired_alias"],
+					"table_id [%s] index [%s] delete_alias_list [%s] is not empty will delete the alias.", e.TableID, indexName, alias["expired_alias"],
 				)
 				resp, err := client.DeleteAlias(ctx, []string{indexName}, expiredAlias)
 				if err != nil {
-					logger.Errorf("table_id [%s] delete_alias_list [%s] error: %s", e.TableID, alias["expired_alias"], err)
+					logger.Errorf("table_id [%s] index [%s] delete_alias_list [%s] error: %s", e.TableID, indexName, alias["expired_alias"], err)
 					continue
 				}
 				resp.Close()
-				logger.Warnf("table_id [%s] delete_alias_list [%s] is deleted.", e.TableID, alias["expired_alias"])
+				logger.Warnf("table_id [%s] index [%s] delete_alias_list [%s] is deleted.", e.TableID, indexName, alias["expired_alias"])
 			}
 			continue
 		}

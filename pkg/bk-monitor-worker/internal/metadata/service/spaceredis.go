@@ -27,8 +27,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -205,10 +205,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 
 	}
 	if len(dlRtsMap) != 0 {
-		client, err := dependentredis.GetInstance(context.Background())
-		if err != nil {
-			return errors.Wrapf(err, "get redis client error, %v", err)
-		}
+		client := redis.GetInstance(context.Background())
 		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
@@ -312,10 +309,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		return err
 	}
 
-	client, err := dependentredis.GetInstance(context.Background())
-	if err != nil {
-		return errors.Wrapf(err, "get redis client error, %v", err)
-	}
+	client := redis.GetInstance(context.Background())
 
 	for tableId, detail := range tableIdDetail {
 		var ok bool
@@ -706,10 +700,7 @@ func (s SpacePusher) PushSpaceTableIds(spaceType, spaceId string, isPublish bool
 	}
 	// 如果指定要更新，则通知
 	if isPublish {
-		client, err := dependentredis.GetInstance(context.Background())
-		if err != nil {
-			return errors.Wrapf(err, "get redis client error, %v", err)
-		}
+		client := redis.GetInstance(context.Background())
 		if err := client.Publish(cfg.SpaceToResultTableChannel, fmt.Sprintf("%s__%s", spaceType, spaceId)); err != nil {
 			return err
 		}
@@ -730,10 +721,7 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 	if err != nil {
 		return err
 	}
-	client, err := dependentredis.GetInstance(context.Background())
-	if err != nil {
-		return errors.Wrapf(err, "get redis client error, %v", err)
-	}
+	client := redis.GetInstance(context.Background())
 	for tableId, value := range values {
 		valueStr, err := jsonx.MarshalString(value)
 		if err != nil {
@@ -773,7 +761,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		values[tid] = value
 	}
 	// 推送数据
-	client, err := dependentredis.GetInstance(context.Background())
+	client := redis.GetInstance(context.Background())
 	for tableId, value := range values {
 		valueStr, err := jsonx.MarshalString(value)
 		if err != nil {
@@ -802,7 +790,7 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		values[tid] = value
 	}
 	// 推送数据
-	client, err := dependentredis.GetInstance(context.Background())
+	client := redis.GetInstance(context.Background())
 	for tableId, value := range values {
 		valueStr, err := jsonx.MarshalString(value)
 		if err != nil {

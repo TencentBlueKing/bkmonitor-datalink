@@ -20,8 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -137,10 +137,7 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 
 	logger.Infof("async task start to push space_type: %s, space_id: %s to redis", params.SpaceType, params.SpaceId)
 
-	client, err := dependentredis.GetInstance(ctx)
-	if err != nil {
-		return errors.Wrapf(err, "get redis client error, %v", err)
-	}
+	client := redis.GetInstance(ctx)
 	spaceUid := fmt.Sprintf("%s__%s", params.SpaceType, params.SpaceId)
 	if err := client.SAdd(cfg.SpaceRedisKey, spaceUid); err != nil {
 		return errors.Wrapf(err, "async task push space to redis error, %s", err)

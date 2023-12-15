@@ -41,7 +41,8 @@ type Config struct {
 	MsgQueueSize   uint32        `config:"mqsize"`
 	Endpoint       string        `config:"endpoint"`
 	WriteTimeout   time.Duration `config:"writetimeout"` // unit: second
-	FastMode       bool          `config:"fastmode"`
+	FastMode       bool          `config:"fastmode"`     // 是否启用高性能模式（默认不启用）
+	Concurrency    int           `config:"concurrency"`  // 并发数（仅在高性能模式下生效）
 
 	BKAddressing BKAddressingType `config:"bk_addressing"`
 	HostIP       string           `config:"hostip"`

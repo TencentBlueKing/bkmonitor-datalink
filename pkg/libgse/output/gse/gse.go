@@ -59,9 +59,10 @@ var MarshalFunc = json.Marshal
 
 // Output : gse output, for libbeat output
 type Output struct {
-	cli      *gse.GseClient
-	aif      *AgentInfoFetcher
-	fastMode bool
+	cli         *gse.GseClient
+	aif         *AgentInfoFetcher
+	fastMode    bool
+	concurrency int
 }
 
 // agentInfoLoader 全局 agentInfo 加载器
@@ -109,9 +110,10 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 	fetcher := NewAgentInfoFetcher(c, cli)
 	ail.Init(fetcher.Fetch)
 	output := &Output{
-		cli:      cli,
-		aif:      fetcher,
-		fastMode: c.FastMode,
+		cli:         cli,
+		aif:         fetcher,
+		fastMode:    c.FastMode,
+		concurrency: c.Concurrency,
 	}
 
 	// start gse client
@@ -163,9 +165,10 @@ func MakeGSEWithoutCheckConn(im outputs.IndexManager, beat beat.Info, stats outp
 	fetcher := NewAgentInfoFetcher(c, cli)
 	ail.Init(fetcher.Fetch)
 	output := &Output{
-		cli:      cli,
-		aif:      fetcher,
-		fastMode: c.FastMode,
+		cli:         cli,
+		aif:         fetcher,
+		fastMode:    c.FastMode,
+		concurrency: c.Concurrency,
 	}
 
 	go func() {
@@ -223,7 +226,12 @@ func (c *Output) slowPublish(batch publisher.Batch) error {
 func (c *Output) fastPublish(batch publisher.Batch) error {
 	events := batch.Events()
 
-	worker := make(chan struct{}, 4) // 4 个并发足以让 gse 嗷嗷叫了
+	workers := c.concurrency
+	if workers <= 0 {
+		workers = 4 // 4 个并发足以让 gse 嗷嗷叫了
+	}
+
+	ch := make(chan struct{}, workers)
 	wg := sync.WaitGroup{}
 	for i := range events {
 		if events[i].Content.Fields == nil {
@@ -232,11 +240,11 @@ func (c *Output) fastPublish(batch publisher.Batch) error {
 		}
 
 		wg.Add(1)
-		worker <- struct{}{}
+		ch <- struct{}{}
 		go func(evt *publisher.Event) {
 			defer func() {
 				wg.Done()
-				<-worker
+				<-ch
 			}()
 			MetricGsePublishReceived.Add(1)
 			err := c.PublishEvent(evt)

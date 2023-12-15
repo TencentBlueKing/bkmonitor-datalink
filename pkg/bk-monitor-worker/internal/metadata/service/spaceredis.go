@@ -1071,7 +1071,18 @@ func (s SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map[
 		bizIdStr = *sr.ResourceId
 	}
 	options := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": true, "fromAuthorization": false})
-	return s.composeData(resourceType, bizIdStr, nil, []map[string]interface{}{{"bk_biz_id": bizIdStr}}, options)
+	values, err := s.composeData(resourceType, bizIdStr, nil, []map[string]interface{}{{"bk_biz_id": bizIdStr}}, options)
+	if err != nil {
+		return nil, errors.Wrapf(err, "composeData for [%s_%s] failed", resourceType, bizIdStr)
+	}
+	// bkci只能访问业务下system.开头的结果表
+	systemValues := make(map[string]map[string]interface{})
+	for k, v := range values {
+		if strings.HasPrefix(k, models.SystemTableIdPrefix) {
+			systemValues[k] = v
+		}
+	}
+	return systemValues, nil
 }
 
 func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {

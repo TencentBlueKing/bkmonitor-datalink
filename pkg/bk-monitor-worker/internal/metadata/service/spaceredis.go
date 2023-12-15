@@ -239,30 +239,39 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	db := mysql.GetDBSession().DB
 	// 过滤写入 influxdb 的结果表
 	var influxdbStorageList []storage.InfluxdbStorage
-	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []storage.InfluxdbStorage
-		qs := storage.NewInfluxdbStorageQuerySet(db).Select(storage.InfluxdbStorageDBSchema.TableID)
-		if len(tableIdList) != 0 {
-			qs = qs.TableIDIn(chunkTableIdList...)
+	qs := storage.NewInfluxdbStorageQuerySet(db).Select(storage.InfluxdbStorageDBSchema.TableID)
+	if len(tableIdList) != 0 {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.InfluxdbStorage
+
+			qsTemp := qs.TableIDIn(chunkTableIdList...)
+			if err := qsTemp.All(&tempList); err != nil {
+				return nil, err
+			}
+			influxdbStorageList = append(influxdbStorageList, tempList...)
 		}
-		if err := qs.All(&tempList); err != nil {
+	} else {
+		if err := qs.All(&influxdbStorageList); err != nil {
 			return nil, err
 		}
-		influxdbStorageList = append(influxdbStorageList, tempList...)
 	}
 
 	// 过滤写入 vm 的结果表
 	var vmRecordList []storage.AccessVMRecord
-	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []storage.AccessVMRecord
-		qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId)
-		if len(tableIdList) != 0 {
-			qs2 = qs2.ResultTableIdIn(chunkTableIdList...)
+	qs2 := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.ResultTableId)
+	if len(tableIdList) != 0 {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.AccessVMRecord
+			qsTemp := qs2.ResultTableIdIn(chunkTableIdList...)
+			if err := qsTemp.All(&tempList); err != nil {
+				return nil, err
+			}
+			vmRecordList = append(vmRecordList, tempList...)
 		}
-		if err := qs2.All(&tempList); err != nil {
+	} else {
+		if err := qs2.All(&vmRecordList); err != nil {
 			return nil, err
 		}
-		vmRecordList = append(vmRecordList, tempList...)
 	}
 
 	var tableIds []string

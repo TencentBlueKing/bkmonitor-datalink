@@ -43,6 +43,12 @@ func (c *Client) SearchCloudArea(opts ...define.OperationOption) define.Operatio
 // ListBizHostsTopo for cmdb resource list_biz_hosts_topo
 // 查询业务主机及关联拓扑
 func (c *Client) ListBizHostsTopo(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		bk_biz_id | int | 业务id
+		host_property_filter ｜ [map] | 查询条件
+		fields | [string] | 查询字段
+	*/
 	path := "list_biz_hosts_topo"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "list_biz_hosts_topo",

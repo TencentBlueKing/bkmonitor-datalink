@@ -161,6 +161,10 @@ func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.
 	flushInterval := BulkDefaultFlushInterval
 
 	mqConfig := config.MQConfigFromContext(ctx)
+	if mqConfig == nil {
+		return bufferSize, flushInterval
+	}
+
 	if mqConfig.BatchSize != 0 {
 		bufferSize = mqConfig.BatchSize
 	}
@@ -170,8 +174,8 @@ func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.
 			flushInterval = interval
 		}
 	}
-	logging.Debugf("backend:%s use bufferSize:%d and flushInterval:%s", name, bufferSize, flushInterval)
 
+	logging.Debugf("backend:%s use bufferSize:%d and flushInterval:%s", name, bufferSize, flushInterval)
 	return bufferSize, flushInterval
 }
 

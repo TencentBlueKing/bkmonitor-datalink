@@ -102,9 +102,9 @@ type BulkManager interface {
 // Bulk defaults
 var (
 	BulkDefaultBufferSize           = 2000
-	BulkDefaultFlushInterval        = 1 * time.Second
+	BulkDefaultFlushInterval        = 2 * time.Second
 	BulkDefaultFlushRetries         = 3
-	BulkDefaultConcurrency    int64 = 25
+	BulkDefaultConcurrency    int64 = 32
 	BulkDefaultMaxConcurrency int64 = 10000
 )
 
@@ -159,7 +159,6 @@ type BulkBackendAdapter struct {
 func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
 	flushInterval := BulkDefaultFlushInterval
-
 	mqConfig := config.MQConfigFromContext(ctx)
 	if mqConfig == nil {
 		return bufferSize, flushInterval

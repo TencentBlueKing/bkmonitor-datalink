@@ -25,8 +25,8 @@ const (
 	BkUserName = "admin"
 	TSpider    = "tspider"
 
-	OK     = "00"
-	FAILED = "-1"
+	StatusOK     = "00"
+	StatusFailed = "-1"
 
 	RUNNING  = "running"
 	FINISHED = "finished"

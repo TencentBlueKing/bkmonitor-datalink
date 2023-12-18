@@ -19,7 +19,6 @@ import (
 	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type Client struct {
@@ -41,6 +40,10 @@ type Client struct {
 }
 
 func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result) error {
+	if sql == "" {
+		return fmt.Errorf("sql is empty")
+	}
+
 	if method == "" {
 		method = curl.Post
 	}
@@ -51,11 +54,9 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 		PreferStorage:              c.PreferStorage,
 		BkdataDataToken:            c.BkdataDataToken,
 		BkAppSecret:                c.BkAppSecret,
+		SQL:                        sql,
 	}
-	if sql != "" {
-		params.SQL = sql
-		log.Debugf(ctx, sql)
-	}
+
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -82,12 +83,7 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 		return fmt.Errorf(resp.Status)
 	}
 
-	err = json.NewDecoder(resp.Body).Decode(res)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return json.NewDecoder(resp.Body).Decode(res)
 }
 
 func (c *Client) QueryAsync(ctx context.Context, sql string) *Result {
@@ -137,6 +133,6 @@ func (c *Client) failed(ctx context.Context, err error) *Result {
 	return &Result{
 		Result:  false,
 		Message: err.Error(),
-		Code:    FAILED,
+		Code:    StatusFailed,
 	}
 }

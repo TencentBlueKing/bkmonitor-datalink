@@ -64,8 +64,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
-			sql:    `(test1 = 'abc' AND test1 != 'abc')`,
-			vm:     `result_table_id="table_id", test1="abc", test1!="abc"`,
+			sql:    `(test1 = 'abc' and test1 != 'abc')`,
+			vm:     `test1="abc", test1!="abc", result_table_id="table_id"`,
 		},
 		// 简单的or拼接
 		{
@@ -82,8 +82,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"or"},
 			},
 			result: []int{1, 1},
-			sql:    `(test1 REGEXP 'abc') OR ((test1 NOT REGEXP 'b' OR test1 NOT REGEXP 'c' OR test1 NOT REGEXP 'd'))`,
-			vm:     `result_table_id="table_id", test1=~"abc" or result_table_id="table_id", test1!~"b|c|d"`,
+			sql:    `test1 REGEXP 'abc' or (test1 NOT REGEXP 'b' and test1 NOT REGEXP 'c' and test1 NOT REGEXP 'd')`,
+			vm:     `test1=~"abc", result_table_id="table_id" or test1!~"b|c|d", result_table_id="table_id"`,
 		},
 		// and和or混合
 		{
@@ -104,8 +104,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"and", "or"},
 			},
 			result: []int{2, 1},
-			vm:     `result_table_id="table_id", test1="abc", test1=~"^(abc|bcd)$" or result_table_id="table_id", test1=~"^(abc|ggg)$"`,
-			sql:    `(test1 = 'abc' AND (test1 = 'abc' OR test1 = 'bcd')) OR ((test1 = 'abc' OR test1 = 'ggg'))`,
+			vm:     `test1="abc", test1=~"^(abc|bcd)$", result_table_id="table_id" or test1=~"^(abc|ggg)$", result_table_id="table_id"`,
+			sql:    `(test1 = 'abc' and (test1 = 'abc' or test1 = 'bcd')) or (test1 = 'abc' or test1 = 'ggg')`,
 		},
 		// and和or混合
 		{
@@ -126,8 +126,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				ConditionList: []string{"or", "and"},
 			},
 			result: []int{1, 2},
-			vm:     `result_table_id="table_id", test1="abc" or result_table_id="table_id", test1="abc", test1="abc"`,
-			sql:    `(test1 = 'abc') OR (test1 = 'abc' AND test1 = 'abc')`,
+			vm:     `test1="abc", result_table_id="table_id" or test1="abc", test1="abc", result_table_id="table_id"`,
+			sql:    `test1 = 'abc' or (test1 = 'abc' and test1 = 'abc')`,
 		},
 	}
 
@@ -144,7 +144,7 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 				assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
 			}
 
-			vmCondition, _ := testResult.Vm("table_id")
+			vmCondition, _ := testResult.VMString("table_id", "", false)
 			assert.Equal(t, testCase.vm, vmCondition)
 
 			sqlCondtion := testResult.BkSql()

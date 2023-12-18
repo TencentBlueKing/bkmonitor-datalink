@@ -183,7 +183,7 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 }
 
 func (c AllConditions) BkSql() string {
-	var conditionsSring []string
+	var conditionsString []string
 	for _, cond := range c {
 		var conditionString []string
 		for _, f := range cond {
@@ -217,14 +217,14 @@ func (c AllConditions) BkSql() string {
 
 		if len(conditionString) > 0 {
 			if len(conditionString) == 1 {
-				conditionsSring = append(conditionsSring, conditionString[0])
+				conditionsString = append(conditionsString, conditionString[0])
 			} else {
-				conditionsSring = append(conditionsSring, fmt.Sprintf("(%s)", strings.Join(conditionString, fmt.Sprintf(" %s ", promql.AndOperator))))
+				conditionsString = append(conditionsString, fmt.Sprintf("(%s)", strings.Join(conditionString, fmt.Sprintf(" %s ", promql.AndOperator))))
 			}
 		}
 	}
 
-	return strings.Join(conditionsSring, fmt.Sprintf(" %s ", promql.OrOperator))
+	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
 func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {

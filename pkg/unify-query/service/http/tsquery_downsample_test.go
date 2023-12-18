@@ -12,7 +12,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"testing"
 	"time"
 

@@ -49,7 +49,7 @@ func (i Instance) checkResult(res *Result) error {
 			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
 		)
 	}
-	if res.Code != OK {
+	if res.Code != StatusOK {
 		return fmt.Errorf(
 			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
 		)
@@ -97,41 +97,32 @@ func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*
 	trace.InsertStringIntoSpan("query-interval-time", i.IntervalTime.String(), span)
 	trace.InsertStringIntoSpan("data-query-id", data.QueryId, span)
 
-	receiveCH := make(chan struct{}, 1)
-	go func() {
-		defer func() {
-			receiveCH <- struct{}{}
-		}()
-
+	err = func() error {
 		for {
 			select {
 			case <-ctx.Done():
-				err = fmt.Errorf("queryAsyncState %s timeout %s", data.QueryId, i.Timeout.String())
-				return
+				return fmt.Errorf("queryAsyncState %s timeout %s", data.QueryId, i.Timeout.String())
 			default:
 				stateRes := i.Client.QueryAsyncState(ctx, data.QueryId)
 				if err = i.checkResult(res); err != nil {
-					return
+					return err
 				}
 				if stateData, ok = stateRes.Data.(*QueryAsyncStateData); !ok {
-					err = fmt.Errorf("queryAsyncState type is error: %T", res.Data)
-					return
+					return fmt.Errorf("queryAsyncState type is error: %T", res.Data)
 				}
 				switch stateData.State {
 				case RUNNING:
 					time.Sleep(i.IntervalTime)
 					continue
 				case FINISHED:
-					return
+					return nil
 				default:
-					err = fmt.Errorf("queryAsyncState error %+v", stateData)
-					return
+					return fmt.Errorf("queryAsyncState error %+v", stateData)
 				}
 			}
 		}
 	}()
 
-	<-receiveCH
 	if err != nil {
 		return resultData, err
 	}
@@ -198,29 +189,29 @@ func (i Instance) formatData(field string, isCount bool, data *QueryAsyncResultD
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[dtEventTimeStamp]; !ok {
 			return res, fmt.Errorf("dimension %s is emtpy", dtEventTimeStamp)
-		} else {
-			switch vtLong.(type) {
-			case int64:
-				vt = vtLong.(int64)
-			case float64:
-				vt = int64(vtLong.(float64))
-			default:
-				return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
-			}
+		}
+
+		switch vtLong.(type) {
+		case int64:
+			vt = vtLong.(int64)
+		case float64:
+			vt = int64(vtLong.(float64))
+		default:
+			return res, fmt.Errorf("%s type is error %T, %v", dtEventTimeStamp, vtLong, vtLong)
 		}
 
 		// 获取值
 		if vvDouble, ok = d[field]; !ok {
 			return res, fmt.Errorf("dimension %s is emtpy", field)
-		} else {
-			switch vvDouble.(type) {
-			case int64:
-				vv = float64(vvDouble.(int64))
-			case float64:
-				vv = vvDouble.(float64)
-			default:
-				return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
-			}
+		}
+
+		switch vvDouble.(type) {
+		case int64:
+			vv = float64(vvDouble.(int64))
+		case float64:
+			vv = vvDouble.(float64)
+		default:
+			return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
 		}
 
 		var buf strings.Builder

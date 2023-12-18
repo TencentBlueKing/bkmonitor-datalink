@@ -67,7 +67,7 @@ func TestClient_QueryAsync(t *testing.T) {
 
 	res := client.QueryAsync(ctx, `SELECT * FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1700745780000 AND dtEventTimeStamp < 1700746080000 LIMIT 10`)
 
-	assert.Equal(t, res.Code, OK)
+	assert.Equal(t, res.Code, StatusOK)
 	d, ok := res.Data.(*QueryAsyncData)
 	assert.True(t, ok)
 
@@ -85,7 +85,7 @@ func TestClient_QueryAsyncState(t *testing.T) {
 
 	res := client.QueryAsyncState(ctx, "BK912760164455546880")
 
-	assert.Equal(t, res.Code, OK)
+	assert.Equal(t, res.Code, StatusOK)
 	d, ok := res.Data.(*QueryAsyncStateData)
 	assert.True(t, ok)
 
@@ -103,7 +103,7 @@ func TestClient_QueryAsyncResult(t *testing.T) {
 
 	res := client.QueryAsyncResult(ctx, "BK912760164455546880")
 
-	assert.Equal(t, res.Code, OK)
+	assert.Equal(t, res.Code, StatusOK)
 	d, ok := res.Data.(*QueryAsyncResultData)
 	assert.True(t, ok)
 

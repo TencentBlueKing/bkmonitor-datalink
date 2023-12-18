@@ -144,7 +144,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 		return err
 	}
 	// 记录更新日志
-	log.Infof(ctx, "[SpaceTSDB] Write count in kvStorage, once=%v, key=%s, %d created, %d updated", once, stoPrefix, createdCount, updatedCount)
+	log.Debugf(ctx, "[SpaceTSDB] Write count in kvStorage, once=%v, key=%s, %d created, %d updated", once, stoPrefix, createdCount, updatedCount)
 	// 按照类型记录更新情况
 	metric.SpaceRequestCountAdd(ctx, float64(createdCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionCreate)
 	metric.SpaceRequestCountAdd(ctx, float64(updatedCount), stoPrefix, metric.SpaceTypeBolt, metric.SpaceActionWrite)
@@ -160,7 +160,7 @@ func (r *SpaceTsDbRouter) BatchAdd(ctx context.Context, stoPrefix string, entiti
 				rt.VmRt, rt.BcsClusterID)
 		}
 		if printBytes {
-			log.Infof(ctx, "[SpaceTSDB] Write content in kvStorage, once=%v, %s", once, item.Print())
+			log.Debugf(ctx, "[SpaceTSDB] Write content in kvStorage, once=%v, %s", once, item.Print())
 		}
 	}
 	return nil
@@ -201,7 +201,7 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	if err != nil {
 		if err.Error() == "keyNotFound" {
 			if !ignoreKeyNotFound {
-				log.Infof(ctx, "Key(%s) not found in KVBolt", stoKey)
+				log.Debugf(ctx, "Key(%s) not found in KVBolt", stoKey)
 			}
 		} else {
 			log.Warnf(ctx, "Fail to get value in KVBolt, key: %s, error: %v", stoKey, err)
@@ -324,7 +324,7 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 	defer r.rwLock.Unlock()
 	start := time.Now()
 	defer func() {
-		log.Infof(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))
+		log.Debugf(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))
 	}()
 	var (
 		err error

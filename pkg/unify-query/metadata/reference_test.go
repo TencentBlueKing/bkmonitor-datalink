@@ -21,7 +21,7 @@ import (
 
 type checkExpected struct {
 	ok           bool
-	vmRtGroup    map[string][]string
+	vmRtList     []string
 	vmConditions map[string]string
 }
 
@@ -122,10 +122,8 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_net_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_net_cmdb",
 				},
 			},
 		},
@@ -154,10 +152,8 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value",bk_inst_id="test",bk_obj_id="demo" or result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value",bk_biz_id="test-1"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_net_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_net_cmdb",
 				},
 			},
 		},
@@ -198,10 +194,8 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_net_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_net_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_net_cmdb",
 				},
 			},
 		},
@@ -252,11 +246,9 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value" or result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value",bk_obj_id="1",bk_inst_id="2"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_cmdb",
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_cmdb",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -307,11 +299,9 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value" or result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_cmdb",
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_cmdb",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -362,11 +352,9 @@ func TestCheckVmQuery(t *testing.T) {
 				vmConditions: map[string]string{
 					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="cpu_detail_usage" or result_table_id="100147_ieod_system_summary_cmdb",__name__="cpu_summary_usage"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_cmdb",
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_cmdb",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -425,13 +413,9 @@ func TestCheckVmQuery(t *testing.T) {
 					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value"`,
 					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_cmdb",
-					},
-					refNameB: {
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_cmdb",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -504,13 +488,9 @@ func TestCheckVmQuery(t *testing.T) {
 					refNameA: `result_table_id="100147_ieod_system_detail_cmdb",__name__="usage_value"`,
 					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_cmdb",
-					},
-					refNameB: {
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_cmdb",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -566,13 +546,9 @@ func TestCheckVmQuery(t *testing.T) {
 					refNameA: `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
 					refNameB: `result_table_id="100147_ieod_system_summary_cmdb",__name__="usage_value"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_raw",
-					},
-					refNameB: {
-						"100147_ieod_system_summary_cmdb",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_raw",
+					"100147_ieod_system_summary_cmdb",
 				},
 			},
 		},
@@ -625,13 +601,9 @@ func TestCheckVmQuery(t *testing.T) {
 					refNameA: `result_table_id="100147_ieod_system_detail_raw",__name__="usage_value"`,
 					refNameB: `result_table_id="100147_ieod_system_summary_raw",__name__="cpu_summary_usage"`,
 				},
-				vmRtGroup: map[string][]string{
-					refNameA: {
-						"100147_ieod_system_detail_raw",
-					},
-					refNameB: {
-						"100147_ieod_system_summary_raw",
-					},
+				vmRtList: []string{
+					"100147_ieod_system_detail_raw",
+					"100147_ieod_system_summary_raw",
 				},
 			},
 		},
@@ -649,8 +621,8 @@ func TestCheckVmQuery(t *testing.T) {
 			if tc.expected.vmConditions != nil {
 				assert.Equal(t, tc.expected.vmConditions, vmExpand.MetricFilterCondition)
 			}
-			if tc.expected.vmRtGroup != nil {
-				assert.Equal(t, tc.expected.vmRtGroup, vmExpand.ResultTableGroup)
+			if tc.expected.vmRtList != nil {
+				assert.Equal(t, tc.expected.vmRtList, vmExpand.ResultTableList)
 			}
 		})
 	}

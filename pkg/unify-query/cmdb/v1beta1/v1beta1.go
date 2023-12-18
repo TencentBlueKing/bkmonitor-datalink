@@ -268,8 +268,6 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 			return indexMatchers, err
 		}
 
-		condition := getConditions(false, indexMatchers...)
-		vmCondition := getConditions(true, indexMatchers...)
 		labelsMatcher := make([]*labels.Matcher, 0)
 		for _, im := range indexMatchers {
 			matcher, err := im.ToPromMatcher()
@@ -281,9 +279,13 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 
 		for _, qm := range queryReference {
 			for _, ql := range qm.QueryList {
-				ql.Condition = condition
-
-				ql.VmCondition = vmCondition
+				ql.Condition, _ = getConditions(ConditionOption{matchers: indexMatchers})
+				ql.VmCondition, ql.VmConditionNum = getConditions(ConditionOption{
+					vmRt:        ql.VmRt,
+					measurement: ql.Measurement,
+					field:       ql.Field,
+					matchers:    indexMatchers,
+				})
 				ql.LabelsMatcher = labelsMatcher
 			}
 		}
@@ -364,20 +366,40 @@ func (r *model) getIndexMatcher(ctx context.Context, resource cmdb.Resource, mat
 	return indexMatcher, nil
 }
 
-func getConditions(vm bool, matchers ...cmdb.Matcher) string {
-	condition := make([][]promql.ConditionField, 0, len(matchers))
-	for _, m := range matchers {
-		conditionField := make([]promql.ConditionField, 0, len(m))
+type ConditionOption struct {
+	vmRt        string
+	measurement string
+	field       string
+	isRegexp    bool
+	matchers    cmdb.Matchers
+}
+
+func getConditions(opt ConditionOption) (string, int) {
+	condition := make(structured.AllConditions, 0, len(opt.matchers))
+	conditionNum := 0
+	for _, m := range opt.matchers {
+		conditionField := make([]structured.ConditionField, 0, len(m))
 		for k, v := range m {
-			conditionField = append(conditionField, promql.ConditionField{
+			conditionField = append(conditionField, structured.ConditionField{
 				DimensionName: k,
 				Value:         []string{v},
-				Operator:      promql.EqualOperator,
+				Operator:      structured.ConditionEqual,
 			})
+			conditionNum += 1
 		}
 		condition = append(condition, conditionField)
 	}
-	return promql.MakeOrExpression(condition)
+
+	if opt.vmRt != "" {
+		var vmMetric string
+		if opt.measurement != "" {
+			vmMetric = fmt.Sprintf("%s_%s", opt.measurement, opt.field)
+		}
+
+		return condition.VMString(opt.vmRt, vmMetric, opt.isRegexp)
+	} else {
+		return promql.MakeOrExpression(structured.ConvertToPromBuffer(condition)), conditionNum
+	}
 }
 
 func getMetric(relation cmdb.Relation) string {

@@ -52,12 +52,16 @@ type Query struct {
 
 	StorageType string // 存储类型
 	StorageID   string
+	StorageName string
+
 	ClusterName string
 	TagsKey     []string
 
+	TableID string
+
 	// vm 的 rt
-	TableID        string
-	VmRt           string
+	VmRt string
+
 	IsSingleMetric bool
 
 	// 兼容 InfluxDB 结构体
@@ -236,20 +240,18 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		return ok, vmExpand, err
 	}
 
+	var (
+		vmRts          = make(map[string]struct{})
+		vmClusterNames = make(map[string]struct{})
+	)
+
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
-			var (
-				metricName string
-				vmRts      = make(map[string]struct{})
-			)
-
 			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
 
 			vmConditions := make(map[string]struct{})
 
 			for _, query := range reference.QueryList {
-				// 获取 vm 的指标名
-				metricName = fmt.Sprintf("%s_%s", query.Measurement, query.Field)
 
 				// 只有全部为单指标单表
 				if !query.IsSingleMetric {
@@ -266,6 +268,9 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 					// 获取 vm 对应的 rt 列表
 					vmRts[query.VmRt] = struct{}{}
+
+					// 获取 vm 对应的 clusterName，因为存在混用的情况，所以也需要把空也放到里面
+					vmClusterNames[query.StorageName] = struct{}{}
 				}
 			}
 
@@ -282,19 +287,27 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
 
 			if len(vmRts) == 0 {
-				err = fmt.Errorf("vm query result table is empty %s", metricName)
 				break
 			}
 
-			vmExpand.ResultTableList = make([]string, 0, len(vmRts))
-
-			for k := range vmRts {
-				vmExpand.ResultTableList = append(vmExpand.ResultTableList, k)
-			}
-
-			sort.Strings(vmExpand.ResultTableList)
 		}
 	}
+
+	trace.InsertStringIntoSpan("vm_expand_cluster_name", fmt.Sprintf("%+v", vmClusterNames), span)
+
+	// 当所有的 vm 集群都一样的时候，才进行传递
+	if len(vmClusterNames) == 1 {
+		for k := range vmClusterNames {
+			vmExpand.ClusterName = k
+		}
+	}
+
+	vmExpand.ResultTableList = make([]string, 0, len(vmRts))
+	for k := range vmRts {
+		vmExpand.ResultTableList = append(vmExpand.ResultTableList, k)
+	}
+
+	sort.Strings(vmExpand.ResultTableList)
 
 	ok = true
 	return ok, vmExpand, err

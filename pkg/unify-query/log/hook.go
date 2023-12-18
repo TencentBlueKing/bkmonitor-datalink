@@ -97,7 +97,7 @@ func initLogConfig() {
 		otelzap.WithTraceIDField(true),
 		otelzap.WithCaller(true),
 		otelzap.WithStackTrace(true),
-		otelzap.WithMinLevel(zapcore.InfoLevel),
+		otelzap.WithMinLevel(zapcore.WarnLevel),
 		otelzap.WithErrorStatusLevel(zapcore.ErrorLevel),
 	)
 

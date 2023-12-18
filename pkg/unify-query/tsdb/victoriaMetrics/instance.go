@@ -231,6 +231,16 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
 		)
 	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
 	lbsMap := make(map[string]struct{}, 0)
 	for _, d := range resp.Data.List {
 		for _, v := range d.Data {
@@ -252,6 +262,16 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	if resp.Code != OK {
 		return nil, fmt.Errorf("%s", resp.Message)
 	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {
 		series = append(series, d.Data...)
@@ -311,7 +331,8 @@ func (i *Instance) vmQuery(
 	trace.InsertStringIntoSpan("query-username", user.Name, span)
 	trace.InsertStringIntoSpan("query-address", i.Address, span)
 	trace.InsertStringIntoSpan("query-uri-path", i.UriPath, span)
-	log.Debugf(ctx,
+
+	log.Infof(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
 		address, body, sql,
 	)
@@ -373,9 +394,12 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Matrix{}, nil
 	}
+
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -395,20 +419,13 @@ func (i *Instance) QueryRange(
 			End:   end.Unix(),
 			Step:  int64(step.Seconds()),
 		},
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
-	// or 语法查询特性开关
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQueryRange.UseNativeOr = i.UseNativeOr
-		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQueryRange.ResultTableGroup = metricResultTableGroup
+	if vmExpand.ClusterName != "" {
+		paramsQueryRange.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQueryRange)
@@ -447,9 +464,12 @@ func (i *Instance) Query(
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
 	}
+
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -467,20 +487,13 @@ func (i *Instance) Query(
 			Time:    end.Unix(),
 			Timeout: int64(i.Timeout.Seconds()),
 		},
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
-	// or 语法查询特性开关
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQuery.MetricAliasMapping = vmExpand.MetricAliasMapping
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -521,6 +534,9 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
+
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
 		APIType:          APILabelValues,
@@ -529,18 +545,13 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		}{
 			Label: name,
 		},
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.UseNativeOr = i.UseNativeOr
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-	} else {
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -576,7 +587,8 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -585,19 +597,6 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
-
-	referenceName := ""
-	metricName := ""
-	var labelMatchers []*labels.Matcher
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			referenceName = m.Value
-		}
-	}
-
-	if referenceName == "" {
-		return nil, fmt.Errorf("reference name is empty: %v", matchers)
-	}
 
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.InfluxCompatible,
@@ -610,32 +609,17 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			Start: start.Unix(),
 			End:   end.Unix(),
 		},
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQuery.UseNativeOr = i.UseNativeOr
-		paramsQuery.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
-		metricName = referenceName
-	} else {
-		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
-			metricName = m
-		}
-		if l, ok := vmExpand.LabelsMatcher[referenceName]; ok {
-			labelMatchers = l
-		}
-
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQuery.ResultTableGroup = metricResultTableGroup
+	if vmExpand.ClusterName != "" {
+		paramsQuery.ClusterName = vmExpand.ClusterName
 	}
 
 	vector := &parser.VectorSelector{
-		Name:          metricName,
-		LabelMatchers: labelMatchers,
+		LabelMatchers: matchers,
 	}
 	paramsQuery.APIParams.Match = vector.String()
 
@@ -673,7 +657,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	vmExpand = metadata.GetExpand(ctx)
 
 	// 检查 vmExpand 以及 vmExpand.ResultTableGroup 不能为空
-	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 {
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return nil, nil
 	}
 
@@ -681,14 +665,14 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
+	ves, _ := json.Marshal(vmExpand)
+	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
 	trace.InsertStringIntoSpan("query-name", name, span)
 	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
 	referenceName := ""
-	metricName := ""
-	var labelMatchers []*labels.Matcher
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
 			referenceName = m.Value
@@ -697,6 +681,12 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 	if referenceName == "" {
 		return nil, fmt.Errorf("reference name is empty: %v", matchers)
+	}
+
+	// 如果使用 end - start 作为 step，查询的时候会多查一个step的数据量，所以这里需要减少点数
+	step := (end.Unix() - start.Unix()) / 10
+	if step < 60 {
+		step = 60
 	}
 
 	paramsQueryRange := &ParamsQueryRange{
@@ -710,36 +700,19 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		}{
 			Start: start.Unix(),
 			End:   end.Unix(),
+			Step:  step,
 		},
+		UseNativeOr:           i.UseNativeOr,
+		MetricFilterCondition: vmExpand.MetricFilterCondition,
+		ResultTableList:       vmExpand.ResultTableList,
 	}
 
-	paramsQueryRange.APIParams.Step = paramsQueryRange.APIParams.End - paramsQueryRange.APIParams.Start
-
-	if metadata.GetVMQueryOrFeatureFlag(ctx) {
-		paramsQueryRange.UseNativeOr = i.UseNativeOr
-		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
-		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
-		metricName = referenceName
-
-	} else {
-		if m, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
-			metricName = m
-		}
-		if l, ok := vmExpand.LabelsMatcher[referenceName]; ok {
-			labelMatchers = l
-		}
-
-		// 拼接 result table 和 metric
-		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
-		if err != nil {
-			return nil, err
-		}
-		paramsQueryRange.ResultTableGroup = metricResultTableGroup
+	if vmExpand.ClusterName != "" {
+		paramsQueryRange.ClusterName = vmExpand.ClusterName
 	}
 
 	vector := &parser.VectorSelector{
-		Name:          metricName,
-		LabelMatchers: labelMatchers,
+		LabelMatchers: matchers,
 	}
 	expr := &parser.AggregateExpr{
 		Op:       parser.COUNT,

@@ -16,7 +16,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define/prompb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -76,7 +75,7 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	writeReq, size, err := prompb.DecodeWriteRequest(req.Body)
+	writeReq, size, err := utils.DecodeWriteRequest(req.Body)
 	if err != nil {
 		receiver.WriteResponse(w, define.ContentTypeText, http.StatusBadRequest, []byte(err.Error()))
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordRemoteWrite)

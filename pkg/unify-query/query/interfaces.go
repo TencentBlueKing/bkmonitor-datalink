@@ -27,6 +27,7 @@ type TsDBV2 struct {
 	DataLabel       string   `json:"data_label,omitempty"`
 	// 将存储信息合并在 TsDB 中
 	StorageID   string   `json:"storage_id,omitempty"`
+	StorageName string   `json:"storage_name,omitempty"`
 	ClusterName string   `json:"cluster_name"`
 	TagsKey     []string `json:"tags_key"`
 	DB          string   `json:"db"`

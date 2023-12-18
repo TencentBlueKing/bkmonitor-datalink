@@ -10,6 +10,8 @@
 package testsuite
 
 import (
+	"fmt"
+
 	"github.com/golang/mock/gomock"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -26,6 +28,12 @@ type StoreSuite struct {
 func (s *StoreSuite) StoreHost(host *models.CCHostInfo) *gomock.Call {
 	bytes, err := models.ModelConverter.Marshal(host)
 	return s.Store.EXPECT().Get(host.GetStoreKey()).Return(bytes, err)
+}
+
+// StoreAgentHost :
+func (s *StoreSuite) StoreAgentHost(agentHost *models.CCAgentHostInfo) *gomock.Call {
+	bytes := []byte(fmt.Sprintf("%d:%d:%s", agentHost.BizID, agentHost.CloudID, agentHost.IP))
+	return s.Store.EXPECT().Get(agentHost.GetStoreKey()).Return(bytes, nil)
 }
 
 // StoreHost :

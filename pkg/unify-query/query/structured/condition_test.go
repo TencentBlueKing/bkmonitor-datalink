@@ -469,3 +469,145 @@ func TestConditionField_LabelMatcherConvert(t *testing.T) {
 		})
 	}
 }
+
+func TestAllConditions_VMString(t *testing.T) {
+	for i, c := range []struct {
+		allConditions AllConditions
+		vmCondition   string
+		isRegex       bool
+		metric        string
+		rt            string
+	}{
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionEqual,
+					},
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-4",
+							"val-5",
+						},
+						Operator: ConditionContains,
+					},
+					{
+						DimensionName: "dim-3",
+						Value: []string{
+							"val-8",
+							"val-9",
+						},
+						Operator: ConditionRegEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "dim1-1",
+						Value: []string{
+							"val-1",
+						},
+						Operator: ConditionNotEqual,
+					},
+					{
+						DimensionName: "dim1-2",
+						Value: []string{
+							"val-5",
+						},
+						Operator: ConditionNotContains,
+					},
+					{
+						DimensionName: "dim1-3",
+						Value: []string{
+							"val-8",
+						},
+						Operator: ConditionRegEqual,
+					},
+				},
+			},
+			metric:      "metric_1",
+			rt:          "rt-n",
+			vmCondition: `dim-1=~"^(val-1|val-2)$", dim-2=~"^(val-4|val-5)$", dim-3=~"val-8|val-9", result_table_id="rt-n", __name__="metric_1" or dim1-1!="val-1", dim1-2!="val-5", dim1-3=~"val-8", result_table_id="rt-n", __name__="metric_1"`,
+		},
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionContains,
+					},
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionNotContains,
+					},
+				},
+			},
+			metric:      "metric_.*",
+			rt:          "rt-n",
+			isRegex:     true,
+			vmCondition: `dim-1=~"^(val-1|val-2)$", dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "",
+			rt:            "rt-n",
+			vmCondition:   `result_table_id="rt-n"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "metric",
+			vmCondition:   `__name__="metric"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "",
+			vmCondition:   ``,
+		},
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionContains,
+					},
+				},
+				{
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionNotContains,
+					},
+				},
+			},
+			metric:      "metric_.*",
+			rt:          "rt-n",
+			isRegex:     true,
+			vmCondition: `dim-1=~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*" or dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			actual, _ := c.allConditions.VMString(c.rt, c.metric, c.isRegex)
+			assert.Equal(t, c.vmCondition, actual)
+		})
+	}
+}

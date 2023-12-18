@@ -140,6 +140,10 @@ func (c *ConditionField) ContainsToPromReg() *ConditionField {
 	isRegx := false
 	// value 个数大于 1，转换为正则表达式处理
 	switch c.Operator {
+	case ConditionEqual:
+		c.Operator = ConditionRegEqual
+	case ConditionNotEqual:
+		c.Operator = ConditionNotRegEqual
 	case ConditionContains:
 		c.Operator = ConditionRegEqual
 	case ConditionNotContains:

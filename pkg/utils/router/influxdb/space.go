@@ -40,6 +40,7 @@ type ResultTableList []string
 //go:generate msgp -tests=false
 type ResultTableDetail struct {
 	StorageId       int64    `json:"storage_id"`
+	StorageName     string   `json:"storage_name"`
 	ClusterName     string   `json:"cluster_name"`
 	DB              string   `json:"db"`
 	TableId         string   `json:"table_id"`

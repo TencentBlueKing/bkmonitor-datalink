@@ -203,7 +203,7 @@ func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 		if err != nil {
 			return err
 		}
-		mapObj["timestamp"] = timestamp
+		mapObj["timestamp"] = int64(timestamp)
 	}
 	return nil
 }
@@ -284,7 +284,7 @@ func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 		if err != nil {
 			return err
 		}
-		mapObj["timestamp"] = timestamp
+		mapObj["timestamp"] = int64(timestamp)
 	}
 	return nil
 }

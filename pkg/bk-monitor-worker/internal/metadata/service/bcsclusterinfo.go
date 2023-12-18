@@ -936,7 +936,7 @@ func (b BcsClusterInfoSvc) RefreshAllToConsul(ctx context.Context) error {
 		dataIds = append(dataIds, monitor.BkDataId)
 	}
 	// 去重
-	dataIds = slicex.UintSet2List(slicex.UintList2Set(dataIds))
+	dataIds = slicex.RemoveDuplicate(dataIds)
 	value, err := jsonx.MarshalString(dataIds)
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("marshal dataids [%v] failed", dataIds))

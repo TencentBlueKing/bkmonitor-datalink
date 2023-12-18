@@ -287,15 +287,17 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 
 	var factor float64
-	if ok, factor, err = downsample.CheckDownSampleRange(query.Step, query.DownSampleRange); ok && err != nil {
-		var info *TimeInfo
-		if info, err = getTimeInfo(&structured.CombinedQueryParams{
-			Start: query.Start,
-			End:   query.End,
-			Step:  query.DownSampleRange,
-		}); err == nil {
-			log.Debugf(context.TODO(), "respData to downsample: %+v", info)
-			resp.Downsample(factor)
+	if ok, factor, err = downsample.CheckDownSampleRange(query.Step, query.DownSampleRange); ok {
+		if err == nil {
+			var info *TimeInfo
+			if info, err = getTimeInfo(&structured.CombinedQueryParams{
+				Start: query.Start,
+				End:   query.End,
+				Step:  query.DownSampleRange,
+			}); err == nil {
+				log.Debugf(context.TODO(), "respData to down sample: %+v", info)
+				resp.Downsample(factor)
+			}
 		}
 	}
 

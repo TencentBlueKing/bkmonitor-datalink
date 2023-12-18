@@ -81,6 +81,10 @@ type Query struct {
 
 	Condition string // 过滤条件
 
+	// BkSql 过滤条件
+	BkSqlCondition string
+
+	// Vm 过滤条件
 	VmCondition    string
 	VmConditionNum int
 

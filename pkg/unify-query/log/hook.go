@@ -96,7 +96,7 @@ func initLogConfig() {
 	OtLogger = otelzap.New(ZapLogger,
 		otelzap.WithTraceIDField(true),
 		otelzap.WithCaller(true),
-		otelzap.WithStackTrace(true),
+		otelzap.WithStackTrace(false),
 		otelzap.WithMinLevel(zapcore.WarnLevel),
 		otelzap.WithErrorStatusLevel(zapcore.ErrorLevel),
 	)

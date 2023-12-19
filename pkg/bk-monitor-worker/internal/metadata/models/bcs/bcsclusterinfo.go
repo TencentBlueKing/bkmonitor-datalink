@@ -45,7 +45,7 @@ type BCSClusterInfo struct {
 	CustomEventDataID  uint      `gorm:"column:CustomEventDataID" json:"CustomEventDataID"`
 	SystemLogDataID    uint      `gorm:"column:SystemLogDataID" json:"SystemLogDataID"`
 	CustomLogDataID    uint      `gorm:"column:CustomLogDataID" json:"CustomLogDataID"`
-	BkEnv              *string   `gorm:"size:32;default: " json:"bk_env"`
+	BkEnv              *string   `gorm:"size:32" json:"bk_env"`
 	Creator            string    `json:"creator" gorm:"size:32"`
 	CreateTime         time.Time `json:"create_time"`
 	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
@@ -67,6 +67,10 @@ func (r *BCSClusterInfo) BeforeCreate(tx *gorm.DB) error {
 	}
 	if r.Status == "" {
 		r.Status = models.BcsClusterStatusRunning
+	}
+	var bkEnv string
+	if r.BkEnv == nil {
+		r.BkEnv = &bkEnv
 	}
 	r.CreateTime = time.Now()
 	r.LastModifyTime = time.Now()

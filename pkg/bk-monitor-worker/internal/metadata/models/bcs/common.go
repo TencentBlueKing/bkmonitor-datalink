@@ -39,8 +39,8 @@ type BCSResource struct {
 	Namespace          string    `gorm:"size:512" json:"namespace"`
 	Name               string    `gorm:"size:128" json:"name"`
 	BkDataId           uint      `gorm:"column:bk_data_id;" json:"bk_data_id"`
-	IsCustomResource   bool      `gorm:"default:true" json:"is_custom_resource"`
-	IsCommonDataId     bool      `gorm:"default:true" json:"is_common_data_id"`
+	IsCustomResource   bool      `gorm:"column:is_custom_resource" json:"is_custom_resource"`
+	IsCommonDataId     bool      `gorm:"column:is_common_data_id" json:"is_common_data_id"`
 	RecordCreateTime   time.Time `json:"record_create_time"`
 	ResourceCreateTime time.Time `json:"resource_create_time"`
 }

@@ -39,7 +39,7 @@ type DataSource struct {
 	IsEnable          bool      `gorm:"is_enable" json:"is_enable"`
 	TransferClusterId string    `gorm:"size:50" json:"transfer_cluster_id"`
 	IsPlatformDataId  bool      `gorm:"column:is_platform_data_id" json:"is_platform_data_id"`
-	SpaceTypeId       string    `gorm:"size:64;default:all" json:"space_type_id"`
+	SpaceTypeId       string    `gorm:"size:64" json:"space_type_id"`
 	SpaceUid          string    `gorm:"size:256" json:"space_uid"`
 }
 
@@ -47,6 +47,9 @@ type DataSource struct {
 func (d *DataSource) BeforeCreate(tx *gorm.DB) error {
 	d.CreateTime = time.Now()
 	d.LastModifyTime = time.Now()
+	if d.SpaceTypeId == "" {
+		d.SpaceTypeId = "all"
+	}
 	return nil
 }
 

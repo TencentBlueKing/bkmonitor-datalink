@@ -57,7 +57,7 @@ type ClusterInfo struct {
 	SslInsecureSkipVerify     bool      `gorm:"column:ssl_insecure_skip_verify" json:"ssl_insecure_skip_verify"`
 	SslVerificationMode       string    `gorm:"size:16" json:"ssl_verification_mode"`
 	ExtranetDomainName        string    `gorm:"size:128" json:"extranet_domain_name"`
-	ExtranetPort              uint      `gorm:"default:0" json:"extranet_port"`
+	ExtranetPort              uint      `gorm:"column:extranet_port" json:"extranet_port"`
 }
 
 // TableName: 用于设置表的别名

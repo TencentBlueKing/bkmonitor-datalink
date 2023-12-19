@@ -20,7 +20,7 @@ type InfluxdbProxyStorage struct {
 	ProxyClusterId      uint   `gorm:"proxy_cluster_id" json:"proxy_cluster_id"`
 	InstanceClusterName string `gorm:"size:128" json:"instance_cluster_name"`
 	ServiceName         string `gorm:"size:64" json:"service_name"`
-	IsDefault           bool   `gorm:"default:false" json:"is_default"`
+	IsDefault           bool   `gorm:"column:is_default" json:"is_default"`
 	models.BaseModel
 }
 

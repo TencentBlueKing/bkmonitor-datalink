@@ -79,6 +79,32 @@ type QueryAsyncData struct {
 	QueryStartTime       string                 `json:"query_start_time"`
 }
 
+type QuerySyncResultData struct {
+	ResultTableScanRange struct {
+		BcsLolRestriction struct {
+		} `json:"132_bcs_lol_restriction"`
+	} `json:"result_table_scan_range"`
+	Cluster            string `json:"cluster"`
+	TraceId            string `json:"trace_id"`
+	TotalRecords       int    `json:"totalRecords"`
+	SpanId             string `json:"span_id"`
+	ResourceUseSummary struct {
+		CpuTimeMills   int `json:"cpu_time_mills"`
+		MemoryBytes    int `json:"memory_bytes"`
+		ProcessedBytes int `json:"processed_bytes"`
+		ProcessedRows  int `json:"processed_rows"`
+	} `json:"resource_use_summary"`
+	Source               string                   `json:"source"`
+	List                 []map[string]interface{} `json:"list"`
+	SelectFieldsOrder    []string                 `json:"select_fields_order"`
+	Sql                  string                   `json:"sql"`
+	TotalRecordSize      int                      `json:"total_record_size"`
+	Timetaken            float64                  `json:"timetaken"`
+	BksqlCallElapsedTime int                      `json:"bksql_call_elapsed_time"`
+	Device               string                   `json:"device"`
+	ResultTableIds       []string                 `json:"result_table_ids"`
+}
+
 type QueryAsyncResultData struct {
 	TotalRecords int `json:"totalRecords"`
 	Timetaken    struct {

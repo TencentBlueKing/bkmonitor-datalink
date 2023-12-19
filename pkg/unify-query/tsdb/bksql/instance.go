@@ -63,7 +63,37 @@ func (i Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*QueryAsyncResultData, error) {
+func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*QuerySyncResultData, error) {
+	var (
+		data *QuerySyncResultData
+
+		ok  bool
+		err error
+	)
+
+	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
+	trace.InsertStringIntoSpan("query-sql", sql, span)
+
+	// 发起异步查询
+	res := i.Client.QuerySync(ctx, sql)
+	if err = i.checkResult(res); err != nil {
+		return data, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
+
+	trace.InsertStringIntoSpan("query-timeout", i.Timeout.String(), span)
+	trace.InsertStringIntoSpan("query-interval-time", i.IntervalTime.String(), span)
+
+	if data, ok = res.Data.(*QuerySyncResultData); !ok {
+		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
+	}
+
+	return data, nil
+}
+
+func (i Instance) queryAsync(ctx context.Context, sql string, span oleltrace.Span) (*QueryAsyncResultData, error) {
 	var (
 		data       *QueryAsyncData
 		stateData  *QueryAsyncStateData
@@ -156,25 +186,22 @@ func (i Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i Instance) formatData(field string, isCount bool, data *QueryAsyncResultData) (*prompb.QueryResult, error) {
+func (i Instance) formatData(field string, isCount bool, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
-	if data == nil {
-		return res, fmt.Errorf("data is nil")
-	}
-	if len(data.List) == 0 {
+	if len(list) == 0 {
 		return res, nil
 	}
 	// 维度结构体为空则任务异常
-	if len(data.SelectFieldsOrder) == 0 {
+	if len(keys) == 0 {
 		return res, fmt.Errorf("SelectFieldsOrder is empty")
 	}
 
 	// 获取该指标的维度 key
-	dimensions := i.dims(data.SelectFieldsOrder, field)
+	dimensions := i.dims(keys, field)
 
 	tsMap := make(map[string]*prompb.TimeSeries, 0)
-	for _, d := range data.List {
+	for _, d := range list {
 		// 优先获取时间和值
 		var (
 			vt int64
@@ -355,6 +382,10 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 		return storage.ErrSeriesSet(err)
 	}
 
+	if data == nil {
+		return storage.EmptySeriesSet()
+	}
+
 	trace.InsertIntIntoSpan("data-total-records", data.TotalRecords, span)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
@@ -362,7 +393,7 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.Limit))
 	}
 
-	qr, err := i.formatData(query.Field, isCount, data)
+	qr, err := i.formatData(query.Field, isCount, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

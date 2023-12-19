@@ -85,6 +85,19 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 	return json.NewDecoder(resp.Body).Decode(res)
 }
 
+func (c *Client) QuerySync(ctx context.Context, sql string) *Result {
+	data := &QuerySyncResultData{}
+	res := c.response(data)
+
+	url := fmt.Sprintf("%s/%s", c.Address, QuerySync)
+	err := c.curl(ctx, curl.Post, url, sql, res)
+	if err != nil {
+		return c.failed(ctx, err)
+	}
+
+	return res
+}
+
 func (c *Client) QueryAsync(ctx context.Context, sql string) *Result {
 	data := &QueryAsyncData{}
 	res := c.response(data)

@@ -40,10 +40,6 @@ type Client struct {
 }
 
 func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result) error {
-	if sql == "" {
-		return fmt.Errorf("sql is empty")
-	}
-
 	if method == "" {
 		method = curl.Post
 	}
@@ -54,7 +50,10 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 		PreferStorage:              c.PreferStorage,
 		BkdataDataToken:            c.BkdataDataToken,
 		BkAppSecret:                c.BkAppSecret,
-		SQL:                        sql,
+	}
+
+	if sql != "" {
+		params.SQL = sql
 	}
 
 	body, err := json.Marshal(params)

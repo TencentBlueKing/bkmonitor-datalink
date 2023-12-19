@@ -102,9 +102,9 @@ type BulkManager interface {
 // Bulk defaults
 var (
 	BulkDefaultBufferSize           = 2000
-	BulkDefaultFlushInterval        = 2 * time.Second
+	BulkDefaultFlushInterval        = 1 * time.Second
 	BulkDefaultFlushRetries         = 3
-	BulkDefaultConcurrency    int64 = 32
+	BulkDefaultConcurrency    int64 = 25
 	BulkDefaultMaxConcurrency int64 = 10000
 )
 

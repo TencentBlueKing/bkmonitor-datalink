@@ -16,7 +16,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -39,8 +38,7 @@ func TestDimensions(t *testing.T) {
 }
 
 func TestEvent_ModifyEventList(t *testing.T) {
-	config.FilePath = "../../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
 	event := Event{
 		EventGroupID: 9000,
 	}

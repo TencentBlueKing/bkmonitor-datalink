@@ -19,7 +19,6 @@ import (
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
-	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -56,8 +55,7 @@ func TestSpacePusher_getMeasurementType(t *testing.T) {
 }
 
 func TestSpacePusher_refineTableIds(t *testing.T) {
-	cfg.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	itableName := "i_table_test.dbname"
 	iTable := storage.InfluxdbStorage{TableID: itableName, RealTableName: "i_table_test", Database: "dbname"}
@@ -78,8 +76,7 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 }
 
 func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
-	cfg.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 
 	dsRtMap := map[string]uint{
@@ -120,12 +117,11 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 }
 
 func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
-	cfg.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	s := storage.InfluxdbProxyStorage{
 		ProxyClusterId:      2,
-		InstanceClusterName: "instance_cluster_name",
+		InstanceClusterName: "default",
 		ServiceName:         "svc_name",
 		IsDefault:           true,
 	}
@@ -170,12 +166,11 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	assert.JSONEq(t, `{"cluster_name":"","db":"","measurement":"","storage_name":"vm_cluster_abc","tags_key":[],"vm_rt":"vm_result_table_id"}`, vmData)
 	itableData, err := jsonx.MarshalString(data[itableName])
 	assert.NoError(t, err)
-	assert.JSONEq(t, `{"cluster_name":"instance_cluster_name","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":""}`, itableData)
+	assert.JSONEq(t, `{"cluster_name":"default","db":"dbname","measurement":"i_table_test","storage_id":2,"storage_name":"","tags_key":["t1","t2"],"vm_rt":""}`, itableData)
 }
 
 func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
-	cfg.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		data := ``
 		body := io.NopCloser(strings.NewReader(data))

@@ -26,8 +26,7 @@ import (
 )
 
 func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        99,
@@ -61,8 +60,7 @@ func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
 }
 
 func TestKafkaStorageSvc_CreateTable(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	db := mysql.GetDBSession().DB
 	tableId := "table_id_for_kafka_create_table"

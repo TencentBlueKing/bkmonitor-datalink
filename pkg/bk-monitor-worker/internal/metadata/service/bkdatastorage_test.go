@@ -48,8 +48,7 @@ func TestGenBkdataRtIdWithoutBizId(t *testing.T) {
 }
 
 func TestBkDataStorageSvc_CreateDatabusClean(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	db := mysql.GetDBSession().DB
 	defer db.Close()

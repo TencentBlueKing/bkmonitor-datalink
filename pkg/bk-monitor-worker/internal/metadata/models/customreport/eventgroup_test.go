@@ -22,7 +22,6 @@ import (
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
@@ -31,8 +30,7 @@ import (
 )
 
 func TestEventGroup_GetESData(t *testing.T) {
-	config.FilePath = "../../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
 	gomonkey.ApplyMethod(elasticsearch.Elasticsearch{}, "SearchWithBody", func(es elasticsearch.Elasticsearch, ctx context.Context, index string, body io.Reader) (*elasticsearch.Response, error) {
 		all, _ := io.ReadAll(body)
 		input := string(all)

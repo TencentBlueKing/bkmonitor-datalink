@@ -16,7 +16,6 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -24,9 +23,8 @@ import (
 )
 
 func TestResultTableFieldSvc_BatchGetFields(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	tableID := "test_table_001.base"
-	mocker.PatchDBSession()
 	f1 := resulttable.ResultTableField{
 		TableID:        tableID,
 		FieldName:      "f1",
@@ -58,8 +56,7 @@ func TestResultTableFieldSvc_BatchGetFields(t *testing.T) {
 }
 
 func TestResultTableFieldSvc_BulkCreateDefaultFields(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	defer db.Close()
 	rt := resulttable.ResultTable{

@@ -36,8 +36,7 @@ import (
 )
 
 func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	config.InitConfig()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
@@ -60,7 +59,6 @@ func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
 		}, nil
 	})
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	cluster := &bcs.BCSClusterInfo{
 		ClusterID:          "BCS-K8S-00000",
 		BCSApiClusterId:    "BCS-K8S-00000",
@@ -150,8 +148,7 @@ func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	var createCount, updateCount int
 	var data = []byte(`{"apiVersion":"monitoring.bk.tencent.com/v1beta1","items":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"false","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"custommetricdataid","resourceVersion":"5719372880","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/custommetricdataid","uid":"2f2f4b12-e63f-49d8-83e2-dd0d79f9fa16"},"spec":{"dataID":1572865,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:04Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"event"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:04Z"}],"name":"k8seventdataid","resourceVersion":"5719372903","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8seventdataid","uid":"33482264-805f-40a2-9487-84e15887797a"},"spec":{"dataID":1572866,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"k8smetricdataid","resourceVersion":"5719372853","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8smetricdataid","uid":"fc006b95-9a97-4479-88c3-8d7a53500f00"},"spec":{"dataID":1572864,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}}],"kind":"DataIDList","metadata":{"continue":"","resourceVersion":"10899929740","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids"}}`)
 	patchListK8sResource := gomonkey.ApplyFunc(BcsClusterInfoSvc.ListK8sResource, func(b BcsClusterInfoSvc, group, version, resource string) (*unstructured.UnstructuredList, error) {
@@ -283,13 +280,11 @@ func TestKubernetesNodeJsonParser(t *testing.T) {
 }
 
 func TestBCSClusterInfo_Create(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	c := bcs.BCSClusterInfo{
 		ClusterID: "new_create_cluster",
 	}
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	db.Delete(&c, "cluster_id = ?", c.ClusterID)
 	err := c.Create(db)
 	assert.NoError(t, err)
@@ -312,8 +307,7 @@ func TestBcsClusterInfoSvc_IsClusterIdInGray(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_FetchK8sClusterList(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	config.InitConfig()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		data := `{"message":"ok","result":true,"code":200,"data":[{"clusterID":"BCS-K8S-00000","clusterName":"蓝鲸","federationClusterID":"","provider":"bluekingCloud","region":"default","vpcID":"","projectID":"xxxxxxx750477982c23","businessID":"2","environment":"prod","engineType":"k8s","isExclusive":true,"clusterType":"single","labels":{},"creator":"admin","createTime":"2023-10-26T21:01:57+08:00","updateTime":"2023-10-26T21:01:57+08:00","bcsAddons":{},"extraAddons":{},"systemID":"","manageType":"INDEPENDENT_CLUSTER","master":{},"networkSettings":{"clusterIPxxxxx":"","serviceIxx":"","maxNodePodNum":0,"maxServiceNum":0,"enableVPCCni":false,"eniSubnetIDs":[],"subnetSource":null,"isStaticIpMode":false,"claimExpiredSeconds":0,"multiClusterCIDR":[],"cidrStep":0},"clusterBasicSettings":{"OS":"Linux","version":"v1.20.6-tke.34","clusterTags":{},"versionName":""},"clusterAdvanceSettings":{"IPVS":true,"containerRuntime":"docker","runtimeVersion":"19.3","extraArgs":{"Etcd":"node-data-dir=/data/bcs/lib/etcd;"}},"nodeSettings":{"dockerGraphPath":"/data/bcs/lib/docker","mountTarget":"/data","unSchedulable":1,"labels":{},"extraArgs":{}},"status":"RUNNING","updater":"","networkType":"overlay","autoGenerateMasterNodes":false,"template":[],"extraInfo":{},"moduleID":"","extraClusterID":"","isCommonCluster":false,"description":"xxxxx部署环境","clusterCategory":"","is_shared":false,"kubeConfig":"","importCategory":"","cloudAccountID":""}]}`
 		body := io.NopCloser(strings.NewReader(data))
@@ -334,8 +328,7 @@ func TestBcsClusterInfoSvc_FetchK8sClusterList(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_FetchK8sNodeListByCluster(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	config.InitConfig()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "Node") {
@@ -364,10 +357,8 @@ func TestBcsClusterInfoSvc_FetchK8sNodeListByCluster(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	clusterID := "BCS-K8S-00001"
 	bkBizId := "2"
 	projectId := "project_id_xxxxx"

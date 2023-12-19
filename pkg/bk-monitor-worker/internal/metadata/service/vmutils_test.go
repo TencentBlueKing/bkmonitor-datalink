@@ -28,7 +28,7 @@ import (
 )
 
 func TestVmUtils_getDataTypeCluster(t *testing.T) {
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	cluster := bcs.BCSClusterInfo{
 		ClusterID:          "",
 		K8sMetricDataID:    299991,
@@ -57,7 +57,7 @@ func TestVmUtils_getDataTypeCluster(t *testing.T) {
 }
 
 func TestVmUtils_getVmCluster(t *testing.T) {
-	defer mocker.PatchDBSession().Reset()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	cluster := storage.ClusterInfo{
 		ClusterName:      "testVmCluster",
 		ClusterType:      models.StorageTypeVM,
@@ -112,7 +112,7 @@ func TestVmUtils_getBkbaseDataNameAndTopic(t *testing.T) {
 }
 
 func TestVmUtils_getTimestampLen(t *testing.T) {
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	ds := resulttable.DataSource{
 		BkDataId: 198877,
 	}
@@ -139,8 +139,7 @@ func TestVmUtils_getTimestampLen(t *testing.T) {
 }
 
 func TestVmUtils_AccessBkdata(t *testing.T) {
-	cfg.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	defer db.Close()
 	cluster := storage.ClusterInfo{

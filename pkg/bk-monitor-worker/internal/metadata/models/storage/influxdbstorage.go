@@ -297,7 +297,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 				return err
 			}
 			influxdbClient, err := influxdb.GetClient(
-				fmt.Sprintf("http://%s:%v", hostInfo.DomainName, hostInfo.Port), hostInfo.Username, hostInfo.Password,
+				fmt.Sprintf("http://%s:%v", hostInfo.DomainName, hostInfo.Port), hostInfo.Username, hostInfo.Password, 5,
 			)
 			if err != nil {
 				return err

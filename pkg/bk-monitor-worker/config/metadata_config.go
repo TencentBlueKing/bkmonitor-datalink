@@ -33,6 +33,9 @@ var (
 	BcsInfluxdbDefaultProxyClusterNameForK8s string
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
+
+	// GlobalTsDataSavedDays 监控采集数据保存天数
+	GlobalTsDataSavedDays int
 )
 
 func initMetadataVariables() {
@@ -47,4 +50,6 @@ func initMetadataVariables() {
 	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0), viper.GetUint)
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
+
+	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 }

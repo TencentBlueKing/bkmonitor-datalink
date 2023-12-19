@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/go-version"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -25,7 +26,7 @@ import (
 )
 
 var EventDefaultStorageConfig = map[string]interface{}{
-	"retention":   30,
+	"retention":   cfg.GlobalTsDataSavedDays,
 	"slice_gap":   60 * 24,
 	"date_format": "%Y%m%d",
 	"mapping_settings": map[string]interface{}{

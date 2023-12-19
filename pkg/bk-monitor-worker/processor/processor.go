@@ -188,11 +188,6 @@ func (p *Processor) Exec() {
 			beginTime := time.Now()
 			go func() {
 				// task run count
-				metrics.PublishMetric(metrics.Metric{
-					TaskName:   msg.Kind,
-					Value:      1,
-					MetricType: "RunTaskCount",
-				})
 				metrics.RunTaskCount(msg.Kind)
 				task := t.NewTask(
 					msg.Kind,
@@ -208,45 +203,21 @@ func (p *Processor) Exec() {
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
-				metrics.PublishMetric(metrics.Metric{
-					TaskName:   msg.Kind,
-					Value:      1,
-					MetricType: "RunTaskFailureCount",
-				})
 				metrics.RunTaskFailureCount(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
-				metrics.PublishMetric(metrics.Metric{
-					TaskName:   msg.Kind,
-					Value:      1,
-					MetricType: "RunTaskFailureCount",
-				})
 				metrics.RunTaskFailureCount(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
 				if resErr != nil {
-					metrics.PublishMetric(metrics.Metric{
-						TaskName:   msg.Kind,
-						Value:      1,
-						MetricType: "RunTaskFailureCount",
-					})
 					metrics.RunTaskFailureCount(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
 				}
-				metrics.PublishMetric(metrics.Metric{
-					TaskName:   msg.Kind,
-					Value:      time.Now().Sub(beginTime).Seconds() * 1000,
-					MetricType: "RunTaskCostTime",
-				})
-				metrics.PublishMetric(metrics.Metric{
-					TaskName:   msg.Kind,
-					Value:      1,
-					MetricType: "RunTaskSuccessCount",
-				})
+				metrics.RunTaskCostTime(msg.Kind, beginTime)
 				metrics.RunTaskSuccessCount(msg.Kind)
 				p.HandleSucceededMessage(lease, msg)
 			}

@@ -132,6 +132,16 @@ func (r *Instance) HGetAll(key string) map[string]string {
 	return val
 }
 
+// SAdd set add
+func (r *Instance) SAdd(key string, field ...interface{}) error {
+	err := r.Client.SAdd(r.ctx, key, field...).Err()
+	if err != nil {
+		logger.Errorf("sadd fields error, key: %s, fields: %v", key, field)
+		return err
+	}
+	return nil
+}
+
 // Publish message pusher
 func (r *Instance) Publish(channelName string, msg interface{}) error {
 	if err := r.Client.Publish(r.ctx, channelName, msg).Err(); err != nil {

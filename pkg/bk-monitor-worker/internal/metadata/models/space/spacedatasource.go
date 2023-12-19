@@ -9,6 +9,8 @@
 
 package space
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+
 //go:generate goqueryset -in spacedatasource.go -out qs_spacedatasource_gen.go
 
 // SpaceDataSource space data source model
@@ -19,6 +21,7 @@ type SpaceDataSource struct {
 	SpaceId           string `gorm:"size:128" json:"space_id"`
 	BkDataId          uint   `gorm:"column:bk_data_id" json:"bk_data_id"`
 	FromAuthorization bool   `gorm:"column:from_authorization" json:"from_authorization"`
+	models.BaseModel
 }
 
 // TableName table alias name

@@ -52,3 +52,26 @@ func SplitString(str string) []string {
 func SplitStringByDot(str string) []string {
 	return strings.Split(str, ".")
 }
+
+// LimitLengthPrefix 从前向后截取一定长度字符串
+func LimitLengthPrefix(input string, length int) string {
+	if length <= 0 {
+		return ""
+	}
+	if length > len(input) {
+		return input
+	}
+	return input[:length]
+}
+
+// LimitLengthSuffix 从后向前截取一定长度字符串
+func LimitLengthSuffix(input string, length int) string {
+	if length <= 0 {
+		return ""
+	}
+	index := len(input) - length
+	if index < 0 {
+		index = 0
+	}
+	return input[index:]
+}

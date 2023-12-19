@@ -139,7 +139,7 @@ taskConfig:
       metricKeyPrefix: bkmonitor:metrics_
       metricDimensionKeyPrefix: bkmonitor:metric_dimensions_
       maxMetricsFetchStep: 500
-      timeSeriesMetricExpiredDays: 30
+      timeSeriesMetricExpiredSeconds: 2592000
     bcs:
       enableBcsGray: false
       clusterBkEnvLabel: ""

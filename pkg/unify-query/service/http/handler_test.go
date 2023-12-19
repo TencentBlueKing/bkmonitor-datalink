@@ -1511,9 +1511,9 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"nodeIndex 3 with sum": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
-				PromQL: `increase(sum by (deployment_environment, result_table_id) (bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"})[2m:])`,
+				PromQL: `increase(sum by (deployment_environment, result_table_id) (count_over_time(bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"})[1m])[2m:])`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{

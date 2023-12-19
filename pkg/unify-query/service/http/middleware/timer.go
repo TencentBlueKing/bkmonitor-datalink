@@ -95,7 +95,7 @@ func Timer(p *Params) gin.HandlerFunc {
 
 				// 记录慢查询
 				if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-					log.Errorf(ctx,
+					log.Warnf(ctx,
 						fmt.Sprintf(
 							"slow query log request: %s, duration: %s",
 							c.Request.URL.Path, sub.String(),

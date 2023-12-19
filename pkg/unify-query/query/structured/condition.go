@@ -39,7 +39,7 @@ type Conditions struct {
 }
 
 // AnalysisConditions
-func (c *Conditions) AnalysisConditions() ([][]ConditionField, error) {
+func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
 	var (
 		totalBuffer = make([][]ConditionField, 0) // 以or作为分界线，and条件的内容都会放入到一起，然后一起渲染处理
@@ -180,6 +180,51 @@ func MergeConditionField(source, target AllConditions) AllConditions {
 		}
 	}
 	return all
+}
+
+func (c AllConditions) BkSql() string {
+	var conditionsString []string
+	for _, cond := range c {
+		var conditionString []string
+		for _, f := range cond {
+			nf := f.BkSql()
+			if nf == nil {
+				continue
+			}
+
+			if len(nf.Value) == 1 {
+				conditionString = append(conditionString, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, nf.Value[0]))
+			} else {
+				var vals []string
+				for _, v := range nf.Value {
+					vals = append(vals, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, v))
+				}
+				logical := promql.OrOperator
+				// 如果是不等于，则要用and连接
+				if nf.Operator == SqlNotEqual || nf.Operator == SqlNotReg {
+					logical = promql.AndOperator
+				}
+
+				if len(vals) > 0 {
+					if len(vals) == 1 {
+						conditionString = append(conditionString, vals[0])
+					} else {
+						conditionString = append(conditionString, fmt.Sprintf("(%s)", strings.Join(vals, fmt.Sprintf(" %s ", logical))))
+					}
+				}
+			}
+		}
+
+		if len(conditionString) > 0 {
+			if len(conditionString) == 1 {
+				conditionsString = append(conditionsString, conditionString[0])
+			} else {
+				conditionsString = append(conditionsString, fmt.Sprintf("(%s)", strings.Join(conditionString, fmt.Sprintf(" %s ", promql.AndOperator))))
+			}
+		}
+	}
+
+	return strings.Join(conditionsString, fmt.Sprintf(" %s ", promql.OrOperator))
 }
 
 func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int) {

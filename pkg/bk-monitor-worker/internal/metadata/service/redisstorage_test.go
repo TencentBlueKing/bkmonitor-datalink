@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -23,8 +22,7 @@ import (
 )
 
 func TestRedisStorageSvc_ConsulConfig(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        99,
@@ -36,6 +34,7 @@ func TestRedisStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&clusterInfo, "cluster_id = ?", 99)
 	err := clusterInfo.Create(db)
 	assert.NoError(t, err)

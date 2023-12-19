@@ -157,7 +157,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("biz_id [%v] already has TimeSeriesGroup [TimeSeriesGroupName], should change %s and try again", bkDataId, customGroupName)
+		return fmt.Errorf("biz_id [%v] already has TimeSeriesGroup [%s], should change TimeSeriesGroupName and try again", bkBizId, customGroupName)
 	}
 	return nil
 }

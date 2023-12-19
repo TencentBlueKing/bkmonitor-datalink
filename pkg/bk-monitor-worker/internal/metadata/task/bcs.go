@@ -40,7 +40,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 	if err != nil {
 		return err
 	}
-
+	db := mysql.GetDBSession().DB
 	var clusterIdList []string
 	wg := &sync.WaitGroup{}
 	ch := make(chan bool, GetGoroutineLimit("discover_bcs_clusters"))
@@ -54,8 +54,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			var bcsClusterInfo bcs.BCSClusterInfo
-			if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).
-				ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
+			if err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
 				if !gorm.IsRecordNotFoundError(err) {
 					logger.Errorf("query bcs cluster info record from db failed, %v", err)
 					return
@@ -81,7 +80,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 	wg.Wait()
 	// 接口未返回的集群标记为删除状态
 	if len(clusterIdList) != 0 {
-		if err := bcs.NewBCSClusterInfoUpdater(mysql.GetDBSession().DB.Model(&bcs.BCSClusterInfo{}).Where("cluster_id not in (?)", clusterIdList)).
+		if err := bcs.NewBCSClusterInfoUpdater(db.Model(&bcs.BCSClusterInfo{}).Where("cluster_id not in (?)", clusterIdList)).
 			SetStatus(models.BcsClusterStatusDeleted).SetLastModifyTime(time.Now()).Update(); err != nil {
 			return err
 		}

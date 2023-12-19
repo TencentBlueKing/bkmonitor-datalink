@@ -14,4 +14,6 @@ const (
 	TimeLayout = "2006-01-02 15:04:05"
 	// DefaultUsername default username
 	DefaultUsername = "system"
+	// DefaultDBFilterSize 查询数据库时，过滤条件in的数量
+	DefaultDBFilterSize = 500
 )

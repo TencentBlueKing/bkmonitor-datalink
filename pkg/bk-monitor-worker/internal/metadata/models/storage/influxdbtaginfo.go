@@ -36,7 +36,7 @@ type InfluxdbTagInfo struct {
 	ClusterName          string `gorm:"size:128" json:"cluster_name"`
 	HostList             string `gorm:"size:128" json:"host_list"`
 	ManualUnreadableHost string `gorm:"size:128" json:"manual_unreadable_host"`
-	ForceOverwrite       bool   `gorm:"default:false" json:"force_overwrite"`
+	ForceOverwrite       bool   `gorm:"column:force_overwrite" json:"force_overwrite"`
 }
 
 // TableName 用于设置表的别名

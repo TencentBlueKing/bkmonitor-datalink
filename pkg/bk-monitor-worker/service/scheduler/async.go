@@ -11,6 +11,7 @@ package scheduler
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/example"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 )
 
@@ -19,11 +20,27 @@ type Task struct {
 }
 
 var (
-	exampleTask = "async:test_example"
+	exampleTask               = "async:test_example"
+	CreateEsStorageIndex      = "async:create_es_storage_index"
+	PushAndPublishSpaceRouter = "async:push_and_publish_space_router"
+	PushSpaceToRedis          = "async:push_space_to_redis"
+	AccessBkdataVm            = "async:access_bkdata_vm"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
 			Handler: example.HandleExampleTask,
+		},
+		CreateEsStorageIndex: {
+			Handler: task.CreateEsStorageIndex,
+		},
+		PushAndPublishSpaceRouter: {
+			Handler: task.PushAndPublishSpaceRouter,
+		},
+		PushSpaceToRedis: {
+			Handler: task.PushSpaceToRedis,
+		},
+		AccessBkdataVm: {
+			Handler: task.AccessBkdataVm,
 		},
 	}
 )

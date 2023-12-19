@@ -9,6 +9,8 @@
 
 package space
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+
 //go:generate goqueryset -in space.go -out qs_space_gen.go
 
 // Space space model
@@ -23,6 +25,7 @@ type Space struct {
 	TimeZone    string `gorm:"size:32" json:"time_zone"`
 	Language    string `gorm:"size:16" json:"language"`
 	IsBcsValid  bool   `gorm:"column:is_bcs_valid" json:"is_bcs_valid"`
+	models.BaseModel
 }
 
 // TableName table alias name

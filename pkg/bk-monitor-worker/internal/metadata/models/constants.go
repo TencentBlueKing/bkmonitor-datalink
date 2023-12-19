@@ -46,6 +46,32 @@ const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdb�
 // ResultTableOption
 const (
 	OptionCustomReportDimensionValues = "dimension_values"
+	OptionSegmentedQueryEnable        = "segmented_query_enable"
+)
+
+// MeasurementType
+const (
+	MeasurementTypeBkTraditional          = "bk_traditional_measurement"
+	MeasurementTypeBkSplit                = "bk_split_measurement"
+	MeasurementTypeBkExporter             = "bk_exporter"
+	MeasurementTypeBkStandardV2TimeSeries = "bk_standard_v2_time_series"
+)
+
+// ETLConfigType
+const (
+	// 多指标单表(system)
+	ETLConfigTypeBkSystemBasereport     = "bk_system_basereport"
+	ETLConfigTypeBkUptimecheckHeartbeat = "bk_uptimecheck_heartbeat"
+	ETLConfigTypeBkUptimecheckHttp      = "bk_uptimecheck_http"
+	ETLConfigTypeBkUptimecheckTcp       = "bk_uptimecheck_tcp"
+	ETLConfigTypeBkUptimecheckUdp       = "bk_uptimecheck_udp"
+	ETLConfigTypeBkSystemProcPort       = "bk_system_proc_port"
+	ETLConfigTypeBkSystemProc           = "bk_system_proc"
+	// 自定义多指标单表
+	ETLConfigTypeBkStandardV2TimeSeries = "bk_standard_v2_time_series"
+	// 固定指标单表(metric_name)
+	ETLConfigTypeBkExporter = "bk_exporter"
+	ETLConfigTypeBkStandard = "bk_standard"
 )
 
 // ClusterStorageType
@@ -93,6 +119,8 @@ const (
 	BcsServiceMonitorResourcePlural = "servicemonitors"           // service monitor注入类型查询名
 	BcsPodMonitorResourceUsage      = "metric"                    // pod monitor用途
 	BcsServiceMonitorResourceUsage  = "metric"                    // service monitor用途
+	BcsClusterTypeSingle            = "single"                    // 独占集群类型
+	BcsClusterTypeShared            = "shared"                    // 共享集群类型
 )
 
 // Label
@@ -122,7 +150,10 @@ const (
 
 // DataSourceOption
 const (
-	OptionTimestampUnit = "timestamp_precision"
+	OptionTimestampUnit        = "timestamp_precision"
+	OptionIsSplitMeasurement   = "is_split_measurement"
+	OptionDisableMetricCutter  = "disable_metric_cutter"
+	OptionEnableFieldBlackList = "enable_field_black_list"
 )
 
 // root consul path template
@@ -147,3 +178,37 @@ const (
 	MaxReqLength             = 500 * 1024 // 最大请求Body大小，500KB
 
 )
+
+// space
+const (
+	SpaceTypeBKCC   = "bkcc"
+	SpaceTypeBCS    = "bcs"
+	SpaceTypeBKCI   = "bkci"
+	SpaceTypeBKSAAS = "bksaas"
+	SpaceTypeAll    = "all"
+
+	Bkci1001TableIdPrefix = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
+	Dbm1001TableIdPrefix  = "dbm_system."  // 1001 仅允许访问 dbm 相关结果表的前缀
+	SystemTableIdPrefix   = "system."
+)
+
+// VM
+const (
+	VmRetentionTime            = "30d" // vm 数据默认保留时间
+	VmDataTypeUserCustom       = "user_custom"
+	VmDataTypeBcsClusterK8s    = "bcs_cluster_k8s"
+	VmDataTypeBcsClusterCustom = "bcs_cluster_custom"
+)
+
+// TimeStampLen
+const (
+	TimeStampLenSecondLen      = 10 // Unix Time Stamp(seconds)
+	TimeStampLenMillisecondLen = 13 // Unix Time Stamp(milliseconds)
+	TimeStampLenNanosecondLen  = 19 // Unix Time Stamp(nanosecond)
+)
+
+var TimeStampLenValeMap = map[int]string{
+	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",
+	TimeStampLenMillisecondLen: "Unix Time Stamp(milliseconds)",
+	TimeStampLenNanosecondLen:  "Unix Time Stamp(nanosecond)",
+}

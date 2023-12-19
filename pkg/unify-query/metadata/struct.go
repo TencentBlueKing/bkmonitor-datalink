@@ -241,7 +241,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag && !druidQueryStatus {
-		return ok, vmExpand, err
+		return ok, nil, err
 	}
 
 	var (
@@ -259,7 +259,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 				// 只有全部为单指标单表
 				if !query.IsSingleMetric {
-					return ok, vmExpand, err
+					return ok, nil, err
 				}
 
 				// 开启 vm rt 才进行 vm 查询
@@ -289,11 +289,6 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			}
 
 			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
-
-			if len(vmRts) == 0 {
-				break
-			}
-
 		}
 	}
 

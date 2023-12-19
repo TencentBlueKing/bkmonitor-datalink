@@ -22,6 +22,7 @@ import (
 	omd "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -394,4 +395,195 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 		})
 	}
 
+}
+
+func TestQueryTs_ToQueryReference(t *testing.T) {
+	ctx := context.Background()
+	err := featureFlag.MockFeatureFlag(
+		ctx, `{
+	"influxdb-query": {
+		"variations": {
+			"Default": true,
+			"true": true,
+			"false": false
+		},
+		"targeting": [{
+			"query": "tableID in [\"system.cpu_detail\", \"system.disk\"] and name in [\"my_bro\"]",
+			"percentage": {
+				"true": 0,
+				"false": 100
+			}
+		}],
+		"defaultRule": {
+			"variation": "Default"
+		}
+	},
+	"vm-query": {
+		"variations": {
+			"Default": false,
+			"true": true,
+			"false": false
+		},
+		"targeting": [{
+			"query": "spaceUid in [\"vm-query\"]",
+			"percentage": {
+				"true": 100,
+				"false": 0
+			}
+		}],
+		"defaultRule": {
+			"variation": "Default"
+		}
+	}
+}`,
+	)
+
+	mock.SetRedisClient(ctx, "")
+	mock.SetSpaceTsDbMockData(ctx, "", "", ir.SpaceInfo{
+		"vm-query": ir.Space{
+			"system.cpu_detail": &ir.SpaceResultTable{
+				TableId: "system.cpu_detail",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.disk": &ir.SpaceResultTable{
+				TableId: "system.disk",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_detail": &ir.ResultTableDetail{
+			TableId:         "system.cpu_detail",
+			DB:              "system",
+			Measurement:     "cpu_detail",
+			VmRt:            "100147_ieod_system_cpu_detail_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+		"system.disk": &ir.ResultTableDetail{
+			TableId:         "system.disk",
+			DB:              "system",
+			Measurement:     "disk",
+			VmRt:            "100147_ieod_system_disk_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+		"system.cpu_summary": &ir.ResultTableDetail{
+			TableId:         "system.cpu_summary",
+			DB:              "system",
+			Measurement:     "cpu_detail",
+			VmRt:            "100147_ieod_system_cpu_summary_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+	}, nil, nil)
+
+	for name, tc := range map[string]struct {
+		ts     *QueryTs
+		source string
+		ok     bool
+		expand *md.VmExpand
+	}{
+		"测试非单指标开启 InfluxDBQuery 特性开关": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.disk",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ok: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw", "100147_ieod_system_disk_raw"},
+				MetricFilterCondition: map[string]string{
+					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+				},
+				ConditionNum: 6,
+			},
+		},
+		"测试非单指标部份开启 InfluxDBQuery 特性开关": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.cpu_summary",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ok:     false,
+			expand: nil,
+		},
+		"测试非单指标未开启 InfluxDBQuery 特性开关": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_summary",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "b",
+			},
+			ok:     false,
+			expand: nil,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var (
+				ref      md.QueryReference
+				vmExpand *md.VmExpand
+				ok       bool
+			)
+			ctx = mock.Init(ctx)
+
+			md.SetUser(ctx, tc.source, tc.ts.SpaceUid)
+			ref, err = tc.ts.ToQueryReference(ctx)
+			assert.Nil(t, err)
+			if err == nil {
+				ok, vmExpand, err = ref.CheckVmQuery(ctx)
+				assert.Nil(t, err)
+				if err == nil {
+					assert.Equal(t, tc.ok, ok)
+					assert.Equal(t, tc.expand, vmExpand)
+				}
+			}
+		})
+	}
 }

@@ -19,6 +19,33 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
+func GetInfluxDBQueryFeatureFlag(ctx context.Context, tableID string) bool {
+	var (
+		span oleltrace.Span
+		user = GetUser(ctx)
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-influxdb-query-feature-flag")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("table-id", tableID, span)
+
+	// 特性开关只有指定空间才启用 vm 查询
+	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+		"tableID":  tableID,
+	})
+
+	status := featureFlag.BoolVariation(ctx, ffUser, "influxdb-query", true)
+	trace.InsertStringIntoSpan("influxdb-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+
+	return status
+}
+
 func GetDruidQueryFeatureFlag(ctx context.Context) bool {
 	return true
 }

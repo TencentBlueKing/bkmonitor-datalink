@@ -58,9 +58,17 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return nil
 	}
 
+	// 判断如果不是指定查询 InfluxDB 则改成 单指标单表用于查询 vm
+	isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
+	if !isSplitMeasurement {
+		if !metadata.GetInfluxDBQueryFeatureFlag(s.ctx, tableID) {
+			rtDetail.MeasurementType = redis.BkSplitMeasurement
+		}
+	}
+
 	// 当传入有效的 measurementType 字段时，需要进行类型过滤
 	if isK8s {
-		if rtDetail.MeasurementType != redis.BkSplitMeasurement {
+		if !isSplitMeasurement {
 			return nil
 		}
 

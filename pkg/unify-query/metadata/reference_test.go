@@ -33,27 +33,26 @@ func TestCheckVmQuery(t *testing.T) {
 
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
-	"druid-query": {
+	"influxdb-query": {
 		"variations": {
+			"Default": true,
 			"true": true,
 			"false": false
 		},
 		"targeting": [{
-			"query": "spaceUid in [\"druid-query\"]",
-			"percentage": {
-				"true": 100,
-				"false": 0
-			}
-		}],
-		"defaultRule": {
+			"query": "tableID in [\"system.cpu_detail\", \"system.io\"] and name in [\"my_bro\"]",
 			"percentage": {
 				"true": 0,
 				"false": 100
 			}
+		}],
+		"defaultRule": {
+			"variation": "Default"
 		}
 	},
 	"vm-query": {
 		"variations": {
+			"Default": false,
 			"true": true,
 			"false": false
 		},
@@ -65,10 +64,7 @@ func TestCheckVmQuery(t *testing.T) {
 			}
 		}],
 		"defaultRule": {
-			"percentage": {
-				"true": 0,
-				"false": 100
-			}
+			"variation": "Default"
 		}
 	}
 }`,
@@ -83,6 +79,8 @@ func TestCheckVmQuery(t *testing.T) {
 		ref      QueryReference
 		spaceUid string
 		expected checkExpected
+
+		source string
 	}{
 		{
 			name:     "测试单一查询符合 druid-query 双维度条件",
@@ -613,7 +611,7 @@ func TestCheckVmQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx = context.Background()
 
-			SetUser(ctx, tc.spaceUid, tc.spaceUid)
+			SetUser(ctx, tc.source, tc.spaceUid)
 
 			ok, vmExpand, err := tc.ref.CheckVmQuery(ctx)
 			assert.Nil(t, err)

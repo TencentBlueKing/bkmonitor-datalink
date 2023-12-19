@@ -123,22 +123,19 @@ func ReportInfluxdbClusterMetric(ctx context.Context, t *t.Task) error {
 		semaphore:   make(chan struct{}, 10),
 		recordQueue: recordQueue,
 		instances:   instances,
-		client:      &http.NetHttpClient{},
+		client:      http.NewClient(),
 		metrics:     metrics,
 	}
-	loadCtx, loadCancelFun := context.WithCancel(ctx)
-	go bl.Load(loadCtx)
+	go bl.Load(ctx)
 	for {
 		select {
 		case record, ok := <-recordQueue:
 			if !ok {
-				loadCancelFun()
 				return nil
 			}
 			logger.Infof("Load record(%v), start to write to kv store", (*record).Print())
 			ks.Write(ctx, record)
 		case <-ctx.Done():
-			loadCancelFun()
 			return nil
 		}
 	}
@@ -177,6 +174,10 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 	for _, m := range bl.metrics {
 		// 根据指标配置组装请求语句
 		parts := strings.Split(m.MetricName, ".")
+		if len(parts) != 3 {
+			logger.Errorf("Invalid metric name: %s", m.MetricName)
+			continue
+		}
 		measurement := parts[1]
 		metricName := parts[2]
 		escapedTags := make([]string, 0)
@@ -202,7 +203,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 			UserName: instance.Host.Username,
 			Password: instance.Host.Password,
 		}
-		resp, err := bl.client.Request(ctx, http.Get, options)
+		resp, err := bl.client.Request(ctx, http.MethodGet, options)
 		if err != nil {
 			logger.Errorf("Fail to load influxdb host(%s) metrics, %s, %v", instance.HostName, err, options)
 			return

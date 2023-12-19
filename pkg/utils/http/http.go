@@ -25,8 +25,8 @@ import (
 )
 
 const (
-	Get  = "GET"
-	Post = "POST"
+	MethodGet  = "GET"
+	MethodPost = "POST"
 )
 
 // Options HTTP 请求配置
@@ -46,8 +46,15 @@ type Client interface {
 	Post(ctx context.Context, baseUrl string, body []byte, contentType string, BaseOpt Options) (*http.Response, error)
 }
 
+func NewClient() Client {
+	return &NetHttpClient{
+		client: http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)},
+	}
+}
+
 // NetHttpClient 基于 net/http 进行封装
 type NetHttpClient struct {
+	client http.Client
 }
 
 // Request 公共调用方法实现
@@ -60,9 +67,6 @@ func (c *NetHttpClient) Request(ctx context.Context, method string, opt Options)
 		defer span.End()
 	}
 
-	client := http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-	}
 	// 拼接完整请求地址
 	u, err := url.Parse(opt.BaseUrl)
 	if err != nil {
@@ -91,13 +95,13 @@ func (c *NetHttpClient) Request(ctx context.Context, method string, opt Options)
 	for k, v := range opt.Headers {
 		req.Header.Set(k, v)
 	}
-	return client.Do(req)
+	return c.client.Do(req)
 }
 
 func (c *NetHttpClient) Get(ctx context.Context, baseUrl string, params url.Values, baseOpt Options) (*http.Response, error) {
 	baseOpt.BaseUrl = baseUrl
 	baseOpt.Params = params
-	return c.Request(ctx, Get, baseOpt)
+	return c.Request(ctx, MethodGet, baseOpt)
 }
 
 func (c *NetHttpClient) Post(ctx context.Context, baseUrl string, body []byte, contentType string, baseOpt Options) (*http.Response, error) {
@@ -111,5 +115,5 @@ func (c *NetHttpClient) Post(ctx context.Context, baseUrl string, body []byte, c
 	} else {
 		baseOpt.Headers["Content-Type"] = "application/json"
 	}
-	return c.Request(ctx, Post, baseOpt)
+	return c.Request(ctx, MethodPost, baseOpt)
 }

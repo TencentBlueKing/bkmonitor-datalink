@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"strings"
 	"time"
 
@@ -37,22 +38,26 @@ type KvShipper struct {
 	RedisClient *redisStore.Instance
 }
 
-func renderKvKey(metric *storage.ClusterMetric, instCtx map[string]string) string {
+func renderKvKey(metric *storage.ClusterMetric, instCtx map[string]string) (string, error) {
 	pattern := config.ClusterMetricFieldPattern
 	instCtx[config.ClusterMetricFieldPatternMetricFlag] = metric.MetricName
 	keys := []string{config.ClusterMetricFieldPatternClusterFlag, config.ClusterMetricFieldPatternMetricFlag}
 	for _, k := range keys {
 		val, ok := instCtx[k]
 		if !ok {
-			logger.Errorf("Miss expected variable(%v) in instance context", k)
+			return "", errors.Errorf("Miss expected variable(%v) in instance context", k)
 		}
 		pattern = strings.ReplaceAll(pattern, fmt.Sprintf("{%s}", k), val)
 	}
-	return pattern
+	return pattern, nil
 }
 
 func (kw *KvShipper) Write(ctx context.Context, record *Record) {
-	key := renderKvKey(record.Metric, record.Instance.GetContext())
+	key, err := renderKvKey(record.Metric, record.Instance.GetContext())
+	if err != nil {
+		logger.Errorf("Fail to render key, %+v", err)
+		return
+	}
 	ttl := time.Duration(config.ClusterMetricStorageTTL)
 	// 提取已经保存的指标数据
 	savedData := make([]map[string]interface{}, 0)
@@ -60,9 +65,10 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 	if savedContent == "" {
 		logger.Infof("No key(%s) contents", key)
 	} else {
-		err := json.Unmarshal([]byte(savedContent), &savedData)
+		err = json.Unmarshal([]byte(savedContent), &savedData)
 		if err != nil {
 			logger.Errorf("Fail to unmarshal key(%s) content, %v, $v", key, err, savedContent)
+			return
 		}
 	}
 	// 合并新旧指标数据
@@ -72,7 +78,7 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 		// 数据以秒为单位进行存储，移除过期数据
 		expiredTime := float64(time.Now().Unix() - int64(ttl))
 		for _, d := range data {
-			if d["time"].(float64) > expiredTime {
+			if t, ok := d["time"].(float64); ok && t > expiredTime {
 				validData = append(validData, d)
 			}
 		}
@@ -83,10 +89,12 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 	content, err := json.Marshal(validData)
 	if err != nil {
 		logger.Error("Fail to pack message to string for redis storage, %v, %v", record, err)
+		return
 	}
 	err = kw.RedisClient.HSet(config.ClusterMetricKey, key, string(content))
 	if err != nil {
 		logger.Error("Fait to store message to redis, %v", err)
+		return
 	}
 	// 更新指标
 	kvMetricMeta := KvClusterMetricMeta{
@@ -96,10 +104,12 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 	metricMetaContent, err := json.Marshal(&kvMetricMeta)
 	if err != nil {
 		logger.Error("Fail to pack metric metaInfo to string for redis storage, %v, %v", record, err)
+		return
 	}
 	err = kw.RedisClient.HSet(config.ClusterMetricMetaKey, record.Metric.MetricName, string(metricMetaContent))
 	if err != nil {
 		logger.Error("Fait to store metric metaInfo to redis, %v", err)
+		return
 	}
 }
 

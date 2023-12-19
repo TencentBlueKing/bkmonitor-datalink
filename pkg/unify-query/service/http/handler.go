@@ -369,6 +369,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query.Timezone = queryPromQL.Timezone
 	query.LookBackDelta = queryPromQL.LookBackDelta
 	query.Instant = queryPromQL.Instant
+	query.DownSampleRange = queryPromQL.DownSampleRange
 
 	// 补充业务ID
 	if len(queryPromQL.BKBizIDs) > 0 {

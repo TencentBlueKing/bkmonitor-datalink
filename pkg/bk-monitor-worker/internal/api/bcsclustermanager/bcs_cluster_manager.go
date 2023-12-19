@@ -32,7 +32,12 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 // FetchClusters for bcs cluster manager resource fetch clusters
 // 从bcs-cluster-manager获取集群列表
 func (c *Client) FetchClusters(opts ...define.OperationOption) define.Operation {
-
+	/*
+		@params
+		cluster_id | string | 集群ID
+		businessID | string | 业务id
+		engineType | string | 集群类型
+	*/
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "fetch cluster",
 		Method: "GET",

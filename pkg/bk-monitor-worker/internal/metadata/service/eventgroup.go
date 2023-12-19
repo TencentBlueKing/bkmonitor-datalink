@@ -50,7 +50,7 @@ var EventStorageTimeOption = map[string]interface{}{
 
 var EventStorageEventOption = map[string]interface{}{
 	"es_type": "object",
-	"es_format": map[string]interface{}{
+	"es_properties": map[string]interface{}{
 		"content": map[string]interface{}{
 			"type": "text",
 		},
@@ -185,11 +185,11 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 	tx := db.Begin()
 	for _, dsOption := range dsOptions {
 		if err := NewDataSourceOptionSvc(nil).CreateOption(bkDataId, dsOption["name"], dsOption["value"], "system", tx); err != nil {
-			db.Rollback()
+			tx.Rollback()
 			return nil, err
 		}
 	}
-	db.Commit()
+	tx.Commit()
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (EventGroupSvc) PreCheck(label string, bkDataId uint, customGroupName strin
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("biz_id [%v] already has EventGroup [EventGroupName], should change %s and try again", bkDataId, customGroupName)
+		return fmt.Errorf("biz_id [%v] already has EventGroup [%s], should change EventGroupName and try again", bkDataId, customGroupName)
 	}
 	return nil
 }

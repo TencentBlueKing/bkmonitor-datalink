@@ -219,6 +219,10 @@ func (s ResultTableFieldSvc) BulkCreateDefaultFields(tableId string, timeOption 
 
 func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[string]interface{}) error {
 	fields, fieldNameList, optionData, err := s.composeData(tableId, fieldList)
+	if len(fieldList) == 0 {
+		logger.Warnf("create fields for table [%s] skip, got no filed", tableId)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -228,11 +232,11 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 		return err
 	}
 	if len(rtfList) != 0 {
-		var names string
+		var names []string
 		for _, rtf := range rtfList {
-			names = names + "," + rtf.FieldName
+			names = append(names, rtf.FieldName)
 		}
-		return fmt.Errorf("field [%s] is exists under table [%s]", names, tableId)
+		return fmt.Errorf("field [%s] is exists under table [%s]", strings.Join(names, ","), tableId)
 	}
 	tx := db.Begin()
 	for _, field := range fields {

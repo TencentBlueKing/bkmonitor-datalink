@@ -45,7 +45,6 @@ func NewHTTPService() *gin.Engine {
 	return svr
 }
 
-
 // NewProfHttpService new a pprof service
 func NewProfHttpService() *gin.Engine {
 	svr := gin.Default()

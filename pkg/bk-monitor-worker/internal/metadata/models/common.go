@@ -20,7 +20,7 @@ import (
 	"github.com/jinzhu/gorm"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -35,6 +35,26 @@ type OptionBase struct {
 // BeforeCreate 新建前时间字段设置为当前时间
 func (r *OptionBase) BeforeCreate(tx *gorm.DB) error {
 	r.CreateTime = time.Now()
+	return nil
+}
+
+type BaseModel struct {
+	Creator    string    `gorm:"column:creator" json:"creator"`
+	CreateTime time.Time `gorm:"column:create_time" json:"create_time"`
+	Updater    string    `gorm:"column:updater" json:"updater"`
+	UpdateTime time.Time `gorm:"column:update_time" json:"update_time"`
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (b *BaseModel) BeforeCreate(tx *gorm.DB) error {
+	b.CreateTime = time.Now()
+	b.UpdateTime = time.Now()
+	return nil
+}
+
+// BeforeUpdate 保存前最后修改时间字段设置为当前时间
+func (b *BaseModel) BeforeUpdate(tx *gorm.DB) error {
+	b.UpdateTime = time.Now()
 	return nil
 }
 
@@ -88,18 +108,14 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 	}
 }
 
-// PushToRedis 推送数据到 redis
+// PushToRedis 推送数据到 redis, just for influxdb
 func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
-	client, err := dependentredis.GetInstance(ctx)
-	if err != nil {
-		logger.Errorf("get redis client error, %v", err)
-		return
-	}
+	client := redis.GetInstance(ctx)
 
 	redisKey := fmt.Sprintf("%s:%s", InfluxdbKeyPrefix, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
 
-	err = client.HSet(redisKey, field, value)
+	err := client.HSet(redisKey, field, value)
 	if err != nil {
 		logger.Errorf("push redis failed, %s, err: %v", msgSuffix, err)
 	} else {

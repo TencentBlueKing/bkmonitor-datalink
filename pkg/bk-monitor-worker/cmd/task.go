@@ -58,7 +58,7 @@ func startTask(cmd *cobra.Command, args []string) {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go metrics.SubscribeMetric(ctx)
 

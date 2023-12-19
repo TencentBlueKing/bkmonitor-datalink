@@ -20,3 +20,15 @@ type APICommonResp struct {
 	ApiCommonRespMeta
 	Data interface{} `json:"data"`
 }
+
+// APICommonMapResp api通用返回结构体Map
+type APICommonMapResp struct {
+	ApiCommonRespMeta
+	Data map[string]interface{} `json:"data"`
+}
+
+// APICommonListResp api通用返回结构体List
+type APICommonListResp struct {
+	ApiCommonRespMeta
+	Data []interface{} `json:"data"`
+}

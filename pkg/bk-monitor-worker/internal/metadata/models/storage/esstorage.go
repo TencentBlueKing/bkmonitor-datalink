@@ -23,7 +23,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
@@ -38,14 +38,14 @@ import (
 // ESStorage es storage model
 // gen:qs
 type ESStorage struct {
-	TableID           string                       `json:"table_id" gorm:"index;size:128"`
-	DateFormat        string                       `json:"date_format" gorm:"size:64;default:%Y%m%d%H"`
-	SliceSize         uint                         `json:"slice_size" gorm:"default:500"`
-	SliceGap          int                          `json:"slice_gap" gorm:"default:120"`
-	Retention         int                          `json:"retention" gorm:"default:30"`
+	TableID           string                       `json:"table_id" gorm:"primary_key;size:128"`
+	DateFormat        string                       `json:"date_format" gorm:"size:64"`
+	SliceSize         uint                         `json:"slice_size" gorm:"column:slice_size"`
+	SliceGap          int                          `json:"slice_gap" gorm:"column:slice_gap"`
+	Retention         int                          `json:"retention" gorm:"column:retention"`
 	WarmPhaseDays     int                          `json:"warm_phase_days" gorm:"column:warm_phase_days"`
 	WarmPhaseSettings string                       `json:"warm_phase_settings" gorm:"warm_phase_settings"`
-	TimeZone          int8                         `json:"time_zone" gorm:"default:0"`
+	TimeZone          int8                         `json:"time_zone" gorm:"column:time_zone"`
 	IndexSettings     string                       `json:"index_settings" gorm:"index_settings"`
 	MappingSettings   string                       `json:"mapping_settings" gorm:"mapping_settings"`
 	StorageClusterID  uint                         `json:"storage_cluster_id" gorm:"autoUpdateTime"`
@@ -57,8 +57,23 @@ func (ESStorage) TableName() string {
 	return "metadata_esstorage"
 }
 
+// BeforeCreate 默认值
+func (b *ESStorage) BeforeCreate(tx *gorm.DB) error {
+	if b.DateFormat == "" {
+		b.DateFormat = "%Y%m%d%H"
+	}
+	if b.SliceSize == 0 {
+		b.SliceSize = 500
+	}
+	if b.SliceGap == 0 {
+		b.SliceGap = 120
+	}
+
+	return nil
+}
+
 // GetDateFormat 解析python日期格式化字符串返回go类型的格式化字符串
-func (e ESStorage) GetDateFormat() string {
+func (e *ESStorage) GetDateFormat() string {
 	return timex.ParsePyDateFormat(e.DateFormat)
 }
 
@@ -84,7 +99,7 @@ func (e *ESStorage) GetESClient(ctx context.Context) (*elasticsearch.Elasticsear
 }
 
 // ManageESStorage es_storage生命周期管理
-func (e ESStorage) ManageESStorage(ctx context.Context) error {
+func (e *ESStorage) ManageESStorage(ctx context.Context) error {
 	exist, err := e.CheckIndexExist(ctx)
 	if err != nil {
 		logger.Errorf("es_storage [%s] judge index error: [%v]", e.TableID, err)
@@ -95,14 +110,14 @@ func (e ESStorage) ManageESStorage(ctx context.Context) error {
 		logger.Infof("table_id [%s] found no index in es, will create new one", e.TableID)
 		err := e.CreateIndexAndAliases(ctx, e.SliceGap)
 		if err != nil {
-			logger.Infof("table_id [%s] create index and alias error, %v", e.TableID, err)
+			logger.Errorf("table_id [%s] create index and alias error, %v", e.TableID, err)
 			return err
 		}
 	} else {
 		// 否则走更新流程
 		err := e.UpdateIndexAndAliases(ctx, e.SliceGap)
 		if err != nil {
-			logger.Infof("table_id [%s] update index and alias error, %v", e.TableID, err)
+			logger.Errorf("table_id [%s] update index and alias error, %v", e.TableID, err)
 			return err
 		}
 	}
@@ -110,26 +125,26 @@ func (e ESStorage) ManageESStorage(ctx context.Context) error {
 	// 创建快照
 	err = e.CreateSnapshot(ctx)
 	if err != nil {
-		logger.Infof("table_id [%s] create snapshot error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] create snapshot error, %v", e.TableID, err)
 		return err
 	}
 	// 清理过期的index
 	err = e.CleanIndexV2(ctx)
 	if err != nil {
-		logger.Infof("table_id [%s] clean index error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] clean index error, %v", e.TableID, err)
 		return err
 	}
 	//# 清理过期快照
 	err = e.CleanSnapshot(ctx)
 	if err != nil {
-		logger.Infof("table_id [%s] clean snapshot error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] clean snapshot error, %v", e.TableID, err)
 		return err
 	}
 
 	//# 重新分配索引数据
 	err = e.ReallocateIndex(ctx)
 	if err != nil {
-		logger.Infof("table_id [%s] reallocate index error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] reallocate index error, %v", e.TableID, err)
 		return err
 	}
 
@@ -137,7 +152,7 @@ func (e ESStorage) ManageESStorage(ctx context.Context) error {
 }
 
 // CreateIndexAndAliases 创建索引和别名
-func (e ESStorage) CreateIndexAndAliases(ctx context.Context, aheadTime int) error {
+func (e *ESStorage) CreateIndexAndAliases(ctx context.Context, aheadTime int) error {
 	err := e.CreateIndexV2(ctx)
 	if err != nil {
 		return err
@@ -150,7 +165,7 @@ func (e ESStorage) CreateIndexAndAliases(ctx context.Context, aheadTime int) err
 }
 
 // UpdateIndexAndAliases 更新索引和别名
-func (e ESStorage) UpdateIndexAndAliases(ctx context.Context, aheadTime int) error {
+func (e *ESStorage) UpdateIndexAndAliases(ctx context.Context, aheadTime int) error {
 	err := e.UpdateIndexV2(ctx)
 	if err != nil {
 		return err
@@ -164,7 +179,7 @@ func (e ESStorage) UpdateIndexAndAliases(ctx context.Context, aheadTime int) err
 }
 
 // CheckIndexExist 判断索引是否存在
-func (e ESStorage) CheckIndexExist(ctx context.Context) (bool, error) {
+func (e *ESStorage) CheckIndexExist(ctx context.Context) (bool, error) {
 
 	// 优先查询V2类型索引
 	existV2, err := e.isIndexExist(ctx, e.searchFormatV2(), e.IndexReV2())
@@ -188,7 +203,7 @@ func (e ESStorage) CheckIndexExist(ctx context.Context) (bool, error) {
 }
 
 // indexExist 判断索引是否存在
-func (e ESStorage) isIndexExist(ctx context.Context, searchFormat string, matchRe *regexp.Regexp) (bool, error) {
+func (e *ESStorage) isIndexExist(ctx context.Context, searchFormat string, matchRe *regexp.Regexp) (bool, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return false, err
@@ -219,69 +234,69 @@ func (e ESStorage) isIndexExist(ctx context.Context, searchFormat string, matchR
 }
 
 // IndexName 索引名
-func (e ESStorage) IndexName() string {
+func (e *ESStorage) IndexName() string {
 	return strings.ReplaceAll(e.TableID, ".", "_")
 }
 
 // searchFormatV1 索引查询V1
-func (e ESStorage) searchFormatV1() string {
+func (e *ESStorage) searchFormatV1() string {
 	return fmt.Sprintf("%s_*", e.IndexName())
 }
 
 // searchFormatV2 索引查询V2
-func (e ESStorage) searchFormatV2() string {
+func (e *ESStorage) searchFormatV2() string {
 	return fmt.Sprintf("v2_%s_*", e.IndexName())
 }
 
 // IndexReV1 获取这个存储的V1正则匹配
-func (e ESStorage) IndexReV1() *regexp.Regexp {
+func (e *ESStorage) IndexReV1() *regexp.Regexp {
 	pattern := fmt.Sprintf(`%s_(?P<datetime>\d+)_(?P<index>\d+)`, e.IndexName())
 	return regexp.MustCompile(pattern)
 }
 
 // IndexReV2 获取这个存储的V2正则匹配
-func (e ESStorage) IndexReV2() *regexp.Regexp {
+func (e *ESStorage) IndexReV2() *regexp.Regexp {
 	pattern := fmt.Sprintf(`v2_%s_(?P<datetime>\d+)_(?P<index>\d+)$`, e.IndexName())
 	return regexp.MustCompile(pattern)
 }
 
 // SnapshotRe 获取这个存储快照的正则匹配
-func (e ESStorage) SnapshotRe() *regexp.Regexp {
+func (e *ESStorage) SnapshotRe() *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`^%s_snapshot_(?P<datetime>\d+)$`, e.IndexName()))
 }
 
 // WriteAliasRe 获取这个存储的写入别名正则匹配
-func (e ESStorage) WriteAliasRe() *regexp.Regexp {
+func (e *ESStorage) WriteAliasRe() *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`write_(?P<datetime>\d+)_%s`, e.IndexName()))
 }
 
 // ReadAliasRe 获取这个存储的读别名正则匹配
-func (e ESStorage) ReadAliasRe() *regexp.Regexp {
+func (e *ESStorage) ReadAliasRe() *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`%s_(?P<datetime>\d+)_read`, e.IndexName()))
 }
 
 // OldWriteAliasRe 获取这个存储的旧版写入别名正则匹配
-func (e ESStorage) OldWriteAliasRe() *regexp.Regexp {
+func (e *ESStorage) OldWriteAliasRe() *regexp.Regexp {
 	return regexp.MustCompile(fmt.Sprintf(`%s_(?P<datetime>\d+)_write`, e.IndexName()))
 }
 
 // SearchSnapshot 查询snapshot的通配符字符串
-func (e ESStorage) SearchSnapshot() string {
+func (e *ESStorage) SearchSnapshot() string {
 	return fmt.Sprintf("%s_snapshot_*", e.IndexName())
 }
 
 // SnapshotDateFormat 快照日期格式
-func (e ESStorage) SnapshotDateFormat() string {
+func (e *ESStorage) SnapshotDateFormat() string {
 	return "20060102"
 }
 
 // RestoreIndexPrefix restore索引前缀
-func (e ESStorage) RestoreIndexPrefix() string {
+func (e *ESStorage) RestoreIndexPrefix() string {
 	return "restore_"
 }
 
 // MakeIndexName 构造index名
-func (e ESStorage) MakeIndexName(zoneTime *time.Time, index uint, version string) string {
+func (e *ESStorage) MakeIndexName(zoneTime *time.Time, index uint, version string) string {
 	dateStr := zoneTime.Format(e.GetDateFormat())
 	if version == "v2" {
 		return fmt.Sprintf("v2_%s_%s_%v", e.IndexName(), dateStr, index)
@@ -290,18 +305,18 @@ func (e ESStorage) MakeIndexName(zoneTime *time.Time, index uint, version string
 }
 
 // MakeSnapshotName 构造snapshot名
-func (e ESStorage) MakeSnapshotName(now time.Time, indexName string) string {
+func (e *ESStorage) MakeSnapshotName(now time.Time, indexName string) string {
 	return fmt.Sprintf("%s_snapshot_%s", indexName, now.Format(e.SnapshotDateFormat()))
 }
 
 // Now 返回调整时区后的time对象
-func (e ESStorage) Now() time.Time {
+func (e *ESStorage) Now() time.Time {
 	utcTime := time.Now().UTC()
 	return utcTime.Add(time.Duration(e.TimeZone) * time.Hour)
 }
 
 // CreateIndexV2 创建索引
-func (e ESStorage) CreateIndexV2(ctx context.Context) error {
+func (e *ESStorage) CreateIndexV2(ctx context.Context) error {
 	enabled, err := e.IsIndexEnable()
 	if err != nil {
 		return err
@@ -318,13 +333,13 @@ func (e ESStorage) CreateIndexV2(ctx context.Context) error {
 	indexName := e.MakeIndexName(&nowTime, 0, "v2")
 	body, err := e.IndexBody()
 	if err != nil {
-		logger.Infof("table_id [%s] make index body error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] make index body error, %v", e.TableID, err)
 		return err
 	}
 	logger.Infof("table_id [%s] create index body [%s]", e.TableID, string(body))
 	resp, err := client.CreateIndex(ctx, indexName, bytes.NewReader(body))
 	if err != nil {
-		logger.Infof("table_id [%s] create index error, %v", e.TableID, err)
+		logger.Errorf("table_id [%s] create index error, %v", e.TableID, err)
 		return err
 	}
 	defer resp.Close()
@@ -334,7 +349,7 @@ func (e ESStorage) CreateIndexV2(ctx context.Context) error {
 
 // UpdateIndexV2 判断index是否需要分裂，并提前建立index别名的功能
 // 此处仍然保留每个小时创建新的索引，主要是为了在发生异常的时候，可以降低影响的索引范围（最多一个小时）
-func (e ESStorage) UpdateIndexV2(ctx context.Context) error {
+func (e *ESStorage) UpdateIndexV2(ctx context.Context) error {
 	enabled, err := e.IsIndexEnable()
 	if err != nil {
 		return err
@@ -384,7 +399,7 @@ func (e ESStorage) UpdateIndexV2(ctx context.Context) error {
 	shouldCreate := false
 	if uint(indexSizeInByte/1024/1024/1024) > e.SliceSize {
 		logger.Infof(
-			"table_id [%s] index [%s] current_size [%s] is larger than slice size [%s], create new index slice",
+			"table_id [%s] index [%s] current_size [%v] is larger than slice size [%v], create new index slice",
 			e.TableID, lastIndexName, indexSizeInByte, e.SliceSize,
 		)
 		shouldCreate = true
@@ -452,7 +467,7 @@ func (e ESStorage) UpdateIndexV2(ctx context.Context) error {
 			)
 		} else {
 			newIndex = indexInfo.Index + 1
-			logger.Infof("table_id [%s] index->[%s] has data, so new index will create", e.TableID, newIndex)
+			logger.Infof("table_id [%s] index->[%v] has data, so new index will create", e.TableID, newIndex)
 		}
 	}
 	newIndexName := e.MakeIndexName(&nowTimeObj, newIndex, "v2")
@@ -473,7 +488,7 @@ func (e ESStorage) UpdateIndexV2(ctx context.Context) error {
 }
 
 // CreateOrUpdateAliases 更新alias，如果有已存在的alias，则将其指向最新的index，并根据ahead_time前向预留一定的alias
-func (e ESStorage) CreateOrUpdateAliases(ctx context.Context, aheadTime int) error {
+func (e *ESStorage) CreateOrUpdateAliases(ctx context.Context, aheadTime int) error {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return err
@@ -565,7 +580,7 @@ func (e ESStorage) CreateOrUpdateAliases(ctx context.Context, aheadTime int) err
 }
 
 // CurrentIndexInfo  返回当前使用的最新index相关的信息
-func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, error) {
+func (e *ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, error) {
 	indexStat, err := e.GetIndexStat(ctx, e.searchFormatV2())
 	if err != nil {
 		return nil, err
@@ -621,7 +636,7 @@ func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, err
 		if currentTime.After(*maxDatetimeObject) {
 			maxDatetimeObject = currentTime
 			maxIndex = currentIndex
-			logger.Debugf("index [%s] current time [%s] is newer than max time [%s] will use it and reset count [%s]",
+			logger.Debugf("index [%s] current time [%s] is newer than max time [%s] will use it and reset count [%v]",
 				statIndexName,
 				currentDatetimeStr,
 				maxDatetimeObject.Format(e.GetDateFormat()),
@@ -633,9 +648,12 @@ func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, err
 		if currentTime.Equal(*maxDatetimeObject) && currentIndex > maxIndex {
 			maxIndex = currentIndex
 			logger.Debugf(
-				"index [%s] current time [%s] found newer index [%s] will use it", statIndexName, maxDatetimeObject.Format(e.GetDateFormat()), currentIndex,
+				"index [%s] current time [%s] found newer index [%v] will use it", statIndexName, maxDatetimeObject.Format(e.GetDateFormat()), currentIndex,
 			)
 		}
+	}
+	if maxDatetimeObject == nil {
+		return nil, errors.Errorf("index [%s] can not find current index datetime", e.IndexName())
 	}
 	index := e.MakeIndexName(maxDatetimeObject, uint(maxIndex), indexVersion)
 	size := indexStat.Indices[index].Primaries.Store.SizeInBytes
@@ -650,7 +668,7 @@ func (e ESStorage) CurrentIndexInfo(ctx context.Context) (*CurrentIndexInfo, err
 }
 
 // GetIndexStat 从es中获取索引当前状态
-func (e ESStorage) GetIndexStat(ctx context.Context, index string) (*elasticsearch.IndexStat, error) {
+func (e *ESStorage) GetIndexStat(ctx context.Context, index string) (*elasticsearch.IndexStat, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return nil, err
@@ -673,7 +691,7 @@ func (e ESStorage) GetIndexStat(ctx context.Context, index string) (*elasticsear
 }
 
 // IsIndexEnable 判断索引是否启用中
-func (e ESStorage) IsIndexEnable() (bool, error) {
+func (e *ESStorage) IsIndexEnable() (bool, error) {
 	dbSession := mysql.GetDBSession()
 	count, err := resulttable.NewResultTableQuerySet(dbSession.DB).TableIdEq(e.TableID).IsEnableEq(true).IsDeletedEq(false).Count()
 	if err != nil {
@@ -702,7 +720,7 @@ func (e ESStorage) IsIndexEnable() (bool, error) {
 }
 
 // IndexBody ES创建索引的配置内容
-func (e ESStorage) IndexBody() ([]byte, error) {
+func (e *ESStorage) IndexBody() ([]byte, error) {
 	// 构造index配置
 	configJson := fmt.Sprintf(`{"settings": %s, "mappings": %s}`, e.IndexSettings, e.MappingSettings)
 	var indexConfig IndexConfig
@@ -740,7 +758,7 @@ func (e ESStorage) GetEsVersion() string {
 }
 
 // MakeIndexConfigMappingsProperties 生成索引的mappings - properties
-func (e ESStorage) MakeIndexConfigMappingsProperties() (map[string]map[string]interface{}, error) {
+func (e *ESStorage) MakeIndexConfigMappingsProperties() (map[string]map[string]interface{}, error) {
 	var properties = make(map[string]map[string]interface{})
 
 	dbSession := mysql.GetDBSession()
@@ -784,7 +802,7 @@ func (e ESStorage) MakeIndexConfigMappingsProperties() (map[string]map[string]in
 }
 
 // IsMappingSame 判断es中index的配置是否和数据库的一致
-func (e ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, error) {
+func (e *ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return false, err
@@ -798,7 +816,7 @@ func (e ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, e
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		if errors.Is(err, elasticsearch.NotFoundErr) {
-			logger.Infof("index_name [{}] is not exists, will think the mapping is not same.", indexName)
+			logger.Infof("index_name [%s] is not exists, will think the mapping is not same.", indexName)
 			return false, nil
 		}
 		return false, err
@@ -811,7 +829,7 @@ func (e ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, e
 	}
 	config, ok := mappingConfig[indexName]
 	if !ok {
-		logger.Infof("index_name [{}] is not exists, will think the mapping is not same.", indexName)
+		logger.Infof("index_name [%s] is not exists, will think the mapping is not same.", indexName)
 		return false, nil
 	}
 	var currentPropertiesInterface interface{}
@@ -822,7 +840,7 @@ func (e ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, e
 		currentPropertiesInterface = config.Mappings["properties"]
 	}
 	if currentPropertiesInterface == nil {
-		logger.Infof("index_name [{}] is not exists, will think the mapping is not same.", indexName)
+		logger.Infof("index_name [%s] is not exists, will think the mapping is not same.", indexName)
 		return false, nil
 	}
 	currentProperties := currentPropertiesInterface.(map[string]interface{})
@@ -897,7 +915,7 @@ func (e ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, e
 }
 
 // CreateSnapshot 创建snapshot
-func (e ESStorage) CreateSnapshot(ctx context.Context) error {
+func (e *ESStorage) CreateSnapshot(ctx context.Context) error {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return err
@@ -972,7 +990,7 @@ func (e ESStorage) CreateSnapshot(ctx context.Context) error {
 }
 
 // SnapshotObj 获取esSnapshot对象
-func (e ESStorage) SnapshotObj() (*EsSnapshot, error) {
+func (e *ESStorage) SnapshotObj() (*EsSnapshot, error) {
 	dbSession := mysql.GetDBSession()
 	var esSnapshot EsSnapshot
 	err := NewEsSnapshotQuerySet(dbSession.DB).TableIDEq(e.TableID).One(&esSnapshot)
@@ -984,7 +1002,7 @@ func (e ESStorage) SnapshotObj() (*EsSnapshot, error) {
 }
 
 // CanSnapshot 判断能否进行快照操作
-func (e ESStorage) CanSnapshot() (bool, error) {
+func (e *ESStorage) CanSnapshot() (bool, error) {
 	isEnabled, err := e.IsIndexEnable()
 	if err != nil {
 		return false, err
@@ -1004,7 +1022,7 @@ func (e ESStorage) CanSnapshot() (bool, error) {
 // - 无快照的结果表 直接删除
 // - 当天有索引需要删除的时候 需要判断当天快照是否创建
 // - 当天快照完成 删除索引
-func (e ESStorage) CanDelete(ctx context.Context) (bool, error) {
+func (e *ESStorage) CanDelete(ctx context.Context) (bool, error) {
 	has, err := e.HasSnapshotConf()
 	if err != nil {
 		return false, err
@@ -1044,7 +1062,7 @@ func (e ESStorage) CanDelete(ctx context.Context) (bool, error) {
 }
 
 // CurrentSnapshotInfo 获取当前最新的快照信息
-func (e ESStorage) CurrentSnapshotInfo(ctx context.Context) (*SnapshotInfo, error) {
+func (e *ESStorage) CurrentSnapshotInfo(ctx context.Context) (*SnapshotInfo, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return nil, err
@@ -1105,7 +1123,7 @@ func (e ESStorage) CurrentSnapshotInfo(ctx context.Context) (*SnapshotInfo, erro
 }
 
 // ExpiredIndex 返回过期的index列表
-func (e ESStorage) ExpiredIndex(ctx context.Context) ([]string, error) {
+func (e *ESStorage) ExpiredIndex(ctx context.Context) ([]string, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return nil, err
@@ -1159,7 +1177,7 @@ func (e ESStorage) ExpiredIndex(ctx context.Context) ([]string, error) {
 }
 
 // GroupExpiredAlias 将每个索引的别名进行分组，分为已过期和未过期
-func (e ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays int) map[string]map[string][]string {
+func (e *ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays int) map[string]map[string][]string {
 	logger.Infof("table_id [%s] filtering expired alias before %v days.", e.TableID, expiredDays+models.ESAliasExpiredDelayDays)
 	// 按照过期时间进行过期可能导致最早一天的数据查询缺失，让ES别名延迟1天过期，保证数据查询完整
 	expiredDatetimePoint := e.Now().Add(-time.Duration(expiredDays+models.ESAliasExpiredDelayDays) * time.Hour * 24)
@@ -1176,7 +1194,7 @@ func (e ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays 
 			datetimeStr := e.GetAliasDatetimeStr(aliasName)
 			if datetimeStr == "" {
 				// 匹配不上时间字符串的情况，一般是因为用户自行创建了别名
-				if config.StorageEsUpdateTaskRetainInvalidAlias {
+				if cfg.StorageEsUpdateTaskRetainInvalidAlias {
 					// 保留不合法的别名，将该别名视为未过期
 					notExpiredAlias = append(notExpiredAlias, aliasName)
 					logger.Infof(
@@ -1202,7 +1220,7 @@ func (e ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays 
 			// 检查当前别名是否过期
 			logger.Debugf("index [%s] alias [%s], datetime [%s], expired datetime [%s]", indexName, aliasName, indexDatetimeObj, expiredDatetimePoint)
 			if indexDatetimeObj.After(expiredDatetimePoint) {
-				logger.Infof(
+				logger.Debugf(
 					"table_id [%s] got alias [%s] for index [%s] is not expired.", e.TableID, aliasName, indexName,
 				)
 				notExpiredAlias = append(notExpiredAlias, aliasName)
@@ -1217,7 +1235,7 @@ func (e ESStorage) GroupExpiredAlias(alias elasticsearch.AliasResp, expiredDays 
 }
 
 // GetAliasDatetimeStr 获取别名中的时间字符串
-func (e ESStorage) GetAliasDatetimeStr(name string) string {
+func (e *ESStorage) GetAliasDatetimeStr(name string) string {
 	// 判断是否是需要的格式 write_xxx
 	aliasWriteRe := e.WriteAliasRe()
 	// xxx_read
@@ -1242,7 +1260,7 @@ func (e ESStorage) GetAliasDatetimeStr(name string) string {
 }
 
 // CreateSnapshotIndice 构造EsSnapshotIndice对象
-func (e ESStorage) CreateSnapshotIndice(ctx context.Context, indexName string, snapshotName string) (*EsSnapshotIndice, error) {
+func (e *ESStorage) CreateSnapshotIndice(ctx context.Context, indexName string, snapshotName string) (*EsSnapshotIndice, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return nil, err
@@ -1305,7 +1323,7 @@ func (e ESStorage) CreateSnapshotIndice(ctx context.Context, indexName string, s
 }
 
 // GetLastTimeContent 获取索引中最新/旧记录的时间
-func (e ESStorage) GetLastTimeContent(ctx context.Context, index string, orderAsc bool) (*time.Time, error) {
+func (e *ESStorage) GetLastTimeContent(ctx context.Context, index string, orderAsc bool) (*time.Time, error) {
 	client, err := e.GetESClient(ctx)
 	if err != nil {
 		return nil, err
@@ -1340,7 +1358,7 @@ func (e ESStorage) GetLastTimeContent(ctx context.Context, index string, orderAs
 }
 
 // CleanIndexV2 清理过期的写入别名及index的操作，如果发现某个index已经没有写入别名，那么将会清理该index
-func (e ESStorage) CleanIndexV2(ctx context.Context) error {
+func (e *ESStorage) CleanIndexV2(ctx context.Context) error {
 	can, err := e.CanDelete(ctx)
 	if err != nil {
 		return err
@@ -1378,15 +1396,15 @@ func (e ESStorage) CleanIndexV2(ctx context.Context) error {
 			// 如果存在已过期的别名，则将别名删除
 			if len(expiredAlias) != 0 {
 				logger.Infof(
-					"table_id [%s] delete_alias_list [%s] is not empty will delete the alias.", e.TableID, alias["expired_alias"],
+					"table_id [%s] index [%s] delete_alias_list [%s] is not empty will delete the alias.", e.TableID, indexName, alias["expired_alias"],
 				)
 				resp, err := client.DeleteAlias(ctx, []string{indexName}, expiredAlias)
 				if err != nil {
-					logger.Errorf("table_id [%s] delete_alias_list [%s] error: %s", e.TableID, alias["expired_alias"], err)
+					logger.Errorf("table_id [%s] index [%s] delete_alias_list [%s] error: %s", e.TableID, indexName, alias["expired_alias"], err)
 					continue
 				}
 				resp.Close()
-				logger.Warnf("table_id [%s] delete_alias_list [%s] is deleted.", e.TableID, alias["expired_alias"])
+				logger.Warnf("table_id [%s] index [%s] delete_alias_list [%s] is deleted.", e.TableID, indexName, alias["expired_alias"])
 			}
 			continue
 		}
@@ -1406,7 +1424,7 @@ func (e ESStorage) CleanIndexV2(ctx context.Context) error {
 }
 
 // HasSnapshotConf 判断是否存在快照配置
-func (e ESStorage) HasSnapshotConf() (bool, error) {
+func (e *ESStorage) HasSnapshotConf() (bool, error) {
 	dbSession := mysql.GetDBSession()
 	count, err := NewEsSnapshotQuerySet(dbSession.DB).TableIDEq(e.TableID).Count()
 	if err != nil {
@@ -1416,7 +1434,7 @@ func (e ESStorage) HasSnapshotConf() (bool, error) {
 }
 
 // CleanSnapshot 清理快照
-func (e ESStorage) CleanSnapshot(ctx context.Context) error {
+func (e *ESStorage) CleanSnapshot(ctx context.Context) error {
 	can, err := e.CanDeleteSnapshot()
 	if err != nil {
 		return err
@@ -1464,11 +1482,14 @@ func (e ESStorage) CleanSnapshot(ctx context.Context) error {
 }
 
 // CanDeleteSnapshot 判断是否可以删除快照
-func (e ESStorage) CanDeleteSnapshot() (bool, error) {
+func (e *ESStorage) CanDeleteSnapshot() (bool, error) {
 	dbSession := mysql.GetDBSession()
 	var esSnapshot EsSnapshot
 	err := NewEsSnapshotQuerySet(dbSession.DB).TableIDEq(e.TableID).One(&esSnapshot)
 	if err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return false, nil
+		}
 		return false, err
 	}
 	if esSnapshot.SnapshotDays != 0 {
@@ -1479,7 +1500,7 @@ func (e ESStorage) CanDeleteSnapshot() (bool, error) {
 }
 
 // GetExpiredSnapshot 获取过期的快照列表
-func (e ESStorage) GetExpiredSnapshot(ctx context.Context, expiredDays int, snapshotRepositoryName string) ([]elasticsearch.Snapshot, error) {
+func (e *ESStorage) GetExpiredSnapshot(ctx context.Context, expiredDays int, snapshotRepositoryName string) ([]elasticsearch.Snapshot, error) {
 	logger.Infof("table_id [%s] filter expired snapshot before %v days", e.TableID, expiredDays)
 	expiredDatetimePoint := e.Now().Add(-time.Duration(expiredDays) * time.Hour * 24)
 	client, err := e.GetESClient(ctx)
@@ -1519,7 +1540,7 @@ func (e ESStorage) GetExpiredSnapshot(ctx context.Context, expiredDays int, snap
 }
 
 // ReallocateIndex 重新分配索引所在的节点
-func (e ESStorage) ReallocateIndex(ctx context.Context) error {
+func (e *ESStorage) ReallocateIndex(ctx context.Context) error {
 	if e.WarmPhaseDays <= 0 {
 		logger.Infof("table_id [%s] warm_phase_days is not set, skip.", e.TableID)
 		return nil

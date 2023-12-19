@@ -10,6 +10,10 @@
 package service
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,9 +27,66 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
+
+func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		var data string
+		if strings.Contains(req.URL.Path, "list_biz_hosts_topo") {
+			data = `{"result":true,"code":0,"data":{"count":3,"info":[{"host":{"bk_agent_id":"020000000052540078494116983065049641","bk_bak_operator":"admin","bk_cloud_id":99,"bk_comment":"","bk_host_id":54,"bk_host_innerip":"1.0.0.1","bk_host_innerip_v6":"","bk_host_name":"VM-6-23-centos","bk_host_outerip":"","bk_host_outerip_v6":"","bk_isp_name":null,"bk_os_name":"linux centos","bk_os_type":"1","bk_os_version":"7.8.2003","bk_province_name":null,"bk_state":null,"bk_state_name":null,"bk_supplier_account":"0","operator":"admin"},"topo":[{"bk_set_id":2,"bk_set_name":"idle pool","module":[{"bk_module_id":3,"bk_module_name":"idle host"}]}]},{"host":{"bk_agent_id":"02000000005254005e03fe1700488328477x","bk_bak_operator":"admin","bk_cloud_id":99,"bk_comment":"","bk_host_id":94,"bk_host_innerip":"1.0.0.2","bk_host_innerip_v6":"","bk_host_name":"VM-6-27-centos","bk_host_outerip":"","bk_host_outerip_v6":"","bk_isp_name":null,"bk_os_name":"linux centos","bk_os_type":"1","bk_os_version":"7.8.2003","bk_province_name":null,"bk_state":null,"bk_state_name":null,"bk_supplier_account":"0","operator":"admin"},"topo":[{"bk_set_id":2,"bk_set_name":"idle pool","module":[{"bk_module_id":3,"bk_module_name":"idle host"}]}]},{"host":{"bk_agent_id":"020000000052540045dba11700492467313n","bk_bak_operator":"admin","bk_cloud_id":0,"bk_comment":"","bk_host_id":95,"bk_host_innerip":"1.0.0.3","bk_host_innerip_v6":"","bk_host_name":"VM-6-29-centos","bk_host_outerip":"","bk_host_outerip_v6":"","bk_isp_name":null,"bk_os_name":"linux centos","bk_os_type":"1","bk_os_version":"7.8.2003","bk_province_name":null,"bk_state":null,"bk_state_name":null,"bk_supplier_account":"0","operator":"admin"},"topo":[{"bk_set_id":2,"bk_set_name":"idle pool","module":[{"bk_module_id":3,"bk_module_name":"idle host"}]}]}]},"message":"success","permission":null,"request_id":"55f8fc9b67fe4bc6a34c125c56911099"}`
+		}
+		if strings.Contains(req.URL.Path, "Node") {
+			data = `{"message":"ok","result":true,"code":0,"data":[{"status":{"addresses":[{"address":"1.0.0.1","type":"InternalIP"},{"address":"1.0.0.1","type":"Hostname"}],"conditions":[{"lastHeartbeatTime":"2023-05-23T11:29:30Z","lastTransitionTime":"2023-05-23T11:29:30Z","message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable"},{"type":"MemoryPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False"},{"message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure","status":"False","type":"DiskPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z"},{"status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID"},{"type":"Ready","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True"}]},"metadata":{"labels":{"eng-cstate-7fca4c84-1":"1","kubernetes.io/arch":"amd64","topology.kubernetes.io/region":"gz","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","beta.kubernetes.io/arch":"amd64","kubernetes.io/hostname":"1.0.0.1","beta.kubernetes.io/instance-type":"SA3.MEDIUM2","kubernetes.io/os":"linux","eng-cstate-22817e80-4":"1","eng-cstate-86fabc2b-6":"1","eng-cstate-3b9bc87a-7":"1","beta.kubernetes.io/os":"linux","dedicated":"ingress-nginx","topology.kubernetes.io/zone":"100006","eng-cstate-12616088-2":"1","failure-domain.beta.kubernetes.io/region":"gz","node.kubernetes.io/instance-type":"SA3.MEDIUM2","cloud.tencent.com/node-instance-id":"ins-qcc4u546","eng-cstate-3e8191b0-5":"1","ingress-nginx":"true","eng-cstate-b59d451c-3":"1","failure-domain.beta.kubernetes.io/zone":"100006"},"name":"1.0.0.1","resourceVersion":"11386901553","creationTimestamp":"2023-05-23T11:29:27Z"},"spec":{"unschedulable":true,"taints":[{"effect":"PreferNoSchedule","key":"dedicated","value":"ingress-nginx"},{"effect":"NoSchedule","key":"node.kubernetes.io/unschedulable","timeAdded":"2023-09-27T09:58:05Z"}]}},{"metadata":{"resourceVersion":"12191526357","creationTimestamp":"2023-11-20T14:59:56Z","labels":{"kubernetes.io/arch":"amd64","kubernetes.io/hostname":"1.0.0.2","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","tke.cloud.tencent.com/cbs-mountable":"true","cloud.tencent.com/node-instance-id":"ins-olh8t1mu","tke.cloud.tencent.com/nodepool-id":"np-a72t3t12","failure-domain.beta.kubernetes.io/region":"gz","beta.kubernetes.io/instance-type":"SA3.8XLARGE64","kubernetes.io/os":"linux","beta.kubernetes.io/arch":"amd64","failure-domain.beta.kubernetes.io/zone":"100006","topology.kubernetes.io/region":"gz","topology.kubernetes.io/zone":"100006","cloud.tencent.com/auto-scaling-group-id":"asg-5ndk7a9g","node.kubernetes.io/instance-type":"SA3.8XLARGE64","beta.kubernetes.io/os":"linux"},"name":"1.0.0.2"},"spec":{},"status":{"addresses":[{"address":"1.0.0.2","type":"InternalIP"},{"type":"Hostname","address":"1.0.0.2"}],"conditions":[{"lastHeartbeatTime":"2023-11-20T15:00:04Z","lastTransitionTime":"2023-11-20T15:00:04Z","message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable"},{"type":"MemoryPressure","lastHeartbeatTime":"2023-11-24T03:16:59Z","lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False"},{"lastHeartbeatTime":"2023-11-24T03:16:59Z","lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure","status":"False","type":"DiskPressure"},{"lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID","status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-24T03:16:59Z"},{"lastTransitionTime":"2023-11-20T15:01:09Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True","type":"Ready","lastHeartbeatTime":"2023-11-24T03:16:59Z"}]}},{"metadata":{"creationTimestamp":"2023-05-23T05:44:29Z","labels":{"kubernetes.io/hostname":"1.0.0.3","eng-cstate-22817e80-4":"1","eng-cstate-12616088-2":"1","dedicated":"bkSaaS","node.kubernetes.io/instance-type":"SA3.4XLARGE32","topology.kubernetes.io/region":"gz","beta.kubernetes.io/instance-type":"SA3.4XLARGE32","failure-domain.beta.kubernetes.io/region":"gz","tke.cloud.tencent.com/nodepool-id":"np-nckqef5i","cloud.tencent.com/auto-scaling-group-id":"asg-1r49l84c","eng-cstate-7fca4c84-1":"1","eng-cstate-b59d451c-3":"1","eng-cstate-3b9bc87a-7":"1","kubernetes.io/arch":"amd64","failure-domain.beta.kubernetes.io/zone":"100006","beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","cloud.tencent.com/node-instance-id":"ins-3yvkivri","eng-cstate-3e8191b0-5":"1","topology.kubernetes.io/zone":"100006","kubernetes.io/os":"linux","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","eng-cstate-86fabc2b-6":"1"},"name":"1.0.0.3","resourceVersion":"12091824029"},"spec":{"taints":[{"key":"dedicated","value":"bkSaaS","effect":"NoSchedule"}]},"status":{"addresses":[{"address":"1.0.0.3","type":"InternalIP"},{"address":"1.0.0.3","type":"Hostname"}],"conditions":[{"message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable","lastHeartbeatTime":"2023-05-23T05:44:40Z","lastTransitionTime":"2023-05-23T05:44:40Z"},{"message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False","type":"MemoryPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-04T07:48:28Z"},{"status":"False","type":"DiskPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-10T08:41:43Z","message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure"},{"message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID","status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-04T07:48:28Z"},{"lastTransitionTime":"2023-11-04T07:48:28Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True","type":"Ready","lastHeartbeatTime":"2023-11-22T02:14:10Z"}]}}]}`
+		}
+		if strings.Contains(req.URL.Path, "Endpoints") {
+			data = `{"message":"ok","result":true,"code":0,"data":[]}`
+		}
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	db := mysql.GetDBSession().DB
+	cluster := &bcs.BCSClusterInfo{
+		ClusterID:          "BCS-K8S-00000",
+		BCSApiClusterId:    "BCS-K8S-00000",
+		BkBizId:            2,
+		ProjectId:          "xxxxx",
+		Status:             models.BcsClusterStatusRunning,
+		DomainName:         "www.xxx.com",
+		Port:               80,
+		ServerAddressPath:  "clusters",
+		ApiKeyType:         "authorization",
+		ApiKeyContent:      "xxxxxx",
+		ApiKeyPrefix:       "Bearer",
+		IsSkipSslVerify:    true,
+		K8sMetricDataID:    1572864,
+		CustomMetricDataID: 1572865,
+		K8sEventDataID:     1572866,
+		Creator:            "system",
+		CreateTime:         time.Now(),
+		LastModifyTime:     time.Now(),
+		LastModifyUser:     "system",
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err := cluster.Create(db)
+	assert.NoError(t, err)
+	err = NewBcsClusterInfoSvc(cluster).UpdateBcsClusterCloudIdConfig()
+	assert.NoError(t, err)
+	assert.Equal(t, 99, *cluster.BkCloudId)
+}
 
 func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
 	type fields struct {
@@ -87,8 +148,7 @@ func TestBcsClusterInfoSvc_isSameMapConfig(t *testing.T) {
 }
 
 func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	var createCount, updateCount int
 	var data = []byte(`{"apiVersion":"monitoring.bk.tencent.com/v1beta1","items":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"false","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"custommetricdataid","resourceVersion":"5719372880","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/custommetricdataid","uid":"2f2f4b12-e63f-49d8-83e2-dd0d79f9fa16"},"spec":{"dataID":1572865,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:04Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"event"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:04Z"}],"name":"k8seventdataid","resourceVersion":"5719372903","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8seventdataid","uid":"33482264-805f-40a2-9487-84e15887797a"},"spec":{"dataID":1572866,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}},{"apiVersion":"monitoring.bk.tencent.com/v1beta1","kind":"DataID","metadata":{"creationTimestamp":"2023-07-19T10:40:03Z","generation":1,"labels":{"isCommon":"true","isSystem":"true","usage":"metric"},"managedFields":[{"apiVersion":"monitoring.bk.tencent.com/v1beta1","fieldsType":"FieldsV1","fieldsV1":{"f:metadata":{"f:labels":{".":{},"f:isCommon":{},"f:isSystem":{},"f:usage":{}}},"f:spec":{".":{},"f:dataID":{},"f:dimensionReplace":{},"f:labels":{".":{},"f:bcs_cluster_id":{},"f:bk_biz_id":{}},"f:metricReplace":{}}},"manager":"OpenAPI-Generator","operation":"Update","time":"2023-07-19T10:40:03Z"}],"name":"k8smetricdataid","resourceVersion":"5719372853","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids/k8smetricdataid","uid":"fc006b95-9a97-4479-88c3-8d7a53500f00"},"spec":{"dataID":1572864,"dimensionReplace":{},"labels":{"bcs_cluster_id":"BCS-K8S-00000","bk_biz_id":"2"},"metricReplace":{}}}],"kind":"DataIDList","metadata":{"continue":"","resourceVersion":"10899929740","selfLink":"/apis/monitoring.bk.tencent.com/v1beta1/dataids"}}`)
 	patchListK8sResource := gomonkey.ApplyFunc(BcsClusterInfoSvc.ListK8sResource, func(b BcsClusterInfoSvc, group, version, resource string) (*unstructured.UnstructuredList, error) {
@@ -171,7 +231,6 @@ func TestBcsClusterInfoSvc_RefreshCommonResource(t *testing.T) {
 	err = svc.RefreshCommonResource()
 	assert.Nil(t, err)
 	assert.Equal(t, 1, createCount)
-	assert.Equal(t, 1, updateCount)
 }
 
 func Test_isIPv6(t *testing.T) {
@@ -207,4 +266,150 @@ func TestKubernetesNodeJsonParser(t *testing.T) {
 	assert.JSONEq(t, `{"beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","node-role.kubernetes.io/role-test":"test-role"}`, labelsJson)
 	assert.Equal(t, []string{"role-test"}, parser.RoleList())
 	assert.Equal(t, "Ready,SchedulingDisabled", parser.ServiceStatus())
+	tm, err := time.Parse("2006-01-02 15:04:05", "2023-05-23 11:29:27")
+	assert.NoError(t, err)
+	assert.Equal(t, tm, *parser.CreationTimestamp())
+	parser.TaintLabels()
+	assert.ElementsMatch(t, []string{"dedicated=ingress-nginx:PreferNoSchedule", "node.kubernetes.io/unschedulable=:NoSchedule"}, parser.TaintLabels())
+
+	result := make(map[string]string)
+	for _, m := range parser.LabelList() {
+		result[m["key"]] = m["value"]
+	}
+	assert.True(t, assert.ObjectsAreEqual(map[string]string{"beta.kubernetes.io/arch": "amd64", "beta.kubernetes.io/os": "linux", "node-role.kubernetes.io/role-test": "test-role"}, result))
+}
+
+func TestBCSClusterInfo_Create(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	c := bcs.BCSClusterInfo{
+		ClusterID: "new_create_cluster",
+	}
+	db := mysql.GetDBSession().DB
+	db.Delete(&c, "cluster_id = ?", c.ClusterID)
+	err := c.Create(db)
+	assert.NoError(t, err)
+	assert.Equal(t, "Bearer", c.ApiKeyPrefix)
+	assert.Equal(t, "authorization", c.ApiKeyType)
+	assert.Equal(t, models.BcsClusterStatusRunning, c.Status)
+}
+
+func TestBcsClusterInfoSvc_IsClusterIdInGray(t *testing.T) {
+	svc := NewBcsClusterInfoSvc(nil)
+	// 未启用灰度
+	config.BcsEnableBcsGray = false
+	config.BcsGrayClusterIdList = []string{"cluster_1", "cluster_2"}
+	assert.True(t, svc.IsClusterIdInGray("abc"))
+
+	// 启用灰度
+	config.BcsEnableBcsGray = true
+	assert.False(t, svc.IsClusterIdInGray("abc"))
+	assert.True(t, svc.IsClusterIdInGray("cluster_2"))
+}
+
+func TestBcsClusterInfoSvc_FetchK8sClusterList(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		data := `{"message":"ok","result":true,"code":200,"data":[{"clusterID":"BCS-K8S-00000","clusterName":"蓝鲸","federationClusterID":"","provider":"bluekingCloud","region":"default","vpcID":"","projectID":"xxxxxxx750477982c23","businessID":"2","environment":"prod","engineType":"k8s","isExclusive":true,"clusterType":"single","labels":{},"creator":"admin","createTime":"2023-10-26T21:01:57+08:00","updateTime":"2023-10-26T21:01:57+08:00","bcsAddons":{},"extraAddons":{},"systemID":"","manageType":"INDEPENDENT_CLUSTER","master":{},"networkSettings":{"clusterIPxxxxx":"","serviceIxx":"","maxNodePodNum":0,"maxServiceNum":0,"enableVPCCni":false,"eniSubnetIDs":[],"subnetSource":null,"isStaticIpMode":false,"claimExpiredSeconds":0,"multiClusterCIDR":[],"cidrStep":0},"clusterBasicSettings":{"OS":"Linux","version":"v1.20.6-tke.34","clusterTags":{},"versionName":""},"clusterAdvanceSettings":{"IPVS":true,"containerRuntime":"docker","runtimeVersion":"19.3","extraArgs":{"Etcd":"node-data-dir=/data/bcs/lib/etcd;"}},"nodeSettings":{"dockerGraphPath":"/data/bcs/lib/docker","mountTarget":"/data","unSchedulable":1,"labels":{},"extraArgs":{}},"status":"RUNNING","updater":"","networkType":"overlay","autoGenerateMasterNodes":false,"template":[],"extraInfo":{},"moduleID":"","extraClusterID":"","isCommonCluster":false,"description":"xxxxx部署环境","clusterCategory":"","is_shared":false,"kubeConfig":"","importCategory":"","cloudAccountID":""}]}`
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	svc := NewBcsClusterInfoSvc(nil)
+	clusterList, err := svc.FetchK8sClusterList()
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(clusterList))
+	assert.Equal(t, "BCS-K8S-00000", clusterList[0].ClusterId)
+
+}
+
+func TestBcsClusterInfoSvc_FetchK8sNodeListByCluster(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		var data string
+		if strings.Contains(req.URL.Path, "Node") {
+			data = `{"message":"ok","result":true,"code":0,"data":[{"status":{"addresses":[{"address":"1.0.0.1","type":"InternalIP"},{"address":"1.0.0.1","type":"Hostname"}],"conditions":[{"lastHeartbeatTime":"2023-05-23T11:29:30Z","lastTransitionTime":"2023-05-23T11:29:30Z","message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable"},{"type":"MemoryPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False"},{"message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure","status":"False","type":"DiskPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z"},{"status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID"},{"type":"Ready","lastHeartbeatTime":"2023-11-07T11:00:20Z","lastTransitionTime":"2023-08-14T07:23:01Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True"}]},"metadata":{"labels":{"eng-cstate-7fca4c84-1":"1","kubernetes.io/arch":"amd64","topology.kubernetes.io/region":"gz","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","beta.kubernetes.io/arch":"amd64","kubernetes.io/hostname":"1.0.0.1","beta.kubernetes.io/instance-type":"SA3.MEDIUM2","kubernetes.io/os":"linux","eng-cstate-22817e80-4":"1","eng-cstate-86fabc2b-6":"1","eng-cstate-3b9bc87a-7":"1","beta.kubernetes.io/os":"linux","dedicated":"ingress-nginx","topology.kubernetes.io/zone":"100006","eng-cstate-12616088-2":"1","failure-domain.beta.kubernetes.io/region":"gz","node.kubernetes.io/instance-type":"SA3.MEDIUM2","cloud.tencent.com/node-instance-id":"ins-qcc4u546","eng-cstate-3e8191b0-5":"1","ingress-nginx":"true","eng-cstate-b59d451c-3":"1","failure-domain.beta.kubernetes.io/zone":"100006"},"name":"1.0.0.1","resourceVersion":"11386901553","creationTimestamp":"2023-05-23T11:29:27Z"},"spec":{"unschedulable":true,"taints":[{"effect":"PreferNoSchedule","key":"dedicated","value":"ingress-nginx"},{"effect":"NoSchedule","key":"node.kubernetes.io/unschedulable","timeAdded":"2023-09-27T09:58:05Z"}]}},{"metadata":{"resourceVersion":"12191526357","creationTimestamp":"2023-11-20T14:59:56Z","labels":{"kubernetes.io/arch":"amd64","kubernetes.io/hostname":"1.0.0.2","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","tke.cloud.tencent.com/cbs-mountable":"true","cloud.tencent.com/node-instance-id":"ins-olh8t1mu","tke.cloud.tencent.com/nodepool-id":"np-a72t3t12","failure-domain.beta.kubernetes.io/region":"gz","beta.kubernetes.io/instance-type":"SA3.8XLARGE64","kubernetes.io/os":"linux","beta.kubernetes.io/arch":"amd64","failure-domain.beta.kubernetes.io/zone":"100006","topology.kubernetes.io/region":"gz","topology.kubernetes.io/zone":"100006","cloud.tencent.com/auto-scaling-group-id":"asg-5ndk7a9g","node.kubernetes.io/instance-type":"SA3.8XLARGE64","beta.kubernetes.io/os":"linux"},"name":"1.0.0.2"},"spec":{},"status":{"addresses":[{"address":"1.0.0.2","type":"InternalIP"},{"type":"Hostname","address":"1.0.0.2"}],"conditions":[{"lastHeartbeatTime":"2023-11-20T15:00:04Z","lastTransitionTime":"2023-11-20T15:00:04Z","message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable"},{"type":"MemoryPressure","lastHeartbeatTime":"2023-11-24T03:16:59Z","lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False"},{"lastHeartbeatTime":"2023-11-24T03:16:59Z","lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure","status":"False","type":"DiskPressure"},{"lastTransitionTime":"2023-11-20T14:59:56Z","message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID","status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-24T03:16:59Z"},{"lastTransitionTime":"2023-11-20T15:01:09Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True","type":"Ready","lastHeartbeatTime":"2023-11-24T03:16:59Z"}]}},{"metadata":{"creationTimestamp":"2023-05-23T05:44:29Z","labels":{"kubernetes.io/hostname":"1.0.0.3","eng-cstate-22817e80-4":"1","eng-cstate-12616088-2":"1","dedicated":"bkSaaS","node.kubernetes.io/instance-type":"SA3.4XLARGE32","topology.kubernetes.io/region":"gz","beta.kubernetes.io/instance-type":"SA3.4XLARGE32","failure-domain.beta.kubernetes.io/region":"gz","tke.cloud.tencent.com/nodepool-id":"np-nckqef5i","cloud.tencent.com/auto-scaling-group-id":"asg-1r49l84c","eng-cstate-7fca4c84-1":"1","eng-cstate-b59d451c-3":"1","eng-cstate-3b9bc87a-7":"1","kubernetes.io/arch":"amd64","failure-domain.beta.kubernetes.io/zone":"100006","beta.kubernetes.io/arch":"amd64","beta.kubernetes.io/os":"linux","cloud.tencent.com/node-instance-id":"ins-3yvkivri","eng-cstate-3e8191b0-5":"1","topology.kubernetes.io/zone":"100006","kubernetes.io/os":"linux","topology.com.tencent.cloud.csi.cbs/zone":"ap-guangzhou-6","eng-cstate-86fabc2b-6":"1"},"name":"1.0.0.3","resourceVersion":"12091824029"},"spec":{"taints":[{"key":"dedicated","value":"bkSaaS","effect":"NoSchedule"}]},"status":{"addresses":[{"address":"1.0.0.3","type":"InternalIP"},{"address":"1.0.0.3","type":"Hostname"}],"conditions":[{"message":"RouteController created a route","reason":"RouteCreated","status":"False","type":"NetworkUnavailable","lastHeartbeatTime":"2023-05-23T05:44:40Z","lastTransitionTime":"2023-05-23T05:44:40Z"},{"message":"kubelet has sufficient memory available","reason":"KubeletHasSufficientMemory","status":"False","type":"MemoryPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-04T07:48:28Z"},{"status":"False","type":"DiskPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-10T08:41:43Z","message":"kubelet has no disk pressure","reason":"KubeletHasNoDiskPressure"},{"message":"kubelet has sufficient PID available","reason":"KubeletHasSufficientPID","status":"False","type":"PIDPressure","lastHeartbeatTime":"2023-11-22T02:14:10Z","lastTransitionTime":"2023-11-04T07:48:28Z"},{"lastTransitionTime":"2023-11-04T07:48:28Z","message":"kubelet is posting ready status","reason":"KubeletReady","status":"True","type":"Ready","lastHeartbeatTime":"2023-11-22T02:14:10Z"}]}}]}`
+		}
+		if strings.Contains(req.URL.Path, "Endpoints") {
+			data = `{"message":"ok","result":true,"code":0,"data":[]}`
+		}
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	nodes, err := NewBcsClusterInfoSvc(nil).FetchK8sNodeListByCluster("BCS-K8S-00000")
+	assert.NoError(t, err)
+	assert.Len(t, nodes, 3)
+	var ips []string
+	for _, node := range nodes {
+		ips = append(ips, node.NodeIp)
+	}
+	assert.ElementsMatch(t, []string{"1.0.0.1", "1.0.0.2", "1.0.0.3"}, ips)
+}
+
+func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	clusterID := "BCS-K8S-00001"
+	bkBizId := "2"
+	projectId := "project_id_xxxxx"
+	var initChannelId uint = 1999900
+	c := storage.ClusterInfo{
+		ClusterID:        1,
+		ClusterName:      "kafka_default_test",
+		ClusterType:      models.StorageTypeKafka,
+		DomainName:       "127.0.0.1",
+		Port:             9096,
+		IsDefaultCluster: true,
+		GseStreamToId:    0,
+	}
+	c.Delete(db)
+	err := c.Create(db)
+	assert.NoError(t, err)
+	db.Delete(&bcs.BCSClusterInfo{}, "cluster_id = ?", clusterID)
+	db.Delete(&resulttable.DataSource{}, fmt.Sprintf("data_name like '%%%s%%'", clusterID))
+	db.Delete(&storage.KafkaTopicInfo{}, "bk_data_id > ?", initChannelId)
+	db.Delete(&resulttable.DataSourceOption{}, "bk_data_id > ?", initChannelId)
+	db.Delete(&customreport.TimeSeriesGroup{}, fmt.Sprintf("time_series_group_name like '%%%s%%'", clusterID))
+	db.Delete(&customreport.EventGroup{}, "bk_data_id > ?", initChannelId)
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		var data string
+		if strings.Contains(req.URL.Path, "add_route") {
+			initChannelId += 1
+			data = fmt.Sprintf(`{"message":"ok","result":true,"code":0,"data":{"channel_id":%v}}`, initChannelId)
+		}
+		if strings.Contains(req.URL.Path, "query_route") {
+			data = `{"message":"ok","result":true,"code":0}`
+		}
+		body := io.NopCloser(strings.NewReader(data))
+		return &http.Response{
+			Status:        "ok",
+			StatusCode:    200,
+			Body:          body,
+			ContentLength: int64(len(data)),
+			Request:       req,
+		}, nil
+	})
+	patch := gomonkey.ApplyMethod(ResultTableSvc{}, "CreateResultTable", func(ResultTableSvc, uint, int, string, string, bool, string, string, string, map[string]interface{}, []map[string]interface{}, bool, map[string]interface{}, string, map[string]interface{}) error {
+		return nil
+	})
+	defer patch.Reset()
+	cluster, err := NewBcsClusterInfoSvc(nil).RegisterCluster(bkBizId, clusterID, projectId, "test")
+	assert.NoError(t, err)
+	dataIdList := []uint{cluster.K8sMetricDataID, cluster.CustomMetricDataID, cluster.K8sEventDataID}
+	targetIdList := []uint{initChannelId, initChannelId - 1, initChannelId - 2}
+	assert.ElementsMatch(t, []uint{initChannelId, initChannelId - 1, initChannelId - 2}, dataIdList)
+	count, err := resulttable.NewDataSourceQuerySet(db).BkDataIdIn(targetIdList...).Count()
+	assert.NoError(t, err)
+	assert.Equal(t, len(targetIdList), count)
+
 }

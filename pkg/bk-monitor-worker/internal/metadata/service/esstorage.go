@@ -90,7 +90,7 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
 	db := mysql.GetDBSession().DB
 	// 判断是否需要使用默认集群信息
 	var clusterId uint
@@ -106,7 +106,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 			return err
 		}
 		if count == 0 {
-			return fmt.Errorf("cluster_id [%v] is not exists or is not redis cluster", clusterId)
+			return fmt.Errorf("cluster_id [%v] is not exists or is not es cluster", clusterId)
 		}
 	}
 	// 校验table_id， key是否存在冲突
@@ -122,8 +122,7 @@ func (e EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *
 	if !ok {
 		dateformat = "%Y%m%d%H"
 	}
-	dateformat = timex.ParsePyDateFormat(dateformat)
-	nowStr := time.Now().Format(dateformat)
+	nowStr := time.Now().Format(timex.ParsePyDateFormat(dateformat))
 	if findString := regexp.MustCompile(`^\d+$`).FindString(nowStr); findString == "" {
 		return fmt.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
 	}

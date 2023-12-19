@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 )
 
 //go:generate goqueryset -in bcsclusterinfo.go -out qs_bcsclusterinfo_gen.go
@@ -28,14 +30,14 @@ type BCSClusterInfo struct {
 	BkBizId            int       `gorm:"column:bk_biz_id" json:"bk_biz_id"`
 	BkCloudId          *int      `gorm:"column:bk_cloud_id" json:"BkCloudId"`
 	ProjectId          string    `gorm:"size:128" json:"project_id"`
-	Status             string    `gorm:"size:50;default:running" json:"status"`
+	Status             string    `gorm:"size:50" json:"status"`
 	DomainName         string    `gorm:"size:512" json:"domain_name"`
 	Port               uint      `json:"port"`
 	ServerAddressPath  string    `gorm:"size:512" json:"server_address_path"`
-	ApiKeyType         string    `gorm:"size:128;default:authorization" json:"api_key_type"`
+	ApiKeyType         string    `gorm:"size:128" json:"api_key_type"`
 	ApiKeyContent      string    `gorm:"size:128" json:"api_key_content"`
-	ApiKeyPrefix       string    `gorm:"size:128;default:Bearer" json:"api_key_prefix"`
-	IsSkipSslVerify    bool      `gorm:"default:true" json:"is_skip_ssl_verify"`
+	ApiKeyPrefix       string    `gorm:"size:128" json:"api_key_prefix"`
+	IsSkipSslVerify    bool      `gorm:"column:is_skip_ssl_verify" json:"is_skip_ssl_verify"`
 	CertContent        *string   `json:"cert_content"`
 	K8sMetricDataID    uint      `gorm:"column:K8sMetricDataID" json:"K8sMetricDataID"`
 	CustomMetricDataID uint      `gorm:"column:CustomMetricDataID" json:"CustomMetricDataID"`
@@ -43,7 +45,7 @@ type BCSClusterInfo struct {
 	CustomEventDataID  uint      `gorm:"column:CustomEventDataID" json:"CustomEventDataID"`
 	SystemLogDataID    uint      `gorm:"column:SystemLogDataID" json:"SystemLogDataID"`
 	CustomLogDataID    uint      `gorm:"column:CustomLogDataID" json:"CustomLogDataID"`
-	BkEnv              *string   `gorm:"size:32;default: " json:"bk_env"`
+	BkEnv              *string   `gorm:"size:32" json:"bk_env"`
 	Creator            string    `json:"creator" gorm:"size:32"`
 	CreateTime         time.Time `json:"create_time"`
 	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
@@ -55,8 +57,21 @@ func (BCSClusterInfo) TableName() string {
 	return "metadata_bcsclusterinfo"
 }
 
-// BeforeCreate 新建前时间字段设置为当前时间
+// BeforeCreate 新建前时间字段设置为当前时间，配置默认值
 func (r *BCSClusterInfo) BeforeCreate(tx *gorm.DB) error {
+	if r.ApiKeyPrefix == "" {
+		r.ApiKeyPrefix = "Bearer"
+	}
+	if r.ApiKeyType == "" {
+		r.ApiKeyType = "authorization"
+	}
+	if r.Status == "" {
+		r.Status = models.BcsClusterStatusRunning
+	}
+	var bkEnv string
+	if r.BkEnv == nil {
+		r.BkEnv = &bkEnv
+	}
 	r.CreateTime = time.Now()
 	r.LastModifyTime = time.Now()
 	return nil

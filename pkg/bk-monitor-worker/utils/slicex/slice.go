@@ -9,6 +9,12 @@
 
 package slicex
 
+import (
+	"golang.org/x/exp/constraints"
+
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+)
+
 // RemoveItem remove the item from string array
 func RemoveItem(l []string, s string) []string {
 	i := 0
@@ -19,4 +25,32 @@ func RemoveItem(l []string, s string) []string {
 		}
 	}
 	return l[:i]
+}
+
+// RemoveDuplicate 可排序类型的去重
+func RemoveDuplicate[T constraints.Ordered](source []T) []T {
+	temp := make(map[T]bool)
+	var target []T
+	for _, s := range source {
+		if exist := temp[s]; !exist {
+			target = append(target, s)
+			temp[s] = true
+		}
+	}
+	return target
+}
+
+func ChunkSlice[T any](bigSlice []T, size int) [][]T {
+	if size <= 0 {
+		size = cfg.DefaultDBFilterSize
+	}
+	var chunkList [][]T
+	for i := 0; i < len(bigSlice); i += size {
+		end := i + size
+		if end > len(bigSlice) {
+			end = len(bigSlice)
+		}
+		chunkList = append(chunkList, bigSlice[i:end])
+	}
+	return chunkList
 }

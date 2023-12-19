@@ -28,7 +28,7 @@ import (
 type InfluxdbClusterInfo struct {
 	HostName     string `gorm:"size:128" json:"host_name"`
 	ClusterName  string `gorm:"size:128" json:"cluster_name"`
-	HostReadable bool   `gorm:"default:true" json:"host_readable"`
+	HostReadable bool   `gorm:"column:host_readable" json:"host_readable"`
 }
 
 // TableName 用于设置表的别名

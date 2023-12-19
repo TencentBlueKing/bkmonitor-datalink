@@ -19,16 +19,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
-func PatchDBSession() *gomonkey.Patches {
+func InitTestDBConfig(filePath string) {
+	config.FilePath = filePath
 	config.InitConfig()
-	return gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
+	gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
 		db, err := gorm.Open("mysql", fmt.Sprintf(
 			"%s:%s@tcp(%s:%v)/%s?&parseTime=True&loc=Local",
-			config.TestStorageMysqlUser,
-			config.TestStorageMysqlPassword,
-			config.TestStorageMysqlHost,
-			config.TestStorageMysqlPort,
-			config.TestStorageMysqlDbName,
+			config.StorageMysqlUser,
+			config.StorageMysqlPassword,
+			config.StorageMysqlHost,
+			config.StorageMysqlPort,
+			config.StorageMysqlDbName,
 		))
 		if err != nil {
 			panic(err)

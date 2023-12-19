@@ -40,3 +40,53 @@ func TestSplitStringByDot(t *testing.T) {
 
 	assert.Equal(t, []string{"a,b"}, SplitStringByDot("a,b"))
 }
+
+func TestLimitLengthPrefix(t *testing.T) {
+	type args struct {
+		input  string
+		length int
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"abc--1", args{input: "abc", length: -1}, ""},
+		{"abc-0", args{input: "abc", length: 0}, ""},
+		{"abc-1", args{input: "abc", length: 1}, "a"},
+		{"abc-2", args{input: "abc", length: 2}, "ab"},
+		{"abc-3", args{input: "abc", length: 3}, "abc"},
+		{"abc-4", args{input: "abc", length: 4}, "abc"},
+		{"abc-999", args{input: "abc", length: 999}, "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, LimitLengthPrefix(tt.args.input, tt.args.length), "LimitLengthPrefix(%v, %v)", tt.args.input, tt.args.length)
+		})
+	}
+}
+
+func TestLimitLengthSuffix(t *testing.T) {
+	type args struct {
+		input  string
+		length int
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"abc--1", args{input: "abc", length: -1}, ""},
+		{"abc-0", args{input: "abc", length: 0}, ""},
+		{"abc-1", args{input: "abc", length: 1}, "c"},
+		{"abc-2", args{input: "abc", length: 2}, "bc"},
+		{"abc-3", args{input: "abc", length: 3}, "abc"},
+		{"abc-4", args{input: "abc", length: 4}, "abc"},
+		{"abc-999", args{input: "abc", length: 999}, "abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, LimitLengthSuffix(tt.args.input, tt.args.length), "LimitLengthSuffix(%v, %v)", tt.args.input, tt.args.length)
+		})
+	}
+}

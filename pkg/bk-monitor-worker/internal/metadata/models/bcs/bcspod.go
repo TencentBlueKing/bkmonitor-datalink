@@ -27,10 +27,10 @@ type BCSPod struct {
 	PodIp                   string   `gorm:"size:64;" json:"pod_ip"`
 	Images                  string   `gorm:"type:text;" json:"images"`
 	Restarts                int      `gorm:"column:restarts" json:"restarts"`
-	RequestCpuUsageRatio    *float64 `gorm:"default:0" json:"request_cpu_usage_ratio"`
-	LimitCpuUsageRatio      *float64 `gorm:"default:0" json:"limit_cpu_usage_ratio"`
-	RequestMemoryUsageRatio *float64 `gorm:"default:0" json:"request_memory_usage_ratio"`
-	LimitMemoryUsageRatio   *float64 `gorm:"default:0" json:"limit_memory_usage_ratio"`
+	RequestCpuUsageRatio    *float64 `gorm:"column:request_cpu_usage_ratio" json:"request_cpu_usage_ratio"`
+	LimitCpuUsageRatio      *float64 `gorm:"column:limit_cpu_usage_ratio" json:"limit_cpu_usage_ratio"`
+	RequestMemoryUsageRatio *float64 `gorm:"column:request_memory_usage_ratio" json:"request_memory_usage_ratio"`
+	LimitMemoryUsageRatio   *float64 `gorm:"column:limit_memory_usage_ratio" json:"limit_memory_usage_ratio"`
 }
 
 // TableName: 用于设置表的别名

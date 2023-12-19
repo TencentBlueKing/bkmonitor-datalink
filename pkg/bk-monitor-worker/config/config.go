@@ -209,20 +209,13 @@ var (
 	BkApiBcsApiGatewayDomain string
 	// BkApiBcsApiGatewayToken bk-apigw bcs token
 	BkApiBcsApiGatewayToken string
+	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
+	BkApiNodemanApiBaseUrl string
+	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
+	BkApiBkdataApiBaseUrl string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
-
-	// TestStorageMysqlHost test-mysql host
-	TestStorageMysqlHost string
-	// TestStorageMysqlPort test-mysql port
-	TestStorageMysqlPort int
-	// TestStorageMysqlUser test-mysql user
-	TestStorageMysqlUser string
-	// TestStorageMysqlPassword test-mysql password
-	TestStorageMysqlPassword string
-	// TestStorageMysqlDbName test-mysql db name
-	TestStorageMysqlDbName string
 )
 
 func initVariables() {
@@ -371,14 +364,10 @@ func initVariables() {
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
 	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
 	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
+	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.NodmanApiBaseUrl", "")
+	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.BkdataApiBaseUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
-
-	TestStorageMysqlHost = GetValue("test.store.mysql.host", "127.0.0.1")
-	TestStorageMysqlPort = GetValue("test.store.mysql.port", 3306)
-	TestStorageMysqlUser = GetValue("test.store.mysql.user", "root")
-	TestStorageMysqlPassword = GetValue("test.store.mysql.password", "")
-	TestStorageMysqlDbName = GetValue("test.store.mysql.dbName", "")
 }
 
 var (

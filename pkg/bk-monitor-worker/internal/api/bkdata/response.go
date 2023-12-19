@@ -7,19 +7,28 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package service
+package bkdata
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-)
-
-// DataSourceResultTableSvc data source result table service
-type DataSourceResultTableSvc struct {
-	*resulttable.DataSourceResultTable
+type CommonBkdataRespMeta struct {
+	Message string      `json:"message"`
+	Result  bool        `json:"result"`
+	Code    string      `json:"code"`
+	Errors  interface{} `json:"errors"`
 }
 
-func NewDataSourceResultTableSvc(obj *resulttable.DataSourceResultTable) DataSourceResultTableSvc {
-	return DataSourceResultTableSvc{
-		DataSourceResultTable: obj,
-	}
+type CreateDataHubResp struct {
+	CommonBkdataRespMeta
+	Data CreateDataHubData `json:"data"`
+}
+
+type CreateDataHubData struct {
+	RawDataId uint     `json:"raw_data_id"`
+	CleanRtId []string `json:"clean_rt_id"`
+}
+
+type AccessDeployPlanResp struct {
+	CommonBkdataRespMeta
+	Data struct {
+		RawDataId int `json:"raw_data_id"`
+	} `json:"data"`
 }

@@ -34,12 +34,13 @@ func GetDBSession() *DBSession {
 		return dbSession
 	}
 	once.Do(func() {
-		dbSession = &DBSession{}
-		err := dbSession.Open()
+		session := &DBSession{}
+		err := session.Open()
 		if err != nil {
 			logger.Errorf("connection mysql error, %v", err)
 			panic(err)
 		}
+		dbSession = session
 	})
 	return dbSession
 }

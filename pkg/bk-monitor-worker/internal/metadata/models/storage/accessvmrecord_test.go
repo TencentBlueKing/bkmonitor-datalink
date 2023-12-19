@@ -33,5 +33,5 @@ func TestAccessVMRecord_RefreshVmRouter(t *testing.T) {
 	assert.NoError(t, err)
 	record, ok := pushRecord[models.QueryVmStorageRouterKey+"-"+vm.ResultTableId]
 	assert.True(t, ok)
-	assert.Equal(t, record, `{"clusterName":"","db":"table_id_a","measurement":"base","retention_policies":{"autogen":{"is_default":true,"resolution":0}},"storageID":"1","table_id":"table_id_a.base","tagsKey":[],"vm_rt":"vm_test"}`)
+	assert.JSONEq(t, record, `{"clusterName":"","db":"table_id_a","measurement":"base","retention_policies":{"autogen":{"is_default":true,"resolution":0}},"storageID":"1","table_id":"table_id_a.base","tagsKey":[],"vm_rt":"vm_test"}`)
 }

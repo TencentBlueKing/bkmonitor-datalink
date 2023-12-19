@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -28,7 +29,7 @@ var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果
 // Event: cluster info model
 // gen:qs
 type ClusterInfo struct {
-	ClusterID                 uint      `gorm:"index" json:"cluster_id"`
+	ClusterID                 uint      `gorm:"primary_key" json:"cluster_id"`
 	ClusterName               string    `gorm:"size:128;unique" json:"cluster_name"`
 	ClusterType               string    `gorm:"size:32;index" json:"cluster_type"`
 	DomainName                string    `gorm:"size:128" json:"domain_name"`
@@ -56,7 +57,7 @@ type ClusterInfo struct {
 	SslInsecureSkipVerify     bool      `gorm:"column:ssl_insecure_skip_verify" json:"ssl_insecure_skip_verify"`
 	SslVerificationMode       string    `gorm:"size:16" json:"ssl_verification_mode"`
 	ExtranetDomainName        string    `gorm:"size:128" json:"extranet_domain_name"`
-	ExtranetPort              uint      `gorm:"default:0" json:"extranet_port"`
+	ExtranetPort              uint      `gorm:"column:extranet_port" json:"extranet_port"`
 }
 
 // TableName: 用于设置表的别名
@@ -84,4 +85,17 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 	}
 
 	return client, nil
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (s *ClusterInfo) BeforeCreate(tx *gorm.DB) error {
+	s.CreateTime = time.Now()
+	s.LastModifyTime = time.Now()
+	return nil
+}
+
+// BeforeUpdate 保存前最后修改时间字段设置为当前时间
+func (d *ClusterInfo) BeforeUpdate(tx *gorm.DB) error {
+	d.LastModifyTime = time.Now()
+	return nil
 }

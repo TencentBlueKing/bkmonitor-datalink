@@ -46,8 +46,8 @@ type InfluxdbStorage struct {
 	DownSampleTable           string `gorm:"size:128" json:"down_sample_table"`
 	DownSampleGap             string `gorm:"size:32" json:"down_sample_gap"`
 	DownSampleDurationTime    string `gorm:"size:32" json:"down_sample_duration_time"`
-	ProxyClusterName          string `gorm:"size:128;default:default" json:"proxy_cluster_name"`
-	UseDefaultRp              bool   `gorm:"default:true" json:"use_default_rp"`
+	ProxyClusterName          string `gorm:"size:128" json:"proxy_cluster_name"`
+	UseDefaultRp              bool   `gorm:"column:use_default_rp" json:"use_default_rp"`
 	EnableRefreshRp           bool   `gorm:"column:enable_refresh_rp" json:"enable_refresh_rp"`
 	PartitionTag              string `gorm:"size:128" json:"partition_tag"`
 	VmTableId                 string `gorm:"vm_table_id;size:128" json:"vm_table_id"`
@@ -59,6 +59,13 @@ type InfluxdbStorage struct {
 // TableName 用于设置表的别名
 func (InfluxdbStorage) TableName() string {
 	return "metadata_influxdbstorage"
+}
+
+func (e *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
+	if e.ProxyClusterName == "" {
+		e.ProxyClusterName = "default"
+	}
+	return nil
 }
 
 // ConsulPath 获取router的consul根路径

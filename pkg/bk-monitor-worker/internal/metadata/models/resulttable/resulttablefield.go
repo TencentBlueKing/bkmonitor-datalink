@@ -24,15 +24,15 @@ type ResultTableField struct {
 	TableID        string    `json:"table_id" gorm:"size:128;unique"`
 	FieldName      string    `json:"field_name" gorm:"size:255;unique"`
 	FieldType      string    `json:"field_type" gorm:"size:32"`
-	Description    string    `json:"description" sql:"type:text"`
+	Description    string    `json:"description" gorm:"type:text"`
 	Unit           string    `json:"unit" gorm:"size:32"`
 	Tag            string    `json:"tag" gorm:"size:16"`
 	IsConfigByUser bool      `json:"is_config_by_user"`
-	DefaultValue   *string   `json:"default_value" gorm:"size:128;default:null"`
+	DefaultValue   *string   `json:"default_value" gorm:"size:128"`
 	Creator        string    `json:"creator" gorm:"size:32"`
-	CreateTime     time.Time `json:"create_time" gorm:"column:create_time;default:null"`
+	CreateTime     time.Time `json:"create_time" gorm:"column:create_time"`
 	LastModifyUser string    `json:"last_modify_user" gorm:"size:32"`
-	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time;default:null"`
+	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time"`
 	AliasName      string    `json:"alias_name" gorm:"size:64"`
 	IsDisabled     bool      `json:"is_disabled" gorm:"column:is_disabled"`
 }
@@ -42,7 +42,7 @@ func (ResultTableField) TableName() string {
 	return "metadata_resulttablefield"
 }
 
-// UpdateMetricField update result table metric field
+// UpdateMetricFieldFromTS update result table metric field
 func (rtf *ResultTableField) UpdateMetricFieldFromTS() error {
 	if _, _, err := rtf.GetOrCreate(); err != nil {
 		return err

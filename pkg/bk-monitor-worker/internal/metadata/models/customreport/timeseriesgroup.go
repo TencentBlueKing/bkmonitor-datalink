@@ -121,6 +121,9 @@ func (ts *TimeSeriesGroup) GetRedisData() ([]map[string]interface{}, error) {
 	validBeginTimeStampStr := fmt.Sprintf("%d", validBeginTimeStamp)
 	ctx := context.Background()
 	redisClient, err := redisStore.GetInstance(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// 根据过滤参数，获取总量
 	zcountVal, err := redisClient.ZCount(metricKey, validBeginTimeStampStr, nowTimeStampStr)
 	if err != nil {

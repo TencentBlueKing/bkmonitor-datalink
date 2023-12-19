@@ -24,7 +24,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -221,7 +223,7 @@ func (r ResultTableSvc) CreateResultTable(
 		IsDeleted:      false,
 		Label:          label,
 		IsEnable:       true,
-		DataLabel:      "",
+		DataLabel:      nil,
 	}
 	db := mysql.GetDBSession().DB
 	if err := rt.Create(db); err != nil {
@@ -344,4 +346,82 @@ func (r ResultTableSvc) RefreshEtlConfig() error {
 	}
 	logger.Infof("table_id [%s] refresh etl config success", r.TableId)
 	return nil
+}
+
+// IsDisableMetricCutter 获取结果表是否禁用切分模块
+func (r ResultTableSvc) IsDisableMetricCutter(tableId string) (bool, error) {
+	db := mysql.GetDBSession().DB
+	var dsrt resulttable.DataSourceResultTable
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).TableIdEq(tableId).One(&dsrt); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+	var dso resulttable.DataSourceOption
+	if err := resulttable.NewDataSourceOptionQuerySet(db).BkDataIdEq(dsrt.BkDataId).NameEq(models.OptionDisableMetricCutter).One(&dso); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+	var value bool
+	if err := jsonx.UnmarshalString(dso.Value, &value); err != nil {
+		return false, err
+	}
+	return value, nil
+}
+
+// GetTableIdCutter 批量获取结果表是否禁用切分模块
+func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool, error) {
+	db := mysql.GetDBSession().DB
+	var dsrtList []resulttable.DataSourceResultTable
+	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []resulttable.DataSourceResultTable
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.TableId, resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
+			return nil, err
+		}
+		dsrtList = append(dsrtList, tempList...)
+	}
+
+	tableIdDataIdMap := make(map[string]uint)
+	var dataIdList []uint
+	for _, dsrt := range dsrtList {
+		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
+		dataIdList = append(dataIdList, dsrt.BkDataId)
+	}
+	dataIdList = slicex.RemoveDuplicate(dataIdList)
+	var dsoList []resulttable.DataSourceOption
+	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
+		var tempList []resulttable.DataSourceOption
+		if err := resulttable.NewDataSourceOptionQuerySet(db).Select(resulttable.DataSourceOptionDBSchema.BkDataId, resulttable.DataSourceOptionDBSchema.Value).BkDataIdIn(chunkDataIds...).NameEq(models.OptionDisableMetricCutter).All(&tempList); err != nil {
+			return nil, err
+		}
+		dsoList = append(dsoList, tempList...)
+	}
+	dataIdOptionMap := make(map[uint]bool)
+	for _, dso := range dsoList {
+		var value bool
+		if err := jsonx.UnmarshalString(dso.Value, &value); err != nil {
+			dataIdOptionMap[dso.BkDataId] = false
+			continue
+		}
+		dataIdOptionMap[dso.BkDataId] = value
+	}
+
+	// 组装数据
+	tableIdCutter := make(map[string]bool)
+	for _, tableId := range tableIdList {
+		bkdataId, ok := tableIdDataIdMap[tableId]
+		if !ok {
+			// 默认为 False
+			tableIdCutter[tableId] = false
+			continue
+		}
+		tableIdCutter[tableId] = dataIdOptionMap[bkdataId]
+	}
+
+	return tableIdCutter, nil
 }

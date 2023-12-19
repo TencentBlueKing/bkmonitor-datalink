@@ -72,49 +72,12 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	rtId := strings.ReplaceAll(rt.TableId, ".", "__")
 	rtId = stringx.LimitLengthSuffix(rtId, 50)
 	rawDataName := fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, rtId)
-
-	params := map[string]interface{}{
-		"bk_app_code":   config.BkApiAppCode,
-		"bk_username":   "admin",
-		"data_scenario": "queue",
-		"bk_biz_id":     config.GlobalBkdataBkBizId,
-		"description":   "",
-		"access_raw_data": map[string]interface{}{
-			"raw_data_name":    rawDataName,
-			"maintainer":       config.GlobalBkdataProjectMaintainer,
-			"raw_data_alias":   rt.TableNameZh,
-			"data_source":      "kafka",
-			"data_encoding":    "UTF-8",
-			"sensitivity":      "private",
-			"description":      fmt.Sprintf("接入配置 (%s)", rt.TableNameZh),
-			"tags":             []interface{}{},
-			"data_source_tags": []string{"src_kafka"},
-		},
-		"access_conf_info": map[string]interface{}{
-			"collection_model": map[string]interface{}{"collection_type": "incr", "start_at": 1, "period": "-1"},
-			"resource": map[string]interface{}{
-				"type": "kafka",
-				"scope": []map[string]interface{}{
-					{
-						"master":            brokerUrl,
-						"group":             KafkaConsumerGroupName,
-						"topic":             svc.Topic,
-						"tasks":             svc.Partition,
-						"use_sasl":          isSasl,
-						"security_protocol": "SASL_PLAINTEXT",
-						"sasl_mechanism":    "SCRAM-SHA-512",
-						"user":              user,
-						"password":          passwd,
-					},
-				},
-			},
-		},
-	}
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return err
 	}
 	var resp bkdata.AccessDeployPlanResp
+	params := bkdata.AccessDeployPlanParams(rawDataName, rt.TableNameZh, brokerUrl, KafkaConsumerGroupName, svc.Topic, user, passwd, svc.Partition, isSasl)
 	if _, err := bkdataApi.AccessDeployPlan().SetBody(params).SetResult(&resp).Request(); err != nil {
 		return errors.Wrapf(err, "access to bkdata failed, params [%#v]", params)
 	}

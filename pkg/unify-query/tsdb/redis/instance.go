@@ -74,7 +74,7 @@ var _ tsdb.Instance = (*Instance)(nil)
 func (instance *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	df, err := instance.rawQuery(ctx, time.Time{}, end, time.Duration(0))
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	return instance.vectorFormat(ctx, *df)
 }
@@ -82,7 +82,7 @@ func (instance *Instance) Query(ctx context.Context, qs string, end time.Time) (
 func (instance *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	df, err := instance.rawQuery(ctx, start, end, step)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	return instance.matrixFormat(ctx, *df)
 }
@@ -94,7 +94,7 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 	// 根据现有支持情况检查 QueryTs 请求体
 	queryTs := instance.QueryTs
 	if len(queryTs.QueryList) != 1 {
-		return nil, fmt.Errorf("Only one query supported, now %d ", len(queryTs.QueryList))
+		return nil, errors.Errorf("Only one query supported, now %d ", len(queryTs.QueryList))
 	}
 	query := queryTs.QueryList[0]
 	// 要求必须传入集群过滤条件，并且汇总所有相关集群数据，预加载数据
@@ -105,19 +105,19 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 		}
 	}
 	if len(clusterNames) == 0 {
-		return nil, fmt.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
+		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
 	stoCtx, _ := context.WithTimeout(ctx, instance.Timeout)
 	sto := MetricStorage{ctx: stoCtx}
 	metricMeta, err := sto.GetMetricMeta(query.FieldName)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(query.FieldName, clusterName, opts)
 		if err != nil {
-			return nil, errors.Wrap(err, "")
+			return nil, err
 		}
 		if dfPointer.Nrow() > 0 {
 			df = df.RBind(*dfPointer)
@@ -125,7 +125,7 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 	}
 	df = instance.handleDFQuery(df, query, start, end, step)
 	if df.Error() != nil {
-		return nil, errors.Wrap(df.Error(), "")
+		return nil, df.Error()
 	}
 	return &df, nil
 }
@@ -134,7 +134,7 @@ func (instance *Instance) vectorFormat(ctx context.Context, df dataframe.DataFra
 	vector := make(promql.Vector, 0)
 	matrix, err := instance.matrixFormat(ctx, df)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 	for _, mSeries := range matrix {
 		vector = append(vector, promql.Sample{
@@ -156,7 +156,7 @@ func (instance *Instance) matrixFormat(ctx context.Context, df dataframe.DataFra
 		// 处理一行完整的数据，分桶塞点
 		labelsGroup, point, err := arrToPoint(names, row)
 		if err != nil {
-			return nil, errors.Wrap(err, "")
+			return nil, err
 		}
 		h := consul.HashIt(labelsGroup)
 		var oneSeries promql.Series
@@ -189,12 +189,12 @@ func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, 
 		if colNames[idx] == ClusterMetricFieldValName {
 			point.V, err = strconv.ParseFloat(val, 64)
 			if err != nil {
-				return nil, nil, errors.Wrap(err, "")
+				return nil, nil, errors.Wrap(err, "Invalid cluster metric value type")
 			}
 		} else if colNames[idx] == ClusterMetricFieldTimeName {
 			point.T, err = strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				return nil, nil, errors.Wrap(err, "")
+				return nil, nil, errors.Wrap(err, "Invalid cluster metric time type")
 			}
 			// 秒转毫秒
 			point.T = point.T * 1000
@@ -219,7 +219,7 @@ func (instance *Instance) handleDFQuery(
 	if len(query.Conditions.FieldList) > 0 {
 		orFields, err := query.Conditions.AnalysisConditions()
 		if err != nil {
-			return dataframe.DataFrame{Err: fmt.Errorf("Invalid query conditions: %v ", err)}
+			return dataframe.DataFrame{Err: errors.Errorf("Invalid query conditions: %v ", err)}
 		}
 		// 每个分组过滤条件处理后，把结果进行合并
 		for _, fields := range orFields {
@@ -227,7 +227,7 @@ func (instance *Instance) handleDFQuery(
 			for _, fieldCond := range fields {
 				dfComparator, ok := QueryConditionToDataframeComparator[fieldCond.Operator]
 				if !ok {
-					return dataframe.DataFrame{Err: fmt.Errorf("Not suppport condition operator: %v ", fieldCond.Operator)}
+					return dataframe.DataFrame{Err: errors.Errorf("Not suppport condition operator: %v ", fieldCond.Operator)}
 				}
 				dfConditions = append(
 					dfConditions,
@@ -261,7 +261,7 @@ func (instance *Instance) handleDFQuery(
 		wDuration, err := query.TimeAggregation.Window.ToTime()
 		if err != nil {
 			return dataframe.DataFrame{
-				Err: fmt.Errorf("TimeAggregation.Window(%v) format is invalid", query.TimeAggregation)}
+				Err: errors.Errorf("TimeAggregation.Window(%v) format is invalid", query.TimeAggregation)}
 		}
 		df = handleDFTimeRounding(df, wDuration)
 		df = handleDFGroupBy(df, allDims, query.TimeAggregation.Function)
@@ -307,7 +307,7 @@ func handleDFGroupBy(df dataframe.DataFrame, dims []string, aggreFunc string) da
 	groups := df.GroupBy(dims...)
 	aggreType, ok := QueryAggreToDataframeMapping[aggreFunc]
 	if !ok {
-		return dataframe.DataFrame{Err: fmt.Errorf("Not support aggregate method: %s ", aggreFunc)}
+		return dataframe.DataFrame{Err: errors.Errorf("Not support aggregate method: %s ", aggreFunc)}
 	}
 	df = groups.Aggregation([]dataframe.AggregationType{aggreType}, []string{"value"})
 	// 将分组聚合字段名称调整为 value
@@ -351,11 +351,11 @@ func (sto *MetricStorage) GetMetricMeta(metricName string) (*MetricMeta, error) 
 	)
 	res, err = redisUtil.HGet(sto.ctx, ClusterMetricMetaKey, metricName)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, errors.Wrap(err, "Fail to get cluster metric meta from redis")
 	}
 	err = json.Unmarshal([]byte(res), metricMeta)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, errors.Wrap(err, "Fail to unmarshal cluster metric meta")
 	}
 	return metricMeta, nil
 }

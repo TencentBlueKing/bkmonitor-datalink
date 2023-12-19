@@ -759,7 +759,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		res, err = instance.QueryRange(ctx, "", start, end, step)
 	}
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, err
 	}
 
 	trace.InsertStringIntoSpan("start", start.String(), span)

@@ -61,7 +61,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	// 判断如果不是指定查询 InfluxDB 则改成 单指标单表用于查询 vm
 	isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
 	if !isSplitMeasurement {
-		if !metadata.GetInfluxDBQueryFeatureFlag(s.ctx, tableID) {
+		if !metadata.GetIsSplitFeatureFlag(s.ctx, tableID) {
 			rtDetail.MeasurementType = redis.BkSplitMeasurement
 		}
 	}

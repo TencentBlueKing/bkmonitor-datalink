@@ -401,7 +401,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	ctx := context.Background()
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
-	"influxdb-query": {
+	"is-split": {
 		"variations": {
 			"Default": true,
 			"true": true,

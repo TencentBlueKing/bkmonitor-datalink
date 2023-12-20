@@ -19,13 +19,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-func GetInfluxDBQueryFeatureFlag(ctx context.Context, tableID string) bool {
+func GetIsSplitFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
 		span oleltrace.Span
 		user = GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-influxdb-query-feature-flag")
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-is-split-feature-flag")
 	if span != nil {
 		defer span.End()
 	}
@@ -40,8 +40,8 @@ func GetInfluxDBQueryFeatureFlag(ctx context.Context, tableID string) bool {
 		"tableID":  tableID,
 	})
 
-	status := featureFlag.BoolVariation(ctx, ffUser, "influxdb-query", true)
-	trace.InsertStringIntoSpan("influxdb-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+	status := featureFlag.BoolVariation(ctx, ffUser, "is-split", true)
+	trace.InsertStringIntoSpan("is-split-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 
 	return status
 }

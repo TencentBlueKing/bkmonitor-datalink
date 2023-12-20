@@ -281,7 +281,7 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
-	tableIds = slicex.StringSet2List(slicex.StringList2Set(tableIds))
+	tableIds = slicex.RemoveDuplicate(tableIds)
 	return tableIds, nil
 }
 
@@ -708,7 +708,7 @@ func (s SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string, 
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义
 	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusEq(models.BcsClusterStatusRunning)
-	dataIds = slicex.UintSet2List(slicex.UintList2Set(dataIds))
+	dataIds = slicex.RemoveDuplicate(dataIds)
 	var clusterListA []bcs.BCSClusterInfo
 	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
 		return nil, err

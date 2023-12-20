@@ -44,7 +44,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	if g.tool == nil {
 		g.tool = new(BKMetricbeatTool)
-		err := g.tool.Init(g.config, g.GetGlobalConfig().(*configs.Config))
+		err := g.tool.Init(g.config, g.GetGlobalConfig())
 		if err != nil {
 			logger.Errorf("metricbeat init failed, err:%v", err)
 			g.tool = nil

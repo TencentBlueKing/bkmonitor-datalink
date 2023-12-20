@@ -36,7 +36,7 @@ const (
 
 // MetricTool metricbeat接口
 type MetricTool interface {
-	Init(taskConf *configs.MetricBeatConfig, globalConf *configs.Config) error
+	Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error
 	Run(ctx context.Context, e chan<- define.Event) error
 }
 
@@ -45,11 +45,11 @@ type BKMetricbeatTool struct {
 	module          *module.Wrapper
 	taskConf        *configs.MetricBeatConfig
 	tempFilePattern string
-	globalConf      *configs.Config
+	globalConf      define.Config
 }
 
 // Init 初始化参数，主要处理配置文件中的modules
-func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig, globalConf *configs.Config) error {
+func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error {
 	// 补充 period 把调度直接交给 Gather
 	t.tempFilePattern = fmt.Sprintf(tempFilePatternFormat, taskConf.GetIdent())
 	err := taskConf.Module.Merge(common.MapStr{
@@ -258,7 +258,7 @@ loop:
 			event.Data = v
 			// 仅二进制采集环境下，提取状态指标整理，整理成专属格式和DataID，进行分发
 			if !beat.IsContainerMode() {
-				upEvent := t.SendGatherUp(v)
+				upEvent := t.BuildGatherUp(v)
 				if upEvent != nil {
 					e <- upEvent
 				}
@@ -394,11 +394,11 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 	logger.Debugf("old metrics(%v), \n new metrics(%v)", oldMetrics, newMetrics)
 }
 
-// SendGatherUp 从 Beat 事件中提取状态信息
-func (t *BKMetricbeatTool) SendGatherUp(evc common.MapStr) define.Event {
+// BuildGatherUp 从 Beat 事件中提取状态信息
+func (t *BKMetricbeatTool) BuildGatherUp(evc common.MapStr) define.Event {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Errorf("Panic in SendGatherUp: %v", r)
+			logger.Errorf("Panic in BuildGatherUp: %+v")
 		}
 	}()
 
@@ -406,10 +406,22 @@ func (t *BKMetricbeatTool) SendGatherUp(evc common.MapStr) define.Event {
 	if err != nil {
 		logger.Errorf("KeyNotFound(prometheus.collector.metrics) in metricbeat: %v", err)
 	}
-	metrics := metricsVal.([]common.MapStr)
+	metrics, ok := metricsVal.([]common.MapStr)
+	if !ok {
+		logger.Errorf("Fail to convert prometheus.collector.metrics(%v) to []common.MapStr", metricsVal)
+	}
 	for _, m := range metrics {
-		if m["key"] == "bkm_metricbeat_endpoint_up" {
-			code := m["labels"].(common.MapStr)["code"].(string)
+		if m["key"] == define.MetricBeatUpMetric {
+			labels, ok := m["labels"].(common.MapStr)
+			if !ok {
+				logger.Errorf("Fail to convert labels(%v) to common.MapStr", m)
+				return nil
+			}
+			code, ok := labels["code"].(string)
+			if !ok {
+				logger.Errorf("Fail to convert code(%v) to string", labels)
+				return nil
+			}
 			codeNum, _ := strconv.ParseInt(code, 10, 32)
 			return tasks.NewGatherUpEventWithConfig(t.taskConf, t.globalConf, define.BeatErrorCode(codeNum), nil)
 		}

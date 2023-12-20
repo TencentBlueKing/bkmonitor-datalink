@@ -38,12 +38,8 @@ const (
 	metricName    = "__name__"
 )
 
-const (
-	upMetric = "bkm_metricbeat_endpoint_up"
-)
-
 func newMetricUp(code int) string {
-	return fmt.Sprintf(`%s{code="%d"} 1`, upMetric, code)
+	return fmt.Sprintf(`%s{code="%d"} 1`, define.MetricBeatUpMetric, code)
 }
 
 var (

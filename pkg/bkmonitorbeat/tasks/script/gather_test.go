@@ -252,10 +252,13 @@ func checkResult(t *testing.T, gather *Gather, testCase []TestItem) {
 
 				eventCount++
 				ms := event.AsMapStr()
-				//var code = ms["error_code"].(define.BeatErrorCode)
-				//if code != define.BeatErrCodeOK {
-				//	t.Logf("item:%d, script event result failed, result code(%d)", itemIndex, code)
-				//}
+				if data, isExisted := ms["data"]; isExisted {
+					dataItem := data.([]common.MapStr)[0]
+					ms = common.MapStr{
+						"dimensions": dataItem["dimension"],
+						"metrics":    dataItem["metrics"],
+					}
+				}
 				compareEvent(ms, outputResult.expectedOut)
 			}
 			if eventCount != len(outputResult.expectedOut) {

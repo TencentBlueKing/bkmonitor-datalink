@@ -140,7 +140,12 @@ const (
 	BeaterUpMetricCodeNameLabel = "bkm_up_code_name"
 )
 
-// BeaterUpMetricErr 有关
+// MetricBeatUpMetric metricbeat 采集类型专属状态指标
+const (
+	MetricBeatUpMetric = "bkm_metricbeat_endpoint_up"
+)
+
+// BeaterUpMetricErr 包含上报状态码的异常
 type BeaterUpMetricErr struct {
 	Code    int
 	Message string

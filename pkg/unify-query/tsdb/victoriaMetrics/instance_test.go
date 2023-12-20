@@ -86,7 +86,8 @@ func query(ctx context.Context, promql string, rts []string, data map[string]flo
 }
 
 func TestPromQL(t *testing.T) {
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 
 	once.Do(func() {
 		instance = &Instance{
@@ -124,7 +125,7 @@ func TestPromQL(t *testing.T) {
 	)
 	f, err := os.Open("vmrt.list")
 	if err != nil {
-		panic(err)
+		log.Errorf(ctx, err.Error())
 	}
 	defer f.Close()
 
@@ -379,7 +380,8 @@ var (
 )
 
 func TestInstance_QueryRange(t *testing.T) {
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 	mockInstance(ctx)
 
 	for i, c := range []struct {
@@ -406,7 +408,8 @@ func TestInstance_QueryRange(t *testing.T) {
 }
 
 func TestInstance_Query(t *testing.T) {
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 	mockInstance(ctx)
 
 	for i, c := range []struct {
@@ -433,7 +436,8 @@ func TestInstance_Query(t *testing.T) {
 }
 
 func TestInstance_LabelNames(t *testing.T) {
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 	mockInstance(ctx)
 
 	lbl, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, "a")
@@ -460,7 +464,8 @@ func TestInstance_LabelNames(t *testing.T) {
 }
 
 func TestInstance_LabelValues(t *testing.T) {
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 	mockInstance(ctx)
 
 	lbl, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, "a")

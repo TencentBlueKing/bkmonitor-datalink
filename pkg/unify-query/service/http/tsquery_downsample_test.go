@@ -24,13 +24,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/mocktest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
 // mockDownSampleData
 func mockDownSampleData(t *testing.T) (*gomock.Controller, *gostub.Stubs) {
-	log.InitTestLogger()
+	mock.Init()
+
 	ctrl := gomock.NewController(t)
 	baseT := time.Unix(0, 0)
 
@@ -364,7 +366,7 @@ func TestDownSample(t *testing.T) {
 
 	for name, testCase := range testCases {
 		t.Run(name, func(t *testing.T) {
-			ctx := mock.Init(context.Background())
+			ctx := metadata.InitHashID(context.Background())
 			// 根据请求参数请求url，使用mock的假数据看数据的计算结果
 			res, err := handlePromqlQuery(ctx, testCase.req, nil, "")
 			if testCase.err != nil {

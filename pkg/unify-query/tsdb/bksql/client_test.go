@@ -35,10 +35,10 @@ var (
 
 func mockClient() *Client {
 	once.Do(func() {
-		url = ""
-		code = ""
-		secret = ""
-		token = ""
+		url = "http://127.0.0.1"
+		code = "code"
+		secret = "secret"
+		token = "token"
 
 		client = &Client{
 			Address:                    url,
@@ -62,7 +62,7 @@ func mockClient() *Client {
 func TestClient_QueryAsync(t *testing.T) {
 	ctx := context.Background()
 
-	mock.Init(ctx)
+	mock.Init()
 	mockClient()
 
 	res := client.QueryAsync(ctx, `SELECT * FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1700745780000 AND dtEventTimeStamp < 1700746080000 LIMIT 10`)
@@ -80,7 +80,7 @@ func TestClient_QueryAsync(t *testing.T) {
 func TestClient_QueryAsyncState(t *testing.T) {
 	ctx := context.Background()
 
-	mock.Init(ctx)
+	mock.Init()
 	mockClient()
 
 	res := client.QueryAsyncState(ctx, "BK912760164455546880")
@@ -98,7 +98,7 @@ func TestClient_QueryAsyncState(t *testing.T) {
 func TestClient_QueryAsyncResult(t *testing.T) {
 	ctx := context.Background()
 
-	mock.Init(ctx)
+	mock.Init()
 	mockClient()
 
 	res := client.QueryAsyncResult(ctx, "BK912760164455546880")

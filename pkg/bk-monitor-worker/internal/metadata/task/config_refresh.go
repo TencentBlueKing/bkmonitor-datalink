@@ -238,3 +238,54 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 
 	return nil
 }
+
+// RefreshESRestore 刷新回溯状态
+func RefreshESRestore(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshEsRestore Runtime panic caught: %v\n", err)
+		}
+	}()
+
+	db := mysql.GetDBSession().DB
+	// 过滤满足条件的记录
+	var restoreList []storage.EsSnapshotRestore
+	if err := storage.NewEsSnapshotRestoreQuerySet(db).IsDeletedNe(true).All(&restoreList); err != nil {
+		logger.Errorf("query EsSnapshotRestore record error, %v", err)
+		return err
+	}
+	var notDoneRestores []storage.EsSnapshotRestore
+	for _, r := range restoreList {
+		if r.TotalDocCount != r.CompleteDocCount {
+			notDoneRestores = append(notDoneRestores, r)
+		}
+	}
+	if len(notDoneRestores) == 0 {
+		logger.Infof("no restore need refresh, skip")
+		return nil
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_es_restore"))
+	wg.Add(len(notDoneRestores))
+	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	for _, restore := range notDoneRestores {
+		ch <- true
+		go func(r storage.EsSnapshotRestore, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			svc := service.NewEsSnapshotRestoreSvc(&r)
+			if _, err := svc.GetCompleteDocCount(ctx); err != nil {
+				logger.Errorf("es_restore [%v] failed to cron task, %v", svc.RestoreID, err)
+			} else {
+				logger.Infof("es_restore [%v] refresh success", svc.RestoreID)
+			}
+		}(restore, wg, ch)
+
+	}
+	wg.Wait()
+
+	return nil
+}

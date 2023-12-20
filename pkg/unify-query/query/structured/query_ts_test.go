@@ -466,6 +466,32 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 		},
+		"influxdb-query": ir.Space{
+			"system.cpu_detail": &ir.SpaceResultTable{
+				TableId: "system.cpu_detail",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.disk": &ir.SpaceResultTable{
+				TableId: "system.disk",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+		},
 	}, ir.ResultTableDetailInfo{
 		"system.cpu_detail": &ir.ResultTableDetail{
 			TableId:         "system.cpu_detail",
@@ -486,7 +512,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		"system.cpu_summary": &ir.ResultTableDetail{
 			TableId:         "system.cpu_summary",
 			DB:              "system",
-			Measurement:     "cpu_detail",
+			Measurement:     "cpu_summary",
 			VmRt:            "100147_ieod_system_cpu_summary_raw",
 			Fields:          []string{"usage"},
 			MeasurementType: redis.BKTraditionalMeasurement,
@@ -498,8 +524,9 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		source string
 		ok     bool
 		expand *md.VmExpand
+		ref    md.QueryReference
 	}{
-		"测试非单指标开启 InfluxDBQuery 特性开关": {
+		"vm 查询开启 + 多 tableID 都开启单指标单表 = 更改 vmCondition 和 单指标单表状态": {
 			source: "username:my_bro",
 			ts: &QueryTs{
 				SpaceUid: "vm-query",
@@ -526,8 +553,64 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 				ConditionNum: 6,
 			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "disk",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
 		},
-		"测试非单指标部份开启 InfluxDBQuery 特性开关": {
+		"vm 查询开启 + tableID 开启单指标单表 =  更改 vmCondition 和 单指标单表状态": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+			ok: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw"},
+				MetricFilterCondition: map[string]string{
+					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+				},
+				ConditionNum: 3,
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + 多 tableID 只有部份开启单指标单表 = 无需修改 field + influxdb 查询": {
 			source: "username:my_bro",
 			ts: &QueryTs{
 				SpaceUid: "vm-query",
@@ -545,10 +628,30 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 				MetricMerge: "a + b",
 			},
-			ok:     false,
-			expand: nil,
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="cpu_summary_usage"`,
+						},
+					},
+				},
+			},
 		},
-		"测试非单指标未开启 InfluxDBQuery 特性开关": {
+		"vm 查询开启 + tableID 未开启单指标单表 = 无需修改 field + influxdb 查询": {
 			source: "username:my_bro",
 			ts: &QueryTs{
 				SpaceUid: "vm-query",
@@ -561,10 +664,20 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 				MetricMerge: "b",
 			},
-			ok:     false,
-			expand: nil,
+			ref: md.QueryReference{
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="cpu_summary_usage"`,
+						},
+					},
+				},
+			},
 		},
-		"测试该用户未开启 InfluxDBQuery 特性开关": {
+		"vm 查询开启 + 该用户未开启单指标单表 = 无需修改 field + influxdb 查询": {
 			source: "username:my_bro_1",
 			ts: &QueryTs{
 				SpaceUid: "vm-query",
@@ -577,8 +690,59 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 				MetricMerge: "b",
 			},
-			ok:     false,
-			expand: nil,
+			ref: md.QueryReference{
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+						},
+					},
+				},
+			},
+		},
+		"未开启 vm查询 + 多 tableID 都开启单指标单表 = 无需修改 field + influxdb 查询": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.disk",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "disk",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="disk_usage"`,
+						},
+					},
+				},
+			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -598,6 +762,15 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				if err == nil {
 					assert.Equal(t, tc.ok, ok)
 					assert.Equal(t, tc.expand, vmExpand)
+				}
+
+				for refName, v := range ref {
+					for idx := range v.QueryList {
+						assert.Equal(t, tc.ref[refName].QueryList[idx].Measurement, v.QueryList[idx].Measurement)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].Field, v.QueryList[idx].Field)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].IsSingleMetric, v.QueryList[idx].IsSingleMetric)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].VmCondition, v.QueryList[idx].VmCondition)
+					}
 				}
 			}
 		})

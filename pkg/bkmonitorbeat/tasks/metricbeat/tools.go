@@ -398,17 +398,19 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 func (t *BKMetricbeatTool) BuildGatherUp(evc common.MapStr) define.Event {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Errorf("Panic in BuildGatherUp: %+v")
+			logger.Errorf("Panic in BuildGatherUp: %+v", r)
 		}
 	}()
 
 	metricsVal, err := evc.GetValue("prometheus.collector.metrics")
 	if err != nil {
 		logger.Errorf("KeyNotFound(prometheus.collector.metrics) in metricbeat: %v", err)
+		return nil
 	}
 	metrics, ok := metricsVal.([]common.MapStr)
 	if !ok {
 		logger.Errorf("Fail to convert prometheus.collector.metrics(%v) to []common.MapStr", metricsVal)
+		return nil
 	}
 	for _, m := range metrics {
 		if m["key"] == define.MetricBeatUpMetric {

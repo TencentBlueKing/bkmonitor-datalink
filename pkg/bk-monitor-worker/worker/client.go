@@ -49,11 +49,7 @@ func (c *Client) Close() error {
 
 // Enqueue 入队列
 func (c *Client) Enqueue(task *t.Task, opts ...t.Option) (*t.TaskInfo, error) {
-	metrics.PublishMetric(metrics.Metric{
-		TaskName:   task.Kind,
-		Value:      1,
-		MetricType: "EnqueueTaskCount",
-	})
+	metrics.EnqueueTaskCount(task.Kind)
 	return c.EnqueueWithContext(context.Background(), task, opts...)
 }
 

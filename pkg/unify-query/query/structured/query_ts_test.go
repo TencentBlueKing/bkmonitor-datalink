@@ -403,15 +403,15 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		ctx, `{
 	"is-split": {
 		"variations": {
-			"Default": true,
+			"Default": false,
 			"true": true,
 			"false": false
 		},
 		"targeting": [{
 			"query": "tableID in [\"system.cpu_detail\", \"system.disk\"] and name in [\"my_bro\"]",
 			"percentage": {
-				"true": 0,
-				"false": 100
+				"true": 100,
+				"false":0 
 			}
 		}],
 		"defaultRule": {
@@ -555,6 +555,22 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				QueryList: []*Query{
 					{
 						TableID:       "system.cpu_summary",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "b",
+			},
+			ok:     false,
+			expand: nil,
+		},
+		"测试该用户未开启 InfluxDBQuery 特性开关": {
+			source: "username:my_bro_1",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
 						FieldName:     "usage",
 						ReferenceName: "b",
 					},

@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
+// GetIsSplitFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetIsSplitFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
 		span oleltrace.Span
@@ -40,7 +41,7 @@ func GetIsSplitFeatureFlag(ctx context.Context, tableID string) bool {
 		"tableID":  tableID,
 	})
 
-	status := featureFlag.BoolVariation(ctx, ffUser, "is-split", true)
+	status := featureFlag.BoolVariation(ctx, ffUser, "is-split", false)
 	trace.InsertStringIntoSpan("is-split-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 
 	return status

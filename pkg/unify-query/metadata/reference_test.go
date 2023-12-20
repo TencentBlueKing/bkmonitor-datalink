@@ -33,23 +33,6 @@ func TestCheckVmQuery(t *testing.T) {
 
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
-	"influxdb-query": {
-		"variations": {
-			"Default": true,
-			"true": true,
-			"false": false
-		},
-		"targeting": [{
-			"query": "tableID in [\"system.cpu_detail\", \"system.io\"] and name in [\"my_bro\"]",
-			"percentage": {
-				"true": 0,
-				"false": 100
-			}
-		}],
-		"defaultRule": {
-			"variation": "Default"
-		}
-	},
 	"vm-query": {
 		"variations": {
 			"Default": false,

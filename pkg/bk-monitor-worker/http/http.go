@@ -39,9 +39,6 @@ func NewHTTPService() *gin.Engine {
 	// 删除所有任务
 	svr.DELETE("/bmw/task/all", RemoveAllTask)
 
-	// metrics
-	svr.GET("/bmw/metrics", prometheusHandler())
-
 	return svr
 }
 
@@ -49,6 +46,9 @@ func NewHTTPService() *gin.Engine {
 func NewProfHttpService() *gin.Engine {
 	svr := gin.Default()
 	gin.SetMode(config.GinMode)
+
+	// metrics
+	svr.GET("/bmw/metrics", prometheusHandler())
 
 	pprof.Register(svr)
 

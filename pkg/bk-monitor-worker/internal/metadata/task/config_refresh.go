@@ -241,6 +241,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
+// RefreshKafkaTopicInfo 刷新kafka topic into的partitions
 func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {

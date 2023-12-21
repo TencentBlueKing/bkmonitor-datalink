@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -232,6 +234,43 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
 			}
 		}(dataSource, wg, ch)
+
+	}
+	wg.Wait()
+
+	return nil
+}
+
+func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshKafkaTopicInfo Runtime panic caught: %v\n", err)
+		}
+	}()
+	db := mysql.GetDBSession().DB
+	var kafkaTopicInfoList []storage.KafkaTopicInfo
+	if err := storage.NewKafkaTopicInfoQuerySet(db).All(&kafkaTopicInfoList); err != nil {
+		return errors.Wrapf(err, "query RefreshKafkaTopicInfo failed")
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	wg.Add(len(kafkaTopicInfoList))
+	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	for _, info := range kafkaTopicInfoList {
+		ch <- true
+		go func(info storage.KafkaTopicInfo, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			svc := service.NewKafkaTopicInfoSvc(&info)
+			if err := svc.RefreshTopicInfo(); err != nil {
+				logger.Errorf("refresh kafka topic info [%v] failed, %v", svc.Topic, err)
+			} else {
+				logger.Infof("refresh kafka topic info [%v] success", svc.Topic)
+			}
+		}(info, wg, ch)
 
 	}
 	wg.Wait()

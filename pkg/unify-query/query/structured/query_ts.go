@@ -201,7 +201,7 @@ type Query struct {
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp bool `json:"is_regexp" example:"false"`
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
-	FieldList []string `json:"field_list" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
+	FieldList []string `json:"-" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
 	// AggregateMethodList 维度聚合函数
 	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法

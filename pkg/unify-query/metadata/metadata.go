@@ -11,7 +11,6 @@ package metadata
 
 import (
 	"context"
-	"fmt"
 
 	cache "github.com/patrickmn/go-cache"
 
@@ -26,7 +25,7 @@ type metaData struct {
 // Get 通过 traceID + key 获取缓存
 func (m *metaData) get(ctx context.Context, key string) (interface{}, bool) {
 	id := hashID(ctx)
-	k := fmt.Sprintf("%s_%s", id, key)
+	k := id + "_" + key
 	log.Debugf(ctx, "metadata get %s", k)
 	return m.c.Get(k)
 }
@@ -34,7 +33,7 @@ func (m *metaData) get(ctx context.Context, key string) (interface{}, bool) {
 // Set 通过 traceID + key 写入缓存
 func (m *metaData) set(ctx context.Context, key string, value interface{}) {
 	id := hashID(ctx)
-	k := fmt.Sprintf("%s_%s", id, key)
+	k := id + "_" + key
 	log.Debugf(ctx, "metadata set %s", k)
 	m.c.SetDefault(k, value)
 }

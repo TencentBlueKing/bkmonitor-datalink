@@ -95,6 +95,7 @@ type Config struct {
 
 	TCPTask           *TCPTaskMetaConfig     `config:"tcp_task"`
 	HeartBeat         *HeartBeatConfig       `config:"heart_beat"`
+	GatherUpBeat      *GatherUpBeatConfig    `config:"gather_up_beat"`
 	UDPTask           *UDPTaskMetaConfig     `config:"udp_task"`
 	HTTPTask          *HTTPTaskMetaConfig    `config:"http_task"`
 	ScriptTask        *ScriptTaskMetaConfig  `config:"script_task"`
@@ -123,8 +124,8 @@ func NewConfig() *Config {
 		Mode:             "check",
 		KeepOneDimension: false,
 		HeartBeat:        NewHeartBeatConfig(),
+		GatherUpBeat:     NewGatherUpBeatConfig(),
 	}
-
 	config.TCPTask = NewTCPTaskMetaConfig(config)
 	config.UDPTask = NewUDPTaskMetaConfig(config)
 	config.HTTPTask = NewHTTPTaskMetaConfig(config)
@@ -195,4 +196,8 @@ func (c *Config) GetTaskConfigList() []define.TaskConfig {
 		}
 	}
 	return tasks
+}
+
+func (c *Config) GetGatherUpDataID() int32 {
+	return c.GatherUpBeat.DataID
 }

@@ -109,6 +109,10 @@ func (g *Gather) AsPortEvents(pid int32, cmd string, conns []process.FileSocket)
 	return []Event{event}
 }
 
+func (g *Gather) newUpMetricEvent(upCode define.BeatErrorCode) define.Event {
+	return tasks.NewGatherUpEvent(g, upCode)
+}
+
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig
@@ -195,27 +199,40 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 
 	pid, err := g.getPidFromPidPath()
 	if err != nil {
+		logger.Warnf("pid file not found, %v", err)
+		failedEvent := g.newUpMetricEvent(define.BeaterProcPIDFileNotFountOuterError)
+		e <- failedEvent
 		return
 	}
 
 	var match []define.ProcStat
 	if pid >= 0 {
+		// 通过PID文件方式读取进程信息分支
 		one, err := g.ctr.GetOneMetaData(pid)
 		if err != nil {
 			logger.Errorf("failed to get one proc perf detailed: %v", err)
+			failedEvent := g.newUpMetricEvent(define.BeaterProcStateReadOuterError)
+			e <- failedEvent
 			return
 		}
 		match = append(match, one)
 	} else {
+		// 通过进程关键字匹配方式读取进程信息分支
 		all, err := g.GetAllMetaDataWithCache()
 		if err != nil {
+			failedEvent := g.newUpMetricEvent(define.BeaterProcSnapshotReadError)
+			e <- failedEvent
 			logger.Errorf("failed to get all proc perf detailed: %v", err)
 			return
 		}
-
 		match = g.config.Match(all)
+		if len(match) == 0 {
+			failedEvent := g.newUpMetricEvent(define.BeaterProcNotMatchedOuterError)
+			e <- failedEvent
+			logger.Warn("No processes matched keyword pattern")
+			return
+		}
 	}
-
 	// 一次采集全局仅允许刷新一次 Map
 	refresh := false
 	if g.config.EnablePerfCollected() {
@@ -224,7 +241,6 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 			refresh = true
 			events = g.aggregateStats(events, true)
 		}
-
 		for _, event := range events {
 			e <- event
 		}
@@ -235,12 +251,19 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		for _, m := range match {
 			pids = append(pids, m.Pid)
 		}
-		conn, err := g.getConnDetector().Get(pids)
+		connDetector := g.getConnDetector()
+		conn, err := connDetector.Get(pids)
 		if err != nil {
 			logger.Errorf(
-				"ConnDetector.Get failed, connector: %#v pids: %v, err: %v ", g.getConnDetector(), pids, err,
+				"ConnDetector.Get failed, connector: %#v pids: %v, err: %v ", connDetector, pids, err,
 			)
+			if _, ok := connDetector.(process.StdDetector); ok {
+				e <- g.newUpMetricEvent(define.BeaterProcStdConnDetectError)
+			} else {
+				e <- g.newUpMetricEvent(define.BeaterProcNetConnDetectError)
+			}
 			g.degradeToStdConn = true
+			return
 		} else {
 			for _, m := range match {
 				socketList := make([]process.FileSocket, 0)
@@ -259,6 +282,9 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 			}
 		}
 	}
+
+	upEvent := g.newUpMetricEvent(define.BeatErrCodeOK)
+	e <- upEvent
 }
 
 func (g *Gather) getConnDetector() process.ConnDetector {

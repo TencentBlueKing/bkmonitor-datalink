@@ -7,31 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package script
+package configs
 
-import (
-	"testing"
+type GatherUpBeatConfig struct {
+	DataID int32 `config:"dataid"`
+}
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-)
-
-func TestScriptEvent(t *testing.T) {
-	globalConf := configs.NewConfig()
-	// 提供一个心跳的data_id，防止命中data_id防御机制
-	globalConf.HeartBeat.GlobalDataID = 1000
-	taskConf := configs.NewScriptTaskConfig()
-	err := globalConf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
+func NewGatherUpBeatConfig() *GatherUpBeatConfig {
+	config := &GatherUpBeatConfig{
+		DataID: 0,
 	}
-	err = taskConf.Clean()
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	st := New(globalConf, taskConf).(*Gather)
-	event := NewEvent(st)
-	if event.ErrorCode != define.BeatErrCodeUnknown {
-		t.Errorf("script event initial failed")
-	}
+	return config
 }

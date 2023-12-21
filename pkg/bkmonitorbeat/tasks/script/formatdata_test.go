@@ -34,7 +34,8 @@ func TestScriptFormat(t *testing.T) {
 // TestFormat :
 func (s *ScriptFormatSuite) TestFormat() {
 	now := time.Now()
-	fmResult, err := FormatOutput([]byte(promutheusTestMeta), now.UnixMilli(), 8760, "s")
+	handler, _ := tasks.GetTimestampHandler("s")
+	fmResult, err := FormatOutput([]byte(promutheusTestMeta), now.UnixMilli(), 8760, handler)
 	s.Equal(err, nil)
 	s.Equal(len(fmResult), 1)
 	for timestamp, eventData := range fmResult {

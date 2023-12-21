@@ -401,7 +401,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	ctx := context.Background()
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
-	"is-split": {
+	"must-vm-query": {
 		"variations": {
 			"Default": false,
 			"true": true,

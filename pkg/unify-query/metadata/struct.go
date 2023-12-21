@@ -125,53 +125,56 @@ type ReplaceLabel struct {
 }
 
 func ReplaceVmCondition(condition string, replaceLabels ReplaceLabels) string {
+	if len(replaceLabels) == 0 {
+		return condition
+	}
+
 	expr, err := metricsql.Parse(fmt.Sprintf(`{%s}`, condition))
 	if err != nil {
 		return condition
 	}
 
-	if len(replaceLabels) == 0 {
+	me, ok := expr.(*metricsql.MetricExpr)
+	if !ok {
 		return condition
 	}
 
-	me, ok := expr.(*metricsql.MetricExpr)
-	if ok {
-		var cond []byte
-		for i, f := range me.LabelFilterss {
-			var dst []byte
-			for j, l := range f {
-				if rl, exist := replaceLabels[l.Label]; exist {
-					l.Value = strings.Replace(l.Value, rl.Source, rl.Target, 1)
-				}
-
-				if j == 0 {
-					dst = l.AppendString(dst)
-				} else {
-					dst = append(dst, ',', ' ')
-					dst = l.AppendString(dst)
+	var cond []byte
+	for i, f := range me.LabelFilterss {
+		var dst []byte
+		for j, l := range f {
+			if rl, exist := replaceLabels[l.Label]; exist {
+				if l.Value == rl.Source {
+					l.Value = rl.Target
 				}
 			}
 
-			if i == 0 {
-				cond = dst
+			if j == 0 {
+				dst = l.AppendString(dst)
 			} else {
-				cond = append(cond, " or "...)
-				cond = append(cond, dst...)
+				dst = append(dst, ',', ' ')
+				dst = l.AppendString(dst)
 			}
 		}
-		condition = string(cond)
+
+		if i == 0 {
+			cond = dst
+		} else {
+			cond = append(cond, " or "...)
+			cond = append(cond, dst...)
+		}
 	}
 
-	return condition
+	return string(cond)
 }
 
-func (qRef QueryReference) CheckIsSplit(ctx context.Context) bool {
+func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
 	// 判断是否打开 vm-query 特性开关
 	if !GetVMQueryFeatureFlag(ctx) {
 		return false
 	}
 
-	isSplitStatus := true
+	mustVmQueryStatus := true
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
 			for _, query := range reference.QueryList {
@@ -185,47 +188,49 @@ func (qRef QueryReference) CheckIsSplit(ctx context.Context) bool {
 					continue
 				}
 
-				// 如果该 TableID 未配置单指标单表的特性开关
-				if !GetIsSplitFeatureFlag(ctx, query.TableID) {
-					isSplitStatus = false
+				// 如果该 TableID 配置了 vm 查询特制开关则跳过
+				if GetMustVmQueryFeatureFlag(ctx, query.TableID) {
+					continue
 				}
+
+				mustVmQueryStatus = false
 			}
 		}
 	}
 
-	if isSplitStatus {
-		for _, reference := range qRef {
-			if len(reference.QueryList) > 0 {
-				for _, query := range reference.QueryList {
-					// 忽略 vmRt 为空的
-					if query.VmRt == "" {
-						continue
-					}
+	if !mustVmQueryStatus {
+		return false
+	}
 
-					// 忽略本身已经是单指标单表的
-					if query.IsSingleMetric {
-						continue
-					}
-
-					// 更改为单指标单表
-					replaceLabels := make(ReplaceLabels)
-
-					oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-					newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
-					query.IsSingleMetric = true
-
-					replaceLabels["__name__"] = ReplaceLabel{
-						Source: oldMetric,
-						Target: newMetric,
-					}
-
-					query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)
-				}
+	for _, reference := range qRef {
+		for _, query := range reference.QueryList {
+			// 忽略 vmRt 为空的
+			if query.VmRt == "" {
+				continue
 			}
+
+			// 忽略本身已经是单指标单表的
+			if query.IsSingleMetric {
+				continue
+			}
+
+			// 更改为单指标单表
+			replaceLabels := make(ReplaceLabels)
+
+			oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
+			newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
+			query.IsSingleMetric = true
+
+			replaceLabels["__name__"] = ReplaceLabel{
+				Source: oldMetric,
+				Target: newMetric,
+			}
+
+			query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)
 		}
 	}
 
-	return isSplitStatus
+	return true
 }
 
 // CheckDruidCheck 判断是否是查询 druid 数据
@@ -323,10 +328,10 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	// 特性开关 vm or 语法查询
 	vmQueryFeatureFlag := GetVMQueryFeatureFlag(ctx)
 	druidQueryStatus := qRef.CheckDruidCheck(ctx)
-	isSplitStatus := qRef.CheckIsSplit(ctx)
+	mustVmQueryStatus := qRef.CheckMustVmQuery(ctx)
 
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
-	if !vmQueryFeatureFlag && !druidQueryStatus && !isSplitStatus {
+	if !vmQueryFeatureFlag && !druidQueryStatus && !mustVmQueryStatus {
 		return ok, nil, err
 	}
 

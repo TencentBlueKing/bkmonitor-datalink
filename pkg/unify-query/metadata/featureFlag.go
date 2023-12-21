@@ -19,14 +19,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// GetIsSplitFeatureFlag 判断该 TableID 是否强行指定为单指标单表
-func GetIsSplitFeatureFlag(ctx context.Context, tableID string) bool {
+// GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
+func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
 		span oleltrace.Span
 		user = GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-is-split-feature-flag")
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-must-vm-query-feature-flag")
 	if span != nil {
 		defer span.End()
 	}
@@ -41,8 +41,8 @@ func GetIsSplitFeatureFlag(ctx context.Context, tableID string) bool {
 		"tableID":  tableID,
 	})
 
-	status := featureFlag.BoolVariation(ctx, ffUser, "is-split", false)
-	trace.InsertStringIntoSpan("is-split-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", false)
+	trace.InsertStringIntoSpan("must-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 
 	return status
 }

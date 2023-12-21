@@ -12,11 +12,14 @@ package collector
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"testing"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
 func TestGetEventFromPromEvent(t *testing.T) {
@@ -37,7 +40,7 @@ metric1{label1="value1"} 10
 metric2{label1="value2"} 11
 metric3{label1="value3"} 12
 `
-	ch := mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines1)), func() {}, false)
+	ch := mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines1)), func() {}, true)
 	expected := []common.MapStr{
 		{
 			"key": "metric1",
@@ -58,8 +61,14 @@ metric3{label1="value3"} 12
 			},
 			"value": float64(12),
 		},
+		{
+			"key": "bkm_gather_up",
+			"labels": common.MapStr{
+				"bkm_up_code": "0",
+			},
+			"value": float64(1),
+		},
 	}
-
 	index := 0
 	for msg := range ch {
 		for k, _ := range expected[index] {
@@ -74,8 +83,9 @@ metric3{label1="value3"} 12
 metric1{label1="value1"} 20
 metric2{label1="value2"} 21
 metric3{label1="value3"} 22
+metric4label1"value3"} 22
 `
-	ch = mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines2)), func() {}, false)
+	ch = mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines2)), func() {}, true)
 	expected = []common.MapStr{
 		{
 			"key": "metric1",
@@ -98,6 +108,13 @@ metric3{label1="value3"} 22
 			},
 			"value": float64(22),
 		},
+		{
+			"key": "bkm_gather_up",
+			"labels": common.MapStr{
+				"bkm_up_code": "2502",
+			},
+			"value": float64(1),
+		},
 	}
 
 	index = 0
@@ -109,4 +126,10 @@ metric3{label1="value3"} 22
 		assert.True(t, ok)
 		index++
 	}
+	failedMetric := newFailReader(define.BeatMetricBeatConnOuterError)
+	ch = mb.getEventsFromReader(failedMetric, func() {}, false)
+	for msg := range ch {
+		fmt.Printf("aaa: %v", msg)
+	}
+
 }

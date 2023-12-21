@@ -57,6 +57,7 @@ type TaskMetaConfig interface {
 // Config : task config
 type Config interface {
 	GetTaskConfigListByType(string) []TaskConfig
+	GetGatherUpDataID() int32
 	Clean() error
 }
 

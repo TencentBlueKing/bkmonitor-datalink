@@ -77,6 +77,10 @@ bkmonitorbeat:
     period: 60s
     publish_immediately: true
 
+  # 任务执行状态配置
+  gather_up_beat:
+    dataid: 1100017
+
   # 静态资源采集配置
   static_task:
     dataid: 1100010

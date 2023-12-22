@@ -11,7 +11,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -49,9 +48,12 @@ func RefreshDefaultRp(ctx context.Context, t *t.Task) error {
 			}()
 			var svc = service.NewInfluxdbHostInfoSvc(&host)
 			err := svc.RefreshDefaultRp()
-			fmt.Print(err)
+			if err != nil {
+				logger.Errorf("refresh default rp for [%s] failed, %v", host.HostName, err)
+				return
+			}
+			logger.Infof("refresh default rp for [%s] success", host.HostName)
 		}(host, &wg, ch)
-
 	}
 	wg.Wait()
 

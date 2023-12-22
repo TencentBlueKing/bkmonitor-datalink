@@ -92,6 +92,9 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 	if err != nil {
 		return errors.Wrapf(err, "influxdb [%s] show databases faield", s.HostName)
 	}
+	if len(resps) == 0 {
+		return fmt.Errorf("influxdb [%s] show databases result is empty", s.HostName)
+	}
 	dbInfoList := influxdb.ParseResult(resps[0])
 	for _, dbInfo := range dbInfoList {
 		dbName, ok := dbInfo["name"].(string)
@@ -107,6 +110,10 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 		resps, err := influxdb.QueryDB(c, "SHOW RETENTION POLICIES", dbName, nil)
 		if err != nil {
 			logger.Errorf("influxdb [%s] cmd [SHOW RETENTION POLICIES ON %s] failed, %v", s.HostName, dbName, err)
+			continue
+		}
+		if len(resps) == 0 {
+			logger.Warnf("influxdb [%s] [SHOW RETENTION POLICIES ON %s]  result is empty, skip", s.HostName, dbName)
 			continue
 		}
 		rpList := influxdb.ParseResult(resps[0])

@@ -7,7 +7,6 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
-	github.com/bwmarrin/snowflake v0.3.0
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0
 	github.com/elastic/go-elasticsearch/v8 v8.0.0-20210317102009-a9d74cec0186

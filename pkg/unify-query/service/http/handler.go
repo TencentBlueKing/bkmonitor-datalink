@@ -431,19 +431,25 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	}
 
 	// 解析请求 body
-	promql := &structured.QueryPromQL{}
-	err := json.NewDecoder(c.Request.Body).Decode(promql)
+	promQL := &structured.QueryPromQL{}
+	err := json.NewDecoder(c.Request.Body).Decode(promQL)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
 
-	query, err := promQLToStruct(ctx, promql)
+	promQLStr, _ := json.Marshal(promQL)
+	trace.InsertStringIntoSpan("promql-body", string(promQLStr), span)
+
+	query, err := promQLToStruct(ctx, promQL)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
+
+	queryStr, _ := json.Marshal(query)
+	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 
 	resp.success(ctx, gin.H{"data": query})
 }
@@ -482,12 +488,19 @@ func HandlerStructToPromQL(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
+
+	queryStr, _ := json.Marshal(query)
+	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+
 	promQL, err := structToPromQL(ctx, query)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
+
+	promQLStr, _ := json.Marshal(promQL)
+	trace.InsertStringIntoSpan("promql-body", string(promQLStr), span)
 
 	resp.success(ctx, promQL)
 }

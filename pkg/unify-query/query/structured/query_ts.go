@@ -35,25 +35,25 @@ import (
 
 type QueryTs struct {
 	// SpaceUid 空间ID
-	SpaceUid string `json:"space_uid"`
+	SpaceUid string `json:"space_uid,omitempty"`
 	// QueryList 查询实例
-	QueryList []*Query `json:"query_list"`
+	QueryList []*Query `json:"query_list,omitempty"`
 	// MetricMerge 表达式：支持所有PromQL语法
-	MetricMerge string `json:"metric_merge" example:"a"`
+	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
 	// ResultColumns 指定保留返回字段值
-	ResultColumns []string `json:"result_columns" swaggerignore:"true"`
+	ResultColumns []string `json:"result_columns,omitempty" swaggerignore:"true"`
 	// Start 开始时间：单位为毫秒的时间戳
-	Start string `json:"start_time" example:"1657848000"`
+	Start string `json:"start_time,omitempty" example:"1657848000"`
 	// End 结束时间：单位为毫秒的时间戳
-	End string `json:"end_time" example:"1657851600"`
+	End string `json:"end_time,omitempty" example:"1657851600"`
 	// Step 步长：最终返回的点数的时间间隔
-	Step string `json:"step" example:"1m"`
+	Step string `json:"step,omitempty" example:"1m"`
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 	// LookBackDelta 偏移量
-	LookBackDelta string `json:"look_back_delta"`
+	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
 }
@@ -193,43 +193,43 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 
 type Query struct {
 	// DataSource 暂不使用
-	DataSource string `json:"data_source" swaggerignore:"true"`
+	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
-	TableID TableID `json:"table_id" example:"system.cpu_summary"`
+	TableID TableID `json:"table_id,omitempty" example:"system.cpu_summary"`
 	// FieldName 查询指标
-	FieldName string `json:"field_name" example:"usage"`
+	FieldName string `json:"field_name,omitempty" example:"usage"`
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp bool `json:"is_regexp" example:"false"`
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
-	FieldList []string `json:"-" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
+	FieldList []string `json:"field_list,omitempty" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
 	// AggregateMethodList 维度聚合函数
 	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法
 	TimeAggregation TimeAggregation `json:"time_aggregation"`
 	// ReferenceName 别名，用于表达式计算
-	ReferenceName string `json:"reference_name" example:"a"`
+	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
-	Dimensions []string `json:"dimensions" example:"bk_target_ip,bk_target_cloud_id"`
+	Dimensions []string `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Limit 点数限制数量
-	Limit int `json:"limit" example:"0"`
+	Limit int `json:"limit,omitempty" example:"0"`
 	// Timestamp @-modifier 标记
-	Timestamp *int64 `json:"timestamp"`
+	Timestamp *int64 `json:"timestamp,omitempty"`
 	// StartOrEnd @-modifier 标记，start or end
-	StartOrEnd parser.ItemType `json:"start_or_end"`
+	StartOrEnd parser.ItemType `json:"start_or_end,omitempty"`
 	// VectorOffset
-	VectorOffset time.Duration `json:"vector_offset"`
+	VectorOffset time.Duration `json:"vector_offset,omitempty"`
 	// Offset 偏移量
-	Offset string `json:"offset" example:""`
+	Offset string `json:"offset,omitempty" example:""`
 	// OffsetForward 偏移方向，默认 false 为向前偏移
-	OffsetForward bool `json:"offset_forward" example:"false"`
+	OffsetForward bool `json:"offset_forward,omitempty" example:"false"`
 	// Slimit 维度限制数量
-	Slimit int `json:"slimit" example:"0"`
+	Slimit int `json:"slimit,omitempty" example:"0"`
 	// Soffset 弃用字段
-	Soffset int `json:"soffset" example:"0" swaggerignore:"true"`
+	Soffset int `json:"soffset,omitempty" example:"0" swaggerignore:"true"`
 	// Conditions 过滤条件
-	Conditions Conditions `json:"conditions"`
+	Conditions Conditions `json:"conditions,omitempty"`
 	// KeepColumns 保留字段
-	KeepColumns KeepColumns `json:"keep_columns" swaggerignore:"true"`
+	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -239,7 +239,7 @@ type Query struct {
 	// End 保留字段，会被外面的 End 覆盖
 	End string `json:"-" swaggerignore:"true"`
 	// Step
-	Step string `json:"step" swaggerignore:"true"`
+	Step string `json:"step,omitempty" swaggerignore:"true"`
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
 }

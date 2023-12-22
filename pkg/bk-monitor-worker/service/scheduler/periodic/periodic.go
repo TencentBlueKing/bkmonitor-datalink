@@ -33,7 +33,8 @@ var (
 	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource     = "periodic:metadata:refresh_datasource"
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
-	RefreshBcsMonitorInfo = "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshBcsMonitorInfo  = "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshBcsMetricsLabel = "periodic:metadata:refresh_bcs_metrics_label"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -63,6 +64,10 @@ var (
 		RefreshBcsMonitorInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMonitorInfo,
+		},
+		RefreshBcsMetricsLabel: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBcsMetricsLabel,
 		},
 	}
 )

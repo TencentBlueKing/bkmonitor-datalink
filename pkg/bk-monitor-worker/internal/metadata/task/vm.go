@@ -40,7 +40,7 @@ func RefreshQueryVMSpaceList(ctx context.Context, t *t.Task) error {
 	// 推送到 redis
 	client, err := dependentredis.GetInstance(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get redis client error, %v", err)
+		return errors.Wrap(err, "get redis client error")
 	}
 	// 推送空间数据到 redis，用于创建时，推送失败或者没有推送的场景
 	var uidList []interface{}
@@ -57,7 +57,7 @@ func RefreshQueryVMSpaceList(ctx context.Context, t *t.Task) error {
 		return err
 	}
 	if err := client.Publish(config.QueryVMSpaceUidChannelKey, currTimeJson); err != nil {
-		return errors.Wrapf(err, "publish time [%s] to [%s] failed, %v", currTimeJson, config.QueryVMSpaceUidChannelKey, err)
+		return errors.Wrapf(err, "publish time [%s] to [%s] failed", currTimeJson, config.QueryVMSpaceUidChannelKey)
 	}
 	logger.Infof("refresh query vm space list success")
 	return nil

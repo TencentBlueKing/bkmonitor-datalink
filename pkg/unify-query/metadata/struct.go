@@ -25,6 +25,8 @@ import (
 
 const (
 	StaticField = "value"
+
+	UUID = "query_uuid"
 )
 
 // AggrMethod 聚合方法

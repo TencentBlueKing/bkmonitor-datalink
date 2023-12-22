@@ -571,6 +571,8 @@ func TestQueryTs(t *testing.T) {
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
 			body := []byte(c.query)
 			query := &structured.QueryTs{}
 			err := json.Unmarshal(body, query)

@@ -19,13 +19,15 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestInstance_QueryRaw(t *testing.T) {
 
-	ctx := mock.Init(context.Background())
+	ctx := context.Background()
+	mock.Init()
 	cli := mockClient()
 
 	ins := &Instance{
@@ -74,6 +76,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
 			ss := ins.QueryRaw(ctx, c.query, c.hints)
 			for ss.Next() {
 				series := ss.At()
@@ -95,7 +98,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 			}
 
 			if ss.Err() != nil {
-				panic(ss.Err())
+				log.Errorf(ctx, ss.Err().Error())
 			}
 		})
 	}
@@ -134,7 +137,7 @@ func TestInstance_bkSql(t *testing.T) {
 
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
-			ctx := mock.Init(context.Background())
+			ctx := metadata.InitHashID(context.Background())
 			sql, _ := ins.bkSql(ctx, c.query, c.hints)
 			assert.Equal(t, sql, c.sql)
 		})

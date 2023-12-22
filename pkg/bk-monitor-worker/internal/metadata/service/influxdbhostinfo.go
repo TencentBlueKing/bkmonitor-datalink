@@ -93,7 +93,7 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 		return errors.Wrapf(err, "influxdb [%s] show databases faield", s.HostName)
 	}
 	if len(resps) == 0 {
-		return fmt.Errorf("influxdb [%s] show databases result is empty", s.HostName)
+		return errors.Errorf("influxdb [%s] show databases result is empty", s.HostName)
 	}
 	dbInfoList := influxdb.ParseResult(resps[0])
 	for _, dbInfo := range dbInfoList {
@@ -102,7 +102,7 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 			logger.Warnf("influxdb [%s] parse dbname failed, [%v]", s.HostName, dbInfo)
 			continue
 		}
-		// 判断该db是否在需要刷新的set当中，如果不是，则直接跳过
+		// 判断该db是否在需要刷新的数组当中，如果不是，则直接跳过
 		if !slicex.IsExistItem(databases, dbName) {
 			continue
 		}

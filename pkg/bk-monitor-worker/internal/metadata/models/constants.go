@@ -211,3 +211,10 @@ var TimeStampLenValeMap = map[int]string{
 	TimeStampLenMillisecondLen: "Unix Time Stamp(milliseconds)",
 	TimeStampLenNanosecondLen:  "Unix Time Stamp(nanosecond)",
 }
+
+var BcsMetricLabelPrefix = map[string]string{
+	"*":          "kubernetes",
+	"node_":      "kubernetes",
+	"container_": "kubernetes",
+	"kube_":      "kubernetes",
+}

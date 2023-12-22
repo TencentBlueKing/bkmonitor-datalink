@@ -329,7 +329,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 			groupList = append(groupList, dim)
 		}
 
-		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, int(window.Milliseconds()))
+		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
 		groupList = append(groupList, timeField)
 
 		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)

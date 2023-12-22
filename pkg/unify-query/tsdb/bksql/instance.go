@@ -214,8 +214,8 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 		)
 
 		// 获取时间戳，单位是毫秒
-		if vtLong, ok = d[dtEventTimeStamp]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", dtEventTimeStamp)
+		if vtLong, ok = d[timeStamp]; !ok {
+			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
 		}
 
 		switch vtLong.(type) {
@@ -316,7 +316,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 
 	// 判断是否需要提前聚合
 	newFuncName, window, dims := query.GetDownSampleFunc(hints)
-	if newFuncName != "" && window.Seconds() >= time.Minute.Seconds() {
+	if newFuncName != "" {
 		isCount = newFuncName == metadata.COUNT
 		// 兼容函数
 		if newFuncName == metadata.MEAN {
@@ -329,15 +329,16 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 			groupList = append(groupList, dim)
 		}
 
-		timeGrouping := fmt.Sprintf("minute%d", int(window.Minutes()))
+		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, int(window.Milliseconds()))
+		timeGrouping := fmt.Sprintf(`FROM_UNIXTIME(%s  / 1000, "%%Y%%m%%d%%H%%i%%s")`, timeField)
 		groupList = append(groupList, timeGrouping)
 
-		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS %s", strings.ToUpper(newFuncName), query.Field, query.Field, dtEventTimeStamp, dtEventTimeStamp)
+		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
 		if len(dims) > 0 {
 			aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
 		}
 	} else {
-		aggField = "*"
+		aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
 	}
 
 	where = fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, hints.Start, dtEventTimeStamp, hints.End)

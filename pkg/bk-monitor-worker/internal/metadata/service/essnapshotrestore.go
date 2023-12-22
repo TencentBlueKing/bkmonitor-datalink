@@ -60,6 +60,9 @@ func (s *EsSnapshotRestoreSvc) GetCompleteDocCount(ctx context.Context) (int, er
 	}
 	defer resp.Close()
 	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, errors.Wrapf(err, "read respose body for CatIndices [%v] failed", searchIndexList)
+	}
 	var indicesInfos []map[string]string
 	err = jsonx.Unmarshal(body, &indicesInfos)
 	if err != nil {

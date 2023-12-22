@@ -29,7 +29,7 @@ import (
 func RefreshESStorage(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshESStorage Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -101,7 +101,7 @@ func RefreshESStorage(ctx context.Context, t *t.Task) error {
 func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshInfluxdbRoute Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -181,7 +181,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshDatasource Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -243,7 +243,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 func RefreshESRestore(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("RefreshEsRestore Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshEsRestore Runtime panic caught: %v", err)
 		}
 	}()
 

@@ -23,7 +23,7 @@ import (
 func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshTimeSeriesMetric Runtime panic caught: %v", err)
 		}
 	}()
 	// funcName := runtimex.GetFuncName()
@@ -53,7 +53,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 func RefreshEventDimension(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshEventDimension Runtime panic caught: %v", err)
 		}
 	}()
 

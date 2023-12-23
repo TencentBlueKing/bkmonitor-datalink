@@ -16,6 +16,8 @@ const (
 	startTime        = "_startTime_"
 	endTime          = "_endTime_"
 	theDate          = "thedate"
+
+	timeStamp = "time"
 )
 
 const (
@@ -36,6 +38,7 @@ const (
 
 var (
 	internalDimension = map[string]struct{}{
+		timeStamp:        {},
 		dtEventTimeStamp: {},
 		dtEventTime:      {},
 		localTime:        {},

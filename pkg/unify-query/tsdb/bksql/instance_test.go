@@ -61,7 +61,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				BkSqlCondition: "instance = '5744' OR instance = '11211'",
 				AggregateMethodList: []metadata.AggrMethod{
 					{
-						Name:       "sum",
+						Name:       "avg",
 						Dimensions: []string{"instance", "application"},
 					},
 				},
@@ -69,9 +69,27 @@ func TestInstance_QueryRaw(t *testing.T) {
 			hints: &storage.SelectHints{
 				Start: end.Add(time.Minute * -30).UnixMilli(),
 				End:   end.UnixMilli(),
+				Step:  600000,
+				Func:  "avg_over_time",
+				Range: 600000,
+			},
+		},
+		{
+			query: &metadata.Query{
+				Measurement: "101068_ymzx_online",
+				Field:       "gseindex",
+				AggregateMethodList: []metadata.AggrMethod{
+					{
+						Name: "avg",
+					},
+				},
+			},
+			hints: &storage.SelectHints{
+				Start: end.Add(time.Minute * -30).UnixMilli(),
+				End:   end.UnixMilli(),
 				Step:  120000,
-				Func:  "count_over_time",
-				Range: 60000,
+				Func:  "avg_over_time",
+				Range: 10000,
 			},
 		},
 	} {
@@ -86,7 +104,9 @@ func TestInstance_QueryRaw(t *testing.T) {
 				fmt.Printf("------------------------------------------------\n")
 				for it.Next() == chunkenc.ValFloat {
 					ts, val := it.At()
-					fmt.Printf("%g %d\n", val, ts)
+					tt := time.UnixMilli(ts)
+
+					fmt.Printf("%g %s\n", val, tt.Format("2006-01-02 15:04:05"))
 				}
 				if it.Err() != nil {
 					panic(it.Err())
@@ -105,6 +125,8 @@ func TestInstance_QueryRaw(t *testing.T) {
 }
 
 func TestInstance_bkSql(t *testing.T) {
+	mock.Init()
+
 	testCases := []struct {
 		query *metadata.Query
 		hints *storage.SelectHints
@@ -129,11 +151,32 @@ func TestInstance_bkSql(t *testing.T) {
 				Func:  "count_over_time",
 				Range: 60000,
 			},
-			sql: "SELECT COUNT(`value`) AS `value`, instance, application, minute1, MAX(dtEventTimeStamp) AS dtEventTimeStamp FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 AND (instance = '5744' OR instance = '11211') GROUP BY instance, application, minute1 ORDER BY dtEventTimeStamp ASC LIMIT 200000",
+			sql: "SELECT COUNT(`value`) AS `value`, MAX(dtEventTimeStamp) AS `time`, instance, application FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 AND (instance = '5744' OR instance = '11211') GROUP BY instance, application, FROM_UNIXTIME((dtEventTimestamp - (dtEventTimestamp % 60000)) / 1000, \"%Y%m%d%H%i%s\") ORDER BY dtEventTimeStamp ASC LIMIT 200000",
+		},
+		{
+			query: &metadata.Query{
+				Measurement: "132_hander_opmon_avg",
+				Field:       "value",
+				AggregateMethodList: []metadata.AggrMethod{
+					{
+						Name: "sum",
+					},
+				},
+			},
+			hints: &storage.SelectHints{
+				Start: 1701092460000,
+				End:   1701096060000,
+				Step:  120000,
+				Func:  "count_over_time",
+				Range: 15000,
+			},
+			sql: "SELECT COUNT(`value`) AS `value`, MAX(dtEventTimeStamp) AS `time` FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 GROUP BY FROM_UNIXTIME((dtEventTimestamp - (dtEventTimestamp % 15000)) / 1000, \"%Y%m%d%H%i%s\") ORDER BY dtEventTimeStamp ASC LIMIT 200000",
 		},
 	}
 
-	ins := Instance{}
+	ins := Instance{
+		Limit: 2e5,
+	}
 
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

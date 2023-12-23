@@ -10,6 +10,8 @@
 package tokenchecker
 
 import (
+	"errors"
+
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -101,10 +103,50 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 		err = p.processLogs(decoder, config, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
+	case define.RecordFta:
+		err = p.processFta(decoder, config, record)
+
 	default:
 		err = p.processCommon(decoder, record)
 	}
 	return nil, err
+}
+
+// processFta 专门处理 FTA 传入的 token
+// 1. 尝试判断
+func (p *tokenChecker) processFta(decoder TokenDecoder, config Config, record *define.Record) error {
+	var err error
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
+		return err
+	}
+
+	token := record.Token
+
+	// 如果存在fta的插件及data id，说明该token为旧版fta token，判断是否为该插件的token
+	if config.FtaPluginId != "" && config.FtaDataId != 0 {
+		if token.AppName != config.FtaPluginId {
+			return errors.New("reject invalid pluginId")
+		}
+		token.MetricsDataId = config.FtaDataId
+		record.Token = token
+		return nil
+	}
+
+	// 新版token，走aes解密，直接得到token
+	pluginId := token.AppName
+	record.Token, err = decoder.Decode(token.Original)
+	if err != nil {
+		return err
+	}
+
+	// 如果存在插件id，判断是否为该插件的token
+	if pluginId != "" && pluginId != record.Token.AppName {
+		return errors.New("reject invalid pluginId")
+	}
+	record.Data.(*define.FtaData).PluginId = record.Token.AppName
+
+	return nil
 }
 
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {

@@ -29,4 +29,8 @@ type Config struct {
 	// type: proxy
 	ProxyDataId int32  `config:"dataid" mapstructure:"proxy_dataid"`
 	ProxyToken  string `config:"token" mapstructure:"proxy_token"`
+
+	// type: fta (兼容旧版fta token)
+	FtaPluginId string `config:"plugin_id" mapstructure:"plugin_id"`
+	FtaDataId   int32  `config:"data_id" mapstructure:"data_id"`
 }

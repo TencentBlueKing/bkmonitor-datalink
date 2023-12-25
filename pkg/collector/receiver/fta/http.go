@@ -132,6 +132,18 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 			httpHeaders[k] = v[0]
 		}
 	}
+	data["__http_headers__"] = httpHeaders
+
+	// 将查询参数放入data中
+	var httpQueryParams map[string]string
+	for k, v := range req.URL.Query() {
+		if len(v) != 0 {
+			httpQueryParams[k] = v[0]
+		}
+	}
+	if len(httpQueryParams) != 0 {
+		data["__http_query_params__"] = httpQueryParams
+	}
 
 	event := &define.FtaData{
 		PluginId:   pluginId,

@@ -37,7 +37,7 @@ func RefreshDefaultRp(ctx context.Context, t *t.Task) error {
 	}
 
 	wg := sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_event_dimension"))
+	ch := make(chan bool, GetGoroutineLimit("refresh_default_rp"))
 	wg.Add(len(influxdbHostList))
 	for _, host := range influxdbHostList {
 		ch <- true

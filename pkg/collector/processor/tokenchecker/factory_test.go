@@ -12,6 +12,7 @@ package tokenchecker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -399,5 +400,99 @@ func TestProxyToken(t *testing.T) {
 			Data: data,
 		})
 		assert.NoError(t, err)
+	})
+}
+
+func ftaAes256TokenChecker() tokenChecker {
+	config := Config{
+		Type:        "aes256",
+		ResourceKey: "bk.data.token",
+		Salt:        "bk",
+		DecodedIv:   "bkbkbkbkbkbkbkbk",
+		DecodedKey:  "81be7fc6-5476-4934-9417-6d4d593728db",
+
+		FtaDataId:   1001,
+		FtaPluginId: "tencent_cloud",
+		FtaToken:    "123456",
+	}
+
+	decoders := confengine.NewTierConfig()
+	decoders.SetGlobal(NewTokenDecoder(config))
+
+	configs := confengine.NewTierConfig()
+	configs.SetGlobal(config)
+	return tokenChecker{
+		decoders: decoders,
+		configs:  configs,
+	}
+}
+
+func TestFtaAes256Token(t *testing.T) {
+	t.Run("New Token", func(t *testing.T) {
+		checker := ftaAes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "123456",
+			},
+			Data: &define.FtaData{
+				PluginId: "tencent_cloud",
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, record.Token.AppName, "tencent_cloud")
+		assert.Equal(t, record.Token.MetricsDataId, int32(1001))
+	})
+
+	t.Run("New Token", func(t *testing.T) {
+		checker := ftaAes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "Ymtia2JrYmtia2JrYmtiaxJ3i4amfEBRpRly3svdCllhrOjDgm6IjwqqIVKwzKN5",
+			},
+			Data: &define.FtaData{
+				PluginId: "tencent_cloud",
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, record.Token.AppName, "tencent_cloud")
+		assert.Equal(t, record.Token.MetricsDataId, int32(1001))
+	})
+
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := ftaAes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "12345",
+			},
+			Data: &define.FtaData{
+				PluginId: "tencent_cloud",
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "reject invalid token"))
 	})
 }

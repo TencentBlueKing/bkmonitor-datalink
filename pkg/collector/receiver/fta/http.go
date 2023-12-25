@@ -12,6 +12,7 @@ package fta
 import (
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,9 +31,10 @@ const (
 	routeFtaEventPlugin      = "/fta/v1/event/{pluginId}"
 	routeFtaEventPluginSlash = "/fta/v1/event/{pluginId}/"
 
-	ftaTokenKey = "X-BK-FTA-TOKEN"
-	tokenKey    = "X-BK-TOKEN"
-	statusError = "error"
+	ftaTokenKey    = "X-BK-FTA-TOKEN"
+	tokenKey       = "X-BK-TOKEN"
+	tokenParamsKey = "token"
+	statusError    = "error"
 )
 
 func init() {
@@ -86,16 +88,20 @@ var httpSvc HttpService
 func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 
+	// 只接受POST请求
+	if req.Method != http.MethodPost {
+		resp := s.getResponse(statusError, "method not allowed")
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusMethodNotAllowed, resp)
+		return
+	}
+
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	// 从请求中获取pluginId
-	pluginId := req.URL.Query().Get("pluginId")
-	if pluginId == "" {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
-		resp := s.getResponse(statusError, "pluginId is empty")
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, resp)
-	}
+	pluginId := strings.TrimPrefix(req.URL.Path, "/fta/v1/event")
+	pluginId = strings.TrimPrefix(pluginId, "/")
+	pluginId = strings.TrimSuffix(pluginId, "/")
 
 	// 从请求头中获取token
 	token := req.Header.Get(tokenKey)
@@ -103,9 +109,13 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		token = req.Header.Get(ftaTokenKey)
 	}
 	if token == "" {
+		token = req.URL.Query().Get(tokenParamsKey)
+	}
+	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		resp := s.getResponse(statusError, "token is empty")
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusForbidden, resp)
+		return
 	}
 
 	// 从请求中获取数据
@@ -114,6 +124,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		resp := s.getResponse(statusError, err.Error())
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, resp)
+		return
 	}
 
 	// 将数据转换为map
@@ -123,21 +134,24 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		resp := s.getResponse(statusError, err.Error())
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, resp)
+		return
 	}
 
 	// 将headers放入data中
-	var httpHeaders map[string]string
+	httpHeaders := make(map[string]string)
 	for k, v := range req.Header {
-		if len(v) != 0 {
+		if len(v) != 0 && strings.ToUpper(k) != tokenKey && strings.ToUpper(k) != ftaTokenKey {
 			httpHeaders[k] = v[0]
 		}
 	}
-	data["__http_headers__"] = httpHeaders
+	if len(httpHeaders) != 0 {
+		data["__http_headers__"] = httpHeaders
+	}
 
 	// 将查询参数放入data中
-	var httpQueryParams map[string]string
+	httpQueryParams := make(map[string]string)
 	for k, v := range req.URL.Query() {
-		if len(v) != 0 {
+		if len(v) != 0 && k != tokenParamsKey {
 			httpQueryParams[k] = v[0]
 		}
 	}
@@ -166,6 +180,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordFta, processorName, r.Token.Original, code)
 		resp := s.getResponse(statusError, err.Error())
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, resp)
+		return
 	}
 
 	s.Publish(r)

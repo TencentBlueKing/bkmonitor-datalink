@@ -39,6 +39,7 @@ func (c ftaConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataId := c.ToDataID(record)
 	data := record.Data.(*define.FtaData)
 	events := []define.Event{c.ToEvent(record.Token, dataId, common.MapStr{
+		"dataid":          dataId,
 		"bk_data_id":      dataId,
 		"bk_plugin_id":    data.PluginId,
 		"bk_ingest_time":  data.IngestTime,

@@ -200,7 +200,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	for _, dsrt := range dataSourceRtList {
 		dataIdList = append(dataIdList, dsrt.BkDataId)
 	}
-	dataIdList = slicex.RemoveDuplicate(dataIdList)
+	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(dbSession.DB).IsEnableEq(true).

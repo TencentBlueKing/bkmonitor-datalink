@@ -399,6 +399,7 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 
 func TestQueryTs_ToQueryReference(t *testing.T) {
 	ctx := context.Background()
+	mock.Init()
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
 	"must-vm-query": {
@@ -751,7 +752,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				vmExpand *md.VmExpand
 				ok       bool
 			)
-			ctx = mock.Init(ctx)
+			ctx = md.InitHashID(ctx)
 
 			md.SetUser(ctx, tc.source, tc.ts.SpaceUid)
 			ref, err = tc.ts.ToQueryReference(ctx)

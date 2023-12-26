@@ -12,10 +12,12 @@ package structured
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
 // getExpressionByParam
@@ -70,4 +72,140 @@ func combineExprList(position int, expr parser.Expr, exprParams []interface{}) (
 	}
 
 	return results, nil
+}
+
+// containElement  判断一个切片中是否包含某个元素
+func containElement(slice []string, element string) bool {
+	if element == "" || len(slice) == 0 {
+		return false
+	}
+	for _, item := range slice {
+		if item == element {
+			return true
+		}
+	}
+	return false
+}
+
+// judgeFilter 判断 filter 是否符合合并压缩的条件
+// 目前仅支持 tsDB 的每一个 filter 的 key 均为一致，并且 key 的长度为 2 的情况
+func judgeFilter(filters []query.Filter) (bool, []string) {
+	tKeys := make(map[string]struct{})
+
+	if len(filters) == 0 {
+		return false, nil
+	}
+	for idx, filter := range filters {
+		if idx == 0 {
+			for k := range filter {
+				tKeys[k] = struct{}{}
+			}
+		}
+		for k := range filter {
+			if _, ok := tKeys[k]; !ok {
+				return false, nil
+			}
+		}
+	}
+	// 仅支持 key 的长度为 2 的情况
+	if len(tKeys) == 2 {
+		result := make([]string, 0, len(tKeys))
+		for k := range tKeys {
+			result = append(result, k)
+		}
+		return true, result
+	}
+	return false, nil
+}
+
+// compressFilterCondition 对 filterCondition 压缩，减少后续产出的 vm 查询语句的长度
+func compressFilterCondition(tKeys []string, filters []query.Filter) [][]ConditionField {
+	// 分别取出两个 key ，并且通过 2 个 key 的值的个数来判断选择拿哪个key进行分组
+	key1, key2 := tKeys[0], tKeys[1]
+	var (
+		tArr1 = make([]string, 0)
+		tArr2 = make([]string, 0)
+	)
+	for _, filter := range filters {
+		for k, v := range filter {
+			if v == "" {
+				continue
+			}
+			if k == tKeys[0] && !containElement(tArr1, v) {
+				tArr1 = append(tArr1, v)
+			}
+			if k == tKeys[1] && !containElement(tArr2, v) {
+				tArr2 = append(tArr2, v)
+			}
+		}
+	}
+	// 根据两个 key 的长度来进行判断 选用哪个 key 作为分组依据
+	groupKey, subKey := key1, key2
+	if len(tArr2) < len(tArr1) {
+		groupKey, subKey = key2, key1
+	}
+	// 开始对所有的内容进行分组，生成一个压缩后的字典
+	// 压缩字典内容如下  key => groupKey 对应的值, value 为字符串列表，列表中的元素 为 subKey 对应的值（去重过后的）
+	compressMap := make(map[string][]string)
+	for _, filter := range filters {
+		_, ok := compressMap[filter[groupKey]]
+		if !ok {
+			if filter[subKey] != "" {
+				compressMap[filter[groupKey]] = []string{filter[subKey]}
+			}
+		} else {
+			if !containElement(compressMap[filter[groupKey]], filter[subKey]) && filter[subKey] != "" {
+				compressMap[filter[groupKey]] = append(compressMap[filter[groupKey]], filter[subKey])
+			}
+		}
+	}
+	// 组装好的compressMap 结构如下 {groupValue:[subVal1,subVal2]}
+	// 开始组装 condition
+	filterConditions := make([][]ConditionField, 0)
+	for k, v := range compressMap {
+		var cond = make([]ConditionField, 0, 2)
+		cond = []ConditionField{{
+			DimensionName: groupKey,
+			Value:         []string{k},
+			Operator:      Contains,
+		}, {
+			DimensionName: subKey,
+			Value:         v,
+			Operator:      Contains,
+		}}
+		filterConditions = append(filterConditions, cond)
+	}
+	return filterConditions
+}
+
+// compareClusterId 比较传入的 condition 以及 rtDetail.bcs_cluster_id
+func compareClusterId(conditions Conditions, bcsClusterId string) bool {
+	conditionFields := conditions.GetCluster()
+	// 对于Condition中不包含 clusterId 筛选条件的 直接放行
+	if len(conditionFields) == 0 {
+		return true
+	}
+
+	for _, cond := range conditionFields {
+		switch cond.Operator {
+		case ConditionEqual, ConditionContains:
+			for _, clusterId := range cond.Value {
+				if clusterId == bcsClusterId {
+					return true
+				}
+			}
+		case ConditionRegEqual:
+			for _, reClusterId := range cond.Value {
+				clusterIdExp, err := regexp.Compile(reClusterId)
+				if err != nil {
+					log.Warnf(context.Background(), "unable to compile %s, error: %s", reClusterId, err)
+					return false
+				}
+				if clusterIdExp.Match([]byte(bcsClusterId)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

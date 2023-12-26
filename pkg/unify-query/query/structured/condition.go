@@ -305,6 +305,24 @@ func ConvertToPromBuffer(totalBuffer [][]ConditionField) [][]promql.ConditionFie
 	return promBuffer
 }
 
+// GetCluster 过滤 Conditions，获取所有的 clusterID，包括正则的内容
+func (c *Conditions) GetCluster() []ConditionField {
+	var conditionFields []ConditionField
+	for _, field := range c.FieldList {
+		if len(field.Value) == 0 {
+			continue
+		}
+		switch field.DimensionName {
+		case ClusterID:
+			switch field.Operator {
+			case ConditionEqual, ConditionContains, ConditionRegEqual:
+				conditionFields = append(conditionFields, field)
+			}
+		}
+	}
+	return conditionFields
+}
+
 // GetRequiredFiled: 从conditions中过滤出bk_biz_id, bcs_cluster, project_id
 // bk_biz_id : 只支持eq和contains
 // bcs_cluster_id : 支持eq contains ne reg nreg ncontains (不过建议还是能用eq和contains就用这俩)

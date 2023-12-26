@@ -737,7 +737,6 @@ func (i *Instance) QueryRaw(
 					Measurement:         measurement,
 					Field:               field,
 					Timezone:            query.Timezone,
-					LabelsMatcher:       query.LabelsMatcher,
 					IsHasOr:             query.IsHasOr,
 					AggregateMethodList: query.AggregateMethodList,
 					Condition:           query.Condition,

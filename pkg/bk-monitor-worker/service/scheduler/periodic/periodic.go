@@ -37,6 +37,7 @@ var (
 	RefreshDefaultRp      = "periodic:metadata:refresh_default_rp"
 	RefreshBkccSpaceName  = "periodic:metadata:refresh_bkcc_space_name"
 	RefreshKafkaTopicInfo = "periodic:metadata:refresh_kafka_topic_info"
+	RefreshESRestore      = "periodic:metadata:refresh_es_restore"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -77,6 +78,10 @@ var (
 		RefreshKafkaTopicInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshKafkaTopicInfo,
+		},
+		RefreshESRestore: {
+			Cron:    "* * * * *",
+			Handler: metadataTask.RefreshESRestore,
 		},
 	}
 )

@@ -145,9 +145,8 @@ func (s *EsSnapshotRestoreSvc) isRestoredIndex(index string, now time.Time, rest
 	}
 	if count != 0 {
 		return true, nil
-	} else {
-		return false, nil
 	}
+	return false, nil
 }
 
 // 判断索引是否已经被回溯

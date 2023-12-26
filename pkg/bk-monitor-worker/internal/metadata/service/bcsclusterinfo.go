@@ -1005,10 +1005,12 @@ func (b BcsClusterInfoSvc) RefreshMetricLabel() error {
 	}
 	// 每个label批量更新一下
 	for label, ids := range labelFieldIdMap {
-		err := customreport.NewTimeSeriesMetricQuerySet(db).FieldIDIn(ids...).GetUpdater().SetLastModifyTime(time.Now()).SetLabel(label).Update()
-		if err != nil {
-			logger.Errorf("update tsMetrics label [%s] for [%v] failed, %v", label, dataids, err)
-			continue
+		for _, chunkIds := range slicex.ChunkSlice(ids, 0) {
+			err := customreport.NewTimeSeriesMetricQuerySet(db).FieldIDIn(chunkIds...).GetUpdater().SetLastModifyTime(time.Now()).SetLabel(label).Update()
+			if err != nil {
+				logger.Errorf("update tsMetrics label [%s] for [%v] failed, %v", label, chunkIds, err)
+				continue
+			}
 		}
 	}
 	return nil

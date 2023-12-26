@@ -11,13 +11,10 @@ package task
 
 import (
 	"context"
-	"strconv"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/pkg/errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -29,49 +26,10 @@ func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
 			logger.Errorf("Runtime panic caught: %v\n", err)
 		}
 	}()
-
-	logger.Infof("start sync bkcc space name task")
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return err
-	}
-	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
-		return err
-	}
-	bizIdNameMap := make(map[string]string)
-	var bizIdList []string
-	for _, info := range bizResp.Data.Info {
-		// 过滤出bkcc业务
-		if info.BkBizId > 0 {
-			bizIdStr := strconv.Itoa(info.BkBizId)
-			bizIdNameMap[bizIdStr] = info.BkBizName
-			bizIdList = append(bizIdList, bizIdStr)
-		}
-	}
-
-	db := mysql.GetDBSession().DB
-	var spaceList []space.Space
-	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).All(&spaceList); err != nil {
-		return err
-	}
-	for _, sp := range spaceList {
-		oldName := sp.SpaceName
-		name, ok := bizIdNameMap[sp.SpaceId]
-		// 不存在则跳过
-		if !ok {
-			continue
-		}
-		// 名称变动，需要更新
-		if name != "" && name != oldName {
-			sp.SpaceName = name
-			err := sp.Update(db, space.SpaceDBSchema.SpaceName)
-			if err != nil {
-				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName)
-				continue
-			}
-			logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
-		}
+	logger.Info("start sync bkcc space name task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.RefreshBkccSpaceName(); err != nil {
+		return errors.Wrap(err, "refresh bkcc space name failed")
 	}
 	logger.Info("refresh bkcc space name successfully")
 	return nil

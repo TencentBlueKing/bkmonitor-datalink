@@ -57,7 +57,6 @@ func startTask(cmd *cobra.Command, args []string) {
 		}
 	}()
 
-
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {

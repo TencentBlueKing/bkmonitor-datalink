@@ -77,7 +77,7 @@ func CreateTask(c *gin.Context) {
 	// 如果是异步任务，则直接写入到队列，然后执行任务
 	// 如果是常驻任务，则直接写入到常驻任务队列中即可
 	kind := params.Kind
-	if err = metrics.RegisterTaskCount(kind); err != nil{
+	if err = metrics.RegisterTaskCount(kind); err != nil {
 		logger.Errorf("Report task count metric failed: %s", err)
 	}
 	// 组装 task

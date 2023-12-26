@@ -28,10 +28,10 @@ func RemoveItem(l []string, s string) []string {
 }
 
 // RemoveDuplicate 可排序类型的去重
-func RemoveDuplicate[T constraints.Ordered](source []T) []T {
+func RemoveDuplicate[T constraints.Ordered](source *[]T) []T {
 	temp := make(map[T]bool)
 	var target []T
-	for _, s := range source {
+	for _, s := range *source {
 		if exist := temp[s]; !exist {
 			target = append(target, s)
 			temp[s] = true
@@ -53,4 +53,16 @@ func ChunkSlice[T any](bigSlice []T, size int) [][]T {
 		chunkList = append(chunkList, bigSlice[i:end])
 	}
 	return chunkList
+}
+
+// IsExistItem 判断item是否存在列表中
+func IsExistItem[T constraints.Ordered](itemList []T, item T) bool {
+	var exist bool
+	for _, t := range itemList {
+		if t == item {
+			exist = true
+			break
+		}
+	}
+	return exist
 }

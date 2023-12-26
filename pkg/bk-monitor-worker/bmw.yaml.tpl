@@ -94,16 +94,6 @@ log:
 aes:
   key: ""
 
-# ================================ 测试配置  ===================================
-test:
-  store:
-    mysql:
-      host: 127.0.0.1
-      port: 3306
-      user: root
-      password: 123456
-      dbName: bkmonitor_api
-
 # ================================ worker配置  ===================================
 worker:
   concurrency: 0

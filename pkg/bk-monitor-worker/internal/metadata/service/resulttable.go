@@ -166,7 +166,7 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 				FromAuthorization: false,
 			}
 			if err := sds.Create(db); err != nil {
-				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", ds.BkDataId, err)
+				return errors.Wrapf(err, "create spacedatasource for %v failed", ds.BkDataId)
 			}
 		}
 	}
@@ -392,7 +392,7 @@ func (r ResultTableSvc) GetTableIdCutter(tableIdList []string) (map[string]bool,
 		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
 		dataIdList = append(dataIdList, dsrt.BkDataId)
 	}
-	dataIdList = slicex.RemoveDuplicate(dataIdList)
+	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 	var dsoList []resulttable.DataSourceOption
 	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
 		var tempList []resulttable.DataSourceOption

@@ -58,6 +58,8 @@ var (
 	GlobalBkdataProjectMaintainer string
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
 	GlobalAccessDbmRtSpaceUid []string
+	// GlobalTsDataSavedDays 监控采集数据保存天数
+	GlobalTsDataSavedDays int
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -97,6 +99,7 @@ func initMetadataVariables() {
 	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
+	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))

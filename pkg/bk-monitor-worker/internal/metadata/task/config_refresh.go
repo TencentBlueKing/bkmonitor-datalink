@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -29,7 +31,7 @@ import (
 func RefreshESStorage(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshESStorage Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -101,7 +103,7 @@ func RefreshESStorage(ctx context.Context, t *t.Task) error {
 func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshInfluxdbRoute Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -181,7 +183,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshDatasource Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -200,7 +202,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	for _, dsrt := range dataSourceRtList {
 		dataIdList = append(dataIdList, dsrt.BkDataId)
 	}
-	dataIdList = slicex.UintSet2List(slicex.UintList2Set(dataIdList))
+	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(dbSession.DB).IsEnableEq(true).
@@ -232,6 +234,95 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 				logger.Infof("data_id [%v] refresh all outer success", dsSvc.BkDataId)
 			}
 		}(dataSource, wg, ch)
+
+	}
+	wg.Wait()
+
+	return nil
+}
+
+// RefreshESRestore 刷新回溯状态
+func RefreshESRestore(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshEsRestore Runtime panic caught: %v", err)
+		}
+	}()
+
+	db := mysql.GetDBSession().DB
+	// 过滤满足条件的记录
+	var restoreList []storage.EsSnapshotRestore
+	if err := storage.NewEsSnapshotRestoreQuerySet(db).IsDeletedNe(true).All(&restoreList); err != nil {
+		logger.Errorf("query EsSnapshotRestore record error, %v", err)
+		return err
+	}
+	var notDoneRestores []storage.EsSnapshotRestore
+	for _, r := range restoreList {
+		if r.TotalDocCount != r.CompleteDocCount {
+			notDoneRestores = append(notDoneRestores, r)
+		}
+	}
+	if len(notDoneRestores) == 0 {
+		logger.Infof("no restore need refresh, skip")
+		return nil
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_es_restore"))
+	wg.Add(len(notDoneRestores))
+	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	for _, restore := range notDoneRestores {
+		ch <- true
+		go func(r storage.EsSnapshotRestore, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			svc := service.NewEsSnapshotRestoreSvc(&r)
+			if _, err := svc.GetCompleteDocCount(ctx); err != nil {
+				logger.Errorf("es_restore [%v] failed to cron task, %v", svc.RestoreID, err)
+			} else {
+				logger.Infof("es_restore [%v] refresh success", svc.RestoreID)
+			}
+		}(restore, wg, ch)
+
+	}
+	wg.Wait()
+
+	return nil
+}
+
+// RefreshKafkaTopicInfo 刷新kafka topic into的partitions
+func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshKafkaTopicInfo Runtime panic caught: %v\n", err)
+		}
+	}()
+	db := mysql.GetDBSession().DB
+	var kafkaTopicInfoList []storage.KafkaTopicInfo
+	if err := storage.NewKafkaTopicInfoQuerySet(db).All(&kafkaTopicInfoList); err != nil {
+		return errors.Wrapf(err, "query RefreshKafkaTopicInfo failed")
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	wg.Add(len(kafkaTopicInfoList))
+	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
+	for _, info := range kafkaTopicInfoList {
+		ch <- true
+		go func(info storage.KafkaTopicInfo, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			svc := service.NewKafkaTopicInfoSvc(&info)
+			if err := svc.RefreshTopicInfo(); err != nil {
+				logger.Errorf("refresh kafka topic info [%v] failed, %v", svc.Topic, err)
+			} else {
+				logger.Infof("refresh kafka topic info [%v] success", svc.Topic)
+			}
+		}(info, wg, ch)
 
 	}
 	wg.Wait()

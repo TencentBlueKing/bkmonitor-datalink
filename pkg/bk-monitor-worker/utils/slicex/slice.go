@@ -28,10 +28,10 @@ func RemoveItem(l []string, s string) []string {
 }
 
 // RemoveDuplicate 可排序类型的去重
-func RemoveDuplicate[T constraints.Ordered](source []T) []T {
+func RemoveDuplicate[T constraints.Ordered](source *[]T) []T {
 	temp := make(map[T]bool)
 	var target []T
-	for _, s := range source {
+	for _, s := range *source {
 		if exist := temp[s]; !exist {
 			target = append(target, s)
 			temp[s] = true

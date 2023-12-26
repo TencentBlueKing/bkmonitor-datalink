@@ -74,7 +74,7 @@ func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 		return err
 	}
 	if err := service.NewResultTableSvc(&rt).RefreshEtlConfig(); err != nil {
-		return errors.Wrapf(err, "refresh etl config for table_id [%s] failed, %v", params.TableId, err)
+		return errors.Wrapf(err, "refresh etl config for table_id [%s] failed", params.TableId)
 	}
 
 	logger.Infof("table_id [%s] create es index finished", params.TableId)
@@ -140,7 +140,7 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	client := redis.GetInstance(ctx)
 	spaceUid := fmt.Sprintf("%s__%s", params.SpaceType, params.SpaceId)
 	if err := client.SAdd(cfg.SpaceRedisKey, spaceUid); err != nil {
-		return errors.Wrapf(err, "async task push space to redis error, %s", err)
+		return errors.Wrap(err, "async task push space to redis error")
 	}
 	return nil
 }

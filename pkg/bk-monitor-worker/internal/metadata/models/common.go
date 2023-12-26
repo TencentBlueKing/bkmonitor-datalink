@@ -11,13 +11,13 @@ package models
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
 	"time"
 
 	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
@@ -100,11 +100,11 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 	case reflect.String:
 		valueStr, ok := value.(string)
 		if !ok {
-			return "", "", fmt.Errorf("assert string value type error, %#v", value)
+			return "", "", errors.Errorf("assert string value type error, %#v", value)
 		}
 		return valueStr, "string", nil
 	default:
-		return "", "", fmt.Errorf("unsupport option value type [%s], value [%v]", reflect.TypeOf(value).Kind().String(), value)
+		return "", "", errors.Errorf("unsupport option value type [%s], value [%v]", reflect.TypeOf(value).Kind().String(), value)
 	}
 }
 

@@ -16,4 +16,6 @@ const (
 	DefaultUsername = "system"
 	// DefaultDBFilterSize 查询数据库时，过滤条件in的数量
 	DefaultDBFilterSize = 500
+	// DefaultStringFilterSize url查询时，路径过滤条件长度
+	DefaultStringFilterSize = 1024 * 3
 )

@@ -26,6 +26,61 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
+func TestEsSnapshotRestoreSvc_DeleteRestoreIndices(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	essr := storage.EsSnapshotRestore{
+		RestoreID:     12122,
+		TableID:       "test_rt_for_expired_restore",
+		StartTime:     time.Now().Add(-10 * time.Hour),
+		EndTime:       time.Now().Add(-5 * time.Hour),
+		ExpiredTime:   time.Now().Add(-time.Hour),
+		ExpiredDelete: false,
+		Indices:       "index_r1,index_r2,index_r3",
+		IsDeleted:     false,
+	}
+	db.Delete(&essr, "table_id = ?", essr.TableID)
+	err := essr.Create(db)
+	assert.NoError(t, err)
+	cluster := storage.ClusterInfo{
+		ClusterID:        99,
+		ClusterType:      models.StorageTypeES,
+		Version:          "7.10.1",
+		Schema:           "https",
+		DomainName:       "example.com",
+		Port:             9200,
+		Username:         "elastic",
+		Password:         "123456",
+		CreateTime:       time.Now(),
+		LastModifyTime:   time.Now(),
+		RegisteredSystem: "_default",
+		Creator:          "system",
+		GseStreamToId:    -1,
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err = cluster.Create(db)
+	assert.NoError(t, err)
+	ess := storage.ESStorage{
+		TableID:          essr.TableID,
+		StorageClusterID: cluster.ClusterID,
+	}
+	db.Delete(&ess, "table_id = ?", ess.TableID)
+	err = ess.Create(db)
+	var deletedIndex []string
+	gomonkey.ApplyFunc(storage.ClusterInfo.GetESClient, func(svc storage.ClusterInfo, ctx context.Context) (*elasticsearch.Elasticsearch, error) {
+		return &elasticsearch.Elasticsearch{}, nil
+	})
+	gomonkey.ApplyFunc(elasticsearch.Elasticsearch.DeleteIndex, func(es elasticsearch.Elasticsearch, ctx context.Context, indices []string) (*elasticsearch.Response, error) {
+		deletedIndex = append(deletedIndex, indices...)
+		return &elasticsearch.Response{}, nil
+	})
+	assert.NoError(t, err)
+	svc := NewEsSnapshotRestoreSvc(&essr)
+	err = svc.DeleteRestoreIndices(context.Background())
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"restore_index_r1", "restore_index_r2", "restore_index_r3"}, deletedIndex)
+}
+
 func TestEsSnapshotRestoreSvc_GetCompleteDocCount(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB

@@ -10,6 +10,8 @@
 package slicex
 
 import (
+	"fmt"
+
 	"golang.org/x/exp/constraints"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -53,6 +55,29 @@ func ChunkSlice[T any](bigSlice []T, size int) [][]T {
 		chunkList = append(chunkList, bigSlice[i:end])
 	}
 	return chunkList
+}
+
+// ChunkStringsBySize 将字符串列表分成指定长度
+func ChunkStringsBySize(bigSlice *[]string, size int, sep string) []string {
+	if size <= 0 {
+		size = cfg.DefaultStringFilterSize
+	}
+	var indexChunk []string
+	var longString string
+	for i, item := range *bigSlice {
+		if len(longString) < size {
+			if longString == "" {
+				longString = item
+			} else {
+				longString = fmt.Sprintf("%s%s%s", longString, sep, item)
+			}
+		}
+		if len(longString) >= size || i == len(*bigSlice)-1 {
+			indexChunk = append(indexChunk, longString)
+			longString = ""
+		}
+	}
+	return indexChunk
 }
 
 // IsExistItem 判断item是否存在列表中

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -106,7 +108,7 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 			return err
 		}
 		if count == 0 {
-			return fmt.Errorf("cluster_id [%v] is not exists or is not es cluster", clusterId)
+			return errors.Errorf("cluster_id [%v] is not exists or is not es cluster", clusterId)
 		}
 	}
 	// 校验table_id， key是否存在冲突
@@ -115,7 +117,7 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("result_table [%s] already has redis storage config", tableId)
+		return errors.Errorf("result_table [%s] already has redis storage config", tableId)
 	}
 	// 测试date_format是否正确可用的 -- 格式化结果的数据只能包含数字，不能有其他结果
 	dateformat, ok := storageConfig.GetString("date_format")
@@ -124,7 +126,7 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 	}
 	nowStr := time.Now().Format(timex.ParsePyDateFormat(dateformat))
 	if findString := regexp.MustCompile(`^\d+$`).FindString(nowStr); findString == "" {
-		return fmt.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
+		return errors.Errorf("result_table [%s] date_format contains none digit info, it is bad", tableId)
 	}
 	// 	获取配置参数或使用默认值
 	// 切分时间间隔
@@ -168,18 +170,18 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 
 	if warmPhaseDays > 0 {
 		if len(warmPhaseSettings) == 0 {
-			return fmt.Errorf("result_table [%s] warm_phase_settings is empty, but min_days > 0", tableId)
+			return errors.Errorf("result_table [%s] warm_phase_settings is empty, but min_days > 0", tableId)
 		}
 		for _, key := range []string{"allocation_attr_name", "allocation_attr_value", "allocation_type"} {
 			if _, ok := warmPhaseSettings[key]; !ok {
-				return fmt.Errorf("warm_phase_settings.%s can not be empty", key)
+				return errors.Errorf("warm_phase_settings.%s can not be empty", key)
 			}
 
 		}
 	}
 
 	if timeZone > 12 || timeZone < -12 {
-		return fmt.Errorf("time_zone illegal")
+		return errors.Errorf("time_zone illegal")
 	}
 	warmPhaseSettingsStr, err := jsonx.MarshalString(warmPhaseSettings)
 	if err != nil {

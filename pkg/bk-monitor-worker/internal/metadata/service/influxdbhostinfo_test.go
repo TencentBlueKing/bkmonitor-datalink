@@ -58,6 +58,10 @@ func TestInfluxdbHostInfoSvc_RefreshDefaultRp(t *testing.T) {
 	db.Delete(&dbStorage, "proxy_cluster_name = ?", cluster.ClusterName)
 	err = dbStorage.Create(db)
 	assert.NoError(t, err)
+	mockerClient := &mocker.InfluxDBClientMocker{}
+	gomonkey.ApplyFunc(InfluxdbHostInfoSvc.GetClient, func(svc InfluxdbHostInfoSvc) (client.Client, error) {
+		return mockerClient, nil
+	})
 	gomonkey.ApplyFunc(influxdb.QueryDB, func(clnt client.Client, cmd string, database string, params map[string]interface{}) ([]client.Result, error) {
 		if cmd == "SHOW DATABASES" {
 			var results []client.Result

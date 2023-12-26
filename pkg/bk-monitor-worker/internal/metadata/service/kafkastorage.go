@@ -90,7 +90,7 @@ func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig 
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("result_table [%s] already has redis storage config, nothing will add", tableId)
+		return errors.Errorf("result_table [%s] already has redis storage config, nothing will add", tableId)
 	}
 
 	// 如果未有指定key，则改为table_id

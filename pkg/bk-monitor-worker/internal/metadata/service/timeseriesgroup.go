@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pkg/errors"
+
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
@@ -141,7 +143,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count == 0 {
-		return fmt.Errorf("label [%s] is not exists as a rt label", label)
+		return errors.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	// 判断同一个data_id是否已经被其他事件绑定了
 	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkDataIDEq(bkDataId).Count()
@@ -149,7 +151,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId)
+		return errors.Errorf("bk_data_id [%v] is already used by other custom group, use it first?", bkDataId)
 	}
 	// 判断同一个业务下是否有重名的custom_group_name
 	count, err = customreport.NewTimeSeriesGroupQuerySet(db).BkBizIDEq(bkBizId).IsDeleteEq(false).TimeSeriesGroupNameEq(customGroupName).Count()
@@ -157,7 +159,7 @@ func (TimeSeriesGroupSvc) PreCheck(label string, bkDataId uint, customGroupName 
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("biz_id [%v] already has TimeSeriesGroup [%s], should change TimeSeriesGroupName and try again", bkBizId, customGroupName)
+		return errors.Errorf("biz_id [%v] already has TimeSeriesGroup [%s], should change TimeSeriesGroupName and try again", bkBizId, customGroupName)
 	}
 	return nil
 }

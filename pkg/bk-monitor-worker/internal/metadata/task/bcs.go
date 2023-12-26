@@ -11,7 +11,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -93,7 +92,7 @@ func createBcsCluster(cluster service.BcsClusterInfo) error {
 	// 注册集群
 	newCluster, err := service.NewBcsClusterInfoSvc(nil).RegisterCluster(cluster.BkBizId, cluster.ClusterId, cluster.ProjectId, "system")
 	if err != nil {
-		return errors.Wrap(err, fmt.Sprintf("register cluster %s failed, %s", cluster.ClusterId, err))
+		return errors.Wrapf(err, "register cluster %s failed", cluster.ClusterId)
 	}
 	newBcsClusterInfoSvc := service.NewBcsClusterInfoSvc(newCluster)
 	// 初始化资源resource信息
@@ -105,7 +104,7 @@ func createBcsCluster(cluster service.BcsClusterInfo) error {
 	// 更新云区域ID
 	err = newBcsClusterInfoSvc.UpdateBcsClusterCloudIdConfig()
 	if err != nil {
-		return errors.Wrap(err, fmt.Sprintf("update bcs cluster cloud id failed, %s", err))
+		return errors.Wrap(err, "update bcs cluster cloud id failed")
 	}
 	logger.Infof("cluster_id [%s], project_id [%s], bk_biz_id [%v] init resource finished", newCluster.ClusterID, newCluster.ProjectId, newCluster.BkBizId)
 	return nil
@@ -144,7 +143,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 	if bcsClusterInfo.BkCloudId == nil {
 		// 更新云区域ID
 		if err := service.NewBcsClusterInfoSvc(bcsClusterInfo).UpdateBcsClusterCloudIdConfig(); err != nil {
-			return errors.Wrap(err, fmt.Sprintf("update bk_cloud_id for cluster [%v] error, %s", bcsClusterInfo.ClusterID, err))
+			return errors.Wrapf(err, "update bk_cloud_id for cluster [%v] error", bcsClusterInfo.ClusterID)
 		}
 	}
 	logger.Infof("cluster_id [%s], project_id [%s] already exists, skip create", cluster.ClusterId, cluster.ProjectId)

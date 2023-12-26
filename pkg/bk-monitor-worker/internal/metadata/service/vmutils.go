@@ -126,22 +126,22 @@ func (s VmUtils) AccessBkdata(bkBizId int, tableId string, bkDataId uint) error 
 	}
 	vmDataMap, err := s.AccessVmByKafka(tableId, dataName, vmClusterName, timestampLen)
 	if err != nil {
-		return fmt.Errorf("access vm error, %v", err)
+		return errors.Wrap(err, "access vm error")
 	}
 	// 如果接入返回为空，则直接返回
 	resp := optionx.NewOptions(vmDataMap)
 	// 创建 KafkaStorage 和 AccessVMRecord 记录
 	clusterId, ok := resp.GetUint("cluster_id")
 	if !ok {
-		return fmt.Errorf("vm data can not get cluster_id")
+		return errors.New("vm data can not get cluster_id")
 	}
 	vmDataId, ok := resp.GetUint("bk_data_id")
 	if !ok {
-		return fmt.Errorf("vm data can not get bk_data_id")
+		return errors.New("vm data can not get bk_data_id")
 	}
 	cleanRtId, ok := resp.GetString("clean_rt_id")
 	if !ok {
-		return fmt.Errorf("vm data can not get clean_rt_id")
+		return errors.New("vm data can not get clean_rt_id")
 	}
 	kafkaStorageExist, ok := resp.GetBool("kafka_storage_exist")
 	if ok && !kafkaStorageExist {
@@ -382,7 +382,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 		return nil, errors.Wrapf(err, "create data storages error, storageParams [%#v], error [%v]", storageParams, err)
 	}
 	if bkBaseData.RawDataID <= 0 {
-		return nil, fmt.Errorf("table_id [%s] BkDataStorage raw_data_id is still -1", tableId)
+		return nil, errors.Errorf("table_id [%s] BkDataStorage raw_data_id is still -1", tableId)
 	}
 	return map[string]interface{}{
 		"clean_rt_id":         fmt.Sprintf("%v_%s", cfg.GlobalDefaultBkdataBizId, rawDataName),
@@ -419,7 +419,7 @@ func (s VmUtils) refineBkdataKafkaInfo() (uint, string, error) {
 	}
 	bkdataKafkaDataList, ok := resp.Data.([]interface{})
 	if !ok {
-		return 0, "", fmt.Errorf("parse get_kafka_info response error, %#v", resp.Data)
+		return 0, "", errors.Errorf("parse get_kafka_info response error, %#v", resp.Data)
 	}
 	if len(bkdataKafkaDataList) == 0 {
 		return 0, "", errors.New("bkdata kafka data not found")
@@ -427,7 +427,7 @@ func (s VmUtils) refineBkdataKafkaInfo() (uint, string, error) {
 	bkdataKafkaDataInterface := bkdataKafkaDataList[0]
 	bkdataKafkaData, ok := bkdataKafkaDataInterface.(map[string]interface{})
 	if !ok {
-		return 0, "", fmt.Errorf("parse bkdata kafka data error, %#v", bkdataKafkaData)
+		return 0, "", errors.Errorf("parse bkdata kafka data error, %#v", bkdataKafkaData)
 	}
 	kafkaData := optionx.NewOptions(bkdataKafkaData)
 	bkdataKafkaHostStr, _ := kafkaData.GetString("ip_list")
@@ -436,7 +436,7 @@ func (s VmUtils) refineBkdataKafkaInfo() (uint, string, error) {
 	// 获取 metadata 和接口返回的交集，然后任取其中一个; 如果不存在，则直接报错
 	existedHostList := slicex.StringSet2List(slicex.StringList2Set(kafkaDomainList).Intersect(slicex.StringList2Set(bkdataKafkaHostList)))
 	if len(existedHostList) == 0 {
-		return 0, "", fmt.Errorf("bkdata kafka host not registerd ClusterInfo, bkdata resp: %#v", resp.Data)
+		return 0, "", errors.Errorf("bkdata kafka host not registerd ClusterInfo, bkdata resp: %#v", resp.Data)
 	}
 	host := existedHostList[rand.Intn(len(existedHostList))]
 	clusterId := kafkaDomainCLusterIdMap[host]
@@ -457,7 +457,7 @@ func (s VmUtils) accessVm(rawDataName, vmCluster, vmRetentionTime string, timest
 	}
 	// 解析返回，获取计算平台 dataid
 	if len(data.CleanRtId) == 0 {
-		return 0, "", fmt.Errorf("accessing bkdata data [%v] error, %v", data, err)
+		return 0, "", errors.Wrapf(err, "accessing bkdata data [%v] error", data)
 	}
 	bkDataId := data.RawDataId
 	cleanRtId := data.CleanRtId[0]

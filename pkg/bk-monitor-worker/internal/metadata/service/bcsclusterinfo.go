@@ -124,27 +124,27 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 		}
 		clusterName, ok := cluster.GetString("clusterName")
 		if !ok {
-			return nil, fmt.Errorf("can not get clusterName")
+			return nil, errors.New("can not get clusterName")
 		}
 		projectID, ok := cluster.GetString("projectID")
 		if !ok {
-			return nil, fmt.Errorf("can not get projectID")
+			return nil, errors.New("can not get projectID")
 		}
 		createTime, ok := cluster.GetString("createTime")
 		if !ok {
-			return nil, fmt.Errorf("can not get createTime")
+			return nil, errors.New("can not get createTime")
 		}
 		updateTime, ok := cluster.GetString("updateTime")
 		if !ok {
-			return nil, fmt.Errorf("can not get updateTime")
+			return nil, errors.New("can not get updateTime")
 		}
 		status, ok := cluster.GetString("status")
 		if !ok {
-			return nil, fmt.Errorf("can not get status")
+			return nil, errors.New("can not get status")
 		}
 		environment, ok := cluster.GetString("environment")
 		if !ok {
-			return nil, fmt.Errorf("can not get environment")
+			return nil, errors.New("can not get environment")
 		}
 
 		clusterList = append(clusterList, BcsClusterInfo{
@@ -272,11 +272,11 @@ func (b BcsClusterInfoSvc) FetchK8sNodeListByCluster(bcsClusterId string) ([]K8s
 
 	nodes, err := b.fetchBcsStorage(bcsClusterId, nodeField, "Node")
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("fetch bcs storage Node for %s failed, %s", bcsClusterId, err))
+		return nil, errors.Wrapf(err, "fetch bcs storage Node for %s failed", bcsClusterId)
 	}
 	endpoints, err := b.fetchBcsStorage(bcsClusterId, endpointField, "Endpoints")
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("fetch bcs storage Endpoints for %s failed, %s", bcsClusterId, err))
+		return nil, errors.Wrapf(err, "fetch bcs storage Endpoints for %s failed", bcsClusterId)
 	}
 	statistics, err := b.getPodCountStatistics(bcsClusterId)
 	if err != nil {
@@ -340,7 +340,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 		return nil, err
 	}
 	if result.Code != 0 {
-		return nil, fmt.Errorf("fetch bcs storage failed, %s", result.Message)
+		return nil, errors.Errorf("fetch bcs storage failed, %s", result.Message)
 	}
 	return result.Data, nil
 }
@@ -391,9 +391,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	}
 	// 集群已经接入
 	if count != 0 {
-		return nil, errors.New(
-			fmt.Sprintf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId),
-		)
+		return nil, errors.Errorf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId)
 	}
 	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiGatewayDomain)
 	if err != nil {
@@ -652,7 +650,7 @@ func (b BcsClusterInfoSvc) InitResource() error {
 		}
 		name := b.composeDataidResourceName(strings.ToLower(register.DatasourceName))
 		if err := b.ensureDataIdResource(name, dataidConfig); err != nil {
-			return errors.Wrap(err, fmt.Sprintf("ensure data id resource error, %s", err))
+			return errors.Wrap(err, "ensure data id resource error")
 		}
 	}
 	return nil
@@ -679,12 +677,12 @@ func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config *unstructure
 		config.SetResourceVersion(resp.GetResourceVersion())
 		_, err = b.UpdateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("update resource %s failed, %v", name, err))
+			return errors.Wrapf(err, "update resource %s failed", name)
 		}
 	} else {
 		_, err = b.CreateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
 		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("create resource %s failed, %v", name, err))
+			return errors.Wrapf(err, "create resource %s failed", name)
 		}
 	}
 	logger.Infof("%s datasource %s succeed", action, name)
@@ -973,7 +971,7 @@ func (b BcsClusterInfoSvc) RefreshAllToConsul(ctx context.Context) error {
 	dataIds = slicex.RemoveDuplicate(dataIds)
 	value, err := jsonx.MarshalString(dataIds)
 	if err != nil {
-		return errors.Wrap(err, fmt.Sprintf("marshal dataids [%v] failed", dataIds))
+		return errors.Wrapf(err, "marshal dataids [%v] failed", dataIds)
 	}
 	path := fmt.Sprintf(models.BcsResourceConsulPathTemplate, cfg.StorageConsulPathPrefix, b.ProjectId, b.ClusterID)
 	consulClient, err := consul.GetInstance(ctx)

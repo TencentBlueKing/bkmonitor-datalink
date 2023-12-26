@@ -10,9 +10,10 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -88,7 +89,7 @@ func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string
 		for _, o := range existOptions {
 			existOptionsNames = append(existOptionsNames, o.Name)
 		}
-		return fmt.Errorf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ","))
+		return errors.Errorf("table_id [%s] already has option [%s]", tableId, strings.Join(existOptionsNames, ","))
 	}
 	tx := db.Begin()
 	for _, option := range rtoList {

@@ -12,6 +12,8 @@ package service
 import (
 	"fmt"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -36,7 +38,7 @@ func (a KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 		return nil, err
 	}
 	if count != 0 {
-		return nil, fmt.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
+		return nil, errors.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
 	}
 	if topic == "" {
 		topic = fmt.Sprintf("%s%v0", "0bkmonitor_", bkDataId)

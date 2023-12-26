@@ -166,7 +166,7 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 				FromAuthorization: false,
 			}
 			if err := sds.Create(db); err != nil {
-				return errors.Wrapf(err, "create spacedatasource for %v failed, %v", ds.BkDataId, err)
+				return errors.Wrapf(err, "create spacedatasource for %v failed", ds.BkDataId)
 			}
 		}
 	}

@@ -88,7 +88,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 	}
 	bkDataId, err := d.ApplyForDataIdFromGse(operator)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("apply for data_id error, %s", err))
+		return nil, errors.Wrap(err, "apply for data_id error")
 	}
 	if transferClusterId == "" {
 		transferClusterId = "default"

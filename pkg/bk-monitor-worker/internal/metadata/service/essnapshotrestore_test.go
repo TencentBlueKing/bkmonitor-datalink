@@ -14,10 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -62,12 +64,17 @@ func TestEsSnapshotRestoreSvc_DeleteRestoreIndices(t *testing.T) {
 	}
 	db.Delete(&ess, "table_id = ?", ess.TableID)
 	err = ess.Create(db)
-
-	//gomonkey.ApplyFunc(ClusterInfoSvc.GetESClient, func(svc ClusterInfoSvc, ctx context.Context) (*elasticsearch.Elasticsearch, error) {
-	//	return mockerClient, nil
-	//})
+	var deletedIndex []string
+	gomonkey.ApplyFunc(storage.ClusterInfo.GetESClient, func(svc storage.ClusterInfo, ctx context.Context) (*elasticsearch.Elasticsearch, error) {
+		return &elasticsearch.Elasticsearch{}, nil
+	})
+	gomonkey.ApplyFunc(elasticsearch.Elasticsearch.DeleteIndex, func(es elasticsearch.Elasticsearch, ctx context.Context, indices []string) (*elasticsearch.Response, error) {
+		deletedIndex = append(deletedIndex, indices...)
+		return &elasticsearch.Response{}, nil
+	})
 	assert.NoError(t, err)
 	svc := NewEsSnapshotRestoreSvc(&essr)
 	err = svc.DeleteRestoreIndices(context.Background())
 	assert.NoError(t, err)
+	assert.ElementsMatch(t, []string{"restore_index_r1", "restore_index_r2", "restore_index_r3"}, deletedIndex)
 }

@@ -39,9 +39,9 @@ type KvShipper struct {
 }
 
 func renderKvKey(metric *ClusterMetric, instCtx map[string]string) (string, error) {
-	pattern := config.ClusterMetricFieldPattern
-	instCtx[config.ClusterMetricFieldPatternMetricFlag] = metric.MetricName
-	keys := []string{config.ClusterMetricFieldPatternClusterFlag, config.ClusterMetricFieldPatternMetricFlag}
+	pattern := config.ClusterMetricSubKeyPattern
+	instCtx[config.ClusterMetricFieldName] = metric.MetricName
+	keys := []string{config.ClusterMetricClusterFieldName, config.ClusterMetricFieldName}
 	for _, k := range keys {
 		val, ok := instCtx[k]
 		if !ok {

@@ -14,13 +14,14 @@ import (
 )
 
 var (
-	ClusterMetricStorageKeyPrefix        string
-	ClusterMetricStorageTTL              int
-	ClusterMetricKey                     string
-	ClusterMetricMetaKey                 string
-	ClusterMetricFieldPattern            string
-	ClusterMetricFieldPatternClusterFlag string
-	ClusterMetricFieldPatternMetricFlag  string
+	ClusterMetricStorageKeyPrefix string
+	ClusterMetricStorageTTL       int
+	ClusterMetricKey              string
+	ClusterMetricMetaKey          string
+	ClusterMetricSubKeyPattern    string
+	ClusterMetricClusterFieldName string
+	ClusterMetricFieldName        string
+	ClusterMetricHostFieldName    string
 )
 
 func initClusterMetricVariables() {
@@ -28,7 +29,9 @@ func initClusterMetricVariables() {
 	ClusterMetricStorageTTL = GetValue("taskConfig.cluster_metrics.storage_ttl", 300)
 	ClusterMetricKey = fmt.Sprintf("%s:cluster_metrics", ClusterMetricStorageKeyPrefix)
 	ClusterMetricMetaKey = fmt.Sprintf("%s:cluster_metrics_meta", ClusterMetricStorageKeyPrefix)
-	ClusterMetricFieldPattern = "{bkm_metric_name}|bkm_cluster={bkm_cluster}"
-	ClusterMetricFieldPatternClusterFlag = "bkm_cluster"
-	ClusterMetricFieldPatternMetricFlag = "bkm_metric_name"
+
+	ClusterMetricSubKeyPattern = "{bkm_metric_name}|bkm_cluster={bkm_cluster}"
+	ClusterMetricClusterFieldName = "bkm_cluster"
+	ClusterMetricFieldName = "bkm_metric_name"
+	ClusterMetricHostFieldName = "bkm_hostname"
 }

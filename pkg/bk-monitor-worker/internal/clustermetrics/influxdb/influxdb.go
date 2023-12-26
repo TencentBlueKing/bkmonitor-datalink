@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"net/url"
 	"sync"
 	"time"
@@ -35,8 +36,8 @@ type Instance struct {
 
 func (inst *Instance) GetContext() map[string]string {
 	return map[string]string{
-		storage.BkmClusterKey:  inst.ClusterName,
-		storage.BkmHostnameKey: inst.HostName,
+		config.ClusterMetricClusterFieldName: inst.ClusterName,
+		config.ClusterMetricHostFieldName:    inst.HostName,
 	}
 }
 

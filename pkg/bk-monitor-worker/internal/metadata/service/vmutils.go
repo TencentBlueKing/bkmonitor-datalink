@@ -202,7 +202,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 	if vmClusterId != 0 {
 		var cluster storage.ClusterInfo
 		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeVM).ClusterIDEq(vmClusterId).One(&cluster); err != nil {
-			return nil, errors.Wrapf(err, "not found vm cluster [%v], %v", vmClusterId, err)
+			return nil, errors.Wrapf(err, "query vm cluster [%v] failed", vmClusterId)
 		}
 		return &cluster, nil
 	}
@@ -220,7 +220,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 		} else {
 			var cluster storage.ClusterInfo
 			if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(spaceVmInfo.VMClusterID).One(&cluster); err != nil {
-				return nil, errors.Wrapf(err, "space_type [%s] space_id [%s] not found vm cluster, %v", spaceTypeId, spaceId, err)
+				return nil, errors.Wrapf(err, "space_type [%s] space_id [%s] not found vm cluster", spaceTypeId, spaceId)
 			}
 			return &cluster, nil
 		}
@@ -229,7 +229,7 @@ func (s VmUtils) getVmCluster(spaceTypeId, spaceId string, vmClusterId uint) (*s
 	// 没有接入过，获取默认 VM 集群
 	var cluster storage.ClusterInfo
 	if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeVM).IsDefaultClusterEq(true).One(&cluster); err != nil {
-		return nil, errors.Wrapf(err, "not found default vm cluster, %v", err)
+		return nil, errors.Wrap(err, "query default vm cluster failed")
 	}
 	return &cluster, nil
 }
@@ -304,11 +304,11 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	if !kafkaStorageExist {
 		storageClusterId, _, err := s.refineBkdataKafkaInfo()
 		if err != nil {
-			return nil, errors.Wrapf(err, "refineBkdataKafkaInfo error, %s", err)
+			return nil, errors.Wrap(err, "refineBkdataKafkaInfo error")
 		}
 		bkDataId, cleanRtId, err := s.accessVm(rawDataName, vmClusterName, models.VmRetentionTime, timestampLen)
 		if err != nil {
-			return nil, errors.Wrapf(err, "accessVm error, %s", err)
+			return nil, errors.Wrap(err, "accessVm error")
 		}
 		return map[string]interface{}{"cluster_id": storageClusterId, "bk_data_id": bkDataId, "clean_rt_id": cleanRtId}, nil
 	}
@@ -359,7 +359,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	}
 	var resp define.APICommonMapResp
 	if _, err := bkdataApi.DataBusCleans().SetBody(cleanData).SetResult(resp).Request(); err != nil {
-		return nil, errors.Wrapf(err, "create data clean error, params [%#v], error [%v]", cleanData, err)
+		return nil, errors.Wrapf(err, "create data clean error, params [%#v]", cleanData)
 	}
 	bkbaseResultTableId := resp.Data["result_table_id"]
 	// 启动
@@ -369,7 +369,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 		"result_table_id": bkbaseResultTableId,
 		"storages":        []string{"kafka"},
 	}).Request(); err != nil {
-		return nil, errors.Wrapf(err, "create data clean error, bkbaseResultTableId [%v], error [%v]", bkbaseResultTableId, err)
+		return nil, errors.Wrapf(err, "create data clean error, bkbaseResultTableId [%v]", bkbaseResultTableId)
 	}
 	// 接入 vm
 	storageParams, err := NewBkDataStorageWithDataID(bkBaseData.RawDataID, rawDataName, vmClusterName, "").Value()
@@ -379,7 +379,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 		return nil, err
 	}
 	if _, err := bkdataApi.CreateDataStorages().SetBody(storageParams).Request(); err != nil {
-		return nil, errors.Wrapf(err, "create data storages error, storageParams [%#v], error [%v]", storageParams, err)
+		return nil, errors.Wrapf(err, "create data storages error, storageParams [%#v]", storageParams)
 	}
 	if bkBaseData.RawDataID <= 0 {
 		return nil, fmt.Errorf("table_id [%s] BkDataStorage raw_data_id is still -1", tableId)

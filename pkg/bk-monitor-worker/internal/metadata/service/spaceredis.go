@@ -55,7 +55,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 	if len(tableIdList) == 0 {
 		tableDataIdMap, err := pusher.GetSpaceTableIdDataId(spaceType, spaceId, nil, nil, nil)
 		if err != nil {
-			return errors.Wrapf(err, "get space table id dataid failed, %v", err)
+			return errors.Wrap(err, "get space table id dataid failed")
 		}
 		for tableId := range tableDataIdMap {
 			tableIdList = append(tableIdList, tableId)

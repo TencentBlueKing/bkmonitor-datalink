@@ -218,6 +218,21 @@ func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 
 }
 
+// RefreshBcsMetricsLabel 更新bcs指标label
+func RefreshBcsMetricsLabel(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBcsMetricsLabel Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start refresh bcs metrics label")
+	if err := service.NewBcsClusterInfoSvc(nil).RefreshMetricLabel(); err != nil {
+		logger.Errorf("refresh bcs metrics label failed, %v", err)
+		return err
+	}
+	return nil
+}
+
 // CleanExpiredRestore 清理到期的回溯索引
 func CleanExpiredRestore(ctx context.Context, t *t.Task) error {
 	defer func() {

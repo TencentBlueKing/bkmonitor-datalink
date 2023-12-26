@@ -10,35 +10,17 @@
 package mocker
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/agiledragon/gomonkey/v2"
 	client "github.com/influxdata/influxdb1-client/v2"
-	"github.com/jinzhu/gorm"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 func InitTestDBConfig(filePath string) {
 	config.FilePath = filePath
 	config.InitConfig()
-	gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s:%v)/%s?&parseTime=True&loc=Local",
-			config.StorageMysqlUser,
-			config.StorageMysqlPassword,
-			config.StorageMysqlHost,
-			config.StorageMysqlPort,
-			config.StorageMysqlDbName,
-		))
-		if err != nil {
-			panic(err)
-		}
-		return &mysql.DBSession{DB: db}
-	})
 }
 
 type KafkaClientMocker struct {

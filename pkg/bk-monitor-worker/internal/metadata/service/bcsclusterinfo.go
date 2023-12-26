@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	mapset "github.com/deckarep/golang-set"
 	"github.com/pkg/errors"
 	k8sErr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,10 +37,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -941,6 +944,117 @@ func (b BcsClusterInfoSvc) isSameMapConfig(source map[string]interface{}, target
 		}
 	}
 	return true
+}
+
+// RefreshMetricLabel 刷新bcs指标的label
+func (b BcsClusterInfoSvc) RefreshMetricLabel() error {
+	// 获取所有bcs相关dataid
+	dataids, err := b.getBcsDataids(nil)
+	if err != nil {
+		return errors.Wrap(err, "get all bcs dataids failed")
+	}
+	if len(dataids) == 0 {
+		logger.Info("refresh bcs metrics label get no dataid")
+		return nil
+	}
+	db := mysql.GetDBSession().DB
+	// 基于dataid过滤出自定义指标group_id
+	var tsGroups []customreport.TimeSeriesGroup
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).Select(customreport.TimeSeriesGroupDBSchema.TimeSeriesGroupID).BkDataIDIn(dataids...).IsDeleteEq(false).All(&tsGroups); err != nil {
+		return errors.Wrap(err, "query tsGroup failed")
+	}
+	var tsGroupIds []uint
+	for _, group := range tsGroups {
+		tsGroupIds = append(tsGroupIds, group.TimeSeriesGroupID)
+	}
+	if len(tsGroupIds) == 0 {
+		logger.Warnf("query tsGroup with dataids [%v] return no record", dataids)
+		return nil
+	}
+	// 基于group_id拿到对应的指标项
+	var tsMetrics []customreport.TimeSeriesMetric
+	if err := customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.FieldID, customreport.TimeSeriesMetricDBSchema.Label).GroupIDIn(tsGroupIds...).All(&tsMetrics); err != nil {
+		return errors.Wrap(err, "query tsMetrics failed")
+	}
+	var defaultLabel string
+	if prefix, ok := models.BcsMetricLabelPrefix["*"]; ok {
+		defaultLabel = prefix
+	}
+	labelFieldIdMap := make(map[string][]uint)
+	for _, metric := range tsMetrics {
+		var targetLabel string
+		// 通过遍历匹配，获取到需要处理label的指标信息
+		for prefix, label := range models.BcsMetricLabelPrefix {
+			if strings.HasPrefix(metric.FieldName, prefix) {
+				targetLabel = label
+				break
+			}
+		}
+		if targetLabel == "" {
+			targetLabel = defaultLabel
+		}
+		// 记录需要更新label的field_id，后面批量更新
+		if metric.Label != targetLabel {
+			if ids, ok := labelFieldIdMap[targetLabel]; ok {
+				labelFieldIdMap[targetLabel] = append(ids, metric.FieldID)
+			} else {
+				labelFieldIdMap[targetLabel] = []uint{metric.FieldID}
+			}
+		}
+	}
+	// 每个label批量更新一下
+	for label, ids := range labelFieldIdMap {
+		for _, chunkIds := range slicex.ChunkSlice(ids, 0) {
+			err := customreport.NewTimeSeriesMetricQuerySet(db).FieldIDIn(chunkIds...).GetUpdater().SetLastModifyTime(time.Now()).SetLabel(label).Update()
+			if err != nil {
+				logger.Errorf("update tsMetrics label [%s] for [%v] failed, %v", label, chunkIds, err)
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+// getBcsDataids 获取bcs相关dataid
+func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
+	db := mysql.GetDBSession().DB
+	var clusters []bcs.BCSClusterInfo
+	qs := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.ClusterID, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID)
+	if len(clusterIdList) != 0 {
+		qs = qs.ClusterIDIn(clusterIdList...)
+	}
+	if err := qs.All(&clusters); err != nil {
+		return nil, errors.Wrap(err, "query bcs cluster info failed")
+	}
+	if len(clusters) == 0 {
+		logger.Infof("query BCSCluster but return empty")
+		return []uint{}, nil
+	}
+	var realClusterIds []string
+	dataids := mapset.NewSet()
+	for _, c := range clusters {
+		realClusterIds = append(realClusterIds, c.ClusterID)
+		dataids.Add(c.K8sMetricDataID)
+		dataids.Add(c.CustomMetricDataID)
+	}
+
+	var serviceMonitorList []bcs.ServiceMonitorInfo
+	if err := bcs.NewServiceMonitorInfoQuerySet(db).Select(bcs.ServiceMonitorInfoDBSchema.BkDataId).ClusterIDIn(realClusterIds...).IsCommonDataIdEq(false).All(&serviceMonitorList); err != nil {
+		return nil, errors.Wrap(err, "query service monitor info failed")
+	}
+	for _, info := range serviceMonitorList {
+		dataids.Add(info.BkDataId)
+	}
+
+	var podMonitorList []bcs.PodMonitorInfo
+	if err := bcs.NewPodMonitorInfoQuerySet(db).Select(bcs.PodMonitorInfoDBSchema.BkDataId).ClusterIDIn(realClusterIds...).IsCommonDataIdEq(false).All(&podMonitorList); err != nil {
+		return nil, errors.Wrap(err, "query service monitor info failed")
+	}
+	for _, info := range podMonitorList {
+		dataids.Add(info.BkDataId)
+	}
+	dataidList := slicex.UintSet2List(dataids)
+	return dataidList, nil
 }
 
 // BcsClusterInfo FetchK8sClusterList 中返回的集群信息对象

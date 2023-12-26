@@ -39,5 +39,7 @@ func (c *CustomGroupBase) BeforeCreate(tx *gorm.DB) error {
 	if c.Label == "" {
 		c.Label = "other"
 	}
+	c.CreateTime = time.Now()
+	c.LastModifyTime = time.Now()
 	return nil
 }

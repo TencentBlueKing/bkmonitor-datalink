@@ -75,13 +75,6 @@ var (
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
-
-	// QueryVMSpaceUidList 通过 vm 查询的空间列表
-	QueryVMSpaceUidList []string
-	// QueryVMSpaceUidListKey 通过 vm 查询的空间列表推送redis的key
-	QueryVMSpaceUidListKey string
-	// QueryVMSpaceUidChannelKey 通过 vm 查询的空间列表redis发布通道key
-	QueryVMSpaceUidChannelKey string
 )
 
 func initMetadataVariables() {
@@ -115,8 +108,4 @@ func initMetadataVariables() {
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
-
-	QueryVMSpaceUidList = GetValue("taskConfig.metadata.queryVMSpaceUidList", []string{})
-	QueryVMSpaceUidListKey = GetValue("taskConfig.metadata.queryVMSpaceUidListKey", "bkmonitorv3:vm-query:space_uid")
-	QueryVMSpaceUidChannelKey = GetValue("taskConfig.metadata.QueryVMSpaceUidChannelKey", "bkmonitorv3:vm-query")
 }

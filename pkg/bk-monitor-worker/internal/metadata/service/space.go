@@ -68,7 +68,7 @@ func (*SpaceSvc) RefreshBkccSpaceName() error {
 			continue
 		}
 		// 名称变动，需要更新
-		if name != "" && name != oldName {
+		if name != oldName {
 			sp.SpaceName = name
 			err := sp.Update(db, space.SpaceDBSchema.SpaceName)
 			if err != nil {

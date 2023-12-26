@@ -13,20 +13,24 @@ import (
 	"time"
 
 	client "github.com/influxdata/influxdb1-client/v2"
+	"github.com/pkg/errors"
 )
 
 // GetClient 根据参数获取influxdb实例
-func GetClient(address, username, password string) (client.Client, error) {
+func GetClient(address, username, password string, timeout int) (client.Client, error) {
 	clientItem, err := client.NewHTTPClient(client.HTTPConfig{
 		Addr:     address,
 		Username: username,
 		Password: password,
-		Timeout:  5 * time.Second,
+		Timeout:  time.Duration(timeout) * time.Second,
 	})
 	if err != nil {
 		return nil, err
 	}
-
+	_, _, err = clientItem.Ping(time.Duration(timeout) * time.Second)
+	if err != nil {
+		return nil, errors.Wrapf(err, "ping indluxdb [%s] failed", address)
+	}
 	return clientItem, nil
 }
 

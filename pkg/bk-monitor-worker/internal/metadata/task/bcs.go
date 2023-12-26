@@ -230,8 +230,6 @@ func RefreshBcsMetricsLabel(ctx context.Context, t *t.Task) error {
 	if err := service.NewBcsClusterInfoSvc(nil).RefreshMetricLabel(); err != nil {
 		logger.Errorf("refresh bcs metrics label failed, %v", err)
 		return err
-	} else {
-		logger.Info("refresh bcs metrics label success")
-		return nil
 	}
+	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	mapset "github.com/deckarep/golang-set"
 	"github.com/pkg/errors"
 	k8sErr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1028,14 +1029,15 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 		return nil, errors.Wrap(err, "query bcs cluster info failed")
 	}
 	if len(clusters) == 0 {
+		logger.Infof("query BCSCluster but return empty")
 		return []uint{}, nil
 	}
 	var realClusterIds []string
-	var dataids []uint
+	dataids := mapset.NewSet()
 	for _, c := range clusters {
 		realClusterIds = append(realClusterIds, c.ClusterID)
-		dataids = append(dataids, c.K8sMetricDataID)
-		dataids = append(dataids, c.CustomMetricDataID)
+		dataids.Add(c.K8sMetricDataID)
+		dataids.Add(c.CustomMetricDataID)
 	}
 
 	var serviceMonitorList []bcs.ServiceMonitorInfo
@@ -1043,7 +1045,7 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 		return nil, errors.Wrap(err, "query service monitor info failed")
 	}
 	for _, info := range serviceMonitorList {
-		dataids = append(dataids, info.BkDataId)
+		dataids.Add(info.BkDataId)
 	}
 
 	var podMonitorList []bcs.PodMonitorInfo
@@ -1051,10 +1053,10 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 		return nil, errors.Wrap(err, "query service monitor info failed")
 	}
 	for _, info := range podMonitorList {
-		dataids = append(dataids, info.BkDataId)
+		dataids.Add(info.BkDataId)
 	}
-	dataids = slicex.RemoveDuplicate(&dataids)
-	return dataids, nil
+	dataidList := slicex.UintSet2List(dataids)
+	return dataidList, nil
 }
 
 // BcsClusterInfo FetchK8sClusterList 中返回的集群信息对象

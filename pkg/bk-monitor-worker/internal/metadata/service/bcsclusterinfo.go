@@ -1053,7 +1053,7 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 	for _, info := range podMonitorList {
 		dataids = append(dataids, info.BkDataId)
 	}
-	dataids = slicex.RemoveDuplicate(dataids)
+	dataids = slicex.RemoveDuplicate(&dataids)
 	return dataids, nil
 }
 

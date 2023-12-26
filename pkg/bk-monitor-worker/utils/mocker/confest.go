@@ -12,6 +12,7 @@ package mocker
 import (
 	"fmt"
 
+	"github.com/IBM/sarama"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/jinzhu/gorm"
 
@@ -37,3 +38,14 @@ func InitTestDBConfig(filePath string) {
 		return &mysql.DBSession{DB: db}
 	})
 }
+
+type KafkaClientMocker struct {
+	sarama.Client
+	PartitionMap map[string][]int32
+}
+
+func (k *KafkaClientMocker) Partitions(topic string) ([]int32, error) {
+	return k.PartitionMap[topic], nil
+}
+
+func (k *KafkaClientMocker) Close() error { return nil }

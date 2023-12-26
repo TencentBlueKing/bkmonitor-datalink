@@ -35,6 +35,7 @@ var (
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
 	RefreshBcsMonitorInfo = "periodic:metadata:refresh_bcs_monitor_info"
 	RefreshDefaultRp      = "periodic:metadata:refresh_default_rp"
+	RefreshKafkaTopicInfo = "periodic:metadata:refresh_kafka_topic_info"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -68,6 +69,10 @@ var (
 		RefreshDefaultRp: {
 			Cron:    "0 22 * * *",
 			Handler: metadataTask.RefreshDefaultRp,
+		},
+		RefreshKafkaTopicInfo: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshKafkaTopicInfo,
 		},
 	}
 )

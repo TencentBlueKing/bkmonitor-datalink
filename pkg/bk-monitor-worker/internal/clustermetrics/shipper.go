@@ -13,19 +13,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pkg/errors"
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Record struct {
 	Instance ClusterInstance
-	Metric   *storage.ClusterMetric
+	Metric   *ClusterMetric
 	Data     []map[string]interface{}
 }
 
@@ -38,7 +38,7 @@ type KvShipper struct {
 	RedisClient *redisStore.Instance
 }
 
-func renderKvKey(metric *storage.ClusterMetric, instCtx map[string]string) (string, error) {
+func renderKvKey(metric *ClusterMetric, instCtx map[string]string) (string, error) {
 	pattern := config.ClusterMetricFieldPattern
 	instCtx[config.ClusterMetricFieldPatternMetricFlag] = metric.MetricName
 	keys := []string{config.ClusterMetricFieldPatternClusterFlag, config.ClusterMetricFieldPatternMetricFlag}
@@ -99,7 +99,7 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 	// 更新指标
 	kvMetricMeta := KvClusterMetricMeta{
 		MetricName: record.Metric.MetricName,
-		Tags:       record.Metric.TagsParsed,
+		Tags:       record.Metric.Tags,
 	}
 	metricMetaContent, err := json.Marshal(&kvMetricMeta)
 	if err != nil {

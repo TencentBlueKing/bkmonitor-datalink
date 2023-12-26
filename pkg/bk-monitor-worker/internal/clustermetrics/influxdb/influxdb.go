@@ -13,11 +13,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"net/url"
-	"strings"
 	"sync"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
@@ -73,7 +73,7 @@ type Response struct {
 func ReportInfluxdbClusterMetric(ctx context.Context, t *t.Task) error {
 	var clusterHosts []storage.InfluxdbClusterInfo
 	var hosts []storage.InfluxdbHostInfo
-	var metrics []storage.ClusterMetric
+	var metrics []clustermetrics.ClusterMetric
 	var err error
 	// 从数据读取 influxdb 集群、实例数据、influxdb 集群指标配置
 	dbSession := mysql.GetDBSession()
@@ -87,7 +87,7 @@ func ReportInfluxdbClusterMetric(ctx context.Context, t *t.Task) error {
 		logger.Errorf("Fail to query InfluxdbHostInfo, %v", err)
 		return err
 	}
-	err = storage.NewClusterMetricQuerySet(dbSession.DB).InfluxdbQS().All(&metrics)
+	metrics, err = clustermetrics.QueryInfluxdbMetrics(ctx)
 	if err != nil {
 		logger.Errorf("Fail to query ClusterMetric, %v", err)
 		return err
@@ -147,7 +147,7 @@ type BatchLoader struct {
 	recordQueue chan *clustermetrics.Record
 	instances   []*Instance
 	client      http.Client
-	metrics     []storage.ClusterMetric
+	metrics     []clustermetrics.ClusterMetric
 }
 
 func (bl *BatchLoader) Load(ctx context.Context) {
@@ -173,28 +173,9 @@ func (bl *BatchLoader) Load(ctx context.Context) {
 func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) {
 	for _, m := range bl.metrics {
 		// 根据指标配置组装请求语句
-		parts := strings.Split(m.MetricName, ".")
-		if len(parts) != 3 {
-			logger.Errorf("Invalid metric name: %s", m.MetricName)
-			continue
-		}
-		measurement := parts[1]
-		metricName := parts[2]
-		escapedTags := make([]string, 0)
-		escapedTagsWithAs := make([]string, 0)
-		for _, tag := range m.GetNonBkmTags() {
-			escapedTags = append(escapedTags, fmt.Sprintf(`"%s"`, convertInfluxdbMetricName(tag)))
-			escapedTagsWithAs = append(escapedTagsWithAs, fmt.Sprintf(`"%s" as "%s"`, convertInfluxdbMetricName(tag), tag))
-		}
-		ql := fmt.Sprintf(
-			`select LAST("%s") as value, %s from "%s" where time > now() - %ds group by %s`,
-			convertInfluxdbMetricName(metricName),
-			strings.Join(escapedTagsWithAs, ","),
-			measurement, config.ClusterMetricStorageTTL,
-			strings.Join(escapedTags, ","))
 		values := url.Values{}
 		values.Set("db", "_internal")
-		values.Set("q", ql)
+		values.Set("q", m.Config.SQL)
 		values.Set("epoch", "s")
 		options := http.Options{
 			BaseUrl:  fmt.Sprintf("%s://%s:%d/query", instance.Host.Protocol, instance.Host.DomainName, instance.Host.Port),
@@ -221,42 +202,32 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 		recordData := make([]map[string]interface{}, 0)
 		for _, r := range resultData.Results {
 			for _, s := range r.Series {
-				for _, vs := range s.Values {
-					d := make(map[string]interface{})
-					for idx, v := range vs {
-						d[s.Columns[idx]] = v
-					}
-					// 补充 bkm_% 内置字段
-					for k, v := range instance.GetContext() {
-						if m.IsInTags(k) {
-							d[k] = v
-						}
-					}
-					recordData = append(recordData, d)
+				if len(s.Values) == 0 {
+					continue
 				}
+				// 默认只取一个点
+				vs := s.Values[0]
+				d := make(map[string]interface{})
+				for idx, v := range vs {
+					d[s.Columns[idx]] = v
+				}
+				// 替换时间戳字段为当前时间戳
+				d["time"] = time.Now().Unix()
+				// 补充标签字段
+				for k, v := range s.Tags {
+					d[stringx.CamelToSnake(k)] = v
+				}
+				// 补充 bkm_% 内置标签字段
+				for k, v := range instance.GetContext() {
+					if m.IsInTags(k) {
+						d[k] = v
+					}
+				}
+				recordData = append(recordData, d)
 			}
 		}
-
 		// 推送消息
 		recordMetric := m
 		bl.recordQueue <- &clustermetrics.Record{Instance: instance, Metric: &recordMetric, Data: recordData}
 	}
-}
-
-// convertInfluxdbMetricName 一般情况将下划线词组转换为驼峰词组，并且首字符小写，部分指标需要定制化处理
-func convertInfluxdbMetricName(underline string) string {
-	runtimeMetrics := []string{"sys", "alloc"}
-	for _, m := range runtimeMetrics {
-		if m == underline {
-			return strings.Title(m)
-		}
-	}
-	words := strings.Split(underline, "_")
-	for i := 0; i < len(words); i++ {
-		if i == 0 {
-			continue
-		}
-		words[i] = strings.Title(words[i])
-	}
-	return strings.Join(words, "")
 }

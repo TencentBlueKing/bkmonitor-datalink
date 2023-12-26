@@ -68,14 +68,6 @@ func (s *TestSuite) initStoreData() {
 	if err != nil {
 		panic(err)
 	}
-	clusterMetric := storage.ClusterMetric{
-		MetricName: "influxdb.database.num_series",
-		Tags:       "[\"bkm_cluster\", \"database\", \"hostname\"]",
-	}
-	err = clusterMetric.Create(s.dbSession.DB)
-	if err != nil {
-		panic(err)
-	}
 }
 
 func (s *TestSuite) clear() {
@@ -84,10 +76,6 @@ func (s *TestSuite) clear() {
 		panic(err)
 	}
 	err = storage.NewInfluxdbHostInfoQuerySet(s.dbSession.DB).Delete()
-	if err != nil {
-		panic(err)
-	}
-	err = storage.NewClusterMetricQuerySet(s.dbSession.DB).Delete()
 	if err != nil {
 		panic(err)
 	}

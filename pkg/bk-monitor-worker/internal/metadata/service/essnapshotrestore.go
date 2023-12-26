@@ -41,9 +41,6 @@ func NewEsSnapshotRestoreSvc(obj *storage.EsSnapshotRestore) EsSnapshotRestoreSv
 
 // CleanAllExpiredRestore 清理到期的回溯索引
 func (*EsSnapshotRestoreSvc) CleanAllExpiredRestore(ctx context.Context, goRoutineLimit int) error {
-	if goRoutineLimit == 0 {
-		goRoutineLimit = 10
-	}
 	db := mysql.GetDBSession().DB
 	now := time.Now().UTC()
 	var expiredRestores []storage.EsSnapshotRestore

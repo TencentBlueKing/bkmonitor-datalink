@@ -24,14 +24,14 @@ var (
 			Name: "bmw_api_request_count",
 			Help: "api request count",
 		},
-		[]string{"method", "path", "taskName", "status"},
+		[]string{"method", "path", "status"},
 	)
 	apiRequestCost = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "bmw_api_request_cost",
 			Help: "api request cost time",
 		},
-		[]string{"method", "path", "taskName"},
+		[]string{"method", "path"},
 	)
 
 	// task metrics
@@ -53,8 +53,8 @@ var (
 )
 
 // RequestApiCount request api count metric
-func RequestApiCount(method, apiPath, taskName, status string) error {
-	metric, err := apiRequestCount.GetMetricWithLabelValues(method, apiPath, taskName, status)
+func RequestApiCount(method, apiPath, status string) error {
+	metric, err := apiRequestCount.GetMetricWithLabelValues(method, apiPath, status)
 	if err != nil {
 		logger.Errorf("prom get request api count metric failed: %v", err)
 		return err
@@ -64,9 +64,9 @@ func RequestApiCount(method, apiPath, taskName, status string) error {
 }
 
 // RequestApiCostTime cost time of request api
-func RequestApiCostTime(method, apiPath, taskName string, startTime time.Time) error {
+func RequestApiCostTime(method, apiPath string, startTime time.Time) error {
 	duringTime := time.Now().Sub(startTime).Seconds()
-	metric, err := taskCostTime.GetMetricWithLabelValues(method, apiPath, taskName)
+	metric, err := apiRequestCost.GetMetricWithLabelValues(method, apiPath)
 	if err != nil {
 		logger.Errorf("prom get request api time metric failed: %v", err)
 		return err
@@ -147,5 +147,5 @@ var Registry *prometheus.Registry
 func init() {
 	// register the metrics
 	Registry = prometheus.NewRegistry()
-	Registry.MustRegister(taskCount, taskCostTime)
+	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime)
 }

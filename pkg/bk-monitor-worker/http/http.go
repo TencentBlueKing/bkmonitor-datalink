@@ -31,13 +31,13 @@ func NewHTTPService() *gin.Engine {
 	svr := NewProfHttpService()
 
 	// 注册任务
-	svr.POST("/bmw/task/", CreateTask)
+	svr.POST(CreateTaskPath, CreateTask)
 	// 获取运行中的任务列表
-	svr.GET("/bmw/task/", ListTask)
+	svr.GET(ListTaskPath, ListTask)
 	// 删除任务
-	svr.DELETE("/bmw/task/", RemoveTask)
+	svr.DELETE(DeleteTaskPath, RemoveTask)
 	// 删除所有任务
-	svr.DELETE("/bmw/task/all", RemoveAllTask)
+	svr.DELETE(DeleteAllTaskPath, RemoveAllTask)
 
 	return svr
 }

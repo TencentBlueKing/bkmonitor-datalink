@@ -34,30 +34,33 @@ func AESDecrypt(encryptedPwd string) string {
 	// 非加密串返回原密码
 	if !strings.HasPrefix(encryptedPwd, AESPrefix) {
 		return encryptedPwd
+	} else {
+		// 截取实际加密数据段
+		encryptedPwd = strings.TrimPrefix(encryptedPwd, AESPrefix)
 	}
-
-	// 截取实际加密数据段
-	realEncrypted := encryptedPwd[len(AESPrefix):]
 	// base64解码
-	base64Decoded, err := base64.StdEncoding.DecodeString(realEncrypted)
+	ciphertext, err := base64.StdEncoding.DecodeString(encryptedPwd)
 	if err != nil {
 		logger.Errorf("base64 decode password error, %s", err)
 		return ""
 	}
-	// 获取iv
-	iv := base64Decoded[:aes.BlockSize]
+	// 获取iv和key
+	iv := encryptedPwd[:aes.BlockSize]
 	key := sha256.Sum256([]byte(config.AesKey))
+
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Errorf("new cipher error, %s", err)
 		return ""
 	}
-	decrypter := cipher.NewCBCDecrypter(block, iv)
+	decrypter := cipher.NewCBCDecrypter(block, []byte(iv))
 	// 解密
-	decrypter.CryptBlocks(base64Decoded, base64Decoded)
-	part := base64Decoded[aes.BlockSize:]
-	k := int(part[len(part)-1])
-	realPwd := string(part[:len(part)-k])
+	decrypted := make([]byte, len(ciphertext))
+	decrypter.CryptBlocks(decrypted, ciphertext)
 
+	plainData := decrypted[aes.BlockSize:]
+	length := len(plainData)
+	unpadding := int(plainData[length-1])
+	realPwd := string(plainData[:(length - unpadding)])
 	return realPwd
 }

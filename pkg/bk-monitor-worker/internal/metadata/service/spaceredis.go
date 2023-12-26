@@ -55,7 +55,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 	if len(tableIdList) == 0 {
 		tableDataIdMap, err := pusher.GetSpaceTableIdDataId(spaceType, spaceId, nil, nil, nil)
 		if err != nil {
-			return errors.Wrapf(err, "get space table id dataid failed, %v", err)
+			return errors.Wrap(err, "get space table id dataid failed")
 		}
 		for tableId := range tableDataIdMap {
 			tableIdList = append(tableIdList, tableId)
@@ -281,7 +281,7 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
 	}
-	tableIds = slicex.StringSet2List(slicex.StringList2Set(tableIds))
+	tableIds = slicex.RemoveDuplicate(&tableIds)
 	return tableIds, nil
 }
 
@@ -515,7 +515,7 @@ func (s SpacePusher) getMeasurementTypeByTableId(tableIdList []string, tableList
 	for _, bkDataId := range tableDataIdMap {
 		bkDataIdList = append(bkDataIdList, bkDataId)
 	}
-	bkDataIdList = slicex.RemoveDuplicate(bkDataIdList)
+	bkDataIdList = slicex.RemoveDuplicate(&bkDataIdList)
 	// 过滤数据源对应的 etl_config
 	dataIdEtlMap := make(map[uint]string)
 	var dsList []resulttable.DataSource
@@ -601,7 +601,7 @@ func (s SpacePusher) composeTableIdFields(tableIds []string) (map[string][]strin
 	for _, o := range rtoList {
 		whiteTableIdList = append(whiteTableIdList, o.TableID)
 	}
-	whiteTableIdList = slicex.RemoveDuplicate(whiteTableIdList)
+	whiteTableIdList = slicex.RemoveDuplicate(&whiteTableIdList)
 	// 剩余的结果表，需要判断是否时序的，然后根据过期时间过滤数据
 
 	logger.Infof("white table_id list: %v", whiteTableIdList)
@@ -708,7 +708,7 @@ func (s SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string, 
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义
 	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusEq(models.BcsClusterStatusRunning)
-	dataIds = slicex.UintSet2List(slicex.UintList2Set(dataIds))
+	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
 	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
 		return nil, err

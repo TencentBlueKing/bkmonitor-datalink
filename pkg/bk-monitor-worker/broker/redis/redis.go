@@ -77,7 +77,7 @@ func GetRDB() *RDB {
 			return nil
 		},
 		retry.Attempts(3),
-		retry.Delay(1*time.Second),
+		retry.Delay(5*time.Second),
 	)
 
 	if err != nil {

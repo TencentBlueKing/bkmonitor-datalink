@@ -155,7 +155,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("DiscoverBcsClusters Runtime panic caught: %v", err)
+			logger.Errorf("RefreshBcsMonitorInfo Runtime panic caught: %v", err)
 		}
 	}()
 

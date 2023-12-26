@@ -136,11 +136,7 @@ func (s *Scheduler) Register(cronspec string, task *t.Task, opts ...t.Option) (e
 	s.mu.Lock()
 	s.idmap[job.id.String()] = cronID
 	s.mu.Unlock()
-	metrics.PublishMetric(metrics.Metric{
-		TaskName:   task.Kind,
-		Value:      1,
-		MetricType: "RegisterTaskCount",
-	})
+	metrics.RegisterTaskCount(task.Kind)
 	return job.id.String(), nil
 }
 

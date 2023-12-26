@@ -37,11 +37,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -943,46 +941,6 @@ func (b BcsClusterInfoSvc) isSameMapConfig(source map[string]interface{}, target
 		}
 	}
 	return true
-}
-
-// RefreshAllToConsul 刷新资源与k8s集群对应的所有时序data_id到consul
-func (b BcsClusterInfoSvc) RefreshAllToConsul(ctx context.Context) error {
-	db := mysql.GetDBSession().DB
-	// 所有的时序dataid = k8scluster的默认K8sMetricDataID + resource(PodMonitorInfo,ServiceMonitorInfo) 的data_id_list
-	dataIds := []uint{b.K8sMetricDataID}
-	// pod monitor data id
-	var podMonitors []bcs.PodMonitorInfo
-	if err := bcs.NewPodMonitorInfoQuerySet(db).ClusterIDEq(b.ClusterID).All(&podMonitors); err != nil {
-		return errors.Wrap(err, "query pod monitor info failed")
-
-	}
-	for _, monitor := range podMonitors {
-		dataIds = append(dataIds, monitor.BkDataId)
-	}
-	// service monitor data id
-	var serviceMonitors []bcs.ServiceMonitorInfo
-	if err := bcs.NewServiceMonitorInfoQuerySet(db).ClusterIDEq(b.ClusterID).All(&serviceMonitors); err != nil {
-		return errors.Wrap(err, "query service monitor info failed")
-	}
-	for _, monitor := range serviceMonitors {
-		dataIds = append(dataIds, monitor.BkDataId)
-	}
-	// 去重
-	dataIds = slicex.RemoveDuplicate(dataIds)
-	value, err := jsonx.MarshalString(dataIds)
-	if err != nil {
-		return errors.Wrapf(err, "marshal dataids [%v] failed", dataIds)
-	}
-	path := fmt.Sprintf(models.BcsResourceConsulPathTemplate, cfg.StorageConsulPathPrefix, b.ProjectId, b.ClusterID)
-	consulClient, err := consul.GetInstance(ctx)
-	if err != nil {
-		return errors.Wrap(err, "get consul instance failed")
-	}
-	if err := consulClient.Put(path, value, 0); err != nil {
-		return errors.Wrapf(err, "consul put path [%s] value [%s] failed", path, value)
-	}
-	return nil
-
 }
 
 // BcsClusterInfo FetchK8sClusterList 中返回的集群信息对象

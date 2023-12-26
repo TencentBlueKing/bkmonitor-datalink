@@ -132,9 +132,6 @@ func (s *EsSnapshotRestoreSvc) DeleteRestoreIndices(ctx context.Context) error {
 
 // 判断索引是否已经被回溯
 func (s *EsSnapshotRestoreSvc) isRestoredIndex(index string, now time.Time, restoreId int) (bool, error) {
-	if s.EsSnapshotRestore == nil {
-		return false, errors.New("isRestoredIndex EsSnapshotRestore obj can not be nil")
-	}
 	db := mysql.GetDBSession().DB
 	qs := storage.NewEsSnapshotRestoreQuerySet(db).IsDeletedNe(true).ExpiredDeleteNe(true)
 	if restoreId != 0 {

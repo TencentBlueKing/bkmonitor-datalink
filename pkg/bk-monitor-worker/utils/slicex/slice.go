@@ -54,3 +54,15 @@ func ChunkSlice[T any](bigSlice []T, size int) [][]T {
 	}
 	return chunkList
 }
+
+// IsExistItem 判断item是否存在列表中
+func IsExistItem[T constraints.Ordered](itemList []T, item T) bool {
+	var exist bool
+	for _, t := range itemList {
+		if t == item {
+			exist = true
+			break
+		}
+	}
+	return exist
+}

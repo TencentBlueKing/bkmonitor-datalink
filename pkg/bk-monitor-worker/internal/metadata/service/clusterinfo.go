@@ -13,6 +13,10 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/IBM/sarama"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 )
@@ -62,6 +66,21 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 			Username: k.Username,
 		},
 	}
+}
+
+func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
+	if k.ClusterInfo == nil {
+		return nil, errors.New("ClusterInfo can not be nil")
+	}
+	if k.ClusterType != models.StorageTypeKafka {
+		return nil, errors.Errorf("cluster type is not kafka")
+	}
+	hosts := fmt.Sprintf("%s:%v", k.DomainName, k.Port)
+	client, err := sarama.NewClient([]string{hosts}, sarama.NewConfig())
+	if err != nil {
+		return nil, errors.Wrapf(err, "new kafka client [%s] failed", hosts)
+	}
+	return client, nil
 }
 
 // base64WithPrefix 编码，并添加上前缀

@@ -14,6 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -31,7 +32,7 @@ func NewKafkaTopicInfoSvc(obj *storage.KafkaTopicInfo) KafkaTopicInfoSvc {
 }
 
 // CreateInfo 创建一个新的Topic信息
-func (a KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize, flushInterval, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
+func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize, flushInterval, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
 	db := mysql.GetDBSession().DB
 	count, err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdEq(bkDataId).Count()
 	if err != nil {
@@ -60,4 +61,39 @@ func (a KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 	}
 	logger.Infof("new kafka topic is set for data_id [%v] topic [%s] partition [%v]", info.BkDataId, info.Topic, info.Partition)
 	return &info, nil
+}
+
+func (s KafkaTopicInfoSvc) RefreshTopicInfo() error {
+	if s.KafkaTopicInfo == nil {
+		return errors.New("KafkaTopicInfo can not be nil")
+	}
+	db := mysql.GetDBSession().DB
+	var ds resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(s.BkDataId).One(&ds); err != nil {
+		return errors.Wrapf(err, "query DataSource for data_id [%v] failed", s.BkDataId)
+	}
+	var cluster storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(ds.MqClusterId).One(&cluster); err != nil {
+		return errors.Wrapf(err, "query ClusterInfo for cluster_id [%v] failed", ds.MqClusterId)
+	}
+	client, err := NewClusterInfoSvc(&cluster).GetKafkaClient()
+	if err != nil {
+		return errors.Wrapf(err, "get kafka client from cluster [%s] failed", cluster.ClusterName)
+	}
+	defer client.Close()
+	partitions, err := client.Partitions(s.Topic)
+	if err != nil {
+		return errors.Wrapf(err, "query topic[%s] partitions failed", s.Topic)
+	}
+	partitionLen := len(partitions)
+	if partitionLen == 0 {
+		return errors.Errorf("query topic[%s] partitions len, bug got 0", s.Topic)
+	}
+
+	s.Partition = partitionLen
+	if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
+		return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
+	}
+	logger.Infof("kafka topic info for partition of topic [%s] with partition [%v] has been refreshed", s.Topic, s.Partition)
+	return nil
 }

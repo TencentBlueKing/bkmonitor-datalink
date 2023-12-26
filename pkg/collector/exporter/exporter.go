@@ -133,6 +133,7 @@ func (e *Exporter) sendEvents() {
 		select {
 		case event := <-e.queue.Pop():
 			start := time.Now()
+			logger.Debugf("send event: %+v", event)
 			SentFunc(event)
 			DefaultMetricMonitor.ObserveSentDuration(start)
 			DefaultMetricMonitor.IncSentCounter()

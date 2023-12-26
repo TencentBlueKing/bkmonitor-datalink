@@ -10,10 +10,10 @@
 package service
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -59,7 +59,7 @@ func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interf
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("bk_data_id [%v] already has option [%s]", bkDataId, name)
+		return errors.Errorf("bk_data_id [%v] already has option [%s]", bkDataId, name)
 	}
 	valueStr, valueType, err := models.ParseOptionValue(value)
 	if err != nil {

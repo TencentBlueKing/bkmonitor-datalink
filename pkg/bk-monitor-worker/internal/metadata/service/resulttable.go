@@ -11,7 +11,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -101,7 +100,7 @@ func (r ResultTableSvc) preCheckLabel(label string) error {
 		return err
 	}
 	if count == 0 {
-		return fmt.Errorf("label [%s] is not exists as a rt label", label)
+		return errors.Errorf("label [%s] is not exists as a rt label", label)
 	}
 	return nil
 }
@@ -111,7 +110,7 @@ func (r ResultTableSvc) getDataSource(bkDataId uint) (*resulttable.DataSource, e
 	var ds resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(mysql.GetDBSession().DB).BkDataIdEq(bkDataId).One(&ds); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
-			return nil, fmt.Errorf("bk_data_id [%v] is not exists", bkDataId)
+			return nil, errors.Errorf("bk_data_id [%v] is not exists", bkDataId)
 		}
 		return nil, err
 	}
@@ -125,7 +124,7 @@ func (r ResultTableSvc) preCheckResultTable(tableId string) error {
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("table_id [%s] is already exist", tableId)
+		return errors.Errorf("table_id [%s] is already exist", tableId)
 	}
 	return nil
 }
@@ -287,7 +286,7 @@ func (r ResultTableSvc) CreateResultTable(
 // BulkCreateFields 批量创建新的字段
 func (r ResultTableSvc) BulkCreateFields(fieldList []map[string]interface{}, isEtlRefresh bool, isForceAdd bool) error {
 	if !isForceAdd && r.SchemaType == models.ResultTableSchemaTypeFixed {
-		return fmt.Errorf("result_table [%s] schema type is set, no field can be added", r.TableId)
+		return errors.Errorf("result_table [%s] schema type is set, no field can be added", r.TableId)
 	}
 	if err := NewResultTableFieldSvc(nil).BulkCreateFields(r.TableId, fieldList); err != nil {
 		return err
@@ -315,7 +314,7 @@ func (r ResultTableSvc) CreateStorage(defaultStorage string, isSyncDb bool, stor
 	case models.StorageTypeArgus:
 		s = NewArgusStorageSvc(nil)
 	default:
-		return fmt.Errorf("storage [%s] now is not supported", defaultStorage)
+		return errors.Errorf("storage [%s] now is not supported", defaultStorage)
 	}
 	if err := s.CreateTable(r.TableId, isSyncDb, optionx.NewOptions(storageConfig)); err != nil {
 		return err

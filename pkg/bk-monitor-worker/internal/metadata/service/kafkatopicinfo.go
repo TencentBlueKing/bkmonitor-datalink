@@ -39,7 +39,7 @@ func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 		return nil, err
 	}
 	if count != 0 {
-		return nil, fmt.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
+		return nil, errors.Errorf("kafka topic for data_id [%v] already exists", bkDataId)
 	}
 	if topic == "" {
 		topic = fmt.Sprintf("%s%v0", "0bkmonitor_", bkDataId)

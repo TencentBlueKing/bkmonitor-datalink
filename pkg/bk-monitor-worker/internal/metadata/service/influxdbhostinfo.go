@@ -170,7 +170,7 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 }
 
 // GetClient 获取influxdb client
-func (s *InfluxdbHostInfoSvc) GetClient() (client.Client, error) {
+func (s InfluxdbHostInfoSvc) GetClient() (client.Client, error) {
 	pwd := s.Password
 	if pwd != "" {
 		pwd = cipher.AESDecrypt(pwd)

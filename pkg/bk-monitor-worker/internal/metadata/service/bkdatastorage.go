@@ -83,7 +83,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	}
 	s.RawDataID = resp.Data.RawDataId
 	if s.RawDataID == 0 {
-		return fmt.Errorf("access to bkdata failed, %s", resp.Message)
+		return errors.Errorf("access to bkdata failed, %s", resp.Message)
 	}
 	logger.Infof("access to bkdata, result [%#v]", resp)
 

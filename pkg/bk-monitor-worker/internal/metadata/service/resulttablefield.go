@@ -10,9 +10,10 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -213,7 +214,7 @@ func (s ResultTableFieldSvc) BulkCreateDefaultFields(tableId string, timeOption 
 	if err := NewResultTableFieldOptionSvc(nil).CreateOption(tableId, "bk_cmdb_level", models.RTFOInfluxdbDisabled, true, "system", nil); err != nil {
 		return err
 	}
-	logger.Infof(fmt.Sprintf("all default field is created for table->[%s]", tableId))
+	logger.Infof("all default field is created for table->[%s]", tableId)
 	return nil
 }
 
@@ -236,7 +237,7 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 		for _, rtf := range rtfList {
 			names = append(names, rtf.FieldName)
 		}
-		return fmt.Errorf("field [%s] is exists under table [%s]", strings.Join(names, ","), tableId)
+		return errors.Errorf("field [%s] is exists under table [%s]", strings.Join(names, ","), tableId)
 	}
 	tx := db.Begin()
 	for _, field := range fields {

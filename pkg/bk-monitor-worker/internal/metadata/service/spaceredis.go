@@ -1101,7 +1101,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 	}
 	var resList []map[string]interface{}
 	if err := jsonx.UnmarshalString(sr.DimensionValues, &resList); err != nil {
-		return nil, fmt.Errorf("unmarshal space resource dimension failed, %v", err)
+		return nil, errors.Wrap(err, "unmarshal space resource dimension failed")
 	}
 	// 如果关键维度数据为空，同样返回默认
 	if len(resList) == 0 {
@@ -1114,7 +1114,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
 		if !ok {
-			return nil, fmt.Errorf("parse space resource dimension values failed, %v", res)
+			return nil, errors.Errorf("parse space resource dimension values failed, %v", res)
 		}
 		clusterType, ok := resOptions.GetString("cluster_type")
 		if !ok {
@@ -1184,7 +1184,7 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 	}
 	var resList []map[string]interface{}
 	if err := jsonx.UnmarshalString(sr.DimensionValues, &resList); err != nil {
-		return nil, fmt.Errorf("unmarshal space resource dimension failed, %v", err)
+		return nil, errors.Wrap(err, "unmarshal space resource dimension failed")
 	}
 	// 如果关键维度数据为空，同样返回默认
 	if len(resList) == 0 {
@@ -1197,7 +1197,7 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
 		if !ok {
-			return nil, fmt.Errorf("parse space resource dimension values failed, %v", res)
+			return nil, errors.Errorf("parse space resource dimension values failed, %v", res)
 		}
 		clusterType, ok := resOptions.GetString("cluster_type")
 		if !ok {

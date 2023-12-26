@@ -69,7 +69,7 @@ func (s *InfluxdbHostInfoSvc) RefreshDefaultRp() error {
 	for _, db := range refreshStorageList {
 		refreshDBList = append(refreshDBList, db.Database)
 	}
-	refreshDBList = slicex.RemoveDuplicate(refreshDBList)
+	refreshDBList = slicex.RemoveDuplicate(&refreshDBList)
 	return s.updateDefaultRp(refreshDBList)
 
 }

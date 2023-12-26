@@ -75,6 +75,7 @@ var (
 		RefreshBkccSpaceName: {
 			Cron:    "30 3 * * *",
 			Handler: metadataTask.RefreshBkccSpaceName,
+		},
 		RefreshKafkaTopicInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshKafkaTopicInfo,

@@ -212,7 +212,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 					d[s.Columns[idx]] = v
 				}
 				// 替换时间戳字段为当前时间戳
-				d["time"] = time.Now().Unix()
+				d["time"] = float64(time.Now().Unix())
 				// 补充标签字段
 				for k, v := range s.Tags {
 					d[stringx.CamelToSnake(k)] = v

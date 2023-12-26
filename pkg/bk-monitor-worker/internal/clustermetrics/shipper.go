@@ -86,6 +86,10 @@ func (kw *KvShipper) Write(ctx context.Context, record *Record) {
 		validData = record.Data
 	}
 	// 将合并数据写入存储
+	if len(validData) == 0 {
+		logger.Warnf("No valid data to write redis storage, %v", record)
+		return
+	}
 	content, err := json.Marshal(validData)
 	if err != nil {
 		logger.Error("Fail to pack message to string for redis storage, %v, %v", record, err)

@@ -40,8 +40,8 @@ var QueryConditionToDataframeComparator = map[string]series.Comparator{
 }
 
 const (
-	ClusterMetricKey              = "bkmonitorv3:cluster_metrics"
-	ClusterMetricMetaKey          = "bkmonitorv3:cluster_metrics_meta"
+	ClusterMetricKey              = "cluster_metrics"
+	ClusterMetricMetaKey          = "cluster_metrics_meta"
 	ClusterMetricFieldPattern     = "{bkm_metric_name}|bkm_cluster={bkm_cluster}"
 	ClusterMetricFieldClusterName = "bkm_cluster"
 	ClusterMetricFieldMetricName  = "bkm_metric_name"

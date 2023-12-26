@@ -10,9 +10,10 @@
 package redis
 
 import (
+	"testing"
+
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
-	"testing"
 )
 
 func TestDataframe(t *testing.T) {

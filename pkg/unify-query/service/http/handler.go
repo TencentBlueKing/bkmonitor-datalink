@@ -752,7 +752,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 	query.Timezone = timezone
-	instance := redis.Instance{Ctx: ctx, QueryTs: query, Timeout: 30 * time.Second}
+	instance := redis.Instance{Ctx: ctx, QueryTs: query, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
 	if query.Instant {
 		res, err = instance.Query(ctx, "", end)
 	} else {

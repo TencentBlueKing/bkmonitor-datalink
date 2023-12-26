@@ -60,6 +60,10 @@ const (
 	SegmentedEnable      = "http.segmented.enable"
 	SegmentedMaxRoutines = "http.segmented.max_routines"
 	SegmentedMinInterval = "http.segmented.min_interval"
+
+	// 集群指标查询配置
+	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
+	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
 )
 
 var (
@@ -79,4 +83,7 @@ var (
 	DefaultInfoLimit int
 
 	QueryMaxRouting int
+
+	ClusterMetricQueryPrefix  string
+	ClusterMetricQueryTimeout time.Duration
 )

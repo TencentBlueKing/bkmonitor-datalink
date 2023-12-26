@@ -13,10 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/prometheus/prometheus/storage"
 	"strconv"
 	"strings"
 	"time"
@@ -26,17 +22,23 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 // Instance redis 查询实例
 type Instance struct {
-	Ctx     context.Context
-	QueryTs *structured.QueryTs
-	Timeout time.Duration
+	Ctx                 context.Context
+	QueryTs             *structured.QueryTs
+	Timeout             time.Duration
+	ClusterMetricPrefix string
 }
 
 func (instance *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
@@ -108,16 +110,19 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
 	stoCtx, _ := context.WithTimeout(ctx, instance.Timeout)
-	sto := MetricStorage{ctx: stoCtx}
+	sto := MetricStorage{ctx: stoCtx, storagePrefix: instance.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(query.FieldName)
 	if err != nil {
-		return nil, err
+		// 指标配置不存在，则返回空 DF
+		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", query.FieldName, err)
+		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
 		dfPointer, err := sto.LoadMetricDataFrame(query.FieldName, clusterName, opts)
 		if err != nil {
-			return nil, err
+			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, query.FieldName, err)
+			continue
 		}
 		if dfPointer.Nrow() > 0 {
 			df = df.RBind(*dfPointer)
@@ -316,7 +321,8 @@ func handleDFGroupBy(df dataframe.DataFrame, dims []string, aggreFunc string) da
 }
 
 type MetricStorage struct {
-	ctx context.Context
+	ctx           context.Context
+	storagePrefix string
 }
 
 type MetricMeta struct {
@@ -349,7 +355,8 @@ func (sto *MetricStorage) GetMetricMeta(metricName string) (*MetricMeta, error) 
 		res        string
 		err        error
 	)
-	res, err = redisUtil.HGet(sto.ctx, ClusterMetricMetaKey, metricName)
+	metaKey := fmt.Sprintf("%s:%s", sto.storagePrefix, ClusterMetricMetaKey)
+	res, err = redisUtil.HGet(sto.ctx, metaKey, metricName)
 	if err != nil {
 		return nil, errors.Wrap(err, "Fail to get cluster metric meta from redis")
 	}
@@ -372,7 +379,9 @@ func (sto *MetricStorage) LoadMetricDataFrame(metricName string, clusterName str
 	field = strings.Replace(
 		ClusterMetricFieldPattern, fmt.Sprintf("{%s}", ClusterMetricFieldClusterName), clusterName, -1)
 	field = strings.Replace(field, fmt.Sprintf("{%s}", ClusterMetricFieldMetricName), metricName, -1)
-	res, err = redisUtil.HGet(sto.ctx, ClusterMetricKey, field)
+
+	dataKey := fmt.Sprintf("%s:%s", sto.storagePrefix, ClusterMetricKey)
+	res, err = redisUtil.HGet(sto.ctx, dataKey, field)
 	if err != nil {
 		return nil, err
 	}

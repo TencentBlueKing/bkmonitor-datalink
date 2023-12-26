@@ -20,9 +20,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -104,22 +106,7 @@ func (s *EsSnapshotRestoreSvc) DeleteRestoreIndices(ctx context.Context) error {
 	}
 	// es index 删除是通过url带参数 防止索引太多超过url长度限制 所以进行多批删除
 	logger.Infof("restore [%v] need delete indices [%s]", s.RestoreID, strings.Join(restoreIndexList, ","))
-	var indexChunk []string
-	var longIndex string
-	for i, idx := range restoreIndexList {
-		if len(longIndex) < 3072 {
-			if longIndex == "" {
-				longIndex = idx
-			} else {
-				longIndex = fmt.Sprintf("%s,%s", longIndex, idx)
-			}
-		}
-		if len(longIndex) >= 3072 || i == len(restoreIndexList)-1 {
-			indexChunk = append(indexChunk, longIndex)
-			longIndex = ""
-		}
-
-	}
+	indexChunk := slicex.ChunkStringsBySize(&restoreIndexList, cfg.DefaultStringFilterSize, ",")
 	for _, idxStr := range indexChunk {
 		if resp, err := client.DeleteIndex(ctx, strings.Split(idxStr, ",")); err != nil {
 			logger.Errorf("restore [%v] delete indices [%s] failed, %v", s.RestoreID, idxStr, err)

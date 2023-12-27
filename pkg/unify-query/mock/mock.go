@@ -12,18 +12,18 @@ package mock
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"go.opentelemetry.io/otel/trace"
 	"os"
 	"sync"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel/trace"
 
 	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/offlineDataArchive"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"

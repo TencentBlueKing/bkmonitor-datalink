@@ -327,7 +327,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}
 	}
 
-	ret := make([]cmdb.MatchersWithTimestamp, 0, len(matrix))
+	// 按时间戳聚合并排序
+	ret := make([]cmdb.MatchersWithTimestamp, 0, len(merged))
 	for k, v := range merged {
 		ret = append(ret, cmdb.MatchersWithTimestamp{
 			Timestamp: k,

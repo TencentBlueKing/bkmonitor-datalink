@@ -64,7 +64,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		// 时间格式转换
 		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
 		if err != nil {
-			p.CounterFails.Inc()
+			logging.Errorf("parse system event time %s error: %v", eventTime, err)
 			continue
 		}
 		timestamp := float64(parse.UnixMilli())
@@ -76,6 +76,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	}
 
 	// 补充业务ID
+	sentCount := 0
 	for _, eventRecord := range eventRecords {
 		dimensions := utils.NewMapHelper(eventRecord.EventDimension)
 		ip, _ := dimensions.GetString("ip")
@@ -106,7 +107,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			p.CounterFails.Inc()
+			logging.Errorf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
 			continue
 		}
 
@@ -121,14 +122,19 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
-			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			logging.Errorf("system event derive payload failed: %v", err)
 			return
 		}
+		sentCount++
 		outputChan <- output
 	}
 
-	p.CounterSuccesses.Inc()
+	// 发送成功记录
+	if sentCount > 0 {
+		p.CounterSuccesses.Inc()
+	} else {
+		p.CounterFails.Inc()
+	}
 }
 
 func NewSystemEventProcessor(ctx context.Context, name string) *SystemEventProcessor {

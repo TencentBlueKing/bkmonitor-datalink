@@ -15,6 +15,8 @@ import (
 
 	"github.com/cstockton/go-conv"
 	"github.com/mitchellh/mapstructure"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 )
 
 type EventRecord struct {
@@ -271,10 +273,12 @@ func parseSystemEvent(data interface{}) []EventRecord {
 	var err error
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
+		logging.Errorf("parse system event data error: %+v", err)
 		return nil
 	}
 	eventType, ok := dataMap["type"].(float64)
 	if !ok {
+		logging.Errorf("parse system event type error: %+v", err)
 		return nil
 	}
 
@@ -313,6 +317,7 @@ func parseSystemEvent(data interface{}) []EventRecord {
 	}
 
 	if err != nil || event == nil {
+		logging.Errorf("parse system event error: %+v", err)
 		return nil
 	}
 

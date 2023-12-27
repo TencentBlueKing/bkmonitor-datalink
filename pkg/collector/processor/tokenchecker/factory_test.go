@@ -410,10 +410,6 @@ func ftaAes256TokenChecker() tokenChecker {
 		Salt:        "bk",
 		DecodedIv:   "bkbkbkbkbkbkbkbk",
 		DecodedKey:  "81be7fc6-5476-4934-9417-6d4d593728db",
-
-		FtaDataId:   1001,
-		FtaPluginId: "tencent_cloud",
-		FtaToken:    "123456",
 	}
 
 	decoders := confengine.NewTierConfig()
@@ -428,29 +424,6 @@ func ftaAes256TokenChecker() tokenChecker {
 }
 
 func TestFtaAes256Token(t *testing.T) {
-	t.Run("New Token", func(t *testing.T) {
-		checker := ftaAes256TokenChecker()
-		record := define.Record{
-			RecordType: define.RecordFta,
-			Token: define.Token{
-				Original: "123456",
-			},
-			Data: &define.FtaData{
-				PluginId: "tencent_cloud",
-				Data: []map[string]interface{}{
-					{"test": "test"},
-				},
-				EventId:    "1",
-				IngestTime: time.Now().Unix(),
-			},
-		}
-
-		_, err := checker.Process(&record)
-		assert.NoError(t, err)
-		assert.Equal(t, record.Token.AppName, "tencent_cloud")
-		assert.Equal(t, record.Token.MetricsDataId, int32(1001))
-	})
-
 	t.Run("New Token", func(t *testing.T) {
 		checker := ftaAes256TokenChecker()
 		record := define.Record{

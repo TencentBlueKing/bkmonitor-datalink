@@ -104,7 +104,7 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
 	case define.RecordFta:
-		err = p.processFta(decoder, config, record)
+		err = p.processFta(decoder, record)
 
 	default:
 		err = p.processCommon(decoder, record)
@@ -112,44 +112,37 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	return nil, err
 }
 
-// processFta 专门处理 FTA 传入的 token
-func (p *tokenChecker) processFta(decoder TokenDecoder, config Config, record *define.Record) error {
+// processFta Fta Token解析
+func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
 		record.Token, err = decoder.Decode("")
 		return err
 	}
 
-	token := &record.Token
+	pluginId := record.Token.AppName
 
-	// 如果是旧版token，直接按照fta配置进行判断
-	if config.FtaToken == token.Original {
-		// 判断配置是否正确
-		if config.FtaPluginId == "" || config.FtaDataId == 0 {
-			return errors.New("reject invalid fta config")
-		}
-		// 如果插件id为空，使用配置的插件id; 否则判断是否为该插件的token
-		if token.AppName == "" {
-			token.AppName = config.FtaPluginId
-		} else if token.AppName != config.FtaPluginId {
-			return errors.New("reject invalid pluginId")
-		}
-
-		record.Data.(*define.FtaData).PluginId = token.AppName
-		token.MetricsDataId = config.FtaDataId
-		return nil
-	}
-
-	// 新版token，走aes解密，直接得到dataid和插件id
-	record.Token, err = decoder.Decode(token.Original)
+	// token解密
+	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.New("reject invalid token")
 	}
 
+	token := record.Token
+
 	// 如果存在插件id，判断是否为该插件的token
-	if token.AppName != "" && token.AppName != record.Token.AppName {
+	if pluginId != "" && pluginId != token.AppName {
 		return errors.New("reject invalid pluginId")
 	}
+
+	// 检查业务ID及DataID
+	if token.BizId == 0 {
+		return errors.New("reject invalid bizId")
+	}
+	if token.MetricsDataId == 0 {
+		return errors.New("reject invalid metricsDataId")
+	}
+
 	record.Data.(*define.FtaData).PluginId = record.Token.AppName
 	return nil
 }

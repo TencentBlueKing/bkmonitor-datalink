@@ -44,6 +44,7 @@ func TestConvertFtaEvent(t *testing.T) {
 				"bk_ingest_time":  int64(123456789),
 				"data":            []map[string]interface{}{{"key": "value"}},
 				"__bk_event_id__": "event_id",
+				"dataid":          int32(123),
 			}, event.Data())
 		})
 	})

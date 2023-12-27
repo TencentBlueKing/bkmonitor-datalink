@@ -13,7 +13,6 @@
 package collector
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -49,17 +48,11 @@ func getCPUStatUsage(report *CpuReport) error {
 	defer lastCPUTimeSlice.Unlock()
 
 	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 {
+	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
 		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
 		if err != nil {
 			return err
 		}
-	}
-
-	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
-	if l1 != l2 {
-		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
-		return err
 	}
 
 	for index, value := range perCPUTimes {

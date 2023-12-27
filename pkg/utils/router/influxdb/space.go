@@ -40,6 +40,7 @@ type ResultTableList []string
 //go:generate msgp -tests=false
 type ResultTableDetail struct {
 	StorageId       int64    `json:"storage_id"`
+	StorageName     string   `json:"storage_name"`
 	ClusterName     string   `json:"cluster_name"`
 	DB              string   `json:"db"`
 	TableId         string   `json:"table_id"`
@@ -50,6 +51,7 @@ type ResultTableDetail struct {
 	BcsClusterID    string   `json:"bcs_cluster_id"`
 	DataLabel       string   `json:"data_label"`
 	TagsKey         []string `json:"tags_key"`
+	DataId          int64    `json:"bk_data_id"`
 }
 
 func (ss StableSpace) Len() int {

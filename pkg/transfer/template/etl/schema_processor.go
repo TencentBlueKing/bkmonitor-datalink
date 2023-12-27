@@ -50,7 +50,6 @@ func (p *RecordProcessor) Process(d define.Payload, outputChan chan<- define.Pay
 	for _, from := range containers {
 		if bizID, err := from.Get(define.RecordBizID); err == nil {
 			if _, ok := p.DisabledBizIDs[conv.String(bizID)]; ok {
-				p.CounterSkip.Inc()
 				return
 			}
 		}

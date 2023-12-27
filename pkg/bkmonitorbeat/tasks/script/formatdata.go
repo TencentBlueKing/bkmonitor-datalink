@@ -18,18 +18,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// FormatOutput : format prom line data
-func FormatOutput(out []byte, ts int64, offsetTime time.Duration, timestampUnit string) (map[int64]map[string]tasks.PromEvent, error) {
+// FormatOutput : 解析 Prom 格式数据，输出结构化数据，同时输出失败记录
+func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.TimestampHandler) (map[int64]map[string]tasks.PromEvent, error) {
 	// map[timestamp]map[dimension_hash]PromEvent
 	aggreRst := make(map[int64]map[string]tasks.PromEvent)
 	scanner := bufio.NewScanner(bytes.NewBuffer(out))
-
-	// 获取时间戳处理器，支持将ms转换为s，us，ns
-	handler, err := tasks.GetTimestampHandler(timestampUnit)
-	if err != nil {
-		logger.Errorf("use timestamp unit:%s to get timestamp handler failed,error:%s", timestampUnit, err)
-		return nil, err
-	}
+	var outputErr error
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -37,9 +31,10 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, timestampUnit 
 			continue
 		}
 
-		promEvent, err := tasks.NewPromEvent(line, ts, offsetTime, handler)
-		if err != nil {
-			logger.Warnf("parse line=>(%s) failed,error:%s", line, err)
+		promEvent, promErr := tasks.NewPromEvent(line, ts, offsetTime, handler)
+		if promErr != nil {
+			logger.Warnf("parse line=>(%s) failed,error:%s", line, promErr)
+			outputErr = promErr
 			continue
 		}
 
@@ -60,6 +55,5 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, timestampUnit 
 			aggreRst[promEvent.TS] = subRst
 		}
 	}
-
-	return aggreRst, nil
+	return aggreRst, outputErr
 }

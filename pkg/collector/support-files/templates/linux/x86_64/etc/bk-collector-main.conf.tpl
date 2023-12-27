@@ -16,6 +16,7 @@ logging:
 output.bkpipe:
   endpoint: {{ plugin_path.endpoint }}
   synccfg: true
+  fastmode: true
 
 seccomp.enabled: false
 
@@ -221,6 +222,15 @@ bk-collector:
         drop:
           keys:
             - "resource.bk.data.token"
+
+    # ResourceFilter: 资源过滤处理器
+    - name: "resource_filter/metrics"
+      config:
+        assemble:
+        drop:
+          keys:
+            - "resource.bk.data.token"
+            - "resource.process.pid"
 
     # Sampler: 采样处理器
     - name: "sampler/random"
@@ -1702,6 +1712,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "resource_filter/metrics"
 
     - name: "metrics_pipeline/derived"
       type: "metrics.derived"

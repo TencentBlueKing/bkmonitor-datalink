@@ -71,13 +71,17 @@ func getIPs() []string {
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			ctx      = c.Request.Context()
 			span     oleltrace.Span
 			start    = time.Now()
 			ips      = getIPs()
 			source   = c.Request.Header.Get(metadata.BkQuerySourceHeader)
 			spaceUid = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			ctx      = c.Request.Context()
 		)
+
+		ctx = metadata.InitHashID(ctx)
+		c.Request = c.Request.WithContext(ctx)
+
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
 
 		// 把用户名注入到 metadata 中
@@ -95,7 +99,7 @@ func Timer(p *Params) gin.HandlerFunc {
 
 				// 记录慢查询
 				if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
-					log.Errorf(ctx,
+					log.Warnf(ctx,
 						fmt.Sprintf(
 							"slow query log request: %s, duration: %s",
 							c.Request.URL.Path, sub.String(),

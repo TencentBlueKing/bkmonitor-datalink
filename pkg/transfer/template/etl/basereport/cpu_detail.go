@@ -186,7 +186,6 @@ func (p *PerformanceCPUDetailProcessor) Process(d define.Payload, outputChan cha
 
 	if bizID, err := root.Get(define.RecordBizID); err == nil {
 		if _, ok := p.DisabledBizIDs[conv.String(bizID)]; ok {
-			p.CounterSkip.Inc()
 			return
 		}
 	}

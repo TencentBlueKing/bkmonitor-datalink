@@ -28,69 +28,69 @@ type ParamsQueryRange struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
+	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Query string `json:"query"`
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 		Step  int64  `json:"step"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsQuery struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
+	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Query   string `json:"query"`
 		Time    int64  `json:"time"`
 		Timeout int64  `json:"timeout"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsSeries struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
+	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Match string `json:"match[]"`
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsLabelName struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
+	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Match string `json:"match[]"`
 		Start int64  `json:"start"`
 		End   int64  `json:"end"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type ParamsLabelValues struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`
 	APIType          string `json:"api_type"`
+	ClusterName      string `json:"cluster_name"`
 	APIParams        struct {
 		Label string `json:"label"`
 	} `json:"api_params"`
-	ResultTableGroup      map[string][]string `json:"result_table_group"`
-	MetricFilterCondition map[string]string   `json:"metric_filter_condition"`
-	MetricAliasMapping    map[string]string   `json:"metric_alias_mapping"`
+	ResultTableList       []string          `json:"result_table_list"`
+	MetricFilterCondition map[string]string `json:"metric_filter_condition"`
 }
 
 type Metric map[string]string

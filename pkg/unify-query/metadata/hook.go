@@ -10,14 +10,18 @@
 package metadata
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	cache "github.com/patrickmn/go-cache"
 	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 var (
@@ -40,6 +44,22 @@ func InitMetadata() {
 			viper.GetDuration(DefaultExpirationPath),
 			viper.GetDuration(CleanupIntervalPath),
 		),
+	}
+}
+
+func InitHashID(ctx context.Context) context.Context {
+	id := uuid.New()
+	log.Debugf(ctx, "set uuid: %s", id.String())
+	return context.WithValue(ctx, UUID, id.String())
+}
+
+func hashID(ctx context.Context) string {
+	if id, ok := ctx.Value(UUID).(string); ok {
+		return id
+	} else {
+		span := trace.SpanFromContext(ctx)
+		traceID := span.SpanContext().TraceID().String()
+		return traceID
 	}
 }
 

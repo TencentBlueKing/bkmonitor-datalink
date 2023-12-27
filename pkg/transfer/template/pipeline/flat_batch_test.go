@@ -23,19 +23,16 @@ import (
 	. "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
 )
 
-// FlatBatchPipelineSuite :
 type FlatBatchPipelineSuite struct {
 	ETLPipelineSuite
 }
 
-// SetupTest :
 func (s *FlatBatchPipelineSuite) SetupTest() {
 	s.ConsulConfig = `{"etl_config":"bk_flat_batch","result_table_list":[{"schema_type":"fixed","shipper_list":[{"cluster_config":{"domain_name":"influxdb.service.consul","port":5260},"storage_config":{"real_table_name":"heartbeat","database":"uptimecheck"},"cluster_type":"influxdb"}],"result_table":"flat.batch","field_list":[{"default_value":null,"type":"int","is_config_by_user":true,"tag":"dimension","field_name":"bk_biz_id"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"index"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"data"},{"default_value":null,"type":"int","is_config_by_user":true,"tag":"dimension","field_name":"bk_cloud_id"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"metric","field_name":"testM"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"testD"},{"default_value":null,"type":"timestamp","is_config_by_user":true,"tag":"","field_name":"time"}]}],"mq_config":{"cluster_config":{"domain_name":"kafka.service.consul","port":9092},"storage_config":{"topic":"0bkmonitor_10080","partition":1},"cluster_type":"kafka"},"data_id":1008}`
 	s.PipelineName = "bk_flat_batch"
 	s.ETLPipelineSuite.SetupTest()
 }
 
-// TestRun :
 func (s *FlatBatchPipelineSuite) TestRun() {
 	s.StoreHost(&models.CCHostInfo{
 		IP:      "127.0.0.1",
@@ -55,9 +52,41 @@ func (s *FlatBatchPipelineSuite) TestRun() {
 	s.RunPipe(pipe, wg.Wait)
 }
 
-// TestFlatBatchPipelineSuite :
 func TestFlatBatchPipelineSuite(t *testing.T) {
 	suite.Run(t, new(FlatBatchPipelineSuite))
+}
+
+type FlatBatchPipelineRawSuite struct {
+	ETLPipelineSuite
+}
+
+func (s *FlatBatchPipelineRawSuite) SetupTest() {
+	s.ConsulConfig = `{"etl_config":"bk_flat_batch","result_table_list":[{"schema_type":"fixed","shipper_list":[{"cluster_config":{"domain_name":"influxdb.service.consul","port":5260},"storage_config":{"real_table_name":"heartbeat","database":"uptimecheck"},"cluster_type":"influxdb"}],"result_table":"flat.batch","field_list":[{"default_value":null,"type":"int","is_config_by_user":true,"tag":"dimension","field_name":"bk_biz_id"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"index"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"data"},{"default_value":null,"type":"int","is_config_by_user":true,"tag":"dimension","field_name":"bk_cloud_id"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"metric","field_name":"testM"},{"default_value":null,"type":"string","is_config_by_user":true,"tag":"dimension","field_name":"testD"},{"default_value":null,"type":"timestamp","is_config_by_user":true,"tag":"","field_name":"time"}]}],"mq_config":{"cluster_config":{"domain_name":"kafka.service.consul","port":9092},"storage_config":{"topic":"0bkmonitor_10080","partition":1},"cluster_type":"kafka"},"data_id":1008}`
+	s.PipelineName = "bk_flat_batch"
+	s.ETLPipelineSuite.SetupTest()
+}
+
+func (s *FlatBatchPipelineRawSuite) TestRun() {
+	s.StoreHost(&models.CCHostInfo{
+		IP:      "127.0.0.1",
+		CloudID: 0,
+	}).AnyTimes()
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	s.FrontendPulled = `{"bizid":0,"bk_biz_id":2,"bk_cloud_id":0,"cloudid":0,"ip":"127.0.0.1","testM":10086,"testD":"testD","timestamp":1554094763, "index":1,"data":"hello","group_info":[{"tag":"aaa","tag1":"aaa1"},{"tag":"bbb","tag1":"bbb1"}]}`
+	wg.Add(1)
+	pipe := s.BuildPipe(func(payload define.Payload) {
+		wg.Done()
+	}, func(i map[string]interface{}) {
+		wg.Done()
+	})
+
+	s.RunPipe(pipe, wg.Wait)
+}
+
+func TestFlatBatchPipelineRawSuite(t *testing.T) {
+	suite.Run(t, new(FlatBatchPipelineRawSuite))
 }
 
 // LogPipelineSuite

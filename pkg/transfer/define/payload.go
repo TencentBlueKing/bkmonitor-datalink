@@ -81,8 +81,13 @@ func (p *BasePayload) From(v interface{}) error {
 	panic(ErrNotImplemented)
 }
 
-func (p *BasePayload) SetTime(t time.Time) { p.t = t }
-func (p *BasePayload) GetTime() time.Time  { return p.t }
+func (p *BasePayload) SetTime(t time.Time) {
+	p.t = t
+}
+
+func (p *BasePayload) GetTime() time.Time {
+	return p.t
+}
 
 // NewBasePayload :
 func NewBasePayload() *BasePayload {

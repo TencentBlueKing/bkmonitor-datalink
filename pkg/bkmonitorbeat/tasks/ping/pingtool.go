@@ -11,14 +11,15 @@ package ping
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/tatsushid/go-fastping"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -39,6 +40,7 @@ type Info struct {
 	MaxRTT     float64
 	MinRTT     float64
 	TotalRTT   float64
+	Code       int
 }
 
 // BatchPingTool 批量Ping
@@ -137,7 +139,7 @@ func (t *BatchPingTool) getIP(target Target) ([]net.IP, error) {
 	if target.GetTargetType() == "domain" {
 		ips, err := tasks.LookupIP(context.Background(), t.targetIPType, target.GetTarget())
 		if err != nil {
-			return nil, err
+			return nil, &define.BeaterUpMetricErr{Code: define.BeatPingDNSResolveOuterError, Message: err.Error()}
 		}
 		// 检测全部模式返回所有ip列表
 		if t.dnsCheckMode == configs.CheckModeAll {
@@ -152,7 +154,7 @@ func (t *BatchPingTool) getIP(target Target) ([]net.IP, error) {
 	// 类型为ip
 	ip := net.ParseIP(target.GetTarget())
 	if ip == nil {
-		return nil, errors.New("invalid ip")
+		return nil, &define.BeaterUpMetricErr{Code: define.BeatPingInvalidIPOuterError, Message: "invalid ip"}
 	}
 	return []net.IP{ip}, nil
 }
@@ -167,9 +169,21 @@ func (t *BatchPingTool) initInfoList(list []Target) map[string]map[string]*Info 
 		ips, err := t.getIP(v)
 		if err != nil {
 			logger.Errorf("getIP failed: %v config: %+v", err, v)
+			var upErr *define.BeaterUpMetricErr
+			var upCode int
+			if errors.As(err, &upErr) {
+				upCode = upErr.Code
+			} else {
+				upCode = define.BeatErrInternalErr
+			}
+			info := new(Info)
+			info.Name = v.GetTarget()
+			info.Type = v.GetTargetType()
+			info.Code = upCode
+			// 目标地址解析不到主机IP，则置空，写入异常结论
+			addrMap[v.GetTarget()][""] = info
 			continue
 		}
-
 		// 循环处理ip列表生成拨测信息并放到目标对应的map
 		for _, ip := range ips {
 			info := new(Info)

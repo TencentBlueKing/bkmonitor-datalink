@@ -10,6 +10,7 @@
 package consul
 
 const (
+	BkSqlStorageType           = "bkSql"
 	VictoriaMetricsStorageType = "victoria_metrics"
 	InfluxDBStorageType        = "influxdb"
 	PrometheusStorageType      = "prometheus"

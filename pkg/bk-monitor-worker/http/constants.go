@@ -16,4 +16,12 @@ const (
 	PeriodicTask = "periodic"
 	// DaemonTask 常驻任务
 	DaemonTask = "daemon"
+	// CreateTaskPath 创建任务
+	CreateTaskPath = "/bmw/task"
+	// ListTaskPath 查询任务
+	ListTaskPath = "/bmw/task"
+	// DeleteTaskPath 删除任务
+	DeleteTaskPath = "/bmw/task"
+	// DeleteAllTaskPath 删除所有任务
+	DeleteAllTaskPath = "/bmw/task/all"
 )

@@ -15,11 +15,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 )
 
 func prometheusHandler() gin.HandlerFunc {
-	ph := promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{Registry: metrics.Registry})
+	// 需要使用 go 自带的指标获取 goroutines 数量 
+	ph := promhttp.Handler()
 
 	return func(c *gin.Context) {
 		ph.ServeHTTP(c.Writer, c.Request)
@@ -31,13 +31,13 @@ func NewHTTPService() *gin.Engine {
 	svr := NewProfHttpService()
 
 	// 注册任务
-	svr.POST("/bmw/task/", CreateTask)
+	svr.POST(CreateTaskPath, CreateTask)
 	// 获取运行中的任务列表
-	svr.GET("/bmw/task/", ListTask)
+	svr.GET(ListTaskPath, ListTask)
 	// 删除任务
-	svr.DELETE("/bmw/task/", RemoveTask)
+	svr.DELETE(DeleteTaskPath, RemoveTask)
 	// 删除所有任务
-	svr.DELETE("/bmw/task/all", RemoveAllTask)
+	svr.DELETE(DeleteAllTaskPath, RemoveAllTask)
 
 	return svr
 }

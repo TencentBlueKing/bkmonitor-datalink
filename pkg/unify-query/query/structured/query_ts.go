@@ -161,6 +161,7 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 	// 先解析表达式
 	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
 		log.Errorf(ctx, "failed to parser metric_merge->[%s] for err->[%s]", string(q.MetricMerge), err)
+		panic(1324)
 		return nil, err
 	}
 
@@ -174,6 +175,7 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 		}
 
 		if expr, err = query.ToPromExpr(ctx, referenceNameMetric, labelsMatcher...); err != nil {
+			panic(err)
 			return nil, err
 		}
 		exprMap[query.ReferenceName] = &PromExpr{
@@ -185,6 +187,7 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 
 	result, err = HandleExpr(exprMap, result)
 	if err != nil {
+		panic(123)
 		return nil, err
 	}
 
@@ -278,6 +281,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		if q.DataSource == BkData {
 			allConditions, err := q.Conditions.AnalysisConditions()
 			if err != nil {
+				panic(1)
 				return nil, err
 			}
 
@@ -307,11 +311,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		IsRegexp:  q.IsRegexp,
 	})
 	if err != nil {
+		panic(333)
 		return nil, err
 	}
 
 	queryConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
+		panic(err)
 		return nil, err
 	}
 

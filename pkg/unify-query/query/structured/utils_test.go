@@ -11,7 +11,6 @@ package structured
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,57 +95,99 @@ func TestJudgeFilter(t *testing.T) {
 }
 
 func TestCompressFilterCondition(t *testing.T) {
-	t.Run("test with multiple nameSpace value", func(t *testing.T) {
-		tKeys := []string{"bcs_cluster_id", "nameSpace"}
-		filters := []query.Filter{
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace2"},
-		}
-		condition := compressFilterCondition(tKeys, filters)
-		assert.Equal(t, 1, len(condition))
-		assert.Equal(t, "[][]structured.ConditionField", reflect.TypeOf(condition).String())
-		for _, cond := range condition[0] {
-			if cond.DimensionName == "bcs_cluster_id" {
-				assert.Equal(t, 1, len(cond.Value))
-				assert.Equal(t, []string{"bcs_cluster_id1"}, cond.Value)
-			}
-			if cond.DimensionName == "nameSpace" {
-				assert.Equal(t, 2, len(cond.Value))
-				assert.Equal(t, []string{"nameSpace1", "nameSpace2"}, cond.Value)
-			}
-		}
-	})
-	t.Run("test with multiple bcs_cluster_id value", func(t *testing.T) {
-		tKeys := []string{"bcs_cluster_id", "nameSpace"}
-		filters := []query.Filter{
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id2", "nameSpace": "nameSpace1"},
-		}
-		condition := compressFilterCondition(tKeys, filters)
-		assert.Equal(t, 1, len(condition))
-		assert.Equal(t, "[][]structured.ConditionField", reflect.TypeOf(condition).String())
-		for _, cond := range condition[0] {
-			if cond.DimensionName == "bcs_cluster_id" {
-				assert.Equal(t, 2, len(cond.Value))
-				assert.Equal(t, []string{"bcs_cluster_id1", "bcs_cluster_id2"}, cond.Value)
-			}
-			if cond.DimensionName == "nameSpace" {
-				assert.Equal(t, 1, len(cond.Value))
-				assert.Equal(t, []string{"nameSpace1"}, cond.Value)
-			}
-		}
-	})
-	t.Run("test with multiple bcs_cluster_id and nameSpace value", func(t *testing.T) {
-		tKeys := []string{"bcs_cluster_id", "nameSpace"}
-		filters := []query.Filter{
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id2", "nameSpace": "nameSpace2"},
-			map[string]string{"bcs_cluster_id": "bcs_cluster_id3", "nameSpace": "nameSpace2"},
-		}
-		condition := compressFilterCondition(tKeys, filters)
-		assert.Equal(t, 2, len(condition))
-		assert.Equal(t, "[][]structured.ConditionField", reflect.TypeOf(condition).String())
-	})
+	testCases := []struct {
+		name    string
+		tKeys   []string
+		filters []query.Filter
+		expect  [][]ConditionField
+	}{
+		{
+			name:  "test with multiple nameSpace value",
+			tKeys: []string{"bcs_cluster_id", "nameSpace"},
+			filters: []query.Filter{
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace2"},
+			},
+			expect: [][]ConditionField{
+				{
+					ConditionField{
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id1"},
+						Operator:      Contains,
+					},
+					ConditionField{
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace1", "nameSpace2"},
+						Operator:      Contains,
+					},
+				},
+			},
+		},
+		{
+			name:  "test with multiple bcs_cluster_id value",
+			tKeys: []string{"bcs_cluster_id", "nameSpace"},
+			filters: []query.Filter{
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id2", "nameSpace": "nameSpace1"},
+			},
+			expect: [][]ConditionField{
+				{
+					ConditionField{
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace1"},
+						Operator:      Contains,
+					},
+					ConditionField{
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id1", "bcs_cluster_id2"},
+						Operator:      Contains,
+					},
+				},
+			},
+		},
+		{
+			name:  "test with multiple bcs_cluster_id value",
+			tKeys: []string{"bcs_cluster_id", "nameSpace"},
+			filters: []query.Filter{
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id1", "nameSpace": "nameSpace1"},
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id2", "nameSpace": "nameSpace2"},
+				map[string]string{"bcs_cluster_id": "bcs_cluster_id3", "nameSpace": "nameSpace2"},
+			},
+			expect: [][]ConditionField{
+				{
+					ConditionField{
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace1"},
+						Operator:      Contains,
+					},
+					ConditionField{
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id1"},
+						Operator:      Contains,
+					},
+				},
+				{
+					ConditionField{
+						DimensionName: "nameSpace",
+						Value:         []string{"nameSpace2"},
+						Operator:      Contains,
+					},
+					ConditionField{
+						DimensionName: "bcs_cluster_id",
+						Value:         []string{"bcs_cluster_id2", "bcs_cluster_id3"},
+						Operator:      Contains,
+					},
+				},
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			condition := compressFilterCondition(testCase.tKeys, testCase.filters)
+			assert.Equal(t, testCase.expect, condition)
+		})
+	}
 }
 
 func TestCompareClusterId(t *testing.T) {

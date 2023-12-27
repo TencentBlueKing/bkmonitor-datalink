@@ -142,6 +142,22 @@ func RunTaskCostTime(taskName string, startTime time.Time) error {
 	return nil
 }
 
+// 设置 api 请求的耗时
+func SetApiRequestCostTime(method, apiPath string) func() {
+	start := time.Now()
+	return func() {
+		RequestApiCostTime(method, apiPath, start)
+	}
+}
+
+// 设置任务的耗时
+func SetTaskCostTime(taskName string) func() {
+	start := time.Now()
+	return func() {
+		RunTaskCostTime(taskName, start)
+	}
+}
+
 var Registry *prometheus.Registry
 
 func init() {

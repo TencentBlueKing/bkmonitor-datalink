@@ -1556,7 +1556,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"nodeIndex 2 with sum": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
 				PromQL: `sum by (deployment_environment, result_table_id) (increase(bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"}[2m]))`,
 			},
@@ -1590,7 +1590,29 @@ func TestStructAndPromQLConvert(t *testing.T) {
 								},
 							},
 						},
-						Offset: "",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"predict_linear": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `predict_linear(metric[1h], 4*3600)`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    "bkmonitor",
+						TableID:       "",
+						FieldName:     "metric",
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "predict_linear",
+							Window:    "1h0m0s",
+							NodeIndex: 2,
+							VargsList: []interface{}{"4 * 3600"},
+						},
 					},
 				},
 				MetricMerge: "a",

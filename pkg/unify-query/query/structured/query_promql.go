@@ -247,6 +247,8 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 						vargsList = append(vargsList, at.Val)
 					case *parser.StringLiteral:
 						vargsList = append(vargsList, at.Val)
+					case *parser.BinaryExpr:
+						vargsList = append(vargsList, at.String())
 					default:
 						continue
 					}

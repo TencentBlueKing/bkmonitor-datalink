@@ -413,3 +413,130 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 	assert.Equal(t, len(targetIdList), count)
 
 }
+
+func TestBcsClusterInfoSvc_RefreshMetricLabel(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	// mocker bcsClusterInfo
+	cluster := bcs.BCSClusterInfo{
+		ClusterID:          "test_metric_label_bcs_cluster",
+		K8sMetricDataID:    170000,
+		CustomMetricDataID: 170001,
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err := cluster.Create(db)
+	assert.NoError(t, err)
+	// mocker serviceMonitor
+	serviceMonitor := bcs.ServiceMonitorInfo{
+		BCSResource: bcs.BCSResource{
+			ClusterID:          cluster.ClusterID,
+			BkDataId:           170002,
+			RecordCreateTime:   time.Now(),
+			ResourceCreateTime: time.Now(),
+		},
+	}
+	db.Delete(&serviceMonitor, "cluster_id = ?", serviceMonitor.ClusterID)
+	err = serviceMonitor.Create(db)
+	assert.NoError(t, err)
+	// mocker podMonitor
+	podMonitor := bcs.PodMonitorInfo{
+		BCSResource: bcs.BCSResource{
+			ClusterID:          cluster.ClusterID,
+			BkDataId:           170003,
+			RecordCreateTime:   time.Now(),
+			ResourceCreateTime: time.Now(),
+		},
+	}
+	db.Delete(&podMonitor, "cluster_id = ?", podMonitor.ClusterID)
+	err = podMonitor.Create(db)
+	assert.NoError(t, err)
+	// mock tsGroup
+	tsGroup0 := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID: 170000,
+			Label:    "",
+			IsEnable: true,
+		},
+	}
+	tsGroup1 := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID: 170001,
+			Label:    "",
+			IsEnable: true,
+		},
+	}
+	tsGroup2 := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID: 170002,
+			Label:    "",
+			IsEnable: true,
+		},
+	}
+	tsGroup3 := customreport.TimeSeriesGroup{
+		CustomGroupBase: customreport.CustomGroupBase{
+			BkDataID: 170003,
+			Label:    "",
+			IsEnable: true,
+		},
+	}
+	db.Delete(&customreport.TimeSeriesGroup{}, "bk_data_id in (?)", []uint{170000, 170001, 170002, 170003})
+	err = tsGroup0.Create(db)
+	assert.NoError(t, err)
+	err = tsGroup1.Create(db)
+	assert.NoError(t, err)
+	err = tsGroup2.Create(db)
+	assert.NoError(t, err)
+	err = tsGroup3.Create(db)
+	assert.NoError(t, err)
+
+	// mock tsMetrics
+	tsMetric0 := customreport.TimeSeriesMetric{
+		GroupID:   tsGroup0.TimeSeriesGroupID,
+		FieldName: "any_for_default_prefix",
+		Label:     "label0",
+	}
+	tsMetric1 := customreport.TimeSeriesMetric{
+		GroupID:   tsGroup1.TimeSeriesGroupID,
+		FieldName: "node_for_node_prefix",
+		Label:     "label1",
+	}
+	tsMetric2 := customreport.TimeSeriesMetric{
+		GroupID:   tsGroup2.TimeSeriesGroupID,
+		FieldName: "container_for_container_prefix",
+		Label:     "label2",
+	}
+	tsMetric3 := customreport.TimeSeriesMetric{
+		GroupID:   tsGroup3.TimeSeriesGroupID,
+		FieldName: "kube_for_kube_prefix",
+		Label:     "label3",
+	}
+	filedNames := []string{"any_for_default_prefix", "node_for_node_prefix", "container_for_container_prefix", "kube_for_kube_prefix"}
+	db.Delete(&customreport.TimeSeriesMetric{}, "field_name in (?)", filedNames)
+	err = tsMetric0.Create(db)
+	assert.NoError(t, err)
+	err = tsMetric1.Create(db)
+	assert.NoError(t, err)
+	err = tsMetric2.Create(db)
+	assert.NoError(t, err)
+	err = tsMetric3.Create(db)
+	assert.NoError(t, err)
+
+	err = NewBcsClusterInfoSvc(nil).RefreshMetricLabel()
+	assert.NoError(t, err)
+	var metrics []customreport.TimeSeriesMetric
+	err = customreport.NewTimeSeriesMetricQuerySet(db).Select(customreport.TimeSeriesMetricDBSchema.FieldName, customreport.TimeSeriesMetricDBSchema.Label).FieldNameIn(filedNames...).All(&metrics)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, metrics)
+	for _, m := range metrics {
+		var target string
+		for k, v := range models.BcsMetricLabelPrefix {
+			if strings.HasPrefix(m.FieldName, k) {
+				target = v
+			}
+		}
+		if target == "" {
+			target = models.BcsMetricLabelPrefix["*"]
+		}
+		assert.Equal(t, target, m.Label)
+	}
+}

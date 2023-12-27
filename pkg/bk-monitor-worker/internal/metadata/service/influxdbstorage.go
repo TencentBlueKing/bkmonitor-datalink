@@ -11,8 +11,9 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -80,7 +81,7 @@ func (InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConf
 		return err
 	}
 	if count == 0 {
-		return fmt.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
+		return errors.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
 	}
 	// 如果未有指定对应的结果表及数据库，则从table_id中分割获取
 	split := strings.Split(tableId, ".")

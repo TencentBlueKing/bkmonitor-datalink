@@ -119,7 +119,7 @@ func (r *Instance) HSet(key, field, value string) error {
 func (r *Instance) HGet(key, field string) string {
 	val := r.Client.HGet(r.ctx, key, field).Val()
 	if val == "" {
-		logger.Warnf("hset field error, key: %s, field: %s, value: %s", key, field, val)
+		logger.Warnf("hget field error, key: %s, field: %s, value: %s", key, field, val)
 	}
 	return val
 }
@@ -127,7 +127,7 @@ func (r *Instance) HGet(key, field string) string {
 func (r *Instance) HGetAll(key string) map[string]string {
 	val := r.Client.HGetAll(r.ctx, key).Val()
 	if len(val) == 0 {
-		logger.Warnf("hset field error, key: %s, value is empty", key)
+		logger.Warnf("hgetall field error, key: %s, value is empty", key)
 	}
 	return val
 }

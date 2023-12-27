@@ -36,7 +36,7 @@ type CreateEsStorageIndexParams struct {
 func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 	var params CreateEsStorageIndexParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
+		return errors.Wrap(err, "parse params error")
 	}
 	if params.TableId == "" {
 		return errors.New("params table_id can not be empty")
@@ -92,11 +92,11 @@ type AccessBkdataVmParams struct {
 func AccessBkdataVm(ctx context.Context, t *task.Task) error {
 	var params AccessBkdataVmParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
+		return errors.Wrap(err, "parse params error")
 	}
 	logger.Infof("bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm", params.BkBizId, params.TableId, params.BkDataId)
 	if err := service.NewVmUtils().AccessBkdata(params.BkBizId, params.TableId, params.BkDataId); err != nil {
-		return fmt.Errorf("bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm failed, %v", params.BkBizId, params.TableId, params.BkDataId, err)
+		return errors.Wrapf(err, "bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm failed", params.BkBizId, params.TableId, params.BkDataId)
 	}
 	logger.Infof("bk_biz_id [%v] table_id [%s] data_id [%v] finish access bkdata vm", params.BkBizId, params.TableId, params.BkDataId)
 	return nil
@@ -113,7 +113,7 @@ type PushAndPublishSpaceRouterParams struct {
 func PushAndPublishSpaceRouter(ctx context.Context, t *task.Task) error {
 	var params PushAndPublishSpaceRouterParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
+		return errors.Wrap(err, "parse params error")
 	}
 	svc := service.NewSpaceRedisSvc(GetGoroutineLimit("push_and_publish_space_router"))
 	return svc.PushAndPublishSpaceRouter(params.SpaceType, params.SpaceId, params.TableIdList)
@@ -129,7 +129,7 @@ type PushSpaceToRedisParams struct {
 func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	var params PushSpaceToRedisParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("parse params error, %s", err))
+		return errors.Wrap(err, "parse params error")
 	}
 	if params.SpaceType == "" || params.SpaceId == "" {
 		return errors.New("params space_type or space_id can not be empty")

@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -34,6 +36,12 @@ type TimeSeriesMetric struct {
 	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time"`
 	LastIndex      uint      `json:"last_index"`
 	Label          string    `json:"label" gorm:"size:255"`
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (s *TimeSeriesMetric) BeforeCreate(tx *gorm.DB) error {
+	s.LastModifyTime = time.Now()
+	return nil
 }
 
 // TableName table alias name

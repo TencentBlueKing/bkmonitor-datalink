@@ -115,6 +115,7 @@ func TestVmUtils_getTimestampLen(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	ds := resulttable.DataSource{
 		BkDataId: 198877,
+		DataName: "data_name_198877",
 	}
 	db := mysql.GetDBSession().DB
 	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)

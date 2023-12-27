@@ -625,7 +625,7 @@ func (e Elasticsearch) DeleteIndex(ctx context.Context, indices []string) (*Resp
 		if !ok {
 			return nil, ClientVersionErr
 		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
+		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx), client.Indices.Delete.WithIgnoreUnavailable(true))
 		if err != nil {
 			return nil, err
 		}
@@ -639,7 +639,7 @@ func (e Elasticsearch) DeleteIndex(ctx context.Context, indices []string) (*Resp
 		if !ok {
 			return nil, ClientVersionErr
 		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
+		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx), client.Indices.Delete.WithIgnoreUnavailable(true))
 		if err != nil {
 			return nil, err
 		}

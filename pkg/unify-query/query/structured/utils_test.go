@@ -10,11 +10,13 @@
 package structured
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
@@ -148,6 +150,7 @@ func TestCompressFilterCondition(t *testing.T) {
 }
 
 func TestCompareClusterId(t *testing.T) {
+	log.InitTestLogger()
 	testCases := []struct {
 		name         string
 		bcsClusterId string
@@ -155,7 +158,7 @@ func TestCompareClusterId(t *testing.T) {
 		expect       bool
 	}{
 		{
-			name:         "matchType: normal, with eq condition. result: matched",
+			name:         "matchType: normal, with eq condition.",
 			bcsClusterId: "bcs_cluster_id1",
 			conditions: Conditions{
 				FieldList: []ConditionField{
@@ -169,50 +172,50 @@ func TestCompareClusterId(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:         "matchType: normal, with contain condition. result: matched",
-			bcsClusterId: "bcs_cluster_id1",
-			conditions: Conditions{
-				FieldList: []ConditionField{
-					{
-						DimensionName: ClusterID,
-						Value:         []string{"bcs_cluster_id1"},
-						Operator:      ConditionContains,
-					},
-				},
-			},
-			expect: true,
-		},
-		{
-			name:         "matchType: normal, with eq condition. result: unmatched",
-			bcsClusterId: "bcs_cluster_id2",
-			conditions: Conditions{
-				FieldList: []ConditionField{
-					{
-						DimensionName: ClusterID,
-						Value:         []string{"bcs_cluster_id1"},
-						Operator:      ConditionEqual,
-					},
-				},
-			},
-			expect: false,
-		},
-		{
-			name:         "matchType: normal, with contain condition. result: unmatched",
-			bcsClusterId: "bcs_cluster_id2",
-			conditions: Conditions{
-				FieldList: []ConditionField{
-					{
-						DimensionName: ClusterID,
-						Value:         []string{"bcs_cluster_id1"},
-						Operator:      ConditionContains,
-					},
-				},
-			},
-			expect: false,
-		},
-		{
-			name:         "matchType: regex, with req condition. result: matched",
+			name:         "matchType: normal, with ne condition.",
 			bcsClusterId: "bcs_cluster_id",
+			conditions: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: ClusterID,
+						Value:         []string{"bcs_cluster_id1"},
+						Operator:      ConditionNotEqual,
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			name:         "matchType: normal, with contain condition.",
+			bcsClusterId: "bcs_cluster_id1",
+			conditions: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: ClusterID,
+						Value:         []string{"bcs_cluster_id1"},
+						Operator:      ConditionContains,
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			name:         "matchType: normal, with ncontains condition.",
+			bcsClusterId: "bcs_cluster_id1",
+			conditions: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: ClusterID,
+						Value:         []string{"bcs_cluster_id1"},
+						Operator:      ConditionNotContains,
+					},
+				},
+			},
+			expect: false,
+		},
+		{
+			name:         "matchType: normal, with re condition. result: unmatched",
+			bcsClusterId: "bcs_cluster_id2",
 			conditions: Conditions{
 				FieldList: []ConditionField{
 					{
@@ -225,23 +228,89 @@ func TestCompareClusterId(t *testing.T) {
 			expect: true,
 		},
 		{
-			name:         "matchType: regex, with req condition. result: unmatched",
+			name:         "matchType: regex, with nreq condition. result: unmatched",
 			bcsClusterId: "bcs_cluster_id",
 			conditions: Conditions{
 				FieldList: []ConditionField{
 					{
 						DimensionName: ClusterID,
 						Value:         []string{"kk.*"},
-						Operator:      ConditionRegEqual,
+						Operator:      ConditionNotRegEqual,
 					},
 				},
 			},
-			expect: false,
+			expect: true,
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			assert.Equal(t, testCase.expect, compareClusterId(testCase.conditions, testCase.bcsClusterId))
+		})
+	}
+}
+
+func Test_reMatchElement(t *testing.T) {
+	testCases := []struct {
+		name    string
+		expr    string
+		val     string
+		isMatch bool
+		expect  bool
+		errMsg  string
+	}{
+		{
+			name:    "regex Match with result true",
+			expr:    "bcs.*",
+			val:     "bcs_cluster_id1",
+			isMatch: true,
+			expect:  true,
+		},
+		{
+			name:    "regex Match with result false",
+			expr:    "bs.*",
+			val:     "bcs_cluster_id1",
+			isMatch: true,
+			expect:  false,
+		},
+		{
+			name:    "regex not Match with result false",
+			expr:    "bcs.*",
+			val:     "bcs_cluster_id1",
+			isMatch: false,
+			expect:  false,
+		},
+		{
+			name:    "regex not Match with result true",
+			expr:    "bcs.*",
+			val:     "bks_cluster_id1",
+			isMatch: false,
+			expect:  true,
+		},
+		{
+			name:    "regex empty with result false",
+			expr:    "",
+			val:     "bks_cluster_id1",
+			isMatch: false,
+			expect:  false,
+			errMsg:  fmt.Sprintf("expr: %s, val: %s shouldn't be empty", "", "bks_cluster_id1"),
+		},
+		{
+			name:    "val empty with result false",
+			expr:    "bcs.*",
+			val:     "",
+			isMatch: false,
+			expect:  false,
+			errMsg:  fmt.Sprintf("expr: %s, val: %s shouldn't be empty", "bcs.*", ""),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			res, err := reMatchElement(testCase.expr, testCase.val, testCase.isMatch)
+			if err != nil {
+				assert.Equal(t, testCase.errMsg, err.Error())
+			}
+			assert.Equal(t, testCase.expect, res)
 		})
 	}
 }

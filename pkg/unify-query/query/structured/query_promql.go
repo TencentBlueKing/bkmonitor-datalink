@@ -14,6 +14,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/Knetic/govaluate"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -248,7 +249,16 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 					case *parser.StringLiteral:
 						vargsList = append(vargsList, at.Val)
 					case *parser.BinaryExpr:
-						vargsList = append(vargsList, at.String())
+						expr, err := govaluate.NewEvaluableExpression(at.String())
+						if err != nil {
+							return &QueryTs{}, err
+						}
+						result, err := expr.Evaluate(nil)
+						if err != nil {
+							return &QueryTs{}, err
+						}
+
+						vargsList = append(vargsList, result)
 					default:
 						continue
 					}

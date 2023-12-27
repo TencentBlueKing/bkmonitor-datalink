@@ -12,14 +12,22 @@ package http
 import (
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 )
 
 func prometheusHandler() gin.HandlerFunc {
-	// 需要使用 go 自带的指标获取 goroutines 数量 
-	ph := promhttp.Handler()
+	// 需要使用 go 自带的指标获取 goroutines 数量
+	gatherers := &prometheus.Gatherers{
+		prometheus.DefaultGatherer, // 默认的数据采集器，包含go运行时的指标信息
+		metrics.Registry,           // 自定义的采集器
+	}
+	ph := promhttp.InstrumentMetricHandler(
+		metrics.Registry, promhttp.HandlerFor(gatherers, promhttp.HandlerOpts{}),
+	)
 
 	return func(c *gin.Context) {
 		ph.ServeHTTP(c.Writer, c.Request)
@@ -45,6 +53,7 @@ func NewHTTPService() *gin.Engine {
 // NewProfHttpService new a pprof service
 func NewProfHttpService() *gin.Engine {
 	svr := gin.Default()
+	svr.Use(gin.Recovery())
 	gin.SetMode(config.GinMode)
 
 	// metrics

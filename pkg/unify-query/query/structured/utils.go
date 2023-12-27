@@ -90,32 +90,32 @@ func containElement(slice []string, element string) bool {
 // judgeFilter 判断 filter 是否符合合并压缩的条件
 // 目前仅支持 tsDB 的每一个 filter 的 key 均为一致，并且 key 的长度为 2 的情况
 func judgeFilter(filters []query.Filter) (bool, []string) {
-	tKeys := make(map[string]struct{})
-
 	if len(filters) == 0 {
 		return false, nil
 	}
+
+	tKeys := make(map[string]struct{})
+	values := make([]string, 0)
+	// 仅支持 key 的长度为 2 的情况
 	for idx, filter := range filters {
+		if len(filter) != 2 {
+			return false, nil
+		}
 		if idx == 0 {
 			for k := range filter {
 				tKeys[k] = struct{}{}
+				values = append(values, k)
 			}
-		}
-		for k := range filter {
-			if _, ok := tKeys[k]; !ok {
-				return false, nil
+		} else {
+			// 如果存在 key 不一致的情况，直接退出
+			for k := range filter {
+				if _, ok := tKeys[k]; !ok {
+					return false, nil
+				}
 			}
 		}
 	}
-	// 仅支持 key 的长度为 2 的情况
-	if len(tKeys) == 2 {
-		result := make([]string, 0, len(tKeys))
-		for k := range tKeys {
-			result = append(result, k)
-		}
-		return true, result
-	}
-	return false, nil
+	return true, values
 }
 
 // compressFilterCondition 对 filterCondition 压缩，减少后续产出的 vm 查询语句的长度

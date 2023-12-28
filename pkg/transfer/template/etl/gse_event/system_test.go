@@ -27,7 +27,7 @@ type SystemEventSuite struct {
 	StoreSuite
 }
 
-func (s *SystemEventSuite) runCase(input string, pass bool, eventName string, dimensions map[string]interface{}, target string, outputCount int) {
+func (s *SystemEventSuite) runCase(input string, pass bool, eventName string, dimensions map[string]interface{}, target string, outputCount int, timestamp float64) {
 	hostInfo := models.CCHostInfo{
 		IP:      "127.0.0.1",
 		CloudID: 0,
@@ -93,6 +93,12 @@ func (s *SystemEventSuite) runCase(input string, pass bool, eventName string, di
 		if !cmp.Equal(eventName, record.EventName) {
 			diff := cmp.Diff(eventName, record.EventName)
 			s.FailNow("event_name differ: %#v", diff)
+		}
+
+		// 检查timestamp
+		if !cmp.Equal(timestamp, *record.Timestamp) {
+			diff := cmp.Diff(timestamp, record.Timestamp)
+			s.FailNow("timestamp differ: %#v", diff)
 		}
 	}
 
@@ -482,7 +488,7 @@ func (s *SystemEventSuite) TestUsage() {
 		},
 	}
 	for _, c := range cases {
-		s.runCase(c.input, c.pass, c.eventName, c.dimensions, c.target, c.outputCount)
+		s.runCase(c.input, c.pass, c.eventName, c.dimensions, c.target, c.outputCount, c.timestamp)
 	}
 }
 

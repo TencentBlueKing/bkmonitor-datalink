@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -88,20 +89,11 @@ var httpSvc HttpService
 func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 
-	// 只接受POST请求
-	if req.Method != http.MethodPost {
-		resp := s.getResponse(statusError, "method not allowed")
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusMethodNotAllowed, resp)
-		return
-	}
-
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	// 从请求中获取pluginId
-	pluginId := strings.TrimPrefix(req.URL.Path, "/fta/v1/event")
-	pluginId = strings.TrimPrefix(pluginId, "/")
-	pluginId = strings.TrimSuffix(pluginId, "/")
+	pluginId := mux.Vars(req)["pluginId"]
 
 	// 从请求头中获取token
 	token := req.Header.Get(tokenKey)

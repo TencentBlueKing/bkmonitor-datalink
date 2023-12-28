@@ -635,7 +635,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "cpu_detail",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -645,7 +645,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "cpu_summary",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="cpu_summary_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -671,7 +671,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "cpu_summary",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="cpu_summary_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -697,7 +697,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "cpu_detail",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -728,7 +728,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "cpu_detail",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="cpu_detail_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -738,7 +738,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							IsSingleMetric: false,
 							Measurement:    "disk",
 							Field:          "usage",
-							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="disk_usage"`,
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
 						},
 					},
 				},
@@ -751,7 +751,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				vmExpand *md.VmExpand
 				ok       bool
 			)
-			ctx = mock.Init(ctx)
+			ctx = md.InitHashID(ctx)
 
 			md.SetUser(ctx, tc.source, tc.ts.SpaceUid)
 			ref, err = tc.ts.ToQueryReference(ctx)

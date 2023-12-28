@@ -29,8 +29,7 @@ type EventRecord struct {
 type SystemEventData struct {
 	Time   string `json:"utctime2"`
 	Values []struct {
-		EventTime string      `json:"event_time"`
-		Extra     interface{} `json:"extra"`
+		Extra interface{} `json:"extra"`
 	} `json:"value"`
 }
 

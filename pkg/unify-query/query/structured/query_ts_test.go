@@ -399,6 +399,7 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 
 func TestQueryTs_ToQueryReference(t *testing.T) {
 	ctx := context.Background()
+	mock.Init()
 	err := featureFlag.MockFeatureFlag(
 		ctx, `{
 	"must-vm-query": {

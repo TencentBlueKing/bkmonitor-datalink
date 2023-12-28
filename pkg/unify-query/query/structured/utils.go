@@ -12,10 +12,13 @@ package structured
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"regexp"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
 // getExpressionByParam
@@ -70,4 +73,189 @@ func combineExprList(position int, expr parser.Expr, exprParams []interface{}) (
 	}
 
 	return results, nil
+}
+
+// containElement  判断一个切片中是否包含某个元素
+func containElement(slice []string, element string) bool {
+	if element == "" || len(slice) == 0 {
+		return false
+	}
+	for _, item := range slice {
+		if item == element {
+			return true
+		}
+	}
+	return false
+}
+
+// reMatchElement 生成 expr 正则并且进行匹配
+func reMatchElement(expr, val string, isMatch bool) (bool, error) {
+	if expr == "" || val == "" {
+		errMsg := fmt.Errorf("expr: %s, val: %s shouldn't be empty", expr, val)
+		return false, errMsg
+	}
+	reExp, err := regexp.Compile(expr)
+	if err != nil {
+		errMsg := fmt.Errorf("unable to generate reExp, expr: %s, error: %s", expr, err)
+		return false, errMsg
+	}
+	res := reExp.Match([]byte(val))
+	if isMatch {
+		return res, nil
+	}
+	return !res, nil
+}
+
+// judgeFilter 判断 filter 是否符合合并压缩的条件
+// 目前仅支持 tsDB 的每一个 filter 的 key 均为一致，并且 key 的长度为 2 的情况
+func judgeFilter(filters []query.Filter) (bool, []string) {
+	if len(filters) == 0 {
+		return false, nil
+	}
+
+	tKeys := make(map[string]struct{})
+	values := make([]string, 0)
+	// 仅支持 key 的长度为 2 的情况
+	for idx, filter := range filters {
+		if len(filter) != 2 {
+			return false, nil
+		}
+		if idx == 0 {
+			for k := range filter {
+				tKeys[k] = struct{}{}
+				values = append(values, k)
+			}
+		} else {
+			// 如果存在 key 不一致的情况，直接退出
+			for k := range filter {
+				if _, ok := tKeys[k]; !ok {
+					return false, nil
+				}
+			}
+		}
+	}
+	return true, values
+}
+
+// compressFilterCondition 对 filterCondition 压缩，减少后续产出的 vm 查询语句的长度
+func compressFilterCondition(tKeys []string, filters []query.Filter) [][]ConditionField {
+	// 分别取出两个 key ，并且通过 2 个 key 的值的个数来判断选择拿哪个key进行分组
+	key1, key2 := tKeys[0], tKeys[1]
+	var (
+		tArr1 = make([]string, 0)
+		tArr2 = make([]string, 0)
+	)
+	for _, filter := range filters {
+		for k, v := range filter {
+			if v == "" {
+				continue
+			}
+			if k == tKeys[0] && !containElement(tArr1, v) {
+				tArr1 = append(tArr1, v)
+			}
+			if k == tKeys[1] && !containElement(tArr2, v) {
+				tArr2 = append(tArr2, v)
+			}
+		}
+	}
+	// 根据两个 key 的长度来进行判断 选用哪个 key 作为分组依据
+	groupKey, subKey := key1, key2
+	if len(tArr2) < len(tArr1) {
+		groupKey, subKey = key2, key1
+	}
+	// 开始对所有的内容进行分组，生成一个压缩后的字典
+	// 压缩字典内容如下  key => groupKey 对应的值, value 为字符串列表，列表中的元素 为 subKey 对应的值（去重过后的）
+	compressMap := make(map[string][]string)
+	for _, filter := range filters {
+		_, ok := compressMap[filter[groupKey]]
+		if !ok {
+			if filter[subKey] != "" {
+				compressMap[filter[groupKey]] = []string{filter[subKey]}
+			}
+		} else {
+			if !containElement(compressMap[filter[groupKey]], filter[subKey]) && filter[subKey] != "" {
+				compressMap[filter[groupKey]] = append(compressMap[filter[groupKey]], filter[subKey])
+			}
+		}
+	}
+	// 组装好的compressMap 结构如下 {groupValue:[subVal1,subVal2]}
+	// 开始组装 condition
+	filterConditions := make([][]ConditionField, 0)
+	for k, v := range compressMap {
+		var cond = make([]ConditionField, 0, 2)
+		cond = []ConditionField{{
+			DimensionName: groupKey,
+			Value:         []string{k},
+			Operator:      Contains,
+		}, {
+			DimensionName: subKey,
+			Value:         v,
+			Operator:      Contains,
+		}}
+		filterConditions = append(filterConditions, cond)
+	}
+	return filterConditions
+}
+
+// compareClusterId 比较传入的 condition 以及 rtDetail.bcs_cluster_id
+func compareClusterId(conditions Conditions, bcsClusterId string) bool {
+	ctx := context.Background()
+	allConditions, err := conditions.AnalysisConditions()
+	if err != nil {
+		log.Errorf(ctx, "unable to get AllConditions, error: %s", err)
+		return false
+	}
+	// 如果 allConditions 长度为 0 ，侧面证明无需匹配 bcs_cluster_id，直接放行
+	if len(allConditions) == 0 {
+		log.Warnf(ctx, "length of AllConditions is 0")
+		return true
+	}
+	// 匹配 bcs_cluster_id 标志位
+	clusterFlag := false
+	for _, cond := range allConditions {
+		// 开始进行 conditionField 匹配
+		for _, field := range cond {
+			// 维度名不是 bcs_cluster_id 则跳过
+			if field.DimensionName != ClusterID {
+				continue
+			}
+			// 更新标志位
+			if !clusterFlag {
+				clusterFlag = true
+			}
+			switch field.Operator {
+			case ConditionEqual, ConditionContains:
+				if containElement(field.Value, bcsClusterId) {
+					return true
+				}
+			case ConditionNotEqual, ConditionNotContains:
+				if !containElement(field.Value, bcsClusterId) {
+					return true
+				}
+			case ConditionRegEqual:
+				for _, val := range field.Value {
+					match, err := reMatchElement(val, bcsClusterId, true)
+					if err != nil {
+						log.Errorf(ctx, "reMatchElement Error, error: %s", err)
+						return false
+					}
+					return match
+				}
+			case ConditionNotRegEqual:
+				for _, val := range field.Value {
+					match, err := reMatchElement(val, bcsClusterId, false)
+					if err != nil {
+						log.Errorf(ctx, "reMatchElement Error, error: %s", err)
+						return false
+					}
+					return match
+				}
+			}
+		}
+	}
+	// 当所有循环都走到结尾还没推出则判断是否进行了 clusterId 的匹配
+	if !clusterFlag {
+		return true
+	}
+	return false
 }

@@ -286,7 +286,6 @@ func (r *model) getDataWithMatchers(ctx context.Context, lookBackDeltaStr, space
 					field:       ql.Field,
 					matchers:    indexMatchers,
 				})
-				ql.LabelsMatcher = labelsMatcher
 			}
 		}
 

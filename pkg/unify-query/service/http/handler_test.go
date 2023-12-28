@@ -66,12 +66,81 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 		EnableNegativeOffset: true,
 	})
 
-	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType)
+	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType, "bkcc__1068")
 
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
 
 	mock.SetRedisClient(ctx, "demo")
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			"bkcc__1068": ir.Space{
+				"table_id_1.metric": &ir.SpaceResultTable{
+					TableId: "table_id_1.metric",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-1",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-2",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-3",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-4",
+						},
+					},
+				},
+				"table_id_2.metric": &ir.SpaceResultTable{
+					TableId: "table_id_2.metric",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "cls-2",
+							"namespace":      "ns-1",
+						},
+					},
+				},
+				"table_id_3.metric": &ir.SpaceResultTable{
+					TableId: "table_id_3.metric",
+					Filters: []map[string]string{
+						{
+							"bk_biz_id":      "bk_biz_id_1",
+							"bcs_cluster_id": "cls-3",
+						},
+					},
+				},
+			},
+		}, ir.ResultTableDetailInfo{
+			"table_id_1.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_1",
+				BcsClusterID:    "BCS-K8S-40899",
+			},
+			"table_id_2.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_2",
+				BcsClusterID:    "cls-2",
+			},
+			"table_id_3.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_3",
+				BcsClusterID:    "cls-3",
+			},
+		}, nil, nil)
 	mock.SetSpaceTsDbMockData(ctx, path, bucket,
 		ir.SpaceInfo{
 			consul.VictoriaMetricsStorageType: ir.Space{
@@ -1657,4 +1726,24 @@ func equalWithJson(t *testing.T, a, b interface{}) {
 	if a1Err == nil && b1Err == nil {
 		assert.Equal(t, string(a1), string(b1))
 	}
+}
+
+func TestQueryTs_ToQueryReference(t *testing.T) {
+	ctx := context.Background()
+	mockData(ctx, "handler_test", "handler_test")
+	metadata.SetUser(ctx, fmt.Sprintf("username:%s", "bkcc__1068"), "bkcc__1068")
+	jsonData := `{"space_uid":"bkcc__1068","query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-common"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["flux-cd-deploy"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kube-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator-bkop"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-jk"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kyverno"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-prod"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bkce-bcs-k8s-40980"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-costops-grey"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-test"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkop-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bk-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25186"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25451"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25326"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25182"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25037"],"op":"contains"}],"condition_list":["and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and"]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`
+	var query *structured.QueryTs
+	err := json.Unmarshal([]byte(jsonData), &query)
+	assert.Nil(t, err)
+
+	queryReference, err := query.ToQueryReference(ctx)
+	assert.Nil(t, err)
+
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+	expectData := `bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse-data-common", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="flux-cd-deploy", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="kube-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkmonitor-operator-bkop", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkmonitor-operator", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse-data-jk", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="kyverno", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bscp-prod", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bkce-bcs-k8s-40980", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-costops-grey", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bscp-test", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkop-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bk-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25186", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25451", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25326", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25182", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25037", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value"`
+	assert.Equal(t, expectData, vmExpand.MetricFilterCondition["a"])
+	assert.Nil(t, err)
+	assert.True(t, ok)
+
 }

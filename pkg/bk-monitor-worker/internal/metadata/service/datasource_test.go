@@ -68,7 +68,7 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	}
 	// 初始化数据
 	db := mysql.GetDBSession().DB
-	defer db.Close()
+
 	db.Where("bk_data_id=?", kafkaTopic.BkDataId).Delete(&kafkaTopic)
 	kafkaTopic.Create(db)
 	ds.Delete(db)

@@ -59,7 +59,6 @@ func TestServiceMonitorInfoSvc_RefreshResource(t *testing.T) {
 		LastModifyUser:     "system",
 	}
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	db.Delete(&bcs.ServiceMonitorInfo{}, "cluster_id = ?", cluster.ClusterID)
 	svc := NewBcsClusterInfoSvc(cluster)
 	err := NewServiceMonitorInfoSvc(nil).RefreshResource(&svc, cluster.K8sMetricDataID)
@@ -91,7 +90,6 @@ func TestShouldRefreshOwnDataId(t *testing.T) {
 func TestServiceMonitorInfoSvc_GetConfigName(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 
 	var cloudId = 0
 	cluster := &bcs.BCSClusterInfo{

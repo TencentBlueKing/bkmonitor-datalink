@@ -390,6 +390,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 
 func TestMakeQuery(t *testing.T) {
 	type Case struct {
+		Name        string
 		Path        cmdb.Path
 		Matcher     cmdb.Matcher
 		MetricMerge string
@@ -397,6 +398,7 @@ func TestMakeQuery(t *testing.T) {
 
 	cases := []Case{
 		{
+			Name: "level1",
 			Path: cmdb.Path{
 				{V: []cmdb.Resource{"pod", "node"}},
 			},
@@ -408,6 +410,7 @@ func TestMakeQuery(t *testing.T) {
 			MetricMerge: "(count(a) by (bcs_cluster_id,node))",
 		},
 		{
+			Name: "level2",
 			Path: cmdb.Path{
 				{V: []cmdb.Resource{"pod", "node"}},
 				{V: []cmdb.Resource{"node", "system"}},
@@ -420,6 +423,21 @@ func TestMakeQuery(t *testing.T) {
 			MetricMerge: "count(b and on(node) (count(a) by (bcs_cluster_id,node))) by (bk_target_ip)",
 		},
 		{
+			Name: "level3",
+			Path: cmdb.Path{
+				{V: []cmdb.Resource{"pod", "node"}},
+				{V: []cmdb.Resource{"node", "system"}},
+				{V: []cmdb.Resource{"pod", "replicaset"}},
+			},
+			Matcher: map[string]string{
+				"pod":            "pod1",
+				"namespace":      "ns1",
+				"bcs_cluster_id": "cluster1",
+			},
+			MetricMerge: "count(c and on(system) count(b and on(node) (count(a) by (bcs_cluster_id,node))) by (bk_target_ip)) by (bcs_cluster_id,namespace,replicaset)",
+		},
+		{
+			Name: "level4",
 			Path: cmdb.Path{
 				{V: []cmdb.Resource{"pod", "node"}},
 				{V: []cmdb.Resource{"node", "system"}},
@@ -435,8 +453,10 @@ func TestMakeQuery(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		queryTs, err := makeQuery("", c.Path, c.Matcher)
-		assert.NoError(t, err)
-		assert.Equal(t, c.MetricMerge, queryTs.MetricMerge)
+		t.Run(c.Name, func(t *testing.T) {
+			queryTs, err := makeQuery("", c.Path, c.Matcher)
+			assert.NoError(t, err)
+			assert.Equal(t, c.MetricMerge, queryTs.MetricMerge)
+		})
 	}
 }

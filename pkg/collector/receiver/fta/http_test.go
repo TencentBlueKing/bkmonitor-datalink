@@ -51,7 +51,7 @@ func TestExportEvent_Common(t *testing.T) {
 			wantCode:      http.StatusOK,
 			wantPublished: true,
 			wantToken:     "1",
-			wantData:      `{"__http_query_params__":{"source":"tencent"},"test":"1"}`,
+			wantData:      `{"test":"1", "__http_query_params__":{"source":"tencent"}}`,
 		},
 		{
 			name:          "header token",
@@ -117,10 +117,8 @@ func TestExportEvent_Common(t *testing.T) {
 				ftaData, ok := r.Data.(*define.FtaData)
 				assert.True(t, ok)
 
-				data, err := json.Marshal(ftaData.Data[0])
-				assert.NoError(t, err)
-
-				assert.Equal(t, tt.wantData, string(data))
+				data, _ := json.Marshal(ftaData.Data[0])
+				assert.JSONEq(t, tt.wantData, string(data))
 			}
 		})
 	}

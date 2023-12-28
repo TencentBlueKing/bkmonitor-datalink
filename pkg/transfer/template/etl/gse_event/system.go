@@ -134,7 +134,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 	// 发送指标记录
 	if sentCount > 0 {
-		p.CounterSuccesses.Inc()
+		p.CounterSuccesses.Add(float64(sentCount))
 	}
 	if sentCount != len(eventRecords) {
 		p.CounterFails.Add(float64(len(eventRecords) - sentCount))

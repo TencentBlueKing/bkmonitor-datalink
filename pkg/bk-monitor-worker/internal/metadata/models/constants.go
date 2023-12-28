@@ -18,6 +18,8 @@ const (
 	ResultTableFieldTagDimension = "dimension"
 	// ResultTableFieldTagTimestamp timestamp
 	ResultTableFieldTagTimestamp = "timestamp"
+	// ResultTableFieldTagGroup group
+	ResultTableFieldTagGroup = "group"
 
 	// ResultTableFieldTypeInt int type
 	ResultTableFieldTypeInt = "int"

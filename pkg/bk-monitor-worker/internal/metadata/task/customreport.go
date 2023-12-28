@@ -13,7 +13,10 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -26,24 +29,57 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			logger.Errorf("RefreshTimeSeriesMetric Runtime panic caught: %v", err)
 		}
 	}()
-	// funcName := runtimex.GetFuncName()
-	dbSession := mysql.GetDBSession()
-	qs := customreport.NewTimeSeriesGroupQuerySet(dbSession.DB)
-	// TODO: 暂时先关闭，需要在优化一下
-	qs = qs.IsEnableEq(true).IsDeleteEq(true)
-	// 过滤满足条件的记录
+	db := mysql.GetDBSession().DB
 	var tsGroupList []customreport.TimeSeriesGroup
-	if err := qs.All(&tsGroupList); err != nil {
-		logger.Errorf("find ts group record error, %v", err)
-		return err
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
+		return errors.Wrap(err, "find ts group record error")
 	}
-	// TODO: 先不拆分子任务，观察一下单个任务是不是可以满足需求
-	for _, ts := range tsGroupList {
-		if err := ts.UpdateMetricsFromRedis(); err != nil {
-			logger.Errorf("time_series_group: [%s] try to update metrics from redis failed", ts.TableID)
-		} else {
-			logger.Infof("time_series_group: [%s] metric update from redis success", ts.TableID)
+	// 收集需要更新推送redis的table_id
+	tableIdChan := make(chan string)
+	var updatedTableIds []string
+	wg := sync.WaitGroup{}
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		for {
+			tableId, ok := <-tableIdChan
+			if !ok {
+				break
+			}
+			updatedTableIds = append(updatedTableIds, tableId)
 		}
+	}()
+	ch := make(chan bool, GetGoroutineLimit("refresh_time_series_metric"))
+	wg.Add(len(tsGroupList))
+	for _, eg := range tsGroupList {
+		ch <- true
+		go func(ts customreport.TimeSeriesGroup, tableIdChan chan string, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+
+			svc := service.NewTimeSeriesGroupSvc(&ts)
+			updated, err := svc.UpdateTimeSeriesMetrics()
+			if err != nil {
+				logger.Errorf("time_series_group: [%s] try to update metrics from redis failed, %v", ts.TableID, err)
+				return
+			}
+			logger.Infof("time_series_group: [%s] metric update from redis success", ts.TableID)
+			if updated {
+				tableIdChan <- svc.TableID
+			}
+		}(eg, tableIdChan, &wg, ch)
+
+	}
+	wg.Wait()
+	close(tableIdChan)
+	if len(updatedTableIds) != 0 {
+		pusher := service.NewSpacePusher()
+		if err := pusher.PushTableIdDetail(updatedTableIds, true); err != nil {
+			return errors.Wrapf(err, "metric update to push table id detaild for [%v] failed", updatedTableIds)
+		}
+		logger.Infof("metric updated of table_id  [%v]", updatedTableIds)
 	}
 
 	return nil

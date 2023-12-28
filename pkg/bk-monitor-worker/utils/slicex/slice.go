@@ -18,7 +18,7 @@ import (
 )
 
 // RemoveItem remove the item from string array
-func RemoveItem(l []string, s string) []string {
+func RemoveItem[T constraints.Ordered](l []T, s T) []T {
 	i := 0
 	for _, val := range l {
 		if val != s {

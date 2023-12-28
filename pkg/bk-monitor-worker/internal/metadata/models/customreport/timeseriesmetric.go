@@ -10,17 +10,9 @@
 package customreport
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/jinzhu/gorm"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 )
 
 //go:generate goqueryset -in timeseriesmetric.go -out qs_tsmetric_gen.go
@@ -47,90 +39,4 @@ func (s *TimeSeriesMetric) BeforeCreate(tx *gorm.DB) error {
 // TableName table alias name
 func (TimeSeriesMetric) TableName() string {
 	return "metadata_timeseriesmetric"
-}
-
-// UpdateMetrics: update ts metrics
-func (tsm *TimeSeriesMetric) UpdateMetrics(MetricInfoList []map[string]interface{}) error {
-	// 判断是否真的存在某个group_id
-	var tsGroup TimeSeriesGroup
-	dbSession := mysql.GetDBSession()
-	qs := NewTimeSeriesGroupQuerySet(dbSession.DB)
-	if err := qs.TimeSeriesGroupIDEq(tsm.GroupID).One(&tsGroup); err != nil {
-		return fmt.Errorf("timeseriesgroup: %d not exist", tsm.GroupID)
-	}
-
-	// 更新 ts metric 和 tag 记录
-	for _, metricInfo := range MetricInfoList {
-		// 获取tag list
-		var tagList []string
-		if mapx.IsMapKey("tag_value_list", metricInfo) {
-			tagValue := metricInfo["tag_value_list"].(map[string]interface{})
-			tagList = mapx.GetMapKeys(tagValue)
-		} else {
-			tagList = metricInfo["tag_list"].([]string)
-		}
-		// 必然会追加target这个维度内容
-		tagList = append(tagList, "target")
-
-		fieldName := metricInfo["field_name"]
-		lastModifyTime := metricInfo["last_modify_time"].(float64)
-		lastTime := time.Unix(int64(lastModifyTime), 0)
-		lastTimeStr := lastTime.Format(config.TimeLayout)
-
-		tsmRecord := TimeSeriesMetric{
-			FieldName:      fieldName.(string),
-			GroupID:        tsm.GroupID,
-			LastModifyTime: lastTime,
-		}
-		tsmObj, created, err := tsmRecord.GetOrCreate()
-		if err != nil {
-			return fmt.Errorf("get or create time series metric error: %v", err)
-		}
-
-		// 生成/更新真实表id
-		dbName := stringx.SplitStringByDot(tsGroup.TableID)[0]
-		// 处理 tag list
-		var objTagList []string
-		jsonx.Unmarshal([]byte(dbName), &objTagList)
-		oldTagList := slicex.StringList2Set(objTagList)
-		newTagList := slicex.StringList2Set(tagList)
-		resultTagList := oldTagList.Union(newTagList)
-		// 修改已有的配置, 但是考虑需要保持已有的维度，需要将新旧两个维度merge
-		if created || lastTimeStr > tsmObj.LastModifyTime.String() {
-			qs := NewTimeSeriesMetricQuerySet(dbSession.DB)
-			updater := qs.GetUpdater().CustomSetTagList(
-				slicex.StringSet2List(resultTagList),
-			).SetLastModifyTime(lastTime).SetTableID(
-				fmt.Sprintf("%s.%s", dbName, tsmObj.FieldName),
-			)
-			if err := updater.Update(); err != nil {
-				return fmt.Errorf("update ts metric error: %v", err)
-			}
-		}
-	}
-	return nil
-}
-
-// GetOrCreate retrieve or create a record, and return the record info
-func (tsm *TimeSeriesMetric) GetOrCreate() (*TimeSeriesMetric, bool, error) {
-	dbSession := mysql.GetDBSession()
-	qs := NewTimeSeriesMetricQuerySet(dbSession.DB)
-	qs = qs.FieldNameEq(tsm.FieldName).GroupIDEq(tsm.GroupID)
-
-	var tsmRecord TimeSeriesMetric
-	created := false
-	if err := qs.One(&tsmRecord); err != nil {
-		created = true
-		// create a record
-		if err := tsm.Create(dbSession.DB); err != nil {
-			return nil, created, err
-		}
-
-		// 查询数据，然后返回
-		if err := qs.One(&tsmRecord); err != nil {
-			return nil, created, err
-		}
-	}
-
-	return &tsmRecord, created, nil
 }

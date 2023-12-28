@@ -12,6 +12,8 @@ package resulttable
 import (
 	"time"
 
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -40,6 +42,13 @@ type ResultTableField struct {
 // TableName table alias name
 func (ResultTableField) TableName() string {
 	return "metadata_resulttablefield"
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (rtf *ResultTableField) BeforeCreate(tx *gorm.DB) error {
+	rtf.LastModifyTime = time.Now()
+	rtf.CreateTime = time.Now()
+	return nil
 }
 
 // UpdateMetricFieldFromTS update result table metric field

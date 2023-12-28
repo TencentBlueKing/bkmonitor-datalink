@@ -273,12 +273,12 @@ func parseSystemEvent(data interface{}) []EventRecord {
 	var err error
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		logging.Errorf("parse system event data error: %+v", err)
+		logging.Errorf("parse system event data failed, expected map[string]interface{}, but got %T", data)
 		return nil
 	}
 	eventType, ok := dataMap["type"].(float64)
 	if !ok {
-		logging.Errorf("parse system event type error: %+v", err)
+		logging.Errorf("parse system event type failed, expected float64, but got %T", dataMap["type"])
 		return nil
 	}
 

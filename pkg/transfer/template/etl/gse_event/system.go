@@ -64,7 +64,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		// 时间格式转换
 		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
 		if err != nil {
-			logging.Errorf("parse system event time %s error: %v", eventTime, err)
+			logging.Errorf("parse system event time %s failed: %v", eventTime, err)
 			continue
 		}
 		timestamp := float64(parse.UnixMilli())
@@ -107,7 +107,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			logging.Errorf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
+			logging.Warnf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
 			continue
 		}
 

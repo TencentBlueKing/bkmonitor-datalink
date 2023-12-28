@@ -7,21 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package clustermetrics
 
-const (
-	// AsyncTask 异步任务
-	AsyncTask = "async"
-	// PeriodicTask 周期任务
-	PeriodicTask = "periodic"
-	// DaemonTask 常驻任务
-	DaemonTask = "daemon"
-	// CreateTaskPath 创建任务
-	CreateTaskPath = "/bmw/task"
-	// ListTaskPath 查询任务
-	ListTaskPath = "/bmw/task"
-	// DeleteTaskPath 删除任务
-	DeleteTaskPath = "/bmw/task"
-	// DeleteAllTaskPath 删除所有任务
-	DeleteAllTaskPath = "/bmw/task/all"
+import (
+	"fmt"
+	"path/filepath"
+	"runtime"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
+
+func InitTestConfig() {
+	pc, filename, x, ok := runtime.Caller(0)
+	fmt.Println("Caller: ", pc, filename, x)
+	if !ok {
+		panic("Failed to get current file information")
+	}
+	path := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		panic(err)
+	}
+	configFilePath := absPath + "/bmw.yaml"
+	fmt.Println("Current config file path:", configFilePath)
+	config.FilePath = configFilePath
+	config.InitConfig()
+}

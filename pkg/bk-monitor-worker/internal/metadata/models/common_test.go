@@ -9,7 +9,9 @@
 
 package models
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestParseOptionValue(t *testing.T) {
 	type args struct {

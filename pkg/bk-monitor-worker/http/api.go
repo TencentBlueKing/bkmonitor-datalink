@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type taskOptions struct {
@@ -61,15 +61,19 @@ type removeAllTaskParams struct {
 
 // CreateTask create a delay task
 func CreateTask(c *gin.Context) {
+	method := c.Request.Method
+	beginTime := time.Now()
 	// get data
 	params := new(taskParams)
 	if err := BindJSON(c, params); err != nil {
+		metrics.RequestApiCount(method, CreateTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
 	// compose task
 	payload, err := jsonx.Marshal(params.Payload)
 	if err != nil {
+		metrics.RequestApiCount(method, CreateTaskPath, "failure")
 		ServerErrResponse(c, "json marshal error: %v", err)
 		return
 	}
@@ -77,9 +81,7 @@ func CreateTask(c *gin.Context) {
 	// 如果是异步任务，则直接写入到队列，然后执行任务
 	// 如果是常驻任务，则直接写入到常驻任务队列中即可
 	kind := params.Kind
-	if err = metrics.RegisterTaskCount(kind); err != nil {
-		logger.Errorf("Report task count metric failed: %s", err)
-	}
+	metrics.RegisterTaskCount(kind)
 	// 组装 task
 	newedTask := &task.Task{
 		Kind:    kind,
@@ -89,24 +91,30 @@ func CreateTask(c *gin.Context) {
 	// 根据类型做判断
 	if strings.HasPrefix(kind, AsyncTask) {
 		if err = enqueueAsyncTask(newedTask); err != nil {
+			metrics.RequestApiCount(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "enqueue async task error, %v", err)
 			return
 		}
 	} else if strings.HasPrefix(kind, PeriodicTask) {
 		if err = pushPeriodicTaskToRedis(c, newedTask); err != nil {
+			metrics.RequestApiCount(method, CreateTaskPath,  "failure")
 			ServerErrResponse(c, "push task to redis error, %v", err)
 			return
 		}
 	} else if strings.HasPrefix(kind, DaemonTask) {
 		if err = enqueueDaemonTask(newedTask); err != nil {
+			metrics.RequestApiCount(method, CreateTaskPath,  "failure")
 			ServerErrResponse(c, "enqueue daemon task error error, %v", err)
 			return
 		}
 	} else {
+		metrics.RequestApiCount(method, CreateTaskPath,  "failure")
 		BadReqResponse(c, "task kind: %s not support", kind)
 		return
 	}
 
+	metrics.RequestApiCount(method, CreateTaskPath, "success")
+	metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 	// success response
 	Response(c, nil)
 }
@@ -188,8 +196,11 @@ func enqueueDaemonTask(t *task.Task) error {
 
 // RemoveAllTask 删除所有任务
 func RemoveAllTask(c *gin.Context) {
+	beginTime := time.Now()
+	method := c.Request.Method
 	params := new(removeAllTaskParams)
 	if err := BindJSON(c, params); err != nil {
+		metrics.RequestApiCount(method, DeleteAllTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
@@ -199,21 +210,28 @@ func RemoveAllTask(c *gin.Context) {
 		broker := rdb.GetRDB()
 		_, err := broker.Client().Del(context.Background(), common.DaemonTaskKey()).Result()
 		if err != nil {
+			metrics.RequestApiCount(method, DeleteAllTaskPath, "failure")
 			ServerErrResponse(c, fmt.Sprintf("failed to delete key: %s.", common.DaemonTaskKey()), err)
 			return
 		}
 		Response(c, &gin.H{})
 	default:
+		metrics.RequestApiCount(method, DeleteAllTaskPath, "failure")
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}
 
+	metrics.RequestApiCount(method, DeleteAllTaskPath, "success")
+	metrics.RequestApiCostTime(method, DeleteAllTaskPath,  beginTime)
 	return
 }
 
 // RemoveTask 删除某个任务
 func RemoveTask(c *gin.Context) {
+	beginTime := time.Now()
+	method := c.Request.Method
 	params := new(removeTaskParams)
 	if err := BindJSON(c, params); err != nil {
+		metrics.RequestApiCount(method, DeleteTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
@@ -223,6 +241,7 @@ func RemoveTask(c *gin.Context) {
 		client := rdb.GetRDB()
 		tasks, err := client.Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
 		if err != nil {
+			metrics.RequestApiCount(method, DeleteTaskPath, "failed")
 			ServerErrResponse(c, fmt.Sprintf("failed to list task by key: %s.", common.DaemonTaskKey()), err)
 			return
 		}
@@ -230,12 +249,16 @@ func RemoveTask(c *gin.Context) {
 			var item task.SerializerTask
 			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
+				metrics.RequestApiCount(method, DeleteTaskPath, "failure")
 				return
 			}
 			taskUniId := daemon.ComputeTaskUniId(item)
 			if taskUniId == params.TaskUniId {
 				client.Client().SRem(context.Background(), common.DaemonTaskKey(), i)
 				Response(c, &gin.H{"data": taskUniId})
+
+				metrics.RequestApiCount(method, CreateTaskPath, "success")
+				metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 				return
 			}
 		}
@@ -247,18 +270,22 @@ func RemoveTask(c *gin.Context) {
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}
 
+	metrics.RequestApiCount(method, DeleteTaskPath, "failure")
 	return
 }
 
 // ListTask 获取broker中的任务列表
 func ListTask(c *gin.Context) {
+	beginTime := time.Now()
 	taskType := c.DefaultQuery("task_type", "empty")
 
+	method := c.Request.Method
 	switch taskType {
 	case DaemonTask:
 		client := rdb.GetRDB()
 		tasks, err := client.Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
 		if err != nil {
+			metrics.RequestApiCount(method, ListTaskPath, "failure")
 			ServerErrResponse(c, fmt.Sprintf("failed to list task by key: %s.", common.DaemonTaskKey()), err)
 			return
 		}
@@ -267,12 +294,14 @@ func ListTask(c *gin.Context) {
 			var item task.SerializerTask
 			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
+				metrics.RequestApiCount(method, ListTaskPath, "failure")
 				return
 			}
 
 			var payload map[string]any
 			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
+				metrics.RequestApiCount(method, ListTaskPath, "failure")
 				return
 			}
 			res = append(
@@ -285,9 +314,14 @@ func ListTask(c *gin.Context) {
 				},
 			)
 		}
+
+		metrics.RequestApiCount(method, ListTaskPath, "success")
+		metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 		Response(c, &gin.H{"data": res})
+		return
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
 	}
-	return
+
+	metrics.RequestApiCount(method, DeleteTaskPath, "failure")
 }

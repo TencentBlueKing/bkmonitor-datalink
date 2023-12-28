@@ -7,21 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package clustermetrics
 
-const (
-	// AsyncTask 异步任务
-	AsyncTask = "async"
-	// PeriodicTask 周期任务
-	PeriodicTask = "periodic"
-	// DaemonTask 常驻任务
-	DaemonTask = "daemon"
-	// CreateTaskPath 创建任务
-	CreateTaskPath = "/bmw/task"
-	// ListTaskPath 查询任务
-	ListTaskPath = "/bmw/task"
-	// DeleteTaskPath 删除任务
-	DeleteTaskPath = "/bmw/task"
-	// DeleteAllTaskPath 删除所有任务
-	DeleteAllTaskPath = "/bmw/task/all"
-)
+type ClusterInstance interface {
+	GetContext() map[string]string
+}

@@ -428,5 +428,6 @@ func InitConfig() {
 
 	initVariables()
 	initMetadataVariables()
+	initClusterMetricVariables()
 	initApmVariables()
 }

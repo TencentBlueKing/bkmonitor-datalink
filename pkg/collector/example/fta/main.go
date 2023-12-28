@@ -10,10 +10,16 @@
 package fta
 
 import (
+	"bytes"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"time"
 )
+
+const url = "http://localhost:4318/api/v1/event/"
 
 func main() {
 	c := make(chan os.Signal, 1)
@@ -25,6 +31,25 @@ func main() {
 	for {
 		select {
 		case <-c:
+			data := `{
+    "ip": "10.0.0.1", 
+    "source_id": "123456",    
+    "source_time": "2017-04-06 16:50:00+08:00",   
+    "alarm_type": "api_default",
+    "alarm_content": "FAILURE for production/HTTP on machine 127.0.0.1", 
+    "alarm_context": {"key1":"value1","key2":"value2"}, 
+    "description": "avg(usage) > 90%, 当前值 99%",
+    "target_type": "HOST",
+    "category": "os",
+    "severity": 1,
+    "bk_biz_id": 2,
+}`
+			response, err := http.Post(url, "application/json", bytes.NewBuffer([]byte(data)))
+			if err != nil {
+				log.Printf("post data failed, err: %v\n", err)
+			}
+			b, _ := io.ReadAll(response.Body)
+			log.Println(string(b))
 			return
 		case <-ticker.C:
 			continue

@@ -10,8 +10,7 @@
 package tokenchecker
 
 import (
-	"errors"
-
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -125,7 +124,7 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 	// token解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
-		return errors.New("reject invalid token")
+		return errors.Wrap(err, "failed to decode token")
 	}
 
 	token := record.Token

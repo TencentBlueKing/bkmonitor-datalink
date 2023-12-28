@@ -9,11 +9,15 @@
 
 package mocker
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-)
+import "github.com/IBM/sarama"
 
-func InitTestDBConfig(filePath string) {
-	config.FilePath = filePath
-	config.InitConfig()
+type KafkaClientMocker struct {
+	sarama.Client
+	PartitionMap map[string][]int32
 }
+
+func (k *KafkaClientMocker) Partitions(topic string) ([]int32, error) {
+	return k.PartitionMap[topic], nil
+}
+
+func (k *KafkaClientMocker) Close() error { return nil }

@@ -80,7 +80,7 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(groupId uint, tableId string,
 	}
 
 	if len(needUpdateMetricFieldNames) != 0 {
-		err = s.BulkUpdateMetrics(metricsMap, needCreateMetricFieldNames, groupId, isAutoDiscovery)
+		err = s.BulkUpdateMetrics(metricsMap, needUpdateMetricFieldNames, groupId, isAutoDiscovery)
 		if err != nil {
 			return false, errors.Wrapf(err, "bulk update metrics [%v] for group_id [%v] table_id [%s] failed", needUpdateMetricFieldNames, groupId, tableId)
 		}

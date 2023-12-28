@@ -10,10 +10,17 @@
 package mocker
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"time"
+
+	client "github.com/influxdata/influxdb1-client/v2"
 )
 
-func InitTestDBConfig(filePath string) {
-	config.FilePath = filePath
-	config.InitConfig()
+type InfluxDBClientMocker struct {
+	client.Client
 }
+
+func (i *InfluxDBClientMocker) Ping(timeout time.Duration) (time.Duration, string, error) {
+	return 0, "", nil
+}
+
+func (i *InfluxDBClientMocker) Close() error { return nil }

@@ -35,11 +35,13 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	record := new(SystemEventData)
 	err := d.To(record)
 	if err != nil {
+		logging.Errorf("system event parse payload %v failed: %v", d, err)
 		p.CounterFails.Inc()
 		return
 	}
 
 	if record.Values == nil {
+		logging.Errorf("system event parse payload failed: values is empty")
 		p.CounterFails.Inc()
 		return
 	}
@@ -64,7 +66,8 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		// 时间格式转换
 		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
 		if err != nil {
-			logging.Errorf("parse system event time %s failed: %v", eventTime, err)
+			logging.Errorf("system event parse time %s failed: %v", eventTime, err)
+			p.CounterFails.Inc()
 			continue
 		}
 		timestamp := float64(parse.UnixMilli())
@@ -107,7 +110,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			logging.Warnf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
+			logging.Errorf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
 			continue
 		}
 
@@ -123,17 +126,18 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
 			logging.Errorf("system event derive payload failed: %v", err)
-			return
+			continue
 		}
 		sentCount++
 		outputChan <- output
 	}
 
-	// 发送成功记录
+	// 发送指标记录
 	if sentCount > 0 {
 		p.CounterSuccesses.Inc()
-	} else {
-		p.CounterFails.Inc()
+	}
+	if sentCount != len(eventRecords) {
+		p.CounterFails.Add(float64(len(eventRecords) - sentCount))
 	}
 }
 

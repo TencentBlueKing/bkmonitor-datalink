@@ -273,12 +273,12 @@ func parseSystemEvent(data interface{}) []EventRecord {
 	var err error
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
-		logging.Errorf("parse system event data failed, expected map[string]interface{}, but got %T", data)
+		logging.Errorf("system event parse data failed, expected map[string]interface{}, but got %T", data)
 		return nil
 	}
 	eventType, ok := dataMap["type"].(float64)
 	if !ok {
-		logging.Errorf("parse system event type failed, expected float64, but got %T", dataMap["type"])
+		logging.Errorf("system event parse type failed, expected float64, but got %T", dataMap["type"])
 		return nil
 	}
 
@@ -314,10 +314,13 @@ func parseSystemEvent(data interface{}) []EventRecord {
 		var oomEvent OOMEvent
 		err = mapstructure.Decode(dataMap, &oomEvent)
 		event = &oomEvent
+	default:
+		logging.Errorf("system event unknown type: %f", eventType)
+		return nil
 	}
 
-	if err != nil || event == nil {
-		logging.Errorf("parse system event error: %+v", err)
+	if err != nil {
+		logging.Errorf("system event parse data failed: %v", err)
 		return nil
 	}
 

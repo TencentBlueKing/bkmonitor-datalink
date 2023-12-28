@@ -25,16 +25,6 @@ import (
 
 // TestExportEvent is a generated function returning the mock function for the ExportEvent method of the HttpService type.
 func TestExportEvent_Common(t *testing.T) {
-	var r *define.Record
-	svc := HttpService{
-		receiver.Publisher{Func: func(record *define.Record) {
-			r = record
-		}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
-
 	tests := []struct {
 		name          string
 		url           string
@@ -98,7 +88,15 @@ func TestExportEvent_Common(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// reset
-			r = nil
+			var r *define.Record
+			svc := HttpService{
+				receiver.Publisher{Func: func(record *define.Record) {
+					r = record
+				}},
+				pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+					return define.StatusCodeOK, "", nil
+				}},
+			}
 
 			// run
 			buf := bytes.NewBufferString(tt.body)

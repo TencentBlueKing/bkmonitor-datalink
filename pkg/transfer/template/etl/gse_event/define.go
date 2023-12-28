@@ -239,32 +239,6 @@ func (e *OOMEvent) Flat() []EventRecord {
 	}
 }
 
-// PingUnreachableEvent : ping不可达事件
-type PingUnreachableEvent struct {
-	Hosts   []string `json:"iplist" mapstructure:"iplist"`
-	CloudID int      `json:"cloudid" mapstructure:"cloudid"`
-}
-
-func (e *PingUnreachableEvent) Flat() []EventRecord {
-	events := make([]EventRecord, 0)
-	for _, host := range e.Hosts {
-		events = append(events, EventRecord{
-			EventName: "PingUnreachable",
-			Target:    fmt.Sprintf("%d:%s", e.CloudID, host),
-			Event: map[string]interface{}{
-				"content": "ping_unreachable",
-			},
-			EventDimension: map[string]interface{}{
-				"bk_target_cloud_id": conv.String(e.CloudID),
-				"bk_target_ip":       host,
-				"ip":                 host,
-				"bk_cloud_id":        conv.String(e.CloudID),
-			},
-		})
-	}
-	return events
-}
-
 func parseSystemEvent(data interface{}) []EventRecord {
 	var event EventRecordFlatter
 	var err error
@@ -299,11 +273,6 @@ func parseSystemEvent(data interface{}) []EventRecord {
 		var coreFileEvent CoreFileEvent
 		err = mapstructure.Decode(dataMap, &coreFileEvent)
 		event = &coreFileEvent
-	case 8:
-		// ping
-		var pingUnreachableEvent PingUnreachableEvent
-		err = mapstructure.Decode(dataMap, &pingUnreachableEvent)
-		event = &pingUnreachableEvent
 	case 9:
 		// oom
 		var oomEvent OOMEvent

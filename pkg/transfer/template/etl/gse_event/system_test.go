@@ -112,8 +112,9 @@ func (s *SystemEventSuite) TestUsage() {
 		dimensions  map[string]interface{}
 		target      string
 		outputCount int
+		timestamp   float64
 	}{
-		{`{}`, false, "", nil, "", 0},
+		{`{}`, false, "", nil, "", 0, 0},
 		// 测试正常的输入内容
 		{
 			`{
@@ -126,7 +127,7 @@ func (s *SystemEventSuite) TestUsage() {
 					{
 						"event_desc": "",
 						"event_raw_id": 0,
-						"event_time": "2019-03-02 07:29:24",
+						"event_time": "2019-03-02 15:29:24",
 						"event_source_system": "",
 						"event_title": "",
 						"event_type": "gse_basic_alarm_type",
@@ -156,6 +157,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"demo",
 			1,
+			1551511764000,
 		},
 		{
 			`{
@@ -168,7 +170,7 @@ func (s *SystemEventSuite) TestUsage() {
 					{
 						"event_desc": "",
 						"event_raw_id": 0,
-						"event_time": "2019-03-02 07:29:24",
+						"event_time": "2019-03-02 15:29:24",
 						"event_source_system": "",
 						"event_title": "",
 						"event_type": "gse_basic_alarm_type",
@@ -197,6 +199,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
+			1551511764000,
 		},
 		{
 			`{
@@ -209,7 +212,7 @@ func (s *SystemEventSuite) TestUsage() {
 					{
 						"event_desc": "",
 						"event_raw_id": 0,
-						"event_time": "2019-03-02 07:29:24",
+						"event_time": "2019-03-02 15:29:24",
 						"event_source_system": "",
 						"event_title": "",
 						"event_type": "gse_basic_alarm_type",
@@ -239,6 +242,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
+			1551511764000,
 		},
 		{
 			`{
@@ -251,7 +255,7 @@ func (s *SystemEventSuite) TestUsage() {
 					{
 						"event_desc": "",
 						"event_raw_id": 0,
-						"event_time": "2019-03-02 07:29:24",
+						"event_time": "2019-03-02 15:29:24",
 						"event_source_system": "",
 						"event_title": "",
 						"event_type": "gse_basic_alarm_type",
@@ -274,6 +278,7 @@ func (s *SystemEventSuite) TestUsage() {
 			map[string]interface{}{},
 			"",
 			0,
+			1551511764000,
 		},
 		{
 			`{
@@ -322,6 +327,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
+			1519875942000,
 		},
 		{
 			`{
@@ -371,6 +377,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
+			1571291633000,
 		},
 		{
 			`{
@@ -419,6 +426,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
+			1571185733000,
 		},
 		{
 			`{
@@ -470,43 +478,7 @@ func (s *SystemEventSuite) TestUsage() {
 			},
 			"0:127.0.0.1",
 			1,
-		},
-		{
-			`{
-				"server":"127.0.0.1",
-				"time":"2019-10-15 17:34:44",
-				"value":[
-					{
-						"event_desc":"",
-						"event_raw_id":27422,
-						"event_source_system":"",
-						"event_time":"2019-10-15 09:34:44",
-						"event_timezone":0,
-						"event_title":"",
-						"event_type":"gse_basic_alarm_type",
-						"extra":{
-							"bizid":0,
-							"cloudid":0,
-							"count":30,
-							"host":"127.0.0.1",
-							"iplist":["127.0.0.1"],
-							"type":8
-						}
-					}
-				]
-			}`,
-			true,
-			"PingUnreachable",
-			// dimensions
-			map[string]interface{}{
-				"bk_target_cloud_id": "0",
-				"bk_target_ip":       "127.0.0.1",
-				"ip":                 "127.0.0.1",
-				"bk_cloud_id":        "0",
-				"bk_biz_id":          "2",
-			},
-			"0:127.0.0.1",
-			1,
+			1519875942000,
 		},
 	}
 	for _, c := range cases {

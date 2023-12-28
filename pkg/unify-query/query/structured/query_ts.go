@@ -495,8 +495,8 @@ func (q *Query) BuildMetadataQuery(
 
 	// 用于 vm 的查询逻辑特殊处理
 	var vmMetric string
-	if measurement != "" {
-		vmMetric = fmt.Sprintf("%s_%s", measurement, field)
+	if metricName != "" {
+		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
 	}
 
 	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace

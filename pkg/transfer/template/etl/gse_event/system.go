@@ -55,6 +55,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		}
 		newEventRecords := parseSystemEvent(extra)
 		if newEventRecords == nil {
+			p.CounterFails.Inc()
 			continue
 		}
 

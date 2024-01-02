@@ -7,19 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package service
+package clustermetrics
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-)
-
-// DataSourceResultTableSvc data source result table service
-type DataSourceResultTableSvc struct {
-	*resulttable.DataSourceResultTable
-}
-
-func NewDataSourceResultTableSvc(obj *resulttable.DataSourceResultTable) DataSourceResultTableSvc {
-	return DataSourceResultTableSvc{
-		DataSourceResultTable: obj,
-	}
+type ClusterInstance interface {
+	GetContext() map[string]string
 }

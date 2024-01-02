@@ -11,8 +11,9 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -52,7 +53,7 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 }
 
 // CreateTable 创建存储
-func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
+func (InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error {
 	var influxdbProxyStorageId *uint
 	var proxyClusterName *string
 	var storageClusterId *uint
@@ -80,7 +81,7 @@ func (k InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageCo
 		return err
 	}
 	if count == 0 {
-		return fmt.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
+		return errors.Errorf("proxy_cluster [%s] has no config", *proxyClusterName)
 	}
 	// 如果未有指定对应的结果表及数据库，则从table_id中分割获取
 	split := strings.Split(tableId, ".")

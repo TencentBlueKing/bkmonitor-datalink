@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -95,12 +95,8 @@ func RefreshVmRouter(ctx context.Context, objs *[]AccessVMRecord, goroutineLimit
 		}(record, wg, ch)
 	}
 	wg.Wait()
-	client, err := dependentredis.GetInstance(ctx)
-	if err != nil {
-		logger.Errorf("get redis client error, %v", err)
-		return
-	}
-	err = client.Publish(models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
+	client := redis.GetInstance(ctx)
+	err := client.Publish(models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
 	if err != nil {
 		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey, err)
 	} else {

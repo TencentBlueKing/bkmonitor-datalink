@@ -10,7 +10,8 @@
 package cmd
 
 import (
-	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,54 +19,50 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	workerLog "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func init() {
-	rootCmd.AddCommand(taskModuleCmd)
+	rootCmd.AddCommand(taskCmd)
 }
 
-var taskModuleCmd = &cobra.Command{
+var taskCmd = &cobra.Command{
 	Use:   "task",
-	Short: "bk monitor tasks",
+	Short: "bk monitor worker task",
 	Long:  "task module for blueking monitor worker",
-	Run:   startTaskModule,
+	Run:   startTask,
 }
 
-func startTaskModule(cmd *cobra.Command, args []string) {
+func startTask(cmd *cobra.Command, args []string) {
 	defer runtimex.HandleCrash()
 
 	config.InitConfig()
-	workerLog.InitLogger()
+	// 初始化日志
+	log.InitLogger()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	r := bmwHttp.NewHTTPService()
 
-	// 1. 任务监听器
-	taskWatcher := periodic.NewWatchService(ctx)
-	go taskWatcher.StartWatch()
-
-	// 2. 周期任务调度器
-	periodicTaskScheduler, err := periodic.NewPeriodicTaskScheduler(ctx)
-	if err != nil {
-		logger.Fatalf("failed to create period task scheduler: %s", err)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", config.TaskListenHost, config.TaskListenPort),
+		Handler: r,
 	}
-	go periodicTaskScheduler.Run()
+	logger.Infof("Starting HTTP server at %s:%d", config.TaskListenHost, config.TaskListenPort)
 
-	// 3. 常驻任务调度器
-	daemonTaskScheduler := daemon.NewDaemonTaskScheduler(ctx)
-	go daemonTaskScheduler.Run()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatalf("listen addr error, %v", err)
+		}
+	}()
 
-	logger.Infof("Task module started.")
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			cancel()
+			srv.Close()
 			logger.Info("Bye")
 			os.Exit(0)
 		}

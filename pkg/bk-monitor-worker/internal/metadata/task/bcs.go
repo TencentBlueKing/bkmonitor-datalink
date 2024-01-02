@@ -11,7 +11,6 @@ package task
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -40,7 +39,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 	if err != nil {
 		return err
 	}
-
+	db := mysql.GetDBSession().DB
 	var clusterIdList []string
 	wg := &sync.WaitGroup{}
 	ch := make(chan bool, GetGoroutineLimit("discover_bcs_clusters"))
@@ -54,8 +53,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			var bcsClusterInfo bcs.BCSClusterInfo
-			if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).
-				ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
+			if err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
 				if !gorm.IsRecordNotFoundError(err) {
 					logger.Errorf("query bcs cluster info record from db failed, %v", err)
 					return
@@ -81,7 +79,7 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 	wg.Wait()
 	// 接口未返回的集群标记为删除状态
 	if len(clusterIdList) != 0 {
-		if err := bcs.NewBCSClusterInfoUpdater(mysql.GetDBSession().DB.Model(&bcs.BCSClusterInfo{}).Where("cluster_id not in (?)", clusterIdList)).
+		if err := bcs.NewBCSClusterInfoUpdater(db.Model(&bcs.BCSClusterInfo{}).Where("cluster_id not in (?)", clusterIdList)).
 			SetStatus(models.BcsClusterStatusDeleted).SetLastModifyTime(time.Now()).Update(); err != nil {
 			return err
 		}
@@ -94,7 +92,7 @@ func createBcsCluster(cluster service.BcsClusterInfo) error {
 	// 注册集群
 	newCluster, err := service.NewBcsClusterInfoSvc(nil).RegisterCluster(cluster.BkBizId, cluster.ClusterId, cluster.ProjectId, "system")
 	if err != nil {
-		return errors.Wrap(err, fmt.Sprintf("register cluster %s failed, %s", cluster.ClusterId, err))
+		return errors.Wrapf(err, "register cluster %s failed", cluster.ClusterId)
 	}
 	newBcsClusterInfoSvc := service.NewBcsClusterInfoSvc(newCluster)
 	// 初始化资源resource信息
@@ -106,7 +104,7 @@ func createBcsCluster(cluster service.BcsClusterInfo) error {
 	// 更新云区域ID
 	err = newBcsClusterInfoSvc.UpdateBcsClusterCloudIdConfig()
 	if err != nil {
-		return errors.Wrap(err, fmt.Sprintf("update bcs cluster cloud id failed, %s", err))
+		return errors.Wrap(err, "update bcs cluster cloud id failed")
 	}
 	logger.Infof("cluster_id [%s], project_id [%s], bk_biz_id [%v] init resource finished", newCluster.ClusterID, newCluster.ProjectId, newCluster.BkBizId)
 	return nil
@@ -145,7 +143,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 	if bcsClusterInfo.BkCloudId == nil {
 		// 更新云区域ID
 		if err := service.NewBcsClusterInfoSvc(bcsClusterInfo).UpdateBcsClusterCloudIdConfig(); err != nil {
-			return errors.Wrap(err, fmt.Sprintf("update bk_cloud_id for cluster [%v] error, %s", bcsClusterInfo.ClusterID, err))
+			return errors.Wrapf(err, "update bk_cloud_id for cluster [%v] error", bcsClusterInfo.ClusterID)
 		}
 	}
 	logger.Infof("cluster_id [%s], project_id [%s] already exists, skip create", cluster.ClusterId, cluster.ProjectId)
@@ -156,7 +154,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("DiscoverBcsClusters Runtime panic caught: %v", err)
+			logger.Errorf("RefreshBcsMonitorInfo Runtime panic caught: %v", err)
 		}
 	}()
 
@@ -216,6 +214,39 @@ func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 		}(&cluster, wg, ch)
 	}
 	wg.Wait()
+	return nil
+
+}
+
+// RefreshBcsMetricsLabel 更新bcs指标label
+func RefreshBcsMetricsLabel(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBcsMetricsLabel Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start refresh bcs metrics label")
+	if err := service.NewBcsClusterInfoSvc(nil).RefreshMetricLabel(); err != nil {
+		logger.Errorf("refresh bcs metrics label failed, %v", err)
+		return err
+	}
+	return nil
+}
+
+// CleanExpiredRestore 清理到期的回溯索引
+func CleanExpiredRestore(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("CleanExpiredRestore Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start to clean expired restore")
+	// 清理到期的回溯索引
+	svc := service.NewEsSnapshotRestoreSvc(nil)
+	if err := svc.CleanAllExpiredRestore(ctx, GetGoroutineLimit("clean_expired_restore")); err != nil {
+		return errors.Wrap(err, "clean all expired restore failed")
+	}
+	logger.Info("clean expired restore success")
 	return nil
 
 }

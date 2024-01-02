@@ -10,20 +10,34 @@
 package metrics
 
 import (
-	"context"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
+	// API request metrics
+	apiRequestCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "bmw_api_request_count",
+			Help: "api request count",
+		},
+		[]string{"method", "path", "status"},
+	)
+	apiRequestCost = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "bmw_api_request_cost",
+			Help: "api request cost time",
+		},
+		[]string{"method", "path"},
+	)
+
+	// task metrics
 	taskCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "task_count",
+			Name: "bmw_task_count",
 			Help: "task run count",
 		},
 		[]string{"name", "status"}, // name 包含类型
@@ -31,18 +45,41 @@ var (
 
 	taskCostTime = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "task_cost",
+			Name: "bmw_task_cost",
 			Help: "task run cost time",
 		},
 		[]string{"name"},
 	)
 )
 
+// RequestApiCount request api count metric
+func RequestApiCount(method, apiPath, status string) error {
+	metric, err := apiRequestCount.GetMetricWithLabelValues(method, apiPath, status)
+	if err != nil {
+		logger.Errorf("prom get request api count metric failed: %v", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// RequestApiCostTime cost time of request api
+func RequestApiCostTime(method, apiPath string, startTime time.Time) error {
+	duringTime := time.Now().Sub(startTime).Seconds()
+	metric, err := apiRequestCost.GetMetricWithLabelValues(method, apiPath)
+	if err != nil {
+		logger.Errorf("prom get request api time metric failed: %v", err)
+		return err
+	}
+	metric.Set(duringTime)
+	return nil
+}
+
 // RegisterTaskCount registered task count
 func RegisterTaskCount(taskName string) error {
 	metric, err := taskCount.GetMetricWithLabelValues(taskName, "registered")
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get register task count metric failed: %s", err)
 		return err
 	}
 	metric.Inc()
@@ -53,7 +90,7 @@ func RegisterTaskCount(taskName string) error {
 func EnqueueTaskCount(taskName string) error {
 	metric, err := taskCount.GetMetricWithLabelValues(taskName, "enqueue")
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get enqueue task count metric failed: %s", err)
 		return err
 	}
 	metric.Inc()
@@ -64,7 +101,7 @@ func EnqueueTaskCount(taskName string) error {
 func RunTaskCount(taskName string) error {
 	metric, err := taskCount.GetMetricWithLabelValues(taskName, "received")
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get run task count metric failed: %s", err)
 		return err
 	}
 	metric.Inc()
@@ -75,7 +112,7 @@ func RunTaskCount(taskName string) error {
 func RunTaskSuccessCount(taskName string) error {
 	metric, err := taskCount.GetMetricWithLabelValues(taskName, "success")
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get run task success count metric failed: %s", err)
 		return err
 	}
 	metric.Inc()
@@ -86,7 +123,7 @@ func RunTaskSuccessCount(taskName string) error {
 func RunTaskFailureCount(taskName string) error {
 	metric, err := taskCount.GetMetricWithLabelValues(taskName, "failure")
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get run task failure count metric failed: %s", err)
 		return err
 	}
 	metric.Inc()
@@ -94,73 +131,31 @@ func RunTaskFailureCount(taskName string) error {
 }
 
 // RunTaskCostTime cost time of task, duration(ms)
-func RunTaskCostTime(taskName string, duration float64) error {
+func RunTaskCostTime(taskName string, startTime time.Time) error {
+	duringTime := time.Now().Sub(startTime).Seconds()
 	metric, err := taskCostTime.GetMetricWithLabelValues(taskName)
 	if err != nil {
-		logger.Errorf("prom get metric failed: %s", err)
+		logger.Errorf("prom get run task count time metric failed: %s", err)
 		return err
 	}
-	metric.Set(duration)
+	metric.Set(duringTime)
 	return nil
 }
 
-type Metric struct {
-	TaskName   string  `json:"task_name"`
-	Value      float64 `json:"value"`
-	MetricType string  `json:"metric_type"`
-}
-
-// PublishMetric 将metrics发布到redis
-func PublishMetric(m Metric) {
-	redis := rdb.GetRDB()
-	data, err := jsonx.MarshalString(m)
-	if err != nil {
-		logger.Errorf("marshal metrics [%v] failed, %v", m, err)
-		return
-	}
-	if err := redis.Client().Publish(context.Background(), config.BrokerRedisMetricPublishKey, data).Err(); err != nil {
-		logger.Errorf("publish metrics [%v] failed, %v", data, err)
+// 设置 api 请求的耗时
+func SetApiRequestCostTime(method, apiPath string) func() {
+	start := time.Now()
+	return func() {
+		RequestApiCostTime(method, apiPath, start)
 	}
 }
 
-// SubscribeMetric 通过redis订阅metrics并注册到普罗
-func SubscribeMetric(ctx context.Context) {
-	redis := rdb.GetRDB()
-	sub := redis.Client().Subscribe(ctx, config.BrokerRedisMetricPublishKey)
-	for {
-		select {
-		case msg := <-sub.Channel():
-			var m Metric
-			err := jsonx.UnmarshalString(msg.Payload, &m)
-			if err != nil {
-				logger.Errorf("unmarshal metric [%s] failed, %v", msg.Payload, err)
-				continue
-			}
-			switch m.MetricType {
-			case "RegisterTaskCount":
-				err = RegisterTaskCount(m.TaskName)
-			case "EnqueueTaskCount":
-				err = EnqueueTaskCount(m.TaskName)
-			case "RunTaskCount":
-				err = RunTaskCount(m.TaskName)
-			case "RunTaskSuccessCount":
-				err = RunTaskSuccessCount(m.TaskName)
-			case "RunTaskFailureCount":
-				err = RunTaskFailureCount(m.TaskName)
-			case "RunTaskCostTime":
-				err = RunTaskCostTime(m.TaskName, m.Value)
-			default:
-				logger.Errorf("not support metric type, %s", m.MetricType)
-			}
-			if err != nil {
-				logger.Errorf("record metrics failed, %v", err)
-			}
-		case <-ctx.Done():
-			logger.Infof("metric subscribe stopped")
-			return
-		}
+// 设置任务的耗时
+func SetTaskCostTime(taskName string) func() {
+	start := time.Now()
+	return func() {
+		RunTaskCostTime(taskName, start)
 	}
-
 }
 
 var Registry *prometheus.Registry
@@ -168,5 +163,5 @@ var Registry *prometheus.Registry
 func init() {
 	// register the metrics
 	Registry = prometheus.NewRegistry()
-	Registry.MustRegister(taskCount, taskCostTime)
+	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime)
 }

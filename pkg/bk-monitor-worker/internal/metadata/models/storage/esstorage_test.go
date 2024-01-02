@@ -21,7 +21,6 @@ import (
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
@@ -47,8 +46,7 @@ var ess = ESStorage{
 
 // TestESStorage_IndexBody 从db中构造index的body
 func TestESStorage_IndexBody(t *testing.T) {
-	config.FilePath = "../../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
 	patchESVersion := gomonkey.ApplyFunc(ESStorage.GetEsVersion, func(storage ESStorage) string {
 		return "7"
 	})

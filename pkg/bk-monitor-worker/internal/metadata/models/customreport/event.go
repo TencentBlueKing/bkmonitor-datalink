@@ -118,7 +118,7 @@ func (e Event) ModifyEventList(eventInfoList map[string][]string) error {
 			eventObj := event.(Event)
 			// 存在则合并dimensions
 			newDimensionList := append(eventObj.GetDimensionList(), dimensionList...)
-			mergedDimensionList := slicex.StringSet2List(slicex.StringList2Set(newDimensionList))
+			mergedDimensionList := slicex.RemoveDuplicate(&newDimensionList)
 			eventObj.EventName = eventName
 			eventObj.LastModifyTime = time.Now()
 			err := eventObj.SetDimensionList(mergedDimensionList)

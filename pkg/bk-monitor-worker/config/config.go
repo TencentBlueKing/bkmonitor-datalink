@@ -60,8 +60,6 @@ var (
 	BrokerRedisDialTimeout time.Duration
 	// BrokerRedisReadTimeout broker redis dial timeout
 	BrokerRedisReadTimeout time.Duration
-	// BrokerRedisMetricPublishKey key for metrics publish/subscribe
-	BrokerRedisMetricPublishKey string
 
 	// StorageRedisMode mode of storage redis
 	StorageRedisMode string
@@ -177,14 +175,20 @@ var (
 	// SchedulerDaemonTaskTaskWatcherInterval interval of scheduler task watcher
 	SchedulerDaemonTaskTaskWatcherInterval time.Duration
 
-	// HttpGinMode http mode
-	HttpGinMode string
-	// HttpListenHost http listen host
-	HttpListenHost string
-	// HttpListenPort http listen port
-	HttpListenPort int
-	// HttpEnabledPprof enabled http pprof
-	HttpEnabledPprof bool
+	// GinMode http mode
+	GinMode string
+	// TaskListenHost http listen host
+	TaskListenHost string
+	// TaskListenPort http listen port
+	TaskListenPort int
+	// ControllerListenHost http listen host
+	ControllerListenHost string
+	// TaskListenPort http listen port
+	ControllerListenPort int
+	// TaskListenHost http listen host
+	WorkerListenHost string
+	// TaskListenPort http listen port
+	WorkerListenPort int
 
 	// AesKey project aes key
 	AesKey string
@@ -203,20 +207,13 @@ var (
 	BkApiBcsApiGatewayDomain string
 	// BkApiBcsApiGatewayToken bk-apigw bcs token
 	BkApiBcsApiGatewayToken string
+	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
+	BkApiNodemanApiBaseUrl string
+	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
+	BkApiBkdataApiBaseUrl string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
-
-	// TestStorageMysqlHost test-mysql host
-	TestStorageMysqlHost string
-	// TestStorageMysqlPort test-mysql port
-	TestStorageMysqlPort int
-	// TestStorageMysqlUser test-mysql user
-	TestStorageMysqlUser string
-	// TestStorageMysqlPassword test-mysql password
-	TestStorageMysqlPassword string
-	// TestStorageMysqlDbName test-mysql db name
-	TestStorageMysqlDbName string
 )
 
 func initVariables() {
@@ -245,7 +242,6 @@ func initVariables() {
 	BrokerRedisDatabase = GetValue("broker.redis.db", 0)
 	BrokerRedisDialTimeout = GetValue("broker.redis.dialTimeout", 10*time.Second, viper.GetDuration)
 	BrokerRedisReadTimeout = GetValue("broker.redis.readTimeout", 10*time.Second, viper.GetDuration)
-	BrokerRedisMetricPublishKey = GetValue("broker.redis.metricPublishKey", "bmw_metric_publish")
 
 	/* Storage Redis 配置 */
 	StorageRedisMode = GetValue("store.redis.mode", "standalone")
@@ -348,10 +344,13 @@ func initVariables() {
 		Scheduler常驻任务配置 ----- END
 	*/
 
-	HttpGinMode = GetValue("service.http.mode", "release")
-	HttpListenHost = GetValue("service.http.listen", "127.0.0.1")
-	HttpListenPort = GetValue("service.http.port", 10213)
-	HttpEnabledPprof = GetValue("service.http.enablePprof", true)
+	GinMode = GetValue("service.mode", "release")
+	TaskListenHost = GetValue("service.task.listen", "127.0.0.1")
+	TaskListenPort = GetValue("service.task.port", 10211)
+	ControllerListenHost = GetValue("service.controller.listen", "127.0.0.1")
+	ControllerListenPort = GetValue("service.controller.port", 10212)
+	WorkerListenHost = GetValue("service.worker.listen", "127.0.0.1")
+	WorkerListenPort = GetValue("service.worker.port", 10213)
 
 	AesKey = GetValue("aes.key", "")
 
@@ -362,14 +361,10 @@ func initVariables() {
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
 	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
 	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
+	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.NodmanApiBaseUrl", "")
+	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.BkdataApiBaseUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
-
-	TestStorageMysqlHost = GetValue("test.store.mysql.host", "127.0.0.1")
-	TestStorageMysqlPort = GetValue("test.store.mysql.port", 3306)
-	TestStorageMysqlUser = GetValue("test.store.mysql.user", "root")
-	TestStorageMysqlPassword = GetValue("test.store.mysql.password", "")
-	TestStorageMysqlDbName = GetValue("test.store.mysql.dbName", "")
 }
 
 var (
@@ -433,5 +428,6 @@ func InitConfig() {
 
 	initVariables()
 	initMetadataVariables()
+	initClusterMetricVariables()
 	initApmVariables()
 }

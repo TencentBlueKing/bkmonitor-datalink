@@ -10,6 +10,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,11 +22,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
 
 func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        99,
@@ -37,6 +38,7 @@ func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&clusterInfo, "cluster_id = ?", 99)
 	err := clusterInfo.Create(db)
 	assert.NoError(t, err)
@@ -55,4 +57,20 @@ func TestKafkaStorageSvc_ConsulConfig(t *testing.T) {
 	assert.NoError(t, err)
 	assert.JSONEq(t, storageConfigStr, `{"partition":1,"topic":"kafka_topic"}`)
 
+}
+
+func TestKafkaStorageSvc_CreateTable(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+
+	db := mysql.GetDBSession().DB
+	tableId := "table_id_for_kafka_create_table"
+	db.Delete(&storage.KafkaStorage{}, "table_id = ?", tableId)
+	err := NewKafkaStorageSvc(nil).CreateTable(tableId, false, optionx.NewOptions(nil))
+	assert.NoError(t, err)
+	var record storage.KafkaStorage
+	err = storage.NewKafkaStorageQuerySet(db).TableIDEq(tableId).One(&record)
+	assert.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("0%s_storage__%s", config.BkApiAppCode, tableId), record.Topic)
+	assert.Equal(t, int64(1800000), record.Retention)
+	assert.Equal(t, uint(1), record.Partition)
 }

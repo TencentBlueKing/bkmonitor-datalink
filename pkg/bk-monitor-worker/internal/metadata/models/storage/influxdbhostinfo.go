@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -38,16 +39,27 @@ type InfluxdbHostInfo struct {
 	Username        string  `gorm:"size:64" json:"username;"`
 	Password        string  `gorm:"password" json:"password"`
 	Description     string  `gorm:"size:256" json:"description"`
-	Status          bool    `gorm:"default:false" json:"status"`
-	GrpcPort        uint    `gorm:"default:8090" json:"grpc_port"`
-	BackupRateLimit float64 `gorm:"default:0" json:"backup_rate_limit"`
-	ReadRateLimit   float64 `gorm:"default:0" json:"read_rate_limit"`
-	Protocol        string  `gorm:"default:http" json:"protocol"`
+	Status          bool    `gorm:"column:status" json:"status"`
+	GrpcPort        uint    `gorm:"column:grpc_port" json:"grpc_port"`
+	BackupRateLimit float64 `gorm:"column:backup_rate_limit" json:"backup_rate_limit"`
+	ReadRateLimit   float64 `gorm:"column:read_rate_limit" json:"read_rate_limit"`
+	Protocol        string  `gorm:"column:protocol" json:"protocol"`
 }
 
 // TableName 用于设置表的别名
 func (InfluxdbHostInfo) TableName() string {
 	return "metadata_influxdbhostinfo"
+}
+
+// BeforeCreate 配置默认字段
+func (i *InfluxdbHostInfo) BeforeCreate(tx *gorm.DB) error {
+	if i.Protocol == "" {
+		i.Protocol = "http"
+	}
+	if i.GrpcPort == 0 {
+		i.GrpcPort = 8090
+	}
+	return nil
 }
 
 // GetConsulConfig 生成consul配置信息

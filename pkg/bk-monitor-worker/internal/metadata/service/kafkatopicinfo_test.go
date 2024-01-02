@@ -13,25 +13,72 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/IBM/sarama"
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestKafkaTopicInfoSvc_CreateInfo(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	var bkDataId uint = 11223344
 	mysql.GetDBSession().DB.Delete(storage.KafkaTopicInfo{}, "bk_data_id = ?", bkDataId)
-	topicInfo, err := KafkaTopicInfoSvc{nil}.CreateInfo(bkDataId, "", 2, nil, nil, nil)
+	topicInfo, err := NewKafkaTopicInfoSvc(nil).CreateInfo(bkDataId, "", 0, nil, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("0bkmonitor_%v0", bkDataId), topicInfo.Topic)
-	assert.Equal(t, 2, topicInfo.Partition)
+	assert.Equal(t, 1, topicInfo.Partition)
 	// exist error
 	_, err = KafkaTopicInfoSvc{nil}.CreateInfo(bkDataId, "", 2, nil, nil, nil)
 	assert.Error(t, err)
 
+}
+
+func TestKafkaTopicInfoSvc_RefreshTopicInfo(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	topicInfo := storage.KafkaTopicInfo{
+		BkDataId: 1223322,
+		Topic:    "kafka_topic_info_test",
+	}
+	db.Delete(&topicInfo, "topic = ?", topicInfo.Topic)
+	err := topicInfo.Create(db)
+	assert.NoError(t, err)
+	ds := resulttable.DataSource{
+		BkDataId:       topicInfo.BkDataId,
+		DataName:       "kafka_topic_info_test",
+		MqClusterId:    12345,
+		IsCustomSource: true,
+		IsEnable:       true,
+	}
+	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
+	err = ds.Create(db)
+	assert.NoError(t, err)
+
+	cluster := storage.ClusterInfo{
+		ClusterID:   ds.MqClusterId,
+		ClusterName: "kafka_topic_test_cluster",
+		ClusterType: models.StorageTypeKafka,
+		DomainName:  "127.0.0.1",
+		Port:        9092,
+		Schema:      "http",
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err = cluster.Create(db)
+	assert.NoError(t, err)
+
+	mockerClient := &mocker.KafkaClientMocker{PartitionMap: map[string][]int32{topicInfo.Topic: {0, 1, 2}}}
+	gomonkey.ApplyFunc(ClusterInfoSvc.GetKafkaClient, func(svc ClusterInfoSvc) (sarama.Client, error) {
+		return mockerClient, nil
+	})
+	err = NewKafkaTopicInfoSvc(&topicInfo).RefreshTopicInfo()
+	assert.NoError(t, err)
+	var result storage.KafkaTopicInfo
+	err = storage.NewKafkaTopicInfoQuerySet(db).TopicEq(topicInfo.Topic).One(&result)
+	assert.NoError(t, err)
+	assert.True(t, len(mockerClient.PartitionMap[result.Topic]) == result.Partition)
 }

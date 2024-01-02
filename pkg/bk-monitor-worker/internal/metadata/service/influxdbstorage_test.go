@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -24,8 +23,7 @@ import (
 )
 
 func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
-	config.FilePath = "../../../bmw.yaml"
-	mocker.PatchDBSession()
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        99,
@@ -37,8 +35,19 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
+	defer db.Close()
 	db.Delete(&clusterInfo, "cluster_id = ?", 99)
 	err := clusterInfo.Create(db)
+	assert.NoError(t, err)
+
+	p := storage.InfluxdbProxyStorage{
+		ProxyClusterId:      2,
+		InstanceClusterName: "name",
+		ServiceName:         "svc_name",
+		IsDefault:           true,
+	}
+	db.Delete(&p, "instance_cluster_name = ?", p.InstanceClusterName)
+	err = p.Create(db)
 	assert.NoError(t, err)
 	is := &storage.InfluxdbStorage{
 		TableID:                "influxdb_table_id",
@@ -53,7 +62,7 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 		UseDefaultRp:           false,
 		PartitionTag:           "",
 		VmTableId:              "",
-		InfluxdbProxyStorageId: 1,
+		InfluxdbProxyStorageId: p.ID,
 	}
 
 	svc := NewInfluxdbStorageSvc(is)

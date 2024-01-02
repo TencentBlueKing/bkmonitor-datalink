@@ -11,6 +11,8 @@ package customreport
 
 import (
 	"time"
+
+	"github.com/jinzhu/gorm"
 )
 
 // CustomGroupBase : custom group base info for time series、event
@@ -18,13 +20,26 @@ type CustomGroupBase struct {
 	BkDataID           uint      `json:"bk_data_id" gorm:"index"`
 	BkBizID            int       `json:"bk_biz_id" gorm:"index"`
 	TableID            string    `json:"table_id" gorm:"size:128;index"`
-	MaxRate            int       `json:"max_rate" gorm:"default:-1"`
-	Label              string    `json:"label" gorm:"size:128;default:other"`
-	IsEnable           bool      `json:"is_enable" gorm:"default:true"`
+	MaxRate            int       `json:"max_rate" gorm:"column:max_rate"`
+	Label              string    `json:"label" gorm:"size:128"`
+	IsEnable           bool      `json:"is_enable" gorm:"column:is_enable"`
 	IsDelete           bool      `json:"is_delete" gorm:"column:is_delete"`
 	Creator            string    `json:"creator" gorm:"size:255"`
 	CreateTime         time.Time `json:"create_time"`
 	LastModifyUser     string    `json:"last_modify_user" gorm:"size:32"`
 	LastModifyTime     time.Time `json:"last_modify_time"`
 	IsSplitMeasurement bool      `json:"is_split_measurement" gorm:"column:is_split_measurement"`
+}
+
+// BeforeCreate 默认值
+func (c *CustomGroupBase) BeforeCreate(tx *gorm.DB) error {
+	if c.MaxRate == 0 {
+		c.MaxRate = -1
+	}
+	if c.Label == "" {
+		c.Label = "other"
+	}
+	c.CreateTime = time.Now()
+	c.LastModifyTime = time.Now()
+	return nil
 }

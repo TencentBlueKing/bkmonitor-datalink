@@ -1,10 +1,15 @@
 # ================================ Http配置  ===================================
 service:
-  http:
-    mode: release
+  mode: release
+  task:
+    listen: 127.0.0.1
+    port: 10211
+  controller:
+    listen: 127.0.0.1
+    port: 10212
+  worker:
     listen: 127.0.0.1
     port: 10213
-    enabledPprof: true
 
 # ================================ Broker配置  ===================================
 broker:
@@ -89,16 +94,6 @@ log:
 aes:
   key: ""
 
-# ================================ 测试配置  ===================================
-test:
-  store:
-    mysql:
-      host: 127.0.0.1
-      port: 3306
-      user: root
-      password: 123456
-      dbName: bkmonitor_api
-
 # ================================ worker配置  ===================================
 worker:
   concurrency: 0
@@ -134,7 +129,7 @@ taskConfig:
       metricKeyPrefix: bkmonitor:metrics_
       metricDimensionKeyPrefix: bkmonitor:metric_dimensions_
       maxMetricsFetchStep: 500
-      timeSeriesMetricExpiredDays: 30
+      timeSeriesMetricExpiredSeconds: 2592000
     bcs:
       enableBcsGray: false
       clusterBkEnvLabel: ""

@@ -56,14 +56,14 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	if count == 0 {
-		return nil, fmt.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
+		return nil, errors.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
 	}
 	count, err = resulttable.NewLabelQuerySet(db).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
 	if err != nil {
 		return nil, err
 	}
 	if count == 0 {
-		return nil, fmt.Errorf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel)
+		return nil, errors.Errorf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel)
 	}
 	// 判断参数是否符合预期
 	// 数据源名称是否重复
@@ -72,7 +72,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	if count != 0 {
-		return nil, fmt.Errorf("data_name [%s] is already exists, maybe something go wrong", dataName)
+		return nil, errors.Errorf("data_name [%s] is already exists, maybe something go wrong", dataName)
 	}
 	// 如果集群信息无提供，则使用默认的MQ集群信息
 	var mqClusterObj storage.ClusterInfo
@@ -88,7 +88,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 	}
 	bkDataId, err := d.ApplyForDataIdFromGse(operator)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("apply for data_id error, %s", err))
+		return nil, errors.Wrap(err, "apply for data_id error")
 	}
 	if transferClusterId == "" {
 		transferClusterId = "default"
@@ -231,13 +231,13 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 		"space_type_id":       d.SpaceTypeId,
 		"space_uid":           d.SpaceUid,
 	}
-
+	db := mysql.GetDBSession().DB
 	// 获取ResultTable的配置
 	if withRtInfo {
 		var resultTableInfoList []interface{}
 		var resultTableIdList []string
 		var dataSourceRtList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).
 			BkDataIdEq(d.BkDataId).All(&dataSourceRtList); err != nil {
 			return nil, err
 		}
@@ -248,7 +248,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 			resultTableIdList = append(resultTableIdList, t.TableId)
 		}
 		var resultTableList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdIn(resultTableIdList...).
+		if err := resulttable.NewResultTableQuerySet(db).TableIdIn(resultTableIdList...).
 			IsDeletedEq(false).IsEnableEq(true).All(&resultTableList); err != nil {
 			return nil, err
 		}
@@ -323,7 +323,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return err
 	}
 	if mqCluster.GseStreamToId == -1 {
-		return fmt.Errorf("dataid [%v] mq is not inited", d.BkDataId)
+		return errors.Errorf("dataid [%v] mq is not inited", d.BkDataId)
 	}
 	gseApi, err := api.GetGseApi()
 	if err != nil {
@@ -339,7 +339,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		},
 	}).SetResult(&resp).Request()
 	if err != nil {
-		logger.Errorf("data_id [%v] query gse route failed, error: %v", err)
+		logger.Errorf("data_id [%v] query gse route failed, error: %v", d.BkDataId, err)
 		return err
 	}
 	if resp.Data == nil {

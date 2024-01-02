@@ -11,6 +11,7 @@ package stringx
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"unsafe"
 )
@@ -51,4 +52,42 @@ func SplitString(str string) []string {
 // SplitStringByDot 点分割字符串
 func SplitStringByDot(str string) []string {
 	return strings.Split(str, ".")
+}
+
+// LimitLengthPrefix 从前向后截取一定长度字符串
+func LimitLengthPrefix(input string, length int) string {
+	if length <= 0 {
+		return ""
+	}
+	if length > len(input) {
+		return input
+	}
+	return input[:length]
+}
+
+// LimitLengthSuffix 从后向前截取一定长度字符串
+func LimitLengthSuffix(input string, length int) string {
+	if length <= 0 {
+		return ""
+	}
+	index := len(input) - length
+	if index < 0 {
+		index = 0
+	}
+	return input[index:]
+}
+
+var (
+	matchFirstCap = regexp.MustCompile("([a-z0-9])([A-Z])")
+	matchAllCap   = regexp.MustCompile("([A-Z]+)([A-Z][a-z])")
+)
+
+// CamelToSnake 转换驼峰格式为下划线
+func CamelToSnake(s string) string {
+	// 先替换，比如把 "IDNumber" 替换为 "ID_Number"
+	snake := matchAllCap.ReplaceAllString(s, "${1}_${2}")
+	// 再替换，例如把 "ID_Number" 替换为 "i_d_number"
+	snake = matchFirstCap.ReplaceAllString(snake, "${1}_${2}")
+	// 将字符串转换为小写并返回
+	return strings.ToLower(snake)
 }

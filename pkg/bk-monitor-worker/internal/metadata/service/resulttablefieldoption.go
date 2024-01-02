@@ -10,10 +10,10 @@
 package service
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -63,7 +63,7 @@ func (ResultTableFieldOptionSvc) CreateOption(tableId string, fieldName string, 
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name)
+		return errors.Errorf("table_id [%s] field_name [%s] already has option [%s]", tableId, fieldName, name)
 	}
 
 	valueStr, valueType, err := models.ParseOptionValue(value)

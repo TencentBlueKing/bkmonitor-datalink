@@ -10,29 +10,36 @@
 package mocker
 
 import (
-	"fmt"
+	"time"
 
-	"github.com/agiledragon/gomonkey/v2"
-	"github.com/jinzhu/gorm"
+	"github.com/IBM/sarama"
+	client "github.com/influxdata/influxdb1-client/v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
-func PatchDBSession() *gomonkey.Patches {
+func InitTestDBConfig(filePath string) {
+	config.FilePath = filePath
 	config.InitConfig()
-	return gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open("mysql", fmt.Sprintf(
-			"%s:%s@tcp(%s:%v)/%s?&parseTime=True&loc=Local",
-			config.TestStorageMysqlUser,
-			config.TestStorageMysqlPassword,
-			config.TestStorageMysqlHost,
-			config.TestStorageMysqlPort,
-			config.TestStorageMysqlDbName,
-		))
-		if err != nil {
-			panic(err)
-		}
-		return &mysql.DBSession{DB: db}
-	})
 }
+
+type KafkaClientMocker struct {
+	sarama.Client
+	PartitionMap map[string][]int32
+}
+
+func (k *KafkaClientMocker) Partitions(topic string) ([]int32, error) {
+	return k.PartitionMap[topic], nil
+}
+
+func (k *KafkaClientMocker) Close() error { return nil }
+
+type InfluxDBClientMocker struct {
+	client.Client
+}
+
+func (i *InfluxDBClientMocker) Ping(timeout time.Duration) (time.Duration, string, error) {
+	return 0, "", nil
+}
+
+func (i *InfluxDBClientMocker) Close() error { return nil }

@@ -10,12 +10,14 @@
 package customreport
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/jinzhu/gorm"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
@@ -34,6 +36,12 @@ type TimeSeriesMetric struct {
 	LastModifyTime time.Time `json:"last_modify_time" gorm:"column:last_modify_time"`
 	LastIndex      uint      `json:"last_index"`
 	Label          string    `json:"label" gorm:"size:255"`
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (s *TimeSeriesMetric) BeforeCreate(tx *gorm.DB) error {
+	s.LastModifyTime = time.Now()
+	return nil
 }
 
 // TableName table alias name
@@ -83,7 +91,7 @@ func (tsm *TimeSeriesMetric) UpdateMetrics(MetricInfoList []map[string]interface
 		dbName := stringx.SplitStringByDot(tsGroup.TableID)[0]
 		// 处理 tag list
 		var objTagList []string
-		json.Unmarshal([]byte(dbName), &objTagList)
+		jsonx.Unmarshal([]byte(dbName), &objTagList)
 		oldTagList := slicex.StringList2Set(objTagList)
 		newTagList := slicex.StringList2Set(tagList)
 		resultTagList := oldTagList.Union(newTagList)

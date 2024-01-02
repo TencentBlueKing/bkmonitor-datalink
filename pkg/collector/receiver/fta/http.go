@@ -92,10 +92,10 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
-	// 从请求中获取pluginId
+	// 从请求路径中获取 pluginId
 	pluginId := mux.Vars(req)["pluginId"]
 
-	// 从请求头中获取token
+	// 从请求头中获取 token
 	token := req.Header.Get(tokenKey)
 	if token == "" {
 		token = req.Header.Get(ftaTokenKey)
@@ -119,7 +119,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// 将数据转换为map
+	// 将数据转换为 map
 	var data map[string]interface{}
 	err = json.Unmarshal(buf, &data)
 	if err != nil {
@@ -129,7 +129,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// 将headers放入data中
+	// 将 headers 放入 data 中
 	httpHeaders := make(map[string]string)
 	for k, v := range req.Header {
 		if len(v) != 0 && strings.ToUpper(k) != tokenKey && strings.ToUpper(k) != ftaTokenKey {
@@ -140,7 +140,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		data["__http_headers__"] = httpHeaders
 	}
 
-	// 将查询参数放入data中
+	// 将查询参数放入 data 中
 	httpQueryParams := make(map[string]string)
 	for k, v := range req.URL.Query() {
 		if len(v) != 0 && k != tokenParamsKey {

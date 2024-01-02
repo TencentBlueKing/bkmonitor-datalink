@@ -111,7 +111,7 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 	return nil, err
 }
 
-// processFta Fta Token解析
+// processFta Fta Token 解析
 func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
@@ -121,7 +121,7 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 
 	pluginId := record.Token.AppName
 
-	// token解密
+	// token 解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode token")
@@ -129,12 +129,12 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 
 	token := record.Token
 
-	// 如果存在插件id，判断是否为该插件的token
+	// 如果存在插件 ID ，判断是否为该插件的 token
 	if pluginId != "" && pluginId != token.AppName {
 		return errors.New("reject invalid pluginId")
 	}
 
-	// 检查业务ID及DataID
+	// 检查业务 ID 及 DataID
 	if token.BizId == 0 {
 		return errors.New("reject invalid bizId")
 	}

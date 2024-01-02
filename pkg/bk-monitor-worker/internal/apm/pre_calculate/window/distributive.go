@@ -107,6 +107,10 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 		observers:       make(map[observer]struct{}, specificConfig.subWindowSize),
 		ctx:             ctx,
 		saveRequestChan: saveReqChan,
+		logger: monitorLogger.With(
+			zap.String("location", "window"),
+			zap.String("dataId", dataId),
+		),
 	}
 
 	// Register sub-windows Event
@@ -119,17 +123,14 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 		window.register(w)
 	}
 
+	window.logger.Infof("create %d sub-windows", len(subWindowMapping))
 	window.subWindows = subWindowMapping
-	window.logger = monitorLogger.With(
-		zap.String("location", "window"),
-		zap.String("dataId", dataId),
-	)
 	return window
 }
 
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 	hashValue := xxhash.Sum64([]byte(uni))
-	a := int(hashValue) % 10
+	a := int(hashValue) % w.config.subWindowSize
 	return w.subWindows[a]
 }
 

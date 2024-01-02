@@ -35,13 +35,13 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	record := new(SystemEventData)
 	err := d.To(record)
 	if err != nil {
-		logging.Errorf("system event parse payload %v failed: %v", d, err)
+		logging.Errorf("%s parse payload %v failed: %v", p, d, err)
 		p.CounterFails.Inc()
 		return
 	}
 
 	if record.Values == nil {
-		logging.Errorf("system event parse payload failed: values is empty")
+		logging.Errorf("%s parse payload failed: values is empty", p)
 		p.CounterFails.Inc()
 		return
 	}
@@ -112,7 +112,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			logging.Errorf("system event fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", ip, cloudID, agentId)
+			logging.Errorf("%s fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", p, ip, cloudID, agentId)
 			continue
 		}
 

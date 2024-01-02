@@ -216,19 +216,7 @@ func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
 				continue
 			}
 
-			// 更改为单指标单表
-			replaceLabels := make(ReplaceLabels)
-
-			oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-			newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
 			query.IsSingleMetric = true
-
-			replaceLabels["__name__"] = ReplaceLabel{
-				Source: oldMetric,
-				Target: newMetric,
-			}
-
-			query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)
 		}
 	}
 
@@ -292,14 +280,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 					}
 
 					if !query.IsSingleMetric {
-						oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-						newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
 						query.IsSingleMetric = true
-
-						replaceLabels["__name__"] = ReplaceLabel{
-							Source: oldMetric,
-							Target: newMetric,
-						}
 					}
 
 					query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)

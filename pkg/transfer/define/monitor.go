@@ -65,13 +65,6 @@ var (
 		Help:      "Processor dropped payloads",
 	}, []string{"id", "pipeline"})
 
-	// MonitorProcessorSkipped pipeline 处理器跳过计数器
-	MonitorProcessorSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: AppName,
-		Name:      "pipeline_processor_skipped_total",
-		Help:      "Processor skipped payloads",
-	}, []string{"id", "pipeline"})
-
 	// MonitorProcessorHandleDuration pipeline 处理器处理耗时
 	MonitorProcessorHandleDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: AppName,
@@ -144,7 +137,6 @@ func init() {
 		MonitorFrontendDropped,
 		MonitorProcessorHandled,
 		MonitorProcessorDropped,
-		MonitorProcessorSkipped,
 		MonitorProcessorHandleDuration,
 		MonitorBackendHandled,
 		MonitorBackendDropped,

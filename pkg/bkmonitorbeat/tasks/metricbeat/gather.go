@@ -44,10 +44,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	if g.tool == nil {
 		g.tool = new(BKMetricbeatTool)
-		err := g.tool.Init(g.config)
+		err := g.tool.Init(g.config, g.GetGlobalConfig())
 		if err != nil {
 			logger.Errorf("metricbeat init failed, err:%v", err)
-			tasks.SendFailEvent(g.config.GetDataID(), e)
 			g.tool = nil
 			return
 		}
@@ -57,7 +56,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	err := g.tool.Run(valCtx, e)
 	if err != nil {
 		logger.Errorf("metricbeat run failed, err: %v", err)
-		tasks.SendFailEvent(g.config.GetDataID(), e)
 		return
 	}
 }

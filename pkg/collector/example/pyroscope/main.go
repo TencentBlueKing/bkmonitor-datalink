@@ -7,12 +7,51 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package auto
+package main
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
+import (
+	"os"
+	"os/signal"
+	"time"
 
-// NewPayloadDecoder
-func NewPayloadDecoder() *etl.PayloadDecoder {
-	return etl.NewPayloadDecoder().
-		GroupSplitHandler(false, "group_info")
+	"github.com/grafana/pyroscope-go"
+)
+
+const URL = "http://localhost:10205/pyroscope/"
+
+func startPyroscope() {
+	_, _ = pyroscope.Start(pyroscope.Config{
+		ApplicationName: "fake_collector_local_app",
+		ServerAddress:   URL,
+		Logger:          pyroscope.StandardLogger,
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+		},
+	})
+}
+
+func fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n-1) + fib(n-2)
+}
+
+func main() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	go startPyroscope()
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c:
+			return
+		case <-ticker.C:
+			fib(30)
+		}
+	}
 }

@@ -9,32 +9,9 @@
 
 package metadata
 
-import (
-	"fmt"
-
-	"github.com/prometheus/prometheus/model/labels"
-)
-
 type VmExpand struct {
-	ResultTableGroup      map[string][]string
-	MetricAliasMapping    map[string]string
+	ResultTableList       []string
 	MetricFilterCondition map[string]string
-	LabelsMatcher         map[string][]*labels.Matcher
 	ConditionNum          int
-}
-
-// MetricResultTableGroup 合并 resultTable 和 metric
-func (e *VmExpand) MetricResultTableGroup() (map[string][]string, error) {
-	if len(e.ResultTableGroup) == 0 {
-		return nil, fmt.Errorf("vm query result table is empty")
-	}
-	metricResultTableGroup := make(map[string][]string, len(e.ResultTableGroup))
-	for name, rtg := range e.ResultTableGroup {
-		if metric, ok := e.MetricAliasMapping[name]; ok {
-			metricResultTableGroup[metric] = rtg
-		} else {
-			return nil, fmt.Errorf("metric is not found: %s in %+v", name, e.MetricAliasMapping)
-		}
-	}
-	return metricResultTableGroup, nil
+	ClusterName           string
 }

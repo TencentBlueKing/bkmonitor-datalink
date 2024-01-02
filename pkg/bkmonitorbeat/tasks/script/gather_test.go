@@ -23,8 +23,7 @@ import (
 )
 
 type OutPutItem struct {
-	expectedErrCode define.BeatErrorCode
-	expectedOut     []common.MapStr
+	expectedOut []common.MapStr
 }
 
 type TestItem struct {
@@ -71,7 +70,6 @@ func TestGather_KeepOneDimension(t *testing.T) {
 					sys_net{devicename="lo"} 123
 					sys_net{devicename="eth0",supperlier="Dell"} 456`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"mountpoint": "/usr/local"}, "metrics": common.MapStr{"sys_disk_size": float64(8.52597957704355), "sys_disk_used": float64(25.52)}, "catched": 0},
 					{"dimensions": common.MapStr{"devicename": "vda"}, "metrics": common.MapStr{"sys_device": float64(1)}, "catched": 0},
@@ -87,11 +85,6 @@ func TestGather_KeepOneDimension(t *testing.T) {
 // TestMultiScriptGather 预期行为：输出多行且去重
 func TestGather_Run(t *testing.T) {
 	gather := newGather()
-
-	//event := script.NewEvent(gather)
-	//event.ScriptFail(define.BeatErrScriptFormatOutputError, "failed")
-	//errOutputEvent := event.AsMapStr()
-
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
@@ -100,9 +93,9 @@ func TestGather_Run(t *testing.T) {
 			name:  "用例一、单条数据，预期情况为正常输出",
 			input: `sys_disk_size{mountpoint="/usr/local"} 8.52597957704355`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"mountpoint": "/usr/local"}, "metrics": common.MapStr{"sys_disk_size": float64(8.52597957704355)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -114,11 +107,11 @@ func TestGather_Run(t *testing.T) {
 		test1{L0="123",L1="45ee"} 1234
 		test2{T1="aa",T2="bb"} 1234555`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"L0": "123", "L1": "45ee"}, "metrics": common.MapStr{"test1": float64(1234)}, "catched": 0},
 					{"dimensions": common.MapStr{"L0": "124", "L1": "45ed"}, "metrics": common.MapStr{"test1": float64(12345)}, "catched": 0},
 					{"dimensions": common.MapStr{"T1": "aa", "T2": "bb"}, "metrics": common.MapStr{"test2": float64(1234555)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -127,9 +120,9 @@ func TestGather_Run(t *testing.T) {
 			input: `test1{L0="123",L1=45ee} 1234
 			test1{L0="124",L1="45ed"} 12345`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"L0": "124", "L1": "45ed"}, "metrics": common.MapStr{"test1": float64(12345)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "2302"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -137,9 +130,9 @@ func TestGather_Run(t *testing.T) {
 			name:  "用例四、label之间有空格的数据，预期结果为正常输出",
 			input: `abctest{t1="123", t2="456"} 181818`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"abctest": float64(181818)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -148,9 +141,9 @@ func TestGather_Run(t *testing.T) {
 			input: `abctest{t1="123", t2="456" 181818
 			test1{L0="124",L1="45ed"} 12345`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"L0": "124", "L1": "45ed"}, "metrics": common.MapStr{"test1": float64(12345)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "2302"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -159,9 +152,9 @@ func TestGather_Run(t *testing.T) {
 			input: `t1{t1="123", t2="456"} 181818
 		t2{t1="123",t2="456"} 12345`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(181818), "t2": float64(12345)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -170,10 +163,10 @@ func TestGather_Run(t *testing.T) {
 			input: `t1{t1="123", t2="456"} 181818 1583137100
 		t1{t1="123",t2="456"} 181818 1583138100`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"time": int64(1583137100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(181818)}, "catched": 0},
 					{"time": int64(1583138100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(181818)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -182,10 +175,10 @@ func TestGather_Run(t *testing.T) {
 			input: `t1{t1="123", t2="456"} 32576 1584137100000
 					t1{t1="123", t2="456"} 32576 1584138100000`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"time": int64(1584137100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(32576)}, "catched": 0},
 					{"time": int64(1584138100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(32576)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
@@ -203,7 +196,6 @@ func TestGather_Run(t *testing.T) {
 			t1{t1="123", t2="456"} 32576 1584137100000
 			t1{t1="123", t2="456"} 32576 1584138100000`,
 			output: OutPutItem{
-				expectedErrCode: define.BeatErrCodeOK,
 				expectedOut: []common.MapStr{
 					{"dimensions": common.MapStr{"mountpoint": "/usr/local"}, "metrics": common.MapStr{"sys_disk_size": float64(8.52597957704355)}, "catched": 0},
 					{"dimensions": common.MapStr{"L0": "123", "L1": "45ee"}, "metrics": common.MapStr{"test1": float64(1234)}, "catched": 0},
@@ -214,11 +206,22 @@ func TestGather_Run(t *testing.T) {
 					{"time": int64(1583138100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(181818)}, "catched": 0},
 					{"time": int64(1584137100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(32576)}, "catched": 0},
 					{"time": int64(1584138100), "dimensions": common.MapStr{"t1": "123", "t2": "456"}, "metrics": common.MapStr{"t1": float64(32576)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "0"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
+				},
+			},
+		},
+		{
+			name: "用例九、脚本内容解析异常",
+			input: `sys_disk_size{{{{mountpoint="/usr/local"} 8.52597957704355
+			test1{L0="123",L1="45ee"} 1234`,
+			output: OutPutItem{
+				expectedOut: []common.MapStr{
+					{"dimensions": common.MapStr{"L0": "123", "L1": "45ee"}, "metrics": common.MapStr{"test1": float64(1234)}, "catched": 0},
+					{"dimensions": common.MapStr{"bkm_up_code": "2302"}, "metrics": common.MapStr{"bkm_gather_up": 1}, "catched": 0},
 				},
 			},
 		},
 	}
-
 	checkResult(t, gather, testCase)
 }
 
@@ -249,26 +252,23 @@ func checkResult(t *testing.T, gather *Gather, testCase []TestItem) {
 
 				eventCount++
 				ms := event.AsMapStr()
-				var code = ms["error_code"].(define.BeatErrorCode)
-				if code != outputResult.expectedErrCode /* || ms["message"] != "success" */ {
-					t.Errorf("item:%d, script event result failed, excepted code(%d), result code(%d)", itemIndex, outputResult.expectedErrCode, code)
-				} else {
-					// 如果是正常输出，需要继续比较结果
-					if code == define.BeatErrCodeOK {
-						compareEvent(ms, outputResult.expectedOut)
+				if data, isExisted := ms["data"]; isExisted {
+					dataItem := data.([]common.MapStr)[0]
+					ms = common.MapStr{
+						"dimensions": dataItem["dimension"],
+						"metrics":    dataItem["metrics"],
 					}
 				}
+				compareEvent(ms, outputResult.expectedOut)
 			}
 			if eventCount != len(outputResult.expectedOut) {
 				t.Errorf("item:%d, not expected, return event count(%d), expected count(%d)",
 					itemIndex, eventCount, len(outputResult.expectedOut))
 			}
 
-			if outputResult.expectedErrCode == define.BeatErrCodeOK {
-				for resultIndex, result := range outputResult.expectedOut {
-					if result["catched"] != 1 {
-						t.Errorf("item:%d,idx:%d,catched not as expected", itemIndex, resultIndex)
-					}
+			for resultIndex, result := range outputResult.expectedOut {
+				if result["catched"] != 1 {
+					t.Errorf("item:%d,idx:%d,catched not as expected", itemIndex, resultIndex)
 				}
 			}
 		})
@@ -287,7 +287,6 @@ func compareEvent(eventMap common.MapStr, expectedMapList []common.MapStr) {
 				continue
 			}
 			expectedMap["catched"] = expectedMap["catched"].(int) + 1
-
 		}
 	}
 }

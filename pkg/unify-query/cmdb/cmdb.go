@@ -11,10 +11,13 @@ package cmdb
 
 import (
 	"context"
+	"time"
 )
 
 type CMDB interface {
+	// QueryResourceMatcher 获取目标的关键维度和值（instant 查询）
+	QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, ts int64, target Resource, matcher Matcher) (Resource, Matcher, Matchers, error)
 
-	// GetResourceMatcher 获取目标的关键维度和值
-	GetResourceMatcher(ctx context.Context, lookBackDelta string, spaceUid string, timestamp int64, target Resource, matcher Matcher) (Resource, Matcher, Matchers, error)
+	// QueryResourceMatcherRange 获取目标的关键维度和值（query_range 查询）
+	QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target Resource, matcher Matcher) (Resource, Matcher, []MatchersWithTimestamp, error)
 }

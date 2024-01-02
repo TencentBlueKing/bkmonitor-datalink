@@ -456,7 +456,7 @@ func HandleTsDBPrint(c *gin.Context) {
 		FieldName: fieldName,
 		IsRegexp:  false}
 	tsDBs, err := structured.GetTsDBList(ctx, &option)
-	results = append(results, fmt.Sprintf("GetTsDBList result: %v, err: %v", tsDBs, err))
+	results = append(results, fmt.Sprintf("GetTsDBList count: %d, result: %v, err: %v", len(tsDBs), tsDBs, err))
 
 	router, err := influxdb.GetSpaceTsDbRouter()
 	if err != nil {
@@ -467,11 +467,20 @@ func HandleTsDBPrint(c *gin.Context) {
 		results = append(results, fmt.Sprintf("Space: %s, %v ", spaceId, space))
 	} else {
 		results = append(results, fmt.Sprintf("Space: %s, num: %v ", spaceId, len(space)))
-
 	}
 	rtIds := make([]string, 0)
 	if len(tableId) == 0 {
-		rtIds = router.GetFieldRelatedRts(ctx, fieldName)
+		for rtId, _ := range space {
+			rt := router.GetResultTable(ctx, rtId, true)
+			if rt != nil {
+				for _, rtFieldName := range rt.Fields {
+					if rtFieldName == fieldName {
+						rtIds = append(rtIds, rt.TableId)
+						break
+					}
+				}
+			}
+		}
 		results = append(results, fmt.Sprintf("FieldToResulTable: %s, %v", fieldName, rtIds))
 	} else {
 		if !strings.Contains(string(tableId), ".") {

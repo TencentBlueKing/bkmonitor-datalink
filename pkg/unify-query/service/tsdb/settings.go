@@ -54,6 +54,18 @@ const (
 
 	OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath = "offline_data_archive.grpc_max_call_recv_msg_size"
 	OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath = "offline_data_archive.grpc_max_call_send_msg_size"
+
+	// BkSql 配置
+	BkSqlAddressConfigPath              = "bk_sql.address"
+	BkSqlTimeoutConfigPath              = "bk_sql.timeout"
+	BkSqlIntervalTimeConfigPath         = "bk_sql.interval_time"
+	BkSqlLimitConfigPath                = "bk_sql.limit"
+	BkSqlToleranceConfigPath            = "bk_sql.tolerance"
+	BkSqlAuthenticationMethodConfigPath = "bk_sql.authentication_method"
+	BkSqlContentTypeConfigPath          = "bk_sql.content_type"
+	BkSqlCodeConfigPath                 = "bk_sql.code"
+	BkSqlSecretConfigPath               = "bk_sql.secret"
+	BkSqlTokenConfigPath                = "bk_sql.token"
 )
 
 var (
@@ -73,7 +85,17 @@ var (
 
 	InfluxDBRouterPrefix string
 
-	// victoriaMetrics 配置
+	// bksql 配置
+	BkSqlAddress              string
+	BkSqlTimeout              time.Duration
+	BkSqlIntervalTime         time.Duration
+	BkSqlLimit                int
+	BkSqlTolerance            int
+	BkSqlAuthenticationMethod string
+	BkSqlContentType          string
+	BkSqlCode                 string
+	BkSqlSecret               string
+	BkSqlToken                string
 
 	// victoriaMetrics 配置
 	VmAddress string

@@ -31,7 +31,7 @@ func initConfiguration(c define.Configuration) {
 	c.SetDefault(ConfESBUserNameKey, "admin")
 	c.SetDefault(ConfESBAddress, "http://paas.service.consul")
 	c.SetDefault(ConfESBBkSupplierAccount, "0")
-	c.SetDefault(ConfMaxWorker, 10)
+	c.SetDefault(ConfMaxWorker, 2)
 	c.SetDefault(ConfFilterCMDBV3Biz, false)
 }
 

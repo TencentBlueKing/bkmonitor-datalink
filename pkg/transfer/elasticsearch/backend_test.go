@@ -104,7 +104,7 @@ func (s *BulkHandlerSuite) TestFormatTime() {
 
 	s.mockBulkWriter.EXPECT().Write(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, index string, records elasticsearch.Records) (*elasticsearch.Response, error) {
 		s.Len(records, 1)
-		record := records[0].Document.(map[string]interface{})
+		record := records[0].Document
 		s.Equal(conv.String(ts), record["source_time"])
 		s.Equal(conv.String(ts), record["time"])
 

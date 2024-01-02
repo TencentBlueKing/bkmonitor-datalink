@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package standard
+package etl
 
 import (
 	"context"
@@ -28,7 +28,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/storage"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 const (
@@ -37,12 +36,11 @@ const (
 	redisDimensionPrefix   = "bkmonitor:metric_dimensions_"
 	dimensionValuesOpt     = "dimension_values"
 	metricNameRegexOpt     = "metric_name_regex"
-	enableMetricSampling   = "enable_metric_sampling"
 )
 
 var (
 	metricNamePattern = regexp.MustCompile(defaultMetricNameRegex)
-	reconcilePeriod   = time.Duration(60+rand.Intn(10)) * time.Minute // reconcile 周期为 1h+[0, 10)m
+	reconcilePeriod   = time.Duration(7200+rand.Intn(10)) * time.Minute // reconcile 周期为 5d+[0, 10)m
 	timeUnix          = func() int64 { return time.Now().Unix() }
 	syncPeriod        = time.Second * 5
 )
@@ -83,7 +81,6 @@ type MetricsReportProcessor struct {
 	metricStore      map[string]float64
 	dimensionStore   *DimensionStore
 	dimensionUpdated chan struct{}
-	enableSampling   bool
 }
 
 type Label struct {
@@ -173,42 +170,28 @@ func (ds *DimensionStore) GetOrMergeDimensions(metric string, remoteDimensions D
 	return ret
 }
 
-// needToHandle 判断是否需要处理指标数据 有两种情况会开启：
-//
-//  1. Index <= 0
-//     保证只有一个实例（0-INDEX）会运行上报进程 减低对 redis 的读写压力
-//     需要注意的是 数据分发到多个实例时 如果存在上报量极少的指标 很可能不会一开始就发现指标
-//     但如果指标能够周期上报的话 那问题不大
-//     非 Passer 类型 index 默认值为 0
-//
-//  2. !enableSampling
-//     关闭指标采样 默认就会处理所有的指标
-func (p *MetricsReportProcessor) needToHandle() bool {
-	return p.Index() <= 0 || !p.enableSampling
+func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	p.process(d, nil, outputChan, killChan)
 }
 
-func (p *MetricsReportProcessor) Process(d define.Payload, outputChan chan<- define.Payload, _ chan<- error) {
+func (p *MetricsReportProcessor) process(d define.Payload, record *define.ETLRecord, outputChan chan<- define.Payload, _ chan<- error) {
 	p.once.Do(func() {
-		if p.needToHandle() {
-			p.start()
-		}
+		p.start()
 	})
 
-	// 即使失败也应将数据传回 metrics processor 非关键路径
-	defer func() {
-		outputChan <- d
-	}()
-
-	if !p.needToHandle() {
-		p.CounterSuccesses.Inc()
-		return
-	}
-
-	var record define.ETLRecord
-	if err := d.To(&record); err != nil {
-		logging.Errorf("payload %v to recorder failed: %v", d, err)
-		p.CounterFails.Inc()
-		return
+	// 通过 Process 函数入口进来的，仍旧需要序列化一遍，得到 Record 结构体
+	// 兼容原有逻辑
+	if record == nil {
+		defer func() {
+			outputChan <- d
+		}()
+		var dst define.ETLRecord
+		if err := d.To(&dst); err != nil {
+			p.CounterFails.Inc()
+			logging.Errorf("payload %v to record failed: %v", d, err)
+			return
+		}
+		record = &dst
 	}
 
 	var gotNewDimensions bool
@@ -486,11 +469,6 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 		}
 	}
 
-	// 是否开启采样
-	// 开启采样指概率性收集指标元信息（默认为 false）即收集所有
-	pipelineOpts := utils.NewMapHelper(pipelineConfig.Option)
-	enableSampling, _ := pipelineOpts.GetBool(enableMetricSampling)
-
 	processor := &MetricsReportProcessor{
 		ctx:               ctx,
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
@@ -501,7 +479,6 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 		dimensionUpdated:  make(chan struct{}, 1),
 		metricStore:       make(map[string]float64),
 		dimensionStore:    NewDimensionStore(),
-		enableSampling:    enableSampling,
 	}
 	return processor
 }

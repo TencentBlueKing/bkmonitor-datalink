@@ -162,7 +162,6 @@ func (p *PerformanceDiskProcessor) Process(d define.Payload, outputChan chan<- d
 
 	if bizID, err := root.Get(define.RecordBizID); err == nil {
 		if _, ok := p.DisabledBizIDs[conv.String(bizID)]; ok {
-			p.CounterSkip.Inc()
 			return
 		}
 	}

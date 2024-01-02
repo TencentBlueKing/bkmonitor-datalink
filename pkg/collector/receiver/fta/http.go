@@ -155,7 +155,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		err = errors.Wrapf(err, "failed to validate record, code: %d, processor: %s", code, processorName)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordFta, processorName, r.Token.Original, code)
 		resp := s.getResponse(statusError, err.Error())
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, resp)
+		receiver.WriteResponse(w, define.ContentTypeJson, int(code), resp)
 		return
 	}
 

@@ -15,10 +15,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
@@ -73,14 +75,12 @@ func TestExportEvent_Common(t *testing.T) {
 			wantData:      `{"test":"1"}`,
 		},
 		{
-			name:          "plugin id",
-			url:           "http://localhost/fta/v1/event/test?token=4",
+			name:          "error body",
+			url:           "http://localhost/fta/v1/event?token=5",
 			headers:       map[string]string{},
-			body:          `{"test": "1"}`,
-			wantCode:      http.StatusOK,
-			wantPublished: true,
-			wantToken:     "4",
-			wantData:      `{"test":"1"}`,
+			body:          `{"test": "1`,
+			wantCode:      http.StatusBadRequest,
+			wantPublished: false,
 		},
 	}
 
@@ -118,4 +118,32 @@ func TestExportEvent_Common(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("broken request", func(t *testing.T) {
+		svc := HttpService{
+			receiver.Publisher{Func: func(record *define.Record) {}},
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+				return define.StatusCodeOK, "", nil
+			}},
+		}
+		buf := testkits.NewBrokenReader()
+		req, _ := http.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
+		rw := httptest.NewRecorder()
+		svc.ExportEvent(rw, req)
+		assert.Equal(t, http.StatusBadRequest, rw.Code)
+	})
+
+	t.Run("validator failed", func(t *testing.T) {
+		svc := HttpService{
+			receiver.Publisher{Func: func(record *define.Record) {}},
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+				return define.StatusCodeUnauthorized, "", errors.New("MUST ERROR")
+			}},
+		}
+		buf := bytes.NewBufferString(`{"test": "1"}`)
+		req, _ := http.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
+		rw := httptest.NewRecorder()
+		svc.ExportEvent(rw, req)
+		assert.Equal(t, http.StatusUnauthorized, rw.Code)
+	})
 }

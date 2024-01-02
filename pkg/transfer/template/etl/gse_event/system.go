@@ -35,11 +35,13 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	record := new(SystemEventData)
 	err := d.To(record)
 	if err != nil {
+		logging.Errorf("%s parse payload %v failed: %v", p, d, err)
 		p.CounterFails.Inc()
 		return
 	}
 
 	if record.Values == nil {
+		logging.Errorf("%s parse payload failed: values is empty", p)
 		p.CounterFails.Inc()
 		return
 	}
@@ -59,6 +61,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		}
 		newEventRecords := parseSystemEvent(extra)
 		if newEventRecords == nil {
+			p.CounterFails.Inc()
 			continue
 		}
 
@@ -78,6 +81,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	}
 
 	// 补充业务ID
+	sentCount := 0
 	for _, eventRecord := range eventRecords {
 		dimensions := utils.NewMapHelper(eventRecord.EventDimension)
 		ip, _ := dimensions.GetString("ip")
@@ -108,7 +112,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			p.CounterFails.Inc()
+			logging.Errorf("%s fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", p, ip, cloudID, agentId)
 			continue
 		}
 
@@ -127,10 +131,17 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 			logging.Warnf("%s create payload error %v: %v", p, err, d)
 			return
 		}
+		sentCount++
 		outputChan <- output
 	}
 
-	p.CounterSuccesses.Inc()
+	// 发送指标记录
+	if sentCount > 0 {
+		p.CounterSuccesses.Add(float64(sentCount))
+	}
+	if sentCount != len(eventRecords) {
+		p.CounterFails.Add(float64(len(eventRecords) - sentCount))
+	}
 }
 
 func NewSystemEventProcessor(ctx context.Context, name string) *SystemEventProcessor {

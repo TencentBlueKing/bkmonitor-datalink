@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -27,10 +26,8 @@ import (
 )
 
 const (
-	routeFtaEvent            = "/fta/v1/event"
-	routeFtaEventSlash       = "/fta/v1/event/"
-	routeFtaEventPlugin      = "/fta/v1/event/{pluginId}"
-	routeFtaEventPluginSlash = "/fta/v1/event/{pluginId}/"
+	routeFtaEvent      = "/fta/v1/event"
+	routeFtaEventSlash = "/fta/v1/event/"
 
 	ftaTokenKey    = "X-BK-FTA-TOKEN"
 	tokenKey       = "X-BK-TOKEN"
@@ -52,16 +49,6 @@ func Ready() {
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeFtaEventSlash,
-			HandlerFunc:  httpSvc.ExportEvent,
-		},
-		{
-			Method:       http.MethodPost,
-			RelativePath: routeFtaEventPlugin,
-			HandlerFunc:  httpSvc.ExportEvent,
-		},
-		{
-			Method:       http.MethodPost,
-			RelativePath: routeFtaEventPluginSlash,
 			HandlerFunc:  httpSvc.ExportEvent,
 		},
 	})
@@ -91,9 +78,6 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
-
-	// 从请求路径中获取 pluginId
-	pluginId := mux.Vars(req)["pluginId"]
 
 	// 从请求头中获取 token
 	token := req.Header.Get(tokenKey)
@@ -152,7 +136,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	}
 
 	event := &define.FtaData{
-		PluginId:   pluginId,
+		PluginId:   "",
 		IngestTime: time.Now().Unix(),
 		Data:       []map[string]interface{}{data},
 		EventId:    uuid.New().String(),
@@ -162,7 +146,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 		RecordType:    define.RecordFta,
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
-		Token:         define.Token{Original: token, AppName: pluginId},
+		Token:         define.Token{Original: token},
 		Data:          event,
 	}
 

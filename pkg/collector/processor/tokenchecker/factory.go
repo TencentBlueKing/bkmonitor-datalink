@@ -119,30 +119,22 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 		return err
 	}
 
-	pluginId := record.Token.AppName
-
 	// token 解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode token")
 	}
-
 	token := record.Token
 
-	// 如果存在插件 ID ，判断是否为该插件的 token
-	if pluginId != "" && pluginId != token.AppName {
+	// 检查业务 ID 及 DataID 及 PluginID 是否合法
+	if token.MetricsDataId <= 0 {
+		return errors.New("reject invalid dataId")
+	}
+	if token.AppName == "" {
 		return errors.New("reject invalid pluginId")
 	}
 
-	// 检查业务 ID 及 DataID
-	if token.BizId == 0 {
-		return errors.New("reject invalid bizId")
-	}
-	if token.MetricsDataId == 0 {
-		return errors.New("reject invalid metricsDataId")
-	}
-
-	record.Data.(*define.FtaData).PluginId = record.Token.AppName
+	record.Data.(*define.FtaData).PluginId = token.AppName
 	return nil
 }
 

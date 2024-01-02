@@ -47,7 +47,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	// 时间字段为空则不处理
 	if record.Time == "" {
 		p.CounterFails.Inc()
-		logging.Errorf("%v time is empty: %v", p, d)
+		logging.Errorf("%s time is empty: %v", p, d)
 		return
 	}
 
@@ -65,7 +65,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		// 时间字段解析
 		parse, err := time.Parse("2006-01-02 15:04:05", record.Time)
 		if err != nil {
-			logging.Errorf("%v parse time %s error: %v", p, record.Time, err)
+			logging.Errorf("%s parse time %s error: %v", p, record.Time, err)
 			p.CounterFails.Inc()
 			continue
 		}
@@ -124,7 +124,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
 			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			logging.Warnf("%s create payload error %v: %v", p, err, d)
 			return
 		}
 		outputChan <- output

@@ -198,17 +198,10 @@ func compressFilterCondition(tKeys []string, filters []query.Filter) [][]Conditi
 }
 
 // compareClusterId 比较传入的 condition 以及 rtDetail.bcs_cluster_id
-func compareClusterId(conditions Conditions, bcsClusterId string) bool {
-	ctx := context.Background()
-	allConditions, err := conditions.AnalysisConditions()
-	if err != nil {
-		log.Errorf(ctx, "unable to get AllConditions, error: %s", err)
-		return false
-	}
+func compareClusterId(allConditions AllConditions, bcsClusterId string) (bool, error) {
 	// 如果 allConditions 长度为 0 ，侧面证明无需匹配 bcs_cluster_id，直接放行
 	if len(allConditions) == 0 {
-		log.Warnf(ctx, "length of AllConditions is 0")
-		return true
+		return true, nil
 	}
 	// 匹配 bcs_cluster_id 标志位
 	clusterFlag := false
@@ -226,36 +219,34 @@ func compareClusterId(conditions Conditions, bcsClusterId string) bool {
 			switch field.Operator {
 			case ConditionEqual, ConditionContains:
 				if containElement(field.Value, bcsClusterId) {
-					return true
+					return true, nil
 				}
 			case ConditionNotEqual, ConditionNotContains:
 				if !containElement(field.Value, bcsClusterId) {
-					return true
+					return true, nil
 				}
 			case ConditionRegEqual:
 				for _, val := range field.Value {
 					match, err := reMatchElement(val, bcsClusterId, true)
 					if err != nil {
-						log.Errorf(ctx, "reMatchElement Error, error: %s", err)
-						return false
+						return false, fmt.Errorf("case: ConditionRegEqual, reMatchElement Error, error: %s", err)
 					}
-					return match
+					return match, nil
 				}
 			case ConditionNotRegEqual:
 				for _, val := range field.Value {
 					match, err := reMatchElement(val, bcsClusterId, false)
 					if err != nil {
-						log.Errorf(ctx, "reMatchElement Error, error: %s", err)
-						return false
+						return false, fmt.Errorf("case: ConditionNotRegEqual, reMatchElement Error, error: %s", err)
 					}
-					return match
+					return match, nil
 				}
 			}
 		}
 	}
-	// 当所有循环都走到结尾还没推出则判断是否进行了 clusterId 的匹配
+	// 当所有循环都走到结尾还是没有进行 clusterId 的匹配，即 allConditions 中不包含 clusterId 的条件的时候返回 true 放行
 	if !clusterFlag {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }

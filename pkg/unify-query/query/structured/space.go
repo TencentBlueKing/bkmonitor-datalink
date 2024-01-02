@@ -58,8 +58,20 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return nil
 	}
 
-	// 如果 condition 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil
-	if !compareClusterId(conditions, rtDetail.BcsClusterID) {
+	allConditions, err := conditions.AnalysisConditions()
+	if err != nil {
+		log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
+		return nil
+	}
+
+	// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
+	compareResult, err := compareClusterId(allConditions, rtDetail.BcsClusterID)
+	if err != nil {
+		log.Errorf(s.ctx, "compareClusterId error: %s", err)
+		return nil
+	}
+
+	if !compareResult {
 		return nil
 	}
 

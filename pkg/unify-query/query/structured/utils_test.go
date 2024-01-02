@@ -11,11 +11,11 @@ package structured
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 )
 
@@ -191,7 +191,7 @@ func TestCompressFilterCondition(t *testing.T) {
 }
 
 func TestCompareClusterId(t *testing.T) {
-	log.InitTestLogger()
+	mock.Init()
 	testCases := []struct {
 		name         string
 		bcsClusterId string
@@ -285,7 +285,11 @@ func TestCompareClusterId(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			assert.Equal(t, testCase.expect, compareClusterId(testCase.conditions, testCase.bcsClusterId))
+			allConditions, err := testCase.conditions.AnalysisConditions()
+			assert.Nil(t, err)
+			compareResult, err := compareClusterId(allConditions, testCase.bcsClusterId)
+			assert.Nil(t, err)
+			assert.Equal(t, testCase.expect, compareResult)
 		})
 	}
 }

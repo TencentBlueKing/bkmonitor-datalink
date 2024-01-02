@@ -126,7 +126,7 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 	}
 	token := record.Token
 
-	// 检查业务 ID 及 DataID 及 PluginID 是否合法
+	// 检查 DataID 及 PluginID 是否合法
 	if token.MetricsDataId <= 0 {
 		return errors.New("reject invalid dataId")
 	}

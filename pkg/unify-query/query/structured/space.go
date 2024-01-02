@@ -65,9 +65,9 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 
 	// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
-	compareResult, err := compareClusterId(allConditions, rtDetail.BcsClusterID)
+	compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
 	if err != nil {
-		log.Errorf(s.ctx, "compareClusterId error: %s", err)
+		log.Errorf(s.ctx, "allCondition Compare error: %s", err)
 		return nil
 	}
 

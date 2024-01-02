@@ -12,9 +12,6 @@ package structured
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"regexp"
-
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -86,24 +83,6 @@ func containElement(slice []string, element string) bool {
 		}
 	}
 	return false
-}
-
-// reMatchElement 生成 expr 正则并且进行匹配
-func reMatchElement(expr, val string, isMatch bool) (bool, error) {
-	if expr == "" || val == "" {
-		errMsg := fmt.Errorf("expr: %s, val: %s shouldn't be empty", expr, val)
-		return false, errMsg
-	}
-	reExp, err := regexp.Compile(expr)
-	if err != nil {
-		errMsg := fmt.Errorf("unable to generate reExp, expr: %s, error: %s", expr, err)
-		return false, errMsg
-	}
-	res := reExp.Match([]byte(val))
-	if isMatch {
-		return res, nil
-	}
-	return !res, nil
 }
 
 // judgeFilter 判断 filter 是否符合合并压缩的条件
@@ -195,58 +174,4 @@ func compressFilterCondition(tKeys []string, filters []query.Filter) [][]Conditi
 		filterConditions = append(filterConditions, cond)
 	}
 	return filterConditions
-}
-
-// compareClusterId 比较传入的 condition 以及 rtDetail.bcs_cluster_id
-func compareClusterId(allConditions AllConditions, bcsClusterId string) (bool, error) {
-	// 如果 allConditions 长度为 0 ，侧面证明无需匹配 bcs_cluster_id，直接放行
-	if len(allConditions) == 0 {
-		return true, nil
-	}
-	// 匹配 bcs_cluster_id 标志位
-	clusterFlag := false
-	for _, cond := range allConditions {
-		// 开始进行 conditionField 匹配
-		for _, field := range cond {
-			// 维度名不是 bcs_cluster_id 则跳过
-			if field.DimensionName != ClusterID {
-				continue
-			}
-			// 更新标志位
-			if !clusterFlag {
-				clusterFlag = true
-			}
-			switch field.Operator {
-			case ConditionEqual, ConditionContains:
-				if containElement(field.Value, bcsClusterId) {
-					return true, nil
-				}
-			case ConditionNotEqual, ConditionNotContains:
-				if !containElement(field.Value, bcsClusterId) {
-					return true, nil
-				}
-			case ConditionRegEqual:
-				for _, val := range field.Value {
-					match, err := reMatchElement(val, bcsClusterId, true)
-					if err != nil {
-						return false, fmt.Errorf("case: ConditionRegEqual, reMatchElement Error, error: %s", err)
-					}
-					return match, nil
-				}
-			case ConditionNotRegEqual:
-				for _, val := range field.Value {
-					match, err := reMatchElement(val, bcsClusterId, false)
-					if err != nil {
-						return false, fmt.Errorf("case: ConditionNotRegEqual, reMatchElement Error, error: %s", err)
-					}
-					return match, nil
-				}
-			}
-		}
-	}
-	// 当所有循环都走到结尾还是没有进行 clusterId 的匹配，即 allConditions 中不包含 clusterId 的条件的时候返回 true 放行
-	if !clusterFlag {
-		return true, nil
-	}
-	return false, nil
 }

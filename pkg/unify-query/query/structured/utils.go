@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"

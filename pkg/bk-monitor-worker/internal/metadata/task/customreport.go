@@ -35,10 +35,10 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		return errors.Wrap(err, "find ts group record error")
 	}
 	// 收集需要更新推送redis的table_id
-	tableIdChan := make(chan string)
+	tableIdChan := make(chan string, GetGoroutineLimit("refresh_time_series_metric"))
 	var updatedTableIds []string
-	wg := sync.WaitGroup{}
-	go func() {
+	wgReceive := sync.WaitGroup{}
+	go func(wg *sync.WaitGroup) {
 		wg.Add(1)
 		defer wg.Done()
 		for {
@@ -48,8 +48,9 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			}
 			updatedTableIds = append(updatedTableIds, tableId)
 		}
-	}()
+	}(&wgReceive)
 	ch := make(chan bool, GetGoroutineLimit("refresh_time_series_metric"))
+	wg := sync.WaitGroup{}
 	wg.Add(len(tsGroupList))
 	for _, eg := range tsGroupList {
 		ch <- true
@@ -70,10 +71,11 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 				tableIdChan <- svc.TableID
 			}
 		}(eg, tableIdChan, &wg, ch)
-
 	}
 	wg.Wait()
 	close(tableIdChan)
+	// 防止数据没有读完
+	wgReceive.Wait()
 	if len(updatedTableIds) != 0 {
 		pusher := service.NewSpacePusher()
 		if err := pusher.PushTableIdDetail(updatedTableIds, true); err != nil {

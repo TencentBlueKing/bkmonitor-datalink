@@ -12,6 +12,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	oleltrace "go.opentelemetry.io/otel/trace"
@@ -72,7 +73,80 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			Code: http.StatusOK,
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.GetResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
+		if err != nil {
+			d.Message = err.Error()
+			d.Code = http.StatusBadRequest
+		}
+		data.Data = append(data.Data, d)
+	}
+
+	resp.success(ctx, data)
+}
+
+// HandlerAPIRelationMultiResourceRange
+// @Summary  query relation multi resource
+// @ID       api-relation-multi-resource
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      cmdb.RelationMultiResourceRangeRequest			  true   "json data"
+// @Success  200                   	{object}  cmdb.RelationMultiResourceRangeResponse
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /api/v1/relation/multi_resource_range [post]
+func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		span oleltrace.Span
+		user = metadata.GetUser(ctx)
+		err  error
+
+		resp = &response{
+			c: c,
+		}
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "api-relation-multi-resource-range")
+	if span != nil {
+		defer span.End()
+	}
+
+	request := new(cmdb.RelationMultiResourceRangeRequest)
+	err = json.NewDecoder(c.Request.Body).Decode(request)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	paramsBody, _ := json.Marshal(request)
+	trace.InsertStringIntoSpan("params-body", string(paramsBody), span)
+
+	model, err := v1beta1.GetModel(ctx)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	data := new(cmdb.RelationMultiResourceRangeResponse)
+	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, 0, len(request.QueryList))
+	for _, qry := range request.QueryList {
+		d := cmdb.RelationMultiResourceRangeResponseData{
+			Code: http.StatusOK,
+		}
+
+		if qry.Step == "" {
+			qry.Step = "1m"
+		}
+
+		step, err := time.ParseDuration(qry.Step)
+		if err != nil {
+			d.Message = err.Error()
+			d.Code = http.StatusBadRequest
+			data.Data = append(data.Data, d)
+			continue
+		}
+
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceInfo)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest

@@ -46,8 +46,14 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		return
 	}
 
-	var eventRecords []EventRecord
+	// 时间字段为空则不处理
+	if record.Time == "" {
+		p.CounterFails.Inc()
+		logging.Errorf("%s time is empty: %v", p, d)
+		return
+	}
 
+	var eventRecords []EventRecord
 	for _, value := range record.Values {
 		extra := value.Extra
 		if extra == nil {
@@ -59,15 +65,10 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 			continue
 		}
 
-		// 时间字段补充
-		eventTime := value.EventTime
-		if eventTime == "" {
-			eventTime = record.Time
-		}
-		// 时间格式转换
-		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
+		// 时间字段解析
+		parse, err := time.Parse("2006-01-02 15:04:05", record.Time)
 		if err != nil {
-			logging.Errorf("system event parse time %s failed: %v", eventTime, err)
+			logging.Errorf("%s parse time %s error: %v", p, record.Time, err)
 			p.CounterFails.Inc()
 			continue
 		}
@@ -126,8 +127,9 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
-			logging.Errorf("system event derive payload failed: %v", err)
-			continue
+			p.CounterFails.Inc()
+			logging.Warnf("%s create payload error %v: %v", p, err, d)
+			return
 		}
 		sentCount++
 		outputChan <- output

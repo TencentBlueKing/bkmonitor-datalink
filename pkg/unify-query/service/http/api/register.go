@@ -20,5 +20,8 @@ import (
 func RegisterRelation(ctx context.Context, g *gin.Engine) {
 
 	g.POST(RelationMultiResource, HandlerAPIRelationMultiResource)
-	log.Infof(ctx, "api service register in path -> [%s]", RelationMultiResource)
+	g.POST(RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
+
+	log.Infof(ctx, "api service register in path(query) -> [%s]", RelationMultiResource)
+	log.Infof(ctx, "api service register in path(query_range) -> [%s]", RelationMultiResourceRange)
 }

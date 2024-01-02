@@ -403,29 +403,9 @@ func TestProxyToken(t *testing.T) {
 	})
 }
 
-func ftaAes256TokenChecker() tokenChecker {
-	config := Config{
-		Type:        "aes256",
-		ResourceKey: "bk.data.token",
-		Salt:        "bk",
-		DecodedIv:   "bkbkbkbkbkbkbkbk",
-		DecodedKey:  "81be7fc6-5476-4934-9417-6d4d593728db",
-	}
-
-	decoders := confengine.NewTierConfig()
-	decoders.SetGlobal(NewTokenDecoder(config))
-
-	configs := confengine.NewTierConfig()
-	configs.SetGlobal(config)
-	return tokenChecker{
-		decoders: decoders,
-		configs:  configs,
-	}
-}
-
 func TestFtaAes256Token(t *testing.T) {
 	t.Run("New Token", func(t *testing.T) {
-		checker := ftaAes256TokenChecker()
+		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
 			Token: define.Token{
@@ -447,7 +427,7 @@ func TestFtaAes256Token(t *testing.T) {
 	})
 
 	t.Run("Incorrect Token", func(t *testing.T) {
-		checker := ftaAes256TokenChecker()
+		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
 			Token: define.Token{
@@ -468,7 +448,7 @@ func TestFtaAes256Token(t *testing.T) {
 	})
 
 	t.Run("Incorrect Token - Empty Plugin ID", func(t *testing.T) {
-		checker := ftaAes256TokenChecker()
+		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
 			Token: define.Token{
@@ -489,7 +469,7 @@ func TestFtaAes256Token(t *testing.T) {
 	})
 
 	t.Run("Incorrect Token - Empty Data ID", func(t *testing.T) {
-		checker := ftaAes256TokenChecker()
+		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
 			Token: define.Token{

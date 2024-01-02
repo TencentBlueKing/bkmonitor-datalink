@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
-// TestExportEvent is a generated function returning the mock function for the ExportEvent method of the HttpService type.
 func TestExportEvent_Common(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -98,7 +97,6 @@ func TestExportEvent_Common(t *testing.T) {
 				}},
 			}
 
-			// run
 			buf := bytes.NewBufferString(tt.body)
 			req, _ := http.NewRequest(http.MethodPost, tt.url, buf)
 			for key, value := range tt.headers {
@@ -107,11 +105,9 @@ func TestExportEvent_Common(t *testing.T) {
 			rw := httptest.NewRecorder()
 			svc.ExportEvent(rw, req)
 
-			// assert status
 			assert.Equal(t, tt.wantCode, rw.Code)
 			assert.Equal(t, tt.wantPublished, r != nil)
 
-			// assert record
 			if tt.wantPublished && r != nil {
 				assert.Equal(t, tt.wantToken, r.Token.Original)
 				ftaData, ok := r.Data.(*define.FtaData)

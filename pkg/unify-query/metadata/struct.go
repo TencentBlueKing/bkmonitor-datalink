@@ -171,51 +171,24 @@ func ReplaceVmCondition(condition string, replaceLabels ReplaceLabels) string {
 }
 
 func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
-	// 判断是否打开 vm-query 特性开关
-	if !GetVMQueryFeatureFlag(ctx) {
-		return false
-	}
-
-	mustVmQueryStatus := true
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
 			for _, query := range reference.QueryList {
 				// 忽略 vmRt 为空的
 				if query.VmRt == "" {
-					continue
+					return false
 				}
 
-				// 忽略本身已经是单指标单表的
-				if query.IsSingleMetric {
-					continue
+				// 如果该 TableID 未配置特性开关则认为不能访问 vm，直接返回 false
+				if !GetMustVmQueryFeatureFlag(ctx, query.TableID) {
+					return false
 				}
-
-				// 如果该 TableID 配置了 vm 查询特制开关则跳过
-				if GetMustVmQueryFeatureFlag(ctx, query.TableID) {
-					continue
-				}
-
-				mustVmQueryStatus = false
 			}
 		}
 	}
 
-	if !mustVmQueryStatus {
-		return false
-	}
-
 	for _, reference := range qRef {
 		for _, query := range reference.QueryList {
-			// 忽略 vmRt 为空的
-			if query.VmRt == "" {
-				continue
-			}
-
-			// 忽略本身已经是单指标单表的
-			if query.IsSingleMetric {
-				continue
-			}
-
 			query.IsSingleMetric = true
 		}
 	}
@@ -331,7 +304,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			for _, query := range reference.QueryList {
 
-				// 只有全部为单指标单表
+				// 该字段表示为是否查 VM
 				if !query.IsSingleMetric {
 					return ok, nil, err
 				}

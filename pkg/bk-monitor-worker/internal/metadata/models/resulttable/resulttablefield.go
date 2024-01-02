@@ -46,8 +46,8 @@ func (ResultTableField) TableName() string {
 
 // BeforeCreate 新建前时间字段设置为当前时间
 func (rtf *ResultTableField) BeforeCreate(tx *gorm.DB) error {
-	rtf.LastModifyTime = time.Now()
-	rtf.CreateTime = time.Now()
+	rtf.LastModifyTime = time.Now().UTC()
+	rtf.CreateTime = time.Now().UTC()
 	return nil
 }
 

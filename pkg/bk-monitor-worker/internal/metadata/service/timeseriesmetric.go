@@ -11,8 +11,6 @@ package service
 
 import (
 	"fmt"
-	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -91,7 +89,7 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(groupId uint, tableId string,
 
 // BulkCreateMetrics 批量创建指标
 func (s *TimeSeriesMetricSvc) BulkCreateMetrics(metricMap map[string]map[string]interface{}, metricNames []string, groupId uint, tableId string, isAutoDiscovery bool) (bool, error) {
-	var records []customreport.TimeSeriesMetric
+	db := mysql.GetDBSession().DB
 	for _, name := range metricNames {
 		metricInfo, ok := metricMap[name]
 		if !ok {
@@ -116,21 +114,18 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(metricMap map[string]map[string]
 			logger.Errorf("marshal tagList [%v] failed, %v", tagList, err)
 		}
 		realTableId := fmt.Sprintf("%s.%s", strings.Split(tableId, ".")[0], name)
-		records = append(records, customreport.TimeSeriesMetric{
+		tsm := customreport.TimeSeriesMetric{
 			GroupID:        groupId,
 			TableID:        realTableId,
 			FieldName:      name,
 			TagList:        tagListStr,
 			LastModifyTime: time.Now(),
-		})
-	}
-	db := mysql.GetDBSession().DB
-	for _, r := range records {
-		if err := r.Create(db); err != nil {
-			logger.Errorf("create TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s] failed, %v", r.GroupID, r.TableID, r.FieldName, r.TagList, err)
+		}
+		if err := tsm.Create(db); err != nil {
+			logger.Errorf("create TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s] failed, %v", tsm.GroupID, tsm.TableID, tsm.FieldName, tsm.TagList, err)
 			continue
 		}
-		logger.Infof("created TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s]", r.GroupID, r.TableID, r.FieldName, r.TagList)
+		logger.Infof("created TimeSeriesMetric group_id [%v] table_id [%s] field_name [%s] tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.FieldName, tsm.TagList)
 	}
 	return true, nil
 }
@@ -146,7 +141,6 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 		}
 		tsmList = append(tsmList, tempList...)
 	}
-	var records []customreport.TimeSeriesMetric
 	whiteListDisabledMetricSet := mapset.NewSet[string]()
 	// 组装更新的数据
 	for _, tsm := range tsmList {
@@ -190,9 +184,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			logger.Errorf("TimeSeriesMetric group_id [%v] table_id [%s] has wrong format tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.TagList)
 			continue
 		}
-		sort.Strings(dbTagList)
-		sort.Strings(tagList)
-		if !reflect.DeepEqual(dbTagList, tagList) {
+		if !mapset.NewSet(dbTagList...).Equal(mapset.NewSet(tagList...)) {
 			isNeedUpdate = true
 			tagListStr, err := jsonx.MarshalString(tagList)
 			if err != nil {
@@ -202,7 +194,11 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			tsm.TagList = tagListStr
 		}
 		if isNeedUpdate {
-			records = append(records, tsm)
+			if err := tsm.Update(db, customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime); err != nil {
+				logger.Errorf("update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, err)
+				continue
+			}
+			logger.Infof("updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
 		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
@@ -211,13 +207,6 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldNameIn(disabledList...).Delete(); err != nil {
 			logger.Errorf("delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
 		}
-	}
-	for _, r := range records {
-		if err := r.Update(db, customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime); err != nil {
-			logger.Errorf("update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", r.GroupID, r.FieldName, r.TagList, r.LastModifyTime, err)
-			continue
-		}
-		logger.Infof("updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", r.GroupID, r.FieldName, r.TagList, r.LastModifyTime)
 	}
 	return nil
 }

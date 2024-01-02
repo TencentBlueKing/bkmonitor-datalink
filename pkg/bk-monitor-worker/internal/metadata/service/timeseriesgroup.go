@@ -207,9 +207,9 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	}
 
 	// 过滤需要创建或更新的指标
-	metricMap, ok := metricTagInfo["metric_dict"].(map[string]bool)
+	metricMap, ok := metricTagInfo["metricMap"].(map[string]bool)
 	if !ok {
-		return errors.New("parse metric_dict failed")
+		return errors.New("parse metricMap failed")
 	}
 	metricSet := mapset.NewSet[string](mapx.GetMapKeys(metricMap)...)
 	needCreateMetricSet := metricSet.Difference(existMetricSet)
@@ -219,14 +219,14 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	}
 
 	// 过滤需要创建或更新的维度
-	tagMap, ok := metricTagInfo["tag_dict"].(map[string]string)
+	tagMap, ok := metricTagInfo["tagMap"].(map[string]string)
 	if !ok {
-		return errors.New("parse tag_dict failed")
+		return errors.New("parse tagMap failed")
 	}
 	tagSet := mapset.NewSet[string](mapx.GetMapKeys(tagMap)...)
 	needCreateTagSet := tagSet.Difference(existTagSet)
 	needUpdateTagSet := tagSet.Difference(needCreateTagSet)
-	isUpdateDescription, ok := metricTagInfo["is_update_description"].(bool)
+	isUpdateDescription, ok := metricTagInfo["isUpdateDescription"].(bool)
 	if !ok {
 		return errors.New("parse is_update_description failed")
 	}
@@ -244,7 +244,6 @@ func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interf
 	// 标识是否需要更新描述
 	isUpdateDescription := true
 	for _, item := range metricInfoList {
-		// 格式: {field_name: 是否禁用}
 		fieldName, ok := item["field_name"].(string)
 		if !ok {
 			logger.Errorf("get metric field_name from [%v] failed", metricMap)
@@ -254,6 +253,8 @@ func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interf
 		if !ok {
 			isActive = true
 		}
+		// 格式: {field_name: 是否禁用}
+		// NOTE: 取反为了方便存储和transfer使用
 		metricMap[fieldName] = !isActive
 		// 现版本只有 tag_value_list 的情况
 		if tagValue, ok := item["tag_value_list"].(map[string]interface{}); ok {
@@ -267,9 +268,9 @@ func (s *TimeSeriesGroupSvc) refineMetricTags(metricInfoList []map[string]interf
 		}
 	}
 	return map[string]interface{}{
-		"is_update_description": isUpdateDescription,
-		"metric_dict":           metricMap,
-		"tag_dict":              tagMap,
+		"isUpdateDescription": isUpdateDescription,
+		"metricMap":           metricMap,
+		"tagMap":              tagMap,
 	}, nil
 }
 
@@ -290,7 +291,7 @@ func (s *TimeSeriesGroupSvc) IsAutoDiscovery() (bool, error) {
 // BulkCreateOrUpdateMetrics 批量创建或更新字段
 func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap map[string]bool, needCreateMetrics, needUpdateMetrics []string) error {
 	logger.Infof("bulk create or update rt metrics for table_id [%s]", tableId)
-	var createRecords []resulttable.ResultTableField
+	db := mysql.GetDBSession().DB
 	for _, metric := range needCreateMetrics {
 		defaultValue := "0"
 		var isDisabled, ok bool
@@ -298,7 +299,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 		if !ok {
 			isDisabled = false
 		}
-		createRecords = append(createRecords, resulttable.ResultTableField{
+		rtf := resulttable.ResultTableField{
 			TableID:        tableId,
 			FieldName:      metric,
 			FieldType:      models.ResultTableFieldTypeFloat,
@@ -308,19 +309,14 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			Creator:        "system",
 			LastModifyUser: "system",
 			IsDisabled:     isDisabled,
-		})
-	}
-	// 开始写入数据
-	db := mysql.GetDBSession().DB
-	for _, r := range createRecords {
-		if err := r.Create(db); err != nil {
-			logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", r.TableID, r.FieldName, err)
+		}
+		if err := rtf.Create(db); err != nil {
+			logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", rtf.TableID, rtf.FieldName, err)
 			continue
 		}
-		logger.Infof("created ResultTableField table_id [%s] field_name [%s]", r.TableID, r.FieldName)
+		logger.Infof("created ResultTableField table_id [%s] field_name [%s]", rtf.TableID, rtf.FieldName)
 	}
 	logger.Infof("bulk create metrics for table_id [%s] successfully", tableId)
-
 	// 开始批量更新
 	var updateRecords []resulttable.ResultTableField
 	var updateRTFs []resulttable.ResultTableField
@@ -338,16 +334,14 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 		}
 		if rtf.IsDisabled != expectMetricStatus {
 			rtf.IsDisabled = expectMetricStatus
-			rtf.LastModifyTime = time.Now()
+			rtf.LastModifyTime = time.Now().UTC()
 			updateRecords = append(updateRecords, rtf)
+			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime, err)
+				continue
+			}
+			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime)
 		}
-	}
-	for _, r := range updateRecords {
-		if err := r.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-			logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", r.TableID, r.FieldName, r.IsDisabled, r.LastModifyTime, err)
-			continue
-		}
-		logger.Infof("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v]", r.TableID, r.FieldName, r.IsDisabled, r.LastModifyTime)
 	}
 	logger.Infof("batch update metrics for table_id [%s] successfully", tableId)
 	return nil
@@ -356,11 +350,11 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 // BulkCreateOrUpdateTags 批量创建或更新tag
 func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[string]string, needCreateTags, needUpdateTags []string, isUpdateDescription bool) error {
 	logger.Infof("bulk create or update rt tag for table_id [%s]", tableId)
-	var createRecords []resulttable.ResultTableField
+	db := mysql.GetDBSession().DB
 	for _, tag := range needCreateTags {
 		defaultValue := ""
 		description, _ := tagMap[tag]
-		createRecords = append(createRecords, resulttable.ResultTableField{
+		rtf := resulttable.ResultTableField{
 			TableID:        tableId,
 			FieldName:      tag,
 			Description:    description,
@@ -371,20 +365,15 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 			Creator:        "system",
 			LastModifyUser: "system",
 			IsDisabled:     false,
-		})
-	}
-	// 开始写入数据
-	db := mysql.GetDBSession().DB
-	for _, r := range createRecords {
-		if err := r.Create(db); err != nil {
-			logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", r.TableID, r.FieldName, r.Description, err)
+		}
+		if err := rtf.Create(db); err != nil {
+			logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, err)
 			continue
 		}
-		logger.Infof("created ResultTableField table_id [%s] field_name [%s] description [%s]", r.TableID, r.FieldName, r.Description)
+		logger.Infof("created ResultTableField table_id [%s] field_name [%s] description [%s]", rtf.TableID, rtf.FieldName, rtf.Description)
 	}
 	logger.Infof("bulk create tags for table_id [%s] successfully", tableId)
 	// 开始批量更新
-	var updateRecords []resulttable.ResultTableField
 	var updateRTFs []resulttable.ResultTableField
 	for _, chunkMetrics := range slicex.ChunkSlice(needUpdateTags, 0) {
 		var tempList []resulttable.ResultTableField
@@ -400,16 +389,13 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 		expectTagDescription, _ := tagMap[rtf.FieldName]
 		if rtf.Description != expectTagDescription {
 			rtf.Description = expectTagDescription
-			rtf.LastModifyTime = time.Now()
-			updateRecords = append(updateRecords, rtf)
+			rtf.LastModifyTime = time.Now().UTC()
+			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime, err)
+				continue
+			}
+			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime)
 		}
-	}
-	for _, r := range updateRecords {
-		if err := r.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-			logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", r.TableID, r.FieldName, r.Description, r.LastModifyTime, err)
-			continue
-		}
-		logger.Infof("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v]", r.TableID, r.FieldName, r.Description, r.LastModifyTime)
 	}
 	logger.Infof("batch update tags for table_id [%s] successfully", tableId)
 	return nil

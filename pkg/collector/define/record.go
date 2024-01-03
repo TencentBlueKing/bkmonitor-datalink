@@ -11,7 +11,6 @@ package define
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	dto "github.com/prometheus/client_model/go"
@@ -224,18 +223,5 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 }
 
 func WrapProxyToken(token Token) string {
-	return fmt.Sprintf("%s/:!:/%d", token.Original, token.ProxyDataId)
-}
-
-func UnwrapProxyToken(s string) (string, int32) {
-	parts := strings.Split(s, "/:!:/")
-	if len(parts) != 2 {
-		return "", 0
-	}
-
-	i, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "", 0
-	}
-	return parts[0], int32(i)
+	return fmt.Sprintf("%d/%s", token.ProxyDataId, token.Original)
 }

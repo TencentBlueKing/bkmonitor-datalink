@@ -33,6 +33,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/flat"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/formatter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/fta"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/gse_event"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/log"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/procperf"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/procport"

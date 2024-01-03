@@ -43,8 +43,9 @@ const (
 
 // Params
 type Params struct {
-	Metric  string             `json:"metric_name"`
-	TableID structured.TableID `json:"table_id"`
+	DataSource string             `json:"data_source"`
+	TableID    structured.TableID `json:"table_id"`
+	Metric     string             `json:"metric_name"`
 
 	Conditions structured.Conditions `json:"conditions"`
 	Keys       []string              `json:"keys"`

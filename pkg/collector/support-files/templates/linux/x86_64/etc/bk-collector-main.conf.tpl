@@ -16,6 +16,7 @@ logging:
 output.bkpipe:
   endpoint: {{ plugin_path.endpoint }}
   synccfg: true
+  fastmode: true
 
 seccomp.enabled: false
 

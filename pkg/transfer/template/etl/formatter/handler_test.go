@@ -227,7 +227,7 @@ func (s *HandlerSuite) TestFillBizIDHandlerCreator() {
 	})
 }
 
-func (s *HandlerSuite) TestCutterByDbmMetaMatched() {
+func (s *HandlerSuite) TestCutterByDbmMetaV0() {
 	hostInfo := models.CCHostInfo{
 		IP:      "127.0.0.1",
 		CloudID: 1,
@@ -235,7 +235,7 @@ func (s *HandlerSuite) TestCutterByDbmMetaMatched() {
 			BizID: []int{2},
 			Topo:  []map[string]string{},
 		},
-		DbmMeta: `[{"role":"master","cluster":"ssd.nvmessd.dba.db "},{"role":"slave","cluster":"ssd.abcd.dba.db "}]`,
+		DbmMeta: `[{"role":"master","cluster":"ssd.nvmessd.dba.db"},{"role":"slave","cluster":"ssd.abcd.dba.db"}]`,
 	}
 	s.StoreHost(&hostInfo).AnyTimes()
 	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
@@ -244,7 +244,7 @@ func (s *HandlerSuite) TestCutterByDbmMetaMatched() {
 		dims := record.Dimensions
 		s.NotNil(dims["role"])
 		s.NotNil(dims["cluster"])
-		s.T().Logf("dbm-meta record: %+v", record)
+		s.T().Logf("dbm-meta/v0 record: %+v", record)
 	}, []handlerCase{
 		// 有biz id 无ip cloud
 		{
@@ -259,7 +259,7 @@ func (s *HandlerSuite) TestCutterByDbmMetaMatched() {
 	})
 }
 
-func (s *HandlerSuite) TestCutterByDbmMetaMiss() {
+func (s *HandlerSuite) TestCutterByDbmMetaV1() {
 	hostInfo := models.CCHostInfo{
 		IP:      "127.0.0.1",
 		CloudID: 1,
@@ -267,23 +267,25 @@ func (s *HandlerSuite) TestCutterByDbmMetaMiss() {
 			BizID: []int{2},
 			Topo:  []map[string]string{},
 		},
-		DbmMeta: `[{"role":"master","cluster":"ssd.nvmessd.dba.db "},{"role":"slave","cluster":"ssd.abcd.dba.db "}]`,
+		DbmMeta: `{"version":"v1","common":{"region":"gz","status":"prod"},"custom":[{"role":"master","cluster":"ssd.nvmessd.dba.db"},{"role":"slave","cluster":"ssd.abcd.dba.db"}]}`,
 	}
 	s.StoreHost(&hostInfo).AnyTimes()
 	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
 
 	s.runHandler(TransferRecordCutterByExtraMetaCreator(s.Store, true), func(record *define.ETLRecord) {
 		dims := record.Dimensions
-		s.Nil(dims["role"])
-		s.Nil(dims["cluster"])
+		s.NotNil(dims["role"])
+		s.NotNil(dims["cluster"])
+		s.NotNil(dims["region"])
+		s.NotNil(dims["status"])
+		s.T().Logf("dbm-meta/v1 record: %+v", record)
 	}, []handlerCase{
-		// 有biz id 无ip cloud
 		{
-			1, nil, define.ETLRecord{
+			2, nil, define.ETLRecord{
 				Dimensions: map[string]interface{}{
 					define.RecordBizIDFieldName:   3,
 					define.RecordIPFieldName:      "127.0.0.1",
-					define.RecordCloudIDFieldName: "2",
+					define.RecordCloudIDFieldName: "1",
 				},
 			},
 		},

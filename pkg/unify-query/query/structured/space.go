@@ -58,9 +58,12 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return nil
 	}
 
+	// 增加在非单指标单表下，判断如果强行指定了单指标单表则对其进行修改以支持 vm 查询
+	isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
+
 	// 当传入有效的 measurementType 字段时，需要进行类型过滤
 	if isK8s {
-		if rtDetail.MeasurementType != redis.BkSplitMeasurement {
+		if !isSplitMeasurement {
 			return nil
 		}
 

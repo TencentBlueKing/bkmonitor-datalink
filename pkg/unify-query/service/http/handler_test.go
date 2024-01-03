@@ -571,6 +571,8 @@ func TestQueryTs(t *testing.T) {
 
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+
 			body := []byte(c.query)
 			query := &structured.QueryTs{}
 			err := json.Unmarshal(body, query)
@@ -1434,7 +1436,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 		"promq to struct with condition contains`": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `bkmonitor:metric{dim-contains=~"^(val-1|val-2|val-3)$",dim-req=~"val-1|val-2|val-3"} @ end()`,
+				PromQL: `bkmonitor:metric{dim_contains=~"^(val-1|val-2|val-3)$",dim_req=~"val-1|val-2|val-3"} @ end()`,
 			},
 			query: &structured.QueryTs{
 				QueryList: []*structured.Query{
@@ -1445,7 +1447,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						Conditions: structured.Conditions{
 							FieldList: []structured.ConditionField{
 								{
-									DimensionName: "dim-contains",
+									DimensionName: "dim_contains",
 									Value: []string{
 										"val-1",
 										"val-2",
@@ -1454,7 +1456,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 									Operator: "contains",
 								},
 								{
-									DimensionName: "dim-req",
+									DimensionName: "dim_req",
 									Value: []string{
 										"val-1",
 										"val-2",
@@ -1511,7 +1513,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"nodeIndex 3 with sum": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
 				PromQL: `increase(sum by (deployment_environment, result_table_id) (bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"})[2m:])`,
 			},
@@ -1554,7 +1556,7 @@ func TestStructAndPromQLConvert(t *testing.T) {
 			},
 		},
 		"nodeIndex 2 with sum": {
-			queryStruct: true,
+			queryStruct: false,
 			promql: &structured.QueryPromQL{
 				PromQL: `sum by (deployment_environment, result_table_id) (increase(bkmonitor:5000575_bkapm_metric_tgf_server_gs_cn_idctest:__default__:trace_additional_duration_count{deployment_environment="g-5"}[2m]))`,
 			},
@@ -1588,7 +1590,29 @@ func TestStructAndPromQLConvert(t *testing.T) {
 								},
 							},
 						},
-						Offset: "",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"predict_linear": {
+			queryStruct: false,
+			promql: &structured.QueryPromQL{
+				PromQL: `predict_linear(bkmonitor:metric[1h], 4*3600)`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    "bkmonitor",
+						TableID:       "",
+						FieldName:     "metric",
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "predict_linear",
+							Window:    "1h0m0s",
+							NodeIndex: 2,
+							VargsList: []interface{}{4 * 3600},
+						},
 					},
 				},
 				MetricMerge: "a",

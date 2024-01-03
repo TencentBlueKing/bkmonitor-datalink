@@ -408,3 +408,75 @@ func NewMetricEvent(task define.TaskConfig) *MetricEvent {
 		BizID:  task.GetBizID(),
 	}
 }
+
+// GatherUpEvent :
+type GatherUpEvent struct {
+	DataID     int32
+	Time       time.Time
+	Metrics    common.MapStr
+	Dimensions common.MapStr
+}
+
+func (e *GatherUpEvent) IgnoreCMDBLevel() bool { return true }
+
+func (e *GatherUpEvent) GetType() string {
+	return define.ModuleStatus
+}
+
+// AsMapStr :
+func (e *GatherUpEvent) AsMapStr() common.MapStr {
+	mapStr := common.MapStr{}
+	mapStr["dataid"] = e.DataID
+	mapStr["data"] = []common.MapStr{
+		{"metrics": e.Metrics, "dimension": e.Dimensions, "timestamp": e.Time.UnixMilli()},
+	}
+	return mapStr
+}
+
+func NewGatherUpEvent(task define.Task, upCode define.BeatErrorCode) *GatherUpEvent {
+	return NewGatherUpEventWithDims(task, upCode, nil)
+}
+
+func NewGatherUpEventWithDims(task define.Task, upCode define.BeatErrorCode, customDims common.MapStr) *GatherUpEvent {
+	return NewGatherUpEventWithConfig(task.GetConfig(), task.GetGlobalConfig(), upCode, customDims)
+}
+
+func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.BeatErrorCode,
+	customDims common.MapStr) *GatherUpEvent {
+	name, ok := define.BeatErrorCodeNameMap[upCode]
+	if !ok {
+		name = "NotKnownErrorCode"
+	}
+	dims := common.MapStr{
+		"task_id":                          strconv.Itoa(int(taskConfig.GetTaskID())),
+		"bk_collect_type":                  taskConfig.GetType(),
+		"bk_biz_id":                        strconv.Itoa(int(taskConfig.GetBizID())),
+		"bk_collect_config_id":             "",
+		"bk_target_cloud_id":               "",
+		"bk_target_host_id":                "",
+		"bk_target_ip":                     "",
+		define.BeaterUpMetricCodeLabel:     strconv.Itoa(int(upCode)),
+		define.BeaterUpMetricCodeNameLabel: name,
+	}
+	// 从配置文件中获取维度字段
+	for _, labels := range taskConfig.GetLabels() {
+		for k, v := range labels {
+			if _, ok := dims[k]; ok {
+				dims[k] = v
+			}
+		}
+	}
+	// 主动传入自定义维度值覆盖默认值
+	for k, v := range customDims {
+		if _, ok := customDims[k]; ok {
+			dims[k] = v
+		}
+	}
+	ev := &GatherUpEvent{
+		DataID:     globalConfig.GetGatherUpDataID(),
+		Time:       time.Now(),
+		Dimensions: dims,
+		Metrics:    common.MapStr{define.BeaterUpMetric: 1},
+	}
+	return ev
+}

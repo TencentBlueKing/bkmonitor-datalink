@@ -264,7 +264,26 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 					atomic.AddInt64(&hostLost, 1)
 					continue
 				}
+
+				// 以缓存agent id为key，存储host信息
+				if value.Host.BkAgentID != "" {
+					hostAgentInfo := models.CCAgentHostInfo{
+						AgentID: value.Host.BkAgentID,
+						BizID:   value.BizID,
+						IP:      value.Host.BKHostInnerIP,
+						CloudID: value.Host.BKCloudID,
+					}
+					err = hostAgentInfo.Dump(store, expires)
+					if err != nil {
+						logging.Errorf("unable to dump store %v", err)
+						atomic.AddInt64(&hostLost, 1)
+						continue
+					}
+
+				}
+
 				atomic.AddInt64(&hostUpdate, 1)
+
 			case *models.CCInstanceInfo:
 				instanceInfo.InstanceID = value.Host.BKHostInnerIP
 				instanceInfo.BizID = []int{value.BizID}

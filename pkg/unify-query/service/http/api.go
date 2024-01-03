@@ -312,6 +312,7 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 	trace.InsertStringIntoSpan("query-body", string(paramsStr), span)
 
 	query := &structured.Query{
+		DataSource:    params.DataSource,
 		TableID:       params.TableID,
 		FieldName:     params.Metric,
 		Conditions:    params.Conditions,

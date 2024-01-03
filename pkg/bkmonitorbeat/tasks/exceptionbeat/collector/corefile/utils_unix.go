@@ -135,7 +135,7 @@ func (c *CoreFileCollector) handleCoreFileEvent(event fsnotify.Event, e chan<- d
 	// 只关注文件创建，后续文件的写入或者其他的变化都一律认为属于收敛不再关注
 	if strings.Contains(event.Name, c.corePath) && event.Op&fsnotify.Create == fsnotify.Create {
 		// 如果发现创建的事件属于路径，则跳过不处理
-		info, err := os.Stat(event.Name)
+		info, err := os.Lstat(event.Name)
 		if err != nil {
 			logger.Errorf("failed to stat file->[%s] stat for err->[%s], nothing will do any more.", event.Name, err)
 			return

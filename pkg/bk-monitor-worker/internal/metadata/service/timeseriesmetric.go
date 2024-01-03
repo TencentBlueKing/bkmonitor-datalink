@@ -67,24 +67,26 @@ func (s *TimeSeriesMetricSvc) BulkRefreshTSMetrics(groupId uint, tableId string,
 	// 获取已经存在的指标名，然后进行批量更新
 	needUpdateMetricFieldNameSet := metricFieldNameSet.Difference(needCreateMetricFieldNameSet)
 	needUpdateMetricFieldNames := needUpdateMetricFieldNameSet.ToSlice()
-	// 这里仅针对创建时，推送路由数据
-	isCreate := false
+
+	// 针对创建时和白名单模式有更新时，推送路由数据
+	needPush := false
 	var err error
 	if len(needCreateMetricFieldNames) != 0 {
-		isCreate, err = s.BulkCreateMetrics(metricsMap, needCreateMetricFieldNames, groupId, tableId, isAutoDiscovery)
+		needPush, err = s.BulkCreateMetrics(metricsMap, needCreateMetricFieldNames, groupId, tableId, isAutoDiscovery)
 		if err != nil {
 			return false, errors.Wrapf(err, "bulk create metrics [%v] for group_id [%v] table_id [%s] failed", needCreateMetricFieldNames, groupId, tableId)
 		}
 	}
 
 	if len(needUpdateMetricFieldNames) != 0 {
-		err = s.BulkUpdateMetrics(metricsMap, needUpdateMetricFieldNames, groupId, isAutoDiscovery)
+		updatePush, err := s.BulkUpdateMetrics(metricsMap, needUpdateMetricFieldNames, groupId, isAutoDiscovery)
 		if err != nil {
 			return false, errors.Wrapf(err, "bulk update metrics [%v] for group_id [%v] table_id [%s] failed", needUpdateMetricFieldNames, groupId, tableId)
 		}
+		needPush = needPush || updatePush
 	}
 
-	return isCreate, nil
+	return needPush, nil
 }
 
 // BulkCreateMetrics 批量创建指标
@@ -131,16 +133,17 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(metricMap map[string]map[string]
 }
 
 // BulkUpdateMetrics 批量更新指标，针对记录仅更新最后更新时间和 tag 字段
-func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]interface{}, metricNames []string, groupId uint, isAutoDiscovery bool) error {
+func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]interface{}, metricNames []string, groupId uint, isAutoDiscovery bool) (bool, error) {
 	db := mysql.GetDBSession().DB
 	var tsmList []customreport.TimeSeriesMetric
 	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
 		var tempList []customreport.TimeSeriesMetric
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunkMetricNameList...).GroupIDEq(groupId).All(&tempList); err != nil {
-			return errors.Wrapf(err, "query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
+			return false, errors.Wrapf(err, "query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
 		}
 		tsmList = append(tsmList, tempList...)
 	}
+	updated := false
 	whiteListDisabledMetricSet := mapset.NewSet[string]()
 	// 组装更新的数据
 	for _, tsm := range tsmList {
@@ -200,6 +203,9 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			}
 			logger.Infof("updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
 		}
+		if isNeedUpdate {
+			updated = true
+		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
 	disabledList := whiteListDisabledMetricSet.ToSlice()
@@ -208,7 +214,8 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			logger.Errorf("delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
 		}
 	}
-	return nil
+	// 自动发现且有更新时需要推送路由数据
+	return updated && isAutoDiscovery, nil
 }
 
 // 获取 tags

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -65,11 +66,11 @@ func TestModel_Resources(t *testing.T) {
 
 func TestModel_GetResources(t *testing.T) {
 	ctx := context.Background()
-	index, err := testModel.getResource(ctx, "cluster")
+	index, err := testModel.getResourceIndex(ctx, "cluster")
 	assert.Nil(t, err)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id"}, index)
 
-	index, err = testModel.getResource(ctx, "clb")
+	index, err = testModel.getResourceIndex(ctx, "clb")
 	assert.Equal(t, fmt.Errorf("resource is empty clb"), err)
 }
 
@@ -390,10 +391,10 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 
 func TestMakeQuery(t *testing.T) {
 	type Case struct {
-		Name        string
-		Path        cmdb.Path
-		Matcher     cmdb.Matcher
-		MetricMerge string
+		Name    string
+		Path    cmdb.Path
+		Matcher cmdb.Matcher
+		promQL  string
 	}
 
 	cases := []Case{
@@ -407,7 +408,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			MetricMerge: "(count(a) by (bcs_cluster_id,node))",
+			promQL: `(count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"}))`,
 		},
 		{
 			Name: "level2",
@@ -420,43 +421,82 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			MetricMerge: "count(b and on(node) (count(a) by (bcs_cluster_id,node))) by (bk_target_ip)",
+			promQL: `count by (bk_target_ip) (node_with_system_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"})))`,
+		},
+		{
+			Name: "level3_container",
+			Path: cmdb.Path{
+				{V: []cmdb.Resource{"container", "pod"}},
+				{V: []cmdb.Resource{"pod", "replicaset"}},
+				{V: []cmdb.Resource{"replicaset", "deployment"}},
+			},
+			Matcher: map[string]string{
+				"bcs_cluster_id": "cluster1",
+				"namespace":      "ns1",
+				"pod":            "pod1",
+				"container":      "container1",
+			},
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (container_with_pod_relation{bcs_cluster_id="cluster1",container="container1",namespace="ns1",pod="pod1"}))))`,
 		},
 		{
 			Name: "level3",
 			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-				{V: []cmdb.Resource{"node", "system"}},
+				{V: []cmdb.Resource{"node", "pod"}},
 				{V: []cmdb.Resource{"pod", "replicaset"}},
+				{V: []cmdb.Resource{"replicaset", "deployment"}},
 			},
 			Matcher: map[string]string{
-				"pod":            "pod1",
-				"namespace":      "ns1",
+				"node":           "node1",
 				"bcs_cluster_id": "cluster1",
 			},
-			MetricMerge: "count(c and on(system) count(b and on(node) (count(a) by (bcs_cluster_id,node))) by (bk_target_ip)) by (bcs_cluster_id,namespace,replicaset)",
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation{bcs_cluster_id="cluster1",node="node1"}))))`,
 		},
 		{
 			Name: "level4",
 			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-				{V: []cmdb.Resource{"node", "system"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
+				{V: []cmdb.Resource{"system", "node"}},
+				{V: []cmdb.Resource{"node", "pod"}},
 				{V: []cmdb.Resource{"pod", "replicaset"}},
+				{V: []cmdb.Resource{"replicaset", "deployment"}},
 			},
 			Matcher: map[string]string{
-				"bcs_cluster_id": "cluster1",
-				"bk_target_ip":   "127.0.0.1",
+				"bk_target_ip": "127.0.0.1",
 			},
-			MetricMerge: "count(d and on(deployment) count(c and on(system) count(b and on(node) (count(a) by (bcs_cluster_id,node))) by (bk_target_ip)) by (bcs_cluster_id,namespace,deployment)) by (bcs_cluster_id,namespace,replicaset)",
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_system_relation{bk_target_ip="127.0.0.1"})))))`,
 		},
 	}
 
+	ctx := context.Background()
+	mock.Init()
+
+	mode, _ := newModel(ctx)
+
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			queryTs, err := makeQuery("", c.Path, c.Matcher)
+			ctx = metadata.InitHashID(ctx)
+			queryTs, err := mode.makeQuery(ctx, "", c.Path, c.Matcher)
 			assert.NoError(t, err)
-			assert.Equal(t, c.MetricMerge, queryTs.MetricMerge)
+			assert.NotNil(t, queryTs)
+
+			if queryTs != nil {
+				referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
+				referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
+
+				for _, q := range queryTs.QueryList {
+					referenceNameMetric[q.ReferenceName] = q.FieldName
+					matchers := make([]*labels.Matcher, 0, len(q.Conditions.FieldList))
+					for _, f := range q.Conditions.FieldList {
+						matcher, _ := labels.NewMatcher(labels.MatchEqual, f.DimensionName, f.Value[0])
+						matchers = append(matchers, matcher)
+					}
+					referenceNameLabelMatcher[q.ReferenceName] = matchers
+				}
+
+				promQL, err := queryTs.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+				assert.Nil(t, err)
+
+				assert.Equal(t, c.promQL, promQL.String())
+			}
 		})
 	}
 }

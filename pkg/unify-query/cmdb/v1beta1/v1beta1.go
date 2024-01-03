@@ -113,7 +113,7 @@ func (r *model) resources(ctx context.Context) ([]cmdb.Resource, error) {
 	return rs, nil
 }
 
-func (r *model) getResource(ctx context.Context, resource cmdb.Resource) (cmdb.Index, error) {
+func (r *model) getResourceIndex(ctx context.Context, resource cmdb.Resource) (cmdb.Index, error) {
 	if r.m == nil {
 		return nil, fmt.Errorf("reation m is nil")
 	}
@@ -256,7 +256,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}
 	}
 
-	queryTs, err := makeQuery(spaceUid, path, matcher)
+	queryTs, err := r.makeQuery(ctx, spaceUid, path, matcher)
 	if err != nil {
 		return nil, err
 	}
@@ -297,8 +297,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	}
 
 	statement := promQL.String()
-	start := time.UnixMilli(startTs)
-	end := time.UnixMilli(endTs)
+	start := time.Unix(startTs, 0)
+	end := time.Unix(endTs, 0)
 
 	var matrix pl.Matrix
 	var vector pl.Vector
@@ -344,7 +344,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 }
 
 func (r *model) getIndexMatcher(ctx context.Context, resource cmdb.Resource, matcher cmdb.Matcher) (cmdb.Matcher, error) {
-	index, err := r.getResource(ctx, resource)
+	index, err := r.getResourceIndex(ctx, resource)
 	if len(index) == 0 {
 		return nil, fmt.Errorf("resource %s get index empty error %s", resource, err)
 	}
@@ -360,7 +360,7 @@ func (r *model) getIndexMatcher(ctx context.Context, resource cmdb.Resource, mat
 	return indexMatcher, nil
 }
 
-func makeQuery(spaceUid string, path cmdb.Path, matcher cmdb.Matcher) (*structured.QueryTs, error) {
+func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, matcher cmdb.Matcher) (*structured.QueryTs, error) {
 	const ascii = 97 // a
 
 	queryTs := &structured.QueryTs{
@@ -377,16 +377,19 @@ func makeQuery(spaceUid string, path cmdb.Path, matcher cmdb.Matcher) (*structur
 			return nil, fmt.Errorf("metric is empty %v", p)
 		}
 
-		var groupBy []string
-		for _, c := range configData.Resource {
-			if c.Name == p.V[1] {
-				groupBy = c.Index
-			}
+		sourceIndex, err := r.getResourceIndex(ctx, p.V[0])
+		if err != nil {
+			return nil, err
 		}
-		by := strings.Join(groupBy, ",")
+		targetIndex, err := r.getResourceIndex(ctx, p.V[1])
+		if err != nil {
+			return nil, err
+		}
+
+		onConnect := strings.Join(sourceIndex, ",")
+		groupBy := strings.Join(targetIndex, ",")
 
 		ref := string(rune(ascii + i))
-		prevIdx := i - 1
 
 		if i == 0 {
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
@@ -394,21 +397,23 @@ func makeQuery(spaceUid string, path cmdb.Path, matcher cmdb.Matcher) (*structur
 				ReferenceName: ref,
 				Conditions:    convertMapToConditions(matcher),
 			})
-			queryTs.MetricMerge = fmt.Sprintf(`(count(%s) by (%s))`, ref, by)
+			queryTs.MetricMerge = fmt.Sprintf(`(count(%s) by (%s))`, ref, groupBy)
 		} else {
 			// 如果查询条件在其他 relation 中也存在，也需要补充，比如（bcs_cluster_id）
 			includeMatcher := make(cmdb.Matcher)
-			for _, index := range groupBy {
+			for _, index := range targetIndex {
 				if v, ok := matcher[index]; ok {
 					includeMatcher[index] = v
 				}
 			}
+
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
 				FieldName:     metric,
 				ReferenceName: ref,
 				Conditions:    convertMapToConditions(includeMatcher),
 			})
-			queryTs.MetricMerge = fmt.Sprintf(`count(%s and on(%s) %s) by (%s)`, ref, path[prevIdx].V[1], queryTs.MetricMerge, by)
+
+			queryTs.MetricMerge = fmt.Sprintf(`count(%s and on(%s) %s) by (%s)`, ref, onConnect, queryTs.MetricMerge, groupBy)
 		}
 	}
 

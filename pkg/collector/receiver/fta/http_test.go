@@ -25,7 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
-func TestExportEvent_Common(t *testing.T) {
+func TestExportEventCommon(t *testing.T) {
 	tests := []struct {
 		name          string
 		url           string
@@ -67,7 +67,7 @@ func TestExportEvent_Common(t *testing.T) {
 		{
 			name:          "header fta token",
 			url:           "http://localhost/fta/v1/event",
-			headers:       map[string]string{ftaTokenKey: "3"},
+			headers:       map[string]string{tokenKey: "3"},
 			body:          `{"test": "1"}`,
 			wantCode:      http.StatusOK,
 			wantPublished: true,
@@ -86,7 +86,6 @@ func TestExportEvent_Common(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// reset
 			var r *define.Record
 			svc := HttpService{
 				receiver.Publisher{Func: func(record *define.Record) {

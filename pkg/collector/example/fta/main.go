@@ -21,7 +21,21 @@ import (
 )
 
 const (
-	URL = "http://localhost:4318/api/v1/event/"
+	URL = "http://localhost:4318/fta/v1/event/"
+
+	template = `{
+    "ip": "127.0.0.1", 
+    "source_id": "123456",    
+    "source_time": "%s",   
+    "alarm_type": "api_default",
+    "alarm_content": "FAILURE for production/HTTP on machine 127.0.0.1", 
+    "alarm_context": {"key1":"value1","key2":"value2"}, 
+    "description": "avg(usage) > 90%%, 当前值 99%%",
+    "target_type": "HOST",
+    "category": "os",
+    "severity": 1,
+    "bk_biz_id": 2
+}`
 )
 
 func main() {
@@ -35,21 +49,14 @@ func main() {
 		select {
 		case <-c:
 			return
+
 		case <-ticker.C:
-			data := fmt.Sprintf(`{
-    "ip": "127.0.0.1", 
-    "source_id": "123456",    
-    "source_time": "%s",   
-    "alarm_type": "api_default",
-    "alarm_content": "FAILURE for production/HTTP on machine 127.0.0.1", 
-    "alarm_context": {"key1":"value1","key2":"value2"}, 
-    "description": "avg(usage) > 90%%, 当前值 99%%",
-    "target_type": "HOST",
-    "category": "os",
-    "severity": 1,
-    "bk_biz_id": 2,
-}`, time.Now().Format("2006-01-02 15:04:05+07:00"))
-			response, err := http.Post(URL, "application/json", bytes.NewBuffer([]byte(data)))
+			data := fmt.Sprintf(template, time.Now().Format("2006-01-02 15:04:05+07:00"))
+			request, _ := http.NewRequest(http.MethodPost, URL, bytes.NewBufferString(data))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-BK-TOKEN", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==")
+
+			response, err := http.DefaultClient.Do(request)
 			if err != nil {
 				log.Printf("post data failed, err: %v\n", err)
 				continue

@@ -10,6 +10,7 @@
 package tokenchecker
 
 import (
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -101,10 +102,40 @@ func (p *tokenChecker) Process(record *define.Record) (*define.Record, error) {
 		err = p.processLogs(decoder, config, record)
 	case define.RecordProxy:
 		err = p.processProxy(decoder, record)
+	case define.RecordFta:
+		err = p.processFta(decoder, record)
+
 	default:
 		err = p.processCommon(decoder, record)
 	}
 	return nil, err
+}
+
+// processFta Fta Token 解析
+func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) error {
+	var err error
+	if decoder.Skip() {
+		record.Token, err = decoder.Decode("")
+		return err
+	}
+
+	// token 解密
+	record.Token, err = decoder.Decode(record.Token.Original)
+	if err != nil {
+		return errors.Wrap(err, "failed to decode token")
+	}
+	token := record.Token
+
+	// 检查 DataID 及 PluginID 是否合法
+	if token.MetricsDataId <= 0 {
+		return errors.New("reject invalid dataId")
+	}
+	if token.AppName == "" {
+		return errors.New("reject invalid pluginId")
+	}
+
+	record.Data.(*define.FtaData).PluginId = token.AppName
+	return nil
 }
 
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {

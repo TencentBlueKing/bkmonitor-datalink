@@ -25,6 +25,7 @@ const (
 	ContentTypeJson     = "application/json"
 	ContentTypeText     = "text/plain; charset=utf-8"
 
+	SourceFta         = "fta"
 	SourceJaeger      = "jaeger"
 	SourcePyroscope   = "pyroscope"
 	SourceOtlp        = "otlp"
@@ -49,6 +50,7 @@ const (
 	RecordMetricsDerived RecordType = "metrics.derived"
 	RecordLogsDerived    RecordType = "logs.derived"
 	RecordPushGateway    RecordType = "pushgateway"
+	RecordFta            RecordType = "fta"
 	RecordRemoteWrite    RecordType = "remotewrite"
 	RecordProxy          RecordType = "proxy"
 	RecordPingserver     RecordType = "pingserver"
@@ -80,6 +82,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordPingserver
 	case RecordProfiles.S():
 		t = RecordProfiles
+	case RecordFta.S():
+		t = RecordFta
 	default:
 		t = RecordUndefined
 	}
@@ -147,6 +151,13 @@ type PingserverData struct {
 	Data    map[string]interface{} `json:"data"`
 }
 
+type FtaData struct {
+	PluginId   string                   `json:"bk_plugin_id"`
+	IngestTime int64                    `json:"bk_ingest_time"`
+	Data       []map[string]interface{} `json:"data"`
+	EventId    string                   `json:"__bk_event_id__"`
+}
+
 type PushMode string
 
 const (
@@ -199,7 +210,7 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 	switch rtype {
 	case RecordTraces, RecordTracesDerived:
 		return t.TracesDataId
-	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver:
+	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta:
 		return t.MetricsDataId
 	case RecordLogs, RecordLogsDerived:
 		return t.LogsDataId

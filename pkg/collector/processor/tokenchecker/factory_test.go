@@ -422,8 +422,8 @@ func TestFtaAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.NoError(t, err)
-		assert.Equal(t, record.Token.AppName, "tencent_cloud")
-		assert.Equal(t, record.Token.MetricsDataId, int32(1001))
+		assert.Equal(t, "tencent_cloud", record.Token.AppName)
+		assert.Equal(t, int32(1001), record.Token.MetricsDataId)
 	})
 
 	t.Run("Incorrect Token", func(t *testing.T) {
@@ -443,11 +443,10 @@ func TestFtaAes256Token(t *testing.T) {
 		}
 
 		_, err := checker.Process(&record)
-		assert.Error(t, err)
 		assert.True(t, strings.Contains(err.Error(), "failed to decode token"))
 	})
 
-	t.Run("Incorrect Token - Empty Plugin ID", func(t *testing.T) {
+	t.Run("Incorrect Token - Empty PluginID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -464,11 +463,10 @@ func TestFtaAes256Token(t *testing.T) {
 		}
 
 		_, err := checker.Process(&record)
-		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "reject invalid pluginId"))
+		assert.Equal(t, "reject invalid pluginId", err.Error())
 	})
 
-	t.Run("Incorrect Token - Empty Data ID", func(t *testing.T) {
+	t.Run("Incorrect Token - Empty DataID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -485,7 +483,6 @@ func TestFtaAes256Token(t *testing.T) {
 		}
 
 		_, err := checker.Process(&record)
-		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "reject invalid dataId"))
+		assert.Equal(t, "reject invalid dataId", err.Error())
 	})
 }

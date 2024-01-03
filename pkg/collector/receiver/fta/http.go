@@ -29,7 +29,6 @@ const (
 	routeFtaEvent      = "/fta/v1/event"
 	routeFtaEventSlash = "/fta/v1/event/"
 
-	ftaTokenKey    = "X-BK-FTA-TOKEN"
 	tokenKey       = "X-BK-TOKEN"
 	tokenParamsKey = "token"
 	statusError    = "error"
@@ -79,14 +78,12 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
-	// 从请求头中获取 token
+	// 优先尝试从请求头中获取 token，取不到则中参数中获取
 	token := req.Header.Get(tokenKey)
-	if token == "" {
-		token = req.Header.Get(ftaTokenKey)
-	}
 	if token == "" {
 		token = req.URL.Query().Get(tokenParamsKey)
 	}
+
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordFta)
 		resp := s.getResponse(statusError, "token is empty")
@@ -116,7 +113,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	// 将 headers 放入 data 中
 	httpHeaders := make(map[string]string)
 	for k, v := range req.Header {
-		if len(v) != 0 && strings.ToUpper(k) != tokenKey && strings.ToUpper(k) != ftaTokenKey {
+		if len(v) != 0 && strings.ToUpper(k) != tokenKey {
 			httpHeaders[k] = v[0]
 		}
 	}
@@ -161,6 +158,6 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 
 	s.Publish(r)
 
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordMetrics, len(buf), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordFta, len(buf), start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(`{"status": "success"}`))
 }

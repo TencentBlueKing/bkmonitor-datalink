@@ -131,6 +131,7 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
 	hashValue := xxhash.Sum64([]byte(uni))
 	a := int(hashValue) % w.config.subWindowSize
+	w.logger.Infof("a --> %d windowLength: %d", a, len(w.subWindows))
 	return w.subWindows[a]
 }
 

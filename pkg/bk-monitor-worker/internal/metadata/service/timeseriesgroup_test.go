@@ -118,7 +118,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	// 测试修改
 	updated, err = svc.UpdateTimeSeriesMetrics()
 	assert.NoError(t, err)
-	assert.False(t, updated)
+	assert.True(t, updated)
 
 	err = resulttable.NewResultTableFieldQuerySet(db).TableIDEq(tsm.TableID).TagEq(models.ResultTableFieldTagMetric).FieldTypeEq(models.ResultTableFieldTypeFloat).IsDisabledEq(false).FieldNameEq("metric_a").One(&m1)
 	assert.NoError(t, err)

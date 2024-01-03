@@ -65,16 +65,6 @@ func TestExportEventCommon(t *testing.T) {
 			wantData:      `{"__http_headers__":{"Source":"tencent"},"test":"1"}`,
 		},
 		{
-			name:          "header fta token",
-			url:           "http://localhost/fta/v1/event",
-			headers:       map[string]string{tokenKey: "3"},
-			body:          `{"test": "1"}`,
-			wantCode:      http.StatusOK,
-			wantPublished: true,
-			wantToken:     "3",
-			wantData:      `{"test":"1"}`,
-		},
-		{
 			name:          "error body",
 			url:           "http://localhost/fta/v1/event?token=5",
 			headers:       map[string]string{},

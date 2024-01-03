@@ -129,10 +129,10 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 }
 
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
-	hashValue := xxhash.Sum64([]byte(uni))
-	locationIndex := int(hashValue) % w.config.subWindowSize
-	w.logger.Infof("a --> %d windowLength: %d", locationIndex, len(w.subWindows))
-	return w.subWindows[locationIndex]
+	// 计算int的最大值 避免uint超过int最大值计算出下标出现负数
+	const maxInt = int(^uint(0) >> 1)
+	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
+	return w.subWindows[hashValue%w.config.subWindowSize]
 }
 
 func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpts ...RuntimeConfigOption) {

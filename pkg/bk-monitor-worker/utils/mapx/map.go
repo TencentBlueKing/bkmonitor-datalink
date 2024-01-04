@@ -9,17 +9,19 @@
 
 package mapx
 
-// IsMapKey 判断某个字符串为字典的值key
-func IsMapKey(str string, dict map[string]interface{}) bool {
-	if _, ok := dict[str]; ok {
+import "golang.org/x/exp/constraints"
+
+// IsMapKey 判断某个值是否为字典的值key
+func IsMapKey[T constraints.Ordered](key T, dict map[T]interface{}) bool {
+	if _, ok := dict[key]; ok {
 		return true
 	}
 	return false
 }
 
 // GetMapKeys 获取字典的key
-func GetMapKeys(dict map[string]interface{}) []string {
-	var keys []string
+func GetMapKeys[T constraints.Ordered, K any](dict map[T]K) []T {
+	var keys []T
 	for key := range dict {
 		keys = append(keys, key)
 	}

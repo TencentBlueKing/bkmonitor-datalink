@@ -7,19 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package customreport
+package mocker
 
-//go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup_gen.go
+import (
+	"time"
 
-// TimeSeriesGroup : time series group model
-// gen:qs
-type TimeSeriesGroup struct {
-	CustomGroupBase
-	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
-	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
+	client "github.com/influxdata/influxdb1-client/v2"
+)
+
+type InfluxDBClientMocker struct {
+	client.Client
 }
 
-// TableName : 用于设置表的别名
-func (TimeSeriesGroup) TableName() string {
-	return "metadata_timeseriesgroup"
+func (i *InfluxDBClientMocker) Ping(timeout time.Duration) (time.Duration, string, error) {
+	return 0, "", nil
 }
+
+func (i *InfluxDBClientMocker) Close() error { return nil }

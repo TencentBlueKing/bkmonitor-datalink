@@ -7,19 +7,17 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package customreport
+package mocker
 
-//go:generate goqueryset -in timeseriesgroup.go -out qs_tsgroup_gen.go
+import "github.com/IBM/sarama"
 
-// TimeSeriesGroup : time series group model
-// gen:qs
-type TimeSeriesGroup struct {
-	CustomGroupBase
-	TimeSeriesGroupID   uint   `json:"time_series_group_id" gorm:"unique;primary_key"`
-	TimeSeriesGroupName string `json:"time_series_group_name" gorm:"size:255"`
+type KafkaClientMocker struct {
+	sarama.Client
+	PartitionMap map[string][]int32
 }
 
-// TableName : 用于设置表的别名
-func (TimeSeriesGroup) TableName() string {
-	return "metadata_timeseriesgroup"
+func (k *KafkaClientMocker) Partitions(topic string) ([]int32, error) {
+	return k.PartitionMap[topic], nil
 }
+
+func (k *KafkaClientMocker) Close() error { return nil }

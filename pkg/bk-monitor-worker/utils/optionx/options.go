@@ -52,6 +52,11 @@ func (o *Options) GetUintsSlice(key string) ([]uint, bool) {
 	return value, ok
 }
 
+func (o *Options) GetInterfaceSlice(key string) ([]interface{}, bool) {
+	value, ok := o.params[key].([]interface{})
+	return value, ok
+}
+
 func (o *Options) GetInt(key string) (int, bool) {
 	value, ok := o.params[key].(int)
 	return value, ok

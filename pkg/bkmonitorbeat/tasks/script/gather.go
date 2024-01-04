@@ -11,7 +11,6 @@ package script
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -36,17 +35,30 @@ type Gather struct {
 // Run run script command line and parse result as promuthes format
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	var (
-		err      error
-		taskConf = g.TaskConfig.(*configs.ScriptTaskConfig)
-		event    = NewEvent(g)
+		err         error
+		taskConf    = g.TaskConfig.(*configs.ScriptTaskConfig)
+		originEvent = NewEvent(g)
 	)
 	//init event time
 	localtime, utctime, _ := bkcommon.GetDateTime()
-	event.LocalTime = localtime
-	event.UTCTime = utctime
+	originEvent.LocalTime = localtime
+	originEvent.UTCTime = utctime
 
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
+
+	// 生成当前时间戳和时间处理函数
+	milliTimestamp := time.Now().UnixMilli()
+	timeHandler, err := tasks.GetTimestampHandler(taskConf.TimestampUnit)
+	if timeHandler == nil {
+		timeHandler, _ = tasks.GetTimestampHandler("ms")
+	}
+	if err != nil {
+		logger.Errorf("use timestamp unit:%s to get timestamp handler failed, %s", taskConf.TimestampUnit, err)
+		e <- tasks.NewGatherUpEvent(g, define.BeatErrScriptTsUnitConfigError)
+		return
+	}
+
 	logger.Infof("task command %s timeout config %v", taskConf.Command, taskConf.Timeout)
 	cmdCtx, cmdCancel := context.WithTimeout(ctx, taskConf.Timeout)
 	// releases resources if execCmd completes before timeout elapses
@@ -58,22 +70,13 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	out, err := ExecCmdLine(cmdCtx, fmtCommand, taskConf.UserEnvs)
 	if err != nil {
 		logger.Errorf("execCmd [%s] failed:%s, failed content:%s", fmtCommand, err.Error(), out)
-		event.ScriptFail(define.BeatErrScriptRunError, fmt.Sprintf("[%s]%s", err.Error(), out))
-		e <- event
+		e <- tasks.NewGatherUpEvent(g, define.BeatScriptRunOuterError)
 		return
 	}
 	logger.Infof("task-take: %v", time.Since(t0))
-
 	logger.Debugf("run command line %s success", fmtCommand)
-	milliTimestamp := time.Now().UnixMilli()
-	aggreRst, err := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, taskConf.TimestampUnit)
-	if err != nil {
-		logger.Errorf("formatOutput failed:%s", err.Error())
-		event.ScriptFail(define.BeatErrScriptFormatOutputError, err.Error())
-		e <- event
-		return
-	}
-	logger.Debugf("format command line %s result success", fmtCommand)
+
+	aggreRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
 
 	gConfig, ok := g.GlobalConfig.(*configs.Config)
 	if ok && gConfig.KeepOneDimension {
@@ -84,10 +87,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	for timestamp, subResult := range aggreRst {
 		for _, pe := range subResult {
 			ev := NewEvent(g)
-			ev.StartAt = event.StartAt
+			ev.StartAt = originEvent.StartAt
 			ev.Timestamp = timestamp
-			ev.LocalTime = event.LocalTime
-			ev.UTCTime = event.UTCTime
+			ev.LocalTime = originEvent.LocalTime
+			ev.UTCTime = originEvent.UTCTime
 
 			ev.UserTime = time.Unix(ev.Timestamp, 0).UTC().Format(bkcommon.TimeFormat)
 			for aggKey, aggValue := range pe.AggreValue {
@@ -120,10 +123,23 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 					ev.Exemplar = tmp
 				}
 			}
+
 			ev.Success()
 			logger.Infof("event:%+v", ev)
 			e <- ev
 		}
+	}
+
+	if formatErr != nil {
+		e <- tasks.NewGatherUpEvent(g, define.BeatScriptPromFormatOuterError)
+		if len(aggreRst) == 0 {
+			logger.Errorf("format output failed totally: %s", formatErr.Error())
+		} else {
+			logger.Errorf("format output failed partly: %s", formatErr.Error())
+		}
+	} else {
+		e <- tasks.NewGatherUpEvent(g, define.BeatErrCodeOK)
+		logger.Debugf("format command line %s result success", fmtCommand)
 	}
 }
 

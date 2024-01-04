@@ -51,7 +51,6 @@ func TestBkDataStorageSvc_CreateDatabusClean(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	tableId := "bk_data_test_table_id3"
 	bds := storage.BkDataStorage{
 		TableID:   tableId,

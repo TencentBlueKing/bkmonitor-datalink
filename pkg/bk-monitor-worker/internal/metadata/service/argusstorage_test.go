@@ -24,7 +24,6 @@ import (
 func TestArgusStorage_ConsulConfig(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	cluster := storage.ClusterInfo{
 		ClusterID:   100,
 		ClusterName: "argus_storage_100",

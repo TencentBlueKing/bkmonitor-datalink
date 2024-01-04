@@ -329,7 +329,7 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
 				} else {
-					log.Debugf(ctx, "[SpaceTSDB Router] Subscribe msg: %s, key: %s", msg.String(), msg.Payload)
+					log.Infof(ctx, "[SpaceTSDB Router] Subscribe msg: %s, key: %s", msg.String(), msg.Payload)
 				}
 			}
 		}

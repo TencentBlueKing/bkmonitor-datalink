@@ -7,31 +7,46 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package prompb
+package pyroscope
 
 import (
-	"io"
+	"bytes"
+	"mime/multipart"
+	"testing"
 
-	"github.com/gogo/protobuf/proto"
-	"github.com/golang/snappy"
+	"github.com/stretchr/testify/assert"
 )
 
-func DecodeWriteRequest(r io.Reader) (*WriteRequest, int, error) {
-	compressed, err := io.ReadAll(r)
+func TestParseNReadField(t *testing.T) {
+	anyFieldName := "foo_field_name"
+	fileName := "anything.pprof"
+	fileContent := []byte("something here")
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	fw, err := writer.CreateFormFile(anyFieldName, fileName)
+	fw.Write(fileContent)
 	if err != nil {
-		return nil, 0, err
+		t.Fatal(err)
 	}
-	size := len(compressed)
+	writer.Close()
 
-	reqBuf, err := snappy.Decode(nil, compressed)
+	contentType := writer.FormDataContentType()
+	boundary, err := ParseBoundary(contentType)
 	if err != nil {
-		return nil, 0, err
+		t.Fatal(err)
 	}
 
-	var req WriteRequest
-	if err := proto.Unmarshal(reqBuf, &req); err != nil {
-		return nil, 0, err
+	form, err := multipart.NewReader(body, boundary).ReadForm(32 << 20)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	return &req, size, nil
+	readContent, err := ReadField(form, anyFieldName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, fileContent, readContent)
 }

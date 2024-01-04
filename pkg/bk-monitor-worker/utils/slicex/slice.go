@@ -17,7 +17,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
-// RemoveItem remove the item from array
+// RemoveItem remove the item from string array
 func RemoveItem[T constraints.Ordered](l []T, s T) []T {
 	i := 0
 	for _, val := range l {

@@ -29,7 +29,7 @@ func GetMapKeys[T constraints.Ordered, K any](dict map[T]K) []T {
 }
 
 // GetValWithDefault get the default value, if key not found, return default value
-func GetValWithDefault(m map[string]interface{}, key string, val interface{}) interface{} {
+func GetValWithDefault[T constraints.Ordered, K any](m map[T]K, key T, val K) K {
 	// 如果可以查询到，则直接返回数据
 	if v, ok := m[key]; ok {
 		return v

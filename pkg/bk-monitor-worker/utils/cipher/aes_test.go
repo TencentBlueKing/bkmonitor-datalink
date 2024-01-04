@@ -10,9 +10,11 @@
 package cipher
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
@@ -33,4 +35,16 @@ func TestAESDecrypt(t *testing.T) {
 		assert.Equal(t, plain, AESDecrypt(encrypetd))
 	}
 
+}
+
+func TestAESEncrypt(t *testing.T) {
+	config.AesKey = "81be7fc6-5476-4934-9417-6d4d593728db"
+	for i := 0; i < 100; i++ {
+		pwdSize := rand.IntnRange(0, 20)
+		pwd := rand.String(pwdSize)
+		encrypted := AESEncrypt(pwd)
+		decrypted := AESDecrypt(encrypted)
+		fmt.Println(pwd, decrypted, encrypted)
+		assert.Equal(t, pwd, decrypted)
+	}
 }

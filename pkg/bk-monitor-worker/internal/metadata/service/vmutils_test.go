@@ -35,7 +35,6 @@ func TestVmUtils_getDataTypeCluster(t *testing.T) {
 		CustomMetricDataID: 299992,
 	}
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	db.Delete(&cluster, "K8sMetricDataID = ? or CustomMetricDataID = ?", cluster.K8sMetricDataID, cluster.CustomMetricDataID)
 	err := cluster.Create(db)
 	assert.NoError(t, err)
@@ -64,7 +63,6 @@ func TestVmUtils_getVmCluster(t *testing.T) {
 		IsDefaultCluster: true,
 	}
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	db.Delete(&cluster, "cluster_type = ? and is_default_cluster = ? or cluster_name = ?", cluster.ClusterType, cluster.IsDefaultCluster, cluster.ClusterName)
 	err := cluster.Create(db)
 	assert.NoError(t, err)
@@ -142,7 +140,6 @@ func TestVmUtils_getTimestampLen(t *testing.T) {
 func TestVmUtils_AccessBkdata(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-	defer db.Close()
 	cluster := storage.ClusterInfo{
 		ClusterName:      "testVmCluster",
 		ClusterType:      models.StorageTypeVM,

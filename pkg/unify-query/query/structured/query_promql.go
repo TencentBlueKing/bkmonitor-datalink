@@ -14,7 +14,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
+	"github.com/Knetic/govaluate"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
@@ -30,6 +30,8 @@ type QueryPromQL struct {
 	Limit               int      `json:"limit,omitempty"`
 	Slimit              int      `json:"slimit,omitempty"`
 	Match               string   `json:"match,omitempty"`
+	// DownSampleRange 降采样：大于Step才能生效，可以为空
+	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 	// LookBackDelta 偏移量
@@ -246,6 +248,17 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 						vargsList = append(vargsList, at.Val)
 					case *parser.StringLiteral:
 						vargsList = append(vargsList, at.Val)
+					case *parser.BinaryExpr:
+						expr, err := govaluate.NewEvaluableExpression(at.String())
+						if err != nil {
+							return &QueryTs{}, err
+						}
+						result, err := expr.Evaluate(nil)
+						if err != nil {
+							return &QueryTs{}, err
+						}
+
+						vargsList = append(vargsList, result)
 					default:
 						continue
 					}
@@ -350,19 +363,13 @@ func vectorQuery(
 		query = new(Query)
 	}
 	conds := make([]ConditionField, 0)
-	route, err := MakeRouteFromLBMatchOrMetricName(e.LabelMatchers)
+	route, matchers, err := MetricsToRouter(e.LabelMatchers...)
 	if err != nil {
 		return query, err
 	}
+	query.IsRegexp = route.IsRegexp()
 
-	for _, label := range e.LabelMatchers {
-		if label.Name == labels.MetricName {
-			if label.Type == labels.MatchRegexp {
-				query.IsRegexp = true
-			}
-			continue
-		}
-
+	for _, label := range matchers {
 		// bk_database, bk_measurement 2个系统 label 需要过滤
 		if label.Name == bkDatabaseLabelName || label.Name == bkMeasurementLabelName {
 			continue

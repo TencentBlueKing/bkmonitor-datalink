@@ -24,6 +24,7 @@ type ComponentConfig struct {
 	RemoteWrite ComponentRemoteWrite `config:"remotewrite"`
 	Zipkin      ComponentZipkin      `config:"zipkin"`
 	Skywalking  ComponentSkywalking  `config:"skywalking"`
+	Pyroscope   ComponentPyroscope   `config:"pyroscope"`
 }
 
 type ComponentJaeger struct {
@@ -47,6 +48,10 @@ type ComponentZipkin struct {
 }
 
 type ComponentSkywalking struct {
+	Enabled bool `config:"enabled"`
+}
+
+type ComponentPyroscope struct {
 	Enabled bool `config:"enabled"`
 }
 

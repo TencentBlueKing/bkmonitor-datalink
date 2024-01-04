@@ -159,22 +159,22 @@ type BulkBackendAdapter struct {
 func getBufferSizeAndFlushInterval(ctx context.Context, name string) (int, time.Duration) {
 	bufferSize := BulkDefaultBufferSize
 	flushInterval := BulkDefaultFlushInterval
-	shipperConfig, ok := ctx.Value(define.ContextShipperKey).(*config.MetaClusterInfo)
-	if !ok {
-		logging.Warn("get shipper config failed,use default bufferSize and flushInterval")
+	mqConfig := config.MQConfigFromContext(ctx)
+	if mqConfig == nil {
 		return bufferSize, flushInterval
 	}
-	if shipperConfig.BatchSize != 0 {
-		bufferSize = shipperConfig.BatchSize
+
+	if mqConfig.BatchSize != 0 {
+		bufferSize = mqConfig.BatchSize
 	}
-	if shipperConfig.FlushInterval != "" {
-		interval, err := time.ParseDuration(shipperConfig.FlushInterval)
+	if mqConfig.FlushInterval != "" {
+		interval, err := time.ParseDuration(mqConfig.FlushInterval)
 		if err == nil {
 			flushInterval = interval
 		}
 	}
-	logging.Debugf("backend:%s use bufferSize:%d and flushInterval:%s", name, bufferSize, flushInterval)
 
+	logging.Debugf("backend:%s use bufferSize:%d and flushInterval:%s", name, bufferSize, flushInterval)
 	return bufferSize, flushInterval
 }
 

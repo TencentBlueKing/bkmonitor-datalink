@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package auto_test
+package etl_test
 
 import (
 	"testing"
@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/auto"
+	template "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
 )
 
@@ -164,7 +164,7 @@ func (s *SchemaByResultTablePluginSuite) TestUsage() {
 
 	for i, c := range cases {
 		builder := etl.NewContainerSchemaBuilder()
-		s.NoError(builder.Apply(auto.SchemaByResultTablePlugin(&config.MetaResultTableConfig{
+		s.NoError(builder.Apply(template.SchemaByResultTablePlugin(&config.MetaResultTableConfig{
 			FieldList: c.fields,
 		})), i)
 		schema := builder.Finish()
@@ -196,7 +196,7 @@ func (s *PrepareByResultTablePluginSuite) TestDefaultGetSeparatorFieldByOption()
 	})
 
 	for i, c := range cases {
-		f, err := auto.GetSeparatorFieldByOption(c)
+		f, err := template.GetSeparatorFieldByOption(c)
 		s.Nil(f, i)
 		s.NoError(err, i)
 	}
@@ -229,7 +229,7 @@ func (s *PrepareByResultTablePluginSuite) TestPrepareByResultTablePlugin() {
 		c.Option[config.ResultTableOptSeparatorNodeSource] = source
 		c.Option[config.ResultTableOptSeparatorNode] = target
 
-		f, err := auto.GetSeparatorFieldByOption(c)
+		f, err := template.GetSeparatorFieldByOption(c)
 		s.NotNil(f, i)
 		s.NoError(err, i)
 

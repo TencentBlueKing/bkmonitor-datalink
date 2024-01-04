@@ -7,22 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package auto
+package mocker
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
+	"time"
+
+	client "github.com/influxdata/influxdb1-client/v2"
 )
 
-// GetRecordRootByTag
-func GetRecordRootByTag(tag define.MetaFieldTagType) string {
-	switch tag {
-	case define.MetaFieldTagMetric:
-		return define.RecordMetricsFieldName
-	case define.MetaFieldTagDimension, define.MetaFieldTagGroup:
-		return define.RecordDimensionsFieldName
-	case define.MetaFieldTagTime:
-		return ""
-	default:
-		return string(tag)
-	}
+type InfluxDBClientMocker struct {
+	client.Client
 }
+
+func (i *InfluxDBClientMocker) Ping(timeout time.Duration) (time.Duration, string, error) {
+	return 0, "", nil
+}
+
+func (i *InfluxDBClientMocker) Close() error { return nil }

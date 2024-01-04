@@ -30,28 +30,16 @@ import (
 )
 
 var (
-	once       sync.Once
-	genTraceID int
-	genSpanID  int
-	lock       sync.Mutex
+	once sync.Once
 )
 
-func Init(ctx context.Context) context.Context {
+func Init() {
 	once.Do(func() {
 		config.CustomConfigFilePath = os.Getenv("UNIFY-QUERY-CONFIG-FILE-PATH")
 		log.InitTestLogger()
 
 		metadata.InitMetadata()
 	})
-
-	lock.Lock()
-	defer lock.Unlock()
-	genTraceID++
-	genSpanID++
-	tid, _ := trace.TraceIDFromHex(fmt.Sprintf("%032x", genTraceID))
-	sid, _ := trace.SpanIDFromHex(fmt.Sprintf("%016x", genTraceID))
-	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid})
-	return trace.ContextWithRemoteSpanContext(ctx, sc)
 }
 
 func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
@@ -61,8 +49,8 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 func SetSpaceTsDbMockData(
 	ctx context.Context, path string, bucketName string, spaceInfo ir.SpaceInfo, rtInfo ir.ResultTableDetailInfo,
 	fieldInfo ir.FieldToResultTable, dataLabelInfo ir.DataLabelToResultTable) {
+	Init()
 	sr, err := influxdb.SetSpaceTsDbRouter(ctx, path, bucketName, "", 100)
-	Init(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -93,7 +81,7 @@ func SetSpaceTsDbMockData(
 }
 
 func SetRedisClient(ctx context.Context, serverName string) {
-	Init(ctx)
+	Init()
 	host := viper.GetString("redis.host")
 	port := viper.GetInt("redis.port")
 	pwd := viper.GetString("redis.password")

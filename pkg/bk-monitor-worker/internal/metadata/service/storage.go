@@ -18,6 +18,6 @@ type Storage interface {
 
 // StorageConsulConfig storage的consul配置信息
 type StorageConsulConfig struct {
-	ClusterInfoConsulConfig `json:"cluster_config"`
-	StorageConfig           map[string]interface{} `json:"storage_config"`
+	ClusterInfoConsulConfig
+	StorageConfig map[string]interface{} `json:"storage_config"`
 }

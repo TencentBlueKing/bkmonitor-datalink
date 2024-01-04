@@ -10,7 +10,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -436,6 +436,6 @@ func InitConfig() {
 }
 
 func prettyPrintSettings() {
-	b, _ := json.MarshalIndent(viper.AllSettings(), "", "  ")
+	b, _ := jsonx.MarshalIndent(viper.AllSettings(), "", "  ")
 	logger.Infof("settings: \n------\n%s\n------\n", b)
 }

@@ -34,3 +34,7 @@ func MarshalString(v interface{}) (string, error) {
 func UnmarshalString(data string, v interface{}) error {
 	return sonicAPI.UnmarshalFromString(data, v)
 }
+
+func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+	return sonicAPI.MarshalIndent(v, prefix, indent)
+}

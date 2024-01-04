@@ -75,10 +75,6 @@ func NewDataProcessorMonitor(name string, pipe *config.PipelineConfig) *define.P
 				"id":       dataID,
 				"pipeline": name,
 			}),
-			define.MonitorProcessorSkipped.With(prometheus.Labels{
-				"id":       dataID,
-				"pipeline": name,
-			}),
 		),
 	}
 }
@@ -110,13 +106,13 @@ func NewProcessorTimeObserver(pipe *config.PipelineConfig) *ProcessorTimeObserve
 func NewBackendProcessorMonitor(pipe *config.PipelineConfig, shipper *config.MetaClusterInfo) *define.ProcessorMonitor {
 	labels := prometheus.Labels{"id": strconv.Itoa(pipe.DataID)}
 	if shipper.ClusterType == "elasticsearch" {
-		labels["target"] = shipper.AsElasticSearchCluster().GetTarget()
+		labels["target"] = "elasticsearch"
 	} else if shipper.ClusterType == "kafka" {
-		labels["target"] = shipper.AsKafkaCluster().GetTarget()
+		labels["target"] = "kafka"
 	} else if shipper.ClusterType == "redis" {
-		labels["target"] = shipper.AsRedisCluster().GetTarget()
+		labels["target"] = "redis"
 	} else {
-		labels["target"] = shipper.AsInfluxCluster().GetTarget()
+		labels["target"] = "influxdb"
 	}
 
 	return &define.ProcessorMonitor{

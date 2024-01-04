@@ -50,6 +50,7 @@ type CCSearchHostResponseHostInfo struct {
 	BKCloudID     int    `json:"bk_cloud_id"`
 	BKHostInnerIP string `json:"bk_host_innerip"`
 	BKOuterIP     string `json:"bk_host_outerip"`
+	BkAgentID     string `json:"bk_agent_id"`
 	DbmMeta       string `json:"dbm_meta"`
 	DevxMeta      string `json:"devx_meta"`
 }

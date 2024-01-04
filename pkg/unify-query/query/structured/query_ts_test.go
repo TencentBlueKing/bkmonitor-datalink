@@ -22,6 +22,7 @@ import (
 	omd "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/policy/stores/shard"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	md "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -394,4 +395,393 @@ func TestQueryToMetricWithOfflineDataArchiveQuery(t *testing.T) {
 		})
 	}
 
+}
+
+func TestQueryTs_ToQueryReference(t *testing.T) {
+	ctx := context.Background()
+	err := featureFlag.MockFeatureFlag(
+		ctx, `{
+	"must-vm-query": {
+		"variations": {
+			"Default": false,
+			"true": true,
+			"false": false
+		},
+		"targeting": [{
+			"query": "tableID in [\"system.cpu_detail\", \"system.disk\"] and name in [\"my_bro\"]",
+			"percentage": {
+				"true": 100,
+				"false":0 
+			}
+		}],
+		"defaultRule": {
+			"variation": "Default"
+		}
+	},
+	"vm-query": {
+		"variations": {
+			"Default": false,
+			"true": true,
+			"false": false
+		},
+		"targeting": [{
+			"query": "spaceUid in [\"vm-query\"]",
+			"percentage": {
+				"true": 100,
+				"false": 0
+			}
+		}],
+		"defaultRule": {
+			"variation": "Default"
+		}
+	}
+}`,
+	)
+
+	mock.SetRedisClient(ctx, "")
+	mock.SetSpaceTsDbMockData(ctx, "", "", ir.SpaceInfo{
+		"vm-query": ir.Space{
+			"system.cpu_detail": &ir.SpaceResultTable{
+				TableId: "system.cpu_detail",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.disk": &ir.SpaceResultTable{
+				TableId: "system.disk",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+		},
+		"influxdb-query": ir.Space{
+			"system.cpu_detail": &ir.SpaceResultTable{
+				TableId: "system.cpu_detail",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.disk": &ir.SpaceResultTable{
+				TableId: "system.disk",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id": "2",
+					},
+				},
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_detail": &ir.ResultTableDetail{
+			TableId:         "system.cpu_detail",
+			DB:              "system",
+			Measurement:     "cpu_detail",
+			VmRt:            "100147_ieod_system_cpu_detail_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+		"system.disk": &ir.ResultTableDetail{
+			TableId:         "system.disk",
+			DB:              "system",
+			Measurement:     "disk",
+			VmRt:            "100147_ieod_system_disk_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+		"system.cpu_summary": &ir.ResultTableDetail{
+			TableId:         "system.cpu_summary",
+			DB:              "system",
+			Measurement:     "cpu_summary",
+			VmRt:            "100147_ieod_system_cpu_summary_raw",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+		},
+	}, nil, nil)
+
+	for name, tc := range map[string]struct {
+		ts     *QueryTs
+		source string
+		ok     bool
+		expand *md.VmExpand
+		ref    md.QueryReference
+	}{
+		"vm 查询开启 + 多 tableID 都开启单指标单表 = 查询 VM": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.disk",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ok: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw", "100147_ieod_system_disk_raw"},
+				MetricFilterCondition: map[string]string{
+					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+				},
+				ConditionNum: 6,
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "disk",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + tableID 开启单指标单表 = 查询 VM": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+				},
+				MetricMerge: "a",
+			},
+			ok: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw"},
+				MetricFilterCondition: map[string]string{
+					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+				},
+				ConditionNum: 3,
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + 多 tableID 只有部份开启单指标单表 = 查询 InfluxDB": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.cpu_summary",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + tableID 未开启单指标单表 = 查询 InfluxDB": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_summary",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "b",
+			},
+			ref: md.QueryReference{
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + 该用户未开启单指标单表 = 查询 InfluxDB": {
+			source: "username:my_bro_1",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "b",
+			},
+			ref: md.QueryReference{
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"未开启 vm查询 + 多 tableID 都开启单指标单表 = 查询 VM": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+					},
+					{
+						TableID:       "system.disk",
+						FieldName:     "usage",
+						ReferenceName: "b",
+					},
+				},
+				MetricMerge: "a + b",
+			},
+			ok: true,
+			expand: &md.VmExpand{
+				ResultTableList: []string{"100147_ieod_system_cpu_detail_raw", "100147_ieod_system_disk_raw"},
+				MetricFilterCondition: map[string]string{
+					"a": `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+					"b": `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+				},
+				ConditionNum: 6,
+			},
+			ref: md.QueryReference{
+				"a": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_detail_raw", __name__="usage_value"`,
+						},
+					},
+				},
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: true,
+							Measurement:    "disk",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var (
+				ref      md.QueryReference
+				vmExpand *md.VmExpand
+				ok       bool
+			)
+			ctx = md.InitHashID(ctx)
+
+			md.SetUser(ctx, tc.source, tc.ts.SpaceUid)
+			ref, err = tc.ts.ToQueryReference(ctx)
+			assert.Nil(t, err)
+			if err == nil {
+				ok, vmExpand, err = ref.CheckVmQuery(ctx)
+				assert.Nil(t, err)
+				if err == nil {
+					assert.Equal(t, tc.ok, ok)
+					assert.Equal(t, tc.expand, vmExpand)
+				}
+
+				for refName, v := range ref {
+					for idx := range v.QueryList {
+						assert.Equal(t, tc.ref[refName].QueryList[idx].Measurement, v.QueryList[idx].Measurement)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].Field, v.QueryList[idx].Field)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].IsSingleMetric, v.QueryList[idx].IsSingleMetric)
+						assert.Equal(t, tc.ref[refName].QueryList[idx].VmCondition, v.QueryList[idx].VmCondition)
+					}
+				}
+			}
+		})
+	}
 }

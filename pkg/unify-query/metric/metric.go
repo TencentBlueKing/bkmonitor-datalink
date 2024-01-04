@@ -61,10 +61,7 @@ var (
 			Namespace: "unify_query",
 			Name:      "result_table_info",
 		},
-		[]string{
-			"rt_table_id", "rt_bk_biz_id", "rt_data_id",
-			"rt_measurement_type", "vm_table_id", "bcs_cluster_id", "is_influxdb_disabled",
-		},
+		[]string{"rt_table_id", "rt_data_id", "rt_measurement_type", "vm_table_id", "bcs_cluster_id"},
 	)
 
 	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(

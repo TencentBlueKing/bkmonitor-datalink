@@ -19,19 +19,19 @@ import (
 // TimeAggregation
 type TimeAggregation struct {
 	// Function 时间聚合方法
-	Function string `json:"function" example:"avg_over_time"`
+	Function string `json:"function,omitempty" example:"avg_over_time"`
 	// Window 聚合周期
-	Window Window `json:"window" example:"60s"`
+	Window Window `json:"window,omitempty" example:"60s"`
 	// NodeIndex 聚合函数的位置，用于还原 promql 的定位
-	NodeIndex int `json:"node_index"`
+	NodeIndex int `json:"node_index,omitempty"`
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到
-	Position int `json:"position" swaggerignore:"true"`
+	Position int `json:"position,omitempty" swaggerignore:"true"`
 	// VargsList 函数参数位置，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
-	VargsList []interface{} `json:"vargs_list" swaggerignore:"true"`
+	VargsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
 	// IsSubQuery 判断是否为子查询
-	IsSubQuery bool `json:"is_sub_query"`
+	IsSubQuery bool `json:"is_sub_query,omitempty"`
 	// Step 子查询区间 step
-	Step string `json:"step" swaggerignore:"true"`
+	Step string `json:"step,omitempty" swaggerignore:"true"`
 }
 
 // ToProm
@@ -57,10 +57,25 @@ func (m TimeAggregation) ToProm(expr parser.Expr) (*parser.Call, error) {
 			}
 		}
 
-		expr = &parser.SubqueryExpr{
-			Expr:  expr,
-			Range: window,
-			Step:  time.Duration(stepDur),
+		if v, ok := expr.(*parser.VectorSelector); ok {
+			expr = &parser.SubqueryExpr{
+				Expr: &parser.VectorSelector{
+					Name:          v.Name,
+					LabelMatchers: v.LabelMatchers,
+				},
+				Range:          window,
+				OriginalOffset: v.OriginalOffset,
+				Offset:         v.Offset,
+				Timestamp:      v.Timestamp,
+				StartOrEnd:     v.StartOrEnd,
+				Step:           time.Duration(stepDur),
+			}
+		} else {
+			expr = &parser.SubqueryExpr{
+				Expr:  expr,
+				Range: window,
+				Step:  time.Duration(stepDur),
+			}
 		}
 	} else {
 		expr = &parser.MatrixSelector{

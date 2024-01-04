@@ -40,11 +40,21 @@ type Route struct {
 	measurement string // 数据表, 如 cpu_summary
 	metricName  string // 指标名, 如 usage
 	matchType   labels.MatchType
+	isRegexp    bool
+}
+
+// IsRegexp 判断指标查询是否是正则
+func (r *Route) IsRegexp() bool {
+	return r.isRegexp
 }
 
 // MatchType 获取路由查询规则
 func (r *Route) MatchType() labels.MatchType {
 	return r.matchType
+}
+
+func (r *Route) SetIsRegexp(isRegexp bool) {
+	r.isRegexp = isRegexp
 }
 
 // DataSource
@@ -200,6 +210,34 @@ func MakeRouteFromMetricName(name string) (*Route, error) {
 		// TODO: 这里可能还有其他情况 比如 DB/TableID?
 		return &Route{metricName: metricName}, nil
 	}
+}
+
+func MetricsToRouter(matchers ...*labels.Matcher) (*Route, []*labels.Matcher, error) {
+	var (
+		route      *Route
+		err        error
+		newMatcher []*labels.Matcher
+	)
+
+	if len(matchers) < 1 {
+		err = fmt.Errorf("labels matcher is empty")
+		return route, newMatcher, err
+	}
+
+	newMatcher = make([]*labels.Matcher, 0, len(matchers)-1)
+	for _, m := range matchers {
+		if route == nil && m.Name == labels.MetricName && (m.Type == labels.MatchEqual || m.Type == labels.MatchRegexp) {
+			route, err = MakeRouteFromMetricName(m.Value)
+			if err != nil {
+				return route, newMatcher, err
+			}
+			route.SetIsRegexp(m.Type == labels.MatchRegexp)
+		} else {
+			newMatcher = append(newMatcher, m)
+		}
+	}
+
+	return route, newMatcher, err
 }
 
 // MakeRouteFromLBMatchOrMetricName :

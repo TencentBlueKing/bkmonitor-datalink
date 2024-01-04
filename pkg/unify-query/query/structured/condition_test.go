@@ -28,6 +28,8 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 	var testCases = []struct {
 		condition Conditions
 		result    []int
+		vm        string
+		sql       string
 		err       error
 	}{
 		// 长度不匹配
@@ -35,7 +37,7 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
@@ -52,87 +54,103 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionNotContains,
 					Value:         []string{"abc"},
 				}},
 				ConditionList: []string{"and"},
 			},
 			result: []int{2},
+			sql:    `(test1 = 'abc' and test1 != 'abc')`,
+			vm:     `test1="abc", test1!="abc", result_table_id="table_id"`,
 		},
 		// 简单的or拼接
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionRegEqual,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionNotRegEqual,
+					Value:         []string{"b", "c", "d"},
 				}},
 				ConditionList: []string{"or"},
 			},
 			result: []int{1, 1},
+			sql:    `test1 REGEXP 'abc' or (test1 NOT REGEXP 'b' and test1 NOT REGEXP 'c' and test1 NOT REGEXP 'd')`,
+			vm:     `test1=~"abc", result_table_id="table_id" or test1!~"b|c|d", result_table_id="table_id"`,
 		},
 		// and和or混合
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionContains,
+					Value:         []string{"abc", "bcd"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
-					Value:         []string{"abc"},
+					Operator:      ConditionContains,
+					Value:         []string{"abc", "ggg"},
 				}},
 				ConditionList: []string{"and", "or"},
 			},
 			result: []int{2, 1},
+			vm:     `test1="abc", test1=~"^(abc|bcd)$", result_table_id="table_id" or test1=~"^(abc|ggg)$", result_table_id="table_id"`,
+			sql:    `(test1 = 'abc' and (test1 = 'abc' or test1 = 'bcd')) or (test1 = 'abc' or test1 = 'ggg')`,
 		},
 		// and和or混合
 		{
 			condition: Conditions{
 				FieldList: []ConditionField{{
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}, {
 					DimensionName: "test1",
-					Operator:      "==",
+					Operator:      ConditionContains,
 					Value:         []string{"abc"},
 				}},
 				ConditionList: []string{"or", "and"},
 			},
 			result: []int{1, 2},
+			vm:     `test1="abc", result_table_id="table_id" or test1="abc", test1="abc", result_table_id="table_id"`,
+			sql:    `test1 = 'abc' or (test1 = 'abc' and test1 = 'abc')`,
 		},
 	}
 
-	for _, testCase := range testCases {
-		testResult, err := testCase.condition.AnalysisConditions()
-		if testCase.err != nil {
-			assert.NotNil(t, err)
-			continue
-		}
+	for idx, testCase := range testCases {
+		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
+			testResult, err := testCase.condition.AnalysisConditions()
+			if testCase.err != nil {
+				assert.NotNil(t, err)
+				return
+			}
 
-		assert.Equal(t, len(testCase.result), len(testResult), "assert row")
-		for row, columnLength := range testCase.result {
-			assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
-		}
+			assert.Equal(t, len(testCase.result), len(testResult), "assert row")
+			for row, columnLength := range testCase.result {
+				assert.Equal(t, columnLength, len(testResult[row]), "row->[%d] assert column failed", row)
+			}
 
+			vmCondition, _ := testResult.VMString("table_id", "", false)
+			assert.Equal(t, testCase.vm, vmCondition)
+
+			sqlCondtion := testResult.BkSql()
+			assert.Equal(t, testCase.sql, sqlCondtion)
+
+		})
 	}
 }
 
@@ -448,6 +466,148 @@ func TestConditionField_LabelMatcherConvert(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestAllConditions_VMString(t *testing.T) {
+	for i, c := range []struct {
+		allConditions AllConditions
+		vmCondition   string
+		isRegex       bool
+		metric        string
+		rt            string
+	}{
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionEqual,
+					},
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-4",
+							"val-5",
+						},
+						Operator: ConditionContains,
+					},
+					{
+						DimensionName: "dim-3",
+						Value: []string{
+							"val-8",
+							"val-9",
+						},
+						Operator: ConditionRegEqual,
+					},
+				},
+				{
+					{
+						DimensionName: "dim1-1",
+						Value: []string{
+							"val-1",
+						},
+						Operator: ConditionNotEqual,
+					},
+					{
+						DimensionName: "dim1-2",
+						Value: []string{
+							"val-5",
+						},
+						Operator: ConditionNotContains,
+					},
+					{
+						DimensionName: "dim1-3",
+						Value: []string{
+							"val-8",
+						},
+						Operator: ConditionRegEqual,
+					},
+				},
+			},
+			metric:      "metric_1",
+			rt:          "rt-n",
+			vmCondition: `dim-1=~"^(val-1|val-2)$", dim-2=~"^(val-4|val-5)$", dim-3=~"val-8|val-9", result_table_id="rt-n", __name__="metric_1" or dim1-1!="val-1", dim1-2!="val-5", dim1-3=~"val-8", result_table_id="rt-n", __name__="metric_1"`,
+		},
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionContains,
+					},
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionNotContains,
+					},
+				},
+			},
+			metric:      "metric_.*",
+			rt:          "rt-n",
+			isRegex:     true,
+			vmCondition: `dim-1=~"^(val-1|val-2)$", dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "",
+			rt:            "rt-n",
+			vmCondition:   `result_table_id="rt-n"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "metric",
+			vmCondition:   `__name__="metric"`,
+		},
+		{
+			allConditions: AllConditions{},
+			metric:        "",
+			vmCondition:   ``,
+		},
+		{
+			allConditions: AllConditions{
+				{
+					{
+						DimensionName: "dim-1",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionContains,
+					},
+				},
+				{
+					{
+						DimensionName: "dim-2",
+						Value: []string{
+							"val-1",
+							"val-2",
+						},
+						Operator: ConditionNotContains,
+					},
+				},
+			},
+			metric:      "metric_.*",
+			rt:          "rt-n",
+			isRegex:     true,
+			vmCondition: `dim-1=~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*" or dim-2!~"^(val-1|val-2)$", result_table_id="rt-n", __name__=~"metric_.*"`,
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			actual, _ := c.allConditions.VMString(c.rt, c.metric, c.isRegex)
+			assert.Equal(t, c.vmCondition, actual)
 		})
 	}
 }

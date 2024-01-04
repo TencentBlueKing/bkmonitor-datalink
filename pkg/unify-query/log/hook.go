@@ -91,13 +91,14 @@ func initLogConfig() {
 		zapcore.NewCore(encoder, writeSyncer, LoggerLevel),
 		zap.AddCaller(), zap.AddCallerSkip(1),
 	)
+
 	// 追加两个option：调用来源、Error级别增加调用栈
 	OtLogger = otelzap.New(ZapLogger,
 		otelzap.WithTraceIDField(true),
 		otelzap.WithCaller(true),
-		otelzap.WithStackTrace(true),
-		otelzap.WithMinLevel(zapcore.InfoLevel),
-		otelzap.WithErrorStatusLevel(zapcore.WarnLevel),
+		otelzap.WithStackTrace(false),
+		otelzap.WithMinLevel(zapcore.WarnLevel),
+		otelzap.WithErrorStatusLevel(zapcore.ErrorLevel),
 	)
 
 	if OtLogger == nil {

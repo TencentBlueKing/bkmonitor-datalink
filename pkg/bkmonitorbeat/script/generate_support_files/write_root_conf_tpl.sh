@@ -103,6 +103,10 @@ bkmonitorbeat:
     period: 60s
     publish_immediately: true
 
+  # 任务执行状态配置
+  gather_up_beat:
+    dataid: 1100017
+
 EOF
   cat <<EOF >> "$path"
   # 静态资源采集配置
@@ -154,7 +158,7 @@ EOF
       info_timeout: 30s
     disk:
       stat_times: 1
-      mountpoint_black_list: ["docker","container","k8s","kubelet"]
+      mountpoint_black_list: ["docker","container","k8s","kubelet","blueking"]
 {%- if extra_vars is defined and extra_vars.fs_type_white_list is defined %}
       fs_type_white_list: {{ extra_vars.fs_type_white_list | default(["overlay","btrfs","ext2","ext3","ext4","reiser","xfs","ffs","ufs","jfs","jfs2","vxfs","hfs","apfs","refs","ntfs","fat32","zfs"], true) }}
 {%- else %}

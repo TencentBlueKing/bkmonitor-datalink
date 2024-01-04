@@ -10,9 +10,11 @@
 package api
 
 const (
-	RelationMultiResourceConfigPath = "api.relation.multi_resource"
+	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
+	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
 )
 
 var (
-	RelationMultiResource string
+	RelationMultiResource      string
+	RelationMultiResourceRange string
 )

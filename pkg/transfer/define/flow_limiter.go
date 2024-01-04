@@ -24,7 +24,7 @@ var globalFlowLimiter = NewFlowLimiter("kafka:global", TotalFlowBytes())
 // TotalFlowBytes 全局最大允许的流量速率
 func TotalFlowBytes() int {
 	if totalFlowBytes <= 0 {
-		return 1024 * 1024 * 128 // 默认为 128MB/s => 1Gb/s
+		return 1024 * 1024 * 512 // 默认为 512MB/s => 4Gb/s
 	}
 	return totalFlowBytes
 }

@@ -59,8 +59,10 @@ var MarshalFunc = json.Marshal
 
 // Output : gse output, for libbeat output
 type Output struct {
-	cli *gse.GseClient
-	aif *AgentInfoFetcher
+	cli         *gse.GseClient
+	aif         *AgentInfoFetcher
+	fastMode    bool
+	concurrency int
 }
 
 // agentInfoLoader 全局 agentInfo 加载器
@@ -108,8 +110,10 @@ func MakeGSE(im outputs.IndexManager, beat beat.Info, stats outputs.Observer, cf
 	fetcher := NewAgentInfoFetcher(c, cli)
 	ail.Init(fetcher.Fetch)
 	output := &Output{
-		cli: cli,
-		aif: fetcher,
+		cli:         cli,
+		aif:         fetcher,
+		fastMode:    c.FastMode,
+		concurrency: c.Concurrency,
 	}
 
 	// start gse client
@@ -161,8 +165,10 @@ func MakeGSEWithoutCheckConn(im outputs.IndexManager, beat beat.Info, stats outp
 	fetcher := NewAgentInfoFetcher(c, cli)
 	ail.Init(fetcher.Fetch)
 	output := &Output{
-		cli: cli,
-		aif: fetcher,
+		cli:         cli,
+		aif:         fetcher,
+		fastMode:    c.FastMode,
+		concurrency: c.Concurrency,
 	}
 
 	go func() {
@@ -189,8 +195,14 @@ func MakeGSEWithoutCheckConn(im outputs.IndexManager, beat beat.Info, stats outp
 	return outputs.Success(int(c.EventBufferMax), 0, output)
 }
 
-// Publish implement output interface
 func (c *Output) Publish(batch publisher.Batch) error {
+	if c.fastMode {
+		return c.fastPublish(batch)
+	}
+	return c.slowPublish(batch)
+}
+
+func (c *Output) slowPublish(batch publisher.Batch) error {
 	events := batch.Events()
 	for i := range events {
 		if events[i].Content.Fields == nil {
@@ -207,6 +219,45 @@ func (c *Output) Publish(batch publisher.Batch) error {
 		}
 	}
 
+	batch.ACK()
+	return nil
+}
+
+func (c *Output) fastPublish(batch publisher.Batch) error {
+	events := batch.Events()
+
+	workers := c.concurrency
+	if workers <= 0 {
+		workers = 4 // 4 个并发足以让 gse 嗷嗷叫了
+	}
+
+	ch := make(chan struct{}, workers)
+	wg := sync.WaitGroup{}
+	for i := range events {
+		if events[i].Content.Fields == nil {
+			MetricGsePublishDropped.Add(1)
+			continue
+		}
+
+		wg.Add(1)
+		ch <- struct{}{}
+		go func(evt *publisher.Event) {
+			defer func() {
+				wg.Done()
+				<-ch
+			}()
+			MetricGsePublishReceived.Add(1)
+			err := c.PublishEvent(evt)
+			if err != nil {
+				logp.Err("publish event failed: %v", err)
+				MetricGsePublishFailed.Add(1)
+			} else {
+				MetricGsePublishTotal.Add(1)
+			}
+		}(&events[i])
+	}
+
+	wg.Wait()
 	batch.ACK()
 	return nil
 }
@@ -239,7 +290,6 @@ func (c *Output) PublishEvent(event *publisher.Event) error {
 	}
 
 	data, err = c.AddEventAttachInfo(dataid, data)
-
 	if err != nil {
 		return err
 	}
@@ -361,6 +411,8 @@ var sendHook func(int32, float64)
 func RegisterSendHook(f func(int32, float64)) { sendHook = f }
 
 // ReportCommonData send common data
+// fastMode 使得调度器有机会并发执行 Marshal 函数（CPU 热点）
+// 但是发送给 gse 的逻辑必须串行 否则数据会串流
 func (c *Output) ReportCommonData(dataid int32, data common.MapStr) error {
 	// change data to json format
 	buf, err := MarshalFunc(data)

@@ -169,6 +169,11 @@ func (r *MetricCollector) StartReport() {
 
 	if r.config.enabledMetric && r.config.metricsDataId != 0 && r.config.metricsAccessToken != "" {
 
+		apmLogger.Infof(
+			"Start metric report in %s dataId: %s accessToken %s host: %s",
+			r.config.metricReportInterval,
+			r.config.metricsDataId, r.config.metricsAccessToken, r.config.metricReportHost,
+		)
 		go func() {
 			for {
 				select {
@@ -334,15 +339,19 @@ func ReportToServer(
 	// 发送请求并获取响应
 	client := &http.Client{Transport: httpClient}
 	resp, err := client.Do(req)
+	defer func() {
+		if resp != nil {
+			err = resp.Body.Close()
+			if err != nil {
+				apmLogger.Errorf("Close response body failed. error: %s", err)
+			}
+		}
+	}()
+
 	if err != nil {
 		return fmt.Errorf("post request failed, error: %s", err)
 	}
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			apmLogger.Errorf("Close response body failed. error: %s", err)
-		}
-	}()
+
 	return nil
 }
 

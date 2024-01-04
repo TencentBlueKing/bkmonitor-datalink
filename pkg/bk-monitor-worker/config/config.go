@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -430,4 +431,11 @@ func InitConfig() {
 	initMetadataVariables()
 	initClusterMetricVariables()
 	initApmVariables()
+
+	prettyPrintSettings()
+}
+
+func prettyPrintSettings() {
+	b, _ := json.MarshalIndent(viper.AllSettings(), "", "  ")
+	logger.Infof("settings: \n------\n%s\n------\n", b)
 }

@@ -136,9 +136,11 @@ func (e *esStorage) Save(data EsStorageData) error {
 	req := esapi.IndexRequest{Index: e.getSaveIndexName(e.indexName), DocumentID: data.DocumentId, Body: buf}
 	res, err := req.Do(context.Background(), e.client)
 	defer func() {
-		err = res.Body.Close()
-		if err != nil {
-			logger.Warnf("failed to close the body")
+		if res != nil {
+			err = res.Body.Close()
+			if err != nil {
+				logger.Warnf("[Save] failed to close the body")
+			}
 		}
 	}()
 
@@ -159,6 +161,15 @@ func (e *esStorage) SaveBatch(items []EsStorageData) error {
 
 	req := esapi.BulkRequest{Index: e.getSaveIndexName(e.indexName), Body: &buf}
 	response, err := req.Do(context.Background(), e.client)
+	defer func() {
+		if response != nil {
+			err = response.Body.Close()
+			if err != nil {
+				logger.Warnf("[SaveBatch] failed to close the body")
+			}
+		}
+	}()
+
 	if err != nil {
 		return err
 	}
@@ -184,16 +195,18 @@ func (e *esStorage) Query(data any) (any, error) {
 		e.client.Search.WithBody(&buf),
 		e.client.Search.WithTrackTotalHits(true),
 	)
+	defer func() {
+		if res != nil {
+			err = res.Body.Close()
+			if err != nil {
+				logger.Warnf("[Query] failed to close the body")
+			}
+		}
+	}()
+
 	if err != nil {
 		return nil, err
 	}
-
-	defer func() {
-		err = res.Body.Close()
-		if err != nil {
-			logger.Warnf("failed to close the body")
-		}
-	}()
 
 	if res.IsError() {
 		return nil, errors.New(res.String())

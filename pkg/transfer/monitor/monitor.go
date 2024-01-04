@@ -17,25 +17,20 @@ import (
 
 var (
 	DefBuckets      = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60}
-	LargeDefBuckets = []float64{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600}
+	LargeDefBuckets = []float64{1, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800, 3600}
 )
 
 type CounterMixin struct {
 	CounterSuccesses prometheus.Counter
 	CounterFails     prometheus.Counter
-	CounterSkip      prometheus.Counter
 }
 
-func NewCounterMixin(successes, fails prometheus.Counter, skip ...prometheus.Counter) *CounterMixin {
+func NewCounterMixin(successes, fails prometheus.Counter) *CounterMixin {
 	mixin := &CounterMixin{
 		CounterSuccesses: successes,
 		CounterFails:     fails,
 	}
 
-	// 只取第一个
-	if len(skip) > 0 {
-		mixin.CounterSkip = skip[0]
-	}
 	return mixin
 }
 

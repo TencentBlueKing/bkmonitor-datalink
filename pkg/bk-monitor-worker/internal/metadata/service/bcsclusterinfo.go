@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	mapset "github.com/deckarep/golang-set"
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
 	k8sErr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1031,7 +1031,7 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 		return []uint{}, nil
 	}
 	var realClusterIds []string
-	dataids := mapset.NewSet()
+	dataids := mapset.NewSet[uint]()
 	for _, c := range clusters {
 		realClusterIds = append(realClusterIds, c.ClusterID)
 		dataids.Add(c.K8sMetricDataID)
@@ -1053,8 +1053,7 @@ func (BcsClusterInfoSvc) getBcsDataids(clusterIdList []string) ([]uint, error) {
 	for _, info := range podMonitorList {
 		dataids.Add(info.BkDataId)
 	}
-	dataidList := slicex.UintSet2List(dataids)
-	return dataidList, nil
+	return dataids.ToSlice(), nil
 }
 
 // BcsClusterInfo FetchK8sClusterList 中返回的集群信息对象

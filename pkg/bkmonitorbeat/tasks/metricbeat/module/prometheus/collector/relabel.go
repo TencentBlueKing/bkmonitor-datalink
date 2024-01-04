@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -92,7 +93,7 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	logger.Debugf("get original labels: %v", promLabels)
 
 	// up metric 不做 relabels 调整
-	if promEvent.Key == upMetric {
+	if promEvent.Key == define.MetricBeatUpMetric {
 		return true
 	}
 

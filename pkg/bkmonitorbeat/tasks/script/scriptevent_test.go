@@ -34,12 +34,4 @@ func TestScriptEvent(t *testing.T) {
 	if event.ErrorCode != define.BeatErrCodeUnknown {
 		t.Errorf("script event initial failed")
 	}
-	event.Success()
-	if event.ErrorCode != define.BeatErrCodeOK || event.Message != "success" {
-		t.Errorf("script event success func invalid")
-	}
-	event.ScriptFail(define.GatherStatusError, "failed")
-	if event.ErrorCode != define.GatherStatusError || event.Message != "failed" {
-		t.Errorf("script event ScriptFail func invalid")
-	}
 }

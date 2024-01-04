@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/offlineDataArchive"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
@@ -191,5 +192,33 @@ func (s *Service) reloadStorage() error {
 			Curl:             &curl.HttpCurl{Log: log.OtLogger},
 		},
 	})
+
+	// 增加 bksql tspider storage 查询
+	inner.SetStorage(consul.BkSqlStorageType, &inner.Storage{
+		Type: consul.BkSqlStorageType,
+		Instance: &bksql.Instance{
+			Ctx:          s.ctx,
+			Timeout:      BkSqlTimeout,
+			IntervalTime: BkSqlIntervalTime,
+			Limit:        BkSqlLimit,
+			Tolerance:    BkSqlTolerance,
+			Client: &bksql.Client{
+				Address:                    BkSqlAddress,
+				BkdataAuthenticationMethod: BkSqlAuthenticationMethod,
+				BkUsername:                 bksql.BkUserName,
+				BkAppCode:                  BkSqlCode,
+				PreferStorage:              bksql.TSpider,
+				BkdataDataToken:            BkSqlToken,
+				BkAppSecret:                BkSqlSecret,
+				ContentType:                BkSqlContentType,
+				Log:                        log.OtLogger,
+				Timeout:                    BkSqlTimeout,
+				Curl: &curl.HttpCurl{
+					Log: log.OtLogger,
+				},
+			},
+		},
+	})
+
 	return nil
 }

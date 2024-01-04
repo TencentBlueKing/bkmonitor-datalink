@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -34,25 +35,25 @@ import (
 
 type QueryTs struct {
 	// SpaceUid 空间ID
-	SpaceUid string `json:"space_uid"`
+	SpaceUid string `json:"space_uid,omitempty"`
 	// QueryList 查询实例
-	QueryList []*Query `json:"query_list"`
+	QueryList []*Query `json:"query_list,omitempty"`
 	// MetricMerge 表达式：支持所有PromQL语法
-	MetricMerge string `json:"metric_merge" example:"a"`
+	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
 	// ResultColumns 指定保留返回字段值
-	ResultColumns []string `json:"result_columns" swaggerignore:"true"`
+	ResultColumns []string `json:"result_columns,omitempty" swaggerignore:"true"`
 	// Start 开始时间：单位为毫秒的时间戳
-	Start string `json:"start_time" example:"1657848000"`
+	Start string `json:"start_time,omitempty" example:"1657848000"`
 	// End 结束时间：单位为毫秒的时间戳
-	End string `json:"end_time" example:"1657851600"`
+	End string `json:"end_time,omitempty" example:"1657851600"`
 	// Step 步长：最终返回的点数的时间间隔
-	Step string `json:"step" example:"1m"`
+	Step string `json:"step,omitempty" example:"1m"`
 	// DownSampleRange 降采样：大于Step才能生效，可以为空
 	DownSampleRange string `json:"down_sample_range,omitempty" example:"5m"`
 	// Timezone 时区
 	Timezone string `json:"timezone,omitempty" example:"Asia/Shanghai"`
 	// LookBackDelta 偏移量
-	LookBackDelta string `json:"look_back_delta"`
+	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
 }
@@ -192,43 +193,43 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 
 type Query struct {
 	// DataSource 暂不使用
-	DataSource string `json:"data_source" swaggerignore:"true"`
+	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
-	TableID TableID `json:"table_id" example:"system.cpu_summary"`
+	TableID TableID `json:"table_id,omitempty" example:"system.cpu_summary"`
 	// FieldName 查询指标
-	FieldName string `json:"field_name" example:"usage"`
+	FieldName string `json:"field_name,omitempty" example:"usage"`
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp bool `json:"is_regexp" example:"false"`
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
-	FieldList []string `json:"field_list" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
+	FieldList []string `json:"field_list,omitempty" example:"" swaggerignore:"true"` // 目前是供查询trace指标列时，可以批量查询使用
 	// AggregateMethodList 维度聚合函数
-	AggregateMethodList []AggregateMethod `json:"function"`
+	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法
 	TimeAggregation TimeAggregation `json:"time_aggregation"`
 	// ReferenceName 别名，用于表达式计算
-	ReferenceName string `json:"reference_name" example:"a"`
+	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
-	Dimensions []string `json:"dimensions" example:"bk_target_ip,bk_target_cloud_id"`
+	Dimensions []string `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Limit 点数限制数量
-	Limit int `json:"limit" example:"0"`
+	Limit int `json:"limit,omitempty" example:"0"`
 	// Timestamp @-modifier 标记
-	Timestamp *int64 `json:"timestamp"`
+	Timestamp *int64 `json:"timestamp,omitempty"`
 	// StartOrEnd @-modifier 标记，start or end
-	StartOrEnd parser.ItemType `json:"start_or_end"`
+	StartOrEnd parser.ItemType `json:"start_or_end,omitempty"`
 	// VectorOffset
-	VectorOffset time.Duration `json:"vector_offset"`
+	VectorOffset time.Duration `json:"vector_offset,omitempty"`
 	// Offset 偏移量
-	Offset string `json:"offset" example:""`
+	Offset string `json:"offset,omitempty" example:""`
 	// OffsetForward 偏移方向，默认 false 为向前偏移
-	OffsetForward bool `json:"offset_forward" example:"false"`
+	OffsetForward bool `json:"offset_forward,omitempty" example:"false"`
 	// Slimit 维度限制数量
-	Slimit int `json:"slimit" example:"0"`
+	Slimit int `json:"slimit,omitempty" example:"0"`
 	// Soffset 弃用字段
-	Soffset int `json:"soffset" example:"0" swaggerignore:"true"`
+	Soffset int `json:"soffset,omitempty" example:"0" swaggerignore:"true"`
 	// Conditions 过滤条件
-	Conditions Conditions `json:"conditions"`
+	Conditions Conditions `json:"conditions,omitempty"`
 	// KeepColumns 保留字段
-	KeepColumns KeepColumns `json:"keep_columns" swaggerignore:"true"`
+	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -238,7 +239,7 @@ type Query struct {
 	// End 保留字段，会被外面的 End 覆盖
 	End string `json:"-" swaggerignore:"true"`
 	// Step
-	Step string `json:"step" swaggerignore:"true"`
+	Step string `json:"step,omitempty" swaggerignore:"true"`
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
 }
@@ -269,6 +270,34 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
 		MetricName:    metricName,
+	}
+
+	// 判断是否查询非路由 tsdb
+	if q.DataSource != "" {
+		// 如果是 BkSql 查询无需获取 tsdb 路由关系
+		if q.DataSource == BkData {
+			allConditions, err := q.Conditions.AnalysisConditions()
+			if err != nil {
+				return nil, err
+			}
+
+			qry := &metadata.Query{
+				StorageID:           consul.BkSqlStorageType,
+				Measurement:         string(q.TableID),
+				Field:               q.FieldName,
+				AggregateMethodList: q.AggregateMethodList.ToQry(),
+				BkSqlCondition:      allConditions.BkSql(),
+			}
+
+			trace.InsertStringIntoSpan("query-storage-id", qry.StorageID, span)
+			trace.InsertStringIntoSpan("query-measurement", qry.Measurement, span)
+			trace.InsertStringIntoSpan("query-field", qry.Field, span)
+			trace.InsertStringIntoSpan("query-aggr-method-list", fmt.Sprintf("%+v", qry.AggregateMethodList), span)
+			trace.InsertStringIntoSpan("query-bk-sql-condition", qry.BkSqlCondition, span)
+
+			queryMetric.QueryList = []*metadata.Query{qry}
+			return queryMetric, nil
+		}
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
@@ -342,22 +371,10 @@ func (q *Query) BuildMetadataQuery(
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
-	// 增加查询条件
-	if len(queryConditions) > 0 {
-		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
-
-		whereList.Append(
-			promql.AndOperator,
-			promql.NewTextWhere(
-				promql.MakeOrExpression(
-					ConvertToPromBuffer(queryConditions),
-				),
-			),
-		)
-	}
 
 	db := tsDB.DB
 	storageID := tsDB.StorageID
+	storageName := tsDB.StorageName
 	clusterName := tsDB.ClusterName
 	tagKeys := tsDB.TagsKey
 	vmRt := tsDB.VmRt
@@ -365,12 +382,16 @@ func (q *Query) BuildMetadataQuery(
 	measurements = []string{measurement}
 
 	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
+	trace.InsertStringSliceIntoSpan("tsdb-field-list", tsDB.Field, span)
+	trace.InsertStringIntoSpan("tsdb-measurement-type", tsDB.MeasurementType, span)
 	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
-	trace.InsertStringIntoSpan("tsdb-db", db, span)
-	trace.InsertStringIntoSpan("tsdb-storge-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
+	trace.InsertStringIntoSpan("tsdb-storage-id", storageID, span)
+	trace.InsertStringIntoSpan("tsdb-storage-name", storageName, span)
 	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
 	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
 	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
+	trace.InsertStringIntoSpan("tsdb-db", db, span)
 	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
 
 	if q.Offset != "" {
@@ -379,6 +400,23 @@ func (q *Query) BuildMetadataQuery(
 			return nil, err
 		}
 		query.OffsetInfo.OffSet = time.Duration(dTmp)
+	}
+
+	if len(queryConditions) > 0 {
+		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
+
+		// influxdb 查询特殊处理逻辑
+		influxdbConditions := ConvertToPromBuffer(queryConditions)
+		if len(influxdbConditions) > 0 {
+			whereList.Append(
+				promql.AndOperator,
+				promql.NewTextWhere(
+					promql.MakeOrExpression(
+						influxdbConditions,
+					),
+				),
+			)
+		}
 	}
 
 	switch tsDB.MeasurementType {
@@ -455,20 +493,40 @@ func (q *Query) BuildMetadataQuery(
 		)
 	}
 
-	metricsConditions := ConditionField{
-		DimensionName: promql.MetricLabelName,
-		Operator:      ConditionEqual,
-		Value:         []string{fmt.Sprintf("%s_%s", measurement, field)},
+	// 用于 vm 的查询逻辑特殊处理
+	var vmMetric string
+	if metricName != "" {
+		vmMetric = fmt.Sprintf("%s_%s", metricName, promql.StaticField)
 	}
-	if q.IsRegexp {
-		metricsConditions.Operator = ConditionRegEqual
+
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的函数都进行替换，例如 label_replace
+	for _, a := range q.AggregateMethodList {
+		switch a.Method {
+		// label_replace(v instant-vector, dst_label string, replacement string, src_label string, regex string)
+		case "label_replace":
+			if len(a.VArgsList) == 4 && a.VArgsList[2] == promql.MetricLabelName {
+				if strings.LastIndex(fmt.Sprintf("%s", a.VArgsList[3]), field) < 0 {
+					a.VArgsList[3] = fmt.Sprintf("%s_%s", a.VArgsList[3], field)
+				}
+			}
+		}
+	}
+
+	// 因为 vm 查询指标会转换格式，所以在查询的时候需要把用到指标的条件都进行替换，也就是条件中使用 __name__ 的
+	for _, qc := range queryConditions {
+		for _, c := range qc {
+			if c.DimensionName == promql.MetricLabelName {
+				for ci, cv := range c.Value {
+					if strings.LastIndex(cv, field) < 0 {
+						c.Value[ci] = fmt.Sprintf("%s_%s", cv, field)
+					}
+				}
+			}
+		}
 	}
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
-
-	// 合并指标到 condition 里面
-	allCondition = MergeConditionField(allCondition, [][]ConditionField{{metricsConditions}})
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -513,13 +571,35 @@ func (q *Query) BuildMetadataQuery(
 	query.DB = db
 	query.Measurement = measurement
 	query.VmRt = vmRt
+	query.StorageName = storageName
 	query.Field = field
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
 
 	query.Condition = whereList.String()
-	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt)
+	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+
+	trace.InsertStringIntoSpan("query-source-type", query.SourceType, span)
+	trace.InsertStringIntoSpan("query-table-id", query.TableID, span)
+	trace.InsertStringIntoSpan("query-db", query.DB, span)
+	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
+	trace.InsertStringSliceIntoSpan("query-measurements", query.Measurements, span)
+	trace.InsertStringIntoSpan("query-field", query.Field, span)
+	trace.InsertStringSliceIntoSpan("query-fields", query.Fields, span)
+	trace.InsertStringIntoSpan("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo), span)
+	trace.InsertStringIntoSpan("query-timezone", query.Timezone, span)
+	trace.InsertStringIntoSpan("query-condition", query.Condition, span)
+	trace.InsertStringIntoSpan("query-vm-condition", query.VmCondition, span)
+	trace.InsertIntIntoSpan("query-vm-condition-num", query.VmConditionNum, span)
+	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+
+	trace.InsertStringIntoSpan("query-storage-type", query.StorageType, span)
+	trace.InsertStringIntoSpan("query-storage-name", query.StorageName, span)
+
+	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
+	trace.InsertStringSliceIntoSpan("query-tag-keys", query.TagsKey, span)
+	trace.InsertStringIntoSpan("query-vm-rt", query.VmRt, span)
 
 	return query, nil
 }
@@ -592,8 +672,12 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		OriginalOffset: originalOffset,
 	}
 
-	timeIdx := 0
+	timeIdx := -1
+	funcNums := len(q.AggregateMethodList)
+
 	if q.TimeAggregation.Function != "" && q.TimeAggregation.Window != "" {
+		funcNums += 1
+
 		// 拼接时间聚合函数，NodeIndex 的数据如下：
 		// count_over_time(metric[1m:2m])：vector -> subQuery -> call： nodeIndex 为 2
 		// sum by(job, metric_name) (delta(label_replace(metric, "")[1m:]))：vector -> call -> subQuery -> call -> aggr：nodeIndex 为 3
@@ -602,24 +686,26 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		timeIdx = q.TimeAggregation.NodeIndex - 2
 		// 增加小于 0 的场景兼容默认值为空的情况
 		if timeIdx <= 0 {
-			result, err = q.TimeAggregation.ToProm(result)
-			if err != nil {
-				return nil, err
-			}
+			timeIdx = 0
 		}
 	}
 
-	for idx, method := range q.AggregateMethodList {
-		if timeIdx > 0 && idx == timeIdx {
+	for idx := 0; idx < funcNums; idx++ {
+		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		if result, err = method.ToProm(result); err != nil {
-			log.Errorf(ctx, "failed to translate function for->[%s]", err)
-			return nil, err
+		} else {
+			methodIdx := idx
+			if timeIdx > -1 && methodIdx >= timeIdx {
+				methodIdx -= 1
+			}
+			method := q.AggregateMethodList[methodIdx]
+			if result, err = method.ToProm(result); err != nil {
+				log.Errorf(ctx, "failed to translate function for->[%s]", err)
+				return nil, err
+			}
 		}
 	}
 

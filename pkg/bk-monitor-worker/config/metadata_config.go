@@ -22,8 +22,6 @@ var (
 	MetadataMetricDimensionKeyPrefix string
 	// MetadataMetricDimensionMaxMetricFetchStep config of metadata.refreshMetric task
 	MetadataMetricDimensionMaxMetricFetchStep int
-	// MetadataMetricDimensionTimeSeriesMetricExpiredDays config of metadata.refreshMetric task
-	MetadataMetricDimensionTimeSeriesMetricExpiredDays int
 
 	// BcsEnableBcsGray  是否启用BCS集群灰度模式
 	BcsEnableBcsGray bool
@@ -38,6 +36,8 @@ var (
 	// BcsCustomEventStorageClusterId 自定义上报存储集群ID
 	BcsCustomEventStorageClusterId uint
 
+	// GlobalFetchTimeSeriesMetricIntervalSeconds 获取指标的间隔时间
+	GlobalFetchTimeSeriesMetricIntervalSeconds int
 	// GlobalTimeSeriesMetricExpiredSeconds 自定义指标过期时间
 	GlobalTimeSeriesMetricExpiredSeconds int
 	// GlobalIsRestrictDsBelongSpace 是否限制数据源归属具体空间
@@ -81,7 +81,6 @@ func initMetadataVariables() {
 	MetadataMetricDimensionMetricKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricKeyPrefix", "bkmonitor:metrics_")
 	MetadataMetricDimensionKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricDimensionKeyPrefix", "bkmonitor:metric_dimensions_")
 	MetadataMetricDimensionMaxMetricFetchStep = GetValue("taskConfig.metadata.metricDimension.maxMetricsFetchStep", 500)
-	MetadataMetricDimensionTimeSeriesMetricExpiredDays = GetValue("taskConfig.metadata.metricDimension.timeSeriesMetricExpiredDays", 30)
 
 	BcsEnableBcsGray = GetValue("taskConfig.metadata.bcs.enableBcsGray", false)
 	BcsGrayClusterIdList = GetValue("taskConfig.metadata.bcs.grayClusterIdList", []string{})
@@ -90,6 +89,7 @@ func initMetadataVariables() {
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
 
+	GlobalFetchTimeSeriesMetricIntervalSeconds = GetValue("taskConfig.metadata.global.fetchTimeSeriesMetricIntervalSeconds", 7200)
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)

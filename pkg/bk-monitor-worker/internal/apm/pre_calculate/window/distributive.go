@@ -107,6 +107,10 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 		observers:       make(map[observer]struct{}, specificConfig.subWindowSize),
 		ctx:             ctx,
 		saveRequestChan: saveReqChan,
+		logger: monitorLogger.With(
+			zap.String("location", "window"),
+			zap.String("dataId", dataId),
+		),
 	}
 
 	// Register sub-windows Event
@@ -119,18 +123,16 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 		window.register(w)
 	}
 
+	window.logger.Infof("create %d sub-windows", len(subWindowMapping))
 	window.subWindows = subWindowMapping
-	window.logger = monitorLogger.With(
-		zap.String("location", "window"),
-		zap.String("dataId", dataId),
-	)
 	return window
 }
 
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
-	hashValue := xxhash.Sum64([]byte(uni))
-	a := int(hashValue) % 10
-	return w.subWindows[a]
+	// 计算int的最大值 避免uint超过int最大值计算出下标出现负数
+	const maxInt = int(^uint(0) >> 1)
+	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
+	return w.subWindows[hashValue%w.config.subWindowSize]
 }
 
 func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpts ...RuntimeConfigOption) {

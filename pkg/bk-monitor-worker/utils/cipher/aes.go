@@ -12,8 +12,11 @@ package cipher
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -24,7 +27,7 @@ const (
 	AESPrefix = "aes_str:::"
 )
 
-// AESDecrypt AES256解密
+// AESDecrypt AES解密
 func AESDecrypt(encryptedPwd string) string {
 	defer func() {
 		if r := recover(); r != nil {
@@ -34,33 +37,70 @@ func AESDecrypt(encryptedPwd string) string {
 	// 非加密串返回原密码
 	if !strings.HasPrefix(encryptedPwd, AESPrefix) {
 		return encryptedPwd
-	} else {
-		// 截取实际加密数据段
-		encryptedPwd = strings.TrimPrefix(encryptedPwd, AESPrefix)
 	}
+	// 截取实际加密数据段
+	encryptedPwd = strings.TrimPrefix(encryptedPwd, AESPrefix)
 	// base64解码
-	ciphertext, err := base64.StdEncoding.DecodeString(encryptedPwd)
+	decodedData, err := base64.StdEncoding.DecodeString(encryptedPwd)
 	if err != nil {
 		logger.Errorf("base64 decode password error, %s", err)
 		return ""
 	}
-	// 获取iv和key
-	iv := encryptedPwd[:aes.BlockSize]
+	// 获取key、IV和加密密码
 	key := sha256.Sum256([]byte(config.AesKey))
+	iv := decodedData[:aes.BlockSize]
+	encryptedData := decodedData[aes.BlockSize:]
 
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Errorf("new cipher error, %s", err)
 		return ""
 	}
-	decrypter := cipher.NewCBCDecrypter(block, []byte(iv))
-	// 解密
-	decrypted := make([]byte, len(ciphertext))
-	decrypter.CryptBlocks(decrypted, ciphertext)
+	// CBC解密
+	decrypter := cipher.NewCBCDecrypter(block, iv)
+	decryptedData := make([]byte, len(encryptedData))
+	decrypter.CryptBlocks(decryptedData, encryptedData)
 
-	plainData := decrypted[aes.BlockSize:]
-	length := len(plainData)
-	unpadding := int(plainData[length-1])
-	realPwd := string(plainData[:(length - unpadding)])
+	length := len(decryptedData)
+	padSize := int(decryptedData[length-1])
+	realPwd := string(decryptedData[:(length - padSize)])
 	return realPwd
+}
+
+// AESEncrypt AES加密
+func AESEncrypt(raw string) string {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warnf("encrypt password failed, return '', %v", r)
+		}
+	}()
+	rawBytes := []byte(raw)
+	padSize := aes.BlockSize - len(rawBytes)%aes.BlockSize
+	padText := make([]byte, padSize)
+	for i := range padText {
+		padText[i] = byte(padSize)
+	}
+	padData := append(rawBytes, padText...)
+
+	key := sha256.Sum256([]byte(config.AesKey))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		logger.Errorf("new cipher error, %s", err)
+		return ""
+	}
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		logger.Errorf("generating IV faield, %s", err)
+		return ""
+	}
+	encrypter := cipher.NewCBCEncrypter(block, iv)
+	encryptedData := make([]byte, len(padData))
+	encrypter.CryptBlocks(encryptedData, padData)
+	// 组合数据
+	var data []byte
+	data = append(data, iv...)
+	data = append(data, encryptedData...)
+	// base64编码
+	encodedData := base64.StdEncoding.EncodeToString(data)
+	return fmt.Sprintf("%s%s", AESPrefix, encodedData)
 }

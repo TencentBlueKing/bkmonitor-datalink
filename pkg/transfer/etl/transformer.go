@@ -111,7 +111,7 @@ func TransformMapByRegexp(pattern string) TransformFn {
 func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) TransformFn {
 	options := utils.NewMapHelper(table.Option)
 	retainExtraJSON, _ := options.GetBool(config.PipelineConfigOptionRetainExtraJson)
-	//enableRetainContent, _ := options.GetBool(config.PipelineConfigOptionRetainContent)
+	enableRetainContent, _ := options.GetBool(config.PipelineConfigOptionRetainContent)
 	retainContentKey, _ := options.GetString(config.PipelineConfigOptionRetainContentKey)
 
 	userFieldMap := table.FieldListGroupByName()
@@ -126,14 +126,14 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 		results := make(map[string]interface{})
 		err = json.Unmarshal([]byte(value), &results)
 		if err != nil {
-			//if enableRetainContent {
-			rk := FieldRetainContentKey
-			if retainContentKey != "" {
-				rk = retainContentKey
+			if enableRetainContent {
+				rk := FieldRetainContentKey
+				if retainContentKey != "" {
+					rk = retainContentKey
+				}
+				return map[string]interface{}{rk: value}, nil
 			}
-			return map[string]interface{}{rk: value}, nil
-			//}
-			//return nil, err
+			return nil, err
 		}
 		if retainExtraJSON {
 			extraJSONMap := make(map[string]interface{})

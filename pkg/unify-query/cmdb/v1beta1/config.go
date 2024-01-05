@@ -26,17 +26,26 @@ var configData = &Config{
 				"node",
 			},
 		},
+		//{
+		//	Name: "cluster",
+		//	Index: cmdb.Index{
+		//		"bcs_cluster_id",
+		//	},
+		//},
+		//{
+		//	Name: "namespace",
+		//	Index: cmdb.Index{
+		//		"bcs_cluster_id",
+		//		"namespace",
+		//	},
+		//},
 		{
-			Name: "cluster",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-			},
-		},
-		{
-			Name: "namespace",
+			Name: "container",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
+				"pod",
+				"container",
 			},
 		},
 		{
@@ -106,7 +115,7 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"pod", "deployment",
+				"replicaset", "deployment",
 			},
 		},
 	},

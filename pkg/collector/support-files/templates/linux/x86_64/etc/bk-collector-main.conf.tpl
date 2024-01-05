@@ -16,6 +16,7 @@ logging:
 output.bkpipe:
   endpoint: {{ plugin_path.endpoint }}
   synccfg: true
+  fastmode: true
 
 seccomp.enabled: false
 
@@ -178,6 +179,8 @@ bk-collector:
         enabled: false
       skywalking:
         enabled: false
+      fta:
+        enabled: true
 
   processor:
     # ApdexCalculator: 健康度状态计算器
@@ -1745,6 +1748,12 @@ bk-collector:
     - name: "pingserver_pipeline/common"
       type: "pingserver"
       processors:
+
+    - name: "fta_pipeline/common"
+      type: "fta"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

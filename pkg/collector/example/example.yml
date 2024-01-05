@@ -165,6 +165,8 @@ bk-collector:
         enabled: true
       pyroscope:
         enabled: true
+      fta:
+        enabled: true
 
 
   # =============================== Processor ================================
@@ -1054,6 +1056,12 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+
+    - name: "profiles_pipeline/common"
+      type: "fta"
+      processors:
+          - "token_checker/aes256"
+          - "rate_limiter/token_bucket"
 
 
   # =============================== Exporter =================================

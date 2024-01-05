@@ -12,6 +12,7 @@ package tokenchecker
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -399,5 +400,89 @@ func TestProxyToken(t *testing.T) {
 			Data: data,
 		})
 		assert.NoError(t, err)
+	})
+}
+
+func TestFtaAes256Token(t *testing.T) {
+	t.Run("New Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "Ymtia2JrYmtia2JrYmtiaxJ3i4amfEBRpRly3svdCllhrOjDgm6IjwqqIVKwzKN5",
+			},
+			Data: &define.FtaData{
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, "tencent_cloud", record.Token.AppName)
+		assert.Equal(t, int32(1001), record.Token.MetricsDataId)
+	})
+
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "12345",
+			},
+			Data: &define.FtaData{
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.True(t, strings.Contains(err.Error(), "failed to decode token"))
+	})
+
+	t.Run("Incorrect Token - Empty PluginID", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "Ymtia2JrYmtia2JrYmtia/r4wM8mjJnSo8oBqbclwaCY2AaNBAvhq1T48ZO09PSe",
+			},
+			Data: &define.FtaData{
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Equal(t, "reject invalid pluginId", err.Error())
+	})
+
+	t.Run("Incorrect Token - Empty DataID", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordFta,
+			Token: define.Token{
+				Original: "Ymtia2JrYmtia2JrYmtia5GdDXVAdxBFaOaaHF6kHUNG/yhSoPsPwAr1WfIhU8gc",
+			},
+			Data: &define.FtaData{
+				Data: []map[string]interface{}{
+					{"test": "test"},
+				},
+				EventId:    "1",
+				IngestTime: time.Now().Unix(),
+			},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Equal(t, "reject invalid dataId", err.Error())
 	})
 }

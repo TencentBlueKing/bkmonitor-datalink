@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/metricbeat/mb"
@@ -23,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/metricbeat/include" // 初始化 bkmetricbeats 组件
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -34,7 +36,7 @@ const (
 
 // MetricTool metricbeat接口
 type MetricTool interface {
-	Init(taskConf *configs.MetricBeatConfig) error
+	Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error
 	Run(ctx context.Context, e chan<- define.Event) error
 }
 
@@ -43,10 +45,11 @@ type BKMetricbeatTool struct {
 	module          *module.Wrapper
 	taskConf        *configs.MetricBeatConfig
 	tempFilePattern string
+	globalConf      define.Config
 }
 
 // Init 初始化参数，主要处理配置文件中的modules
-func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig) error {
+func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error {
 	// 补充 period 把调度直接交给 Gather
 	t.tempFilePattern = fmt.Sprintf(tempFilePatternFormat, taskConf.GetIdent())
 	err := taskConf.Module.Merge(common.MapStr{
@@ -67,6 +70,7 @@ func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig) error {
 	logger.Infof("modules.Config: %+v", modules.Config())
 	t.module = modules
 	t.taskConf = taskConf
+	t.globalConf = globalConf
 	return nil
 }
 
@@ -252,6 +256,13 @@ loop:
 			logger.Debugf("data_id: %d, labels: %#v", t.taskConf.DataID, t.taskConf.GetLabels())
 
 			event.Data = v
+			// 仅二进制采集环境下，提取状态指标整理，整理成专属格式和DataID，进行分发
+			if !beat.IsContainerMode() {
+				upEvent := t.BuildGatherUp(v)
+				if upEvent != nil {
+					e <- upEvent
+				}
+			}
 
 			// 启动自定义上报时，按自定义上报格式发送数据
 			if t.taskConf.CustomReport {
@@ -381,4 +392,41 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 	}
 	collectorData["metrics"] = newMetrics
 	logger.Debugf("old metrics(%v), \n new metrics(%v)", oldMetrics, newMetrics)
+}
+
+// BuildGatherUp 从 Beat 事件中提取状态信息
+func (t *BKMetricbeatTool) BuildGatherUp(evc common.MapStr) define.Event {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("Panic in BuildGatherUp: %+v", r)
+		}
+	}()
+
+	metricsVal, err := evc.GetValue("prometheus.collector.metrics")
+	if err != nil {
+		logger.Errorf("KeyNotFound(prometheus.collector.metrics) in metricbeat: %v", err)
+		return nil
+	}
+	metrics, ok := metricsVal.([]common.MapStr)
+	if !ok {
+		logger.Errorf("Fail to convert prometheus.collector.metrics(%v) to []common.MapStr", metricsVal)
+		return nil
+	}
+	for _, m := range metrics {
+		if m["key"] == define.MetricBeatUpMetric {
+			labels, ok := m["labels"].(common.MapStr)
+			if !ok {
+				logger.Errorf("Fail to convert labels(%v) to common.MapStr", m)
+				return nil
+			}
+			code, ok := labels["code"].(string)
+			if !ok {
+				logger.Errorf("Fail to convert code(%v) to string", labels)
+				return nil
+			}
+			codeNum, _ := strconv.ParseInt(code, 10, 32)
+			return tasks.NewGatherUpEventWithConfig(t.taskConf, t.globalConf, define.BeatErrorCode(codeNum), nil)
+		}
+	}
+	return nil
 }

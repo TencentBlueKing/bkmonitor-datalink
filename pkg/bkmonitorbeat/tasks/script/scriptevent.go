@@ -106,14 +106,7 @@ func NewEvent(t define.Task) *Event {
 	}
 }
 
-// ScriptFail :
-func (e *Event) ScriptFail(code define.BeatErrorCode, message string) {
-	e.ErrorCode = code
-	e.EndAt = time.Now()
-	e.Message = message
-}
-
-// Success :
+// Success 普通指标事件正常结束
 func (e *Event) Success() {
 	e.ErrorCode = define.BeatErrCodeOK
 	e.EndAt = time.Now()

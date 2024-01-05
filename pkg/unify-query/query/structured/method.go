@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 var AggregateMap = map[string]parser.ItemType{
@@ -37,20 +38,35 @@ var AggregateMap = map[string]parser.ItemType{
 // 参数组合
 type Args map[string]string
 
+// 聚合方法列表
+type AggregateMethodList []AggregateMethod
+
+func (a AggregateMethodList) ToQry() []metadata.AggrMethod {
+	aml := make([]metadata.AggrMethod, 0, len(a))
+	for _, aggr := range a {
+		aml = append(aml, metadata.AggrMethod{
+			Name:       aggr.Method,
+			Dimensions: aggr.Dimensions,
+			Without:    aggr.Without,
+		})
+	}
+	return aml
+}
+
 // 聚合方法
 type AggregateMethod struct {
 	// Method 聚合方法
-	Method string `json:"method" example:"mean"`
+	Method string `json:"method,omitempty" example:"mean"`
 	// Without
 	Without bool `json:"without" example:false`
 	// Dimensions 聚合维度
-	Dimensions Dimensions `json:"dimensions" example:"bk_target_ip,bk_target_cloud_id"`
+	Dimensions Dimensions `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Position 函数参数位置，结合 VArgsList 一起使用，类似 topk, histogram_quantile 需要用到
-	Position int `json:"position" swaggerignore:"true"`
+	Position int `json:"position,omitempty" swaggerignore:"true"`
 	// ArgsList 弃用参数
-	ArgsList Args `json:"args_list" swaggerignore:"true"`
+	ArgsList Args `json:"args_list,omitempty" swaggerignore:"true"`
 	// VArgsList 函数参数，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
-	VArgsList []interface{} `json:"vargs_list" swaggerignore:"true"`
+	VArgsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
 }
 
 // ToProm: 将结果返回为一个promql的聚合表达式，但是注意：此时的Expr/Grouping为空，需要在外部进行补充

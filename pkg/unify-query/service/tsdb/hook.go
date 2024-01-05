@@ -54,6 +54,13 @@ func setDefaultConfig() {
 	viper.SetDefault(OfflineDataArchiveTimeoutConfigPath, "10m")
 	viper.SetDefault(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath, 1024*1024*10)
 	viper.SetDefault(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath, 1024*1024*10)
+
+	viper.SetDefault(BkSqlTimeoutConfigPath, "30s")
+	viper.SetDefault(BkSqlIntervalTimeConfigPath, "300ms")
+	viper.SetDefault(BkSqlLimitConfigPath, 2e6)
+	viper.SetDefault(BkSqlToleranceConfigPath, 5)
+	viper.SetDefault(BkSqlContentTypeConfigPath, "application/json")
+	viper.SetDefault(BkSqlAuthenticationMethodConfigPath, "token")
 }
 
 // initConfig 加载配置
@@ -85,6 +92,18 @@ func initConfig() {
 
 	VmInfluxCompatible = viper.GetBool(VmInfluxCompatibleConfigPath)
 	VmUseNativeOr = viper.GetBool(VmUseNativeOrConfigPath)
+
+	// bksql 配置
+	BkSqlAddress = viper.GetString(BkSqlAddressConfigPath)
+	BkSqlTimeout = viper.GetDuration(BkSqlTimeoutConfigPath)
+	BkSqlIntervalTime = viper.GetDuration(BkSqlIntervalTimeConfigPath)
+	BkSqlLimit = viper.GetInt(BkSqlLimitConfigPath)
+	BkSqlTolerance = viper.GetInt(BkSqlToleranceConfigPath)
+	BkSqlAuthenticationMethod = viper.GetString(BkSqlAuthenticationMethodConfigPath)
+	BkSqlContentType = viper.GetString(BkSqlContentTypeConfigPath)
+	BkSqlCode = viper.GetString(BkSqlCodeConfigPath)
+	BkSqlSecret = viper.GetString(BkSqlSecretConfigPath)
+	BkSqlToken = viper.GetString(BkSqlTokenConfigPath)
 
 	OfflineDataArchiveAddress = viper.GetString(OfflineDataArchiveAddressConfigPath)
 	OfflineDataArchiveTimeout = viper.GetDuration(OfflineDataArchiveTimeoutConfigPath)

@@ -179,7 +179,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 		values.Set("q", m.Config.SQL)
 		values.Set("epoch", "s")
 		options := http.Options{
-			BaseUrl:  fmt.Sprintf("%s://%s:%d/query", instance.Host.Protocol, instance.Host.DomainName, instance.Host.Port),
+			BaseUrl:  fmt.Sprintf("http://%s:%d/query", instance.Host.DomainName, instance.Host.Port),
 			Params:   values,
 			Headers:  map[string]string{"Accept": "application/json"},
 			UserName: instance.Host.Username,

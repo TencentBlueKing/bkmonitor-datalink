@@ -91,6 +91,10 @@ const (
 	PipelineConfigOptionIsLogData       = "is_log_data"
 	// PipelineConfigOptionRetainExtraJson : JSON清洗时, 未定义字段将会归到ext里
 	PipelineConfigOptionRetainExtraJson = "retain_extra_json"
+	// PipelineConfigOptionRetainContent 数据清洗失败时是否保留原始日志文本
+	PipelineConfigOptionRetainContent = "enable_retain_content"
+	// PipelineConfigOptionRetainContentKey 清洗失败后日志原始文本应该保存的 key
+	PipelineConfigOptionRetainContentKey = "retain_content_key"
 	// PipelineConfigOptEnableDimensionCmdbLevel : 开启层级组功能
 	PipelineConfigOptEnableDimensionCmdbLevel = "enable_dimension_cmdb_level"
 	// ResultTableListConfigOptMetricSplitLevel  : 描述需要拆解的层级内容

@@ -141,7 +141,21 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	return template.NewRecordProcessorWithDecoderFn(
 		name, config.PipelineConfigFromContext(ctx),
 		etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
-			data := etl.ContainerToMap(from)
+			result, _ := from.Get("data")
+			if result == nil {
+				return nil
+			}
+
+			// 将数据转换为map格式
+			var data map[string]interface{}
+			switch result.(type) {
+			case map[string]interface{}:
+				data = result.(map[string]interface{})
+			case etl.Container:
+				data = etl.ContainerToMap(result.(etl.Container))
+			default:
+				return nil
+			}
 
 			var alerts []*Alert
 			var exprMap map[string]string

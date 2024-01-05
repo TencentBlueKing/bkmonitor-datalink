@@ -12,7 +12,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -159,7 +159,7 @@ func (d DataSourceSvc) makeToken() string {
 
 // ConsulPath 获取datasource的consul根路径
 func (DataSourceSvc) ConsulPath() string {
-	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体data_id的consul配置路径
@@ -171,7 +171,7 @@ func (d DataSourceSvc) ConsulConfigPath() string {
 func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
 	var kafkaTopicInfo storage.KafkaTopicInfo
 	if err := storage.NewKafkaTopicInfoQuerySet(mysql.GetDBSession().DB).BkDataIdEq(d.BkDataId).One(&kafkaTopicInfo); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query KafkaTopicInfo failed")
 	}
 	return &kafkaTopicInfo, nil
 }
@@ -180,7 +180,7 @@ func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
 func (d DataSourceSvc) MqCluster() (*storage.ClusterInfo, error) {
 	var clusterInfo storage.ClusterInfo
 	if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(d.MqClusterId).One(&clusterInfo); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "query mq cluster failed")
 	}
 	return &clusterInfo, nil
 }
@@ -295,8 +295,11 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				shipperList = append(shipperList, consulConfig)
 			}
 			var fieldList = make([]interface{}, 0)
-			if fields, ok := tableFields[rt.TableId]; ok {
-				fieldList = fields
+			// 如果是自定义上报的情况，不需要将字段信息写入到consul上
+			if !d.isCustomTimeSeriesReport() {
+				if fields, ok := tableFields[rt.TableId]; ok {
+					fieldList = fields
+				}
 			}
 			var options = make(map[string]interface{})
 			if ops, ok := rtOptions[rt.TableId]; ok {
@@ -306,7 +309,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				"bk_biz_id":    rt.BkBizId,
 				"result_table": rt.TableId,
 				"shipper_list": shipperList,
-				"field_list":   fieldList, // 如果是自定义上报的情况，不需要将字段信息写入到consul上
+				"field_list":   fieldList,
 				"schema_type":  rt.SchemaType,
 				"option":       options,
 			})
@@ -314,6 +317,11 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 		resultConfig["result_table_list"] = resultTableInfoList
 	}
 	return resultConfig, nil
+}
+
+// 是否自定义上报的数据源
+func (d DataSourceSvc) isCustomTimeSeriesReport() bool {
+	return slicex.IsExistItem([]string{models.ETLConfigTypeBkStandardV2TimeSeries}, d.EtlConfig)
 }
 
 // RefreshGseConfig 刷新GSE配置，同步路由配置到gse
@@ -401,13 +409,16 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	if oldRoute == nil {
 		equal = false
 	} else {
-		equal = reflect.DeepEqual(*oldRoute, *config)
+		equal, err = jsonx.CompareObjects(*oldRoute, *config)
+		if err != nil {
+			return errors.Wrapf(err, "CompareObjects [%#v] and [%#v] failed", *oldRoute, *config)
+		}
 	}
 	if equal {
 		logger.Infof("data_id [%v] gse route config has no difference from gse, skip", d.BkDataId)
 		return nil
 	}
-	logger.Infof("data_id [%v] gse route config is different from gse, will refresh it", d.BkDataId)
+	logger.Infof("data_id [%v] gse route config [%v] is different from gse [%v], will refresh it", d.BkDataId, config, oldRoute)
 	var updateResult define.APICommonResp
 	_, err = gseApi.UpdateRoute().SetBody(map[string]interface{}{
 		"condition": map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
@@ -507,7 +518,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	}
 	val, err := d.ToJson(true, true)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "datasource to_json failed")
 	}
 	valStr, err := jsonx.MarshalString(val)
 	if err != nil {
@@ -518,7 +529,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 		logger.Errorf("data_id [%v] put [%s] failed, %v", d.BkDataId, d.ConsulConfigPath(), err)
 		return err
 	}
-	logger.Infof("data_id [%v] has update config to [%v] success", d.BkDataId, d.ConsulConfigPath())
+	logger.Infof("data_id [%v] has update config [%s] to [%v] success", d.BkDataId, valStr, d.ConsulConfigPath())
 	return nil
 }
 

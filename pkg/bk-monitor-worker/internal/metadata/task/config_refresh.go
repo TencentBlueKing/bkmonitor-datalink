@@ -148,7 +148,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	}
 
 	// 更新version
-	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix)
+	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
 	err = models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath)
 	if err != nil {
 		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)
@@ -187,10 +187,10 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
-	dbSession := mysql.GetDBSession()
+	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(dbSession.DB).Select("bk_data_id").All(&dataSourceRtList); err != nil {
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select("bk_data_id").All(&dataSourceRtList); err != nil {
 		logger.Errorf("query datasourceresulttable record error, %v", err)
 		return err
 	}
@@ -205,7 +205,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(dbSession.DB).IsEnableEq(true).
+	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
 		logger.Errorf("query datasource record error, %v", err)
 		return err
@@ -219,7 +219,6 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	wg := &sync.WaitGroup{}
 	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
 	wg.Add(len(dataSourceList))
-	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
 	for _, dataSource := range dataSourceList {
 		ch <- true
 		go func(ds resulttable.DataSource, wg *sync.WaitGroup, ch chan bool) {

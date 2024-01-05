@@ -10,6 +10,7 @@
 package service
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -58,7 +59,7 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 		TableId:        "test_data_source_table_id",
 		IsCustomTable:  true,
 		SchemaType:     "",
-		DefaultStorage: "influxDB",
+		DefaultStorage: models.StorageTypeES,
 		IsEnable:       true,
 		Label:          "others",
 	}
@@ -66,6 +67,7 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 		BkDataId: ds.BkDataId,
 		TableId:  rt.TableId,
 	}
+
 	// 初始化数据
 	db := mysql.GetDBSession().DB
 
@@ -81,12 +83,34 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	err = dsrt.Create(db)
 	assert.Nil(t, err)
 
+	cluster := storage.ClusterInfo{
+		ClusterName: "test_es_0001",
+		ClusterType: models.StorageTypeES,
+		DomainName:  "127.0.0.1",
+		Port:        9200,
+		Schema:      "http",
+		Version:     "7",
+	}
+	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
+	err = cluster.Create(db)
+	assert.NoError(t, err)
+	es := storage.ESStorage{
+		TableID:           rt.TableId,
+		WarmPhaseSettings: "{}",
+		IndexSettings:     "{}",
+		MappingSettings:   "{}",
+		StorageClusterID:  cluster.ClusterID,
+	}
+	db.Delete(&es, "table_id = ?", es.TableID)
+	err = es.Create(db)
+	assert.NoError(t, err)
 	dsSvc := NewDataSourceSvc(ds)
 	dsConfig, err := dsSvc.ToJson(true, true)
 	assert.Nil(t, err)
 	marshalString, err := jsonx.MarshalString(dsConfig)
 	assert.Nil(t, err)
 	assert.True(t, len(marshalString) != 0)
+	fmt.Println(marshalString)
 }
 
 func TestDataSourceSvc_AddBuiltInChannelIdToGse(t *testing.T) {
@@ -124,4 +148,41 @@ func TestDataSourceSvc_AddBuiltInChannelIdToGse(t *testing.T) {
 	ds := resulttable.DataSource{BkDataId: 1199999, MqClusterId: cluster.ClusterID}
 	err = NewDataSourceSvc(&ds).AddBuiltInChannelIdToGse()
 	assert.NoError(t, err)
+}
+
+func TestDataSourceSvc_StorageConsulConfig(t *testing.T) {
+	s := StorageConsulConfig{
+		ClusterInfoConsulConfig: ClusterInfoConsulConfig{
+			ClusterConfig: ClusterConfig{
+				DomainName:                   "",
+				Port:                         0,
+				ExtranetDomainName:           "",
+				ExtranetPort:                 0,
+				Schema:                       "",
+				IsSslVerify:                  false,
+				SslVerificationMode:          "",
+				SslInsecureSkipVerify:        false,
+				SslCertificateAuthorities:    "",
+				SslCertificate:               "",
+				SslCertificateKey:            "",
+				RawSslCertificateAuthorities: "",
+				RawSslCertificate:            "",
+				RawSslCertificateKey:         "",
+				ClusterId:                    0,
+				ClusterName:                  "",
+				Version:                      "",
+				CustomOption:                 "",
+				RegisteredSystem:             "",
+				Creator:                      "",
+				CreateTime:                   0,
+				LastModifyUser:               "",
+				IsDefaultCluster:             false,
+			},
+			ClusterType: "",
+			AuthInfo:    AuthInfo{},
+		},
+		StorageConfig: nil,
+	}
+	str, _ := jsonx.MarshalString(s)
+	fmt.Println(str)
 }

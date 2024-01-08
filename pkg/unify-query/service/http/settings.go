@@ -43,6 +43,7 @@ const (
 	TSQueryStructToPromQLHandlePathConfigPath = "http.path.ts_struct_to_promql"
 	TSQueryPromQLToStructHandlePathConfigPath = "http.path.ts_promql_to_struct"
 	TSQueryLabelValuesPathConfigPath          = "http.path.ts_label_values"
+	TSQueryClusterMetricsPathConfigPath       = "http.path.ts_cluster_metrics"
 	FluxHandlePromqlPathConfigPath            = "http.path.promql"
 	PrintHandlePathConfigPath                 = "http.path.print"
 	InfluxDBPrintHandlePathConfigPath         = "http.path.influxdb_print"
@@ -59,6 +60,10 @@ const (
 	SegmentedEnable      = "http.segmented.enable"
 	SegmentedMaxRoutines = "http.segmented.max_routines"
 	SegmentedMinInterval = "http.segmented.min_interval"
+
+	// 集群指标查询配置
+	ClusterMetricQueryPrefixConfigPath  = "http.cluster_metric.prefix"
+	ClusterMetricQueryTimeoutConfigPath = "http.cluster_metric.timeout"
 )
 
 var (
@@ -78,4 +83,7 @@ var (
 	DefaultInfoLimit int
 
 	QueryMaxRouting int
+
+	ClusterMetricQueryPrefix  string
+	ClusterMetricQueryTimeout time.Duration
 )

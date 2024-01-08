@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -142,6 +143,59 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 	}
 
 	return queryReference, nil
+}
+
+func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
+	var qry *Query
+	ctx, span := trace.IntoContext(ctx, trace.TracerName, "to-query-cluster-metric")
+	if span != nil {
+		defer span.End()
+	}
+	if len(q.QueryList) != 1 {
+		return nil, errors.Errorf("Only one query supported, now %d ", len(q.QueryList))
+	}
+
+	for _, qry = range q.QueryList {
+	}
+
+	// 结构定义转换
+	allConditions, err := qry.Conditions.AnalysisConditions()
+	queryConditions := make([][]metadata.ConditionField, 0, len(allConditions))
+	for _, conds := range allConditions {
+		queryConds := make([]metadata.ConditionField, 0, len(conds))
+		for _, cond := range conds {
+			queryConds = append(queryConds, metadata.ConditionField{
+				DimensionName: cond.DimensionName,
+				Value:         cond.Value,
+				Operator:      cond.Operator,
+			})
+		}
+		queryConditions = append(queryConditions, queryConds)
+	}
+	if err != nil {
+		return nil, err
+	}
+	queryCM := &metadata.QueryClusterMetric{
+		MetricName:          qry.FieldName,
+		AggregateMethodList: qry.AggregateMethodList.ToQry(),
+		Conditions:          queryConditions,
+	}
+	if qry.TimeAggregation.Function != "" {
+		wDuration, err := qry.TimeAggregation.Window.ToTime()
+		if err != nil {
+			return nil, errors.Errorf("TimeAggregation.Window(%v) format is invalid, %v", qry.TimeAggregation, err)
+		}
+		queryCM.TimeAggregation = metadata.TimeAggregation{
+			Function:       qry.TimeAggregation.Function,
+			WindowDuration: wDuration,
+		}
+	}
+	trace.InsertStringIntoSpan("query-field", queryCM.MetricName, span)
+	trace.InsertStringIntoSpan("query-aggr-methods", fmt.Sprintf("%+v", qry.AggregateMethodList), span)
+	trace.InsertStringIntoSpan("query-conditions", fmt.Sprintf("%+v", queryCM.Conditions), span)
+	trace.InsertStringIntoSpan("query-time-func", queryCM.TimeAggregation.Function, span)
+	trace.InsertStringIntoSpan("query-time-window", strconv.FormatInt(int64(queryCM.TimeAggregation.WindowDuration), 10), span)
+	return queryCM, nil
 }
 
 func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, referenceNameLabelMatcher map[string][]*labels.Matcher) (parser.Expr, error) {

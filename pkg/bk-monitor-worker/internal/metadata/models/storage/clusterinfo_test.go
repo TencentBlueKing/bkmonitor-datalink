@@ -21,10 +21,12 @@ import (
 )
 
 func TestClusterInfo_GetESClient(t *testing.T) {
+	schema := "http"
+	version := "7"
 	cluster := ClusterInfo{
 		ClusterType: models.StorageTypeInfluxdb,
-		Version:     "7.10.1",
-		Schema:      "https",
+		Version:     &version,
+		Schema:      &schema,
 		DomainName:  "example.com",
 		Port:        9200,
 		Username:    "elastic",

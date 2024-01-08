@@ -61,15 +61,15 @@ func (e EsStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	var WarmPhaseSettingsMap map[string]interface{}
 	err = jsonx.UnmarshalString(e.IndexSettings, &indexSettingsMap)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "unmarshal IndexSettings failed")
 	}
 	err = jsonx.UnmarshalString(e.MappingSettings, &mappingSettingMap)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "unmarshal MappingSettings failed")
 	}
 	err = jsonx.UnmarshalString(e.WarmPhaseSettings, &WarmPhaseSettingsMap)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "unmarshal WarmPhaseSettings failed")
 	}
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,

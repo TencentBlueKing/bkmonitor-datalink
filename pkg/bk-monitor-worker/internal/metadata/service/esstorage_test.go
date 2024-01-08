@@ -24,12 +24,13 @@ import (
 
 func TestEsStorageSvc_ConsulConfig(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-
+	version := "7.10.1"
+	schema := "https"
 	clusterInfo := storage.ClusterInfo{
 		ClusterID:        99,
 		ClusterType:      models.StorageTypeES,
-		Version:          "7.10.1",
-		Schema:           "https",
+		Version:          &version,
+		Schema:           &schema,
 		DomainName:       "example.com",
 		Port:             9200,
 		Username:         "elastic",

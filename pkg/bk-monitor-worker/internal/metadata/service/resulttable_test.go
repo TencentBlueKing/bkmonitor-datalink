@@ -127,14 +127,16 @@ func TestResultTableSvc_CreateResultTable_for_event(t *testing.T) {
 		IsEnable:          true,
 		TransferClusterId: "default",
 	}
+	version := "7"
+	schema := "http"
 	cluster := storage.ClusterInfo{
 		ClusterName:      "es_test_default",
 		ClusterType:      models.StorageTypeES,
 		DomainName:       "127.0.0.1",
 		Port:             9200,
 		IsDefaultCluster: true,
-		Schema:           "http",
-		Version:          "7",
+		Schema:           &schema,
+		Version:          &version,
 		RegisteredSystem: "bkmonitor",
 	}
 	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)

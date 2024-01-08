@@ -38,7 +38,7 @@ func (InfluxdbClusterInfo) TableName() string {
 
 // ConsulPath 获取cluster_info的consul根路径
 func (InfluxdbClusterInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbClusterInfoConsulPathTemplate, config.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbClusterInfoConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
 }
 
 // RefreshInfluxdbClusterInfoConsulClusterConfig 更新influxDB集群信息到Consul中

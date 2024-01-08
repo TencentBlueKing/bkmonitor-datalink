@@ -58,14 +58,14 @@ func TestKafkaTopicInfoSvc_RefreshTopicInfo(t *testing.T) {
 	db.Delete(&ds, "bk_data_id = ?", ds.BkDataId)
 	err = ds.Create(db)
 	assert.NoError(t, err)
-
+	schema := "http"
 	cluster := storage.ClusterInfo{
 		ClusterID:   ds.MqClusterId,
 		ClusterName: "kafka_topic_test_cluster",
 		ClusterType: models.StorageTypeKafka,
 		DomainName:  "127.0.0.1",
 		Port:        9092,
-		Schema:      "http",
+		Schema:      &schema,
 	}
 	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
 	err = cluster.Create(db)

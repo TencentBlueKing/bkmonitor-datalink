@@ -70,7 +70,7 @@ func (e *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
 
 // ConsulPath 获取router的consul根路径
 func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体结果表router的consul配置路径
@@ -95,7 +95,7 @@ func (i InfluxdbStorage) InfluxdbProxyStorage() (*InfluxdbProxyStorage, error) {
 	var influxdbProxyStorage InfluxdbProxyStorage
 	err := NewInfluxdbProxyStorageQuerySet(dbSession.DB).IDEq(i.InfluxdbProxyStorageId).One(&influxdbProxyStorage)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query InfluxdbProxyStorage with id [%v] failed", i.InfluxdbProxyStorageId)
 	}
 	i.influxdbProxyStorageCache = &influxdbProxyStorage
 	return &influxdbProxyStorage, nil

@@ -753,7 +753,11 @@ func (e ESStorage) GetEsVersion() string {
 	if err := qs.One(&esClusterInfo); err != nil {
 		return "7"
 	}
-	return strings.Split(esClusterInfo.Version, ".")[0]
+	var version string
+	if esClusterInfo.Version != nil {
+		version = *esClusterInfo.Version
+	}
+	return strings.Split(version, ".")[0]
 
 }
 

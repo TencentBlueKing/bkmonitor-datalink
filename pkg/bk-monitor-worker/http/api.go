@@ -97,18 +97,18 @@ func CreateTask(c *gin.Context) {
 		}
 	} else if strings.HasPrefix(kind, PeriodicTask) {
 		if err = pushPeriodicTaskToRedis(c, newedTask); err != nil {
-			metrics.RequestApiCount(method, CreateTaskPath,  "failure")
+			metrics.RequestApiCount(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "push task to redis error, %v", err)
 			return
 		}
 	} else if strings.HasPrefix(kind, DaemonTask) {
 		if err = enqueueDaemonTask(newedTask); err != nil {
-			metrics.RequestApiCount(method, CreateTaskPath,  "failure")
+			metrics.RequestApiCount(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "enqueue daemon task error error, %v", err)
 			return
 		}
 	} else {
-		metrics.RequestApiCount(method, CreateTaskPath,  "failure")
+		metrics.RequestApiCount(method, CreateTaskPath, "failure")
 		BadReqResponse(c, "task kind: %s not support", kind)
 		return
 	}
@@ -221,7 +221,7 @@ func RemoveAllTask(c *gin.Context) {
 	}
 
 	metrics.RequestApiCount(method, DeleteAllTaskPath, "success")
-	metrics.RequestApiCostTime(method, DeleteAllTaskPath,  beginTime)
+	metrics.RequestApiCostTime(method, DeleteAllTaskPath, beginTime)
 	return
 }
 

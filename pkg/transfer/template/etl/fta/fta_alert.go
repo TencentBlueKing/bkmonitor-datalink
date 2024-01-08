@@ -141,6 +141,13 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	return template.NewRecordProcessorWithDecoderFn(
 		name, config.PipelineConfigFromContext(ctx),
 		etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
+			// 捕获panic，避免不合理的配置导致程序崩溃
+			defer func() {
+				if err := recover(); err != nil {
+					logging.Errorf("%s panic: %+v", name, err)
+				}
+			}()
+
 			result, _ := from.Get("data")
 			if result == nil {
 				return nil

@@ -82,14 +82,15 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	db.Where("table_id=?", dsrt.TableId).Delete(&dsrt)
 	err = dsrt.Create(db)
 	assert.Nil(t, err)
-
+	version := "7"
+	schema := "http"
 	cluster := storage.ClusterInfo{
 		ClusterName: "test_es_0001",
 		ClusterType: models.StorageTypeES,
 		DomainName:  "127.0.0.1",
 		Port:        9200,
-		Schema:      "http",
-		Version:     "7",
+		Schema:      &schema,
+		Version:     &version,
 	}
 	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
 	err = cluster.Create(db)
@@ -158,7 +159,6 @@ func TestDataSourceSvc_StorageConsulConfig(t *testing.T) {
 				Port:                         0,
 				ExtranetDomainName:           "",
 				ExtranetPort:                 0,
-				Schema:                       "",
 				IsSslVerify:                  false,
 				SslVerificationMode:          "",
 				SslInsecureSkipVerify:        false,
@@ -170,7 +170,6 @@ func TestDataSourceSvc_StorageConsulConfig(t *testing.T) {
 				RawSslCertificateKey:         "",
 				ClusterId:                    0,
 				ClusterName:                  "",
-				Version:                      "",
 				CustomOption:                 "",
 				RegisteredSystem:             "",
 				Creator:                      "",

@@ -234,7 +234,8 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 	db := mysql.GetDBSession().DB
 	// 获取ResultTable的配置
 	if withRtInfo {
-		var resultTableInfoList []interface{}
+		resultTableInfoList := make([]interface{}, 0)
+		resultConfig["result_table_list"] = resultTableInfoList
 		var resultTableIdList []string
 		var dataSourceRtList []resulttable.DataSourceResultTable
 		if err := resulttable.NewDataSourceResultTableQuerySet(db).
@@ -304,6 +305,9 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 			var options = make(map[string]interface{})
 			if ops, ok := rtOptions[rt.TableId]; ok {
 				options = ops
+			}
+			if len(shipperList) == 0 {
+				shipperList = make([]*StorageConsulConfig, 0)
 			}
 			resultTableInfoList = append(resultTableInfoList, map[string]interface{}{
 				"bk_biz_id":    rt.BkBizId,
@@ -526,7 +530,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	}
 	err = consulClient.Put(d.ConsulConfigPath(), valStr, 0)
 	if err != nil {
-		logger.Errorf("data_id [%v] put [%s] failed, %v", d.BkDataId, d.ConsulConfigPath(), err)
+		logger.Errorf("data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err
 	}
 	logger.Infof("data_id [%v] has update config [%s] to [%v] success", d.BkDataId, valStr, d.ConsulConfigPath())

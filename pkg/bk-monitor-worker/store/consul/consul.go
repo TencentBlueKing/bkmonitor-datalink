@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -32,32 +33,40 @@ type Instance struct {
 var instance *Instance
 
 func NewInstance(ctx context.Context) (*Instance, error) {
-	client, err := consulUtils.NewConsulInstance(
-		ctx,
-		consulUtils.InstanceOptions{
-			SrvName:    config.StorageConsulSrvName,
-			Addr:       config.StorageConsulAddress,
-			Port:       config.StorageConsulPort,
-			ConsulAddr: config.StorageConsulAddr,
-			Tags:       config.StorageConsulTag,
-			TTL:        config.StorageConsulTll,
-		},
-	)
-	if err != nil {
-		logger.Errorf("new consul instance error, %v", err)
-		return nil, err
-	}
-	// new a kv client
-	conf := api.DefaultConfig()
-	conf.Address = config.StorageConsulAddress
-	apiClient, err := api.NewClient(conf)
-	if err != nil {
-		logger.Errorf("new consul api client error, %v", err)
-		return nil, err
-	}
+	var e error
+	consulOnce.Do(func() {
+		client, err := consulUtils.NewConsulInstance(
+			ctx,
+			consulUtils.InstanceOptions{
+				SrvName:    config.StorageConsulSrvName,
+				Addr:       config.StorageConsulAddress,
+				Port:       config.StorageConsulPort,
+				ConsulAddr: config.StorageConsulAddr,
+				Tags:       config.StorageConsulTag,
+				TTL:        config.StorageConsulTll,
+			},
+		)
+		if err != nil {
+			logger.Errorf("new consul instance error, %v", err)
+			e = err
+			return
+		}
+		// new a kv client
+		conf := api.DefaultConfig()
+		conf.Address = config.StorageConsulAddress
+		apiClient, err := api.NewClient(conf)
+		if err != nil {
+			logger.Errorf("new consul api client error, %v", err)
+			e = err
+			return
+		}
+		instance = &Instance{ctx: ctx, Client: client, APIClient: apiClient}
+	})
 
-	return &Instance{ctx: ctx, Client: client, APIClient: apiClient}, nil
+	return instance, e
 }
+
+var consulOnce sync.Once
 
 // GetInstance get a consul instance
 func GetInstance(ctx context.Context) (*Instance, error) {

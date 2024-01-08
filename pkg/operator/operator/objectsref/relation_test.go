@@ -11,28 +11,58 @@ package objectsref
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMetricsToPrometheusFormat(t *testing.T) {
-	t.Run("", func(t *testing.T) {
+	t.Run("Labels/Count=2", func(t *testing.T) {
 		rows := []RelationMetric{
 			{
 				Name: "usage",
-				Dimension: map[string]string{
-					"cpu": "1",
-					"biz": "0",
+				Labels: []RelationLabel{
+					{Name: "cpu", Value: "1"},
+					{Name: "biz", Value: "0"},
 				},
 			},
 			{
 				Name: "usage",
-				Dimension: map[string]string{
-					"cpu": "2",
-					"biz": "0",
+				Labels: []RelationLabel{
+					{Name: "cpu", Value: "2"},
+					{Name: "biz", Value: "0"},
 				},
 			},
 		}
 
 		lines := RelationToPromFormat(rows)
-		t.Logf("prometheus format lines:\n%s", string(lines))
+
+		expected := `usage{cpu="1",biz="0"} 1
+usage{cpu="2",biz="0"} 1
+`
+		assert.Equal(t, expected, string(lines))
+	})
+
+	t.Run("Labels/Count=1", func(t *testing.T) {
+		rows := []RelationMetric{
+			{
+				Name: "usage",
+				Labels: []RelationLabel{
+					{Name: "cpu", Value: "1"},
+				},
+			},
+			{
+				Name: "usage",
+				Labels: []RelationLabel{
+					{Name: "cpu", Value: "2"},
+				},
+			},
+		}
+
+		lines := RelationToPromFormat(rows)
+
+		expected := `usage{cpu="1"} 1
+usage{cpu="2"} 1
+`
+		assert.Equal(t, expected, string(lines))
 	})
 }

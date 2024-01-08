@@ -106,6 +106,31 @@ type QueryMetric struct {
 	IsCount bool // 标记是否为 count 方法
 }
 
+// ConditionField 过滤条件的字段描述
+type ConditionField struct {
+	// DimensionName 过滤字段
+	DimensionName string
+	// Value 查询值
+	Value []string
+	// Operator 操作符，包含：eq, ne, erq, nreq, contains, ncontains
+	Operator string
+}
+
+// TimeAggregation 时间聚合字段
+type TimeAggregation struct {
+	// Function 时间聚合方法
+	Function string
+	// Window 聚合周期
+	WindowDuration time.Duration
+}
+
+type QueryClusterMetric struct {
+	MetricName          string
+	AggregateMethodList []AggrMethod       // 聚合方法列表，从内到外排序
+	Conditions          [][]ConditionField // 用户请求的完整过滤条件，来源 structured 定义
+	TimeAggregation     TimeAggregation
+}
+
 type QueryReference map[string]*QueryMetric
 
 type Queries struct {

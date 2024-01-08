@@ -36,7 +36,6 @@ import (
 // Instance redis 查询实例
 type Instance struct {
 	Ctx                 context.Context
-	QueryTs             *structured.QueryTs
 	Timeout             time.Duration
 	ClusterMetricPrefix string
 }
@@ -90,20 +89,17 @@ func (instance *Instance) QueryRange(ctx context.Context, promql string, start, 
 }
 
 func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
-	var (
-		err error
-	)
 	// 根据现有支持情况检查 QueryTs 请求体
-	queryTs := instance.QueryTs
-	if len(queryTs.QueryList) != 1 {
-		return nil, errors.Errorf("Only one query supported, now %d ", len(queryTs.QueryList))
-	}
-	query := queryTs.QueryList[0]
+	query := metadata.GetQueryClusterMetric(ctx)
+
+	metricName := query.MetricName
 	// 要求必须传入集群过滤条件，并且汇总所有相关集群数据，预加载数据
 	clusterNames := make([]string, 0)
-	for _, cond := range query.Conditions.FieldList {
-		if cond.Operator == structured.ConditionEqual && cond.DimensionName == ClusterMetricFieldClusterName {
-			clusterNames = append(clusterNames, cond.Value...)
+	for _, conds := range query.Conditions {
+		for _, cond := range conds {
+			if cond.Operator == structured.ConditionEqual && cond.DimensionName == ClusterMetricFieldClusterName {
+				clusterNames = append(clusterNames, cond.Value...)
+			}
 		}
 	}
 	if len(clusterNames) == 0 {
@@ -111,17 +107,17 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 	}
 	stoCtx, _ := context.WithTimeout(ctx, instance.Timeout)
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: instance.ClusterMetricPrefix}
-	metricMeta, err := sto.GetMetricMeta(query.FieldName)
+	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
 		// 指标配置不存在，则返回空 DF
-		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", query.FieldName, err)
+		log.Warnf(ctx, "Fail to get metric meta, %s, %+v", metricName, err)
 		return &dataframe.DataFrame{}, nil
 	}
 	df, opts := metricMeta.toDataframe()
 	for _, clusterName := range clusterNames {
-		dfPointer, err := sto.LoadMetricDataFrame(query.FieldName, clusterName, opts)
+		dfPointer, err := sto.LoadMetricDataFrame(metricName, clusterName, opts)
 		if err != nil {
-			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, query.FieldName, err)
+			log.Warnf(ctx, "Fail to get cluster metric data, %s, %s, %+v", clusterName, metricName, err)
 			continue
 		}
 		if dfPointer.Nrow() > 0 {
@@ -212,7 +208,7 @@ func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, 
 
 // handleDFQuery 根据传入的查询配置，处理 DF 数据
 func (instance *Instance) handleDFQuery(
-	df dataframe.DataFrame, query *structured.Query, start, end time.Time, step time.Duration) dataframe.DataFrame {
+	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration) dataframe.DataFrame {
 	// 时间过滤
 	df = df.FilterAggregation(
 		dataframe.And,
@@ -221,34 +217,29 @@ func (instance *Instance) handleDFQuery(
 	)
 	// 字段过滤
 	mergedDF := dataframe.DataFrame{}
-	if len(query.Conditions.FieldList) > 0 {
-		orFields, err := query.Conditions.AnalysisConditions()
-		if err != nil {
-			return dataframe.DataFrame{Err: errors.Errorf("Invalid query conditions: %v ", err)}
-		}
-		// 每个分组过滤条件处理后，把结果进行合并
-		for _, fields := range orFields {
-			dfConditions := make([]dataframe.F, 0)
-			for _, fieldCond := range fields {
-				dfComparator, ok := QueryConditionToDataframeComparator[fieldCond.Operator]
-				if !ok {
-					return dataframe.DataFrame{Err: errors.Errorf("Not suppport condition operator: %v ", fieldCond.Operator)}
-				}
-				dfConditions = append(
-					dfConditions,
-					dataframe.F{Colname: fieldCond.DimensionName, Comparator: dfComparator, Comparando: fieldCond.Value})
+	orFields := query.Conditions
+	// 每个分组过滤条件处理后，把结果进行合并
+	for _, fields := range orFields {
+		dfConditions := make([]dataframe.F, 0)
+		for _, fieldCond := range fields {
+			dfComparator, ok := QueryConditionToDataframeComparator[fieldCond.Operator]
+			if !ok {
+				return dataframe.DataFrame{Err: errors.Errorf("Not suppport condition operator: %v ", fieldCond.Operator)}
 			}
-			filterDF := df.FilterAggregation(dataframe.And, dfConditions...)
-			if filterDF.Nrow() != 0 {
-				if mergedDF.Nrow() == 0 {
-					mergedDF = filterDF
-				} else {
-					mergedDF = mergedDF.RBind(filterDF)
-				}
+			dfConditions = append(
+				dfConditions,
+				dataframe.F{Colname: fieldCond.DimensionName, Comparator: dfComparator, Comparando: fieldCond.Value})
+		}
+		filterDF := df.FilterAggregation(dataframe.And, dfConditions...)
+		if filterDF.Nrow() != 0 {
+			if mergedDF.Nrow() == 0 {
+				mergedDF = filterDF
+			} else {
+				mergedDF = mergedDF.RBind(filterDF)
 			}
 		}
-		df = mergedDF
 	}
+	df = mergedDF
 
 	if df.Nrow() == 0 {
 		return df
@@ -262,13 +253,7 @@ func (instance *Instance) handleDFQuery(
 				allDims = append(allDims, col)
 			}
 		}
-		// 根据时间步长，将 series 数据时间取整
-		wDuration, err := query.TimeAggregation.Window.ToTime()
-		if err != nil {
-			return dataframe.DataFrame{
-				Err: errors.Errorf("TimeAggregation.Window(%v) format is invalid", query.TimeAggregation)}
-		}
-		df = handleDFTimeRounding(df, wDuration)
+		df = handleDFTimeRounding(df, query.TimeAggregation.WindowDuration)
 		df = handleDFGroupBy(df, allDims, query.TimeAggregation.Function)
 		if df.Error() != nil {
 			return df
@@ -280,10 +265,12 @@ func (instance *Instance) handleDFQuery(
 		aggre := query.AggregateMethodList[0]
 		aggre.Dimensions = append(aggre.Dimensions, ClusterMetricFieldTimeName)
 		df = handleDFTimeRounding(df, step)
-		df = handleDFGroupBy(df, aggre.Dimensions, aggre.Method)
+		df = handleDFGroupBy(df, aggre.Dimensions, aggre.Name)
 		if df.Error() != nil {
 			return df
 		}
+	} else if len(query.AggregateMethodList) > 1 {
+		return dataframe.DataFrame{Err: errors.Errorf("Only one aggregate method can be supported.")}
 	}
 	// 按照时间字段进行排序
 	df = df.Arrange(dataframe.Sort(ClusterMetricFieldTimeName))

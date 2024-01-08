@@ -61,14 +61,6 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 			tableIdList = append(tableIdList, tableId)
 		}
 	}
-	// 更新数据
-	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
-		return err
-	}
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
-		return err
-	}
-
 	// 更新空间下的结果表相关数据
 	db := mysql.GetDBSession().DB
 	if spaceType != "" && spaceId != "" {
@@ -101,6 +93,13 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 			}(sp, wg, ch)
 		}
 		wg.Wait()
+	}
+	// 更新数据
+	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
+		return err
+	}
+	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+		return err
 	}
 	logger.Infof("push and publish space_type: %s, space_id: %s router successfully", spaceType, spaceId)
 	return nil

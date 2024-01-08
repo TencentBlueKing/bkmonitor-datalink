@@ -9,7 +9,9 @@
 
 package mocker
 
-import "github.com/IBM/sarama"
+import (
+	"github.com/IBM/sarama"
+)
 
 type KafkaClientMocker struct {
 	sarama.Client

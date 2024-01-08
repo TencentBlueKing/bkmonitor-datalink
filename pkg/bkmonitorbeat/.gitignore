@@ -18,3 +18,4 @@ debug.test
 bkmonitorbeat.exe
 dev.sh
 vendor
+bkmonitorbeat.conf

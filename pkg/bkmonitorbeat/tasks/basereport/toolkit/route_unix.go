@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly linux netbsd openbsd solaris zos
 
 package toolkit
 
@@ -21,7 +20,7 @@ import (
 func ListRouteTable() (string, error) {
 	bytes, err := exec.Command("route", "-n").CombinedOutput()
 	if err != nil {
-		logger.Errorf("exec route -n failed")
+		logger.Errorf("exec route -n failed, err: %v", err)
 		return "", err
 	}
 	return string(bytes), nil

@@ -7,16 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build windows
-// +build windows
-
-package corefile
+package outofmem
 
 import (
 	"context"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-// TODO::
-func (c *CoreFileCollector) statistic(ctx context.Context, e chan<- define.Event) {}
+func startTraceOOM(ctx context.Context, infoChan chan *OOMInfo) error {
+	return nil
+}

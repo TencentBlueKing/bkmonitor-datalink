@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build darwin || freebsd
+
 package collector
 
 import (
@@ -26,6 +28,7 @@ func GetTcp4SocketStatusCount() (SocketStatusCount, error) {
 	if err != nil {
 		return count, err
 	}
+
 	for _, connection := range connections {
 		switch connection.Status {
 		case "ESTABLISHED":

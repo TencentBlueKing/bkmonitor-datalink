@@ -14,7 +14,6 @@ import (
 )
 
 var (
-	ErrPatternDelimiter = errors.New("Invalid pattern delimiter")
-	ErrPatternSpecifier = errors.New("Invalid pattern specifier")
-	ErrRegexMatch       = errors.New("Regex does not match")
+	ErrPatternDelimiter = errors.New("invalid pattern delimiter")
+	ErrRegexMatch       = errors.New("regex does not match")
 )

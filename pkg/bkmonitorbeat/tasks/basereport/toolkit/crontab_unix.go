@@ -11,10 +11,6 @@
 
 package toolkit
 
-/*
-get crontab from /var/spool/cron/ directory
-*/
-
 import (
 	"os"
 
@@ -22,18 +18,16 @@ import (
 )
 
 func ListCrontab() ([]Crontab, error) {
-	ret := make([]Crontab, 0)
-
-	files, err := os.ReadDir(CRONTAB_PATH)
+	files, err := os.ReadDir(CrontabPath)
 	if err != nil {
-		logger.Errorf("os.ReadDir %s failed", CRONTAB_PATH)
 		return nil, err
 	}
 
+	ret := make([]Crontab, 0)
 	for _, f := range files {
-		bytes, err := os.ReadFile(CRONTAB_PATH + f.Name())
+		bytes, err := os.ReadFile(CrontabPath + f.Name())
 		if err != nil {
-			logger.Errorf("os.ReadFile %s failed. %v", f.Name(), err)
+			logger.Errorf("read file '%s' failed, err: %v", f.Name(), err)
 			continue
 		}
 		cnt := Crontab{

@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package diskspace
 
@@ -27,11 +26,11 @@ import (
 )
 
 const (
-	runningState = iota
-	closeState
+	closeState = iota
+	runningState
 )
 
-type DiskSpaceCollector struct {
+type Collector struct {
 	dataid     int
 	timer      *time.Ticker
 	done       chan bool
@@ -43,19 +42,17 @@ type DiskSpaceCollector struct {
 }
 
 func init() {
-	tmpCollector := new(DiskSpaceCollector)
-	tmpCollector.state = closeState
-	collector.RegisterCollector(tmpCollector)
+	collector.RegisterCollector(new(Collector))
 }
 
-func (c *DiskSpaceCollector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Info("DiskSpaceCollector is running...")
-	if 0 == (conf.CheckBit & configs.DiskSpace) {
-		logger.Infof("DiskSpaceCollector closed by config: %s", conf.CheckMethod)
+func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
+	logger.Info("collector is running...")
+	if (conf.CheckBit & configs.DiskSpace) == 0 {
+		logger.Infof("collector closed by config: %s", conf.CheckMethod)
 		return
 	}
-	if runningState == c.state {
-		logger.Infof("DiskSpaceCollector has been already started", conf.CheckMethod)
+	if c.state == runningState {
+		logger.Info("collector already started")
 		return
 	}
 	c.dataid = int(conf.DataID)
@@ -67,23 +64,23 @@ func (c *DiskSpaceCollector) Start(ctx context.Context, e chan<- define.Event, c
 	c.minSpace = conf.DiskMinFreeSpace
 	c.deviceMap = make(map[string]bool)
 
-	logger.Infof("DiskSpaceCollector start success with config: %v", c)
+	logger.Infof("Collector start success with config: %v", c)
 	go c.statistic(ctx, e)
 }
 
-func (c *DiskSpaceCollector) Reload(conf *configs.ExceptionBeatConfig) {}
+func (c *Collector) Reload(conf *configs.ExceptionBeatConfig) {}
 
-func (c *DiskSpaceCollector) Stop() {
-	if closeState == c.state {
-		logger.Errorf("DiskSpaceCollector stop failed: collector not open")
+func (c *Collector) Stop() {
+	if c.state == closeState {
+		logger.Errorf("collector stop failed: collector not open")
 		return
 	}
-	logger.Info("DiskSpaceCollector stopped")
+	logger.Info("collector stopped")
 	c.state = closeState
 	close(c.done)
 }
 
-func (c *DiskSpaceCollector) statistic(ctx context.Context, e chan<- define.Event) {
+func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -93,7 +90,7 @@ func (c *DiskSpaceCollector) statistic(ctx context.Context, e chan<- define.Even
 
 		case <-c.timer.C:
 			extraList := c.getSpaceExceededDisk()
-			if nil == extraList {
+			if extraList == nil {
 				break
 			}
 			collector.SendBulk(c.dataid, extraList, e)
@@ -106,13 +103,14 @@ func (c *DiskSpaceCollector) statistic(ctx context.Context, e chan<- define.Even
 	}
 }
 
-func (c *DiskSpaceCollector) getSpaceExceededDisk() []beat.MapStr {
+func (c *Collector) getSpaceExceededDisk() []beat.MapStr {
 	// 此处只关心物理设备的分区，其他系统生成的分区不必关注
 	partitions, err := disk.Partitions(false)
 	if err != nil {
-		logger.Errorf("Get disk information failed!")
+		logger.Errorf("get disk information failed, err: %v", err)
 		return nil
 	}
+
 	var extra []beat.MapStr
 	for k := range c.deviceMap {
 		c.deviceMap[k] = false
@@ -121,7 +119,7 @@ func (c *DiskSpaceCollector) getSpaceExceededDisk() []beat.MapStr {
 		c.deviceMap[partition.Device] = true
 		diskInfo, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
-			logger.Errorf("Disk \"%s\" usage information loading failed!")
+			logger.Errorf("disk '%s' usage information load failed, err: %v", partition.Mountpoint, err)
 			continue
 		}
 		usedpercent := int(math.Round(diskInfo.UsedPercent))

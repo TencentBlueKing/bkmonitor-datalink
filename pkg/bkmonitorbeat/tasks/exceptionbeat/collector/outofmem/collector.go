@@ -33,7 +33,7 @@ const (
 	IEG_DOCKER_FILE = "/etc/ieg-docker.conf"
 )
 
-// struct that contains information related to an OOM kill instance
+// OomInstance struct that contains information related to an OOM kill instance
 type OomInstance struct {
 	// process id of the killed process
 	Pid int

@@ -9,4 +9,4 @@
 
 package toolkit
 
-const CrontabPath = "/var/cron/tabs"
+const CrontabPath = "/var/at/tabs"

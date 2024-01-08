@@ -7,8 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
+//go:build aix || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
 
 package corefile
 
@@ -98,15 +97,15 @@ func buildDimensionKey(info beat.MapStr) string {
 }
 
 // handleCorePatternFileEvent 处理CorePattern文件事件
-func (c *CoreFileCollector) handleCorePatternFileEvent(event fsnotify.Event) {
+func (c *Collector) handleCorePatternFileEvent(event fsnotify.Event) {
 	// 如果是发现core_pattern的路径发生变化，需要考虑更新
 	// 直接写入(write事件)或者通过vim编辑(重命名事件)
 	// 其他事件(删除、修改属性、创建)并不关注
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
-		logger.Infof("CoreFileCollector found pattern->[%s] updated, will refresh core fil path.", event.Name)
+		logger.Infof("Collector found pattern->[%s] updated, will refresh core fil path.", event.Name)
 		err := c.updateCoreFilePath()
 		if err != nil {
-			logger.Errorf("CoreFileCollector core file watcher updated error: %s, will wait next update.", err.Error())
+			logger.Errorf("Collector core file watcher updated error: %s, will wait next update.", err.Error())
 		}
 		errPattern := c.checkPattern()
 		if errPattern != nil {
@@ -116,21 +115,21 @@ func (c *CoreFileCollector) handleCorePatternFileEvent(event fsnotify.Event) {
 }
 
 // handleUsesPidFileEvent 处理CoreUsesPidFile文件事件
-func (c *CoreFileCollector) handleCoreUsesPidFileEvent(event fsnotify.Event) {
+func (c *Collector) handleCoreUsesPidFileEvent(event fsnotify.Event) {
 	// 如果是发现core_uses_pid的路径发生变化，需要考虑更新
 	// 直接写入(write事件)或者通过vim编辑(重命名事件)
 	// 其他事件(删除、修改属性、创建)并不关注
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
-		logger.Infof("CoreFileCollector found core_uses_pid->[%s] updated, will refresh core fil path.", event.Name)
+		logger.Infof("Collector found core_uses_pid->[%s] updated, will refresh core fil path.", event.Name)
 		err := c.setCoreUsesPid()
 		if err != nil {
-			logger.Errorf("CoreFileCollector core_uses_pid file watcher updated error: %s, will wait next update.", err.Error())
+			logger.Errorf("Collector core_uses_pid file watcher updated error: %s, will wait next update.", err.Error())
 		}
 	}
 }
 
 // handleCoreFileEvent 处理Core文件事件
-func (c *CoreFileCollector) handleCoreFileEvent(event fsnotify.Event, e chan<- define.Event) {
+func (c *Collector) handleCoreFileEvent(event fsnotify.Event, e chan<- define.Event) {
 	// 如果是其他路径，那么考虑是corefile文件的产生
 	// 只关注文件创建，后续文件的写入或者其他的变化都一律认为属于收敛不再关注
 	if strings.Contains(event.Name, c.corePath) && event.Op&fsnotify.Create == fsnotify.Create {
@@ -142,11 +141,11 @@ func (c *CoreFileCollector) handleCoreFileEvent(event fsnotify.Event, e chan<- d
 		}
 
 		if info.IsDir() {
-			logger.Infof("CoreFileCollector found new create event but path->[%s] is dir, nothing will do.", event.Name)
+			logger.Infof("Collector found new create event but path->[%s] is dir, nothing will do.", event.Name)
 			return
 		}
 
-		logger.Infof("CoreFileCollector found new file->[%s] created, will send corefile event.", event.Name)
+		logger.Infof("Collector found new file->[%s] created, will send corefile event.", event.Name)
 
 		// 创建新的dimension缓存区
 		var dimensions beat.MapStr
@@ -172,7 +171,7 @@ func (c *CoreFileCollector) handleCoreFileEvent(event fsnotify.Event, e chan<- d
 }
 
 // checkSystemFile 检查系统配置变更
-func (c *CoreFileCollector) checkSystemFile() {
+func (c *Collector) checkSystemFile() {
 
 	if !c.isCorePathAddSuccess && c.corePath != "" {
 		logger.Infof("corePath->[%s] add failed before, will retry now.", c.corePath)
@@ -207,7 +206,7 @@ func (c *CoreFileCollector) checkSystemFile() {
 }
 
 // handleSendEvent 处理上报
-func (c *CoreFileCollector) handleSendEvent(e chan<- define.Event) {
+func (c *Collector) handleSendEvent(e chan<- define.Event) {
 	var now = time.Now()
 	// 遍历检查是否存在需要发送的缓存事件
 	for key, reportInfo := range c.reportTimeInfo {
@@ -227,21 +226,21 @@ func (c *CoreFileCollector) handleSendEvent(e chan<- define.Event) {
 }
 
 // addCoreWatch 增加监听core文件路径
-func (c *CoreFileCollector) addCoreWatch() {
-	logger.Infof("CoreFileCollector add path->[%s] to watcher.", c.corePath)
+func (c *Collector) addCoreWatch() {
+	logger.Infof("Collector add path->[%s] to watcher.", c.corePath)
 	err := c.coreWatcher.Add(c.corePath)
 	if err != nil {
-		logger.Errorf("CoreFileCollector add \"%s\" to watcher failed with error: %s, will wait next pattern update.", c.corePath, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s, will wait next pattern update.", c.corePath, err.Error())
 	} else {
 		c.isCorePathAddSuccess = true
 	}
 }
 
 // watchSystemFiles 监听系统配置文件
-func (c *CoreFileCollector) watchSystemFiles() {
+func (c *Collector) watchSystemFiles() {
 	err := c.coreWatcher.Add(CorePatternFile)
 	if err != nil {
-		logger.Errorf("CoreFileCollector add \"%s\" to watcher failed with error: %s", CorePatternFile, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CorePatternFile, err.Error())
 		c.isCorePatternAddSuccess = false
 	} else {
 		c.isCorePatternAddSuccess = true
@@ -249,7 +248,7 @@ func (c *CoreFileCollector) watchSystemFiles() {
 
 	err = c.coreWatcher.Add(CoreUsesPidFile)
 	if err != nil {
-		logger.Errorf("CoreFileCollector add \"%s\" to watcher failed with error: %s", CoreUsesPidFile, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CoreUsesPidFile, err.Error())
 		c.isCoreUsesPidAddSuccess = false
 	} else {
 		c.isCoreUsesPidAddSuccess = true
@@ -257,7 +256,7 @@ func (c *CoreFileCollector) watchSystemFiles() {
 }
 
 // loopCheck 定期的每30秒检查一次是否需要更新
-func (c *CoreFileCollector) loopCheck(ctx context.Context, e chan<- define.Event) {
+func (c *Collector) loopCheck(ctx context.Context, e chan<- define.Event) {
 	logger.Info("loopCheck start", c.coreWatcher.WatchList())
 	var (
 		corePathCheckerTicker = time.NewTicker(30 * time.Second)
@@ -275,7 +274,7 @@ func (c *CoreFileCollector) loopCheck(ctx context.Context, e chan<- define.Event
 			// corefile文件事件
 			if !ok {
 				c.Stop()
-				logger.Info("CoreFileCollector core file watcher closed")
+				logger.Info("Collector core file watcher closed")
 				return
 			}
 			logger.Infof("file event: %s %v", event.Name, event.Op)
@@ -296,10 +295,10 @@ func (c *CoreFileCollector) loopCheck(ctx context.Context, e chan<- define.Event
 			// 异常退出
 			if !ok {
 				c.Stop()
-				logger.Infof("CoreFileCollector core file watcher closed")
+				logger.Infof("Collector core file watcher closed")
 				return
 			}
-			logger.Errorf("CoreFileCollector core file watcher error: %s", err.Error())
+			logger.Errorf("Collector core file watcher error: %s", err.Error())
 		case _, ok := <-c.done:
 			if !ok {
 				// 结束采集
@@ -311,12 +310,12 @@ func (c *CoreFileCollector) loopCheck(ctx context.Context, e chan<- define.Event
 	}
 }
 
-func (c *CoreFileCollector) statistic(ctx context.Context, e chan<- define.Event) {
+func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 	c.isCorePathAddSuccess = false
 	c.isCorePatternAddSuccess = false
 	path, err := c.getCoreFilePath()
 	if err != nil {
-		logger.Errorf("CoreFileCollector obtaining file's name failed with error message: %s", err.Error())
+		logger.Errorf("Collector obtaining file's name failed with error message: %s", err.Error())
 	}
 
 	logger.Infof("Core file path read from core_pattern: %s", path)
@@ -331,7 +330,7 @@ func (c *CoreFileCollector) statistic(ctx context.Context, e chan<- define.Event
 	}
 	c.coreWatcher, err = fsnotify.NewWatcher()
 	if err != nil {
-		logger.Errorf("CoreFileCollector initing core file watcher watcher failed with error message: %s", err.Error())
+		logger.Errorf("Collector initing core file watcher watcher failed with error message: %s", err.Error())
 		c.Stop()
 		return
 	}
@@ -346,7 +345,7 @@ func (c *CoreFileCollector) statistic(ctx context.Context, e chan<- define.Event
 	c.loopCheck(ctx, e)
 }
 
-func (c *CoreFileCollector) getCoreFilePath() (string, error) {
+func (c *Collector) getCoreFilePath() (string, error) {
 	var corePattern string
 	// 若配置中未申明 CoreFile 路径和格式，则读取系统内置的配置文件 CorePatternFile
 	if c.coreFilePattern == "" {
@@ -385,23 +384,23 @@ func (c *CoreFileCollector) getCoreFilePath() (string, error) {
 	return corePattern[0:ind], nil
 }
 
-func (c *CoreFileCollector) updateCoreFilePath() error {
+func (c *Collector) updateCoreFilePath() error {
 	path, err := c.getCoreFilePath()
 	if err != nil {
-		logger.Errorf("CoreFileCollector obtaining file's name failed with error message: %s", err.Error())
+		logger.Errorf("Collector obtaining file's name failed with error message: %s", err.Error())
 		return err
 	}
 	logger.Infof("Core file path read from core_pattern: %s", path)
 
 	if path == "" {
-		logger.Errorf("CoreFileCollector found bad core_pattern->[%s] will not update", path)
+		logger.Errorf("Collector found bad core_pattern->[%s] will not update", path)
 		return nil
 	}
 
 	if c.corePath != "" && c.isCorePathAddSuccess {
 		err = c.coreWatcher.Remove(c.corePath)
 		if err != nil {
-			logger.Errorf("CoreFileCollector remove \"%s\" from watcher failed with error: %s", c.corePath, err.Error())
+			logger.Errorf("Collector remove \"%s\" from watcher failed with error: %s", c.corePath, err.Error())
 			return err
 		}
 	}
@@ -409,17 +408,17 @@ func (c *CoreFileCollector) updateCoreFilePath() error {
 	c.corePath = path
 	err = c.coreWatcher.Add(c.corePath)
 	if err != nil {
-		logger.Errorf("CoreFileCollector add \"%s\" to watcher failed with error: %s", c.corePath, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", c.corePath, err.Error())
 		c.isCorePathAddSuccess = false
 		return err
 	}
 	c.isCorePathAddSuccess = true
-	logger.Infof("CoreFileCollector add new path watcher->[%s]", c.corePath)
+	logger.Infof("Collector add new path watcher->[%s]", c.corePath)
 	return nil
 }
 
 // getDimensionRegs 获取完整正则匹配对象和所有维度匹配对象列表
-func (c *CoreFileCollector) getDimensionReg(greedy bool) *regexp.Regexp {
+func (c *Collector) getDimensionReg(greedy bool) *regexp.Regexp {
 	patternArrLen := len(c.patternArr)
 	// 根据pattern拼接正则表达式，对corefile文件名进行维度提取
 	content := `(%s%s)`
@@ -466,7 +465,7 @@ type regexGroup struct {
 	greedyValue string
 }
 
-func (c *CoreFileCollector) parseDimensions(groups []regexGroup) beat.MapStr {
+func (c *Collector) parseDimensions(groups []regexGroup) beat.MapStr {
 	dimensions := beat.MapStr{}
 	ignoredForConfused := 0
 	for _, group := range groups {
@@ -490,7 +489,7 @@ func (c *CoreFileCollector) parseDimensions(groups []regexGroup) beat.MapStr {
 
 // fillDimension: 填充维度信息到dimensions当中，如果解析失败，那么直接返回dimensions，不对其中的任何内容进行修改
 // 返回内容表示是否可以按照正则正常解析；如果正则解析失败的，很可能是用户自己瞎写的文件，不应该触发告警
-func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
+func (c *Collector) fillDimension(filePath string) (beat.MapStr, bool) {
 
 	// 获取core file文件名
 	fileName, errFileName := c.getCoreFileName(filePath)
@@ -556,7 +555,7 @@ func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
 	return dimensions, true
 }
 
-func (c *CoreFileCollector) checkPattern() error {
+func (c *Collector) checkPattern() error {
 	// 因为匹配的是{前缀}+{占位符}。如果pattern是以非占位符结尾，当前使用的正则会无法匹配到
 	// 需要在匹配前补一个固定的占位符，让正则可以匹配类似pattern：xxx-%e-end
 	myPattern := c.pattern + "%z"
@@ -581,7 +580,7 @@ func (c *CoreFileCollector) checkPattern() error {
 	return nil
 }
 
-func (c *CoreFileCollector) setCoreUsesPid() error {
+func (c *Collector) setCoreUsesPid() error {
 	// 获取是否否添加pid作为扩展名
 	file, err := os.Open(CoreUsesPidFile)
 	if err != nil {
@@ -607,7 +606,7 @@ func (c *CoreFileCollector) setCoreUsesPid() error {
 	return nil
 }
 
-func (c *CoreFileCollector) getCoreFileName(filePath string) (string, error) {
+func (c *Collector) getCoreFileName(filePath string) (string, error) {
 	// 从文件路径中切割出文件名
 	fileName := filepath.Base(filePath)
 	// 如果使用了PID，同时在corefile路径中没有使用%p，那么我们需要切割pid
@@ -624,7 +623,7 @@ func (c *CoreFileCollector) getCoreFileName(filePath string) (string, error) {
 // send: 发送消息，但是在发送前会判断维度是否存在发送缓冲阶段
 // 例如，当某个corefile出现的时候，我们会第一时间发送一个corefile事件。
 // 但如果在上报缓冲时间(默认1分钟)中，那么新产生的时间只会记录计数，不会上报，直到下一个1分钟再统一上报
-func (c *CoreFileCollector) send(info beat.MapStr, e chan<- define.Event) {
+func (c *Collector) send(info beat.MapStr, e chan<- define.Event) {
 	var (
 		now            = time.Now()
 		infoKey        = buildDimensionKey(info)

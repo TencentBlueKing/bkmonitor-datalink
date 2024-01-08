@@ -8,20 +8,18 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package collector
 
 import (
-	"fmt"
-
+	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/load"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// GetLoadInfo
+// GetLoadInfo 获取 cpu 信息
 func GetLoadInfo() (*LoadReport, error) {
 	var report LoadReport
 	var err error
@@ -34,14 +32,14 @@ func GetLoadInfo() (*LoadReport, error) {
 	// per_cpu_load = load1/cpu总核数
 	cores, err := GetCpuCores()
 	if cores == 0 || err != nil {
-		return &report, fmt.Errorf("ger cpu cores err:%s", err)
+		return &report, errors.Wrap(err, "failed to get cpu cores")
 	}
 	report.PerCpuLoad = report.LoadAvg.Load1 / float64(cores)
 
 	return &report, nil
 }
 
-// GetCpuCores cpu count * cores count of per cpu
+// GetCpuCores 获取 CPU 核心数
 func GetCpuCores() (int32, error) {
 	var cores int32
 	infos, err := cpu.Info()

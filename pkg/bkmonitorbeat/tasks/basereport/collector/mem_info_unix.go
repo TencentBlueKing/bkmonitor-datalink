@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package collector
 
@@ -21,8 +20,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-var kb uint64 = 1024
 
 type swapinfo struct {
 	Sin  uint64
@@ -57,24 +54,27 @@ func GetSwapInfo() (in, out float64, lasterr error) {
 	wg.Add(2)
 	go func(sinfobefore *swapinfo) {
 		defer wg.Done()
-		sinfobefore, err := GetSwapinfoLogic(sinfobefore)
+		sinfobefore, err := getSwapInfoLogic(sinfobefore)
 		if err != nil {
 			lasterr = err
 		}
 	}(sinfobefore)
+
 	// 隔一秒，取下一秒的值
 	go func(sinfoafter *swapinfo) {
 		defer wg.Done()
 		time.Sleep(1 * time.Second)
-		sinfoafter, err := GetSwapinfoLogic(sinfoafter)
+		sinfoafter, err := getSwapInfoLogic(sinfoafter)
 		if err != nil {
 			lasterr = err
 		}
 	}(sinfoafter)
+
 	wg.Wait()
 	if lasterr != nil {
 		return 0, 0, lasterr
 	}
+
 	logger.Debugf("sinfobefore: in: %d, out:%d", sinfobefore.Sin, sinfobefore.Sout)
 	logger.Debugf("sinfoafter: in: %d, out:%d", sinfoafter.Sin, sinfoafter.Sout)
 	in = float64(sinfoafter.Sin - sinfobefore.Sin)
@@ -82,7 +82,7 @@ func GetSwapInfo() (in, out float64, lasterr error) {
 	return in, out, nil
 }
 
-func GetSwapinfoLogic(sinfo *swapinfo) (*swapinfo, error) {
+func getSwapInfoLogic(sinfo *swapinfo) (*swapinfo, error) {
 	swapInfo, err := mem.SwapMemory()
 	if err != nil {
 		if strings.Contains(err.Error(), "no swap devices") {
@@ -91,6 +91,7 @@ func GetSwapinfoLogic(sinfo *swapinfo) (*swapinfo, error) {
 		return nil, err
 	}
 
+	const kb uint64 = 1024
 	sinfo.Sin = swapInfo.Sin / kb
 	sinfo.Sout = swapInfo.Sout / kb
 	return sinfo, nil

@@ -33,23 +33,24 @@ func getCPUStatUsage(report *CpuReport) error {
 	// per stat
 	perStat, err := cpu.Times(true)
 	if err != nil {
-		logger.Error("get CPU Stat fail")
+		logger.Errorf("get CPU Stat failed, err: %v", err)
 		return err
 	}
 
 	// total stat
 	totalstat, err := cpu.Times(false)
 	if err != nil {
-		logger.Error("get CPU Total Stat fail")
+		logger.Errorf("get CPU Total Stat failed, err: %v", err)
 		return err
 	}
 	report.TotalStat = totalstat[0]
 
 	perUsage, err := cpu.Percent(0, true)
 	if err != nil {
-		logger.Error("get CPU Percent fail")
+		logger.Errorf("get CPU Percent failed, err: %v", err)
 		return err
 	}
+
 	for _, stat := range perStat {
 		if strings.Contains(stat.CPU, "_Total") {
 			// pass "_Total" filed
@@ -66,7 +67,7 @@ func getCPUStatUsage(report *CpuReport) error {
 	// get total cpu percent
 	total, err := cpu.Percent(0, false)
 	if err != nil {
-		logger.Error("get CPU Total Percent fail")
+		logger.Errorf("get CPU Total Percent failed, err: %v", err)
 		return err
 	}
 	report.TotalUsage = total[0]
@@ -120,7 +121,7 @@ func queryCpuInfo(r *CpuReport, period time.Duration, timeout time.Duration) err
 			for {
 				timeoutCtx, _ := context.WithTimeout(context.Background(), timeout)
 				if tempCpuInfo, err = cpu.InfoWithContext(timeoutCtx); err != nil {
-					logger.Errorf("failed to get cpu info for->[%#v]", err)
+					logger.Errorf("failed to get cpu info, err: %s", err)
 					return
 				}
 

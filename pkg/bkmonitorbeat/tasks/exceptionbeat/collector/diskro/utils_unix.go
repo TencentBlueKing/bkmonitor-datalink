@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package diskro
 
@@ -31,7 +30,6 @@ type MountPointInfo struct {
 	Options    []string `json:"options"`     // 挂载路径属性
 }
 
-// NewMountPointInfo:
 func NewMountPointInfo(stat disk.PartitionStat) *MountPointInfo {
 	return &MountPointInfo{
 		Device:     stat.Device,
@@ -41,7 +39,7 @@ func NewMountPointInfo(stat disk.PartitionStat) *MountPointInfo {
 	}
 }
 
-// NewBatchMountPointInfo: 批量生成MountPoint信息
+// NewBatchMountPointInfo  批量生成MountPoint信息
 func NewBatchMountPointInfo(statList []disk.PartitionStat) []*MountPointInfo {
 	var resultList = make([]*MountPointInfo, 0, len(statList))
 
@@ -52,14 +50,14 @@ func NewBatchMountPointInfo(statList []disk.PartitionStat) []*MountPointInfo {
 	return resultList
 }
 
-// genUniqueKey: 生成唯一key，方便标识功能
+// genUniqueKey  生成唯一 key，方便标识功能
 func (mp *MountPointInfo) genUniqueKey() string {
 	return strings.Join([]string{
 		mp.Device, mp.FileSystem, mp.MountPoint, // 同一个文件系统的同一个设备挂载到同一个路径下，如果有差异则认为是存在了变化
 	}, "-")
 }
 
-// getHistoryInfo: 读取该路径的历史信息
+// getHistoryInfo 读取该路径的历史信息
 func (mp *MountPointInfo) getHistoryInfo() *MountPointInfo {
 	var (
 		history     string
@@ -93,8 +91,7 @@ func (mp *MountPointInfo) setHistoryInfo() error {
 
 	// 如果是只读状态的，不需要进行保存
 	if mp.IsReadOnly() {
-		logger.Infof("try to save mount_point->[%s] which is read only status->[%#v], won`t save its status.",
-			mp.MountPoint, mp.Options)
+		logger.Infof("read only: mount_point->[%s] which is read only status->[%#v]", mp.MountPoint, mp.Options)
 		return nil
 	}
 
@@ -109,7 +106,7 @@ func (mp *MountPointInfo) setHistoryInfo() error {
 		return err
 	}
 
-	logger.Infof("mount_point->[%s] save success.", mp.MountPoint)
+	logger.Infof("mount_point->[%s] save success", mp.MountPoint)
 	return nil
 }
 
@@ -121,30 +118,30 @@ func (mp *MountPointInfo) IsReadOnlyStatusChange() bool {
 
 	// 如果能拿到状态，表示之前这个挂载点是存在过RW的状态的。所以此时如果是RO的状态，那么可以直接判断有发生过变化
 	if !mp.IsReadOnly() {
-		logger.Infof("mount_point->[%s] is not readonly status now, nothing will check.", mp.MountPoint)
+		logger.Infof("mount_point->[%s] is not readonly status now, nothing will check", mp.MountPoint)
 		return false
 	}
 
 	// 如果找不到历史记录，表示：1. 初始化状态，不需要告警；2. 这个mountPoint历史上没有过RW状态，不用存储
 	// 上述两个情况都表示mountPoint不可能存在exceptionbeat能感知的RW到RO转换，所以直接返回false
 	if historyMp = mp.getHistoryInfo(); historyMp == nil {
-		logger.Debugf("mount_point->[%s] has no history info, so not change status can data can detect.", mp.MountPoint)
+		logger.Debugf("mount_point->[%s] has no history info, so not change status can data can detect", mp.MountPoint)
 		return false
 	}
 
 	// 当前是RO状态，而且有历史状态，表示已经是找到了变化的情况，需要返回true
-	logger.Debugf("mount_point->[%s] history data is found and now is readonly status now.", mp.MountPoint)
+	logger.Debugf("mount_point->[%s] history data is found and now is readonly status now", mp.MountPoint)
 	return true
 }
 
-// IsReadOnly: 是否只读状态的
+// IsReadOnly 是否只读状态的
 func (mp *MountPointInfo) IsReadOnly() bool {
 	logger.Debugf("mount_point->[%s] will checkout all options->[%#v]", mp.MountPoint, mp.Options)
 	// 遍历所有的状态是否存在只读标志位
 	for _, status := range mp.Options {
 		logger.Debugf("mount_point->[%s] going to check option->[%s]", mp.MountPoint, status)
 		if status == "ro" {
-			logger.Debugf("mount_point->[%s] readonly status bit found!", mp.MountPoint)
+			logger.Debugf("mount_point->[%s] readonly status bit found", mp.MountPoint)
 			return true
 		}
 	}
@@ -153,7 +150,7 @@ func (mp *MountPointInfo) IsReadOnly() bool {
 	return false
 }
 
-// SaveStatus  保存状态信息
+// SaveStatus 保存状态信息
 func (mp *MountPointInfo) SaveStatus() error {
 	return mp.setHistoryInfo()
 }

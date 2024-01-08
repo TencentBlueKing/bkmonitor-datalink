@@ -9,4 +9,4 @@
 
 package toolkit
 
-const CRONTAB_PATH = "/var/spool/cron/"
+const CrontabPath = "/var/spool/cron/"

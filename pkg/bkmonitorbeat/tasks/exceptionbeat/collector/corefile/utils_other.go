@@ -7,6 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package toolkit
+//go:build darwin || windows
 
-const CrontabPath = "/var/cron/tabs"
+package corefile
+
+import (
+	"context"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+)
+
+func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {}

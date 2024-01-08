@@ -17,13 +17,12 @@ type Win32_OperatingSystem struct {
 	OSArchitecture string
 }
 
-// return: 32-bit or 64-bit or unknow
 func GetSystemType() string {
 	var dst []Win32_OperatingSystem
 	q := wmi.CreateQuery(&dst, "")
 	err := wmi.Query(q, &dst)
 	if err != nil {
-		return "unknow"
+		return "unknown"
 	}
 	systemType := dst[0].OSArchitecture
 	return systemType

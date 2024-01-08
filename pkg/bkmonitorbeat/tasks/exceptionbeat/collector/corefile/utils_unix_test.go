@@ -7,8 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
+//go:build aix || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
 
 package corefile
 
@@ -78,7 +77,7 @@ func TestCheckPattern(t *testing.T) {
 	}
 	for _, item := range testCases {
 		t.Logf("pattern: %s", item.pattern)
-		c := new(CoreFileCollector)
+		c := new(Collector)
 		c.pattern = item.pattern
 		err := c.checkPattern()
 		assert.Equal(t, item.error, err)
@@ -172,7 +171,7 @@ func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &CoreFileCollector{coreFilePattern: tt.inputPattern}
+			c := &Collector{coreFilePattern: tt.inputPattern}
 			corePath, _ := c.getCoreFilePath()
 			assert.Equal(t, corePath, tt.resultPath)
 			assert.Equal(t, c.pattern, tt.resultPattern)
@@ -425,7 +424,7 @@ func TestCoreFileCollector_fillDimension(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &CoreFileCollector{
+			c := &Collector{
 				pattern:   tt.fields.pattern,
 				isUsesPid: tt.fields.isUsesPid,
 			}

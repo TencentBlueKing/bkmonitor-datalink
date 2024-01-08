@@ -44,7 +44,7 @@ func TestGetSwapinfoLogic(t *testing.T) {
 	expectedSinfo := &swapinfo{}
 	expectedSinfo.Sin = 50
 	expectedSinfo.Sout = 100
-	result, err := GetSwapinfoLogic(sinfo)
+	result, err := getSwapInfoLogic(sinfo)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedSinfo, result)
 
@@ -53,14 +53,14 @@ func TestGetSwapinfoLogic(t *testing.T) {
 	expectedSinfo = &swapinfo{}
 	expectedSinfo.Sin = 100
 	expectedSinfo.Sout = 200
-	result, err = GetSwapinfoLogic(sinfo)
+	result, err = getSwapInfoLogic(sinfo)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedSinfo, result)
 
 	//  Test case 3: SwapMemory returns unknown error
 	sinfo = &swapinfo{}
 	expectedErr := errors.New("unknown error")
-	result, err = GetSwapinfoLogic(sinfo)
+	result, err = getSwapInfoLogic(sinfo)
 	assert.Error(t, err)
 	assert.Equal(t, expectedErr, err)
 }

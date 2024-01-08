@@ -25,24 +25,24 @@ import (
 )
 
 const (
-	// IngestTimeField 事件数据采集时间字段
-	IngestTimeField = "bk_ingest_time"
-	// CleanTimeField 事件数据清洗时间字段
-	CleanTimeField = "bk_clean_time"
-	// TagsField 事件标签字段
-	TagsField = "tags"
-	// DefaultEventIDField 默认事件ID字段
-	DefaultEventIDField = "__bk_event_id__"
-	// EventIDField 事件ID字段
-	EventIDField = "event_id"
-	// AlertNameField 告警名称字段
-	AlertNameField = "alert_name"
-	// DefaultPluginIDField 默认插件ID字段
-	DefaultPluginIDField = "bk_plugin_id"
-	// PluginIDField 插件ID字段
-	PluginIDField = "plugin_id"
-	// CleanConfigField 清洗配置字段
-	CleanConfigField = "clean_configs"
+	// fieldIngestTime 事件数据采集时间字段
+	fieldIngestTime = "bk_ingest_time"
+	// fieldCleanTime 事件数据清洗时间字段
+	fieldCleanTime = "bk_clean_time"
+	// fieldTags 事件标签字段
+	fieldTags = "tags"
+	// fieldDefaultEventID 默认事件ID字段
+	fieldDefaultEventID = "__bk_event_id__"
+	// fieldEventID 事件ID字段
+	fieldEventID = "event_id"
+	// fieldAlertName 告警名称字段
+	fieldAlertName = "alert_name"
+	// fieldDefaultPluginID 默认插件ID字段
+	fieldDefaultPluginID = "bk_plugin_id"
+	// fieldPluginID 插件ID字段
+	fieldPluginID = "plugin_id"
+	// fieldCleanConfig 清洗配置字段
+	fieldCleanConfig = "clean_configs"
 )
 
 // Alert 告警名称匹配规则
@@ -99,18 +99,18 @@ func convertToExprMap(c interface{}) (map[string]string, error) {
 func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
 	pipeConfig := config.PipelineConfigFromContext(ctx)
 	helper := utils.NewMapHelper(pipeConfig.Option)
-	configs, _ := helper.Get(CleanConfigField)
+	configs, _ := helper.Get(fieldCleanConfig)
 
 	// 清洗配置
 	var cleanConfigs []*CleanConfig
 	err := mapstructure.Decode(configs, &cleanConfigs)
 	if err != nil {
-		logging.Errorf("decode fta clean config failed: %+v", err)
+		logging.Errorf("%s decode fta clean config failed: %+v", name, err)
 	}
 	for _, cleanConfig := range cleanConfigs {
 		err := cleanConfig.Init()
 		if err != nil {
-			logging.Errorf("init clean config failed: %+v", err)
+			logging.Errorf("%s init clean config failed: %+v", name, err)
 		}
 	}
 
@@ -120,13 +120,13 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	if ok {
 		err := mapstructure.Decode(alertsConfig, &defaultAlerts)
 		if err != nil {
-			return nil, errors.Errorf("decode fta alerts config failed: %+v", err)
+			return nil, errors.Errorf("%s decode fta alerts config failed: %+v", name, err)
 		}
 	}
 	for _, alert := range defaultAlerts {
 		err := alert.Init()
 		if err != nil {
-			logging.Errorf("init alert config failed: %+v", err)
+			logging.Errorf("%s init alert config failed: %+v", name, err)
 		}
 	}
 
@@ -134,7 +134,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	fieldsCfg, _ := helper.Get(config.PipelineConfigOptFTAFieldMappingKey)
 	defaultExprMap, err := convertToExprMap(fieldsCfg)
 	if err != nil {
-		logging.Errorf("convert to expr map failed: %+v", err)
+		logging.Errorf("%s convert to expr map failed: %+v", name, err)
 	}
 
 	decoder := etl.NewPayloadDecoder()
@@ -180,27 +180,27 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			}
 
 			// 默认字段处理
-			IngestTime, _ := from.Get(IngestTimeField)
-			stamp, err := etl.TransformAutoTimeStamp(IngestTime)
+			ingestTime, _ := from.Get(fieldIngestTime)
+			stamp, err := etl.TransformAutoTimeStamp(ingestTime)
 			if err != nil {
 				return err
 			}
-			_ = to.Put(IngestTimeField, stamp)
+			_ = to.Put(fieldIngestTime, stamp)
 
-			PluginID, err := from.Get(DefaultPluginIDField)
+			pluginID, err := from.Get(fieldDefaultPluginID)
 			if err != nil {
 				return err
 			}
-			_ = to.Put(PluginIDField, PluginID)
+			_ = to.Put(fieldPluginID, pluginID)
 
 			newTimeStamp, _ := etl.TransformAutoTimeStamp(time.Now().UTC())
-			_ = to.Put(CleanTimeField, newTimeStamp)
+			_ = to.Put(fieldCleanTime, newTimeStamp)
 
-			// 按照配置的字段表达式，提取字段
+			// 按照配置的字段表达式，提取字段，忽略字段提取错误
 			rt := config.ResultTableConfigFromContext(ctx)
-			err = rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
+			_ = rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
 				// tags后面再处理
-				if config.FieldName == TagsField {
+				if config.FieldName == fieldTags {
 					return nil
 				}
 
@@ -211,18 +211,24 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				}
 				compiledExpr, err := utils.CompileJMESPathCustom(expr)
 				if err != nil {
-					return errors.WithMessagef(err, "compile expr %s failed", expr)
+					logging.Errorf("%s compile expr %s failed: %+v", name, expr, err)
+					return nil
 				}
 
 				// 提取字段
 				field, err := compiledExpr.Search(data)
 				if err != nil {
-					return errors.WithMessagef(err, "search expr %s failed", expr)
+					logging.Errorf("%s search expr %s failed: %+v", name, expr, err)
+					return nil
 				}
 
 				// 字段类型转换
 				fieldTypeTransformFn := etl.NewTransformByField(config)
 				field, err = fieldTypeTransformFn(field)
+				if err != nil {
+					logging.Errorf("%s transform field %s failed: %+v", name, config.FieldName, err)
+					return nil
+				}
 
 				_ = to.Put(config.FieldName, field)
 				return nil
@@ -232,33 +238,38 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			for _, alert := range alerts {
 				// 对满足匹配规则的数据，设置告警名称
 				if alert.IsMatch(data) {
-					_ = to.Put(AlertNameField, alert.Name)
-					logging.Debugf("fta alert name matched->(%s) data->(%+v)", alert.Name, data)
+					_ = to.Put(fieldAlertName, alert.Name)
+					logging.Debugf("alert name matched->(%s) data->(%+v)", alert.Name, data)
 					break
 				}
 			}
-
-			// 事件ID处理
-			eventID, _ := to.Get(EventIDField)
-			if eventID == nil || eventID == "" {
-				eventID, err = from.Get(DefaultEventIDField)
-				if err != nil {
-					return errors.Errorf("get key->(%s) from data failed: %+v, origin data: %+v",
-						DefaultEventIDField, err, from)
-				}
-				logging.Debugf("using event_id->(%s) from origin data: %+v", eventID, from)
-				_ = to.Put(EventIDField, eventID)
+			alertName, _ := to.Get(fieldAlertName)
+			if alertName == nil || alertName == "" {
+				logging.Errorf("%s alert name is empty, data->(%+v)", name, data)
+				return nil
 			}
 
-			// tags处理
-			if tagExpr, ok := exprMap[TagsField]; ok {
+			// 如果没有设置event_id，则使用默认event_id
+			eventID, _ := to.Get(fieldEventID)
+			if eventID == nil || eventID == "" {
+				eventID, _ = from.Get(fieldDefaultEventID)
+				if eventID == nil || eventID == "" {
+					logging.Errorf("%s event_id is empty, data->(%+v)", name, data)
+					return nil
+				}
+			}
+
+			// tags字段处理
+			if tagExpr, ok := exprMap[fieldTags]; ok {
 				// 提取tags字段
 				compiledExpr, err := utils.CompileJMESPathCustom(tagExpr)
 				if err != nil {
-					return errors.WithMessagef(err, "compile expr %s failed", tagExpr)
+					logging.Errorf("%s compile tag expr %s failed: %+v", name, tagExpr, err)
+					return nil
 				}
 				tags, err := compiledExpr.Search(data)
 				if err != nil {
+					logging.Errorf("%s search tag expr %s failed: %+v", name, tagExpr, err)
 					return nil
 				}
 
@@ -268,10 +279,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				case map[string]interface{}:
 					// 针对 tags 为 {"a": "b"} 格式的转换
 					for key, value := range t {
-						tagsList = append(tagsList, map[string]interface{}{
-							"key":   key,
-							"value": value,
-						})
+						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 					}
 				case []interface{}:
 					// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
@@ -285,13 +293,12 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 						if key == nil || value == nil {
 							continue
 						}
-						tagsList = append(tagsList, map[string]interface{}{
-							"key":   key,
-							"value": value,
-						})
+						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 					}
+				default:
+					logging.Errorf("%s tags type %T not supported", name, tags)
 				}
-				_ = to.Put(TagsField, tagsList)
+				_ = to.Put(fieldTags, tagsList)
 			}
 
 			return nil

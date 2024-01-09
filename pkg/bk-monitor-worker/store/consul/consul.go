@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
@@ -84,6 +85,7 @@ func (c *Instance) Open() error {
 // Put put a key-val
 func (c *Instance) Put(key, val string, expiration time.Duration) error {
 	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val)}
+	_ = metrics.ConsulPutCount(key)
 	_, err := c.APIClient.KV().Put(kvPair, nil)
 	if err != nil {
 		logger.Errorf("put to consul error, %v", err)
@@ -110,6 +112,7 @@ func (c *Instance) Get(key string) ([]byte, error) {
 
 // Delete delete a key
 func (c *Instance) Delete(key string) error {
+	_ = metrics.ConsulDeleteCount(key)
 	_, err := c.APIClient.KV().Delete(key, nil)
 	if err != nil {
 		logger.Errorf("delete consul key: %s error, %v", key, err)

@@ -25,8 +25,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -434,6 +436,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	if err != nil {
 		return err
 	}
+	_ = metrics.GSEUpdateCount(d.BkDataId)
 	if updateResult.Code != 0 {
 		logger.Errorf("try to update gse route for channel id [%v] failed, %s", d.BkDataId, updateResult.Message)
 		return errors.New(updateResult.Message)
@@ -528,7 +531,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(d.ConsulConfigPath(), valStr, 0)
+	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr)
 	if err != nil {
 		logger.Errorf("data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err
@@ -539,7 +542,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 
 func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context) error {
 	if !d.IsEnable {
-		logger.Infof("data_id [%s] is not enable, nothing will refresh to outer systems.", d.BkDataId)
+		logger.Infof("data_id [%v] is not enable, nothing will refresh to outer systems.", d.BkDataId)
 		return nil
 	}
 	err := d.RefreshGseConfig()

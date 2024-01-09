@@ -10,6 +10,7 @@
 package metrics
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -158,10 +159,64 @@ func SetTaskCostTime(taskName string) func() {
 	}
 }
 
+// metadata metrics
+var (
+	//consul数据操作统计
+	consulCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_consul_count",
+			Help: "consul execute count",
+		},
+		[]string{"key", "operation"},
+	)
+
+	//GSE变动统计
+	gseCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_gse_count",
+			Help: "gse change count",
+		},
+		[]string{"dataid", "operation"},
+	)
+)
+
+// ConsulPutCount consul put count
+func ConsulPutCount(key string) error {
+	metric, err := taskCount.GetMetricWithLabelValues(key, "PUT")
+	if err != nil {
+		logger.Errorf("prom get consul put count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// ConsulDeleteCount consul delete count
+func ConsulDeleteCount(key string) error {
+	metric, err := taskCount.GetMetricWithLabelValues(key, "DELETE")
+	if err != nil {
+		logger.Errorf("prom get consul delete count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// GSEUpdateCount gse update count
+func GSEUpdateCount(dataid uint) error {
+	metric, err := taskCount.GetMetricWithLabelValues(strconv.Itoa(int(dataid)), "UPDATE")
+	if err != nil {
+		logger.Errorf("prom get gse update count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
 var Registry *prometheus.Registry
 
 func init() {
 	// register the metrics
 	Registry = prometheus.NewRegistry()
-	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime)
+	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime, consulCount, gseCount)
 }

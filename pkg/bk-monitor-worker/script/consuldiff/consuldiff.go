@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmd
+package main
 
 import (
 	"context"
@@ -27,15 +27,24 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func init() {
-	rootCmd.AddCommand(diffCmd)
+func main() {
+	err := diffCmd.Execute()
+	if err != nil {
+		logger.Fatalf("run consul diff failed, %v", err)
+	}
 }
 
 var diffCmd = &cobra.Command{
-	Use:   "diff",
+	Use:   "run",
 	Short: "bk monitor diff",
 	Long:  "diff run",
 	Run:   startDiff,
+}
+
+func init() {
+	diffCmd.PersistentFlags().StringVar(
+		&config.FilePath, "config", "./bmw.yaml", "path of project service config files",
+	)
 }
 
 // start 启动服务

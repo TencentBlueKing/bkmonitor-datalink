@@ -191,7 +191,7 @@ var (
 	// redis数据操作统计
 	redisCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "metadata_es_count",
+			Name: "metadata_redis_count",
 			Help: "es change count",
 		},
 		[]string{"key", "operation"},

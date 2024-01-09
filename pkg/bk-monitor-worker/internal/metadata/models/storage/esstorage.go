@@ -26,6 +26,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -337,6 +338,7 @@ func (e *ESStorage) CreateIndexV2(ctx context.Context) error {
 		return err
 	}
 	logger.Infof("table_id [%s] create index body [%s]", e.TableID, string(body))
+	_ = metrics.ESChangeCount(e.TableID, "CreateIndex")
 	resp, err := client.CreateIndex(ctx, indexName, bytes.NewReader(body))
 	if err != nil {
 		logger.Errorf("table_id [%s] create index error, %v", e.TableID, err)
@@ -478,6 +480,7 @@ func (e *ESStorage) UpdateIndexV2(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	_ = metrics.ESChangeCount(e.TableID, "CreateIndex")
 	resp, err := client.CreateIndex(ctx, newIndexName, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -980,6 +983,7 @@ func (e *ESStorage) CreateSnapshot(ctx context.Context) error {
 			}
 		}
 		payload := fmt.Sprintf(`{"indices": "%s", "include_global_state": false}`, strings.Join(indices, ","))
+		_ = metrics.ESChangeCount(e.TableID, "CreateSnapshot")
 		resp, err := client.CreateSnapshot(ctx, snapshot.TargetSnapshotRepositoryName, newSnapshotName, strings.NewReader(payload))
 		if err != nil {
 			return err
@@ -1415,6 +1419,7 @@ func (e *ESStorage) CleanIndexV2(ctx context.Context) error {
 		// 如果已经不存在未过期的别名，则将索引删除
 		// 等待所有别名过期删除索引，防止删除别名快照时，丢失数据
 		logger.Infof("table_id [%s] has not alias need to keep, will delete the index [%s].", e.TableID, indexName)
+		_ = metrics.ESChangeCount(e.TableID, "DeleteIndex")
 		resp, err := client.DeleteIndex(ctx, []string{indexName})
 		if err != nil {
 			logger.Warnf("table_id [%s] index [%s] delete failed, index maybe doing snapshot，%s", e.TableID, indexName, err)
@@ -1469,6 +1474,7 @@ func (e *ESStorage) CleanSnapshot(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			_ = metrics.ESChangeCount(e.TableID, "DeleteSnapshot")
 			resp, err := client.DeleteSnapshot(ctx, snapshot.Repository, snapshot.Snapshot)
 			if err != nil {
 				return err

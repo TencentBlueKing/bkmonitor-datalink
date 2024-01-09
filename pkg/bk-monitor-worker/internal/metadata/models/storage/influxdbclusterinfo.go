@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -88,7 +89,7 @@ func RefreshInfluxdbClusterInfoConsulClusterConfig(ctx context.Context, objs *[]
 				if err != nil {
 					return err
 				}
-				err = consulClient.Put(consulConfigPath, val, 0)
+				err = hashconsul.Put(consulClient, consulConfigPath, val)
 				if err != nil {
 					logger.Errorf("consul path [%s] refresh with value [%s] failed, %v", consulConfigPath, val, err)
 					return err

@@ -75,8 +75,7 @@ type Query struct {
 	Measurements    []string // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
 
 	// 用于 promql 查询
-	LabelsMatcher []*labels.Matcher
-	IsHasOr       bool // 标记是否有 or 条件
+	IsHasOr bool // 标记是否有 or 条件
 
 	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
 

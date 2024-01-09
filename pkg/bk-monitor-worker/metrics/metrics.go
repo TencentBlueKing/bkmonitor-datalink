@@ -182,7 +182,7 @@ var (
 
 // ConsulPutCount consul put count
 func ConsulPutCount(key string) error {
-	metric, err := taskCount.GetMetricWithLabelValues(key, "PUT")
+	metric, err := consulCount.GetMetricWithLabelValues(key, "PUT")
 	if err != nil {
 		logger.Errorf("prom get consul put count metric failed: %s", err)
 		return err
@@ -193,7 +193,7 @@ func ConsulPutCount(key string) error {
 
 // ConsulDeleteCount consul delete count
 func ConsulDeleteCount(key string) error {
-	metric, err := taskCount.GetMetricWithLabelValues(key, "DELETE")
+	metric, err := consulCount.GetMetricWithLabelValues(key, "DELETE")
 	if err != nil {
 		logger.Errorf("prom get consul delete count metric failed: %s", err)
 		return err
@@ -204,7 +204,7 @@ func ConsulDeleteCount(key string) error {
 
 // GSEUpdateCount gse update count
 func GSEUpdateCount(dataid uint) error {
-	metric, err := taskCount.GetMetricWithLabelValues(strconv.Itoa(int(dataid)), "UPDATE")
+	metric, err := gseCount.GetMetricWithLabelValues(strconv.Itoa(int(dataid)), "UPDATE")
 	if err != nil {
 		logger.Errorf("prom get gse update count metric failed: %s", err)
 		return err

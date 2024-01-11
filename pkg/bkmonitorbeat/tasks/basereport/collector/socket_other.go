@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build darwin || freebsd
+//go:build darwin || freebsd || windows
 
 package collector
 
@@ -15,13 +15,6 @@ import (
 	"github.com/shirou/gopsutil/v3/net"
 )
 
-type SocketInfo struct {
-	BaseSocketInfo
-	Inode uint64
-	Type  uint32 // syscall.SOCK_STREAM or syscall.SOCK_DGR
-}
-
-// GetTcp4SocketStatusCount get sockets status
 func GetTcp4SocketStatusCount() (SocketStatusCount, error) {
 	count := SocketStatusCount{}
 	connections, err := net.Connections("tcp4")

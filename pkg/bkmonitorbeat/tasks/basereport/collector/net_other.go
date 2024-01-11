@@ -10,3 +10,15 @@
 //go:build darwin || freebsd
 
 package collector
+
+import (
+	"github.com/shirou/gopsutil/v3/net"
+)
+
+func InitVirtualInterfaceSet() error {
+	return nil
+}
+
+func ProtoCounters(protocols []string) ([]net.ProtoCountersStat, error) {
+	return net.ProtoCounters(protocols)
+}

@@ -71,7 +71,7 @@ diskStatsLoop:
 		// 判断是否是分区，不是分区则默认为设备
 		if !isPartition(diskStat) {
 			// 先通过黑白名单过滤设备层级数据
-			if !CheckBlackWhiteList(name, config.DiskWhiteList, config.DiskBlackList) {
+			if !checkBlackWhiteList(name, config.DiskWhiteList, config.DiskBlackList) {
 				logger.Debugf("filtered disk io status by black-white list: %s", name)
 				continue
 			}
@@ -85,12 +85,12 @@ diskStatsLoop:
 			// 过滤所属设备
 			// sda1 => sda
 			diskName := getDiskName(name)
-			if !CheckBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
+			if !checkBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
 				logger.Debugf("filtered disk io status by black-white list: %s", name)
 				continue
 			}
 			// 不跳过partition的话，就要过滤对应黑白名单
-			if !CheckBlackWhiteList(name, config.PartitionWhiteList, config.PartitionBlackList) {
+			if !checkBlackWhiteList(name, config.PartitionWhiteList, config.PartitionBlackList) {
 				logger.Debugf("filtered disk io status by black-white list: %s", name)
 				continue
 			}
@@ -100,7 +100,7 @@ diskStatsLoop:
 				// /dev/sda1 => sda1
 				devName := getDevName(partition.Device)
 				// 过滤文件系统类型黑白名单
-				if devName == name && !CheckBlackWhiteList(partition.Fstype, config.FSTypeWhiteList, config.FSTypeBlackList) {
+				if devName == name && !checkBlackWhiteList(partition.Fstype, config.FSTypeWhiteList, config.FSTypeBlackList) {
 					logger.Debugf("filtered disk partition by black-white list, device: %s, mountpoint: %s", partition.Device, partition.Mountpoint)
 					continue diskStatsLoop
 				}
@@ -148,7 +148,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 		// sda1 => sda
 		diskName := getDiskName(partition.Device)
 		if diskName != "" {
-			if !CheckBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
+			if !checkBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
 				logger.Debugf("filtered disk partition and usage by disk black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
 				continue
 			}
@@ -157,18 +157,18 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 		// /dev/sda1 => sda1
 		devName := getDevName(partition.Device)
 		// device(partition)层级黑白名单
-		if !CheckBlackWhiteList(devName, config.PartitionWhiteList, config.PartitionBlackList) {
+		if !checkBlackWhiteList(devName, config.PartitionWhiteList, config.PartitionBlackList) {
 			logger.Debugf("filtered disk partition and usage by partition black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 		// mountpoint层级黑白名单
-		if !CheckBlackWhiteList(partition.Mountpoint, config.MountpointWhiteList, config.MountpointBlackList) {
+		if !checkBlackWhiteList(partition.Mountpoint, config.MountpointWhiteList, config.MountpointBlackList) {
 			logger.Debugf("filtered disk partition and usage by mountpoint black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 
 		// 过滤文件系统类型黑白名单
-		if !CheckBlackWhiteList(partition.Fstype, config.FSTypeWhiteList, config.FSTypeBlackList) {
+		if !checkBlackWhiteList(partition.Fstype, config.FSTypeWhiteList, config.FSTypeBlackList) {
 			logger.Debugf("filtered disk partition and usage by fs type black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
 			continue
 		}

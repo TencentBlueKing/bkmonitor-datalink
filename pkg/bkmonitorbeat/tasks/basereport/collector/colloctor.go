@@ -263,7 +263,7 @@ type ReportData struct {
 	System *SystemReport `json:"system"`
 }
 
-func CounterDiff(now, before uint64) uint64 {
+func calcDelta(now, before uint64) uint64 {
 	// 数值倒流则直接返回 0
 	if before > now {
 		return 0

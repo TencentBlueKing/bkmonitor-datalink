@@ -12,12 +12,10 @@ package collector
 import (
 	"bytes"
 	"errors"
-	"math"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -27,72 +25,119 @@ import (
 	"github.com/yusufpapurcu/wmi"
 	"golang.org/x/sys/windows"
 
-	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 )
 
-// NetProtoCounters returns network statistics for the entire system
-// If protocols is empty then all protocols are returned, otherwise
-// just the protocols in the list are returned.
-var netProtocols = []string{"udp", "ip", "tcp", "icmp"}
+// borrowed from net/interface_windows.go
+func adapterAddresses() ([]*windows.IpAdapterAddresses, error) {
+	var b []byte
+	l := uint32(15000) // recommended initial size
+	for {
+		b = make([]byte, l)
+		err := windows.GetAdaptersAddresses(syscall.AF_UNSPEC, windows.GAA_FLAG_INCLUDE_PREFIX, 0, (*windows.IpAdapterAddresses)(unsafe.Pointer(&b[0])), &l)
+		if err == nil {
+			if l == 0 {
+				return nil, nil
+			}
+			break
+		}
+		if err.(syscall.Errno) != syscall.ERROR_BUFFER_OVERFLOW {
+			return nil, os.NewSyscallError("getadaptersaddresses", err)
+		}
+		if l <= uint32(len(b)) {
+			return nil, os.NewSyscallError("getadaptersaddresses", err)
+		}
+	}
+	var aas []*windows.IpAdapterAddresses
+	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&b[0])); aa != nil; aa = aa.Next {
+		aas = append(aas, aa)
+	}
+	return aas, nil
+}
+
+// borrowed from net/interface_windows.go
+func utf16PtrToString(p *uint16, max int) string {
+	if p == nil {
+		return ""
+	}
+	// Find NUL terminator.
+	end := unsafe.Pointer(p)
+	n := 0
+	for *(*uint16)(end) != 0 && n < max {
+		end = unsafe.Pointer(uintptr(end) + unsafe.Sizeof(*p))
+		n++
+	}
+	s := (*[(1 << 30) - 1]uint16)(unsafe.Pointer(p))[:n:n]
+	return string(utf16.Decode(s))
+}
+
+func InitVirtualInterfaceSet() error {
+	interfaceSet := common.NewSet()
+	aas, err := adapterAddresses()
+	if err != nil {
+		return err
+	}
+	for _, aa := range aas {
+		// windows 目前只屏蔽本地回环
+		if aa.IfType == windows.IF_TYPE_SOFTWARE_LOOPBACK {
+			friendlyName := utf16PtrToString(aa.FriendlyName, 1000)
+			interfaceSet.Insert(friendlyName)
+		}
+	}
+	virtualInterfaceSet = interfaceSet
+	return nil
+}
 
 func ProtoCounters(protocols []string) ([]net.ProtoCountersStat, error) {
-	if len(protocols) == 0 {
-		protocols = netProtocols
-	}
-
 	stats := make([]net.ProtoCountersStat, 0, len(protocols))
 	for _, v := range protocols {
-		oneStat := net.ProtoCountersStat{
-			Protocol: v,
-			Stats:    make(map[string]int64),
-		}
 		var data map[string]int64
 		var err error
-		if v == "udp" {
-			data, err = UdpProtoCounters()
-		} else if v == "ip" {
-			data, err = IpProtoCounters()
-		} else if v == "tcp" {
-			data, err = TcpProtoCounters()
-		} else if v == "icmp" {
-			data, err = IcmpProtoCounters()
-		} else {
+		switch v {
+		case "udp":
+			data, err = getUDPProtoCounters()
+		case "ip":
+			data, err = getIPProtoCounters()
+		case "tcp":
+			data, err = getTCPProtoCounters()
+		case "icmp":
+			data, err = getICMPProtoCounters()
+		default:
 			return nil, errors.New("protocol not support")
 		}
 		if err != nil {
 			return nil, err
 		}
-		for k, m := range data {
-			oneStat.Stats[k] = m
+
+		stat := net.ProtoCountersStat{
+			Protocol: v,
+			Stats:    make(map[string]int64),
 		}
-		stats = append(stats, oneStat)
+		for k, m := range data {
+			stat.Stats[k] = m
+		}
+		stats = append(stats, stat)
 	}
 	return stats, nil
 }
 
-// get udp protocol counter
-func UdpProtoCounters() (map[string]int64, error) {
-	udpMap := make(map[string]int64)
-	udpMap["InCsumErrors"] = -1
-	udpMap["InDatagrams"] = -1
-	udpMap["InErrors"] = -1
-	udpMap["NoPorts"] = -1
-	udpMap["OutDatagrams"] = -1
-	udpMap["RcvbufErrors"] = -1
-	udpMap["SndbufErrors"] = -1
-
-	cmd := exec.Command("netsh", "interfac", "ipv4", "show", "udpstats")
+// getUDPProtoCounters 我也不知道为什么只有 udp 使用 cmd 获取数据 ┓(´∀`)┏
+// only God knows
+func getUDPProtoCounters() (map[string]int64, error) {
 	var buf bytes.Buffer
+	cmd := exec.Command("netsh", "interface", "ipv4", "show", "udpstats")
 	cmd.Stdout = &buf
-	cmd.Start()
-	cmd.Wait()
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
 
-	outStr := buf.String()
-	parts := regexp.MustCompile("(?m)^\\s*-+\\s*$").Split(outStr, 2)
-
+	udpMap := make(map[string]int64)
+	regex := regexp.MustCompile("(?m)^\\s*-+\\s*$")
+	parts := regex.Split(buf.String(), 2)
 	if len(parts) == 2 {
 		part := parts[1]
-		results := regexp.MustCompile("(?m)^.*:\\s*(\\d+)").FindAllStringSubmatch(part, -1)
+		re := regexp.MustCompile("(?m)^.*:\\s*(\\d+)")
+		results := re.FindAllStringSubmatch(part, -1)
 		if len(results) == 4 {
 			udpMap["InDatagrams"], _ = strconv.ParseInt(results[0][1], 10, 64)
 			udpMap["NoPorts"], _ = strconv.ParseInt(results[1][1], 10, 64)
@@ -103,8 +148,7 @@ func UdpProtoCounters() (map[string]int64, error) {
 	return udpMap, nil
 }
 
-// get ip protocol counter
-func IpProtoCounters() (map[string]int64, error) {
+func getIPProtoCounters() (map[string]int64, error) {
 	type Win32_PerfFormattedData_Tcpip_IPv4 struct {
 		DatagramsReceivedDeliveredPersec int64
 		DatagramsReceivedAddressErrors   int64
@@ -138,15 +182,8 @@ func IpProtoCounters() (map[string]int64, error) {
 		if err != nil {
 			return ipMap, err
 		}
-		ttlInt, err := GetTTL()
-		if err != nil {
-			ipMap["DefaultTTL"] = 0
-		} else {
-			ipMap["DefaultTTL"] = ttlInt
-		}
 
 		ipMap["ForwDatagrams"] = dst[0].DatagramsForwardedPersec
-		ipMap["Forwarding"] = 0
 		ipMap["FragCreates"] = dst[0].FragmentsCreatedPersec
 		ipMap["FragFails"] = dst[0].FragmentationFailures
 		ipMap["FragOKs"] = dst[0].FragmentsReceivedPersec
@@ -161,55 +198,11 @@ func IpProtoCounters() (map[string]int64, error) {
 		ipMap["OutRequests"] = dst[0].DatagramsSentPersec
 		ipMap["ReasmFails"] = dst[0].FragmentReassemblyFailures
 		ipMap["ReasmOKs"] = dst[0].FragmentsReassembledPersec
-		ipMap["ReasmReqds"] = 0
-		ipMap["ReasmTimeout"] = 0
 		return ipMap, nil
 	}
 }
 
-// get windows DefaultTTL
-func GetTTL() (int64, error) {
-	// get default ttl cmd
-	cmdStr := "REG QUERY HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\services\\Tcpip\\Parameters /v DefaultTTL | findstr /i DefaultTTL"
-	cmd := exec.Command("cmd", "/c", cmdStr)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Start()
-
-	// use a channel to signal completion
-	var outStr string
-	done := make(chan error)
-	go func() { done <- cmd.Wait() }()
-
-	// start a timer
-	timeout := time.After(10 * time.Second)
-	select {
-	case <-timeout:
-		return 0, errors.New("time out")
-	case err := <-done:
-		if err != nil {
-			return 0, err
-		}
-		outStr = buf.String()
-	}
-	lineStr := strings.Split(outStr, "\n")[0]
-	arr1 := strings.Split(lineStr, " ")
-	if len(arr1) == 0 {
-		return 0, errors.New("can not get default TTL")
-	}
-	ttlStr := strings.Trim(arr1[len(arr1)-1], "\r")
-	if len(ttlStr) == 0 {
-		return 0, errors.New("default TTL is null")
-	}
-	ttlInt, err := strconv.ParseInt(strings.TrimLeft(ttlStr, "0x"), 16, 64)
-	if err != nil {
-		return 0, errors.New("TTL data convert to int error")
-	}
-	return ttlInt, nil
-}
-
-// get tcp protocol counter
-func TcpProtoCounters() (map[string]int64, error) {
+func getTCPProtoCounters() (map[string]int64, error) {
 	type Win32_PerfFormattedData_Tcpip_TCPv4 struct {
 		SegmentsRetransmittedPersec int64
 		SegmentsReceivedPersec      int64
@@ -242,23 +235,15 @@ func TcpProtoCounters() (map[string]int64, error) {
 		tcpMap["AttemptFails"] = dst[0].ConnectionFailures
 		tcpMap["CurrEstab"] = dst[0].ConnectionsEstablished
 		tcpMap["EstabResets"] = dst[0].ConnectionsReset
-		tcpMap["InCsumErrors"] = 0
-		tcpMap["InErrs"] = 0
 		tcpMap["InSegs"] = dst[0].SegmentsReceivedPersec
-		tcpMap["MaxConn"] = 0
-		tcpMap["OutRsts"] = 0
 		tcpMap["OutSegs"] = dst[0].SegmentsSentPersec
 		tcpMap["PassiveOpens"] = dst[0].ConnectionsPassive
 		tcpMap["RetransSegs"] = dst[0].SegmentsRetransmittedPersec
-		tcpMap["RtoAlgorithm"] = 0
-		tcpMap["RtoMax"] = 0
-		tcpMap["RtoMin"] = 0
 		return tcpMap, nil
 	}
 }
 
-// get icmp protocol counter
-func IcmpProtoCounters() (map[string]int64, error) {
+func getICMPProtoCounters() (map[string]int64, error) {
 	type Win32_PerfFormattedData_Tcpip_ICMP struct {
 		ReceivedAddressMaskReply     int64
 		ReceivedAddressMask          int64
@@ -333,74 +318,4 @@ func IcmpProtoCounters() (map[string]int64, error) {
 		icmpMap["OutTimestamps"] = dst[0].SentTimestampPersec
 		return icmpMap, nil
 	}
-}
-
-const (
-	NetCoutnerMaxSize = math.MaxUint32
-)
-
-// 从 net/interface_windows.go 中复制过来
-func adapterAddresses() ([]*windows.IpAdapterAddresses, error) {
-	var b []byte
-	l := uint32(15000) // recommended initial size
-	for {
-		b = make([]byte, l)
-		err := windows.GetAdaptersAddresses(syscall.AF_UNSPEC, windows.GAA_FLAG_INCLUDE_PREFIX, 0, (*windows.IpAdapterAddresses)(unsafe.Pointer(&b[0])), &l)
-		if err == nil {
-			if l == 0 {
-				return nil, nil
-			}
-			break
-		}
-		if err.(syscall.Errno) != syscall.ERROR_BUFFER_OVERFLOW {
-			return nil, os.NewSyscallError("getadaptersaddresses", err)
-		}
-		if l <= uint32(len(b)) {
-			return nil, os.NewSyscallError("getadaptersaddresses", err)
-		}
-	}
-	var aas []*windows.IpAdapterAddresses
-	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&b[0])); aa != nil; aa = aa.Next {
-		aas = append(aas, aa)
-	}
-	return aas, nil
-}
-
-func initVirtualInterfaceSet() error {
-	interfaceSet := bkcommon.NewSet()
-	aas, err := adapterAddresses()
-	if err != nil {
-		return err
-	}
-	for _, aa := range aas {
-		// windows目前只屏蔽本地回环
-		if aa.IfType == windows.IF_TYPE_SOFTWARE_LOOPBACK {
-			friendlyName := UTF16PtrToString(aa.FriendlyName, 1000)
-			interfaceSet.Insert(friendlyName)
-		}
-	}
-	virtualInterfaceSet = interfaceSet
-	return nil
-}
-
-// not implemented
-func GetNetInfoFromDev() (map[string]NetInfo, error) {
-	//return nil, fmt.Errorf("get netinfo from dev not implemented in windows")
-	return nil, nil
-}
-
-// borrowed from net/interface_windows.go
-func UTF16PtrToString(p *uint16, max int) string {
-	if p == nil {
-		return ""
-	}
-	// Find NUL terminator.
-	end := unsafe.Pointer(p)
-	n := 0
-	for *(*uint16)(end) != 0 && n < max {
-		end = unsafe.Pointer(uintptr(end) + unsafe.Sizeof(*p))
-		n++
-	}
-	s := (*[(1 << 30) - 1]uint16)(unsafe.Pointer(p))[:n:n]
-	return string(utf16.Decode(s))
 }

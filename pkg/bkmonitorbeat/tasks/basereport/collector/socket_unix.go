@@ -15,26 +15,144 @@ import (
 	"unsafe"
 
 	"github.com/mdlayher/netlink"
+	"github.com/mdlayher/netlink/nlenc"
 	"golang.org/x/sys/unix"
 )
 
-type FileSocketItem struct {
-	Laddr  string
-	Raddr  string
-	Status string
-	Inode  string
-	Pid    int32
-	Fd     uint32
+// tcp status
+// reference: source/include/net/tcp_states.h
+/*
+ enum {
+	TCP_ESTABLISHED = 1,
+	TCP_SYN_SENT,
+	TCP_SYN_RECV,
+	TCP_FIN_WAIT1,
+	TCP_FIN_WAIT2,
+	TCP_TIME_WAIT,
+	TCP_CLOSE,
+	TCP_CLOSE_WAIT,
+	TCP_LAST_ACK,
+	TCP_LISTEN,
+	TCP_CLOSING,	* Now a valid state *
+	TCP_NEW_SYN_RECV,   // kernel > 4.1
+
+	TCP_MAX_STATES	* Leave at the end! *
+};
+*/
+const (
+	TCP_ESTABLISHED = iota + 1
+	TCP_SYN_SENT
+	TCP_SYN_RECV
+	TCP_FIN_WAIT1
+	TCP_FIN_WAIT2
+	TCP_TIME_WAIT
+	TCP_CLOSE
+	TCP_CLOSE_WAIT
+	TCP_LAST_ACK
+	TCP_LISTEN  // 0x0A
+	TCP_CLOSING //now a valid state
+	TCP_MAX_STATES
+)
+
+/*
+	Socket identity
+
+	struct inet_diag_sockid {
+	    __be16  idiag_sport;
+	    __be16  idiag_dport;
+	    __be32  idiag_src[4];
+	    __be32  idiag_dst[4];
+	    __u32   idiag_if;
+	    __u32   idiag_cookie[2];
+
+#define INET_DIAG_NOCOOKIE (~0U)
+};
+
+/* Request structure
+
+	struct inet_diag_req {
+	    __u8    idiag_family;       /* Family of addresses.
+	    __u8    idiag_src_len;
+	    __u8    idiag_dst_len;
+	    __u8    idiag_ext;      /* Query extended information
+
+	    struct inet_diag_sockid id;
+
+	    __u32   idiag_states;
+	    __u32   idiag_dbs;
+	};
+
+	struct inet_diag_msg {
+	    __u8    idiag_family;
+	    __u8    idiag_state;
+	    __u8    idiag_timer;
+	    __u8    idiag_retrans;
+
+	    struct inet_diag_sockid id;
+
+	    __u32   idiag_expires;
+	    __u32   idiag_rqueue;
+	    __u32   idiag_wqueue;
+	    __u32   idiag_uid;
+	    __u32   idiag_inode;
+	};
+*/
+const TCPDIAG_GETSOCK = 18
+
+// #define NLMSG_ALIGNTO   4U
+const nlmsgAlignTo = 4
+
+// #define NLMSG_ALIGN(len) ( ((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1) )
+func nlmsgAlign(len int) int {
+	return ((len) + nlmsgAlignTo - 1) & ^(nlmsgAlignTo - 1)
 }
 
-type SocketInfo struct {
-	BaseSocketInfo
-	Inode uint64
-	Type  uint32 // syscall.SOCK_STREAM or syscall.SOCK_DGR
+type InetDiagReq struct {
+	Family uint8
+	SrcLen uint8
+	DstLen uint8
+	Ext    uint8
+
+	Sport  uint16
+	Dport  uint16
+	Src    [4]uint32
+	Dst    [4]uint32
+	If     uint32
+	Cookie [2]uint32
+
+	States uint32
+	Dbs    uint32
 }
 
-// GetTcp4SocketStatusCountByNetlink get sockets status by netlink
-func GetTcp4SocketStatusCountByNetlink() (SocketStatusCount, error) {
+func (m InetDiagReq) MarshalBinary() []byte {
+	ml := nlmsgAlign(int(unsafe.Sizeof(m)))
+	b := make([]byte, ml)
+	nlenc.PutUint8(b[0:1], m.Family)
+	nlenc.PutUint32(b[52:56], m.States)
+	return b
+}
+
+type InetDiagMsg struct {
+	Family  uint8 // 0,1
+	State   uint8 // 1,2
+	Timer   uint8 // 2,3
+	Retrans uint8 // 3,4
+
+	Sport  uint16 // 4,6
+	Dport  uint16 // 6,8
+	Src    [4]uint32
+	Dst    [4]uint32
+	If     uint32
+	Cookie [2]uint32
+
+	Expires uint32
+	Rqueue  uint32
+	Wqueue  uint32
+	Uid     uint32
+	Inode   uint32
+}
+
+func GetTcp4SocketStatusCount() (SocketStatusCount, error) {
 	c, err := netlink.Dial(unix.NETLINK_INET_DIAG, nil)
 	if err != nil {
 		return SocketStatusCount{}, err
@@ -60,29 +178,24 @@ func GetTcp4SocketStatusCountByNetlink() (SocketStatusCount, error) {
 		return SocketStatusCount{}, err
 	}
 
-	rawcount := make([]uint, TCP_MAX_STATES)
+	counts := make([]uint, TCP_MAX_STATES)
 	for _, m := range msgs {
 		var req = *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
-		rawcount[int(req.State)]++
+		counts[int(req.State)]++
 	}
 
 	// transfer to SocketStatusCount
 	var count SocketStatusCount
-	count.Established = rawcount[TCP_ESTABLISHED]
-	count.SyncSent = rawcount[TCP_SYN_SENT]
-	count.SynRecv = rawcount[TCP_SYN_RECV]
-	count.FinWait1 = rawcount[TCP_FIN_WAIT1]
-	count.FinWait2 = rawcount[TCP_FIN_WAIT2]
-	count.TimeWait = rawcount[TCP_TIME_WAIT]
-	count.Close = rawcount[TCP_CLOSE]
-	count.CloseWait = rawcount[TCP_CLOSE_WAIT]
-	count.LastAck = rawcount[TCP_LAST_ACK]
-	count.Listen = rawcount[TCP_LISTEN]
-	count.Closing = rawcount[TCP_CLOSING]
+	count.Established = counts[TCP_ESTABLISHED]
+	count.SyncSent = counts[TCP_SYN_SENT]
+	count.SynRecv = counts[TCP_SYN_RECV]
+	count.FinWait1 = counts[TCP_FIN_WAIT1]
+	count.FinWait2 = counts[TCP_FIN_WAIT2]
+	count.TimeWait = counts[TCP_TIME_WAIT]
+	count.Close = counts[TCP_CLOSE]
+	count.CloseWait = counts[TCP_CLOSE_WAIT]
+	count.LastAck = counts[TCP_LAST_ACK]
+	count.Listen = counts[TCP_LISTEN]
+	count.Closing = counts[TCP_CLOSING]
 	return count, nil
-}
-
-// GetTcp4SocketStatusCount get sockets status
-func GetTcp4SocketStatusCount() (SocketStatusCount, error) {
-	return GetTcp4SocketStatusCountByNetlink()
 }

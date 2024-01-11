@@ -10,7 +10,10 @@
 package space
 
 import (
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 //go:generate goqueryset -in spaceresource.go -out qs_spaceresource_gen.go
@@ -30,4 +33,23 @@ type SpaceResource struct {
 // TableName table alias name
 func (SpaceResource) TableName() string {
 	return "metadata_spaceresource"
+}
+
+// SetDimensionValues 设置 DimensionValues
+func (o *SpaceResource) SetDimensionValues(dm []map[string]interface{}) error {
+	dmJson, err := jsonx.MarshalString(dm)
+	if err != nil {
+		return errors.Wrapf(err, "marshal DimensionValues [%#v] failed", dm)
+	}
+	o.DimensionValues = dmJson
+	return nil
+}
+
+// GetDimensionValues 获取 DimensionValues 对象
+func (o *SpaceResource) GetDimensionValues() ([]map[string]interface{}, error) {
+	var dm []map[string]interface{}
+	if err := jsonx.UnmarshalString(o.DimensionValues, &dm); err != nil {
+		return nil, errors.Wrapf(err, "unmarshal DimensionValues [%s] failed", o.DimensionValues)
+	}
+	return dm, nil
 }

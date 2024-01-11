@@ -31,16 +31,15 @@ import (
 const iegDockervmMeminfo = "/dev/shm/ieg_dockervm_meminfo"
 
 func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
-	// 1. 判断文件是否存在，如果不存在直接退出返回信息
+	// 判断文件是否存在，如果不存在直接退出返回信息
 	if _, err := os.Stat(iegDockervmMeminfo); os.IsNotExist(err) {
-		logger.Debugf("internal docker mem file->[%s] not exists, nothing will do.", iegDockervmMeminfo)
+		logger.Debugf("internal docker mem file->[%s] not exists, nothing will do", iegDockervmMeminfo)
 		return info
 	}
 
-	// 2. 解析文件
 	file, err := os.Open(iegDockervmMeminfo)
 	if err != nil {
-		logger.Errorf("failed to open internal docker men file->[%s] for->[%s]", iegDockervmMeminfo, err)
+		logger.Errorf("failed to open internal docker men file->[%s], err: %v", iegDockervmMeminfo, err)
 		return info
 	}
 	defer func() {
@@ -73,8 +72,7 @@ func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 			continue
 		}
 		memValueByte := memValueKB * 1024
-		logger.Debugf("internal mem got line->[%s] transfer to value->[%d] byte and key->[%s]",
-			line, memValueByte, parts[0])
+		logger.Debugf("internal mem got line->[%s] transfer to value->[%d] byte and key->[%s]", line, memValueByte, parts[0])
 
 		// 3. 将文件中的内容解析并放置到info中
 		switch parts[0] {
@@ -96,7 +94,7 @@ func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 	}
 
 	if successCount != 4 {
-		logger.Errorf("failed to get success count to 4 but->[%d] will not update mem info.", successCount)
+		logger.Errorf("failed to get success count to 4 but->[%d] will not update mem info", successCount)
 		return info
 	}
 
@@ -108,9 +106,7 @@ func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 	// 内存其他的依赖项需要重新计算
 	info.Used = info.Total - info.Available
 	info.UsedPercent = float64(info.Total-info.Available) / float64(info.Total) * 100.0
-	logger.Infof("mem info updated, total->[%d] free->[%d] avaliable->[%d] used->[%s] userPercent->[%f]",
-		info.Total, info.Free, info.Available, info.Used, info.UsedPercent)
+	logger.Infof("mem info updated, info=%+v", info)
 
-	// 4. 返回结果
 	return info
 }

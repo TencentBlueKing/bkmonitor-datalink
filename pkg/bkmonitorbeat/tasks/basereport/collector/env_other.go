@@ -7,6 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package toolkit
+//go:build darwin || freebsd
 
-const CrontabPath = "/var/cron/tabs"
+package collector
+
+func GetMaxFiles() (int, error) {
+	return 0, nil
+}
+
+func GetLoginUsers() (int, error) {
+	return 0, nil
+}
+
+func GetProcEnv() (runningProc, blockedProc, totalProc, ctxtProc int, lasterr error) {
+	return 0, 0, 0, 0, nil
+}

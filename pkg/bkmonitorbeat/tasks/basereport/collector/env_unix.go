@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
+//go:build aix || dragonfly || linux || netbsd || openbsd || solaris || zos
 
 package collector
 
@@ -19,112 +19,70 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"golang.org/x/sys/unix"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	FilePath    = "/proc/sys/fs/file-max"
-	VersionPath = "/proc/version"
-	StatPath    = "/proc/stat"
-	PtsPath     = "/dev/pts"
+	pathFsFileMax = "/proc/sys/fs/file-max"
+	pathProcStat  = "/proc/stat"
+	pathDevPts    = "/dev/pts"
 )
 
-// cat /proc/sys/fs/file-max
+// GetMaxFiles 获取 maxfiles 数值
 func GetMaxFiles() (int, error) {
-	fileContent, err := os.ReadFile(FilePath)
+	content, err := os.ReadFile(pathFsFileMax)
 	if err != nil {
 		return 0, err
 	}
-	fileCount := strings.Split(string(fileContent), "\n")
-	if len(fileCount) > 0 {
-		return strconv.Atoi(fileCount[0])
+
+	parts := strings.Split(string(content), "\n")
+	if len(parts) > 0 {
+		return strconv.Atoi(parts[0])
 	}
-	return 0, fmt.Errorf("not found Max files in %s", string(fileContent))
+	return 0, fmt.Errorf("not found maxfile in %s", string(content))
 }
 
-// cat /proc/version
-func GetUname() (string, error) {
-	fileContent, err := os.ReadFile(VersionPath)
-	if err != nil {
-		// freebsd无此文件，使用系统调用实现
-		if os.IsNotExist(err) {
-			var uname unix.Utsname
-			err = unix.Uname(&uname)
-			if err != nil {
-				return "", nil
-			}
-			fields := [][]byte{
-				uname.Sysname[:], uname.Nodename[:], uname.Release[:], uname.Version[:], uname.Machine[:]}
-			parts := make([]string, 0, len(fields))
-			for _, field := range fields {
-				parts = append(parts, string(field))
-			}
-			s := strings.Join(parts, " ")
-			return s, nil
-		}
-		return "", nil
-	}
-	return string(fileContent), nil
-}
-
-// GetLoginUsers: 获取当前登录的用户数量，通过遍历/dev/pts下的终端数量，判断用户个数
-// 返回内容是map，key为用户名，value为该用户登录的数量，以便统计
+// GetLoginUsers 获取当前登录的用户数量，通过遍历 /dev/pts 下的终端数量，判断用户个数
 func GetLoginUsers() (int, error) {
-	var (
-		result       int
-		fileInfoList []os.DirEntry
-		err          error
-	)
-
-	if _, err := os.Stat(PtsPath); err != nil && os.IsNotExist(err) {
-		return 0, fmt.Errorf("cannot get login user info for paht->[%s] is not exists", PtsPath)
+	entries, err := os.ReadDir(pathDevPts)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to read PtsPath files")
 	}
 
-	// 遍历/dev/pts下的所有内容
-	if fileInfoList, err = os.ReadDir(PtsPath); err != nil {
-		return 0, errors.Wrapf(err, "failed to get PtsPath files")
-	}
-
-	for _, fileInfo := range fileInfoList {
-		if _, err = strconv.Atoi(fileInfo.Name()); err != nil {
-			logger.Warnf("bad tty id->[%s] will jump it.", fileInfo.Name())
+	count := 0
+	for _, entry := range entries {
+		if _, err = strconv.Atoi(entry.Name()); err != nil {
+			logger.Warnf("ignore invalid tty id: %s", entry.Name())
 			continue
 		}
-		result++
+		count++
 	}
-
-	return result, nil
+	return count, nil
 }
 
-func GetProcEnv() (runningProc, blockedProc, proc, ctxt int, lasterr error) {
-	fileContent, err := os.ReadFile(StatPath)
+// GetProcEnv 获取 procenv 信息
+func GetProcEnv() (runningProc, blockedProc, totalProc, ctxtProc int, lasterr error) {
+	content, err := os.ReadFile(pathProcStat)
 	if err != nil {
-		// freebsd无此文件，忽略报错
-		if os.IsNotExist(err) {
-			return 0, 0, 0, 0, nil
-		}
 		return 0, 0, 0, 0, err
 	}
 
-	runningProc, err = regexValue("procs_running", fileContent)
-	blockedProc, err = regexValue("procs_blocked", fileContent)
-	proc, err = regexValue("processes", fileContent)
-	ctxt, err = regexValue("ctxt", fileContent)
-	return runningProc, blockedProc, proc, ctxt, err
+	runningProc, _ = parseProcsValue("procs_running", content)
+	blockedProc, _ = parseProcsValue("procs_blocked", content)
+	totalProc, _ = parseProcsValue("processes", content)
+	ctxtProc, _ = parseProcsValue("ctxt", content)
+	return runningProc, blockedProc, totalProc, ctxtProc, nil
 }
 
-func regexValue(name string, content []byte) (int, error) {
+func parseProcsValue(name string, content []byte) (int, error) {
 	expr := name + "\\s+[0-9]+"
-	reg, err := regexp.Compile(expr)
-	var line []byte
-	if err == nil {
-		line = reg.Find(content)
-	} else {
-		logger.Errorf("Compile regex failed %s", err)
+	re, err := regexp.Compile(expr)
+	if err != nil {
 		return 0, err
 	}
-	value := strings.Split(string(line), " ")
-	return strconv.Atoi(value[len(value)-1])
+
+	line := re.Find(content)
+	parts := strings.Split(string(line), " ")
+	return strconv.Atoi(parts[len(parts)-1])
 }

@@ -235,7 +235,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 			t0 := time.Now()
 			defer envJob.MarkFinished()
 			var err error
-			globalEnvInfo, err = GetEnvInfo(config)
+			globalEnvInfo, err = GetEnvInfo()
 			if err != nil {
 				logger.Errorf("collector env info failed: %v", err)
 			}

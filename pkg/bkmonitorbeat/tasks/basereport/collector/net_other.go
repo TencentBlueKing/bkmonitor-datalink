@@ -7,21 +7,6 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
+//go:build darwin || freebsd
 
-package toolkit
-
-import (
-	"os/exec"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
-func ListRouteTable() (string, error) {
-	bytes, err := exec.Command("route", "-n").CombinedOutput()
-	if err != nil {
-		logger.Errorf("exec route -n failed, err: %v", err)
-		return "", err
-	}
-	return string(bytes), nil
-}
+package collector

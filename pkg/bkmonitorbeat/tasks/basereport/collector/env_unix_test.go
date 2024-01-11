@@ -7,67 +7,46 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build linux
-// +build linux
+//go:build aix || dragonfly || linux || netbsd || openbsd || solaris || zos
 
 package collector
 
 import (
-	"regexp"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRegexValue(t *testing.T) {
+func TestParseProcsValue(t *testing.T) {
 	cases := []struct {
-		name      string
-		content   []byte
-		expected  int
-		expectErr bool
+		name     string
+		content  []byte
+		expected int
 	}{
 		{
-			name:     "case  1",
-			content:  []byte("testing  42"),
-			expected: 42,
+			name:     "column",
+			content:  []byte("column  16"),
+			expected: 16,
 		},
 		{
-			name:      "case  2",
-			content:   []byte("testing"),
-			expectErr: true,
+			name:     "column",
+			content:  []byte("column 16"),
+			expected: 16,
 		},
 		{
-			name:      "case  3",
-			content:   []byte("testing  4A"),
-			expectErr: true,
+			name:    "column",
+			content: []byte("column"),
+		},
+		{
+			name:    "column",
+			content: []byte("mando"),
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			actual, err := regexValues(tc.name, tc.content)
-			assert.True(t, tc.expectErr)
-			assert.NoError(t, err)
-			assert.Equal(t, actual, tc.expected)
+	for _, c := range cases {
+		t.Run("", func(t *testing.T) {
+			actual, _ := parseProcsValue(c.name, c.content)
+			assert.Equal(t, actual, c.expected)
 		})
 	}
-}
-
-func regexValues(name string, content []byte) (int, error) {
-	expr := name + "\\s[0-9]"
-	reg, err := regexp.Compile(expr)
-	if err != nil {
-		return 0, err
-	}
-
-	line := reg.Find(content)
-	if line == nil {
-		return 0, nil
-	}
-
-	value := strings.Split(string(line), "  ")
-
-	return strconv.Atoi(value[len(value)-1])
 }

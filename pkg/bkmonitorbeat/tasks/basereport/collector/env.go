@@ -9,57 +9,19 @@
 
 package collector
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/basereport/toolkit"
-)
-
 type EnvReport struct {
-	Contab      []toolkit.Crontab `json:"crontab"`
-	Host        string            `json:"host"`
-	Route       string            `json:"route"`
-	MaxFiles    int               `json:"maxfiles"`
-	Uname       string            `json:"uname"`
-	LoginUser   int               `json:"login_user"`
-	RunningProc int               `json:"proc_running_current"`
-	BlockedProc int               `json:"procs_blocked_current"`
-	Totalproc   int               `json:"procs_processes_total"`
-	Ctxt        int               `json:"procs_ctxt_total"`
+	MaxFiles    int `json:"maxfiles"`
+	LoginUser   int `json:"login_user"`
+	RunningProc int `json:"proc_running_current"`
+	BlockedProc int `json:"procs_blocked_current"`
+	TotalProc   int `json:"procs_processes_total"`
+	CtxtProc    int `json:"procs_ctxt_total"`
 }
 
-func GetEnvInfo(config configs.BasereportConfig) (*EnvReport, error) {
-	var report = EnvReport{
-		Contab: make([]toolkit.Crontab, 0),
-	}
+func GetEnvInfo() (*EnvReport, error) {
+	var report EnvReport
 	var err, lastErr error
-
-	if config.ReportCrontab {
-		report.Contab, err = toolkit.ListCrontab()
-		if err != nil {
-			lastErr = err
-		}
-	}
-
-	if config.ReportHosts {
-		report.Host, err = toolkit.ListHosts()
-		if err != nil {
-			lastErr = err
-		}
-	}
-
-	if config.ReportRoute {
-		report.Route, err = toolkit.ListRouteTable()
-		if err != nil {
-			lastErr = err
-		}
-	}
-
 	report.MaxFiles, err = GetMaxFiles()
-	if err != nil {
-		lastErr = err
-	}
-
-	report.Uname, err = GetUname()
 	if err != nil {
 		lastErr = err
 	}
@@ -69,7 +31,7 @@ func GetEnvInfo(config configs.BasereportConfig) (*EnvReport, error) {
 		lastErr = err
 	}
 
-	report.RunningProc, report.BlockedProc, report.Totalproc, report.Ctxt, err = GetProcEnv()
+	report.RunningProc, report.BlockedProc, report.TotalProc, report.CtxtProc, err = GetProcEnv()
 	if err != nil {
 		lastErr = err
 	}

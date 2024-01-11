@@ -301,10 +301,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:  spaceUid,
-		TableID:   tableID,
-		FieldName: metricName,
-		IsRegexp:  q.IsRegexp,
+		SpaceUid:   spaceUid,
+		TableID:    tableID,
+		FieldName:  metricName,
+		IsRegexp:   q.IsRegexp,
+		Conditions: q.Conditions,
 	})
 	if err != nil {
 		return nil, err
@@ -357,7 +358,6 @@ func (q *Query) BuildMetadataQuery(
 				SOffSet: q.Soffset,
 				SLimit:  q.Slimit,
 			},
-			LabelsMatcher: make([]*labels.Matcher, 0),
 		}
 		allCondition AllConditions
 
@@ -403,7 +403,6 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(queryConditions) > 0 {
-		query.LabelsMatcher = append(query.LabelsMatcher, queryLabelsMatcher...)
 
 		// influxdb 查询特殊处理逻辑
 		influxdbConditions := ConvertToPromBuffer(queryConditions)
@@ -452,36 +451,58 @@ func (q *Query) BuildMetadataQuery(
 
 	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
 
-	// 拼入空间自带过滤条件
-	var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))
-	for _, filter := range tsDB.Filters {
-		var (
-			cond           = make([]ConditionField, 0, len(filter))
-			labelsMatchers = make([]*labels.Matcher, 0, len(filter))
-		)
-		for k, v := range filter {
-			if v != "" {
-				cond = append(cond, ConditionField{
-					DimensionName: k,
-					Value:         []string{v},
-					Operator:      Contains,
-				})
+	//// 拼入空间自带过滤条件
+	//var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))
+	//for _, filter := range tsDB.Filters {
+	//	var (
+	//		cond           = make([]ConditionField, 0, len(filter))
+	//		labelsMatchers = make([]*labels.Matcher, 0, len(filter))
+	//	)
+	//	for k, v := range filter {
+	//		if v != "" {
+	//			cond = append(cond, ConditionField{
+	//				DimensionName: k,
+	//				Value:         []string{v},
+	//				Operator:      Contains,
+	//			})
+	//
+	//			matcher, _ := labels.NewMatcher(labels.MatchEqual, k, v)
+	//			labelsMatchers = append(labelsMatchers, matcher)
+	//		}
+	//	}
+	//
+	//	if len(cond) > 0 {
+	//		filterConditions = append(filterConditions, cond)
+	//	}
+	//
+	//	// labelsMatcher 不支持 or 语法，所以只取第一个
+	//	if len(tsDB.Filters) == 1 {
+	//		query.LabelsMatcher = append(query.LabelsMatcher, labelsMatchers...)
+	//	}
+	//}
 
-				matcher, _ := labels.NewMatcher(labels.MatchEqual, k, v)
-				labelsMatchers = append(labelsMatchers, matcher)
+	filterConditions := make([][]ConditionField, 0)
+	satisfy, tKeys := judgeFilter(tsDB.Filters)
+	// 满足压缩条件
+	if satisfy {
+		filterConditions = compressFilterCondition(tKeys, tsDB.Filters)
+	} else {
+		for _, filter := range tsDB.Filters {
+			cond := make([]ConditionField, 0, len(filter))
+			for k, v := range filter {
+				if v != "" {
+					cond = append(cond, ConditionField{
+						DimensionName: k,
+						Value:         []string{v},
+						Operator:      Contains,
+					})
+				}
+			}
+			if len(cond) > 0 {
+				filterConditions = append(filterConditions, cond)
 			}
 		}
-
-		if len(cond) > 0 {
-			filterConditions = append(filterConditions, cond)
-		}
-
-		// labelsMatcher 不支持 or 语法，所以只取第一个
-		if len(tsDB.Filters) == 1 {
-			query.LabelsMatcher = append(query.LabelsMatcher, labelsMatchers...)
-		}
 	}
-
 	if len(filterConditions) > 0 {
 		whereList.Append(
 			promql.AndOperator,

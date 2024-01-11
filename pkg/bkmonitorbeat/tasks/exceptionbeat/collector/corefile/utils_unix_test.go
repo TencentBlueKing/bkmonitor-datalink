@@ -21,6 +21,51 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 )
 
+func TestTranslate(t *testing.T) {
+	testCases := []struct {
+		text     string
+		expected string
+	}{
+		{"", ""},
+		{"1", "hangup"},
+		{"2", "interrupt"},
+		{"9999", ""},
+		{"abc", "abc"},
+	}
+
+	translator := &SignalTranslator{}
+
+	for _, testCase := range testCases {
+		result := translator.Translate(testCase.text)
+		if result != testCase.expected {
+			t.Errorf("Expected %s, but got %s", testCase.expected, result)
+		}
+	}
+}
+
+func TestExecutablePathTranslator_Translate(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected string
+	}{
+		{"../path!to!file.ext", "../path/to/file.ext"},
+		{"folder!/file!/name.ext", "folder/file/name.ext"},
+		{"root!!file.txt", "root//file.txt"},
+		{"no!exclamation!mark!in!path", "no!exclamation!mark!in!path"},
+		{"!at!the!beginning", "/at/the/beginning"},
+		{"at!the!end!", "at/the/end/"},
+	}
+
+	translator := &ExecutablePathTranslator{}
+
+	for _, test := range tests {
+		result := translator.Translate(test.path)
+		if result != test.expected {
+			t.Errorf("Translate(%q) = %q, want %q", test.path, result, test.expected)
+		}
+	}
+}
+
 type PatternTestCase struct {
 	pattern  string
 	error    error
@@ -85,9 +130,9 @@ func TestCheckPattern(t *testing.T) {
 			continue
 		}
 		for i, e := range item.expected {
-			assert.Equal(t, e[0], c.patternArr[i][0])
-			assert.Equal(t, e[1], c.patternArr[i][1])
-			assert.Equal(t, e[2], c.patternArr[i][2])
+			assert.Equal(t, e[0], c.patternList[i][0])
+			assert.Equal(t, e[1], c.patternList[i][1])
+			assert.Equal(t, e[2], c.patternList[i][2])
 		}
 	}
 }

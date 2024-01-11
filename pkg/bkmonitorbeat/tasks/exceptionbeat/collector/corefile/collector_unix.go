@@ -16,12 +16,18 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/exceptionbeat/collector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+var (
+	ErrPatternDelimiter = errors.New("invalid pattern delimiter")
+	ErrRegexMatch       = errors.New("regex does not match")
 )
 
 const (
@@ -42,7 +48,7 @@ type Collector struct {
 	coreFilePattern         string
 	corePath                string
 	pattern                 string
-	patternArr              [][]string
+	patternList             [][]string
 	coreWatcher             *fsnotify.Watcher
 	isUsesPid               bool
 	isCorePathAddSuccess    bool
@@ -57,18 +63,14 @@ func init() {
 	collector.RegisterCollector(new(Collector))
 }
 
-func (c *Collector) String() string {
-	return "Collector/CoreFile"
-}
-
 func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Infof("%s is running...", c)
+	logger.Info("collector is running...")
 	if (conf.CheckBit & configs.Core) == 0 {
-		logger.Infof("%s closed by config: %s", c, conf.CheckMethod)
+		logger.Info(" corefile collector closed by config: %s", conf.CheckMethod)
 		return
 	}
 	if c.state == runningState {
-		logger.Infof("%s already started", c)
+		logger.Info(" corefile collector already started")
 		return
 	}
 
@@ -81,7 +83,7 @@ func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *conf
 	c.reportTimeInfo = make(map[string]*ReportInfo)
 	c.coreFilePattern = conf.CoreFilePattern
 
-	logger.Infof("%s start with data_id->[%d] report_gap->[%s]", c, c.dataid, c.reportTimeGap)
+	logger.Infof("corefile collector start with data_id->[%d] report_gap->[%s]", c.dataid, c.reportTimeGap)
 	go c.statistic(ctx, e)
 }
 
@@ -89,15 +91,15 @@ func (c *Collector) Reload(conf *configs.ExceptionBeatConfig) {}
 
 func (c *Collector) Stop() {
 	if c.state == closeState {
-		logger.Errorf("%s stop failed: collector not open", c)
+		logger.Error("collector stop failed: collector not open")
 		return
 	}
 	c.state = closeState
 	close(c.done)
-	logger.Infof("%s stopped", c)
+	logger.Info("corefile collector stopped")
 }
 
-func (c *Collector) buildExtra(path string, dimensions beat.MapStr) beat.MapStr {
+func buildExtra(path string, dimensions beat.MapStr) beat.MapStr {
 	extra := beat.MapStr{
 		"bizid":    collector.BizID,
 		"cloudid":  collector.CloudID,

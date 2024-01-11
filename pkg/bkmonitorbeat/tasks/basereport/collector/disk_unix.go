@@ -34,11 +34,6 @@ const (
 	partitionPath   = "partition"
 )
 
-func fileExist(path string) bool {
-	_, err := os.Lstat(path)
-	return !os.IsNotExist(err)
-}
-
 func formatMountPoint(mountpoint string) string {
 	spaceCode := "\\040"
 	if strings.Index(mountpoint, spaceCode) != -1 {
@@ -47,11 +42,16 @@ func formatMountPoint(mountpoint string) string {
 	return mountpoint
 }
 
+func isFileExist(path string) bool {
+	_, err := os.Lstat(path)
+	return !os.IsNotExist(err)
+}
+
 func isPartition(diskStat DiskStats) bool {
 	deviceCode := strconv.FormatUint(diskStat.MajorNum, 10) + ":" + strconv.FormatUint(diskStat.MinorNum, 10)
 	devPath := filepath.Join(basicSysDevPath, deviceCode, partitionPath)
 	// 存在partition文件，说明是分区
-	if fileExist(devPath) {
+	if isFileExist(devPath) {
 		return true
 	}
 	// 否则根据设备名称判断是否为分区
@@ -149,7 +149,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 		diskName := getDiskName(partition.Device)
 		if diskName != "" {
 			if !checkBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
-				logger.Debugf("filtered disk partition and usage by disk black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+				logger.Debugf("filtered disk partition and usage by disk black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 				continue
 			}
 		}
@@ -158,25 +158,25 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 		devName := getDevName(partition.Device)
 		// device(partition)层级黑白名单
 		if !checkBlackWhiteList(devName, config.PartitionWhiteList, config.PartitionBlackList) {
-			logger.Debugf("filtered disk partition and usage by partition black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+			logger.Debugf("filtered disk stats by partition black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 		// mountpoint层级黑白名单
 		if !checkBlackWhiteList(partition.Mountpoint, config.MountpointWhiteList, config.MountpointBlackList) {
-			logger.Debugf("filtered disk partition and usage by mountpoint black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+			logger.Debugf("filtered disk stats by mountpoint black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 
 		// 过滤文件系统类型黑白名单
 		if !checkBlackWhiteList(partition.Fstype, config.FSTypeWhiteList, config.FSTypeBlackList) {
-			logger.Debugf("filtered disk partition and usage by fs type black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+			logger.Debugf("filtered disk stats by fs type black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 
 		// device上报去重
 		if config.DropDuplicateDevice {
 			if _, ok := deviceMap[partition.Device]; ok {
-				logger.Debugf("duplicate device name:%s,which mountpoint is:%s,dropped", partition.Device, partition.Mountpoint)
+				logger.Debugf("duplicate device name=%s, mountpoint=%s, will dropped", partition.Device, partition.Mountpoint)
 				continue
 			}
 			deviceMap[partition.Device] = true

@@ -7,12 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package outofmem
+//go:build windows
+
+package collector
 
 import (
-	"context"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
-func startTraceOOM(ctx context.Context, infoChan chan *OOMInfo) error {
-	return nil
+func PhysicalMemoryInfo(specialSource bool) (info *mem.VirtualMemoryStat, err error) {
+	info, err = mem.VirtualMemory()
+	info.Free = info.Available
+	return
+}
+
+func GetSwapInfo() (in, out float64, err error) {
+	return 0, 0, nil
 }

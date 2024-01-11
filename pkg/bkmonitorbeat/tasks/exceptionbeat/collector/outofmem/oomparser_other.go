@@ -7,26 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build linux
-// +build linux
+//go:build darwin || freebsd
 
-package collector
+package outofmem
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+	"context"
 )
 
-func TestGetLoadInfo(t *testing.T) {
-	actualLoad, err := GetLoadInfo()
-	assert.NoError(t, err)
-	assert.NotNil(t, actualLoad.LoadAvg)
-	assert.NotEqual(t, actualLoad.PerCpuLoad, 0)
-}
-
-func TestGetCpuCores(t *testing.T) {
-	cores, err := GetCpuCores()
-	assert.NoError(t, err)
-	assert.NotEqual(t, cores, 0)
+func startTraceOOM(ctx context.Context, infoChan chan *OOMInfo) error {
+	return nil
 }

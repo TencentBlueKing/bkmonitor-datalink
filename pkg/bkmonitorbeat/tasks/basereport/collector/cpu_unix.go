@@ -43,11 +43,12 @@ func getCPUStatUsage(report *CpuReport) error {
 	if err != nil {
 		return err
 	}
+
 	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
 
-	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
+	// 判断 lastPerCPUTimes 长度，增加重写避免 init 方法失效的情况
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 {
 		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
 		if err != nil {
@@ -57,8 +58,7 @@ func getCPUStatUsage(report *CpuReport) error {
 
 	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
 	if l1 != l2 {
-		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
-		return err
+		return fmt.Errorf("received two CPU counts %d != %d", l1, l2)
 	}
 
 	for index, value := range perCPUTimes {
@@ -72,7 +72,7 @@ func getCPUStatUsage(report *CpuReport) error {
 		return err
 	}
 
-	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
+	// 判断 lastCPUTimes 的长度，增加重写避免 init 方法失效的情况
 	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
 		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
 		if err != nil {
@@ -84,7 +84,7 @@ func getCPUStatUsage(report *CpuReport) error {
 	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
 
-	// 将此次获取的timeState重新写入公共变量
+	// 将此次获取的 timeState 重新写入公共变量
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
@@ -115,10 +115,11 @@ func getCPUStatUsage(report *CpuReport) error {
 // queryCpuInfo: 查询获取机器的CPU信息
 func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) (err error) {
 	if r.Cpuinfo, err = cpu.Info(); err != nil {
-		logger.Errorf("failed to get cpu info for: %v", err)
+		logger.Errorf("failed to get cpu info, err: %v", err)
 		return err
 	}
-	// gopsutil查询失败的情况下，利用 dmidecode 命令查询 cpu 基础信息并上报
+
+	// gopsutil 查询失败的情况下，利用 dmidecode 命令查询 cpu 基础信息并上报
 	if r.Cpuinfo == nil {
 		r.Cpuinfo = make([]cpu.InfoStat, 0)
 		r.Cpuinfo = append(r.Cpuinfo, cpu.InfoStat{})
@@ -127,7 +128,7 @@ func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) (err error) {
 	var mhz float64
 	useDmidecode := false
 	if len(r.Cpuinfo) > 0 {
-		// 取第一个cpu检查，如果发现存在信息为空的情况，则启用dmidecode进行填充
+		// 取第一个 cpu 检查，如果发现存在信息为空的情况，则启用 dmidecode 进行填充
 		if r.Cpuinfo[0].Mhz == 0 || r.Cpuinfo[0].Model == "" {
 			model, mhz = getDMIDecodeCPUInfo()
 			useDmidecode = true
@@ -136,12 +137,12 @@ func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) (err error) {
 		logger.Warn("get empty cpu info, something wrong?")
 	}
 
-	// 不需要dmidecode则直接返回即可，cpu信息已经放在r.Cpuinfo
+	// 不需要 dmidecode 则直接返回即可，cpu 信息已经放在 r.Cpuinfo
 	if !useDmidecode {
 		return nil
 	}
 
-	// 用dmidecode信息填充所有核
+	// 用 dmidecode 信息填充所有核
 	for index, info := range r.Cpuinfo {
 		info.Mhz = mhz
 		info.Model = model
@@ -149,28 +150,29 @@ func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) (err error) {
 		r.Cpuinfo[index] = info
 	}
 
-	logger.Debugf("get cpu_info success->[%v]", r.Cpuinfo)
+	logger.Debugf("get cpu_info success: %+v", r.Cpuinfo)
 	return nil
 }
 
-func getDMIDecodeCPUInfo() (model string, mhz float64) {
-	model = "unknown"
-	mhz = -1
+func getDMIDecodeCPUInfo() (string, float64) {
+	var mhz float64 = -1
+	model := "unknown"
 	dmi, err := dmidecode.New()
 	if err != nil {
-		logger.Errorf("init dmidecoder error:%s", err)
-		return
+		logger.Errorf("init dmidecoder error: %s", err)
+		return model, mhz
 	}
 	processor, err := dmi.Processor()
 	if err != nil {
-		logger.Errorf("get dmi processor error:%s", err)
-		return
+		logger.Errorf("get dmi processor error: %s", err)
+		return model, mhz
 	}
+
 	if len(processor) > 0 {
 		mhz = float64(processor[0].MaxSpeed)
 		model = processor[0].Version
 	}
-	return
+	return model, mhz
 }
 
 func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {

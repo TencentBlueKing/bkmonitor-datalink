@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build windows
+
 package collector
 
 import (
@@ -18,26 +20,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// FilterDiskIoStats 过滤磁盘io信息
+// FilterDiskIoStats 过滤磁盘 io 信息
 func FilterDiskIoStats(diskStats map[string]DiskStats, config configs.DiskConfig) map[string]DiskStats {
 	resultDiskStats := make(map[string]DiskStats)
 	partitions, err := disk.Partitions(true)
 	if err != nil {
-		logger.Errorf("get partitions failed,error:%s", err)
+		logger.Errorf("get partitions failed, err: %s", err)
 	}
 diskStatsLoop:
-	// 过滤掉partition，只留下设备
+	// 过滤掉 partition，只留下设备
 	for name, diskStat := range diskStats {
 		// windows下上报的是分区数据，所以这里的黑白名单是分区黑白名单
-		if !CheckBlackWhiteList(name, config.PartitionWhiteList, config.PartitionBlackList) {
+		if !checkBlackWhiteList(name, config.PartitionWhiteList, config.PartitionBlackList) {
 			logger.Debugf("filtered disk io status by black-white list:%s", name)
 			continue
 		}
 		// 校验分区类型
 		for _, partition := range partitions {
 			// 过滤文件系统类型黑白名单
-			if partition.Device == name && !CheckBlackWhiteList(strings.ToLower(partition.Fstype), config.FSTypeWhiteList, config.FSTypeBlackList) {
-				logger.Debugf("filtered disk partition and usage by fs type black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+			if partition.Device == name && !checkBlackWhiteList(strings.ToLower(partition.Fstype), config.FSTypeWhiteList, config.FSTypeBlackList) {
+				logger.Debugf("filtered disk stats by fs type black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 				continue diskStatsLoop
 			}
 		}
@@ -52,13 +54,13 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 	for _, partition := range partitionStats {
 
 		// windows上报数据只有分区概念，所以只验证分区黑白名单
-		if !CheckBlackWhiteList(partition.Device, config.PartitionWhiteList, config.PartitionBlackList) {
-			logger.Debugf("filtered disk partition and usage by partition black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+		if !checkBlackWhiteList(partition.Device, config.PartitionWhiteList, config.PartitionBlackList) {
+			logger.Debugf("filtered disk stats by partition black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 		// 过滤文件系统类型黑白名单
-		if !CheckBlackWhiteList(strings.ToLower(partition.Fstype), config.FSTypeWhiteList, config.FSTypeBlackList) {
-			logger.Debugf("filtered disk partition and usage by fs type black-white list,device:%s,mountpoint:%s", partition.Device, partition.Mountpoint)
+		if !checkBlackWhiteList(strings.ToLower(partition.Fstype), config.FSTypeWhiteList, config.FSTypeBlackList) {
+			logger.Debugf("filtered disk stats by fs type black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
 

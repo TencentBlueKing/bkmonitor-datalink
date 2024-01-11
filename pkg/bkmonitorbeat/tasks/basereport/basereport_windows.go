@@ -8,17 +8,16 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build windows
-// +build windows
 
 package basereport
 
 import (
-	"github.com/yusufpapurcu/wmi"
+	wmi "github.com/yusufpapurcu/wmi"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// windows独有的init操作，为了可以初始化wmi依赖库的使用
+// windows 独有的 init 操作，为了可以初始化 wmi 依赖库的使用
 // 以便防止内存泄露的问题
 func init() {
 	s, err := wmi.InitializeSWbemServices(wmi.DefaultClient)
@@ -29,5 +28,4 @@ func init() {
 		return
 	}
 	wmi.DefaultClient.SWbemServicesClient = s
-	return
 }

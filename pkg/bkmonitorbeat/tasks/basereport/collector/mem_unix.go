@@ -13,7 +13,6 @@ package collector
 
 import (
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/mem"
@@ -21,78 +20,60 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type swapinfo struct {
-	Sin  uint64
-	Sout uint64
-}
-
-func PhysicalMemoryInfo(specialSource bool) (info *mem.VirtualMemoryStat, err error) {
+func PhysicalMemoryInfo(specialSource bool) (*mem.VirtualMemoryStat, error) {
 	// 原本的方案 usedPercent = total-available/total
-	info, err = mem.VirtualMemory()
-
-	// 内部特殊富容器的监控支持
-	getIEGMemInfo(info)
-
-	if !specialSource {
-		return
-	}
-
+	info, err := mem.VirtualMemory()
 	if err != nil {
 		return nil, err
 	}
 
+	// 内部特殊富容器的监控支持
+	getIEGMemInfo(info)
+	if !specialSource {
+		return info, nil
+	}
+
 	// 使用特殊方案时，usedPercent = Used/total
 	info.UsedPercent = float64(info.Used) / float64(info.Total) * 100.0
-	return
+	return info, nil
 
 }
 
-func GetSwapInfo() (in, out float64, lasterr error) {
-	var wg sync.WaitGroup
-	var sinfobefore, sinfoafter = new(swapinfo), new(swapinfo)
-
-	wg.Add(2)
-	go func(sinfobefore *swapinfo) {
-		defer wg.Done()
-		sinfobefore, err := getSwapInfoLogic(sinfobefore)
-		if err != nil {
-			lasterr = err
-		}
-	}(sinfobefore)
-
-	// 隔一秒，取下一秒的值
-	go func(sinfoafter *swapinfo) {
-		defer wg.Done()
-		time.Sleep(1 * time.Second)
-		sinfoafter, err := getSwapInfoLogic(sinfoafter)
-		if err != nil {
-			lasterr = err
-		}
-	}(sinfoafter)
-
-	wg.Wait()
-	if lasterr != nil {
-		return 0, 0, lasterr
+func GetSwapInfo() (float64, float64, error) {
+	first, err := getSwapInfo()
+	if err != nil {
+		return 0, 0, err
 	}
 
-	logger.Debugf("sinfobefore: in: %d, out:%d", sinfobefore.Sin, sinfobefore.Sout)
-	logger.Debugf("sinfoafter: in: %d, out:%d", sinfoafter.Sin, sinfoafter.Sout)
-	in = float64(sinfoafter.Sin - sinfobefore.Sin)
-	out = float64(sinfoafter.Sout - sinfobefore.Sout)
+	time.Sleep(1 * time.Second)
+	second, err := getSwapInfo()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	logger.Debugf("first swapinfo: %+v, second swapinfo: %+v", first, second)
+	in := float64(second.Sin - first.Sin)
+	out := float64(second.Sout - first.Sout)
 	return in, out, nil
 }
 
-func getSwapInfoLogic(sinfo *swapinfo) (*swapinfo, error) {
-	swapInfo, err := mem.SwapMemory()
+type swapInfo struct {
+	Sin  uint64
+	Sout uint64
+}
+
+func getSwapInfo() (*swapInfo, error) {
+	var si swapInfo
+	swapMemoryStat, err := mem.SwapMemory()
 	if err != nil {
 		if strings.Contains(err.Error(), "no swap devices") {
-			return sinfo, nil
+			return &si, nil
 		}
 		return nil, err
 	}
 
 	const kb uint64 = 1024
-	sinfo.Sin = swapInfo.Sin / kb
-	sinfo.Sout = swapInfo.Sout / kb
-	return sinfo, nil
+	si.Sin = swapMemoryStat.Sin / kb
+	si.Sout = swapMemoryStat.Sout / kb
+	return &si, nil
 }

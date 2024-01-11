@@ -17,10 +17,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"golang.org/x/sys/unix"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/exceptionbeat/collector"
@@ -50,7 +53,7 @@ var (
 		"%t": "\\d+",
 		"%u": "\\d+",
 	}
-	SpecifierParseMap = map[string]CoreFileDimension{
+	SpecifierParseMap = map[string]Dimension{
 		"%e": {
 			name:       ExecutableKeyName,
 			translator: nil,
@@ -70,7 +73,29 @@ var (
 	}
 )
 
-type CoreFileDimension struct {
+type Translator interface {
+	Translate(text string) string
+}
+
+type SignalTranslator struct{}
+
+func (t *SignalTranslator) Translate(text string) string {
+	// 将对应的信号值，转化为信号名
+	signalNum, err := strconv.Atoi(text)
+	if err != nil {
+		return text
+	}
+	return unix.SignalName(syscall.Signal(signalNum))
+}
+
+type ExecutablePathTranslator struct{}
+
+func (t *ExecutablePathTranslator) Translate(text string) string {
+	// 将路径中的"!"替换为"/"
+	return strings.ReplaceAll(text, "!", "/")
+}
+
+type Dimension struct {
 	name       string
 	translator Translator
 }
@@ -102,10 +127,10 @@ func (c *Collector) handleCorePatternFileEvent(event fsnotify.Event) {
 	// 直接写入(write事件)或者通过vim编辑(重命名事件)
 	// 其他事件(删除、修改属性、创建)并不关注
 	if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
-		logger.Infof("Collector found pattern->[%s] updated, will refresh core fil path.", event.Name)
+		logger.Infof("Collector found pattern->[%s] updated, will refresh core fil path", event.Name)
 		err := c.updateCoreFilePath()
 		if err != nil {
-			logger.Errorf("Collector core file watcher updated error: %s, will wait next update.", err.Error())
+			logger.Errorf("Collector core file watcher updated error: %s, will wait next update", err)
 		}
 		errPattern := c.checkPattern()
 		if errPattern != nil {
@@ -123,7 +148,7 @@ func (c *Collector) handleCoreUsesPidFileEvent(event fsnotify.Event) {
 		logger.Infof("Collector found core_uses_pid->[%s] updated, will refresh core fil path.", event.Name)
 		err := c.setCoreUsesPid()
 		if err != nil {
-			logger.Errorf("Collector core_uses_pid file watcher updated error: %s, will wait next update.", err.Error())
+			logger.Errorf("Collector core_uses_pid file watcher updated error: %s, will wait next update", err)
 		}
 	}
 }
@@ -157,7 +182,7 @@ func (c *Collector) handleCoreFileEvent(event fsnotify.Event, e chan<- define.Ev
 			)
 			return
 		}
-		extra := c.buildExtra(event.Name, dimensions)
+		extra := buildExtra(event.Name, dimensions)
 		if nil == extra {
 			// 此时可能是因为从agent获取IP等信息异常，那么此时消息没有必要发送，因为发送后也没法知道是哪个机器发生异常
 			return
@@ -212,14 +237,14 @@ func (c *Collector) handleSendEvent(e chan<- define.Event) {
 	for key, reportInfo := range c.reportTimeInfo {
 		// 如果有上报时间已经超过的，而且存在上报记录信息的，需要上报
 		if now.Sub(reportInfo.time) > c.reportTimeGap && reportInfo.count > 0 {
-			logger.Debugf("key->[%s] last report time->[%s] now is more than gap->[%s] will report it. ", key, reportInfo.time, c.reportTimeGap)
+			logger.Debugf("key->[%s] last report time->[%s] now is more than gap->[%s] will report it", key, reportInfo.time, c.reportTimeGap)
 			reportInfo.info["count"] = reportInfo.count
 			collector.Send(int(c.dataid), reportInfo.info, e)
-			logger.Debugf("key->[%s] last report time->[%s] gap->[%s] now is reported it, will update report time and count. ", key, reportInfo.time, c.reportTimeGap)
+			logger.Debugf("key->[%s] last report time->[%s] gap->[%s] now is reported it, will update report time and count", key, reportInfo.time, c.reportTimeGap)
 
 			reportInfo.time = time.Now()
 			reportInfo.count = 0
-			logger.Infof("key->[%s] is report and count is set to zero and report time set to now.", key)
+			logger.Infof("key->[%s] is report and count is set to zero and report time set to now", key)
 		}
 	}
 	logger.Debugf("routine check for corefile delay report done.")
@@ -230,7 +255,7 @@ func (c *Collector) addCoreWatch() {
 	logger.Infof("Collector add path->[%s] to watcher.", c.corePath)
 	err := c.coreWatcher.Add(c.corePath)
 	if err != nil {
-		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s, will wait next pattern update.", c.corePath, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s, will wait next pattern update", c.corePath, err)
 	} else {
 		c.isCorePathAddSuccess = true
 	}
@@ -240,7 +265,7 @@ func (c *Collector) addCoreWatch() {
 func (c *Collector) watchSystemFiles() {
 	err := c.coreWatcher.Add(CorePatternFile)
 	if err != nil {
-		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CorePatternFile, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CorePatternFile, err)
 		c.isCorePatternAddSuccess = false
 	} else {
 		c.isCorePatternAddSuccess = true
@@ -248,7 +273,7 @@ func (c *Collector) watchSystemFiles() {
 
 	err = c.coreWatcher.Add(CoreUsesPidFile)
 	if err != nil {
-		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CoreUsesPidFile, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", CoreUsesPidFile, err)
 		c.isCoreUsesPidAddSuccess = false
 	} else {
 		c.isCoreUsesPidAddSuccess = true
@@ -298,7 +323,7 @@ func (c *Collector) loopCheck(ctx context.Context, e chan<- define.Event) {
 				logger.Infof("Collector core file watcher closed")
 				return
 			}
-			logger.Errorf("Collector core file watcher error: %s", err.Error())
+			logger.Errorf("Collector core file watcher error: %s", err)
 		case _, ok := <-c.done:
 			if !ok {
 				// 结束采集
@@ -315,7 +340,7 @@ func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 	c.isCorePatternAddSuccess = false
 	path, err := c.getCoreFilePath()
 	if err != nil {
-		logger.Errorf("Collector obtaining file's name failed with error message: %s", err.Error())
+		logger.Errorf("Collector obtaining file's name failed with error message: %s", err)
 	}
 
 	logger.Infof("Core file path read from core_pattern: %s", path)
@@ -330,7 +355,7 @@ func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 	}
 	c.coreWatcher, err = fsnotify.NewWatcher()
 	if err != nil {
-		logger.Errorf("Collector initing core file watcher watcher failed with error message: %s", err.Error())
+		logger.Errorf("Collector initing core file watcher watcher failed with error message: %s", err)
 		c.Stop()
 		return
 	}
@@ -387,7 +412,7 @@ func (c *Collector) getCoreFilePath() (string, error) {
 func (c *Collector) updateCoreFilePath() error {
 	path, err := c.getCoreFilePath()
 	if err != nil {
-		logger.Errorf("Collector obtaining file's name failed with error message: %s", err.Error())
+		logger.Errorf("Collector obtaining file's name failed with error message: %s", err)
 		return err
 	}
 	logger.Infof("Core file path read from core_pattern: %s", path)
@@ -400,7 +425,7 @@ func (c *Collector) updateCoreFilePath() error {
 	if c.corePath != "" && c.isCorePathAddSuccess {
 		err = c.coreWatcher.Remove(c.corePath)
 		if err != nil {
-			logger.Errorf("Collector remove \"%s\" from watcher failed with error: %s", c.corePath, err.Error())
+			logger.Errorf("Collector remove \"%s\" from watcher failed with error: %s", c.corePath, err)
 			return err
 		}
 	}
@@ -408,7 +433,7 @@ func (c *Collector) updateCoreFilePath() error {
 	c.corePath = path
 	err = c.coreWatcher.Add(c.corePath)
 	if err != nil {
-		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", c.corePath, err.Error())
+		logger.Errorf("Collector add \"%s\" to watcher failed with error: %s", c.corePath, err)
 		c.isCorePathAddSuccess = false
 		return err
 	}
@@ -419,11 +444,11 @@ func (c *Collector) updateCoreFilePath() error {
 
 // getDimensionRegs 获取完整正则匹配对象和所有维度匹配对象列表
 func (c *Collector) getDimensionReg(greedy bool) *regexp.Regexp {
-	patternArrLen := len(c.patternArr)
+	patternArrLen := len(c.patternList)
 	// 根据pattern拼接正则表达式，对corefile文件名进行维度提取
 	content := `(%s%s)`
 	dimensionReg := `^`
-	for i, value := range c.patternArr {
+	for i, value := range c.patternList {
 		if i < (patternArrLen - 1) {
 			specifier := value[2]
 			dimension, exist := SpecifierParseMap[specifier]
@@ -480,9 +505,7 @@ func (c *Collector) parseDimensions(groups []regexGroup) beat.MapStr {
 		}
 	}
 	if ignoredForConfused > 0 {
-		logger.Infof("dimension ignored for confused regex groups: %+v",
-			groups,
-		)
+		logger.Infof("dimension ignored for confused regex groups: %+v", groups)
 	}
 	return dimensions
 }
@@ -494,16 +517,17 @@ func (c *Collector) fillDimension(filePath string) (beat.MapStr, bool) {
 	// 获取core file文件名
 	fileName, errFileName := c.getCoreFileName(filePath)
 	if errFileName != nil {
-		logger.Errorf(errFileName.Error())
+		logger.Error(errFileName)
 		return beat.MapStr{}, false
 	}
-	if c.patternArr == nil {
+	if c.patternList == nil {
 		// 如果此时无法正常获取正则规则，那么我们会认为无法判断，会将任何文件都返回
 		logger.Error("parsing of the pattern had failed")
 		return beat.MapStr{}, true
 	}
 	reg := c.getDimensionReg(false)
 	logger.Infof("core file dimensionReg: %s, filename: %s", reg.String(), fileName)
+
 	// 贪婪
 	greedyReg := c.getDimensionReg(true)
 	logger.Infof("core file dimensionReg greedy: %s, filename: %s", greedyReg.String(), fileName)
@@ -511,9 +535,10 @@ func (c *Collector) fillDimension(filePath string) (beat.MapStr, bool) {
 	result := reg.FindAllStringSubmatch(fileName, -1)
 	// 说明没有完全匹配上，说明有问题，那么此时直接返回原本的维度信息
 	if len(result) != 1 {
-		logger.Errorf("%s, dimensionReg: %s, filename: %s", ErrRegexMatch.Error(), reg.String(), fileName)
+		logger.Errorf("%s, dimensionReg: %s, filename: %s", ErrRegexMatch, reg.String(), fileName)
 		return beat.MapStr{}, false
 	}
+
 	values := result[0][1:]
 	names := reg.SubexpNames()[1:]
 	// 贪婪模式匹配用来对比结果
@@ -562,21 +587,21 @@ func (c *Collector) checkPattern() error {
 	// 提取pattern中的占位符及占位符的前缀
 	reg := regexp.MustCompile(`(.*?)(%[a-zA-Z])`)
 	result := reg.FindAllStringSubmatch(myPattern, -1)
-	c.patternArr = nil
+	c.patternList = nil
 	// 未能匹配到占位符，则直接返回
 	if len(result) < 1 {
-		logger.Infof("%s, regex: %s, pattern: %s", ErrRegexMatch.Error(), reg, c.pattern)
+		logger.Infof("%s, regex: %s, pattern: %s", ErrRegexMatch, reg, c.pattern)
 		return ErrRegexMatch
 	}
 
 	for key, value := range result[:len(result)-1] {
 		// 第一个占位符允许没有前缀，后续占位符必须有前缀
 		if key != 0 && value[1] == "" {
-			logger.Errorf("%s, pattern: %s", ErrPatternDelimiter.Error(), c.pattern)
+			logger.Errorf("%s, pattern: %s", ErrPatternDelimiter, c.pattern)
 			return ErrPatternDelimiter
 		}
 	}
-	c.patternArr = result
+	c.patternList = result
 	return nil
 }
 
@@ -612,7 +637,7 @@ func (c *Collector) getCoreFileName(filePath string) (string, error) {
 	// 如果使用了PID，同时在corefile路径中没有使用%p，那么我们需要切割pid
 	if c.isUsesPid && !strings.Contains(c.pattern, "%p") {
 		extInd := strings.LastIndex(fileName, ".")
-		if -1 == extInd {
+		if extInd == -1 {
 			return "", fmt.Errorf("core_uses_pid is true, but can not find the file extension in file name [%s], and the file path is: %s", fileName, filePath)
 		}
 		fileName = fileName[0:extInd]
@@ -633,17 +658,15 @@ func (c *Collector) send(info beat.MapStr, e chan<- define.Event) {
 
 	// 如果是发现存在计数，而且上报间隔还没有到，那么只是增加计数，不做发送动作
 	if reportInfo, ok = c.reportTimeInfo[infoKey]; !ok {
-
 		// 追加计数为1的内容
 		info["count"] = 1
 		// 如果上报记录不曾存在，那么则会立马上报
-		logger.Debugf("key->[%s] is not exists, will report this event.", infoKey)
+		logger.Debugf("key->[%s] is not exists, will report this event", infoKey)
 		shouldSend = true
-		logger.Infof("key->[%s] is not exists, event is reported now.", infoKey)
-
+		logger.Infof("key->[%s] is not exists, event is reported now", infoKey)
 		// 需要更新缓存信息, 缓存的信息应该是0，因为本次的次数已经发送了，没必要计算
 		c.reportTimeInfo[infoKey] = &ReportInfo{time: now, count: 0, info: info}
-		logger.Infof("key->[%s] now is added to buffer.", infoKey)
+		logger.Infof("key->[%s] now is added to buffer", infoKey)
 	} else {
 		// 先更新计数器
 		reportInfo.count++
@@ -656,8 +679,7 @@ func (c *Collector) send(info beat.MapStr, e chan<- define.Event) {
 			shouldSend = true
 			reportInfo.time = now
 			reportInfo.count = 0
-			logger.Infof("key->[%s] last report time is->[%s] is more than gap->[%s] will sent it now, set the report time and count set to zero.",
-				infoKey, reportInfo.time, c.reportTimeGap)
+			logger.Infof("key->[%s] last report time is->[%s] is more than gap->[%s] will sent it now, reset", infoKey, reportInfo.time, c.reportTimeGap)
 		}
 	}
 
@@ -665,5 +687,5 @@ func (c *Collector) send(info beat.MapStr, e chan<- define.Event) {
 		collector.Send(int(c.dataid), info, e)
 	}
 
-	logger.Infof("key->[%s] process done.", infoKey)
+	logger.Infof("key->[%s] process done", infoKey)
 }

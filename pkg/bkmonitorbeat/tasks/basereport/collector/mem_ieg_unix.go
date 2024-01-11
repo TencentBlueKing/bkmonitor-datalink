@@ -22,24 +22,23 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// getIEGMemInfo: 从/dev/shm/ieg_dockervm_meminfo文件读取内存信息，格式如下：
+const iegDockervmMeminfo = "/dev/shm/ieg_dockervm_meminfo"
+
+// getIEGMemInfo: 从 iegDockervmMeminfo 文件读取内存信息，格式如下：
 // MemTotal: 62914560 kB
 // MemFree: 3803636 kB
 // MemUsed: 59110924 kB
 // MemApp: 33181796 kB
-
-const iegDockervmMeminfo = "/dev/shm/ieg_dockervm_meminfo"
-
 func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 	// 判断文件是否存在，如果不存在直接退出返回信息
 	if _, err := os.Stat(iegDockervmMeminfo); os.IsNotExist(err) {
-		logger.Debugf("internal docker mem file->[%s] not exists, nothing will do", iegDockervmMeminfo)
+		logger.Debugf("iegvm memminfo file(%s) not exists, will skip", iegDockervmMeminfo)
 		return info
 	}
 
 	file, err := os.Open(iegDockervmMeminfo)
 	if err != nil {
-		logger.Errorf("failed to open internal docker men file->[%s], err: %v", iegDockervmMeminfo, err)
+		logger.Errorf("failed to open iegvm memminfo file=%s, err: %v", iegDockervmMeminfo, err)
 		return info
 	}
 	defer func() {
@@ -59,22 +58,20 @@ func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 		line := scanner.Text()
 		parts := strings.Fields(line)
 
-		// 如果每行内容少于2的，直接跳过处理
 		if len(parts) != 2 && len(parts) != 3 {
-			logger.Errorf("internal mem got invalid value in mem info->[%s] which is not 2 and 3 parts", line)
+			logger.Errorf("invalid iegvm memminfo line=%s", line)
 			continue
 		}
 
 		// 是否可以正常转换
 		memValueKB, err := strconv.ParseUint(parts[1], 10, 64)
 		if err != nil {
-			logger.Errorf("internal mem got wrong mem value->[%s] which cannot transfer for->[%s]", parts[1], err)
+			logger.Errorf("parse iegvm memminfo value failed, line=%s, err: %v", parts[1], err)
 			continue
 		}
 		memValueByte := memValueKB * 1024
-		logger.Debugf("internal mem got line->[%s] transfer to value->[%d] byte and key->[%s]", line, memValueByte, parts[0])
+		logger.Debugf("iegvm memminfo got line=%s, value=%d, key=%s", line, memValueByte, parts[0])
 
-		// 3. 将文件中的内容解析并放置到info中
 		switch parts[0] {
 		case "MemTotal:":
 			total = memValueByte
@@ -101,10 +98,8 @@ func getIEGMemInfo(info *mem.VirtualMemoryStat) *mem.VirtualMemoryStat {
 	// 需要额外对部分数据进行重新的处理
 	info.Total = total
 	info.Free = free
-	// 此处的内存 = Free + buff + cache
-	info.Available = info.Free + (totalUsed - appUsed)
-	// 内存其他的依赖项需要重新计算
-	info.Used = info.Total - info.Available
+	info.Available = info.Free + (totalUsed - appUsed) // 此处的内存 = Free + buff + cache
+	info.Used = info.Total - info.Available            // 内存其他的依赖项需要重新计算
 	info.UsedPercent = float64(info.Total-info.Available) / float64(info.Total) * 100.0
 	logger.Infof("mem info updated, info=%+v", info)
 

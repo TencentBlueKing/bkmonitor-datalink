@@ -41,6 +41,7 @@ var (
 	CleanExpiredRestore    = "periodic:metadata:clean_expired_restore"
 	RefreshESRestore       = "periodic:metadata:refresh_es_restore"
 	RefreshBcsMetricsLabel = "periodic:metadata:refresh_bcs_metrics_label"
+	RefreshClusterResource = "periodic:metadata:refresh_cluster_resource"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
@@ -96,6 +97,10 @@ var (
 		RefreshBcsMetricsLabel: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMetricsLabel,
+		},
+		RefreshClusterResource: {
+			Cron:    "*/30 * * * *",
+			Handler: metadataTask.RefreshClusterResource,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

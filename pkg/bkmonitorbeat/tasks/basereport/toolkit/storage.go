@@ -21,7 +21,7 @@ const (
 	LastPublishTime = "last_publish_time"
 )
 
-// 将最后一次上报时间写入到持久化存储中
+// RecordTaskPublishTime 将最后一次上报时间写入到持久化存储中
 func RecordTaskPublishTime(taskname, time string) error {
 	err := storage.Set(taskname, time, 0)
 	if err != nil {
@@ -31,7 +31,7 @@ func RecordTaskPublishTime(taskname, time string) error {
 	return nil
 }
 
-// 将时间从持久化存储中读取出来并格式化
+// ReadTimeFromDB 将时间从持久化存储中读取出来并格式化
 func ReadTimeFromDB(timekey string) (int64, error) {
 	val, err := storage.Get(timekey)
 	if err != nil {
@@ -47,7 +47,7 @@ func ReadTimeFromDB(timekey string) (int64, error) {
 	return int64(lastTime), nil
 }
 
-// 检测时间是否相隔 1min（去除秒）,time1,2不分前后
+// IsSameMinTime 检测时间是否相隔 1min（去除秒）,time1,2不分前后
 func IsSameMinTime(time1, time2 int64) bool {
 	time1second := time1 % 60
 	time2second := time2 % 60
@@ -55,7 +55,7 @@ func IsSameMinTime(time1, time2 int64) bool {
 	return (time2 - time2second) == (time1 - time1second)
 }
 
-// true为相差大于等于1min，false为相差小于1min
+// IsDiffMinTimeWithTask true 为相差大于等于 1min，false 为相差小于 1min
 func IsDiffMinTimeWithTask(taskname string, nowtime time.Time, period time.Duration) bool {
 	if period != time.Minute {
 		// 目前值适配周期为1min上报，非1min 直接返回true
@@ -63,8 +63,7 @@ func IsDiffMinTimeWithTask(taskname string, nowtime time.Time, period time.Durat
 	}
 	lasttime, err := ReadTimeFromDB(taskname)
 	if err != nil {
-		logger.Info("read %s err: %s", taskname, err)
-		// 读取出错则默认为为之前未上报，即相差1min以上
+		// 读取出错则默认为为之前未上报，即相差 1min 以上
 		return true
 	}
 	return !IsSameMinTime(lasttime, nowtime.Unix())

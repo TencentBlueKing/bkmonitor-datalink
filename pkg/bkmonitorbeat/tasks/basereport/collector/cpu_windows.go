@@ -21,33 +21,29 @@ import (
 )
 
 // 全局通用的cpu信息获取
-var cpuInfo = make([]cpu.InfoStat, 0)
-
-var isCpuInfoUpdating = false
-
-var updateLock sync.RWMutex
-
-var minPeriod = 1 * time.Minute
+var (
+	cpuInfo           = make([]cpu.InfoStat, 0)
+	isCpuInfoUpdating = false
+	updateLock        sync.RWMutex
+	minPeriod         = 1 * time.Minute
+)
 
 func getCPUStatUsage(report *CpuReport) error {
 	// per stat
 	perStat, err := cpu.Times(true)
 	if err != nil {
-		logger.Errorf("get CPU Stat failed, err: %v", err)
 		return err
 	}
 
 	// total stat
 	totalstat, err := cpu.Times(false)
 	if err != nil {
-		logger.Errorf("get CPU Total Stat failed, err: %v", err)
 		return err
 	}
 	report.TotalStat = totalstat[0]
 
 	perUsage, err := cpu.Percent(0, true)
 	if err != nil {
-		logger.Errorf("get CPU Percent failed, err: %v", err)
 		return err
 	}
 
@@ -63,11 +59,10 @@ func getCPUStatUsage(report *CpuReport) error {
 			report.Stat = append(report.Stat, stat)
 		}
 	}
+
 	report.Usage = perUsage
-	// get total cpu percent
 	total, err := cpu.Percent(0, false)
 	if err != nil {
-		logger.Errorf("get CPU Total Percent failed, err: %v", err)
 		return err
 	}
 	report.TotalUsage = total[0]

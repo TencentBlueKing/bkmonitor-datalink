@@ -119,7 +119,6 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 		var once DiskReport
 		iostats, err := IOCounters()
 		if err != nil {
-			logger.Error("get disk IOCounters failed, error: %s", err)
 			return nil, err
 		}
 
@@ -155,9 +154,7 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 
 	report.Partitions = make([]disk.PartitionStat, 0, len(partitions))
 	report.Usage = make([]disk.UsageStat, 0, len(partitions))
-	// usage
 	for _, partition := range partitions {
-
 		usage, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
 			continue
@@ -187,7 +184,7 @@ func deltaCount(last, current map[string]DiskStats) {
 		interval = 1
 	}
 
-	logger.Debugf("disk interval=%d", int(interval))
+	logger.Debugf("disk interval=%ds", int(interval))
 	diskLastStatTime = now
 
 	for name, stat := range last {
@@ -230,7 +227,7 @@ func deltaCount(last, current map[string]DiskStats) {
 		// %util：delta(time spent doing I/Os) / t / 1000 * 100%
 		// 如果是发现这个节点的IO时间超过了现实时间（部分系统有时间倒流的情况），这个是肯定有问题的，那么此时的使用率将会被设置为0
 		if (deltaIOTime / 1000) > uint64(interval) {
-			logger.Errorf("deltaIOTime->[%d] should not larger than interval->[%d], set to 0", deltaIOTime, interval)
+			logger.Errorf("deltaIOTime->[%d] should not larger than interval->[%f], set to 0", deltaIOTime, interval)
 			newstat.Util = 0
 		} else {
 			newstat.Util = float64(deltaIOTime) / interval / 1000.0

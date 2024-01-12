@@ -47,10 +47,11 @@ func isFileExist(path string) bool {
 	return !os.IsNotExist(err)
 }
 
+// isPartition 判断是否为分区
 func isPartition(diskStat DiskStats) bool {
 	deviceCode := strconv.FormatUint(diskStat.MajorNum, 10) + ":" + strconv.FormatUint(diskStat.MinorNum, 10)
 	devPath := filepath.Join(basicSysDevPath, deviceCode, partitionPath)
-	// 存在partition文件，说明是分区
+	// 存在 partition 文件，说明是分区
 	if isFileExist(devPath) {
 		return true
 	}
@@ -149,7 +150,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 		diskName := getDiskName(partition.Device)
 		if diskName != "" {
 			if !checkBlackWhiteList(diskName, config.DiskWhiteList, config.DiskBlackList) {
-				logger.Debugf("filtered disk partition and usage by disk black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
+				logger.Debugf("filtered disk stats by disk black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 				continue
 			}
 		}

@@ -30,7 +30,7 @@ func FilterDiskIoStats(diskStats map[string]DiskStats, config configs.DiskConfig
 diskStatsLoop:
 	// 过滤掉 partition，只留下设备
 	for name, diskStat := range diskStats {
-		// windows下上报的是分区数据，所以这里的黑白名单是分区黑白名单
+		// windows 上报的是分区数据，所以这里的黑白名单是分区黑白名单
 		if !checkBlackWhiteList(name, config.PartitionWhiteList, config.PartitionBlackList) {
 			logger.Debugf("filtered disk io status by black-white list:%s", name)
 			continue
@@ -53,7 +53,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 	resultPartitionStats := make([]disk.PartitionStat, 0, len(partitionStats))
 	for _, partition := range partitionStats {
 
-		// windows上报数据只有分区概念，所以只验证分区黑白名单
+		// windows 上报数据只有分区概念，所以只验证分区黑白名单
 		if !checkBlackWhiteList(partition.Device, config.PartitionWhiteList, config.PartitionBlackList) {
 			logger.Debugf("filtered disk stats by partition black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue

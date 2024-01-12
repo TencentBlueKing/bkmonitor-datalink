@@ -62,25 +62,19 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		}
 	}
 
-	// collect once
 	err = queryCpuInfo(&report, config.InfoPeriod, config.InfoTimeout)
 	if err != nil {
-		logger.Errorf("get CPU Info fail for->[%#v] but will still upload cpu usage info.", err)
+		logger.Errorf("get CPU Info failed, still update stats, err: %v", err)
 	}
 
 	// 判断是否需要将CPU的指令集去掉，降低上报的数据长度
 	if !config.ReportCpuFlag {
-
 		// 如果不必上报指令集，那么将所有的上报数据统一都改为空
 		emptySlice := make([]string, 0)
-		for index, cpuInfo := range report.CpuInfo {
-			cpuInfo.Flags = emptySlice
-			// 需要将修改后的内容放回到slice当中
-			report.CpuInfo[index] = cpuInfo
+		for index, info := range report.CpuInfo {
+			info.Flags = emptySlice
+			report.CpuInfo[index] = info
 		}
-
-		logger.Debug("cpu flags is all clean.")
 	}
-
 	return &report, nil
 }

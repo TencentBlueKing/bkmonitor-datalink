@@ -69,9 +69,5 @@ func GetMemInfo(config configs.MemConfig) (*MemReport, error) {
 	}
 
 	report.Swapin, report.Swapout, err = GetSwapInfo()
-	if err != nil {
-		return &report, err
-	}
-
-	return &report, nil
+	return &report, err
 }

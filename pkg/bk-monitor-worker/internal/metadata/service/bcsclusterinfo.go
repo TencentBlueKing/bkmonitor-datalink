@@ -496,12 +496,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
-
 	logger.Infof("cluster [%s] all datasource info save to database success.", cluster.ClusterID)
-
 	return &cluster, nil
 }
 

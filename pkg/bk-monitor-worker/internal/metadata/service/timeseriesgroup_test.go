@@ -46,7 +46,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
-	mockerClient := mocker.RedisClientMocker{
+	mockerClient := &mocker.RedisClientMocker{
 		ZcountValue: 2,
 		ZRangeByScoreWithScoresValue: []goRedis.Z{
 			{Score: score, Member: "metric_a"},

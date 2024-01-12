@@ -10,6 +10,7 @@
 package metrics
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -158,10 +159,104 @@ func SetTaskCostTime(taskName string) func() {
 	}
 }
 
+// metadata metrics
+var (
+	//consul数据操作统计
+	consulCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_consul_count",
+			Help: "consul execute count",
+		},
+		[]string{"key", "operation"},
+	)
+
+	//GSE变动统计
+	gseCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_gse_count",
+			Help: "gse change count",
+		},
+		[]string{"dataid", "operation"},
+	)
+
+	//ES变动统计
+	esCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_es_count",
+			Help: "es change count",
+		},
+		[]string{"table_id", "operation"},
+	)
+
+	// redis数据操作统计
+	redisCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_redis_count",
+			Help: "es change count",
+		},
+		[]string{"key", "operation"},
+	)
+)
+
+// ConsulPutCount consul put count
+func ConsulPutCount(key string) error {
+	metric, err := consulCount.GetMetricWithLabelValues(key, "PUT")
+	if err != nil {
+		logger.Errorf("prom get consul put count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// ConsulDeleteCount consul delete count
+func ConsulDeleteCount(key string) error {
+	metric, err := consulCount.GetMetricWithLabelValues(key, "DELETE")
+	if err != nil {
+		logger.Errorf("prom get consul delete count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// GSEUpdateCount gse update count
+func GSEUpdateCount(dataid uint) error {
+	metric, err := gseCount.GetMetricWithLabelValues(strconv.Itoa(int(dataid)), "UPDATE")
+	if err != nil {
+		logger.Errorf("prom get gse update count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// ESChangeCount es change count
+func ESChangeCount(tableId, operation string) error {
+	metric, err := esCount.GetMetricWithLabelValues(tableId, operation)
+	if err != nil {
+		logger.Errorf("prom get es change count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+// RedisCount redis count
+func RedisCount(key, operation string) error {
+	metric, err := redisCount.GetMetricWithLabelValues(key, operation)
+	if err != nil {
+		logger.Errorf("prom get redis count metric failed: %s", err)
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
 var Registry *prometheus.Registry
 
 func init() {
 	// register the metrics
 	Registry = prometheus.NewRegistry()
-	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime)
+	Registry.MustRegister(apiRequestCount, apiRequestCost, taskCount, taskCostTime, consulCount, gseCount, esCount, redisCount)
 }

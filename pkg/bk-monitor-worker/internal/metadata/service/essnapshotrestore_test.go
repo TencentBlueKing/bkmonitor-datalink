@@ -42,11 +42,13 @@ func TestEsSnapshotRestoreSvc_DeleteRestoreIndices(t *testing.T) {
 	db.Delete(&essr, "table_id = ?", essr.TableID)
 	err := essr.Create(db)
 	assert.NoError(t, err)
+	version := "7.10.1"
+	schema := "https"
 	cluster := storage.ClusterInfo{
 		ClusterID:        99,
 		ClusterType:      models.StorageTypeES,
-		Version:          "7.10.1",
-		Schema:           "https",
+		Version:          &version,
+		Schema:           &schema,
 		DomainName:       "example.com",
 		Port:             9200,
 		Username:         "elastic",
@@ -98,15 +100,16 @@ func TestEsSnapshotRestoreSvc_GetCompleteDocCount(t *testing.T) {
 	db.Delete(&restore, "table_id = ?", restore.TableID)
 	err := restore.Create(db)
 	assert.NoError(t, err)
-
+	version := "7.10.1"
+	schema := "https"
 	cluster := storage.ClusterInfo{
 		ClusterName:      "es_test_default",
 		ClusterType:      models.StorageTypeES,
 		DomainName:       "127.0.0.1",
 		Port:             9200,
 		IsDefaultCluster: true,
-		Schema:           "http",
-		Version:          "7",
+		Schema:           &schema,
+		Version:          &version,
 		RegisteredSystem: "bkmonitor",
 	}
 	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)

@@ -146,6 +146,10 @@ func (r *Receiver) ready() {
 			if GetComponentConfig().Pyroscope.Enabled {
 				f()
 			}
+		case define.SourceFta:
+			if GetComponentConfig().Fta.Enabled {
+				f()
+			}
 		}
 	}
 }

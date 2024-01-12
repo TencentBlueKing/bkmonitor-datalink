@@ -198,6 +198,15 @@ const (
 	// MetaFieldOptRealPath : "提取的真实路径"
 	MetaFieldOptRealPath = "real_path"
 
+	// MetaFieldOptDbmEnabled 是否启动 dbm 慢查询解析
+	MetaFieldOptDbmEnabled = "dbm_enabled"
+	// MetaFieldOptDbmUrl dbm 解析 URL
+	MetaFieldOptDbmUrl = "dbm_url"
+	// MetaFieldOptDbmField dbm 解析后写入的新字段
+	MetaFieldOptDbmField = "dbm_field"
+	// MetaFieldOptDbmRetry dbm 解析 URL 重试次数
+	MetaFieldOptDbmRetry = "dbm_retry"
+
 	// 时序类
 	// MetaFieldOptInfluxDisabled : 禁止写入 influxdb
 	MetaFieldOptInfluxDisabled = "influxdb_disabled"

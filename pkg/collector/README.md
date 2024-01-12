@@ -25,10 +25,11 @@ bk-collector 是一个通用的数据接收和清洗框架，依赖配置进行�
 | skywalking | ✅ | | | ✅| | |
 | pushgateway(prometheus) | | ✅ (pb+text) | | | | |
 | remotewrite(prometheus)  | | ✅ (pb+text) | | | | |
+| fta | | ✅ | | | | |
 
 [proxy](./proxy): 接收自定指标和自定义时序数据上报。
 
-### 3) 处理层
+### 3）处理层
 
 [processor](./processor): 负责对数据进行清洗，目前已内置了多种处理器和流水线模型。
 
@@ -93,7 +94,7 @@ type Task interface {
 
 处理层交由调度器驱动。
 
-### 4) 上报层
+### 4）上报层
 
 [exporter](./exporter): 上报层负责将数据上报至蓝鲸 Gse 数据管道，或者在测试场景下直接定向到标准输出。
 
@@ -112,7 +113,7 @@ output.bkpipe:
   synccfg: true
 ```
 
-### 5) 控制器
+### 5）控制器
 
 [controller](./controller): 控制器负责调度和管理不同分层的组件，调度模型可以并发地尽可能地使用机器计算资源。
 
@@ -206,6 +207,7 @@ Pipeline 由 processor 实例构成，一个类型的 processor 可以有多个�
 * remotewrite
 * proxy
 * pingserver
+* fta
 
 derived 后缀的 pipeline 类型用于处理派生类型的数据。派生指的是从一条流水线衍生出另外一种类型的数据，比如黄金指标的提取。
 
@@ -243,7 +245,7 @@ bk-collector 有三种类型的配置，程序的最终配置结果是三者的�
 
 ### 1）本地测试
 
-本地开发的时候可启动一个示例 agent 进行数据上报，已经内置了 OT 和 Prometheus 上报测试样例
+本地开发的时候可启动一个示例 agent 进行数据上报，已经内置了多个上报测试样例，如：
 
 * [example/otmetrics](./example/otmetrics)
 * [example/jaegertraces](./example/jaegertraces)
@@ -307,11 +309,19 @@ $ make test
 
 压测报告参考 [benchmark.md](./benchmark.md)
 
-### 5) 可观测性
+### 5）参与贡献
+
+1. Fork 本仓库并新建分支，使用 `make dev` 可以运行程序。
+2. 提交代码前确保已经执行代码检查及单测（`make lint && make test`），单测覆盖度不得低于 85%。
+3. 中文文档或注释书写请参考 [中文技术文档的写作规范](https://github.com/ruanyf/document-style-guide)。
+4. 单测请尽量参照项目整体风格，包括命名，书写方式。
+5. 如果新增 **recevier** 请提供 [example](https://github.com/TencentBlueKing/bkmonitor-datalink/tree/master/pkg/collector/example) 运行示例。
+
+### 6）可观测性
 
 自监控使用 [prometheus/client-go](https://github.com/prometheus/client-go) 进行上报。所有指标均以 `bk_collector` 开头。如 `bk_collector_uptime`
 
-#### bk-collector
+#### overview
 
 | 名称 | 描述                                       | 类型 |
 | --- |------------------------------------------- | -- |

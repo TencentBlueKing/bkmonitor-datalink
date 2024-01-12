@@ -7,11 +7,10 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package main
+package cmd
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strings"
 
@@ -27,30 +26,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func main() {
-	err := diffCmd.Execute()
-	if err != nil {
-		logger.Fatalf("run consul diff failed, %v", err)
-	}
+func init() {
+	rootCmd.AddCommand(diffCmd)
 }
 
 var diffCmd = &cobra.Command{
-	Use:   "run",
+	Use:   "diff",
 	Short: "bk monitor diff",
 	Long:  "diff run",
 	Run:   startDiff,
 }
 
-func init() {
-	diffCmd.PersistentFlags().StringVar(
-		&config.FilePath, "config", "./bmw.yaml", "path of project service config files",
-	)
-}
-
 // start 启动服务
 func startDiff(cmd *cobra.Command, args []string) {
 	config.InitConfig()
-	fmt.Println("start diff consul dataid...")
+	logger.Infof("start diff consul dataid...")
+	if config.BypassSuffixPath == "" {
+		logger.Warnf("bypaas suffix path empty, skip compare")
+		return
+	}
+	logger.Infof("bypaas suffix path [%s]", config.BypassSuffixPath)
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable

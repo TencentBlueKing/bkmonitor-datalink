@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
@@ -70,7 +71,7 @@ func (e *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
 
 // ConsulPath 获取router的consul根路径
 func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体结果表router的consul配置路径
@@ -95,7 +96,7 @@ func (i InfluxdbStorage) InfluxdbProxyStorage() (*InfluxdbProxyStorage, error) {
 	var influxdbProxyStorage InfluxdbProxyStorage
 	err := NewInfluxdbProxyStorageQuerySet(dbSession.DB).IDEq(i.InfluxdbProxyStorageId).One(&influxdbProxyStorage)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query InfluxdbProxyStorage with id [%v] failed", i.InfluxdbProxyStorageId)
 	}
 	i.influxdbProxyStorageCache = &influxdbProxyStorage
 	return &influxdbProxyStorage, nil
@@ -195,7 +196,7 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 	if err != nil {
 		logger.Errorf("put consul path [%s] value [%s] err, %v", i.ConsulConfigPath(), val, err)
 		return err

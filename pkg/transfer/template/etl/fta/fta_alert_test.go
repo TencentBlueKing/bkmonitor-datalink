@@ -98,6 +98,10 @@ func (s *AlertFTATest) TestEvent() {
 					{
 						"field":"event_id",
 						"expr":"event.id"
+					},
+					{
+						"field":"dimensions",
+						"expr":"{name: event.name}"
 					}
 				]
 			},
@@ -156,6 +160,11 @@ func (s *AlertFTATest) TestEvent() {
 								"time_format": "datetime",
 								"time_zone": 8
 							}
+						},
+						{
+							"type": "object",
+                            "is_config_by_user": true,
+							"field_name":"dedupe_keys"
 						}
 					]
 				}
@@ -166,7 +175,7 @@ func (s *AlertFTATest) TestEvent() {
 	processor, err := fta.NewAlertFTAProcessor(s.CTX, "test")
 
 	s.NoError(err)
-	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "CPU使用率", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "CPU使用率", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}} }`,
 		processor,
 		func(result map[string]interface{}) {
 			delete(result, "bk_clean_time")
@@ -175,6 +184,10 @@ func (s *AlertFTATest) TestEvent() {
 					map[string]interface{}{
 						"key":   "device",
 						"value": "cpu0",
+					},
+					map[string]interface{}{
+						"key":   "name",
+						"value": "CPU使用率",
 					},
 				},
 				"target":         "127.0.0.1",
@@ -183,11 +196,12 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
+				"dedupe_keys":    []interface{}{"name"},
 			}, result)
 		},
 	)
 
-	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}}`,
 		processor,
 		func(result map[string]interface{}) {
 			delete(result, "bk_clean_time")
@@ -196,6 +210,10 @@ func (s *AlertFTATest) TestEvent() {
 					map[string]interface{}{
 						"key":   "device",
 						"value": "cpu0",
+					},
+					map[string]interface{}{
+						"key":   "name",
+						"value": "test_event",
 					},
 				},
 				"target":         "127.0.0.1",
@@ -204,11 +222,12 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
+				"dedupe_keys":    []interface{}{"name"},
 			}, result)
 		},
 	)
 
-	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "type": "aaa", "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}`,
+	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "type": "aaa", "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}}`,
 		processor,
 		func(result map[string]interface{}) {
 			delete(result, "bk_clean_time")
@@ -218,6 +237,10 @@ func (s *AlertFTATest) TestEvent() {
 						"key":   "device",
 						"value": "cpu0",
 					},
+					map[string]interface{}{
+						"key":   "name",
+						"value": "CPU使用率",
+					},
 				},
 				"target":         "127.0.0.1",
 				"alert_name":     "Test",
@@ -225,6 +248,7 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
+				"dedupe_keys":    []interface{}{"name"},
 			}, result)
 		},
 	)

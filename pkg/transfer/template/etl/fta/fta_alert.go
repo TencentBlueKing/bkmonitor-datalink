@@ -31,6 +31,10 @@ const (
 	fieldCleanTime = "bk_clean_time"
 	// fieldTags 事件标签字段
 	fieldTags = "tags"
+	// fieldDimensions 事件维度字段
+	fieldDimensions = "dimensions"
+	// fieldDedupeKeys 事件去重字段
+	fieldDedupeKeys = "dedupe_keys"
 	// fieldDefaultEventID 默认事件ID字段
 	fieldDefaultEventID = "__bk_event_id__"
 	// fieldEventID 事件ID字段
@@ -206,8 +210,8 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			// 按照配置的字段表达式，提取字段，忽略字段提取错误
 			rt := config.ResultTableConfigFromContext(ctx)
 			_ = rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
-				// tags后面再处理
-				if config.FieldName == fieldTags {
+				// tags/dedupe_keys字段不做处理
+				if config.FieldName == fieldTags || config.FieldName == fieldDedupeKeys {
 					return nil
 				}
 
@@ -264,6 +268,39 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 					logging.Errorf("%s event_id is empty, data->(%+v)", name, data)
 					return nil
 				}
+				_ = to.Put(fieldEventID, eventID)
+			}
+
+			// dimensions字段处理，生成dedupe_keys
+			var dimensions map[string]interface{}
+			if dimensionExpr, ok := exprMap[fieldDimensions]; ok {
+				compiledExpr, err := utils.CompileJMESPathCustom(dimensionExpr)
+				if err != nil {
+					logging.Errorf("%s compile dimension expr %s failed: %+v", name, dimensionExpr, err)
+					return nil
+				}
+				dimensionsValue, err := compiledExpr.Search(data)
+				if err != nil {
+					logging.Errorf("%s search dimension expr %s failed: %+v", name, dimensionExpr, err)
+					return nil
+				}
+
+				// 将dimensions的key作为dedupe_keys
+				var dedupeKeys []string
+				switch t := dimensionsValue.(type) {
+				case map[string]interface{}:
+					for key := range t {
+						dedupeKeys = append(dedupeKeys, key)
+					}
+					dimensions = t
+				default:
+					logging.Errorf("%s dimensions type %T not supported", name, dimensions)
+				}
+
+				// 推送dedupe_keys
+				if len(dedupeKeys) > 0 {
+					_ = to.Put(fieldDedupeKeys, dedupeKeys)
+				}
 			}
 
 			// tags字段处理
@@ -305,6 +342,14 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				default:
 					logging.Errorf("%s tags type %T not supported", name, tags)
 				}
+
+				// 将dimensions补充到tags中
+				if dimensions != nil {
+					for key, value := range dimensions {
+						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
+					}
+				}
+
 				_ = to.Put(fieldTags, tagsList)
 			}
 

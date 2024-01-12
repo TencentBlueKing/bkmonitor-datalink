@@ -10,9 +10,13 @@
 package etl
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cstockton/go-conv"
 
@@ -24,7 +28,8 @@ import (
 )
 
 const (
-	FieldNameExtJSON = "ext_json"
+	FieldExtJSON          = "ext_json"
+	FieldRetainContentKey = "log"
 )
 
 // TransformAsIs : return value directly
@@ -110,6 +115,9 @@ func TransformMapByRegexp(pattern string) TransformFn {
 func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) TransformFn {
 	options := utils.NewMapHelper(table.Option)
 	retainExtraJSON, _ := options.GetBool(config.PipelineConfigOptionRetainExtraJson)
+	enableRetainContent, _ := options.GetBool(config.PipelineConfigOptionRetainContent)
+	retainContentKey, _ := options.GetString(config.PipelineConfigOptionRetainContentKey)
+
 	userFieldMap := table.FieldListGroupByName()
 	return func(from interface{}) (to interface{}, err error) {
 		value, err := conv.DefaultConv.String(from)
@@ -122,6 +130,13 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 		results := make(map[string]interface{})
 		err = json.Unmarshal([]byte(value), &results)
 		if err != nil {
+			if enableRetainContent {
+				rk := FieldRetainContentKey
+				if retainContentKey != "" {
+					rk = retainContentKey
+				}
+				return map[string]interface{}{rk: value}, nil
+			}
 			return nil, err
 		}
 		if retainExtraJSON {
@@ -131,7 +146,7 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 					extraJSONMap[key] = value
 				}
 			}
-			results[FieldNameExtJSON] = extraJSONMap
+			results[FieldExtJSON] = extraJSONMap
 		}
 		return results, nil
 	}
@@ -252,11 +267,113 @@ func NewTransformByType(name define.MetaFieldType) TransformFn {
 	}
 }
 
+type DbmRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+type DbmResponse struct {
+	Command         string `json:"command"`
+	QueryString     string `json:"query_string"`
+	QueryDigestText string `json:"query_digest_text"`
+	QueryDigestMd5  string `json:"query_digest_md5"`
+	DbName          string `json:"db_name"`
+	TableName       string `json:"table_name"`
+	QueryLength     int    `json:"query_length"`
+}
+
+// ParseDbmSlowQuery 解析 sql 语句
+func ParseDbmSlowQuery(url, content string, retry int) (*DbmResponse, error) {
+	var resp *DbmResponse
+	var err error
+
+	delay := time.Millisecond * 100 // 初始重试 delay 100ms 重试时成倍增加
+	for i := 0; i <= retry; i++ {
+		resp, err = parseDbmSlowQuery(url, content)
+		if err != nil {
+			logging.MinuteErrorfSampling("DbmSlowQuery", "failed to request slow query, content=[%s], err: %v", content, err)
+			time.Sleep(delay)
+			delay = delay * 2
+			continue
+		}
+		return resp, nil // 请求成功 返回结果
+	}
+	return nil, err
+}
+
+func parseDbmSlowQuery(url, content string) (*DbmResponse, error) {
+	req := DbmRequest{Content: content}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.NewBuffer(body)
+	resp, err := http.Post(url, "", buf)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var dbmResponse DbmResponse
+	if err := json.Unmarshal(b, &dbmResponse); err != nil {
+		return nil, err
+	}
+	return &dbmResponse, nil
+}
+
+type DbmRecord struct {
+	ResponseFieldName string
+	Response          DbmResponse
+	BodyFieldName     string
+	Body              string
+}
+
 // NewTransformByField :
 func NewTransformByField(field *config.MetaFieldConfig) TransformFn {
+	options := utils.NewMapHelper(field.Option)
+
+	// dbm_* 代表数据来源自 dbm 需要解析
+	dbmEnabled, _ := options.GetBool(config.MetaFieldOptDbmEnabled)
+	dbmUrl, _ := options.GetString(config.MetaFieldOptDbmUrl)
+	dbmField, _ := options.GetString(config.MetaFieldOptDbmField)
+	dbmRetry, _ := options.GetInt(config.MetaFieldOptDbmRetry)
+
+	// 将 from 当做 dbm 数据来处理必要要求，如若不符合以下条件则当做普通字符串处理
+	// 1) dbm_enabled 字段指定是否启动慢查询处理
+	// 2) dbm_url 不为空 即请求解析 sql 的地址
+	// 3) dbm_field 解析后的数据写到的字段不为空
+	// 4) dbm_retry 失败重试次数
+	if field.Type == define.MetaFieldTypeString && dbmEnabled && dbmUrl != "" && dbmField != "" {
+		return func(from interface{}) (interface{}, error) {
+			obj, err := TransformNilString(from)
+			if err != nil {
+				return nil, err
+			}
+			s, ok := obj.(string)
+			if !ok {
+				return nil, err
+			}
+			resp, err := ParseDbmSlowQuery(dbmUrl, s, dbmRetry)
+			if err != nil {
+				return nil, err
+			}
+
+			return DbmRecord{
+				Response:          *resp,
+				ResponseFieldName: dbmField,
+				Body:              s,
+				BodyFieldName:     field.FieldName,
+			}, nil
+		}
+	}
+
 	switch field.Type {
 	case define.MetaFieldTypeTimestamp:
-		options := utils.NewMapHelper(field.Option)
 		if options.Exists(config.MetaFieldOptTimeFormat) {
 			return TransformTimeStampByName(
 				options.MustGetString(config.MetaFieldOptTimeFormat),

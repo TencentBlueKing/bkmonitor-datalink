@@ -66,12 +66,81 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 		EnableNegativeOffset: true,
 	})
 
-	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType)
+	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType, "bkcc__1068")
 
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
 
 	mock.SetRedisClient(ctx, "demo")
+	mock.SetSpaceTsDbMockData(ctx, path, bucket,
+		ir.SpaceInfo{
+			"bkcc__1068": ir.Space{
+				"table_id_1.metric": &ir.SpaceResultTable{
+					TableId: "table_id_1.metric",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-1",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-2",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-3",
+						},
+						{
+							"bcs_cluster_id": "BCS-K8S-40899",
+							"namespace":      "ns-4",
+						},
+					},
+				},
+				"table_id_2.metric": &ir.SpaceResultTable{
+					TableId: "table_id_2.metric",
+					Filters: []map[string]string{
+						{
+							"bcs_cluster_id": "cls-2",
+							"namespace":      "ns-1",
+						},
+					},
+				},
+				"table_id_3.metric": &ir.SpaceResultTable{
+					TableId: "table_id_3.metric",
+					Filters: []map[string]string{
+						{
+							"bk_biz_id":      "bk_biz_id_1",
+							"bcs_cluster_id": "cls-3",
+						},
+					},
+				},
+			},
+		}, ir.ResultTableDetailInfo{
+			"table_id_1.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_1",
+				BcsClusterID:    "BCS-K8S-40899",
+			},
+			"table_id_2.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_2",
+				BcsClusterID:    "cls-2",
+			},
+			"table_id_3.metric": &ir.ResultTableDetail{
+				Fields:          []string{"container_cpu_usage_seconds_total"},
+				MeasurementType: redis.BkSplitMeasurement,
+				StorageId:       victoriaMetricsStorageId,
+				DB:              redis.BkSplitMeasurement,
+				VmRt:            "vm_rt_3",
+				BcsClusterID:    "cls-3",
+			},
+		}, nil, nil)
 	mock.SetSpaceTsDbMockData(ctx, path, bucket,
 		ir.SpaceInfo{
 			consul.VictoriaMetricsStorageType: ir.Space{
@@ -1656,5 +1725,171 @@ func equalWithJson(t *testing.T, a, b interface{}) {
 	assert.Nil(t, b1Err)
 	if a1Err == nil && b1Err == nil {
 		assert.Equal(t, string(a1), string(b1))
+	}
+}
+
+func TestQueryTs_ToQueryReference(t *testing.T) {
+	ctx := context.Background()
+	mockData(ctx, "handler_test", "handler_test")
+	metadata.SetUser(ctx, fmt.Sprintf("username:%s", "bkcc__1068"), "bkcc__1068")
+	jsonData := `{"space_uid":"bkcc__1068","query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-common"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["flux-cd-deploy"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kube-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator-bkop"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-jk"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kyverno"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-prod"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bkce-bcs-k8s-40980"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-costops-grey"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-test"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkop-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bk-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25186"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25451"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25326"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25182"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25037"],"op":"contains"}],"condition_list":["and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and"]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`
+	var query *structured.QueryTs
+	err := json.Unmarshal([]byte(jsonData), &query)
+	assert.Nil(t, err)
+
+	queryReference, err := query.ToQueryReference(ctx)
+	assert.Nil(t, err)
+
+	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+	expectData := `bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse-data-common", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="flux-cd-deploy", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="kube-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkmonitor-operator-bkop", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkmonitor-operator", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-blueking-gse-data-jk", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="kyverno", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bscp-prod", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bkce-bcs-k8s-40980", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-costops-grey", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="ieg-bscp-test", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bkop-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bk-system", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25186", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25451", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25326", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25182", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value" or bcs_cluster_id="BCS-K8S-40899", namespace=~"^(ns-1|ns-2|ns-3|ns-4)$", job="kubelet", image!="", container_name!="POD", bcs_cluster_id="BCS-K8S-40899", namespace="bcs-k8s-25037", result_table_id="vm_rt_1", __name__="container_cpu_usage_seconds_total_value"`
+	assert.Equal(t, expectData, vmExpand.MetricFilterCondition["a"])
+	assert.Nil(t, err)
+	assert.True(t, ok)
+}
+
+func setupCluterMetricsData(ctx context.Context) {
+	var err error
+	log.InitTestLogger()
+	mock.SetRedisClient(ctx, "handler_test")
+	_, err = redis.HSet(
+		ctx, "bkmonitor:cluster_metrics_meta", "influxdb_shard_write_points_ok",
+		"{\"metric_name\":\"influxdb_shard_write_points_ok\",\"tags\":[\"bkm_cluster\",\"database\",\"engine\",\"hostname\",\"id\",\"index_type\",\"path\",\"retention_policy\",\"wal_path\"]}")
+	if err != nil {
+		panic(err)
+	}
+	_, err = redis.HSet(
+		ctx, "bkmonitor:cluster_metrics", "influxdb_shard_write_points_ok|bkm_cluster=default",
+		"[{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":155029,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903370,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":406150,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":154324,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"38\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/38\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/38\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"39\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/39\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/39\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"40\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/40\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/40\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"41\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/41\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/41\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"42\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/42\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/42\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"43\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/43\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/43\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"44\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/44\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/44\"},{\"bkm_cluster\":\"default\",\"database\":\"_internal\",\"engine\":\"tsm1\",\"hostname\":\"influxdb-0\",\"id\":\"45\",\"index_type\":\"inmem\",\"path\":\"/var/lib/influxdb/data/_internal/monitor/45\",\"retention_policy\":\"monitor\",\"time\":1700903220,\"value\":0,\"wal_path\":\"/var/lib/influxdb/wal/_internal/monitor/45\"}]")
+	if err != nil {
+		panic(err)
+	}
+}
+
+func TestQueryTsClusterMetrics(t *testing.T) {
+	ctx := context.Background()
+	setupCluterMetricsData(ctx)
+	log.InitTestLogger()
+	mock.SetRedisClient(ctx, "handler_test")
+	testCases := map[string]struct {
+		query  string
+		result string
+	}{
+		"rangeCase": {
+			query: `
+                {
+                    "space_uid": "influxdb",
+                    "query_list": [
+                        {
+                            "data_source": "",
+                            "table_id": "",
+                            "field_name": "influxdb_shard_write_points_ok",
+                            "field_list": null,
+                            "function": [
+                                {
+                                    "method": "sum",
+                                    "without": false,
+                                    "dimensions": ["bkm_cluster"],
+                                    "position": 0,
+                                    "args_list": null,
+                                    "vargs_list": null
+                                }
+                            ],
+                            "time_aggregation": {
+                                "function": "avg_over_time",
+                                "window": "60s",
+                                "position": 0,
+                                "vargs_list": null
+                            },
+                            "reference_name": "a",
+                            "dimensions": [],
+                            "limit": 0,
+                            "timestamp": null,
+                            "start_or_end": 0,
+                            "vector_offset": 0,
+                            "offset": "",
+                            "offset_forward": false,
+                            "slimit": 0,
+                            "soffset": 0,
+                            "conditions": {
+                                "field_list": [{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"}],
+                                "condition_list": []
+                            },
+                            "keep_columns": [
+                                "_time",
+                                "a"
+                            ]
+                        }
+                    ],
+                    "metric_merge": "a",
+                    "result_columns": null,
+                    "start_time": "1700901370",
+                    "end_time": "1700905370",
+                    "step": "60s",
+					"instant": false
+                }
+			`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster"],"group_values":["default"],"values":[[1700903220000,1498687],[1700903340000,1499039.5]]}]}`,
+		},
+		"instanceCase": {
+			query: `
+                {
+                    "space_uid": "influxdb",
+                    "query_list": [
+                        {
+                            "data_source": "",
+                            "table_id": "",
+                            "field_name": "influxdb_shard_write_points_ok",
+                            "field_list": null,
+                            "reference_name": "a",
+                            "dimensions": [],
+                            "limit": 0,
+                            "timestamp": null,
+                            "start_or_end": 0,
+                            "vector_offset": 0,
+                            "offset": "",
+                            "offset_forward": false,
+                            "slimit": 0,
+                            "soffset": 0,
+                            "conditions": {
+                                "field_list": [
+									{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"},
+									{"field_name": "id", "value": ["43"], "op": "eq"},
+									{"field_name": "database", "value": ["_internal"], "op": "eq"},
+									{"field_name": "bkm_cluster", "value": ["default"], "op": "eq"},
+									{"field_name": "id", "value": ["44"], "op": "eq"}
+								],
+                                "condition_list": ["and", "or", "and", "and"]
+                            },
+                            "keep_columns": [
+                                "_time",
+                                "a"
+                            ]
+                        }
+                    ],
+                    "metric_merge": "a",
+                    "result_columns": null,
+                    "end_time": "1700905370",
+					"instant": true
+                }
+			`,
+			result: `{"series":[{"name":"_result0","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","43","inmem","/var/lib/influxdb/data/_internal/monitor/43","monitor","/var/lib/influxdb/wal/_internal/monitor/43"],"values":[[1700903370000,0]]},{"name":"_result1","metric_name":"","columns":["_time","_value"],"types":["float","float"],"group_keys":["bkm_cluster","database","engine","hostname","id","index_type","path","retention_policy","wal_path"],"group_values":["default","_internal","tsm1","influxdb-0","44","inmem","/var/lib/influxdb/data/_internal/monitor/44","monitor","/var/lib/influxdb/wal/_internal/monitor/44"],"values":[[1700903370000,0]]}]}`,
+		},
+	}
+	for name, c := range testCases {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(c.query)
+			query := &structured.QueryTs{}
+			err := json.Unmarshal(body, query)
+			assert.Nil(t, err)
+
+			res, err := QueryTsClusterMetrics(ctx, query)
+			t.Logf("QueryTsClusterMetrics error: %+v", err)
+			assert.Nil(t, err)
+			out, err := json.Marshal(res)
+			actual := string(out)
+			assert.Nil(t, err)
+			fmt.Printf("ActualResult: %v\n", actual)
+			assert.Equal(t, c.result, actual)
+		})
 	}
 }

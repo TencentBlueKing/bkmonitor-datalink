@@ -39,8 +39,8 @@ type ClusterInfo struct {
 	Password                  string    `gorm:"size:128" json:"password"`
 	Username                  string    `gorm:"size:64" json:"username"`
 	IsSslVerify               bool      `json:"is_ssl_verify"`
-	Schema                    string    `gorm:"size:32" json:"schema"`
-	Version                   string    `gorm:"size:64" json:"version"`
+	Schema                    *string   `gorm:"size:32" json:"schema"`
+	Version                   *string   `gorm:"size:64" json:"version"`
 	RegisteredSystem          string    `gorm:"size:128" json:"registered_system"`
 	CustomOption              string    `json:"custom_option"`
 	CreateTime                time.Time `json:"create_time"`
@@ -70,8 +70,19 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 		return nil, errors.Errorf("record type error")
 	}
 	// 获取ES版本，创建ES客户端
-	esVersion := strings.Split(c.Version, ".")[0]
-	address := elasticsearch.ComposeESHosts(c.Schema, c.DomainName, c.Port)
+	var version, schema string
+	if c.Version != nil {
+		version = *c.Version
+	} else {
+		version = "7"
+	}
+	if c.Schema != nil {
+		schema = *c.Schema
+	} else {
+		schema = "http"
+	}
+	esVersion := strings.Split(version, ".")[0]
+	address := elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
 	// 密码解密
 	password := cipher.AESDecrypt(c.Password)
 	client, err := elasticsearch.NewElasticsearch(esVersion, address, c.Username, password)

@@ -9,7 +9,9 @@
 
 package mapx
 
-import "golang.org/x/exp/constraints"
+import (
+	"golang.org/x/exp/constraints"
+)
 
 // IsMapKey 判断某个值是否为字典的值key
 func IsMapKey[T constraints.Ordered](key T, dict map[T]interface{}) bool {

@@ -18,6 +18,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
@@ -134,6 +135,7 @@ func (r *Instance) Close() error {
 }
 
 func (r *Instance) HSet(key, field, value string) error {
+	_ = metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
 		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)

@@ -11,12 +11,14 @@ package consul
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
@@ -32,32 +34,40 @@ type Instance struct {
 var instance *Instance
 
 func NewInstance(ctx context.Context) (*Instance, error) {
-	client, err := consulUtils.NewConsulInstance(
-		ctx,
-		consulUtils.InstanceOptions{
-			SrvName:    config.StorageConsulSrvName,
-			Addr:       config.StorageConsulAddress,
-			Port:       config.StorageConsulPort,
-			ConsulAddr: config.StorageConsulAddr,
-			Tags:       config.StorageConsulTag,
-			TTL:        config.StorageConsulTll,
-		},
-	)
-	if err != nil {
-		logger.Errorf("new consul instance error, %v", err)
-		return nil, err
-	}
-	// new a kv client
-	conf := api.DefaultConfig()
-	conf.Address = config.StorageConsulAddress
-	apiClient, err := api.NewClient(conf)
-	if err != nil {
-		logger.Errorf("new consul api client error, %v", err)
-		return nil, err
-	}
+	var e error
+	consulOnce.Do(func() {
+		client, err := consulUtils.NewConsulInstance(
+			ctx,
+			consulUtils.InstanceOptions{
+				SrvName:    config.StorageConsulSrvName,
+				Addr:       config.StorageConsulAddress,
+				Port:       config.StorageConsulPort,
+				ConsulAddr: config.StorageConsulAddr,
+				Tags:       config.StorageConsulTag,
+				TTL:        config.StorageConsulTll,
+			},
+		)
+		if err != nil {
+			logger.Errorf("new consul instance error, %v", err)
+			e = err
+			return
+		}
+		// new a kv client
+		conf := api.DefaultConfig()
+		conf.Address = config.StorageConsulAddress
+		apiClient, err := api.NewClient(conf)
+		if err != nil {
+			logger.Errorf("new consul api client error, %v", err)
+			e = err
+			return
+		}
+		instance = &Instance{ctx: ctx, Client: client, APIClient: apiClient}
+	})
 
-	return &Instance{ctx: ctx, Client: client, APIClient: apiClient}, nil
+	return instance, e
 }
+
+var consulOnce sync.Once
 
 // GetInstance get a consul instance
 func GetInstance(ctx context.Context) (*Instance, error) {
@@ -75,6 +85,7 @@ func (c *Instance) Open() error {
 // Put put a key-val
 func (c *Instance) Put(key, val string, expiration time.Duration) error {
 	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val)}
+	_ = metrics.ConsulPutCount(key)
 	_, err := c.APIClient.KV().Put(kvPair, nil)
 	if err != nil {
 		logger.Errorf("put to consul error, %v", err)
@@ -101,6 +112,7 @@ func (c *Instance) Get(key string) ([]byte, error) {
 
 // Delete delete a key
 func (c *Instance) Delete(key string) error {
+	_ = metrics.ConsulDeleteCount(key)
 	_, err := c.APIClient.KV().Delete(key, nil)
 	if err != nil {
 		logger.Errorf("delete consul key: %s error, %v", key, err)

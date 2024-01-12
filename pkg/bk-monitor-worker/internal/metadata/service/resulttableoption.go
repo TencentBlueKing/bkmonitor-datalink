@@ -35,7 +35,6 @@ func NewResultTableOptionSvc(obj *resulttable.ResultTableOption) ResultTableOpti
 // BathResultTableOption 返回批量的result table option
 func (ResultTableOptionSvc) BathResultTableOption(tableIdList []string) (map[string]map[string]interface{}, error) {
 	var resultTableOption []resulttable.ResultTableOption
-
 	if err := resulttable.NewResultTableOptionQuerySet(mysql.GetDBSession().DB).
 		TableIDIn(tableIdList...).All(&resultTableOption); err != nil {
 		return nil, err
@@ -46,7 +45,11 @@ func (ResultTableOptionSvc) BathResultTableOption(tableIdList []string) (map[str
 		if err != nil {
 			return nil, err
 		}
-		optionData[option.TableID] = map[string]interface{}{option.Name: value}
+		if rtOpts, ok := optionData[option.TableID]; ok {
+			rtOpts[option.Name] = value
+		} else {
+			optionData[option.TableID] = map[string]interface{}{option.Name: value}
+		}
 	}
 	return optionData, nil
 }

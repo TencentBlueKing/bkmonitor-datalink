@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	FieldNameExtJSON = "ext_json"
+	FieldExtJSON          = "ext_json"
+	FieldRetainContentKey = "log"
 )
 
 // TransformAsIs : return value directly
@@ -114,6 +115,9 @@ func TransformMapByRegexp(pattern string) TransformFn {
 func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) TransformFn {
 	options := utils.NewMapHelper(table.Option)
 	retainExtraJSON, _ := options.GetBool(config.PipelineConfigOptionRetainExtraJson)
+	enableRetainContent, _ := options.GetBool(config.PipelineConfigOptionRetainContent)
+	retainContentKey, _ := options.GetString(config.PipelineConfigOptionRetainContentKey)
+
 	userFieldMap := table.FieldListGroupByName()
 	return func(from interface{}) (to interface{}, err error) {
 		value, err := conv.DefaultConv.String(from)
@@ -126,6 +130,13 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 		results := make(map[string]interface{})
 		err = json.Unmarshal([]byte(value), &results)
 		if err != nil {
+			if enableRetainContent {
+				rk := FieldRetainContentKey
+				if retainContentKey != "" {
+					rk = retainContentKey
+				}
+				return map[string]interface{}{rk: value}, nil
+			}
 			return nil, err
 		}
 		if retainExtraJSON {
@@ -135,7 +146,7 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 					extraJSONMap[key] = value
 				}
 			}
-			results[FieldNameExtJSON] = extraJSONMap
+			results[FieldExtJSON] = extraJSONMap
 		}
 		return results, nil
 	}

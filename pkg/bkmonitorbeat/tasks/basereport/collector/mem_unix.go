@@ -36,7 +36,6 @@ func PhysicalMemoryInfo(specialSource bool) (*mem.VirtualMemoryStat, error) {
 	// 使用特殊方案时，usedPercent = Used/total
 	info.UsedPercent = float64(info.Used) / float64(info.Total) * 100.0
 	return info, nil
-
 }
 
 func GetSwapInfo() (float64, float64, error) {

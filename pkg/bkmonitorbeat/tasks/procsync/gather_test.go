@@ -16,11 +16,9 @@ func newGather() *Gather {
 	taskConf := configs.NewTCPTaskConfig()
 	err := globalConf.Clean()
 	if err != nil {
-
 	}
 	err = taskConf.Clean()
 	if err != nil {
-
 	}
 	return New(globalConf, taskConf).(*Gather)
 }

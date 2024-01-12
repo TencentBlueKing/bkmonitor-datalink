@@ -63,7 +63,7 @@ func getCPUStatUsage(report *CpuReport) error {
 
 	for index, value := range perCPUTimes {
 		item := lastCPUTimeSlice.lastPerCPUTimes[index]
-		tmp := calcTimeState(item, value)
+		tmp := calcTimeStat(item, value)
 		report.Stat = append(report.Stat, tmp)
 	}
 
@@ -82,7 +82,7 @@ func getCPUStatUsage(report *CpuReport) error {
 
 	cpuTimeStat := cpuTimes[0]
 	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
-	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
+	report.TotalStat = calcTimeStat(lastCpuTimeStat, cpuTimeStat)
 
 	// 将此次获取的 timeState 重新写入公共变量
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
@@ -113,69 +113,66 @@ func getCPUStatUsage(report *CpuReport) error {
 }
 
 // queryCpuInfo: 查询获取机器的CPU信息
-func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) (err error) {
-	if r.Cpuinfo, err = cpu.Info(); err != nil {
-		logger.Errorf("failed to get cpu info, err: %v", err)
+func queryCpuInfo(r *CpuReport, _ time.Duration, _ time.Duration) error {
+	var err error
+	if r.CpuInfo, err = cpu.Info(); err != nil {
 		return err
 	}
 
 	// gopsutil 查询失败的情况下，利用 dmidecode 命令查询 cpu 基础信息并上报
-	if r.Cpuinfo == nil {
-		r.Cpuinfo = make([]cpu.InfoStat, 0)
-		r.Cpuinfo = append(r.Cpuinfo, cpu.InfoStat{})
-	}
-	var model string
-	var mhz float64
-	useDmidecode := false
-	if len(r.Cpuinfo) > 0 {
-		// 取第一个 cpu 检查，如果发现存在信息为空的情况，则启用 dmidecode 进行填充
-		if r.Cpuinfo[0].Mhz == 0 || r.Cpuinfo[0].Model == "" {
-			model, mhz = getDMIDecodeCPUInfo()
-			useDmidecode = true
-		}
-	} else {
-		logger.Warn("get empty cpu info, something wrong?")
+	if r.CpuInfo == nil {
+		r.CpuInfo = make([]cpu.InfoStat, 0)
+		r.CpuInfo = append(r.CpuInfo, cpu.InfoStat{})
 	}
 
-	// 不需要 dmidecode 则直接返回即可，cpu 信息已经放在 r.Cpuinfo
-	if !useDmidecode {
+	if len(r.CpuInfo) == 0 {
+		logger.Warn("no cpu info found, will skip")
 		return nil
 	}
 
+	var model string
+	var mhz float64
+	// 取第一个 cpu 检查，如果发现存在信息为空的情况，则启用 dmidecode 进行填充
+	if r.CpuInfo[0].Mhz == 0 || r.CpuInfo[0].Model == "" {
+		model, mhz, err = getDMIDecodeCPUInfo()
+		if err != nil {
+			logger.Warnf("get dmi cpu info failed, err: %v", err)
+		}
+	}
+
 	// 用 dmidecode 信息填充所有核
-	for index, info := range r.Cpuinfo {
+	for index, info := range r.CpuInfo {
 		info.Mhz = mhz
 		info.Model = model
 		info.ModelName = model
-		r.Cpuinfo[index] = info
+		r.CpuInfo[index] = info
 	}
 
-	logger.Debugf("get cpu_info success: %+v", r.Cpuinfo)
+	logger.Debugf("get cpu_info success: %+v", r.CpuInfo)
 	return nil
 }
 
-func getDMIDecodeCPUInfo() (string, float64) {
-	var mhz float64 = -1
+func getDMIDecodeCPUInfo() (string, float64, error) {
+	mhz := -1.0
 	model := "unknown"
+
 	dmi, err := dmidecode.New()
 	if err != nil {
-		logger.Errorf("init dmidecoder error: %s", err)
-		return model, mhz
+		return model, mhz, err
 	}
 	processor, err := dmi.Processor()
 	if err != nil {
-		logger.Errorf("get dmi processor error: %s", err)
-		return model, mhz
+		return model, mhz, err
 	}
 
 	if len(processor) > 0 {
 		mhz = float64(processor[0].MaxSpeed)
 		model = processor[0].Version
 	}
-	return model, mhz
+	return model, mhz, nil
 }
 
-func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {
+func calcTimeStat(t1, t2 cpu.TimesStat) cpu.TimesStat {
 	return cpu.TimesStat{
 		CPU:       t2.CPU,
 		User:      t2.User - t1.User,

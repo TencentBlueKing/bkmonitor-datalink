@@ -46,47 +46,47 @@ func cleanStorage(t *testing.T, mp *MountPointInfo) {
 
 func TestMain(m *testing.M) {
 	// 初始化动作
-	//utils.Setup()
+	// utils.Setup()
 
 	code := m.Run()
 
 	// 清理动作
-	//utils.Teardown()
+	// utils.Teardown()
 	os.Exit(code)
 }
 
 func TestGenUniqueKey(t *testing.T) {
-	var mpList = NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})
+	mpList := NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})
 
 	assert.Equal(t, 1, len(mpList), "test batch mp create count")
 
-	var uniqueKey = mpList[0].genUniqueKey()
+	uniqueKey := mpList[0].genUniqueKey()
 	assert.Equal(t, "/dev/sda-ext4-/data", uniqueKey, "test mount point unique")
 }
 
 func TestSetHistoryInfoNotSaveRO(t *testing.T) {
 	f := initStorage()
 	defer os.Remove(f)
-	var mp = NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
+	mp := NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
 	mp.Options = append(mp.Options, "ro")
 
 	cleanStorage(t, mp)
 
-	var err = mp.SaveStatus()
+	err := mp.SaveStatus()
 	assert.Equal(t, nil, err, "test save must success with no error")
 
-	var history = mp.getHistoryInfo()
+	history := mp.getHistoryInfo()
 	assert.Nil(t, history, "test ro info must not load from db")
 	cleanStorage(t, mp)
 }
 
 func TestSetHistoryInfoSave(t *testing.T) {
-	var mp = NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
+	mp := NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
 
-	var err = mp.SaveStatus()
+	err := mp.SaveStatus()
 	assert.Equal(t, nil, err, "test save must success with no error")
 
-	var history = mp.getHistoryInfo()
+	history := mp.getHistoryInfo()
 	assert.NotNil(t, history, "test normal info must load from db")
 
 	assert.Equal(t, mp.Device, history.Device, "test restore data as old -- device")
@@ -97,13 +97,13 @@ func TestSetHistoryInfoSave(t *testing.T) {
 }
 
 func TestIsReadOnlyStatusChange(t *testing.T) {
-	var mp = NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
+	mp := NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
 
 	assert.False(t, mp.IsReadOnlyStatusChange(), "test init status, no status is detect.")
-	var err = mp.SaveStatus()
+	err := mp.SaveStatus()
 	assert.Nil(t, err, "test init data save must success")
 
-	var newMp = NewBatchMountPointInfo([]disk.PartitionStat{
+	newMp := NewBatchMountPointInfo([]disk.PartitionStat{
 		{
 			Device:     testDiskInfo.Device,
 			Mountpoint: testDiskInfo.Mountpoint,
@@ -116,8 +116,7 @@ func TestIsReadOnlyStatusChange(t *testing.T) {
 }
 
 func TestInitReadOnlyStatusNoChange(t *testing.T) {
-
-	var newMp = NewBatchMountPointInfo([]disk.PartitionStat{
+	newMp := NewBatchMountPointInfo([]disk.PartitionStat{
 		{
 			Device:     testDiskInfo.Device,
 			Mountpoint: testDiskInfo.Mountpoint,
@@ -127,7 +126,7 @@ func TestInitReadOnlyStatusNoChange(t *testing.T) {
 	})[0]
 	assert.Nil(t, newMp.SaveStatus(), "save readonly init status success")
 
-	var mp = NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
+	mp := NewBatchMountPointInfo([]disk.PartitionStat{testDiskInfo})[0]
 	assert.False(t, mp.IsReadOnlyStatusChange(), "test init status, no status is detect.")
 	assert.Nil(t, mp.SaveStatus(), "test init data save must success")
 
@@ -136,8 +135,7 @@ func TestInitReadOnlyStatusNoChange(t *testing.T) {
 }
 
 func TestInitReadOnlyStatusNoChangeV2(t *testing.T) {
-
-	var newMp = NewBatchMountPointInfo([]disk.PartitionStat{
+	newMp := NewBatchMountPointInfo([]disk.PartitionStat{
 		{
 			Device:     testDiskInfo.Device,
 			Mountpoint: testDiskInfo.Mountpoint,
@@ -147,7 +145,7 @@ func TestInitReadOnlyStatusNoChangeV2(t *testing.T) {
 	})[0]
 	assert.Nil(t, newMp.SaveStatus(), "save readonly init status success")
 
-	var mp = NewBatchMountPointInfo([]disk.PartitionStat{
+	mp := NewBatchMountPointInfo([]disk.PartitionStat{
 		{
 			Device:     testDiskInfo.Device,
 			Mountpoint: testDiskInfo.Mountpoint,
@@ -160,7 +158,7 @@ func TestInitReadOnlyStatusNoChangeV2(t *testing.T) {
 }
 
 func TestRuleMatch(t *testing.T) {
-	var testData = []struct {
+	testData := []struct {
 		filePath string
 		ruleList []string
 		result   bool

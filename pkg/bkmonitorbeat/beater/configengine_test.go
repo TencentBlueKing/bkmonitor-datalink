@@ -55,7 +55,7 @@ func TestParseConfig(t *testing.T) {
 	cfg, err := ce.ParseToUcfg([]byte(yamlFile))
 	assert.Nil(t, err)
 
-	//校验操作是否成功
+	// 校验操作是否成功
 	name, err := cfg.String("name", 0)
 	assert.Nil(t, err)
 	minPeriod, err := cfg.String("min_period", 0)
@@ -77,5 +77,4 @@ func TestParseConfig(t *testing.T) {
 	assert.Equal(t, "test", childTaskMetaConfig.Name)
 	assert.Equal(t, "ping", childTaskMetaConfig.Type)
 	assert.Equal(t, "1.2.3", childTaskMetaConfig.Version)
-
 }

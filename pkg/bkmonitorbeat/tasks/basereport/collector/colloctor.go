@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -217,7 +217,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 	}
 
 	// collect once in one period
-	data.Country, data.City, _ = bkcommon.GetLocation()
+	data.Country, data.City, _ = common.GetLocation()
 	data.City = strings.TrimSpace(data.City)
 
 	data.Load, err = GetLoadInfo()
@@ -253,7 +253,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 }
 
 type ReportData struct {
-	bkcommon.DateTime
+	common.DateTime
 	Cpu    *CpuReport    `json:"cpu"`
 	Env    *EnvReport    `json:"env"`
 	Disk   *DiskReport   `json:"disk"`

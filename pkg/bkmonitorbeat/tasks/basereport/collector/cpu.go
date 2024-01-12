@@ -12,6 +12,7 @@ package collector
 import (
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -19,7 +20,7 @@ import (
 )
 
 type CpuReport struct {
-	Cpuinfo    []cpu.InfoStat  `json:"cpuinfo"`
+	CpuInfo    []cpu.InfoStat  `json:"cpuinfo"`
 	Usage      []float64       `json:"per_usage"`
 	TotalUsage float64         `json:"total_usage"`
 	Stat       []cpu.TimesStat `json:"per_stat"`
@@ -43,11 +44,9 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		var once CpuReport
 		err := getCPUStatUsage(&once)
 		if err != nil {
-			logger.Errorf("get cpu usage stat fail")
-			return nil, err
+			return nil, errors.Wrap(err, "get cpu stat usage failed")
 		}
 
-		// select max cpu total usage report
 		if once.TotalUsage >= maxTotalUsage {
 			report = once
 			maxTotalUsage = report.TotalUsage
@@ -74,10 +73,10 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 
 		// 如果不必上报指令集，那么将所有的上报数据统一都改为空
 		emptySlice := make([]string, 0)
-		for index, cpuInfo := range report.Cpuinfo {
+		for index, cpuInfo := range report.CpuInfo {
 			cpuInfo.Flags = emptySlice
 			// 需要将修改后的内容放回到slice当中
-			report.Cpuinfo[index] = cpuInfo
+			report.CpuInfo[index] = cpuInfo
 		}
 
 		logger.Debug("cpu flags is all clean.")

@@ -115,7 +115,6 @@ func buildDimensionKey(info beat.MapStr) string {
 		} else {
 			result = append(result, "")
 		}
-
 	}
 
 	return strings.Join(result, "-")
@@ -197,7 +196,6 @@ func (c *Collector) handleCoreFileEvent(event fsnotify.Event, e chan<- define.Ev
 
 // checkSystemFile 检查系统配置变更
 func (c *Collector) checkSystemFile() {
-
 	if !c.isCorePathAddSuccess && c.corePath != "" {
 		logger.Infof("corePath->[%s] add failed before, will retry now.", c.corePath)
 		if err := c.coreWatcher.Add(c.corePath); err != nil {
@@ -232,7 +230,7 @@ func (c *Collector) checkSystemFile() {
 
 // handleSendEvent 处理上报
 func (c *Collector) handleSendEvent(e chan<- define.Event) {
-	var now = time.Now()
+	now := time.Now()
 	// 遍历检查是否存在需要发送的缓存事件
 	for key, reportInfo := range c.reportTimeInfo {
 		// 如果有上报时间已经超过的，而且存在上报记录信息的，需要上报
@@ -381,7 +379,7 @@ func (c *Collector) getCoreFilePath() (string, error) {
 		defer func() {
 			_ = file.Close()
 		}()
-		var corePatternArr = make([]byte, 512)
+		corePatternArr := make([]byte, 512)
 		_, err = file.Read(corePatternArr)
 		if err != nil {
 			return "", err
@@ -513,7 +511,6 @@ func (c *Collector) parseDimensions(groups []regexGroup) beat.MapStr {
 // fillDimension: 填充维度信息到dimensions当中，如果解析失败，那么直接返回dimensions，不对其中的任何内容进行修改
 // 返回内容表示是否可以按照正则正常解析；如果正则解析失败的，很可能是用户自己瞎写的文件，不应该触发告警
 func (c *Collector) fillDimension(filePath string) (beat.MapStr, bool) {
-
 	// 获取core file文件名
 	fileName, errFileName := c.getCoreFileName(filePath)
 	if errFileName != nil {
@@ -615,7 +612,7 @@ func (c *Collector) setCoreUsesPid() error {
 	defer func() {
 		_ = file.Close()
 	}()
-	var coreUsesPidArr = make([]byte, 512)
+	coreUsesPidArr := make([]byte, 512)
 	_, err = file.Read(coreUsesPidArr)
 	if err != nil {
 		logger.Errorf("read %s failed", CoreUsesPidFile)

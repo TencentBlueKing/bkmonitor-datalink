@@ -280,7 +280,6 @@ func filterNetIOStats(ioCounterStat []net.IOCountersStat, config configs.NetConf
 		stats = append(stats, stat)
 	}
 	return stats
-
 }
 
 // filterNetInterfaceStats 用黑白名单过滤 net 接口
@@ -306,5 +305,4 @@ func filterNetInterfaceStats(interfaceStats []net.InterfaceStat, config configs.
 		stats = append(stats, stat)
 	}
 	return stats
-
 }

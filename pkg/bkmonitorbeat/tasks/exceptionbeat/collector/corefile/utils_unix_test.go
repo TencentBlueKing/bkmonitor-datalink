@@ -146,7 +146,7 @@ type DimensionTestCase struct {
 }
 
 func TestBuildDimensionKey(t *testing.T) {
-	var testData = []struct {
+	testData := []struct {
 		dimensions beat.MapStr
 		result     string
 	}{
@@ -177,13 +177,11 @@ func TestBuildDimensionKey(t *testing.T) {
 	}
 }
 
-var (
-	corePatternPathV2 = path.Join(os.TempDir(), "corefile_pattern")
-)
+var corePatternPathV2 = path.Join(os.TempDir(), "corefile_pattern")
 
 func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
 	CorePatternFile = corePatternPathV2
-	err := os.WriteFile(corePatternPathV2, []byte("/data/corefile/core_%e_%t.%p\n"), 0644)
+	err := os.WriteFile(corePatternPathV2, []byte("/data/corefile/core_%e_%t.%p\n"), 0o644)
 	if err != nil {
 		panic(err)
 	}

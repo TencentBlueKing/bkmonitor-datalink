@@ -58,8 +58,8 @@ func getCPUStatUsage(report *CpuReport) error {
 		} else {
 			// TODO : gopsutil implement has bug
 			// windows TimesStat has only User, System, Idle, Irq
-			//perUsage := 100 - stat.Idle
-			//report.Usage = append(report.Usage, perUsage)
+			// perUsage := 100 - stat.Idle
+			// report.Usage = append(report.Usage, perUsage)
 			report.Stat = append(report.Stat, stat)
 		}
 	}
@@ -142,7 +142,7 @@ func queryCpuInfo(r *CpuReport, period time.Duration, timeout time.Duration) err
 
 	// 将获取的CPU信息返回到Report中
 	updateLock.RLock()
-	r.Cpuinfo = cpuInfo
+	r.CpuInfo = cpuInfo
 	updateLock.RUnlock()
 	return err
 }

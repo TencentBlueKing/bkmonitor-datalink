@@ -35,9 +35,7 @@ const (
 	OutOfMemCollection       = "C_OOM"
 )
 
-var (
-	methods []collector.Collector
-)
+var methods []collector.Collector
 
 type Gather struct {
 	config *configs.ExceptionBeatConfig

@@ -50,7 +50,7 @@ const (
 	TCP_CLOSE_WAIT
 	TCP_LAST_ACK
 	TCP_LISTEN  // 0x0A
-	TCP_CLOSING //now a valid state
+	TCP_CLOSING // now a valid state
 	TCP_MAX_STATES
 )
 
@@ -180,7 +180,7 @@ func GetTcp4SocketStatusCount() (SocketStatusCount, error) {
 
 	counts := make([]uint, TCP_MAX_STATES)
 	for _, m := range msgs {
-		var req = *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
+		req := *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
 		counts[int(req.State)]++
 	}
 

@@ -40,8 +40,8 @@ func IsContainerMode() bool {
 
 // TaskConcurrencyLimitConfig 任务并发限制配置
 type TaskConcurrencyLimitConfig struct {
-	PerInstanceLimit int64 `config:"per_instance"` //全局限制
-	PerTaskLimit     int64 `config:"per_task"`     //单任务限制
+	PerInstanceLimit int64 `config:"per_instance"` // 全局限制
+	PerTaskLimit     int64 `config:"per_task"`     // 单任务限制
 }
 
 // Clean 初始化参数

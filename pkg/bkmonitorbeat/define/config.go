@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultTimeout                         = 3 * time.Second  // 默认任务超时
-	DefaultPeriod                          = 10 * time.Second //默认任务执行间隔
+	DefaultPeriod                          = 10 * time.Second // 默认任务执行间隔
 	DefaultTaskConcurrencyLimitPerInstance = 100000           // 默认任务单实例并发限制
 	DefaultTaskConcurrencyLimitPerTask     = 1000             // 默认单个任务并发限制
 )

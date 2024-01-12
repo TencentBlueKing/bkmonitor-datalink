@@ -39,15 +39,15 @@ func newMock() {
 		messageCount++
 	}
 
-	err := os.WriteFile(corePatternPath, []byte(path.Join(coreFilePath, "%e.corefile\n")), 0644)
+	err := os.WriteFile(corePatternPath, []byte(path.Join(coreFilePath, "%e.corefile\n")), 0o644)
 	if err != nil {
 		panic(err)
 	}
-	err = os.WriteFile(coreUsesPidPath, []byte("0"), 0644)
+	err = os.WriteFile(coreUsesPidPath, []byte("0"), 0o644)
 	if err != nil {
 		panic(err)
 	}
-	err = os.MkdirAll(coreFilePath, 0755)
+	err = os.MkdirAll(coreFilePath, 0o755)
 	if err != nil {
 		panic(err)
 	}
@@ -64,7 +64,7 @@ func resetMock() {
 }
 
 func newTestConfig() *configs.ExceptionBeatConfig {
-	var defaultConfig = configs.DefaultExceptionBeatConfig
+	defaultConfig := configs.DefaultExceptionBeatConfig
 	defaultConfig.CheckBit = configs.Core
 
 	return &defaultConfig
@@ -74,7 +74,7 @@ func TestCorefileCreate(t *testing.T) {
 	newMock()
 	defer resetMock()
 
-	var c = new(Collector)
+	c := new(Collector)
 	c.state = closeState
 	e := make(chan define.Event)
 	c.Start(context.Background(), e, newTestConfig())

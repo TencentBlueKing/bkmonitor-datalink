@@ -46,7 +46,7 @@ func (c *ScriptTaskConfig) Clean() error {
 	if c.TimestampUnit == "" {
 		c.TimestampUnit = "s"
 	}
-	//默认可容忍偏移时间为两年
+	// 默认可容忍偏移时间为两年
 	if c.TimeOffset == 0 {
 		c.TimeOffset = 24 * time.Hour * 365 * 2
 	}
@@ -78,7 +78,7 @@ func (c *ScriptTaskMetaConfig) Clean() error {
 	if err != nil {
 		return err
 	}
-	//load script config for config path
+	// load script config for config path
 	if c.TaskConfigPath != "" {
 		if err := c.loadExclusiveCfg(); err != nil {
 			return err

@@ -98,7 +98,6 @@ func (s *Status) UpdateCheckTime(timestamp int64) {
 	s.lastCheckTime = timestamp
 	// 计算下次检查的时间,仅做日志参考
 	logger.Debugf("next check time is:%s", time.Unix(s.lastCheckTime, 0).Add(s.checkPeriod))
-
 }
 
 // UpdateReportTime :
@@ -121,5 +120,4 @@ func (s *Status) UpdateReportTime(timestamp int64) {
 	s.lastReportTime = timestamp
 	// 计算下次上报的时间,仅做日志参考
 	logger.Debugf("next report time is:%s", time.Unix(s.lastReportTime, 0).Add(nextDuration))
-
 }

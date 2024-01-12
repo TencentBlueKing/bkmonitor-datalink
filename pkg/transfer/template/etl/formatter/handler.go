@@ -311,7 +311,16 @@ func transformFields(from map[string]interface{}, transformers map[string]etl.Tr
 		if err != nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "transform field %v error %v", key, err)
 		}
-		to[key] = value
+
+		// TODO(mando): 暂时没有找到优雅的方案处理 db record 先在这里做个断言
+		r, ok := value.(etl.DbmRecord)
+		if !ok {
+			to[key] = value // 普通类型处理
+			continue
+		}
+
+		to[r.BodyFieldName] = r.Body
+		to[r.ResponseFieldName] = r.Response
 	}
 	return to, nil
 }

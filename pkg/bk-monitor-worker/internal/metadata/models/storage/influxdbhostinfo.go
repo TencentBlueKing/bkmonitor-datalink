@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -79,7 +80,7 @@ func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
 
 // ConsulPath 获取host_info的consul根路径
 func (InfluxdbHostInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbHostInfoConsulPathTemplate, config.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbHostInfoConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体host的consul配置路径
@@ -100,7 +101,7 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		return err
 	}
 	// 更新consul信息
-	err = consulClient.Put(i.ConsulConfigPath(), configStr, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), configStr)
 	if err != nil {
 		logger.Errorf("host: [%s] refresh consul config failed, %v", i.HostName, err)
 		return err

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -26,6 +27,9 @@ var (
 	FilePath = "./bmw.yaml"
 	// EnvKeyPrefix env prefix
 	EnvKeyPrefix = "bmw"
+
+	// BypassSuffixPath 旁路路径后缀，用于consul/redis等数据写入测试
+	BypassSuffixPath string
 
 	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
@@ -217,6 +221,8 @@ var (
 )
 
 func initVariables() {
+	// 旁路路径后缀，用于consul/redis等数据写入测试
+	BypassSuffixPath = GetValue("bypassSuffixPath", "")
 
 	// LoggerEnabledStdout 是否开启日志文件输出
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)
@@ -430,4 +436,11 @@ func InitConfig() {
 	initMetadataVariables()
 	initClusterMetricVariables()
 	initApmVariables()
+
+	prettyPrintSettings()
+}
+
+func prettyPrintSettings() {
+	b, _ := jsonx.MarshalIndent(viper.AllSettings(), "", "  ")
+	logger.Infof("settings: \n------\n%s\n------\n", b)
 }

@@ -25,6 +25,7 @@ type ComponentConfig struct {
 	Zipkin      ComponentZipkin      `config:"zipkin"`
 	Skywalking  ComponentSkywalking  `config:"skywalking"`
 	Pyroscope   ComponentPyroscope   `config:"pyroscope"`
+	Fta         ComponentFta         `config:"fta"`
 }
 
 type ComponentJaeger struct {
@@ -52,6 +53,10 @@ type ComponentSkywalking struct {
 }
 
 type ComponentPyroscope struct {
+	Enabled bool `config:"enabled"`
+}
+
+type ComponentFta struct {
 	Enabled bool `config:"enabled"`
 }
 

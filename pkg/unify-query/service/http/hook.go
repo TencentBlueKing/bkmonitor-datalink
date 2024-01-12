@@ -49,6 +49,7 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryPromQLToStructHandlePathConfigPath, "/query/ts/promql_to_struct")
 
 	viper.SetDefault(TSQueryLabelValuesPathConfigPath, "/query/ts/label/:label_name/values")
+	viper.SetDefault(TSQueryClusterMetricsPathConfigPath, "/query/ts/cluster_metrics")
 
 	viper.SetDefault(PrintHandlePathConfigPath, "/print")
 	viper.SetDefault(FeatureFlagHandlePathConfigPath, "/ff")
@@ -66,6 +67,9 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
 	viper.SetDefault(QueryMaxRoutingConfigPath, 2)
+
+	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
+	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
 
 }
 
@@ -87,6 +91,9 @@ func LoadConfig() {
 	DefaultInfoLimit = viper.GetInt(InfoDefaultLimit)
 
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
+
+	ClusterMetricQueryPrefix = viper.GetString(ClusterMetricQueryPrefixConfigPath)
+	ClusterMetricQueryTimeout = viper.GetDuration(ClusterMetricQueryTimeoutConfigPath)
 
 	infos.SetDefaultLimit(DefaultInfoLimit)
 	promql.SetSegmented(&promql.Segmented{

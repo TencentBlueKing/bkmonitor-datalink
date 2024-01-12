@@ -51,10 +51,27 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 	}, nil
 }
 
-func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp,
+func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, conditions Conditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
+		return nil
+	}
+
+	allConditions, err := conditions.AnalysisConditions()
+	if err != nil {
+		log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
+		return nil
+	}
+
+	// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
+	compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
+	if err != nil {
+		log.Errorf(s.ctx, "allCondition Compare error: %s", err)
+		return nil
+	}
+
+	if !compareResult {
 		return nil
 	}
 
@@ -177,7 +194,7 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 	return tIDs
 }
 
-func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool) ([]*query.TsDBV2, error) {
+func (s *SpaceFilter) DataList(tableID TableID, conditions Conditions, fieldName string, isRegexp bool) ([]*query.TsDBV2, error) {
 	if tableID == "" && fieldName == "" {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
@@ -220,7 +237,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string, isRegexp bool)
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, fieldName, tID, isK8s, isK8sFeatureFlag)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, conditions, fieldName, tID, isK8s, isK8sFeatureFlag)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -245,7 +262,8 @@ type TsDBOption struct {
 	TableID   TableID
 	FieldName string
 	// IsRegexp 指标是否使用正则查询
-	IsRegexp bool
+	IsRegexp   bool
+	Conditions Conditions
 }
 
 type TsDBs []*query.TsDBV2
@@ -265,7 +283,7 @@ func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {
 		return nil, err
 	}
 
-	tsDBs, err := spaceFilter.DataList(option.TableID, option.FieldName, option.IsRegexp)
+	tsDBs, err := spaceFilter.DataList(option.TableID, option.Conditions, option.FieldName, option.IsRegexp)
 	if err != nil {
 		return nil, err
 	}

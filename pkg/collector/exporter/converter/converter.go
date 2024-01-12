@@ -92,6 +92,8 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 		PingserverConverter.Convert(record, f)
 	case define.RecordProfiles:
 		ProfilesConverter.Convert(record, f)
+	case define.RecordFta:
+		FtaConverter.Convert(record, f)
 	}
 }
 

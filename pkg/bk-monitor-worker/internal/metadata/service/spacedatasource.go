@@ -10,11 +10,12 @@
 package service
 
 import (
+	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/pkg/errors"
 )
 
 // SpaceDataSourceSvc space datasource service

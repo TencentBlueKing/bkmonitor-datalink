@@ -87,7 +87,7 @@ func GetBcsApi() (*bcs.Client, error) {
 		return bcsApi, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint: strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/"),
+		Endpoint: strings.TrimRight(cfg.BkApiBcsApiGatewayBaseUrl, "/"),
 		AuthorizationParams: map[string]string{
 			"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken),
 		},

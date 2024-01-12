@@ -123,6 +123,7 @@ taskConfig:
       appSecret: appSecret
       bcsApiGatewayDomain: ""
       bcsApiGatewayToken: ""
+      bcsApiGatewayBaseUrl: ""
   # metadata: metadata任务配置
   metadata:
     metricDimension:

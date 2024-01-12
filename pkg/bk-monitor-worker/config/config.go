@@ -184,11 +184,11 @@ var (
 	TaskListenPort int
 	// ControllerListenHost http listen host
 	ControllerListenHost string
-	// TaskListenPort http listen port
+	// ControllerListenPort http listen port
 	ControllerListenPort int
-	// TaskListenHost http listen host
+	// WorkerListenHost http listen host
 	WorkerListenHost string
-	// TaskListenPort http listen port
+	// WorkerListenPort http listen port
 	WorkerListenPort int
 
 	// AesKey project aes key
@@ -208,6 +208,8 @@ var (
 	BkApiBcsApiGatewayDomain string
 	// BkApiBcsApiGatewayToken bk-apigw bcs token
 	BkApiBcsApiGatewayToken string
+	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
+	BkApiBcsApiGatewayBaseUrl string
 	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
 	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
@@ -362,8 +364,9 @@ func initVariables() {
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
 	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
 	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
-	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.NodmanApiBaseUrl", "")
-	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.BkdataApiBaseUrl", "")
+	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
+	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
+	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 }

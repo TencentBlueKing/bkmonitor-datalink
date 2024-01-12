@@ -30,6 +30,7 @@ require (
 	github.com/hashicorp/go-version v1.2.1
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/jinzhu/gorm v1.9.16
+	github.com/josephburnett/jd v1.7.1
 	github.com/json-iterator/go v1.1.12
 	github.com/minio/highwayhash v1.0.2
 	github.com/nsf/jsondiff v0.0.0-20230430225905-43f6cf3098c1
@@ -105,7 +106,6 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
-	github.com/josephburnett/jd v1.7.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.16.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect

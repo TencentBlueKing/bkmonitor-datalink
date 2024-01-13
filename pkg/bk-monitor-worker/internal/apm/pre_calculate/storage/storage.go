@@ -17,6 +17,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -187,7 +188,10 @@ loop:
 		case r := <-p.saveRequestChan:
 			switch r.Target {
 			case SaveEs:
-				esSaveData = append(esSaveData, r.Data.(EsStorageData))
+				item := r.Data.(EsStorageData)
+				metrics.DecreaseApmSaveRequestCount(item.DataId, string(SaveEs))
+
+				esSaveData = append(esSaveData, item)
 				if len(esSaveData) >= p.config.saveHoldMaxCount {
 					// todo 是否需要满时动态调整
 					err := p.saveEs.SaveBatch(esSaveData)
@@ -197,7 +201,10 @@ loop:
 					}
 				}
 			case Cache:
-				cacheSaveData = append(cacheSaveData, r.Data.(CacheStorageData))
+				item := r.Data.(CacheStorageData)
+				metrics.DecreaseApmSaveRequestCount(item.DataId, string(Cache))
+
+				cacheSaveData = append(cacheSaveData, item)
 				if len(cacheSaveData) >= p.config.saveHoldMaxCount {
 					err := p.cache.SaveBatch(cacheSaveData)
 					cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
@@ -209,6 +216,8 @@ loop:
 				// Bloom-filter needs to be added immediately,
 				// otherwise it may not be added and cause an error in judgment.
 				data := r.Data.(BloomStorageData)
+				metrics.DecreaseApmSaveRequestCount(data.DataId, string(BloomFilter))
+
 				if err := p.bloomFilter.Add(data); err != nil {
 					logger.Errorf("Bloom Filter add key: %s failed, error: %s", data.Key, err)
 				}

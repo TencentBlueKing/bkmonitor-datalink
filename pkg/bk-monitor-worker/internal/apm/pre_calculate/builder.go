@@ -256,7 +256,7 @@ func (p *Precalculate) launch(
 
 	runInstance.startWindowHandler(messageChan, saveReqChan, errorReceiveChan)
 
-	runInstance.startMetricReport(p.httpTransport)
+	runInstance.startMetricReport()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
 	p.runningInstances = append(p.runningInstances, &runInstance)
@@ -282,6 +282,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	groupId := "go-pre-calculate-worker-consumer"
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
+		p.dataId,
 		append([]notifier.Option{
 			notifier.Context(p.ctx),
 			notifier.KafkaGroupId(groupId),
@@ -343,9 +344,9 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 	return proxy.SaveRequest(), nil
 }
 
-func (p *RunInstance) startMetricReport(transport *http.Transport) {
+func (p *RunInstance) startMetricReport() {
 	if len(p.config.metricReportConfig) == 0 {
-		apmLogger.Infof("[!] metric is not configured, the indicator will not be reported")
+		apmLogger.Infof("[!] metricDefine is not configured, the indicator or profile will not be reported")
 		return
 	}
 
@@ -354,6 +355,6 @@ func (p *RunInstance) startMetricReport(transport *http.Transport) {
 		setter(&opt)
 	}
 
-	p.metricCollector = NewMetricCollector(opt, transport, p)
+	p.metricCollector = NewMetricCollector(opt, p)
 	p.metricCollector.StartReport()
 }

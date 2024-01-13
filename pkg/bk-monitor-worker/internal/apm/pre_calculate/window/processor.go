@@ -23,6 +23,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -141,7 +142,14 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 				"That data will be ignored, and result may be distorted. error: %s",
 			event.TraceId, err,
 		)
+		if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "error"); err != nil {
+			p.logger.Errorf("Report filter es query metric.error failed, error: %s", err)
+		}
 		return spans
+	}
+
+	if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "success"); err != nil {
+		p.logger.Errorf("Report filter es query metric.success failed, error: %s", err)
 	}
 	if spanBytes == nil {
 		// The trace does not exist in es. if it occurs frequently, the Bloom-Filter parameter may be set improperly.
@@ -297,29 +305,35 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Target: storage.Cache,
 			Action: storage.SaveTraceCache,
 			Data: storage.CacheStorageData{
-				Key:   storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId),
-				Value: spanBytes,
-				Ttl:   storage.CacheTraceInfoKey.Ttl,
+				DataId: p.dataId,
+				Key:    storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId),
+				Value:  spanBytes,
+				Ttl:    storage.CacheTraceInfoKey.Ttl,
 			},
 		}
+		metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.Cache))
 	}
 
 	receiver <- storage.SaveRequest{
 		Target: storage.BloomFilter,
 		Data: storage.BloomStorageData{
-			Key: event.TraceId,
+			DataId: p.dataId,
+			Key:    event.TraceId,
 		},
 	}
+	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.BloomFilter))
 
 	resultBytes, _ := jsoniter.Marshal(result)
 	receiver <- storage.SaveRequest{
 		Target: storage.SaveEs,
 		Action: storage.SavePrecalculateResult,
 		Data: storage.EsStorageData{
+			DataId:     p.dataId,
 			DocumentId: result.TraceId,
 			Value:      resultBytes,
 		},
 	}
+	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.SaveEs))
 }
 
 func sortNode(nodeDegrees []NodeDegree) func(a, b int) bool {

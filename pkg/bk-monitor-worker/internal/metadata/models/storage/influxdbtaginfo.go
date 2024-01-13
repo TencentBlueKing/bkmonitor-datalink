@@ -17,9 +17,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -49,7 +50,7 @@ func (i InfluxdbTagInfo) GenerateTagKey() string {
 }
 
 func (InfluxdbTagInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, config.StorageConsulPathPrefix)
+	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 func (i InfluxdbTagInfo) RedisField() string {
@@ -136,7 +137,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 	if err != nil {
 		return err
 	}
@@ -180,7 +181,7 @@ func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemIn
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 
 	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val, true)
 	return nil

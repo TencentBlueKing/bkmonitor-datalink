@@ -112,6 +112,8 @@ bk-collector:
         enabled: true
       zipkin:
         enabled: false
+      fta:
+        enabled: true
 
 
   # =============================== Processor ================================
@@ -573,6 +575,12 @@ bk-collector:
       type: "metrics.derived"
       processors:
         - "apdex_calculator/standard"
+
+    - name: "fta_pipeline/common"
+      type: "fta"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

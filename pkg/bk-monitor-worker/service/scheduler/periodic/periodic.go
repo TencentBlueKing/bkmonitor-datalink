@@ -45,10 +45,10 @@ var (
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
 	periodicTasksDefine = map[string]PeriodicTask{
-		refreshTsMetric: {
-			Cron:    "*/2 * * * *",
-			Handler: metadataTask.RefreshTimeSeriesMetric,
-		},
+		// refreshTsMetric: {
+		// 	Cron:    "*/2 * * * *",
+		// 	Handler: metadataTask.RefreshTimeSeriesMetric,
+		// },
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
 			Handler: metadataTask.RefreshEventDimension,

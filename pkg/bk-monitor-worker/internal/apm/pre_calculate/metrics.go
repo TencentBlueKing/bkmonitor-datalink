@@ -17,7 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type MetricCollector struct {
+type ProfileCollector struct {
 	config      MetricOptions
 	runInstance *RunInstance
 }
@@ -60,17 +60,17 @@ func ProfileAppIdx(h string) MetricOption {
 	}
 }
 
-func NewMetricCollector(o MetricOptions, instance *RunInstance) MetricCollector {
-	return MetricCollector{config: o, runInstance: instance}
+func NewProfileCollector(o MetricOptions, instance *RunInstance) ProfileCollector {
+	return ProfileCollector{config: o, runInstance: instance}
 }
 
-func (r *MetricCollector) StartReport() {
+func (r *ProfileCollector) StartReport() {
 	if r.config.enabledProfile {
 		r.startProfiling(r.runInstance.dataId, r.config.profileAppIdx)
 	}
 }
 
-func (r *MetricCollector) startProfiling(dataId, appIdx string) {
+func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 
 	n := fmt.Sprintf("apm_precalculate-%s", appIdx)
 	_, err := pyroscope.Start(pyroscope.Config{

@@ -205,7 +205,6 @@ func IncreaseApmSaveRequestCount(dataId, storageType string) {
 		return
 	}
 	metric.Inc()
-	return
 }
 
 // DecreaseApmSaveRequestCount APM预计算ES存储请求指标 - 1
@@ -216,7 +215,6 @@ func DecreaseApmSaveRequestCount(dataId, storageType string) {
 		return
 	}
 	metric.Dec()
-	return
 }
 
 // IncreaseApmMessageChanCount APM预计算ES存储请求指标 + 1
@@ -227,7 +225,6 @@ func IncreaseApmMessageChanCount(dataId string) {
 		return
 	}
 	metric.Inc()
-	return
 }
 
 // DecreaseApmMessageChanCount APM预计算ES存储请求指标 - 1
@@ -238,7 +235,6 @@ func DecreaseApmMessageChanCount(dataId string) {
 		return
 	}
 	metric.Dec()
-	return
 }
 
 // IncreaseApmWindowsTraceCount APM预计算窗口Trace数量指标 + 1
@@ -249,7 +245,6 @@ func IncreaseApmWindowsTraceCount(dataId, id string) {
 		return
 	}
 	metric.Inc()
-	return
 }
 
 // DecreaseApmWindowsTraceCount APM预计算窗口Trace数量指标 - 1
@@ -260,7 +255,6 @@ func DecreaseApmWindowsTraceCount(dataId, id string) {
 		return
 	}
 	metric.Dec()
-	return
 }
 
 // IncreaseApmWindowsSpanCount APM预计算窗口Span数量指标 + 1
@@ -271,7 +265,6 @@ func IncreaseApmWindowsSpanCount(dataId, id string) {
 		return
 	}
 	metric.Inc()
-	return
 }
 
 // DecreaseApmWindowsSpanCount APM预计算窗口Span数量指标 - n
@@ -282,7 +275,6 @@ func DecreaseApmWindowsSpanCount(dataId, id string, n int) {
 		return
 	}
 	metric.Sub(float64(n))
-	return
 }
 
 // 设置 api 请求的耗时

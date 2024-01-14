@@ -505,36 +505,6 @@ func (q *Query) BuildMetadataQuery(
 
 	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
 
-	//// 拼入空间自带过滤条件
-	//var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))
-	//for _, filter := range tsDB.Filters {
-	//	var (
-	//		cond           = make([]ConditionField, 0, len(filter))
-	//		labelsMatchers = make([]*labels.Matcher, 0, len(filter))
-	//	)
-	//	for k, v := range filter {
-	//		if v != "" {
-	//			cond = append(cond, ConditionField{
-	//				DimensionName: k,
-	//				Value:         []string{v},
-	//				Operator:      Contains,
-	//			})
-	//
-	//			matcher, _ := labels.NewMatcher(labels.MatchEqual, k, v)
-	//			labelsMatchers = append(labelsMatchers, matcher)
-	//		}
-	//	}
-	//
-	//	if len(cond) > 0 {
-	//		filterConditions = append(filterConditions, cond)
-	//	}
-	//
-	//	// labelsMatcher 不支持 or 语法，所以只取第一个
-	//	if len(tsDB.Filters) == 1 {
-	//		query.LabelsMatcher = append(query.LabelsMatcher, labelsMatchers...)
-	//	}
-	//}
-
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)
 	// 满足压缩条件

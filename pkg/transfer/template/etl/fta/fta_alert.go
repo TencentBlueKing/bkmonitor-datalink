@@ -11,9 +11,10 @@ package fta
 
 import (
 	"context"
+	"slices"
+	"sort"
 	"time"
 
-	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -49,96 +50,36 @@ const (
 	fieldCleanConfig = "clean_configs"
 )
 
-// Alert 告警名称匹配规则
-type Alert struct {
-	Trigger `mapstructure:",squash"`
-
-	Name string `json:"name" mapstructure:"name"`
-}
-
-// CleanConfig 清洗配置
-type CleanConfig struct {
-	Alerts         []*Alert `json:"alert_config" mapstructure:"alert_config"`
-	Normalizations []*struct {
-		Field string `json:"field" mapstructure:"field"`
-		Expr  string `json:"expr" mapstructure:"expr"`
-	} `json:"normalization_config" mapstructure:"normalization_config"`
-	Trigger `mapstructure:",squash"`
-}
-
-// Init 清洗配置初始化
-func (c *CleanConfig) Init() error {
-	for _, alert := range c.Alerts {
-		err := alert.Init()
-		if err != nil {
-			return errors.WithMessagef(err, "alert init error for config->(%+v)", alert)
-		}
-	}
-	return c.Trigger.Init()
-}
-
-// convertToExprMap 将字段提取配置转换为map格式
-func convertToExprMap(c interface{}) (map[string]string, error) {
-	var fields []struct {
-		Field string `json:"field"`
-		Expr  string `json:"expr"`
-	}
-
-	err := mapstructure.Decode(c, &fields)
-	if err != nil {
-		return nil, errors.WithMessagef(err, "decode expr config failed")
-	}
-
-	fieldExpr := make(map[string]string)
-	for _, cfg := range fields {
-		if cfg.Expr == "" {
-			continue
-		}
-		fieldExpr[cfg.Field] = cfg.Expr
-	}
-	return fieldExpr, nil
-}
-
 // NewAlertFTAProcessor 创建FTA告警处理器
 func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
+	defer func() {
+		if err := recover(); err != nil {
+			logging.Errorf("%s panic: %+v", name, err)
+		}
+	}()
+
 	pipeConfig := config.PipelineConfigFromContext(ctx)
 	helper := utils.NewMapHelper(pipeConfig.Option)
-	configs, _ := helper.Get(fieldCleanConfig)
 
-	// 清洗配置
-	var cleanConfigs []*CleanConfig
-	err := mapstructure.Decode(configs, &cleanConfigs)
+	// 获取清洗配置
+	configFieldKeys := map[string]string{
+		"clean_configs":        fieldCleanConfig,
+		"normalization_config": config.PipelineConfigOptFTAFieldMappingKey,
+		"alert_config":         config.PipelineConfigOptFTAAlertsKey,
+	}
+	originCleanConfig := map[string]interface{}{}
+	var ok bool
+	for key, field := range configFieldKeys {
+		originCleanConfig[key], ok = helper.Get(field)
+		if !ok {
+			return nil, errors.Errorf("%s %s is empty", name, field)
+		}
+	}
+
+	// 初始化清洗配置
+	cleanConfig, err := NewCleanConfig(originCleanConfig)
 	if err != nil {
-		logging.Errorf("%s decode fta clean config failed: %+v", name, err)
-	}
-	for _, cleanConfig := range cleanConfigs {
-		err := cleanConfig.Init()
-		if err != nil {
-			logging.Errorf("%s init clean config failed: %+v", name, err)
-		}
-	}
-
-	// 默认告警名称配置
-	var defaultAlerts []*Alert
-	alertsConfig, ok := helper.Get(config.PipelineConfigOptFTAAlertsKey)
-	if ok {
-		err := mapstructure.Decode(alertsConfig, &defaultAlerts)
-		if err != nil {
-			return nil, errors.Errorf("%s decode fta alerts config failed: %+v", name, err)
-		}
-	}
-	for _, alert := range defaultAlerts {
-		err := alert.Init()
-		if err != nil {
-			logging.Errorf("%s init alert config failed: %+v", name, err)
-		}
-	}
-
-	// 默认字段表达式配置
-	fieldsCfg, _ := helper.Get(config.PipelineConfigOptFTAFieldMappingKey)
-	defaultExprMap, err := convertToExprMap(fieldsCfg)
-	if err != nil {
-		logging.Errorf("%s convert to expr map failed: %+v", name, err)
+		return nil, errors.Wrapf(err, "%s create clean config failed", name)
 	}
 
 	decoder := etl.NewPayloadDecoder()
@@ -152,6 +93,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				}
 			}()
 
+			// 为了避免获取到外层gse补全的默认字段，因此仅获取data字段，部分内置字段后续会单独处理
 			result, _ := from.Get("data")
 			if result == nil {
 				return nil
@@ -168,26 +110,11 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				return nil
 			}
 
-			var alerts []*Alert
-			var exprMap map[string]string
-
-			// 判断是否满足匹配规则，如果不满足，则使用默认清洗配置
-			var matchedCleanConfig *CleanConfig
-			for _, cleanConfig := range cleanConfigs {
-				if cleanConfig.IsMatch(data) {
-					matchedCleanConfig = cleanConfig
-					break
-				}
-			}
-			if matchedCleanConfig != nil {
-				alerts = matchedCleanConfig.Alerts
-				exprMap, _ = convertToExprMap(matchedCleanConfig.Normalizations)
-			}
-			if alerts == nil {
-				alerts = defaultAlerts
-			}
-			if exprMap == nil {
-				exprMap = defaultExprMap
+			// 获取匹配的配置
+			alerts, exprMap, err := cleanConfig.GetMatchConfig(data)
+			if err != nil {
+				logging.Errorf("%s get match config failed: %+v", name, err)
+				return nil
 			}
 
 			// 默认字段处理
@@ -220,16 +147,11 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				if !ok {
 					return nil
 				}
-				compiledExpr, err := utils.CompileJMESPathCustom(expr)
-				if err != nil {
-					logging.Errorf("%s compile expr %s failed: %+v", name, expr, err)
-					return nil
-				}
 
 				// 提取字段
-				field, err := compiledExpr.Search(data)
+				field, err := expr.Search(data)
 				if err != nil {
-					logging.Errorf("%s search expr %s failed: %+v", name, expr, err)
+					logging.Errorf("%s search expr %v failed: %+v", name, expr, err)
 					return nil
 				}
 
@@ -246,18 +168,18 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			})
 
 			// 告警名称匹配
-			for _, alert := range alerts {
-				// 对满足匹配规则的数据，设置告警名称
-				if alert.IsMatch(data) {
-					_ = to.Put(fieldAlertName, alert.Name)
-					logging.Debugf("alert name matched->(%s) data->(%+v)", alert.Name, data)
-					break
-				}
-			}
 			alertName, _ := to.Get(fieldAlertName)
 			if alertName == nil || alertName == "" {
-				logging.Errorf("%s alert name is empty, data->(%+v)", name, data)
-				return nil
+				alertName, err := getMatchAlertName(alerts, data)
+				if err != nil {
+					logging.Errorf("%s get match alert name failed: %+v", name, err)
+					return nil
+				}
+				if alertName == "" {
+					logging.Errorf("%s alert name is empty, data->(%+v)", name, data)
+					return nil
+				}
+				_ = to.Put(fieldAlertName, alertName)
 			}
 
 			// 如果没有设置event_id，则使用默认event_id
@@ -273,21 +195,16 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 
 			// dimensions字段处理，生成dedupe_keys
 			var dimensions map[string]interface{}
-			if dimensionExpr, ok := exprMap[fieldDimensions]; ok {
-				compiledExpr, err := utils.CompileJMESPathCustom(dimensionExpr)
+			if expr, ok := exprMap[fieldDimensions]; ok {
+				value, err := expr.Search(data)
 				if err != nil {
-					logging.Errorf("%s compile dimension expr %s failed: %+v", name, dimensionExpr, err)
-					return nil
-				}
-				dimensionsValue, err := compiledExpr.Search(data)
-				if err != nil {
-					logging.Errorf("%s search dimension expr %s failed: %+v", name, dimensionExpr, err)
+					logging.Errorf("%s search dimension expr %v failed: %+v", name, expr, err)
 					return nil
 				}
 
 				// 将dimensions的key作为dedupe_keys
 				var dedupeKeys []string
-				switch t := dimensionsValue.(type) {
+				switch t := value.(type) {
 				case map[string]interface{}:
 					for key := range t {
 						dedupeKeys = append(dedupeKeys, key)
@@ -296,6 +213,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				default:
 					logging.Errorf("%s dimensions type %T not supported", name, dimensions)
 				}
+				slices.Sort(dedupeKeys)
 
 				// 推送dedupe_keys
 				if len(dedupeKeys) > 0 {
@@ -306,14 +224,9 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			// tags字段处理
 			if tagExpr, ok := exprMap[fieldTags]; ok {
 				// 提取tags字段
-				compiledExpr, err := utils.CompileJMESPathCustom(tagExpr)
+				tags, err := tagExpr.Search(data)
 				if err != nil {
-					logging.Errorf("%s compile tag expr %s failed: %+v", name, tagExpr, err)
-					return nil
-				}
-				tags, err := compiledExpr.Search(data)
-				if err != nil {
-					logging.Errorf("%s search tag expr %s failed: %+v", name, tagExpr, err)
+					logging.Errorf("%s search tag expr %v failed: %+v", name, tagExpr, err)
 					return nil
 				}
 
@@ -349,6 +262,11 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 					}
 				}
+
+				// 排序
+				sort.Slice(tagsList, func(i, j int) bool {
+					return tagsList[i]["key"].(string) < tagsList[j]["key"].(string)
+				})
 
 				_ = to.Put(fieldTags, tagsList)
 			}

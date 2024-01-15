@@ -92,10 +92,6 @@ func (s *AlertFTATest) TestEvent() {
 						"expr":"event.report_time"
 					},
 					{
-						"field":"alert_name",
-						"expr":"event.name"
-					},
-					{
 						"field":"event_id",
 						"expr":"event.id"
 					},
@@ -178,6 +174,9 @@ func (s *AlertFTATest) TestEvent() {
 	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "CPU使用率", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}} }`,
 		processor,
 		func(result map[string]interface{}) {
+			if result == nil {
+				s.T().Fatal("result is nil")
+			}
 			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
 				"tags": []interface{}{
@@ -204,6 +203,9 @@ func (s *AlertFTATest) TestEvent() {
 	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}}`,
 		processor,
 		func(result map[string]interface{}) {
+			if result == nil {
+				s.T().Fatal("result is nil")
+			}
 			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
 				"tags": []interface{}{
@@ -230,6 +232,10 @@ func (s *AlertFTATest) TestEvent() {
 	s.Run(`{"bk_plugin_id": "bkplugin", "bk_ingest_time": 1618210322, "__bk_event_id__": "123", "data": {"event": {"report_time": "2021-03-18 17:30:07", "tag": {}, "type": "aaa", "name": "test_event", "dimensions": [{"field": "device_name", "value": "cpu0"}, {"field": "ip", "value": "127.0.0.1"}]}}}`,
 		processor,
 		func(result map[string]interface{}) {
+			if result == nil {
+				s.T().Fatal("result is nil")
+			}
+
 			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
 				"tags": []interface{}{
@@ -287,7 +293,7 @@ func (s *AlertFTATest) TestCleanConfig() {
 							},
 							{
 								"field": "event_id",
-								"expr": "incident.incident_id"
+								"expr": "['google_cloud_alert_2', incident.incident_id] | join('.', @)"
 							},
 							{
 								"field": "description",
@@ -295,121 +301,28 @@ func (s *AlertFTATest) TestCleanConfig() {
 							},
 							{
 								"field": "metric",
-								"expr": "incident.metric.displayName"
-							},
-							{
-								"field": "category",
-								"expr": "category"
-							},
-							{
-								"field": "assignee",
-								"expr": "assignee"
+								"expr": "incident.metric.type"
 							},
 							{
 								"field": "status",
 								"expr": "get_field({OPEN: 'ABNORMAL', open: 'ABNORMAL', CLOSED: 'CLOSED', closed: 'CLOSED'}, incident.state)"
 							},
 							{
-								"field": "target",
-								"expr": "target"
-							},
-							{
-								"field": "target_type",
-								"expr": "target_type"
-							},
-							{
 								"field": "severity",
-								"expr": "1"
+								"expr": "get_field({Warning: '3', Error: '2', Critical: '1'}, incident.severity)"
 							},
 							{
 								"field": "bk_biz_id",
-								"expr": "bk_biz_id || '{{plugin_inst_biz_id}}'"
+								"expr": "'2'"
 							},
 							{
 								"field": "tags",
-								"expr": "{scoping_project_id: incident.scoping_project_id, scoping_project_number: incident.scoping_project_number, observed_value: condition.observed_value, resource: to_string(incident.resource), resource_id: incident.resource_id, resource_display_name: incident.resource_display_name, metric: to_string(incident.metric), metadata: to_string(incident.metadata), policy_user_labels: to_string(incident.policy_user_labels), condition: to_string(incident.condition)}"
+								"expr": "{  scoping_project_id: incident.scoping_project_id,  scoping_project_number: incident.scoping_project_number,  resource_id: incident.resource_id,  resource_name: incident.resource_name,  resource_type_display_name: incident.resource_type_display_name,  metric_display_name: incident.metric.displayName,  url: incident.url}"
 							},
 							{
-								"field": "time",
-								"expr": "incident.started_at"
-							},
-							{
-								"field": "anomaly_time",
-								"expr": "incident.started_at"
-							}
-						]
-					},
-					{
-						"rules": [
-							{
-								"key": "__http_query_params__.source",
-								"value": [
-									"tencent"
-								],
-								"method": "eq"
-							}
-						],
-						"normalization_config": [
-							{
-								"field": "alert_name",
-								"expr": "alarmPolicyInfo.policyName"
-							},
-							{
-								"field": "event_id",
-								"expr": "event_id"
-							},
-							{
-								"field": "description",
-								"expr": "alarmPolicyInfo.conditions.metricShowName && alarmPolicyInfo.conditions.calcType && alarmPolicyInfo.conditions.calcValue && alarmPolicyInfo.conditions.calcUnit && join(' ', [alarmPolicyInfo.conditions.metricShowName, alarmPolicyInfo.conditions.calcType, alarmPolicyInfo.conditions.calcValue, alarmPolicyInfo.conditions.calcUnit]) || alarmPolicyInfo.conditions.productShowName && alarmPolicyInfo.conditions.eventShowName && join(' ', [alarmPolicyInfo.conditions.productShowName, alarmPolicyInfo.conditions.eventShowName]) || alarmObjInfo.content"
-							},
-							{
-								"field": "metric",
-								"expr": "alarmPolicyInfo.conditions.metricName"
-							},
-							{
-								"field": "category",
-								"expr": "category"
-							},
-							{
-								"field": "assignee",
-								"expr": "assignee"
-							},
-							{
-								"field": "status",
-								"expr": "get_field({1: 'ABNORMAL', 0: 'RECOVERED'}, alarmStatus)"
-							},
-							{
-								"field": "target",
-								"expr": "target"
-							},
-							{
-								"field": "target_type",
-								"expr": "target_type"
-							},
-							{
-								"field": "severity",
-								"expr": "1"
-							},
-							{
-								"field": "bk_biz_id",
-								"expr": "bk_biz_id || '{{plugin_inst_biz_id}}'"
-							},
-							{
-								"field": "tags",
-								"expr": "{alarmObjInfo: to_string(alarmObjInfo), alarm_type: alarmType, policyId: alarmPolicyInfo.policyId}"
-							},
-							{
-								"field": "time",
-								"expr": "firstOccurTime"
-							},
-							{
-								"field": "source_time",
-								"expr": "firstOccurTime"
-							},
-							{
-								"field": "anomaly_time",
-								"expr": "firstOccurTime"
-							}
+								"field":"dimensions",
+								"expr":"merge(incident.resource.labels, incident.metric.labels, {resource_type: incident.resource.type, metric_type: incident.metric.type})"
+                            }
 						]
 					}
 				],
@@ -480,33 +393,28 @@ func (s *AlertFTATest) TestCleanConfig() {
 	)
 
 	processor, err := fta.NewAlertFTAProcessor(s.CTX, "test")
-
 	s.NoError(err)
-	s.Run(`{"bk_data_id":1572956,"bk_plugin_id":"rest_api","bk_agent_id":"","ip":"127.0.0.1","hostname":"VM-68-183-centos","dataid":1572956,"bizid":0,"cloudid":0,"gseindex":36,"bk_host_id":0,"bk_ingest_time":1703843214,"bk_biz_id":2,"alarmType":"metric","alarmPolicyInfo":{"policyId":"policy-n4exeh88","policyType":"cvm_device","policyName":"test","policyTypeCName":"云服务器-基础监控","conditions":{"alarmNotifyType":"continuousAlarm","calcType":">","currentValue":"100","unit":"%","period":"60","historyValue":"5","periodNum":"1","alarmNotifyPeriod":300,"metricName":"cpu_usage","metricShowName":"CPU 利用率","calcValue":"90","calcUnit":"%"}},"durationTime":500,"recoverTime":"2017-03-09 07:50:00","__http_headers__":{"User-Agent":"curl/7.29.0","Accept":"*/*","Content-Type":"application/json","Content-Length":"1039","Expect":"100-continue"},"__http_query_params__":{"source":"tencent"},"sessionId":"xxxxxxxx","alarmStatus":"1","alarmObjInfo":{"region":"gz","namespace":"qce/cvm","appId":"xxxxxxxxxxxx","uin":"xxxxxxxxxxxx","dimensions":{"unInstanceId":"ins-o9p3rg3m","objId":"xxxxxxxxxxxx"}},"firstOccurTime":"2017-03-09 07:00:00","__bk_event_id__":"089c54d0-6331-4e8d-99bc-0f33bda0ecbd"}`,
+
+	if processor == nil {
+		s.T().Fatal("processor is nil")
+	}
+
+	s.Run(`{"bk_data_id":1572956,"bk_plugin_id":"rest_api","bk_agent_id":"","ip":"127.0.0.1","hostname":"VM-68-183-centos","dataid":1572956,"bizid":0,"cloudid":0,"gseindex":36,"bk_host_id":0,"bk_ingest_time":1703843214, "data":{"__http_query_params__": {"source": "google"}, "incident": {"threshold_value": "5", "condition": {"conditionThreshold": {"filter": "resource.type = \"audited_resource\" AND metric.type = \"logging.googleapis.com/byte_count\"", "thresholdValue": 5, "trigger": {"count": 1}, "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_RATE"}], "comparison": "COMPARISON_GT", "duration": "0s"}, "displayName": "Audited Resource - Log bytes", "name": "projects/e-pulsar-410908/alertPolicies/13599821159254713273/conditions/1331777643246131723"}, "observed_value": "6.477", "resource": {"labels": {"method": "google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy", "project_id": "e-pulsar-410908", "service": "monitoring.googleapis.com"}, "type": "audited_resource"}, "resource_type_display_name": "Audited Resource", "severity": "Warning", "url": "https://console.cloud.google.com/monitoring/alerting/incidents/0.n808anxyygx2?project=e-pulsar-410908", "condition_name": "Audited Resource - Log bytes", "ended_at": null, "incident_id": "0.n808anxyygx2", "resource_id": "", "state": "open", "documentation": {"content": "hjkwedfjklaswjkfhjkasdhfkshadfhjkd", "mime_type": "text/markdown", "subject": "[ALERT - Warning] Audited Resource - Log bytes on e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy}"}, "policy_name": "aaa", "scoping_project_number": 635651495397, "summary": "Log bytes for e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy} with metric labels {log=cloudaudit.googleapis.com/activity, severity=NOTICE} is above the threshold of 5.000 with b value of 6.477.", "metadata": {"system_labels": {}, "user_labels": {}}, "metric": {"displayName": "Log bytes", "labels": {"log": "cloudaudit.googleapis.com/activity", "severity": "NOTICE"}, "type": "logging.googleapis.com/byte_count"}, "resource_name": "e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy}", "scoping_project_id": "e-pulsar-410908", "started_at": 1704963878}, "version": "1.2", "__http_headers__": {"User-Agent": "curl/7.29.0", "Accept": "*/*", "Content-Type": "application/json", "Content-Length": "2662", "Expect": "100-continue"}},"__bk_event_id__":"089c54d0-6331-4e8d-99bc-0f33bda0ecbd"}`,
 		processor,
 		func(result map[string]interface{}) {
+			if result == nil {
+				s.T().Fatal("result is nil")
+			}
 			delete(result, "bk_clean_time")
 			s.MapEqual(map[string]interface{}{
-				"alert_name":     "test",
+				"alert_name":     "aaa",
 				"bk_ingest_time": float64(1703843214),
-				"description":    "CPU 利用率 > 90 %",
-				"event_id":       "089c54d0-6331-4e8d-99bc-0f33bda0ecbd",
+				"description":    "Log bytes for e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy} with metric labels {log=cloudaudit.googleapis.com/activity, severity=NOTICE} is above the threshold of 5.000 with b value of 6.477.",
+				"event_id":       "google_cloud_alert_2.0.n808anxyygx2",
 				"plugin_id":      "rest_api",
-				"target":         nil,
-				"tags": []interface{}{
-					map[string]interface{}{
-						"key":   "alarmObjInfo",
-						"value": `{"appId":"xxxxxxxxxxxx","dimensions":{"objId":"xxxxxxxxxxxx","unInstanceId":"ins-o9p3rg3m"},"namespace":"qce/cvm","region":"gz","uin":"xxxxxxxxxxxx"}`,
-					},
-					map[string]interface{}{
-						"key":   "alarm_type",
-						"value": "metric",
-					},
-					map[string]interface{}{
-						"key":   "policyId",
-						"value": "policy-n4exeh88",
-					},
-				},
+				"severity":       float64(3),
+				"dedupe_keys":    []interface{}{"log", "method", "metric_type", "project_id", "resource_type", "service", "severity"},
+				"tags":           []interface{}{map[string]interface{}{"key": "log", "value": "cloudaudit.googleapis.com/activity"}, map[string]interface{}{"key": "method", "value": "google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy"}, map[string]interface{}{"key": "metric_display_name", "value": "Log bytes"}, map[string]interface{}{"key": "metric_type", "value": "logging.googleapis.com/byte_count"}, map[string]interface{}{"key": "project_id", "value": "e-pulsar-410908"}, map[string]interface{}{"key": "resource_id", "value": ""}, map[string]interface{}{"key": "resource_name", "value": "e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy}"}, map[string]interface{}{"key": "resource_type", "value": "audited_resource"}, map[string]interface{}{"key": "resource_type_display_name", "value": "Audited Resource"}, map[string]interface{}{"key": "scoping_project_id", "value": "e-pulsar-410908"}, map[string]interface{}{"key": "scoping_project_number", "value": 6.35651495397e+11}, map[string]interface{}{"key": "service", "value": "monitoring.googleapis.com"}, map[string]interface{}{"key": "severity", "value": "NOTICE"}, map[string]interface{}{"key": "url", "value": "https://console.cloud.google.com/monitoring/alerting/incidents/0.n808anxyygx2?project=e-pulsar-410908"}},
 			}, result)
 		},
 	)

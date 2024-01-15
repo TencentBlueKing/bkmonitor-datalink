@@ -496,12 +496,10 @@ func getValue(k string, d map[string]interface{}) (string, error) {
 	if v, ok := d[k]; ok {
 		switch v.(type) {
 		case string:
-			value = v.(string)
-		case float64:
+			value = fmt.Sprintf("%s", v)
+		case float64, float32:
 			value = fmt.Sprintf("%.f", v)
-		case int64:
-			value = fmt.Sprintf("%d", v)
-		case int:
+		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
 		default:
 			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)

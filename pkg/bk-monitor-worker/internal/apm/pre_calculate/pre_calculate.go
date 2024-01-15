@@ -79,16 +79,6 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			storage.SaveReqBufferSize(config.StorageSaveRequestBufferSize),
 		).
 		WithMetricReport(
-			EnabledMetricReport(config.MetricEnabled),
-			MetricReportDataId(config.MetricReportDataId),
-			MetricReportAccessToken(config.MetricReportAccessToken),
-			MetricReportHost(config.MetricReportHost),
-			ReportMetrics(
-				SaveRequestChanCount,
-				MessageReceiveChanCount,
-				WindowMetric,
-			),
-			EnabledMetricReportInterval(config.MetricReportInterval),
 			EnabledProfileReport(config.ProfileEnabled),
 			ProfileAddress(config.ProfileHost),
 			ProfileAppIdx(config.ProfileAppIdx),

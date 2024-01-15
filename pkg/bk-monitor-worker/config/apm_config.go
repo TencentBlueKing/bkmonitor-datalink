@@ -86,22 +86,12 @@ var (
 	// StorageBloomDecreaseDivisor The divisor of the overlap-decrement filter.
 	StorageBloomDecreaseDivisor int
 
-	//MetricEnabled Whether to enable indicator reporting.
-	MetricEnabled bool
-	// MetricReportInterval Indicator reporting interval.
-	MetricReportInterval time.Duration
 	// ProfileEnabled Whether to enable indicator reporting.
 	ProfileEnabled bool
 	// ProfileHost profile report host
 	ProfileHost string
 	// ProfileAppIdx app name of profile
 	ProfileAppIdx string
-	// MetricReportHost indicator report host
-	MetricReportHost string
-	// MetricReportDataId indicator report data id
-	MetricReportDataId int
-	// MetricReportAccessToken indicator report access token
-	MetricReportAccessToken string
 )
 
 func initApmVariables() {
@@ -136,11 +126,6 @@ func initApmVariables() {
 	/*
 	   Metric Config
 	*/
-	MetricEnabled = GetValue("taskConfig.apmPreCalculate.metrics.timeSeries.enabled", false)
-	MetricReportHost = GetValue("taskConfig.apmPreCalculate.metrics.timeSeries.host", "")
-	MetricReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.timeSeries.interval", time.Minute, viper.GetDuration)
-	MetricReportDataId = GetValue("taskConfig.apmPreCalculate.metrics.timeSeries.dataId", 0)
-	MetricReportAccessToken = GetValue("taskConfig.apmPreCalculate.metrics.timeSeries.accessToken", "")
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")

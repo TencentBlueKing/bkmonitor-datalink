@@ -245,6 +245,21 @@ func (b *Backend) SendMsg(payload define.Payload) {
 		}
 	}
 
+	// 丢弃 bk_standard 空指标
+	if b.ETLConfig == "bk_standard" {
+		for k, v := range etlRecord.Metrics {
+			if v == nil {
+				delete(etlRecord.Metrics, k)
+			}
+		}
+
+		if len(etlRecord.Metrics) <= 0 {
+			b.skipStats.Inc()
+			logging.Warnf("skip bk_standard useless record: %+v", etlRecord)
+			return
+		}
+	}
+
 	// 时间非空
 	if etlRecord.Time != nil {
 		t := payload.GetTime()

@@ -92,9 +92,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		}
 	}
 
+	// 清理 filter 为空的数据
 	filters := make([]query.Filter, 0, len(spaceTable.Filters))
 	for _, f := range spaceTable.Filters {
-		filters = append(filters, f)
+		nf := make(map[string]string)
+		for k, v := range f {
+			if v != "" {
+				nf[k] = v
+			}
+		}
+		filters = append(filters, nf)
 	}
 
 	tsDBs := make([]*query.TsDBV2, 0)

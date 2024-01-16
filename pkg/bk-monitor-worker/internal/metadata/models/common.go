@@ -49,6 +49,12 @@ type BaseModel struct {
 func (b *BaseModel) BeforeCreate(tx *gorm.DB) error {
 	b.CreateTime = time.Now()
 	b.UpdateTime = time.Now()
+	if b.Creator == "" {
+		b.Creator = "system"
+	}
+	if b.Updater == "" {
+		b.Updater = "system"
+	}
 	return nil
 }
 

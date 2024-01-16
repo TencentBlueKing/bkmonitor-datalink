@@ -64,6 +64,7 @@ var (
 )
 
 type EsStorageData struct {
+	DataId     string
 	DocumentId string
 	Value      []byte
 }

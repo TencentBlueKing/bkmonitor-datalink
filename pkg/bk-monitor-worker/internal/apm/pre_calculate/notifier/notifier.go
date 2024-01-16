@@ -58,11 +58,11 @@ const (
 )
 
 // NewNotifier create notifier
-func NewNotifier(form notifyForm, options ...Option) (Notifier, error) {
+func NewNotifier(form notifyForm, dataId string, options ...Option) (Notifier, error) {
 
 	switch form {
 	case KafkaNotifier:
-		return newKafkaNotifier(options...)
+		return newKafkaNotifier(dataId, options...)
 	default:
 		return emptyNotifierInstance, nil
 	}

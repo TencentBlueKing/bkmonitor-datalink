@@ -81,7 +81,7 @@ type PrecalculateOption struct {
 	processorConfig          []window.ProcessorOption
 	storageConfig            []storage.ProxyOption
 
-	metricReportConfig []MetricOption
+	profileReportConfig []MetricOption
 }
 
 type readySignal struct {
@@ -123,7 +123,7 @@ func (p *Precalculate) WithStorageConfig(options ...storage.ProxyOption) Builder
 }
 
 func (p *Precalculate) WithMetricReport(options ...MetricOption) Builder {
-	p.defaultConfig.metricReportConfig = options
+	p.defaultConfig.profileReportConfig = options
 	return p
 }
 
@@ -256,7 +256,7 @@ func (p *Precalculate) launch(
 
 	runInstance.startWindowHandler(messageChan, saveReqChan, errorReceiveChan)
 
-	runInstance.startMetricReport(p.httpTransport)
+	runInstance.startProfileReport()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
 	p.runningInstances = append(p.runningInstances, &runInstance)
@@ -274,7 +274,7 @@ type RunInstance struct {
 	windowHandler window.Operator
 	proxy         *storage.Proxy
 
-	metricCollector MetricCollector
+	profileCollector ProfileCollector
 }
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
@@ -282,6 +282,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	groupId := "go-pre-calculate-worker-consumer"
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
+		p.dataId,
 		append([]notifier.Option{
 			notifier.Context(p.ctx),
 			notifier.KafkaGroupId(groupId),
@@ -343,17 +344,17 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 	return proxy.SaveRequest(), nil
 }
 
-func (p *RunInstance) startMetricReport(transport *http.Transport) {
-	if len(p.config.metricReportConfig) == 0 {
-		apmLogger.Infof("[!] metric is not configured, the indicator will not be reported")
+func (p *RunInstance) startProfileReport() {
+	if len(p.config.profileReportConfig) == 0 {
+		apmLogger.Infof("[!] profileConfig is not configured, the profile will not be reported")
 		return
 	}
 
 	opt := MetricOptions{}
-	for _, setter := range p.config.metricReportConfig {
+	for _, setter := range p.config.profileReportConfig {
 		setter(&opt)
 	}
 
-	p.metricCollector = NewMetricCollector(opt, transport, p)
-	p.metricCollector.StartReport()
+	p.profileCollector = NewProfileCollector(opt, p)
+	p.profileCollector.StartReport()
 }

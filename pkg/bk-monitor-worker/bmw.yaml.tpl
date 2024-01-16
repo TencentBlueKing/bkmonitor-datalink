@@ -29,6 +29,8 @@ broker:
       password: ""
 
 # ================================ 存储配置  ===================================
+# 旁路配置，用于数据对账
+bypassSuffixPath: ""
 store:
   redis:
     mode: standalone
@@ -172,12 +174,6 @@ taskConfig:
           layers: 10
           divisor: 2
     metrics:
-      timeSeries:
-        enabled: false
-        host: http://127.0.0.1:10205/v2/push/
-        interval: 1m
-        dataId: 0
-        accessToken: ""
       profile:
         enabled: false
         host: http://127.0.0.1:14040

@@ -19,6 +19,7 @@ import (
 	"github.com/xdg-go/scram"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 )
 
@@ -101,6 +102,7 @@ loop:
 }
 
 type consumeHandler struct {
+	dataId  string
 	spans   chan []window.StandardSpan
 	groupId string
 	topic   string
@@ -143,9 +145,10 @@ func (c consumeHandler) sendSpans(message []byte) {
 		res = append(res, *window.ToStandardSpan(item))
 	}
 	c.spans <- res
+	metrics.IncreaseApmMessageChanCount(c.dataId)
 }
 
-func newKafkaNotifier(setters ...Option) (Notifier, error) {
+func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 
 	args := &Options{}
 
@@ -175,6 +178,7 @@ func newKafkaNotifier(setters ...Option) (Notifier, error) {
 		config:        args.kafkaConfig,
 		consumerGroup: group,
 		handler: consumeHandler{
+			dataId:  dataId,
 			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
 			groupId: config.KafkaGroupId,
 			topic:   config.KafkaTopic,

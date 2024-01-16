@@ -15,6 +15,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jmespath/go-jmespath"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -49,6 +50,126 @@ const (
 	// fieldCleanConfig 清洗配置字段
 	fieldCleanConfig = "clean_configs"
 )
+
+// extractTags 从data中提取tags字段
+func extractTags(
+	name string,
+	exprMap *map[string]*jmespath.JMESPath,
+	data *map[string]interface{},
+	to *etl.Container,
+) error {
+	var dimensions map[string]interface{}
+	var dedupeKeys []string
+
+	if expr, ok := (*exprMap)[fieldDimensions]; ok {
+		value, err := expr.Search(data)
+		if err != nil {
+			return errors.Wrapf(err, "search dimension expr %v failed", expr)
+		}
+
+		// 将dimensions的key作为dedupe_keys
+		switch t := value.(type) {
+		case map[string]interface{}:
+			for key := range t {
+				dedupeKeys = append(dedupeKeys, key)
+			}
+			dimensions = t
+		default:
+			logging.Errorf("%s dimensions type %T not supported", name, dimensions)
+		}
+		slices.Sort(dedupeKeys)
+	}
+
+	if tagExpr, ok := (*exprMap)[fieldTags]; ok {
+		// 提取tags字段
+		tags, err := tagExpr.Search(data)
+		if err != nil {
+			return errors.Wrapf(err, "search tag expr %v failed", tagExpr)
+		}
+
+		// 转换为统一格式 [{"key": "a", "value": "b"}]
+		var tagsList []map[string]interface{}
+		switch t := tags.(type) {
+		case map[string]interface{}:
+			// 针对 tags 为 {"a": "b"} 格式的转换
+			for key, value := range t {
+				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
+			}
+		case []interface{}:
+			// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
+			for _, item := range t {
+				mapItem, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				key := mapItem["key"]
+				value := mapItem["value"]
+				if key == nil || value == nil {
+					continue
+				}
+				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
+			}
+		default:
+			logging.Errorf("%s tags type %T not supported", name, tags)
+		}
+
+		// 将dimensions补充到tags中
+		if dimensions != nil {
+			for key, value := range dimensions {
+				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
+			}
+		}
+
+		// 排序
+		sort.Slice(tagsList, func(i, j int) bool {
+			return tagsList[i]["key"].(string) < tagsList[j]["key"].(string)
+		})
+
+		// 推送数据
+		_ = (*to).Put(fieldTags, tagsList)
+		if len(dedupeKeys) > 0 {
+			_ = (*to).Put(fieldDedupeKeys, dedupeKeys)
+		}
+	}
+	return nil
+}
+
+// extractDefaultFields 从data中提取默认字段
+func extractDefaultFields(to *etl.Container, from *etl.Container) error {
+	// 数据接收时间
+	ingestTime, _ := (*from).Get(fieldIngestTime)
+	stamp, err := etl.TransformAutoTimeStamp(ingestTime)
+	if err != nil {
+		return errors.Wrapf(err, "transform ingest_time failed")
+	}
+	_ = (*to).Put(fieldIngestTime, stamp)
+
+	// 插件ID
+	pluginID, err := (*from).Get(fieldDefaultPluginID)
+	if err != nil {
+		return errors.Wrapf(err, "get plugin_id failed")
+	}
+	_ = (*to).Put(fieldPluginID, pluginID)
+
+	// 清洗时间
+	newTimeStamp, err := etl.TransformAutoTimeStamp(time.Now().UTC())
+	if err != nil {
+		return errors.Wrapf(err, "transform clean_time failed")
+	}
+	_ = (*to).Put(fieldCleanTime, newTimeStamp)
+
+	// 如果没有设置event_id，则使用默认event_id
+	eventID, _ := (*to).Get(fieldEventID)
+	if eventID == nil || eventID == "" {
+		eventID, _ = (*from).Get(fieldDefaultEventID)
+		if eventID == nil || eventID == "" {
+			return errors.Wrapf(define.ErrValue, "event_id is empty")
+		}
+		_ = (*to).Put(fieldEventID, eventID)
+	}
+
+	return nil
+}
 
 // NewAlertFTAProcessor 创建FTA告警处理器
 func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
@@ -117,23 +238,6 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				return nil
 			}
 
-			// 默认字段处理
-			ingestTime, _ := from.Get(fieldIngestTime)
-			stamp, err := etl.TransformAutoTimeStamp(ingestTime)
-			if err != nil {
-				return err
-			}
-			_ = to.Put(fieldIngestTime, stamp)
-
-			pluginID, err := from.Get(fieldDefaultPluginID)
-			if err != nil {
-				return err
-			}
-			_ = to.Put(fieldPluginID, pluginID)
-
-			newTimeStamp, _ := etl.TransformAutoTimeStamp(time.Now().UTC())
-			_ = to.Put(fieldCleanTime, newTimeStamp)
-
 			// 按照配置的字段表达式，提取字段，忽略字段提取错误
 			rt := config.ResultTableConfigFromContext(ctx)
 			_ = rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
@@ -182,93 +286,15 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				_ = to.Put(fieldAlertName, alertName)
 			}
 
-			// 如果没有设置event_id，则使用默认event_id
-			eventID, _ := to.Get(fieldEventID)
-			if eventID == nil || eventID == "" {
-				eventID, _ = from.Get(fieldDefaultEventID)
-				if eventID == nil || eventID == "" {
-					logging.Errorf("%s event_id is empty, data->(%+v)", name, data)
-					return nil
-				}
-				_ = to.Put(fieldEventID, eventID)
+			// 默认字段处理
+			if err := extractDefaultFields(&to, &from); err != nil {
+				logging.Errorf("%s extract default fields failed: %+v", name, err)
+				return nil
 			}
 
-			// dimensions字段处理，生成dedupe_keys
-			var dimensions map[string]interface{}
-			if expr, ok := exprMap[fieldDimensions]; ok {
-				value, err := expr.Search(data)
-				if err != nil {
-					logging.Errorf("%s search dimension expr %v failed: %+v", name, expr, err)
-					return nil
-				}
-
-				// 将dimensions的key作为dedupe_keys
-				var dedupeKeys []string
-				switch t := value.(type) {
-				case map[string]interface{}:
-					for key := range t {
-						dedupeKeys = append(dedupeKeys, key)
-					}
-					dimensions = t
-				default:
-					logging.Errorf("%s dimensions type %T not supported", name, dimensions)
-				}
-				slices.Sort(dedupeKeys)
-
-				// 推送dedupe_keys
-				if len(dedupeKeys) > 0 {
-					_ = to.Put(fieldDedupeKeys, dedupeKeys)
-				}
-			}
-
-			// tags字段处理
-			if tagExpr, ok := exprMap[fieldTags]; ok {
-				// 提取tags字段
-				tags, err := tagExpr.Search(data)
-				if err != nil {
-					logging.Errorf("%s search tag expr %v failed: %+v", name, tagExpr, err)
-					return nil
-				}
-
-				// 转换为统一格式 [{"key": "a", "value": "b"}]
-				var tagsList []map[string]interface{}
-				switch t := tags.(type) {
-				case map[string]interface{}:
-					// 针对 tags 为 {"a": "b"} 格式的转换
-					for key, value := range t {
-						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
-					}
-				case []interface{}:
-					// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
-					for _, item := range t {
-						mapItem, ok := item.(map[string]interface{})
-						if !ok {
-							continue
-						}
-						key := mapItem["key"]
-						value := mapItem["value"]
-						if key == nil || value == nil {
-							continue
-						}
-						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
-					}
-				default:
-					logging.Errorf("%s tags type %T not supported", name, tags)
-				}
-
-				// 将dimensions补充到tags中
-				if dimensions != nil {
-					for key, value := range dimensions {
-						tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
-					}
-				}
-
-				// 排序
-				sort.Slice(tagsList, func(i, j int) bool {
-					return tagsList[i]["key"].(string) < tagsList[j]["key"].(string)
-				})
-
-				_ = to.Put(fieldTags, tagsList)
+			// 提取tags字段
+			if err := extractTags(name, &exprMap, &data, &to); err != nil {
+				logging.Errorf("%s extract tags failed: %+v", name, err)
 			}
 
 			return nil

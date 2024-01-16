@@ -54,14 +54,14 @@ const (
 // extractTags 从data中提取tags字段
 func extractTags(
 	name string,
-	exprMap *map[string]*jmespath.JMESPath,
-	data *map[string]interface{},
-	to *etl.Container,
+	exprMap map[string]*jmespath.JMESPath,
+	data map[string]interface{},
+	to etl.Container,
 ) error {
 	var dimensions map[string]interface{}
 	var dedupeKeys []string
 
-	if expr, ok := (*exprMap)[fieldDimensions]; ok {
+	if expr, ok := exprMap[fieldDimensions]; ok {
 		value, err := expr.Search(data)
 		if err != nil {
 			return errors.Wrapf(err, "search dimension expr %v failed", expr)
@@ -80,7 +80,7 @@ func extractTags(
 		slices.Sort(dedupeKeys)
 	}
 
-	if tagExpr, ok := (*exprMap)[fieldTags]; ok {
+	if tagExpr, ok := exprMap[fieldTags]; ok {
 		// 提取tags字段
 		tags, err := tagExpr.Search(data)
 		if err != nil {
@@ -126,46 +126,46 @@ func extractTags(
 		})
 
 		// 推送数据
-		_ = (*to).Put(fieldTags, tagsList)
+		_ = to.Put(fieldTags, tagsList)
 		if len(dedupeKeys) > 0 {
-			_ = (*to).Put(fieldDedupeKeys, dedupeKeys)
+			_ = to.Put(fieldDedupeKeys, dedupeKeys)
 		}
 	}
 	return nil
 }
 
 // extractDefaultFields 从data中提取默认字段
-func extractDefaultFields(to *etl.Container, from *etl.Container) error {
+func extractDefaultFields(to etl.Container, from etl.Container) error {
 	// 数据接收时间
-	ingestTime, _ := (*from).Get(fieldIngestTime)
+	ingestTime, _ := from.Get(fieldIngestTime)
 	stamp, err := etl.TransformAutoTimeStamp(ingestTime)
 	if err != nil {
 		return errors.Wrapf(err, "transform ingest_time failed")
 	}
-	_ = (*to).Put(fieldIngestTime, stamp)
+	_ = to.Put(fieldIngestTime, stamp)
 
 	// 插件ID
-	pluginID, err := (*from).Get(fieldDefaultPluginID)
+	pluginID, err := from.Get(fieldDefaultPluginID)
 	if err != nil {
 		return errors.Wrapf(err, "get plugin_id failed")
 	}
-	_ = (*to).Put(fieldPluginID, pluginID)
+	_ = to.Put(fieldPluginID, pluginID)
 
 	// 清洗时间
 	newTimeStamp, err := etl.TransformAutoTimeStamp(time.Now().UTC())
 	if err != nil {
 		return errors.Wrapf(err, "transform clean_time failed")
 	}
-	_ = (*to).Put(fieldCleanTime, newTimeStamp)
+	_ = to.Put(fieldCleanTime, newTimeStamp)
 
 	// 如果没有设置event_id，则使用默认event_id
-	eventID, _ := (*to).Get(fieldEventID)
+	eventID, _ := to.Get(fieldEventID)
 	if eventID == nil || eventID == "" {
-		eventID, _ = (*from).Get(fieldDefaultEventID)
+		eventID, _ = from.Get(fieldDefaultEventID)
 		if eventID == nil || eventID == "" {
 			return errors.Wrapf(define.ErrValue, "event_id is empty")
 		}
-		_ = (*to).Put(fieldEventID, eventID)
+		_ = to.Put(fieldEventID, eventID)
 	}
 
 	return nil
@@ -281,13 +281,13 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			}
 
 			// 默认字段处理
-			if err := extractDefaultFields(&to, &from); err != nil {
+			if err := extractDefaultFields(to, from); err != nil {
 				logging.Errorf("%s extract default fields failed: %+v", name, err)
 				return nil
 			}
 
 			// 提取tags字段
-			if err := extractTags(name, &exprMap, &data, &to); err != nil {
+			if err := extractTags(name, exprMap, data, to); err != nil {
 				logging.Errorf("%s extract tags failed: %+v", name, err)
 			}
 

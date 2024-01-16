@@ -12,6 +12,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
@@ -135,6 +137,17 @@ func (r *Instance) Close() error {
 }
 
 func (r *Instance) HSet(key, field, value string) error {
+	if config.BypassSuffixPath != "" {
+		realKey := strings.ReplaceAll(key, config.BypassSuffixPath, "")
+		oldValue := r.HGet(realKey, field)
+		equal, _ := jsonx.CompareJson(oldValue, value)
+		if !equal {
+			logger.Infof("[redis_diff] HashSet key [%s] and [%s] field [%s] is different, new [%s]  old [%s]", key, realKey, field, value, oldValue)
+		} else {
+			logger.Infof("[redis_diff] HashSet key [%s] and [%s] field [%s] is equal", key, realKey, field)
+			return nil
+		}
+	}
 	_ = metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {

@@ -15,10 +15,12 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -48,11 +50,21 @@ func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {
 		return errors.Wrapf(err, "getRealZeroBizDataId failed")
 	}
 	db := mysql.GetDBSession().DB
-	for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
-		if err := resulttable.NewDataSourceQuerySet(db).BkDataIdNotIn(models.SkipDataIdListForBkcc...).BkDataIdIn(chunkDataIds...).GetUpdater().SetIsPlatformDataId(true).SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
-			return errors.Wrapf(err, "update DataSourc for [%v] with is_platform_data_id [true] space_type_id [%s] failed", chunkDataIds, models.SpaceTypeBKCC)
+	for range zeroDataIdList {
+		_ = metrics.MysqlCount(resulttable.DataSource{}.TableName(), "SyncBkccSpaceDataSource_updateZeroDataId")
+	}
+	if cfg.BypassSuffixPath != "" {
+		for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
+			logger.Infof("[db_diff] updated DataSource for [%v](exclude[%v]) with is_platform_data_id [true] space_type_id [%s]", chunkDataIds, models.SkipDataIdListForBkcc, models.SpaceTypeBKCC)
 		}
-		logger.Infof("updated DataSource for [%v](exclude[%v]) with is_platform_data_id [true] space_type_id [%s]", chunkDataIds, models.SkipDataIdListForBkcc, models.SpaceTypeBKCC)
+	} else {
+		for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
+			if err := resulttable.NewDataSourceQuerySet(db).BkDataIdNotIn(models.SkipDataIdListForBkcc...).BkDataIdIn(chunkDataIds...).GetUpdater().SetIsPlatformDataId(true).SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
+				logger.Errorf("update DataSourc for [%v] with is_platform_data_id [true] space_type_id [%s] failed, %v", chunkDataIds, models.SpaceTypeBKCC, err)
+				continue
+			}
+			logger.Infof("updated DataSource for [%v](exclude[%v]) with is_platform_data_id [true] space_type_id [%s]", chunkDataIds, models.SkipDataIdListForBkcc, models.SpaceTypeBKCC)
+		}
 	}
 
 	// 过滤掉已经存在的data id
@@ -93,7 +105,11 @@ func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {
 
 func (s *SpaceDataSourceSvc) refineBizDataIdMap(dataIdMap map[int][]uint, spaceIdStr string, bkDataId uint) bool {
 	var isExist bool
-	spaceId, _ := strconv.Atoi(spaceIdStr)
+	spaceId, err := strconv.Atoi(spaceIdStr)
+	if err != nil {
+		logger.Errorf("refineBizDataIdMap int(spaceIdStr) failed, %v", err)
+		return false
+	}
 	spaceDataIds := dataIdMap[spaceId]
 	spaceDataIds = slicex.RemoveDuplicate(&spaceDataIds)
 	if slicex.IsExistItem(spaceDataIds, bkDataId) {
@@ -171,7 +187,8 @@ func (s *SpaceDataSourceSvc) getRealZeroBizDataId() (map[int][]uint, []uint, err
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIds, 0) {
 		var tempList []resulttable.DataSourceResultTable
 		if err := resulttable.NewDataSourceResultTableQuerySet(db).Select(resulttable.DataSourceResultTableDBSchema.BkDataId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
-			return nil, nil, errors.Wrapf(err, "query DataSourceResultTable failed")
+			logger.Error("query DataSourceResultTable failed")
+			continue
 		}
 		for _, dsrt := range tempList {
 			dataIdList = append(dataIdList, dsrt.BkDataId)
@@ -256,19 +273,29 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 				SpaceId:     strconv.Itoa(bizId),
 				BkDataId:    id,
 			}
-			if err := sd.Create(tx); err != nil {
-				tx.Rollback()
-				return errors.Wrapf(err, "create SpaceDataSource with space_type [%s] biz [%v] bk_data_id [%v] failed, rollback", models.SpaceTypeBKCC, bizId, id)
+			_ = metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds")
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v]", sd.SpaceTypeId, sd.SpaceId, sd.BkDataId)
+			} else {
+				if err := sd.Create(tx); err != nil {
+					tx.Rollback()
+					return errors.Wrapf(err, "create SpaceDataSource with space_type [%s] biz [%v] bk_data_id [%v] failed, rollback", models.SpaceTypeBKCC, bizId, id)
+				}
 			}
 		}
 	}
 	// 设置数据源类型为 bkcc
 	if len(dataIdList) != 0 {
-		if err := resulttable.NewDataSourceQuerySet(tx).BkDataIdIn(dataIdList...).GetUpdater().SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
-			tx.Rollback()
-			return errors.Wrapf(err, "update DataSource with space_type [%s] for bk_data_id [%v] failed, rollback", models.SpaceTypeBKCC, dataIdList)
+		_ = metrics.MysqlCount(resulttable.DataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds")
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] updated DataSource with space_type [%s] for bk_data_id [%v]", models.SpaceTypeBKCC, dataIdList)
+		} else {
+			if err := resulttable.NewDataSourceQuerySet(tx).BkDataIdIn(dataIdList...).GetUpdater().SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
+				tx.Rollback()
+				return errors.Wrapf(err, "update DataSource with space_type [%s] for bk_data_id [%v] failed, rollback", models.SpaceTypeBKCC, dataIdList)
+			}
+			logger.Infof("updated DataSource with space_type [%s] for bk_data_id [%v]", models.SpaceTypeBKCC, dataIdList)
 		}
-		logger.Infof("updated DataSource with space_type [%s] for bk_data_id [%v]", models.SpaceTypeBKCC, dataIdList)
 	}
 	tx.Commit()
 	return nil

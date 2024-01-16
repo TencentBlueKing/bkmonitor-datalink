@@ -213,11 +213,18 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 			ok bool
 		)
 
+		if d == nil {
+			continue
+		}
+
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[timeStamp]; !ok {
 			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
 		}
 
+		if vtLong == nil {
+			continue
+		}
 		switch vtLong.(type) {
 		case int64:
 			vt = vtLong.(int64)
@@ -232,6 +239,9 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 			return res, fmt.Errorf("dimension %s is emtpy", field)
 		}
 
+		if vvDouble == nil {
+			continue
+		}
 		switch vvDouble.(type) {
 		case int64:
 			vv = float64(vvDouble.(int64))

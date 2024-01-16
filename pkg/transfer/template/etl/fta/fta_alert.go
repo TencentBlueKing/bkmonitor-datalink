@@ -58,9 +58,10 @@ func extractTags(
 	data map[string]interface{},
 	to etl.Container,
 ) error {
-	var dimensions map[string]interface{}
 	var dedupeKeys []string
 
+	// 提取dimensions字段
+	dimensions := map[string]interface{}{}
 	if expr, ok := exprMap[fieldDimensions]; ok {
 		value, err := expr.Search(data)
 		if err != nil {
@@ -70,18 +71,22 @@ func extractTags(
 		// 将dimensions的key作为dedupe_keys
 		switch t := value.(type) {
 		case map[string]interface{}:
-			for key := range t {
-				dedupeKeys = append(dedupeKeys, key)
+			for k, v := range t {
+				// 过滤掉空key或非字符串类型的值
+				if len(k) == 0 {
+					continue
+				}
+				dedupeKeys = append(dedupeKeys, k)
+				dimensions[k] = v
 			}
-			dimensions = t
 		default:
-			logging.Errorf("%s dimensions type %T not supported", name, dimensions)
+			logging.Errorf("%s dimensions type %T not supported, value->(%T)", name, value, value)
 		}
 		slices.Sort(dedupeKeys)
 	}
 
+	// 提取tags字段
 	if tagExpr, ok := exprMap[fieldTags]; ok {
-		// 提取tags字段
 		tags, err := tagExpr.Search(data)
 		if err != nil {
 			return errors.Wrapf(err, "search tag expr %v failed", tagExpr)
@@ -93,21 +98,20 @@ func extractTags(
 		case map[string]interface{}:
 			// 针对 tags 为 {"a": "b"} 格式的转换
 			for key, value := range t {
+				// 过滤掉空key
+				if len(key) == 0 {
+					continue
+				}
 				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 			}
-		case []interface{}:
+		case []map[string]interface{}:
 			// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
 			for _, item := range t {
-				mapItem, ok := item.(map[string]interface{})
-				if !ok {
-					continue
+				key := item["key"]
+				value := item["value"]
+				if utils.IsNotEmptyString(key) {
+					tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 				}
-				key := mapItem["key"]
-				value := mapItem["value"]
-				if key == nil || value == nil {
-					continue
-				}
-				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 			}
 		default:
 			logging.Errorf("%s tags type %T not supported", name, tags)
@@ -160,9 +164,9 @@ func extractDefaultFields(to etl.Container, from etl.Container) error {
 
 	// 如果没有设置event_id，则使用默认event_id
 	eventID, _ := to.Get(fieldEventID)
-	if eventID == nil || eventID == "" {
+	if !utils.IsNotEmptyString(eventID) {
 		eventID, _ = from.Get(fieldDefaultEventID)
-		if eventID == nil || eventID == "" {
+		if !utils.IsNotEmptyString(eventID) {
 			return errors.Wrapf(define.ErrValue, "event_id is empty")
 		}
 		_ = to.Put(fieldEventID, eventID)
@@ -183,12 +187,14 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 		"alert_config":         config.PipelineConfigOptFTAAlertsKey,
 	}
 	originCleanConfig := map[string]interface{}{}
-	var ok bool
 	for key, field := range configFieldKeys {
-		originCleanConfig[key], ok = helper.Get(field)
-		if !ok {
-			return nil, errors.Errorf("%s %s is empty", name, field)
+		if value, ok := helper.Get(field); ok {
+			originCleanConfig[key] = value
 		}
+	}
+
+	if originCleanConfig["clean_configs"] == nil && originCleanConfig["normalization_config"] == nil {
+		return nil, errors.Errorf("%s clean_configs and normalization_config is empty", name)
 	}
 
 	// 初始化清洗配置
@@ -222,13 +228,16 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			case etl.Container:
 				data = etl.ContainerToMap(result.(etl.Container))
 			default:
-				return nil
+				return errors.Errorf("%s data type %T not supported", name, result)
 			}
 
 			// 获取匹配的配置
 			alerts, exprMap, err := cleanConfig.GetMatchConfig(data)
 			if err != nil {
-				logging.Errorf("%s get match config failed: %+v", name, err)
+				return errors.Errorf("%s get match config failed: %+v", name, err)
+			}
+			if exprMap == nil {
+				logging.Infof("%s no match config", name)
 				return nil
 			}
 
@@ -267,28 +276,25 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 
 			// 告警名称匹配
 			alertName, _ := to.Get(fieldAlertName)
-			if alertName == nil || alertName == "" {
+			if !utils.IsNotEmptyString(alertName) {
 				alertName, err := getMatchAlertName(alerts, data)
 				if err != nil {
-					logging.Errorf("%s get match alert name failed: %+v", name, err)
-					return nil
+					return errors.Errorf("%s get match alert name failed: %+v", name, err)
 				}
 				if alertName == "" {
-					logging.Errorf("%s alert name is empty, data->(%+v)", name, data)
-					return nil
+					return errors.Errorf("%s alert name is empty, data->(%+v)", name, data)
 				}
 				_ = to.Put(fieldAlertName, alertName)
 			}
 
 			// 默认字段处理
 			if err := extractDefaultFields(to, from); err != nil {
-				logging.Errorf("%s extract default fields failed: %+v", name, err)
-				return nil
+				return errors.Errorf("%s extract default fields failed: %+v", name, err)
 			}
 
 			// 提取tags字段
 			if err := extractTags(name, exprMap, data, to); err != nil {
-				logging.Errorf("%s extract tags failed: %+v", name, err)
+				return errors.Errorf("%s extract tags failed: %+v", name, err)
 			}
 
 			return nil

@@ -51,8 +51,8 @@ const (
 	fieldCleanConfig = "clean_configs"
 )
 
-// extractTags 从data中提取tags字段
-func extractTags(
+// ExtractTags 从data中提取tags字段
+func ExtractTags(
 	name string,
 	exprMap map[string]*jmespath.JMESPath,
 	data map[string]interface{},
@@ -104,9 +104,14 @@ func extractTags(
 				}
 				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 			}
-		case []map[string]interface{}:
+		case []map[string]interface{}, []interface{}:
 			// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
-			for _, item := range t {
+			for _, item := range t.([]interface{}) {
+				item, _ := item.(map[string]interface{})
+				if item == nil {
+					continue
+				}
+
 				key := item["key"]
 				value := item["value"]
 				if utils.IsNotEmptyString(key) {
@@ -293,7 +298,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			}
 
 			// 提取tags字段
-			if err := extractTags(name, exprMap, data, to); err != nil {
+			if err := ExtractTags(name, exprMap, data, to); err != nil {
 				return errors.Errorf("%s extract tags failed: %+v", name, err)
 			}
 

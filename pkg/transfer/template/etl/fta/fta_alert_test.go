@@ -12,10 +12,13 @@ package fta_test
 import (
 	"testing"
 
+	"github.com/jmespath/go-jmespath"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl/fta"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/testsuite"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
 // AlertFTATest
@@ -423,4 +426,94 @@ func (s *AlertFTATest) TestCleanConfig() {
 // TestAlertFTATest :
 func TestAlertFTATest(t *testing.T) {
 	suite.Run(t, new(AlertFTATest))
+}
+
+type ExtractTagsTest struct {
+	suite.Suite
+}
+
+func (s *ExtractTagsTest) TestExtractTags() {
+	table := []struct {
+		name             string
+		exprMap          map[string]string
+		data             map[string]interface{}
+		expectTags       []map[string]interface{}
+		expectDedupeKeys []string
+	}{
+		{
+			name: "test tags",
+			exprMap: map[string]string{
+				"tags": "{aaa:aaa}",
+			},
+			data: map[string]interface{}{
+				"aaa": "aaa",
+			},
+			expectTags: []map[string]interface{}{
+				{"key": "aaa", "value": "aaa"},
+			},
+			expectDedupeKeys: nil,
+		},
+		{
+			name: "test dimensions and sort",
+			exprMap: map[string]string{
+				"tags":       "{aaa:aaa, ccc:ccc}",
+				"dimensions": "{bbb:bbb, ddd:ddd}",
+			},
+			data: map[string]interface{}{
+				"aaa": "aaa",
+				"bbb": "bbb",
+				"ddd": "ddd",
+				"ccc": "ccc",
+			},
+			expectTags: []map[string]interface{}{
+				{"key": "aaa", "value": "aaa"},
+				{"key": "bbb", "value": "bbb"},
+				{"key": "ccc", "value": "ccc"},
+				{"key": "ddd", "value": "ddd"},
+			},
+			expectDedupeKeys: []string{"bbb", "ddd"},
+		},
+		{
+			name: "test tags list",
+			exprMap: map[string]string{
+				"tags": "[{key: 'a', value: aaa}, {key: 'b', value: bbb}]",
+			},
+			data: map[string]interface{}{
+				"aaa": "aaa",
+			},
+			expectTags: []map[string]interface{}{
+				{"key": "a", "value": "aaa"},
+				{"key": "b", "value": nil},
+			},
+			expectDedupeKeys: nil,
+		},
+	}
+
+	for _, item := range table {
+		s.Run(item.name, func() {
+			to := etl.NewMapContainer()
+			exprMap := map[string]*jmespath.JMESPath{}
+			for k, v := range item.exprMap {
+				expr, err := utils.CompileJMESPathCustom(v)
+				s.NoError(err)
+				exprMap[k] = expr
+			}
+
+			err := fta.ExtractTags("", exprMap, item.data, to)
+			s.NoError(err)
+
+			tags, _ := to.Get("tags")
+			dedupeKeys, _ := to.Get("dedupe_keys")
+			s.Equal(item.expectTags, tags)
+			if item.expectDedupeKeys != nil {
+				s.Equal(item.expectDedupeKeys, dedupeKeys)
+			} else {
+				s.Nil(dedupeKeys)
+			}
+		})
+	}
+}
+
+func TestExtractTags(t *testing.T) {
+	suite.Run(t, new(ExtractTagsTest))
 }

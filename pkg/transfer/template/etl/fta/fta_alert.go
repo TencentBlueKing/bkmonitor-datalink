@@ -173,12 +173,6 @@ func extractDefaultFields(to *etl.Container, from *etl.Container) error {
 
 // NewAlertFTAProcessor 创建FTA告警处理器
 func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordProcessor, error) {
-	defer func() {
-		if err := recover(); err != nil {
-			logging.Errorf("%s panic: %+v", name, err)
-		}
-	}()
-
 	pipeConfig := config.PipelineConfigFromContext(ctx)
 	helper := utils.NewMapHelper(pipeConfig.Option)
 

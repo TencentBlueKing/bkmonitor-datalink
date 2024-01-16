@@ -26,15 +26,15 @@ var configData = &Config{
 				"node",
 			},
 		},
-		{
-			Name: "container",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"pod",
-				"container",
-			},
-		},
+		//{
+		//	Name: "container",
+		//	Index: cmdb.Index{
+		//		"bcs_cluster_id",
+		//		"namespace",
+		//		"pod",
+		//		"container",
+		//	},
+		//},
 		{
 			Name: "pod",
 			Index: cmdb.Index{
@@ -154,11 +154,11 @@ var configData = &Config{
 				"ingress", "service",
 			},
 		},
-		{
-			Resources: []cmdb.Resource{
-				"container", "pod",
-			},
-		},
+		//{
+		//	Resources: []cmdb.Resource{
+		//		"container", "pod",
+		//	},
+		//},
 		{
 			Resources: []cmdb.Resource{
 				"address", "service",

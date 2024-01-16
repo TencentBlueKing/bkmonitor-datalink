@@ -61,14 +61,14 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"cluster", "deamonset", "deployment", "namespace", "node", "pod", "replicaset", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"address", "container", "deamonset", "deployment", "domain", "ingress", "job", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
 	ctx := context.Background()
-	index, err := testModel.getResourceIndex(ctx, "cluster")
+	index, err := testModel.getResourceIndex(ctx, "address")
 	assert.Nil(t, err)
-	assert.Equal(t, cmdb.Index{"bcs_cluster_id"}, index)
+	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "address"}, index)
 
 	index, err = testModel.getResourceIndex(ctx, "clb")
 	assert.Equal(t, fmt.Errorf("resource is empty clb"), err)
@@ -94,13 +94,14 @@ func TestModel_GetPaths(t *testing.T) {
 				"container":      "container-1",
 				"test":           "1",
 			},
-			source: "pod",
+			source: "container",
 			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
+				"container":      "container-1",
 			},
-			expected: `[[{"V":["pod","node"]},{"V":["node","system"]}]]`,
+			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
 		},
 		"no target resource": {
 			target: "multi_cluster",

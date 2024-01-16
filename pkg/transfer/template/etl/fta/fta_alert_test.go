@@ -487,6 +487,32 @@ func (s *ExtractTagsTest) TestExtractTags() {
 			},
 			expectDedupeKeys: nil,
 		},
+		{
+			name: "test tags list with empty key",
+			exprMap: map[string]string{
+				"tags": "[{key: 'a', value: aaa}, {key: '', value: bbb}]",
+			},
+			data: map[string]interface{}{
+				"aaa": "aaa",
+			},
+			expectTags: []map[string]interface{}{
+				{"key": "a", "value": "aaa"},
+			},
+			expectDedupeKeys: nil,
+		},
+		{
+			name: "test error expr",
+			exprMap: map[string]string{
+				"tags":       "aaa",
+				"dimensions": "bbb",
+			},
+			data: map[string]interface{}{
+				"aaa": "aaa",
+				"bbb": "bbb",
+			},
+			expectTags:       nil,
+			expectDedupeKeys: nil,
+		},
 	}
 
 	for _, item := range table {

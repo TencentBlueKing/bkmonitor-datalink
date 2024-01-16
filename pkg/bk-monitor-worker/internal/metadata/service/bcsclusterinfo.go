@@ -41,6 +41,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
@@ -1396,9 +1397,14 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				logger.Errorf("set dimensionValues for sapce_id [%s] failed, %v", sp.SpaceId, err)
 				continue
 			}
-			if err := sr.Create(db); err != nil {
-				logger.Errorf("create SpaceResource [%#v] failed", sr)
-				continue
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource")
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceResource [%#v]", sr)
+			} else {
+				if err := sr.Create(db); err != nil {
+					logger.Errorf("create SpaceResource [%#v] failed", sr)
+					continue
+				}
 			}
 			spaceIdSet.Add(sp.SpaceId)
 			logger.Infof("create bcs space resource successfully, space [%s]", sr.SpaceId)
@@ -1432,9 +1438,14 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				logger.Errorf("marshal dimensionValues [%#v] failed, %v", dimensionValues, err)
 				continue
 			}
-			if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(sp.SpaceId).ResourceTypeEq(models.SpaceTypeBCS).ResourceIdEq(sp.SpaceId).GetUpdater().SetDimensionValues(dmStr).SetUpdateTime(time.Now()).Update(); err != nil {
-				logger.Errorf("update dimensionValues [%s] for SpaceResource with space_id [%s] failed,  %v", dmStr, sp.SpaceId, err)
-				continue
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource")
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] update SpaceResource space_id [%s], dimension_values is different old [%v] new [%v]", sp.SpaceId, dms, dimensionValues)
+			} else {
+				if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(sp.SpaceId).ResourceTypeEq(models.SpaceTypeBCS).ResourceIdEq(sp.SpaceId).GetUpdater().SetDimensionValues(dmStr).SetUpdateTime(time.Now()).Update(); err != nil {
+					logger.Errorf("update dimensionValues [%s] for SpaceResource with space_id [%s] failed,  %v", dmStr, sp.SpaceId, err)
+					continue
+				}
 			}
 			spaceIdSet.Append(sp.SpaceId)
 		}

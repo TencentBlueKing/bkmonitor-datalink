@@ -30,7 +30,7 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 }
 
 // FetchSharedClusterNamespaces for bcs cluster manager resource fetch clusters
-// 获取集群的命名空间数据
+// 获取项目使用的共享集群的命名空间数据
 func (c *Client) FetchSharedClusterNamespaces(opts ...define.OperationOption) define.Operation {
 	/*
 		@params

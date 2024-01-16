@@ -13,7 +13,9 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -48,19 +50,26 @@ func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map
 		}
 		diffSet := dataidSet.Difference(existDataidSet)
 		var changed bool
-		for _, dataid := range diffSet.ToSlice() {
+		it := diffSet.Iterator()
+		for dataid := range it.C {
 			sds := space.SpaceDataSource{
 				SpaceTypeId:       spaceType,
 				SpaceId:           spaceId,
 				BkDataId:          dataid,
 				FromAuthorization: fromAuthorization,
 			}
-			if err := sds.Create(db); err != nil {
-				logger.Errorf("create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed, %v", spaceType, spaceId, dataid, fromAuthorization, err)
-				continue
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource")
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", spaceType, spaceId, dataid, fromAuthorization)
+			} else {
+				if err := sds.Create(db); err != nil {
+					logger.Errorf("create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed, %v", spaceType, spaceId, dataid, fromAuthorization, err)
+					continue
+				}
 			}
 			changed = true
 		}
+		it.Stop()
 		if changed {
 			changedSpaceIdList = append(changedSpaceIdList, spaceId)
 		}

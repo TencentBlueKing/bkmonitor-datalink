@@ -143,13 +143,12 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 		case <-ticker.C:
 		}
 	}
-	// partition
+
 	partitions, err := disk.Partitions(config.CollectAllDev)
 	if err != nil {
 		return nil, err
 	}
-
-	// 过滤掉不要的分区
+	// 分区过滤
 	partitions = FilterPartitions(partitions, config)
 
 	report.Partitions = make([]disk.PartitionStat, 0, len(partitions))
@@ -157,6 +156,7 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 	for _, partition := range partitions {
 		usage, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
+			logger.Errorf("get disk usage failed, mountpoint=%v, err: %v", partition.Mountpoint, err)
 			continue
 		}
 

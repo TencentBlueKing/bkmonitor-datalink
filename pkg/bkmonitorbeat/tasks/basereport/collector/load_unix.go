@@ -29,7 +29,7 @@ func GetLoadInfo() (*LoadReport, error) {
 		return nil, err
 	}
 
-	// per_cpu_load = load1/cpu总核数
+	// per_cpu_load = load1/cpu 总核数
 	cores, err := GetCpuCores()
 	if cores == 0 || err != nil {
 		return &report, errors.Wrap(err, "failed to get cpu cores")

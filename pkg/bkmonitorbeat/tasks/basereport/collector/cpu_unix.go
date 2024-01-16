@@ -44,7 +44,6 @@ func getCPUStatUsage(report *CpuReport) error {
 		return err
 	}
 
-	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
 
@@ -88,18 +87,18 @@ func getCPUStatUsage(report *CpuReport) error {
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
-	// per usage
+	// 单核使用率
 	report.Usage, err = cpu.Percent(0, true)
 	if err != nil {
 		return err
 	}
-
 	for i := range report.Usage {
 		if report.Usage[i] < 0 || int(report.Usage[i]) > 100 {
 			report.Usage[i] = 0.0
 		}
 	}
-	// total usage
+
+	// 总使用率
 	total, err := cpu.Percent(0, false)
 	if err != nil {
 		return err

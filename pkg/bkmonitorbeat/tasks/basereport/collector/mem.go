@@ -46,7 +46,6 @@ func GetMemInfo(config configs.MemConfig) (*MemReport, error) {
 			once.Info.UsedPercent = 0
 		}
 
-		// select max usage report
 		if once.Info.UsedPercent >= maxUsedPercent {
 			report = once
 			maxUsedPercent = once.Info.UsedPercent

@@ -314,3 +314,26 @@ func TestQueueResize(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueUniqueKey(t *testing.T) {
+	conf := Config{
+		FlushInterval: 2 * time.Second,
+	}
+	queue := NewBatchQueue(conf, func(s string) Config {
+		return Config{}
+	})
+	queue.Put(testMetricsEvent{
+		CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": 10}),
+	})
+	queue.Put(testTracesEvent{
+		CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": 10}),
+	})
+
+	n := 0
+	for i := 0; i < 2; i++ {
+		item := <-queue.Pop()
+		t.Logf("pop item: %+v", item)
+		n += len(item)
+	}
+	assert.Equal(t, 8, n)
+}

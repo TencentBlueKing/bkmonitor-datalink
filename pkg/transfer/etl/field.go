@@ -228,7 +228,24 @@ func (f *SimpleField) Transform(from Container, to Container) error {
 		}
 	}
 
-	return to.Put(f.name, value)
+	// TODO(mando): 暂时没有找到优雅的方案处理 db record 先在这里做个断言
+	r, ok := value.(DbmRecord)
+	if !ok {
+		return to.Put(f.name, value) // 普通类型处理
+	}
+
+	var errs []error
+	if err := to.Put(r.BodyFieldName, r.Body); err != nil {
+		errs = append(errs, err)
+	}
+	if err := to.Put(r.ResponseFieldName, r.Response); err != nil {
+		errs = append(errs, err)
+	}
+	if len(errs) > 0 {
+		return errs[0]
+	}
+
+	return nil
 }
 
 // PrepareField :

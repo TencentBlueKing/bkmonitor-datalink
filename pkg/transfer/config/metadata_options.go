@@ -112,13 +112,6 @@ const (
 	// PipelineConfigOptFlatBatchKey: 事件类数据需要进行进行插件的
 	PipelineConfigOptMetricsReportPathKey    = "metrics_report_path"
 	PipelineConfigCacheFieldRefreshPeriodKey = "cache_field_refresh_period"
-
-	// 故障自愈
-
-	// PipelineConfigOptFTAFieldMappingKey 字段映射配置Key
-	PipelineConfigOptFTAFieldMappingKey = "normalization_config"
-	// PipelineConfigOptFTAAlertsKey 告警名称配置Key
-	PipelineConfigOptFTAAlertsKey = "alert_config"
 )
 
 // MetaResultTableConfig 专用

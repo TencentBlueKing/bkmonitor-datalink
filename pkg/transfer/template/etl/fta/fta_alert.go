@@ -49,6 +49,10 @@ const (
 	fieldPluginID = "plugin_id"
 	// fieldCleanConfig 清洗配置字段
 	fieldCleanConfig = "clean_configs"
+	// fieldDefaultNormalizations 默认清洗配置字段
+	fieldDefaultNormalizations = "normalization_config"
+	// fieldDefaultAlerts 默认告警配置字段
+	fieldDefaultAlerts = "alert_config"
 )
 
 // ExtractTags 从data中提取tags字段
@@ -80,7 +84,7 @@ func ExtractTags(
 				dimensions[k] = v
 			}
 		default:
-			logging.Errorf("%s dimensions type %T not supported, value->(%T)", name, value, value)
+			logging.Errorf("%s dimensions type %T not supported", name, value)
 		}
 		slices.Sort(dedupeKeys)
 	}
@@ -186,19 +190,15 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	helper := utils.NewMapHelper(pipeConfig.Option)
 
 	// 获取清洗配置
-	configFieldKeys := map[string]string{
-		"clean_configs":        fieldCleanConfig,
-		"normalization_config": config.PipelineConfigOptFTAFieldMappingKey,
-		"alert_config":         config.PipelineConfigOptFTAAlertsKey,
-	}
+	configFieldKeys := []string{fieldCleanConfig, fieldDefaultNormalizations, fieldDefaultAlerts}
 	originCleanConfig := map[string]interface{}{}
-	for key, field := range configFieldKeys {
-		if value, ok := helper.Get(field); ok {
+	for _, key := range configFieldKeys {
+		if value, ok := helper.Get(key); ok {
 			originCleanConfig[key] = value
 		}
 	}
 
-	if originCleanConfig["clean_configs"] == nil && originCleanConfig["normalization_config"] == nil {
+	if originCleanConfig[fieldCleanConfig] == nil && originCleanConfig[fieldDefaultNormalizations] == nil {
 		return nil, errors.Errorf("%s clean_configs and normalization_config is empty", name)
 	}
 
@@ -212,12 +212,10 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 	return template.NewRecordProcessorWithDecoderFn(
 		name, config.PipelineConfigFromContext(ctx),
 		etl.NewFunctionalRecord("", func(from etl.Container, to etl.Container) error {
-			// 捕获panic，避免不合理的配置导致程序崩溃
-			defer func() {
-				if err := recover(); err != nil {
-					logging.Errorf("%s panic: %+v", name, err)
-				}
-			}()
+			// 处理panic，避免不合理的配置导致程序崩溃
+			defer utils.RecoverError(func(err error) {
+				logging.Errorf("%s panic: %+v", name, err)
+			})
 
 			// 为了避免获取到外层gse补全的默认字段，因此仅获取data字段，部分内置字段后续会单独处理
 			result, _ := from.Get("data")

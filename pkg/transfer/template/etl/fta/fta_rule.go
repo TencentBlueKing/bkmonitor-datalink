@@ -32,6 +32,7 @@ const (
 
 // CleanConfig 清洗配置
 type CleanConfig struct {
+	// 支持多个清洗配置，可以通过rules配置来决定使用哪个配置
 	CleanConfigs []*struct {
 		Alerts         []*Alert         `mapstructure:"alert_config" json:"alert_config"`
 		Normalizations []*Normalization `mapstructure:"normalization_config" json:"normalization_config"`
@@ -39,6 +40,7 @@ type CleanConfig struct {
 
 		exprMap map[string]*jmespath.JMESPath `mapstructure:"-"`
 	} `mapstructure:"clean_configs" json:"clean_configs"`
+	// 原本的清洗配置，为了兼容旧版，保留，同时也可以作为默认配置
 	DefaultNormalizations []*Normalization `mapstructure:"normalization_config" json:"normalization_config"`
 	DefaultAlerts         []*Alert         `mapstructure:"alert_config" json:"alert_config"`
 

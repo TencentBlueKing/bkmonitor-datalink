@@ -108,14 +108,23 @@ func ExtractTags(
 				}
 				tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
 			}
-		case []map[string]interface{}, []interface{}:
+		case []interface{}:
 			// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
-			for _, item := range t.([]interface{}) {
+			for _, item := range t {
 				item, _ := item.(map[string]interface{})
 				if item == nil {
 					continue
 				}
 
+				key := item["key"]
+				value := item["value"]
+				if utils.IsNotEmptyString(key) {
+					tagsList = append(tagsList, map[string]interface{}{"key": key, "value": value})
+				}
+			}
+		case []map[string]interface{}:
+			// 针对 tags 为 [{"key": "a", "value": "b"}] 的转换
+			for _, item := range t {
 				key := item["key"]
 				value := item["value"]
 				if utils.IsNotEmptyString(key) {

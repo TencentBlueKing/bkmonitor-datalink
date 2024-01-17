@@ -399,7 +399,7 @@ func (i *Instance) QueryRange(
 	}
 
 	ves, _ := json.Marshal(vmExpand)
-	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
+	log.Infof(ctx, "vm-expand: %s", ves)
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)

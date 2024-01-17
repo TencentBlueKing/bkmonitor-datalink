@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -157,9 +158,7 @@ func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveC
 }
 
 func (w *DistributiveWindow) ReportMetric() map[OperatorMetricKey]int {
-
 	r := make(map[OperatorMetricKey]int, 2)
-
 	for _, subWindow := range w.subWindows {
 
 		traceCount := 0
@@ -198,6 +197,7 @@ loop:
 	for {
 		select {
 		case m := <-spanChan:
+			metrics.DecreaseApmMessageChanCount(w.dataId)
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)
 				subWindow.add(span)
@@ -303,7 +303,10 @@ func (d *distributiveSubWindow) detectNotify() {
 				d.logger.Errorf("An expired key[%s] was detected but does not exist in the mapping", k)
 				continue
 			}
-			d.eventChan <- Event{v.(*CollectTrace)}
+			trace := v.(*CollectTrace)
+			metrics.DecreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
+			metrics.DecreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id), len(trace.Spans))
+			d.eventChan <- Event{trace}
 		}
 	}
 }
@@ -324,8 +327,11 @@ loop:
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	d.mLock.Lock()
 	value, exist := d.m.Load(span.TraceId)
+	metrics.IncreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id))
 
 	if !exist {
+		metrics.IncreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
+
 		graph := NewDiGraph()
 		graph.AddNode(&Node{StandardSpan: &span})
 		rt := d.runtimeStrategy.handleNew()
@@ -337,6 +343,7 @@ func (d *distributiveSubWindow) add(span StandardSpan) {
 			Runtime: rt,
 		})
 	} else {
+
 		collect := value.(*CollectTrace)
 		graph := collect.Graph
 		graph.AddNode(&Node{StandardSpan: &span})

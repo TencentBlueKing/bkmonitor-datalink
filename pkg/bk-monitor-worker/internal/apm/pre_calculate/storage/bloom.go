@@ -27,7 +27,8 @@ import (
 
 // BloomStorageData storage request of bloom-filter
 type BloomStorageData struct {
-	Key string
+	DataId string
+	Key    string
 }
 
 // BloomOperator interface of bloom-filter

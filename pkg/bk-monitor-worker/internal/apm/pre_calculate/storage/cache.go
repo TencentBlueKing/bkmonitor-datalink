@@ -54,9 +54,10 @@ var (
 
 // CacheStorageData storage request of cache
 type CacheStorageData struct {
-	Key   string
-	Value []byte
-	Ttl   time.Duration
+	DataId string
+	Key    string
+	Value  []byte
+	Ttl    time.Duration
 }
 
 // CacheOperator cache interface

@@ -44,7 +44,7 @@ func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
 	}()
 	logger.Info("start sync bkcc space task")
 	svc := service.NewSpaceSvc(nil)
-	if err := svc.RefreshBkccSpace(); err != nil {
+	if err := svc.RefreshBkccSpace(false); err != nil {
 		return errors.Wrap(err, "refresh bkcc space failed")
 	}
 	logger.Info("refresh bkcc space successfully")

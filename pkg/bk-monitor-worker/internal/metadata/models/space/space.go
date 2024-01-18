@@ -9,7 +9,11 @@
 
 package space
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+import (
+	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+)
 
 //go:generate goqueryset -in space.go -out qs_space_gen.go
 
@@ -31,4 +35,18 @@ type Space struct {
 // TableName table alias name
 func (Space) TableName() string {
 	return "metadata_space"
+}
+
+func (s *Space) BeforeCreate(tx *gorm.DB) error {
+	_ = s.BaseModel.BeforeCreate(tx)
+	if s.Status == "" {
+		s.Status = "normal"
+	}
+	if s.TimeZone == "" {
+		s.TimeZone = "Asia/Shanghai"
+	}
+	if s.Language == "" {
+		s.Language = "zh-hans"
+	}
+	return nil
 }

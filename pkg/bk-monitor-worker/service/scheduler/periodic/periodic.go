@@ -42,6 +42,7 @@ var (
 	RefreshESRestore        = "periodic:metadata:refresh_es_restore"
 	RefreshBcsMetricsLabel  = "periodic:metadata:refresh_bcs_metrics_label"
 	SyncBkccSpaceDataSource = "periodic:metadata:sync_bkcc_space_data_source"
+	RefreshBkccSpace       = "periodic:metadata:refresh_bkcc_space"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
@@ -97,6 +98,10 @@ var (
 		RefreshBcsMetricsLabel: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMetricsLabel,
+		},
+		RefreshBkccSpace: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBkccSpace,
 		},
 		SyncBkccSpaceDataSource: {
 			Cron:    "*/1 * * * *",

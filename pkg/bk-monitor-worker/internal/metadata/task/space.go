@@ -35,6 +35,22 @@ func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
+// RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
+func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBkccSpace Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bkcc space task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.RefreshBkccSpace(false); err != nil {
+		return errors.Wrap(err, "refresh bkcc space failed")
+	}
+	logger.Info("refresh bkcc space successfully")
+	return nil
+}
+
 // SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
 func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 	defer func() {

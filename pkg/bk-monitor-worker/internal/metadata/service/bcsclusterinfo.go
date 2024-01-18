@@ -1340,7 +1340,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 			// 构造dimensionValue
 			isShared, _ := c["isShared"].(bool)
 			if isShared {
-				nsDataList, err := apiservice.BcsClusterManager.FetchSharedClusterNamespaces(clusterId, sp.SpaceCode)
+				nsDataList, err := apiservice.Bcs.FetchSharedClusterNamespaces(clusterId, sp.SpaceCode)
 				if err != nil {
 					logger.Errorf("FetchSharedClusterNamespaces for cluster_id [%s] code [%s] failed,%v", clusterId, sp.SpaceCode, err)
 					skip = true

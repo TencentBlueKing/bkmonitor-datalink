@@ -13,7 +13,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
@@ -45,41 +44,6 @@ func (BcsClusterManagerService) GetProjectClusters(projectId string, excludeShar
 			"clusterId": c["clusterID"],
 			"bkBizId":   c["businessID"],
 			"isShared":  false,
-		})
-	}
-	return result, nil
-}
-
-// FetchSharedClusterNamespaces 拉取集群下的命名空间数据
-func (BcsClusterManagerService) FetchSharedClusterNamespaces(clusterId string, projectCode string) ([]map[string]string, error) {
-	if projectCode == "" {
-		// 当为`-`时，为拉取集群下所有的命名空间数据
-		projectCode = "-"
-	}
-
-	api, err := api.GetBcsApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "get bcs  api failed")
-	}
-	var resp bcs.FetchSharedClusterNamespacesResp
-	_, err = api.FetchSharedClusterNamespaces().SetPathParams(map[string]string{
-		"project_code": projectCode,
-		"cluster_id":   clusterId,
-	}).SetResult(&resp).Request()
-	if err != nil {
-		return nil, errors.Wrapf(err, "FetchSharedClusterNamespaces with cluster_id [%s] project_code [%s] failed", clusterId, projectCode)
-	}
-	var result []map[string]string
-	for _, ns := range resp.Data {
-		proId, _ := ns["projectID"].(string)
-		proCode, _ := ns["projectCode"].(string)
-		namespace, _ := ns["name"].(string)
-
-		result = append(result, map[string]string{
-			"projectId":   proId,
-			"projectCode": proCode,
-			"clusterId":   clusterId,
-			"namespace":   namespace,
 		})
 	}
 	return result, nil

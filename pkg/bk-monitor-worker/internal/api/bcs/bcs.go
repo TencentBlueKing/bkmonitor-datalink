@@ -14,12 +14,12 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 )
 
-// Client for bcs cluster manager
+// Client for bcs
 type Client struct {
 	define.BkApiClient
 }
 
-// New bcs_cluster_manager client
+// New bcs client
 func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
 	client, err := bkapi.NewBkApiClient("bcs-api", configProvider, opts...)
 	if err != nil {
@@ -29,7 +29,7 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 	return &Client{BkApiClient: client}, nil
 }
 
-// FetchSharedClusterNamespaces for bcs cluster manager resource fetch clusters
+// FetchSharedClusterNamespaces for bcs resource fetch_shared_cluster_namespaces
 // 获取项目使用的共享集群的命名空间数据
 func (c *Client) FetchSharedClusterNamespaces(opts ...define.OperationOption) define.Operation {
 	/*
@@ -38,7 +38,7 @@ func (c *Client) FetchSharedClusterNamespaces(opts ...define.OperationOption) de
 		cluster_id | string | 集群id
 	*/
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "fetch shared cluster namespaces",
+		Name:   "fetch_shared_cluster_namespaces",
 		Method: "GET",
 		Path:   "/bcsproject/v1/projects/{project_code}/clusters/{cluster_id}/native/namespaces",
 	}, opts...)

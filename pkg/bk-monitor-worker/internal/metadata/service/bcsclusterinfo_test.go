@@ -606,7 +606,7 @@ func TestBcsClusterInfoSvc_RefreshClusterResource(t *testing.T) {
 		}, nil
 	})
 
-	gomonkey.ApplyFunc(apiservice.BcsClusterManagerService.FetchSharedClusterNamespaces, func(s apiservice.BcsClusterManagerService, clusterId string, projectCode string) ([]map[string]string, error) {
+	gomonkey.ApplyFunc(apiservice.Bcs.FetchSharedClusterNamespaces, func(s apiservice.BcsClusterManagerService, clusterId string, projectCode string) ([]map[string]string, error) {
 		return []map[string]string{
 			{
 				"projectId":   "shared_cluster",

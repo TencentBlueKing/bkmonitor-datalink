@@ -13,6 +13,7 @@ import (
 	"context"
 	"strconv"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	goRedis "github.com/go-redis/redis/v8"
 )
 
@@ -20,16 +21,17 @@ type RedisClientMocker struct {
 	ZcountValue                  int64
 	ZRangeByScoreWithScoresValue []goRedis.Z
 	HMGetValue                   []interface{}
+	SetMap                       map[string]mapset.Set[string]
 	goRedis.UniversalClient
 }
 
-func (r RedisClientMocker) ZCount(ctx context.Context, key, min, max string) *goRedis.IntCmd {
+func (r *RedisClientMocker) ZCount(ctx context.Context, key, min, max string) *goRedis.IntCmd {
 	c := goRedis.NewIntCmd(ctx)
 	c.SetVal(r.ZcountValue)
 	return c
 }
 
-func (r RedisClientMocker) ZRangeByScoreWithScores(ctx context.Context, key string, opt *goRedis.ZRangeBy) *goRedis.ZSliceCmd {
+func (r *RedisClientMocker) ZRangeByScoreWithScores(ctx context.Context, key string, opt *goRedis.ZRangeBy) *goRedis.ZSliceCmd {
 	c := goRedis.NewZSliceCmd(ctx)
 	var filterRecords []goRedis.Z
 	min, _ := strconv.ParseFloat(opt.Min, 64)
@@ -43,12 +45,29 @@ func (r RedisClientMocker) ZRangeByScoreWithScores(ctx context.Context, key stri
 	return c
 }
 
-func (r RedisClientMocker) HMGet(ctx context.Context, key string, fields ...string) *goRedis.SliceCmd {
+func (r *RedisClientMocker) HMGet(ctx context.Context, key string, fields ...string) *goRedis.SliceCmd {
 	c := goRedis.NewSliceCmd(ctx)
 	c.SetVal(r.HMGetValue)
 	return c
 }
 
-func (r RedisClientMocker) Close() error {
+func (r *RedisClientMocker) SAdd(ctx context.Context, key string, members ...interface{}) *goRedis.IntCmd {
+	c := goRedis.NewIntCmd(ctx)
+	m, ok := r.SetMap[key]
+	if !ok {
+		m = mapset.NewSet[string]()
+	}
+	for _, member := range members {
+		m.Add(member.(string))
+	}
+	r.SetMap[key] = m
+	return c
+}
+
+func (r *RedisClientMocker) Publish(ctx context.Context, channel string, message interface{}) *goRedis.IntCmd {
+	return goRedis.NewIntCmd(ctx)
+}
+
+func (r *RedisClientMocker) Close() error {
 	return nil
 }

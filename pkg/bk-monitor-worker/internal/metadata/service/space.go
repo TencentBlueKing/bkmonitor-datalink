@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -132,6 +133,7 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 				logger.Errorf("set dimension_values [%v] for SpaceResource failed, %v", dm, err)
 				continue
 			}
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_create")
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s]", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues)
 			} else {
@@ -152,6 +154,7 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 			logger.Errorf("set dimension_values [%v] for SpaceResource failed, %v", dm, err)
 			continue
 		}
+		_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_update")
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] update SpaceResource id [%v] with dimension_values [%v] resource_id [%v]", res.Id, dm, res.ResourceId)
 		} else {

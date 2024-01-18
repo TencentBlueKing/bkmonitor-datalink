@@ -58,7 +58,7 @@ func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map
 				BkDataId:          dataid,
 				FromAuthorization: fromAuthorization,
 			}
-			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource")
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", spaceType, spaceId, dataid, fromAuthorization)
 			} else {

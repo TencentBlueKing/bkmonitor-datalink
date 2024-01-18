@@ -397,13 +397,13 @@ func RedisCount(key, operation string) error {
 }
 
 // MysqlCount mysql count
-func MysqlCount(tableName, operation string) error {
+func MysqlCount(tableName, operation string, count float64) error {
 	metric, err := mysqlCount.GetMetricWithLabelValues(tableName, operation)
 	if err != nil {
 		logger.Errorf("prom get mysql count metric failed: %s", err)
 		return err
 	}
-	metric.Inc()
+	metric.Add(count)
 	return nil
 }
 

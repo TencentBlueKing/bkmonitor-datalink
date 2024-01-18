@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -58,7 +57,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 			"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		},
 	}
-	gomonkey.ApplyFunc(dependentredis.GetInstance, func(ctx context.Context) (*dependentredis.Instance, error) {
+	gomonkey.ApplyFunc(dependentredis.GetInstance, func() (*dependentredis.Instance, error) {
 		return &dependentredis.Instance{
 			Client: mockerClient,
 		}, nil

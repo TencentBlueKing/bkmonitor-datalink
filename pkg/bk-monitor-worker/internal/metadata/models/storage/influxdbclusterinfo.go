@@ -85,7 +85,7 @@ func RefreshInfluxdbClusterInfoConsulClusterConfig(ctx context.Context, objs *[]
 				if err != nil {
 					return err
 				}
-				consulClient, err := consul.GetInstance(ctx)
+				consulClient, err := consul.GetInstance()
 				if err != nil {
 					return err
 				}

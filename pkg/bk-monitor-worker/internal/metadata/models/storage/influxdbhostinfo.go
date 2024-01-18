@@ -90,7 +90,7 @@ func (i InfluxdbHostInfo) ConsulConfigPath() string {
 
 // RefreshConsulClusterConfig 刷新consul中的influxdb主机信息
 func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error {
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}

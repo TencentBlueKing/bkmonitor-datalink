@@ -154,6 +154,8 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
 	trace.InsertStringIntoSpan("request-data", string(paramsStr), span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
+
 	data, err := queryInfo(ctx, key, params)
 	if err != nil {
 		resp.failed(ctx, err)

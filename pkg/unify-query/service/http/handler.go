@@ -555,6 +555,8 @@ func HandlerQueryExemplar(c *gin.Context) {
 	queryStr, _ := json.Marshal(query)
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -615,6 +617,8 @@ func HandlerQueryTs(c *gin.Context) {
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertIntIntoSpan("query-body-size", len(queryStr), span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	res, err := queryTs(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -667,6 +671,8 @@ func HandlerQueryPromQL(c *gin.Context) {
 	queryStr, _ := json.Marshal(queryPromQL)
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertStringIntoSpan("query-promql", queryPromQL.PromQL, span)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 
 	if queryPromQL.PromQL == "" {
 		resp.failed(ctx, fmt.Errorf("promql is empty"))
@@ -728,6 +734,9 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		return
 	}
 	queryStr, _ := json.Marshal(query)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	res, err := QueryTsClusterMetrics(ctx, query)
 	if err != nil {

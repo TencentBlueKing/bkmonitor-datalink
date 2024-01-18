@@ -207,8 +207,8 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
-	// BkApiBcsApiGatewayDomain bk-apigw bcs domain
-	BkApiBcsApiGatewayDomain string
+	// BkApiBcsApiMicroGwUrl bk-apigw bcs micro gateway url
+	BkApiBcsApiMicroGwUrl string
 	// BkApiBcsApiGatewayToken bk-apigw bcs token
 	BkApiBcsApiGatewayToken string
 	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
@@ -367,7 +367,7 @@ func initVariables() {
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
-	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
+	BkApiBcsApiMicroGwUrl = GetValue("taskConfig.common.bkapi.bcsApiMicroGwUrl", "")
 	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
 	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
 	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")

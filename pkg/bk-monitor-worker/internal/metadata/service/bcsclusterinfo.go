@@ -319,7 +319,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/"), clusterId, sourceType, field))
+	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/"), clusterId, sourceType, field))
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +398,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	if count != 0 {
 		return nil, errors.Errorf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId)
 	}
-	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiGatewayDomain)
+	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiMicroGwUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +695,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 		return nil, errors.New("BCSClusterInfo obj can not be nil")
 	}
 
-	parsedUrl, err := url.Parse(cfg.BkApiBcsApiGatewayDomain)
+	parsedUrl, err := url.Parse(cfg.BkApiBcsApiMicroGwUrl)
 	if err != nil {
 		return nil, err
 	}

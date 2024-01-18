@@ -123,10 +123,8 @@ taskConfig:
       stage: stag
       appCode: appCode
       appSecret: appSecret
-      # bcsApiMicroGwUrl
-      bcsApiGatewayDomain: ""
+      bcsApiMicroGwUrl: ""
       bcsApiGatewayToken: ""
-      # bcsBkApiGwUrl
       bcsApiGatewayBaseUrl: ""
   # metadata: metadata任务配置
   metadata:

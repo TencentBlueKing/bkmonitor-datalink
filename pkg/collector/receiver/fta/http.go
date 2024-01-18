@@ -39,7 +39,7 @@ func init() {
 }
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourceFta, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceFta, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeFtaEvent,

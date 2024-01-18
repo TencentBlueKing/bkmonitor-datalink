@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -74,7 +73,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	redisClient := &mocker.RedisClientMocker{
 		SetMap: map[string]mapset.Set[string]{},
 	}
-	p := gomonkey.ApplyFunc(redis.GetInstance, func(ctx context.Context) *redis.Instance {
+	p := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
 		return &redis.Instance{
 			Client: redisClient,
 		}
@@ -85,7 +84,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	spaceUids := []string{"bkcc__100", "bkcc__101", "bkcc__102"}
 	db.Delete(&space.Space{}, "space_id in (?)", spaceIds)
 	svc := NewSpaceSvc(nil)
-	err := svc.RefreshBkccSpace()
+	err := svc.RefreshBkccSpace(false)
 	assert.NoError(t, err)
 	spaceIdSet, ok := redisClient.SetMap[models.QueryVmSpaceUidListKey]
 	assert.True(t, ok)

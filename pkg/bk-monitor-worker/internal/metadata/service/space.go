@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 
@@ -170,7 +169,7 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 	}
 	if len(createdSpaces) != 0 {
 		// 追加业务空间到 vm 查询的白名单中, 并通知到 unifyquery
-		rds := redis.GetInstance(context.Background())
+		rds := redis.GetInstance()
 		if err := rds.SAdd(models.QueryVmSpaceUidListKey, createdSpaces...); err != nil {
 			logger.Errorf("reids SAdd [%v] to channel [%s] failed, %v", createdSpaces, models.QueryVmSpaceUidListKey, err)
 		}

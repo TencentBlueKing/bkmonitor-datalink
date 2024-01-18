@@ -58,29 +58,31 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return nil
 	}
 
-	allConditions, err := conditions.AnalysisConditions()
-	if err != nil {
-		log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
-		return nil
-	}
-
-	// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
-	compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
-	if err != nil {
-		log.Errorf(s.ctx, "allCondition Compare error: %s", err)
-		return nil
-	}
-
-	if !compareResult {
-		return nil
-	}
-
-	// 增加在非单指标单表下，判断如果强行指定了单指标单表则对其进行修改以支持 vm 查询
-	isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
-
-	// 当传入有效的 measurementType 字段时，需要进行类型过滤
+	// 只有在容器场景下的特殊逻辑
 	if isK8s {
+		// 增加在非单指标单表下，判断如果强行指定了单指标单表则对其进行修改以支持 vm 查询
+		isSplitMeasurement := rtDetail.MeasurementType == redis.BkSplitMeasurement
+
+		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
+			return nil
+		}
+
+		allConditions, err := conditions.AnalysisConditions()
+		if err != nil {
+			log.Errorf(s.ctx, "unable to get AllConditions, error: %s", err)
+			return nil
+		}
+
+		// 容器下 bcs_cluster_id 是内置维度，才进行此逻辑判断
+		// 如果 allConditions 中存在 clusterId 的筛选条件并且比对不成功的情况下，直接返回 nil，出现错误的情况也直接返回 nil
+		compareResult, err := allConditions.Compare(ClusterID, rtDetail.BcsClusterID)
+		if err != nil {
+			log.Errorf(s.ctx, "allCondition Compare error: %s", err)
+			return nil
+		}
+
+		if !compareResult {
 			return nil
 		}
 

@@ -12,28 +12,41 @@ package log
 import (
 	"context"
 	"fmt"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
+func withTraceID(ctx context.Context, format string, v ...any) string {
+	str := fmt.Sprintf(format, v...)
+	span := trace.SpanFromContext(ctx)
+	traceID := span.SpanContext().TraceID()
+
+	if traceID != [16]byte{0} {
+		return fmt.Sprintf("[%s] %s", traceID, str)
+	}
+	return str
+}
+
 func Warnf(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Warn(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Warn(withTraceID(ctx, format, v...))
 }
 
 func Infof(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Info(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Info(withTraceID(ctx, format, v...))
 }
 
 func Errorf(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Error(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Error(withTraceID(ctx, format, v...))
 }
 
 func Debugf(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Debug(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Debug(withTraceID(ctx, format, v...))
 }
 
 func Panicf(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Panic(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Panic(withTraceID(ctx, format, v...))
 }
 
 func Fatalf(ctx context.Context, format string, v ...any) {
-	OtLogger.Ctx(ctx).Fatal(fmt.Sprintf(format, v...))
+	OtLogger.Ctx(ctx).Fatal(withTraceID(ctx, format, v...))
 }

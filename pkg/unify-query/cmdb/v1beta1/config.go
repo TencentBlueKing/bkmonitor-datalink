@@ -27,33 +27,28 @@ var configData = &Config{
 			},
 		},
 		//{
-		//	Name: "cluster",
-		//	Index: cmdb.Index{
-		//		"bcs_cluster_id",
-		//	},
-		//},
-		//{
-		//	Name: "namespace",
+		//	Name: "container",
 		//	Index: cmdb.Index{
 		//		"bcs_cluster_id",
 		//		"namespace",
+		//		"pod",
+		//		"container",
 		//	},
 		//},
-		{
-			Name: "container",
-			Index: cmdb.Index{
-				"bcs_cluster_id",
-				"namespace",
-				"pod",
-				"container",
-			},
-		},
 		{
 			Name: "pod",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
 				"pod",
+			},
+		},
+		{
+			Name: "job",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"namespace",
+				"job",
 			},
 		},
 		{
@@ -72,6 +67,13 @@ var configData = &Config{
 				"deployment",
 			},
 		}, {
+			Name: "deamonset",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"namespace",
+				"deamonset",
+			},
+		}, {
 			Name: "statefulset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
@@ -79,11 +81,30 @@ var configData = &Config{
 				"statefulset",
 			},
 		}, {
-			Name: "deamonset",
+			Name: "service",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
-				"deamonset",
+				"service",
+			},
+		}, {
+			Name: "ingress",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"namespace",
+				"ingress",
+			},
+		}, {
+			Name: "address",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"address",
+			},
+		}, {
+			Name: "domain",
+			Index: cmdb.Index{
+				"bcs_cluster_id",
+				"domain",
 			},
 		},
 	},
@@ -100,6 +121,11 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
+				"job", "pod",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
 				"pod", "replicaset",
 			},
 		},
@@ -110,12 +136,37 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"pod", "deamonset",
+				"deamonset", "pod",
 			},
 		},
 		{
 			Resources: []cmdb.Resource{
-				"replicaset", "deployment",
+				"deployment", "replicaset",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"pod", "service",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"ingress", "service",
+			},
+		},
+		//{
+		//	Resources: []cmdb.Resource{
+		//		"container", "pod",
+		//	},
+		//},
+		{
+			Resources: []cmdb.Resource{
+				"address", "service",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"domain", "service",
 			},
 		},
 	},

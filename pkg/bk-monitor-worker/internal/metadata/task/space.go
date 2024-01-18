@@ -50,3 +50,19 @@ func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
 	logger.Info("refresh bkcc space successfully")
 	return nil
 }
+
+// SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
+func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("SyncBkccSpaceDataSource Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bkcc space data source task")
+	svc := service.NewSpaceDataSourceSvc(nil)
+	if err := svc.SyncBkccSpaceDataSource(); err != nil {
+		return errors.Wrap(err, "sync bkcc space data source failed")
+	}
+	logger.Info("sync bkcc space data source successfully")
+	return nil
+}

@@ -226,3 +226,20 @@ var BcsMetricLabelPrefix = map[string]string{
 	"container_": "kubernetes",
 	"kube_":      "kubernetes",
 }
+
+// SpaceDataSourceETLList 数据源 ETL 配置
+var SpaceDataSourceETLList = []string{
+	ETLConfigTypeBkSystemBasereport,
+	ETLConfigTypeBkUptimecheckHeartbeat,
+	ETLConfigTypeBkUptimecheckHttp,
+	ETLConfigTypeBkUptimecheckTcp,
+	ETLConfigTypeBkUptimecheckUdp,
+	ETLConfigTypeBkSystemProcPort,
+	ETLConfigTypeBkSystemProc,
+	ETLConfigTypeBkStandardV2TimeSeries,
+	ETLConfigTypeBkExporter,
+	ETLConfigTypeBkStandard,
+}
+
+// SkipDataIdListForBkcc 枚举 0 业务，但不是 bkcc 类型的数据源ID
+var SkipDataIdListForBkcc = []uint{1110000}

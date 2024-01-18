@@ -112,7 +112,7 @@ func ReportInfluxdbClusterMetric(ctx context.Context, t *t.Task) error {
 		}
 	}
 	// 初始化 Redis 客户端和 shipper
-	redisClient, err := redisStore.GetInstance(ctx)
+	redisClient, err := redisStore.GetInstance()
 	if err != nil {
 		logger.Errorf("Fail to get redis client, %v+", err)
 		return err

@@ -32,7 +32,7 @@ func NewWatcher(ctx context.Context, wg *sync.WaitGroup) *Watcher {
 	if wg == nil {
 		wg = new(sync.WaitGroup)
 	}
-	instance := storeRedis.GetInstance(ctx)
+	instance := storeRedis.GetInstance()
 	watcher = &Watcher{
 		instance: instance,
 		wg:       wg,

@@ -38,11 +38,12 @@ var (
 )
 
 // GetInstance get a redis instance
-func GetInstance(ctx context.Context) *Instance {
+func GetInstance() *Instance {
 	if storageRedisInstance != nil {
 		return storageRedisInstance
 	}
 
+	ctx := context.TODO()
 	var client goRedis.UniversalClient
 	var err error
 

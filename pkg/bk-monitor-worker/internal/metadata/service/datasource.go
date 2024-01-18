@@ -520,7 +520,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 			return nil
 		}
 	}
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}

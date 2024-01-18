@@ -95,7 +95,7 @@ func RefreshVmRouter(ctx context.Context, objs *[]AccessVMRecord, goroutineLimit
 		}(record, wg, ch)
 	}
 	wg.Wait()
-	client := redis.GetInstance(ctx)
+	client := redis.GetInstance()
 	err := client.Publish(models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
 	if err != nil {
 		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey, err)

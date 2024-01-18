@@ -9,21 +9,21 @@
 
 package metadata
 
-const (
-	BkQuerySourceHeader = "Bk-Query-Source"
-	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
-	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
-
-	UserKey               = "user"
-	MessageKey            = "message"
-	QueriesKey            = "queries"
-	QueryReferenceKey     = "query_reference"
-	QueryClusterMetricKey = "query_cluster_metric"
-
-	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
-	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
-
-	SpaceIsNotExists             = "SPACE_IS_NOT_EXISTS"
-	SpaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
-	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
+import (
+	"context"
 )
+
+func SetQueryClusterMetric(ctx context.Context, ts *QueryClusterMetric) error {
+	md.set(ctx, QueryClusterMetricKey, ts)
+	return nil
+}
+
+func GetQueryClusterMetric(ctx context.Context) *QueryClusterMetric {
+	r, ok := md.get(ctx, QueryClusterMetricKey)
+	if ok {
+		if v, ok := r.(*QueryClusterMetric); ok {
+			return v
+		}
+	}
+	return nil
+}

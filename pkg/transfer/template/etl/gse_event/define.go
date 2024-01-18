@@ -95,13 +95,13 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 
 // CoreFileEvent : core file事件
 type CoreFileEvent struct {
-	Host           string `json:"host" mapstructure:"host"`
-	CloudID        int    `json:"cloudid" mapstructure:"cloudid"`
-	Executable     string `json:"executable" mapstructure:"executable"`
-	ExecutablePath string `json:"executable_path" mapstructure:"executable_path"`
-	Signal         string `json:"signal" mapstructure:"signal"`
-	Corefile       string `json:"corefile" mapstructure:"corefile"`
-	Filesize       string `json:"filesize" mapstructure:"filesize"`
+	Host           string  `json:"host" mapstructure:"host"`
+	CloudID        int     `json:"cloudid" mapstructure:"cloudid"`
+	Executable     string  `json:"executable" mapstructure:"executable"`
+	ExecutablePath string  `json:"executable_path" mapstructure:"executable_path"`
+	Signal         string  `json:"signal" mapstructure:"signal"`
+	Corefile       string  `json:"corefile" mapstructure:"corefile"`
+	Filesize       float64 `json:"filesize" mapstructure:"filesize"`
 }
 
 func (e *CoreFileEvent) Flat() []EventRecord {

@@ -81,7 +81,7 @@ type BatchQueue struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	mut     sync.RWMutex
-	qs      map[int32]chan []define.Event
+	qs      map[string]chan []define.Event
 	out     chan common.MapStr
 	conf    Config
 	getSize func(string) Config
@@ -100,7 +100,7 @@ func NewBatchQueue(conf Config, fn func(string) Config) Queue {
 	cq := &BatchQueue{
 		ctx:     ctx,
 		cancel:  cancel,
-		qs:      make(map[int32]chan []define.Event),
+		qs:      make(map[string]chan []define.Event),
 		out:     make(chan common.MapStr, define.Concurrency()),
 		conf:    conf,
 		getSize: fn,
@@ -219,9 +219,10 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 
 	dataID := events[0].DataId()
 	rtype := events[0].RecordType()
+	uk := strconv.Itoa(int(dataID)) + "/" + string(rtype)
 
 	bq.mut.Lock() // read-write-lock
-	_, ok := bq.qs[dataID]
+	_, ok := bq.qs[uk]
 	var batchSize int
 	if !ok {
 		switch rtype {
@@ -242,9 +243,9 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 			batchSize: batchSize,
 			ch:        ch,
 		})
-		bq.qs[dataID] = ch
+		bq.qs[uk] = ch
 	}
-	q := bq.qs[dataID]
+	q := bq.qs[uk]
 	bq.mut.Unlock()
 
 	select {

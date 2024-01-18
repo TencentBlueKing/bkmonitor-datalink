@@ -49,7 +49,7 @@ func init() {
 }
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourcePushGateway, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourcePushGateway, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeMetricsJobBase,

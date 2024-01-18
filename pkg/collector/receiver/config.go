@@ -61,9 +61,10 @@ type ComponentFta struct {
 }
 
 type Config struct {
-	HttpServer HttpServerConfig `config:"http_server"`
-	GrpcServer GrpcServerConfig `config:"grpc_server"`
-	Components ComponentConfig  `config:"components"`
+	RecvServer  HttpServerConfig `config:"http_server"`
+	AdminServer HttpServerConfig `config:"admin_server"`
+	GrpcServer  GrpcServerConfig `config:"grpc_server"`
+	Components  ComponentConfig  `config:"components"`
 }
 
 type HttpServerConfig struct {

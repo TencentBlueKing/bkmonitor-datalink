@@ -38,6 +38,7 @@ var (
 	muForBkdataApi         sync.Mutex
 	muForBkssmAPi          sync.Mutex
 )
+
 var (
 	gseApi            *bkgse.Client
 	bcsCcApi          *bcs_cc.Client
@@ -85,8 +86,8 @@ func GetGseApi() (*bkgse.Client, error) {
 
 // GetBkssmApi 获取BkssmApi客户端
 func GetBkssmApi() (*bkssm.Client, error) {
-	muForBcsCcApi.Lock()
-	defer muForBcsCcApi.Unlock()
+	muForBkssmAPi.Lock()
+	defer muForBkssmAPi.Unlock()
 	if bcsCcApi != nil {
 		return bkssmApi, nil
 	}

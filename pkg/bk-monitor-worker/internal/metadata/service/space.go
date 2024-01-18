@@ -14,6 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
@@ -131,9 +132,13 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 				logger.Errorf("set dimension_values [%v] for SpaceResource failed, %v", dm, err)
 				continue
 			}
-			if err := sr.Create(db); err != nil {
-				logger.Errorf("create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s] failed, %v", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues, err)
-				continue
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s]", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues)
+			} else {
+				if err := sr.Create(db); err != nil {
+					logger.Errorf("create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s] failed, %v", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues, err)
+					continue
+				}
 			}
 			createSpaceIdList = append(createSpaceIdList, sp.SpaceId)
 			continue
@@ -147,9 +152,13 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 			logger.Errorf("set dimension_values [%v] for SpaceResource failed, %v", dm, err)
 			continue
 		}
-		if err := res.Update(db, space.SpaceResourceDBSchema.ResourceId, space.SpaceResourceDBSchema.DimensionValues, space.SpaceResourceDBSchema.UpdateTime); err != nil {
-			logger.Errorf("update SpaceResource id [%v] with dimension_values [%v] resource_id [%v] failed, %v", res.Id, dm, res.ResourceId, err)
-			continue
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] update SpaceResource id [%v] with dimension_values [%v] resource_id [%v]", res.Id, dm, res.ResourceId)
+		} else {
+			if err := res.Update(db, space.SpaceResourceDBSchema.ResourceId, space.SpaceResourceDBSchema.DimensionValues, space.SpaceResourceDBSchema.UpdateTime); err != nil {
+				logger.Errorf("update SpaceResource id [%v] with dimension_values [%v] resource_id [%v] failed, %v", res.Id, dm, res.ResourceId, err)
+				continue
+			}
 		}
 		updateSpaceIdList = append(updateSpaceIdList, sp.SpaceId)
 	}

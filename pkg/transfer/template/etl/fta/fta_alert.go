@@ -11,7 +11,6 @@ package fta
 
 import (
 	"context"
-	"slices"
 	"sort"
 	"time"
 
@@ -86,7 +85,7 @@ func ExtractTags(
 		default:
 			logging.Errorf("%s dimensions type %T not supported", name, value)
 		}
-		slices.Sort(dedupeKeys)
+		sort.Strings(dedupeKeys)
 	}
 
 	// 提取tags字段

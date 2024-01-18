@@ -10,7 +10,6 @@
 package cmd
 
 import (
-	"context"
 	"regexp"
 	"strings"
 
@@ -70,7 +69,7 @@ func startDiff(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	c, err := consul.GetInstance(context.Background())
+	c, err := consul.GetInstance()
 	if err != nil {
 		logger.Errorf("get consul client failed, %v", err)
 		return

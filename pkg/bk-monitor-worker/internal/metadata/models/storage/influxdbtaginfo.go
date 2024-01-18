@@ -129,7 +129,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 		Status:         "ready",
 	}
 
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 
 // GetConsulInfo 从consul中获取信息
 func (i InfluxdbTagInfo) GetConsulInfo(ctx context.Context) (*TagItemInfo, error) {
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemIn
 	if err != nil {
 		return err
 	}
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}

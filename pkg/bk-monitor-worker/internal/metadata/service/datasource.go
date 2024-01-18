@@ -520,7 +520,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 			return nil
 		}
 	}
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
@@ -543,22 +543,22 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 
 func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context) error {
 	if !d.IsEnable {
-		logger.Infof("data_id [%v] is not enable, nothing will refresh to outer systems.", d.BkDataId)
+		logger.Infof("data_id [%d] is not enable, nothing will refresh to outer systems.", d.BkDataId)
 		return nil
 	}
+
+	// NOTE: 当刷新 gse 异常时，仅记录日志
 	err := d.RefreshGseConfig()
 	if err != nil {
-		logger.Errorf("data_id [%v] refresh gse config failed, %v", d.BkDataId, err)
-		return err
+		logger.Errorf("data_id [%d] refresh gse config failed, %v", d.BkDataId, err)
 	}
 
 	err = d.RefreshConsulConfig(ctx)
 	if err != nil {
-		logger.Errorf("data_id [%v] refresh consul config failed, %v", d.BkDataId, err)
-		return err
+		logger.Errorf("data_id [%d] refresh consul config failed, %v", d.BkDataId, err)
 	}
 
-	return nil
+	return err
 }
 
 // ApplyForDataIdFromGse 从gse请求生成data id

@@ -163,7 +163,7 @@ func enqueueAsyncTask(t *task.Task) error {
 
 // 推送任务到 redis 中
 func pushPeriodicTaskToRedis(c *gin.Context, t *task.Task) error {
-	r := storeRedis.GetInstance(c)
+	r := storeRedis.GetInstance()
 
 	// expiration set zero，means the key has no expiration time
 	if err := r.HSet(storeRedis.StoragePeriodicTaskKey, t.Kind, string(t.Payload)); err != nil {

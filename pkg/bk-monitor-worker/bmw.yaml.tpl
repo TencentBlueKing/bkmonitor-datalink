@@ -29,6 +29,8 @@ broker:
       password: ""
 
 # ================================ 存储配置  ===================================
+# 旁路配置，用于数据对账
+bypassSuffixPath: ""
 store:
   redis:
     mode: standalone

@@ -116,7 +116,7 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 
 // PushToRedis 推送数据到 redis, just for influxdb
 func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
-	client := redis.GetInstance(ctx)
+	client := redis.GetInstance()
 
 	redisKey := fmt.Sprintf("%s:%s", InfluxdbKeyPrefix, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
@@ -139,7 +139,7 @@ func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) 
 
 // RefreshRouterVersion 更新consul中的version
 func RefreshRouterVersion(ctx context.Context, path string) error {
-	client, err := consul.GetInstance(ctx)
+	client, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}

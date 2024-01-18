@@ -137,7 +137,7 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 
 	logger.Infof("async task start to push space_type: %s, space_id: %s to redis", params.SpaceType, params.SpaceId)
 
-	client := redis.GetInstance(ctx)
+	client := redis.GetInstance()
 	spaceUid := fmt.Sprintf("%s__%s", params.SpaceType, params.SpaceId)
 	if err := client.SAdd(cfg.SpaceRedisKey, spaceUid); err != nil {
 		return errors.Wrap(err, "async task push space to redis error")

@@ -88,7 +88,7 @@ func (*SpaceSvc) RefreshBkccSpaceName() error {
 // RefreshBcsProjectBiz 检测 bcs 项目绑定的业务的变化
 func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 	// 检测所有 bcs 项目
-	projects, err := s.getValidBcsProjects()
+	projects, err := s.GetValidBcsProjects()
 	if err != nil {
 		return errors.Wrap(err, "getValidBcsProjects failed")
 	}
@@ -187,8 +187,8 @@ func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
 	return bizIdNameMap, nil
 }
 
-// 获取可用的 BKCI(BCS) 项目空间
-func (s *SpaceSvc) getValidBcsProjects() ([]map[string]string, error) {
+// GetValidBcsProjects 获取可用的 BKCI(BCS) 项目空间
+func (s *SpaceSvc) GetValidBcsProjects() ([]map[string]string, error) {
 	bizIdNameMap, err := s.getBkccBizIdNameMap()
 	if err != nil {
 		return nil, errors.Wrap(err, "getBkccBizIdNameMap failed")

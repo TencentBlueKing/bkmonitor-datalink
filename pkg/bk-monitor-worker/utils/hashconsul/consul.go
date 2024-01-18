@@ -18,13 +18,13 @@ import (
 func Put(c *consul.Instance, key, val string) error {
 	oldValueBytes, err := c.Get(key)
 	if err != nil {
-		logger.Info("can not get old value from [%s] because of [%v], will refresh consul", key, err)
+		logger.Infof("can not get old value from [%s] because of [%v], will refresh consul", key, err)
 		return c.Put(key, val, 0)
 	}
 	oldValue := string(oldValueBytes)
 	equal, err := jsonx.CompareJson(oldValue, val)
 	if err != nil {
-		logger.Info("can not compare new value [%s] and old value [%s], will refresh consul", key, err)
+		logger.Infof("can not compare new value [%s] and old value [%s], will refresh consul", key, err)
 		return c.Put(key, val, 0)
 	}
 	if !equal {

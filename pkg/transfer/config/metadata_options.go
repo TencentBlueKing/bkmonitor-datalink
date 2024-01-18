@@ -74,6 +74,8 @@ const (
 	PipelineConfigOptAllowDynamicMetricsAsFloat = "dynamic_metrics_as_float"
 	// PipelineConfigOptMaxQps 允许后端写入的最大的 QPS
 	PipelineConfigOptMaxQps = "max_qps"
+	// PipelineConfigDropMetricsETLConfigs 允许丢弃空 metrics 数据的 ELTConfig 列表
+	PipelineConfigDropMetricsETLConfigs = "drop_metrics_etl_configs"
 
 	// 日志类
 	// PipelineConfigOptSeparatorNode : "字段提取节点路径"

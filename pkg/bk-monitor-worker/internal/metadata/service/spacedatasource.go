@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -36,6 +37,52 @@ func NewSpaceDataSourceSvc(obj *space.SpaceDataSource) SpaceDataSourceSvc {
 	return SpaceDataSourceSvc{
 		SpaceDataSource: obj,
 	}
+}
+
+// BulkCreateRecords 批量创建记录
+func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map[string][]uint, fromAuthorization bool) ([]string, error) {
+	// NOTE: 当共享集群项目时，返回的数据中，共享集群即使这个项目下的专用集群，也是这个项目的共享集群, 因此，分开创建，避免相同的数据写入
+	var changedSpaceIdList []string
+	db := mysql.GetDBSession().DB
+	for spaceId, dataids := range SpaceDataIdMap {
+		var sdsList []space.SpaceDataSource
+		if len(dataids) != 0 {
+			if err := space.NewSpaceDataSourceQuerySet(db).Select(space.SpaceDataSourceDBSchema.BkDataId).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).BkDataIdIn(dataids...).All(&sdsList); err != nil {
+				return nil, errors.Wrapf(err, "query SpaceDataSource with space_type [%s] space_id [%s] data_id [%v] failed", spaceType, spaceId, dataids)
+			}
+		}
+		dataidSet := mapset.NewSet[uint](dataids...)
+		existDataidSet := mapset.NewSet[uint]()
+		for _, sds := range sdsList {
+			existDataidSet.Add(sds.BkDataId)
+		}
+		diffSet := dataidSet.Difference(existDataidSet)
+		var changed bool
+		it := diffSet.Iterator()
+		for dataid := range it.C {
+			sds := space.SpaceDataSource{
+				SpaceTypeId:       spaceType,
+				SpaceId:           spaceId,
+				BkDataId:          dataid,
+				FromAuthorization: fromAuthorization,
+			}
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", spaceType, spaceId, dataid, fromAuthorization)
+			} else {
+				if err := sds.Create(db); err != nil {
+					logger.Errorf("create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed, %v", spaceType, spaceId, dataid, fromAuthorization, err)
+					continue
+				}
+			}
+			changed = true
+		}
+		it.Stop()
+		if changed {
+			changedSpaceIdList = append(changedSpaceIdList, spaceId)
+		}
+	}
+	return changedSpaceIdList, nil
 }
 
 func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {

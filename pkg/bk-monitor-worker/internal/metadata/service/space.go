@@ -104,13 +104,17 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 	if diffDelete.Cardinality() != 0 && allowDelete {
 		deleteSpaceIds := diffDelete.ToSlice()
 		// 删除和数据源的关联
+		count := float64(len(deleteSpaceIds))
 		if cfg.BypassSuffixPath != "" {
+			_ = metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", count)
 			logger.Infof("[db_diff] delete SpaceDataSource with space_type_id [bkcc] space_id [%v]", deleteSpaceIds)
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", count)
 			logger.Infof("[db_diff] delete SpaceResource with space_type_id [bkcc] resource_id [%v]", deleteSpaceIds)
+			_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_delete_Space", count)
 			logger.Infof("[db_diff] delete Space with space_type_id [bkcc] resource_id [%v]", deleteSpaceIds)
 		} else {
 			// 删除和数据源的关联
-			_ = metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", 1)
+			_ = metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", count)
 			if err := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdIn(deleteSpaceIds...).Delete(); err != nil {
 				return errors.Wrapf(err, "delete SpaceDataSource with space_type_id [bkcc] space_id [%v] failed", deleteSpaceIds)
 			}
@@ -125,19 +129,19 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 				needUpdateSpaceIds = append(needUpdateSpaceIds, sr.SpaceId)
 			}
 			// 删除关联资源
-			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", 1)
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", count)
 			if err := srQs.Delete(); err != nil {
 				return errors.Wrapf(err, "delete SpaceResource with resource_type [bkcc] resource_id [%v] failed", deleteSpaceIds)
 			}
 			if len(needUpdateSpaceIds) != 0 {
 				// 对应的 BKCI(BCS) 空间，标识为不可用
-				_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_update_Space_IsBcsValid", 1)
+				_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_update_Space_IsBcsValid", float64(len(needUpdateSpaceIds)))
 				if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdIn(needUpdateSpaceIds...).GetUpdater().SetIsBcsValid(false).Update(); err != nil {
 					return errors.Wrapf(err, "update space is_bcs_valid to [false] for space_type_id [bkci] space_id [%v] failed", needUpdateSpaceIds)
 				}
 			}
 			// 删除对应的 BKCC 空间
-			_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_delete_Space", 1)
+			_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_delete_Space", count)
 			if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdIn(deleteSpaceIds...).Delete(); err != nil {
 				return errors.Wrapf(err, "delete Space with space_type_id [bkcc] space_id [%v] failed", deleteSpaceIds)
 			}
@@ -156,10 +160,10 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 			SpaceId:     bizId,
 			SpaceName:   bizName,
 		}
+		_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_create_Space", 1)
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] create Space with space_type_id [%s] space_id [%s] space_name [%s]", models.SpaceTypeBKCC, bizId, bizName)
 		} else {
-			_ = metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_create_Space", 1)
 			if err := sp.Create(db); err != nil {
 				logger.Errorf("create Space with space_type_id [%s] space_id [%s] space_name [%s] failed, %v", models.SpaceTypeBKCC, bizId, bizName, err)
 				continue

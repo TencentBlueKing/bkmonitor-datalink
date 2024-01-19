@@ -35,6 +35,22 @@ func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
 	return nil
 }
 
+// RefreshClusterResource 检测集群资源的变化,当绑定资源的集群信息变动时，刷新绑定的集群资源
+func RefreshClusterResource(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshClusterResource Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start sync bcs space cluster resource task")
+	if err := service.NewBcsClusterInfoSvc(nil).RefreshClusterResource(); err != nil {
+		logger.Errorf("sync bcs space cluster resource failed, %v", err)
+		return err
+	}
+	logger.Infof("sync bcs space cluster resource success")
+	return nil
+}
+
 // RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
 func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
 	defer func() {

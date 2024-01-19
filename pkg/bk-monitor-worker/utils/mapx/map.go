@@ -30,6 +30,16 @@ func GetMapKeys[T constraints.Ordered, K any](dict map[T]K) []T {
 	return keys
 }
 
+// AddSliceItems 向value为slice类型的map中插入元素
+func AddSliceItems[T constraints.Ordered, K any](dict map[T][]K, key T, items ...K) {
+	values, ok := dict[key]
+	if ok {
+		dict[key] = append(values, items...)
+	} else {
+		dict[key] = items
+	}
+}
+
 // GetValWithDefault get the default value, if key not found, return default value
 func GetValWithDefault[T constraints.Ordered, K any](m map[T]K, key T, val K) K {
 	// 如果可以查询到，则直接返回数据

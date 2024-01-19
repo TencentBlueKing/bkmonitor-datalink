@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
@@ -26,25 +27,22 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-var muForGseApi sync.Mutex
-
-var muForBcsClusterManager sync.Mutex
-
-var muForCmdbApi sync.Mutex
-
-var muForNodemanApi sync.Mutex
-
-var muForBkdataApi sync.Mutex
-
-var gseApi *bkgse.Client
-
-var bcsClusterManager *bcsclustermanager.Client
-
-var cmdbApi *cmdb.Client
-
-var nodemanApi *nodeman.Client
-
-var bkdataApi *bkdata.Client
+var (
+	muForGseApi            sync.Mutex
+	muForBcsApi            sync.Mutex
+	muForBcsClusterManager sync.Mutex
+	muForCmdbApi           sync.Mutex
+	muForNodemanApi        sync.Mutex
+	muForBkdataApi         sync.Mutex
+)
+var (
+	gseApi            *bkgse.Client
+	bcsApi            *bcs.Client
+	bcsClusterManager *bcsclustermanager.Client
+	cmdbApi           *cmdb.Client
+	nodemanApi        *nodeman.Client
+	bkdataApi         *bkdata.Client
+)
 
 // GetGseApi 获取GseApi客户端
 func GetGseApi() (*bkgse.Client, error) {
@@ -81,6 +79,30 @@ func GetGseApi() (*bkgse.Client, error) {
 	return gseApi, nil
 }
 
+// GetBcsApi 获取BcsApi客户端
+func GetBcsApi() (*bcs.Client, error) {
+	muForBcsApi.Lock()
+	defer muForBcsApi.Unlock()
+	if bcsApi != nil {
+		return bcsApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint: strings.TrimRight(cfg.BkApiBcsApiGatewayBaseUrl, "/"),
+		AuthorizationParams: map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken),
+		},
+		AppCode:       cfg.BkApiAppCode,
+		AppSecret:     cfg.BkApiAppSecret,
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsApi, err = bcs.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return bcsApi, nil
+}
+
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
 func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 	muForBcsClusterManager.Lock()
@@ -89,7 +111,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/")),
+		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
 		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
 		JsonMarshaler:       jsonx.Marshal,
 	}

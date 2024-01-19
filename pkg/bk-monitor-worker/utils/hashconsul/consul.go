@@ -28,6 +28,7 @@ func Put(c *consul.Instance, key, val string) error {
 			unicodeVal += string(runeValue)
 		}
 	}
+	val = unicodeVal
 
 	oldValueBytes, err := c.Get(key)
 	if err != nil {

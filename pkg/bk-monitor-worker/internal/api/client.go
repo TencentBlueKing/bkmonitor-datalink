@@ -40,6 +40,7 @@ var (
 	muForBkdataApi         sync.Mutex
 	muForBkssmAPi          sync.Mutex
 )
+
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client
@@ -114,7 +115,7 @@ func GetBcsApi() (*bcs.Client, error) {
 func GetBkssmApi() (*bkssm.Client, error) {
 	muForBkssmAPi.Lock()
 	defer muForBkssmAPi.Unlock()
-	if bcsCcApi != nil {
+	if bkssmApi != nil {
 		return bkssmApi, nil
 	}
 	config := bkapi.ClientConfig{

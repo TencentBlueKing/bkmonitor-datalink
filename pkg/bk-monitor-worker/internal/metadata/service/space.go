@@ -304,7 +304,9 @@ func (s *SpaceSvc) GetValidBcsProjects() ([]map[string]string, error) {
 	bizIdList := mapx.GetMapKeys(bizIdNameMap)
 	// 返回有效的项目记录
 	projectList, err := apiservice.BcsCc.BatchGetProjects(2000, false, true)
-
+	if err != nil {
+		return nil, errors.Wrap(err, "BatchGetProjects failed")
+	}
 	var projects []map[string]string
 	for _, p := range projectList {
 		if p["bkBizId"] == "0" || !slicex.IsExistItem(bizIdList, p["bkBizId"]) {

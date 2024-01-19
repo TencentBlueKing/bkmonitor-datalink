@@ -82,3 +82,19 @@ func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 	logger.Info("sync bkcc space data source successfully")
 	return nil
 }
+
+// SyncBcsSpace 同步 BCS 项目空间数据
+func SyncBcsSpace(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("SyncBcsSpace Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bcs space task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.SyncBcsSpace(); err != nil {
+		return errors.Wrap(err, "sync bcs space task failed")
+	}
+	logger.Info("sync bcs space task successfully")
+	return nil
+}

@@ -101,7 +101,7 @@ func initMetadataVariables() {
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 
-	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
+	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))

@@ -184,7 +184,7 @@ func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) erro
 
 // RefreshConsulClusterConfig 更新influxDB结果表信息到consul中
 func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool, isVersionRefresh bool) error {
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -61,14 +60,6 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 			tableIdList = append(tableIdList, tableId)
 		}
 	}
-	// 更新数据
-	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
-		return err
-	}
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
-		return err
-	}
-
 	// 更新空间下的结果表相关数据
 	db := mysql.GetDBSession().DB
 	if spaceType != "" && spaceId != "" {
@@ -101,6 +92,13 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 			}(sp, wg, ch)
 		}
 		wg.Wait()
+	}
+	// 更新数据
+	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
+		return err
+	}
+	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+		return err
 	}
 	logger.Infof("push and publish space_type: %s, space_id: %s router successfully", spaceType, spaceId)
 	return nil
@@ -214,7 +212,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 
 	}
 	if len(dlRtsMap) != 0 {
-		client := redis.GetInstance(context.Background())
+		client := redis.GetInstance()
 		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
@@ -335,7 +333,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		return err
 	}
 
-	client := redis.GetInstance(context.Background())
+	client := redis.GetInstance()
 
 	for tableId, detail := range tableIdDetail {
 		var ok bool
@@ -755,7 +753,7 @@ func (s SpacePusher) PushSpaceTableIds(spaceType, spaceId string, isPublish bool
 	}
 	// 如果指定要更新，则通知
 	if isPublish {
-		client := redis.GetInstance(context.Background())
+		client := redis.GetInstance()
 		if err := client.Publish(cfg.SpaceToResultTableChannel, fmt.Sprintf("%s__%s", spaceType, spaceId)); err != nil {
 			return err
 		}
@@ -777,7 +775,7 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 		return err
 	}
 	if len(values) != 0 {
-		client := redis.GetInstance(context.Background())
+		client := redis.GetInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
@@ -817,7 +815,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 	}
 	// 推送数据
 	if len(values) != 0 {
-		client := redis.GetInstance(context.Background())
+		client := redis.GetInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
@@ -845,7 +843,7 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 	}
 	// 推送数据
 	if len(values) != 0 {
-		client := redis.GetInstance(context.Background())
+		client := redis.GetInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {

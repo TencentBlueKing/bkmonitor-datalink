@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -46,7 +45,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
-	mockerClient := mocker.RedisClientMocker{
+	mockerClient := &mocker.RedisClientMocker{
 		ZcountValue: 2,
 		ZRangeByScoreWithScoresValue: []goRedis.Z{
 			{Score: score, Member: "metric_a"},
@@ -58,7 +57,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 			"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		},
 	}
-	gomonkey.ApplyFunc(dependentredis.GetInstance, func(ctx context.Context) (*dependentredis.Instance, error) {
+	gomonkey.ApplyFunc(dependentredis.GetInstance, func() (*dependentredis.Instance, error) {
 		return &dependentredis.Instance{
 			Client: mockerClient,
 		}, nil

@@ -34,13 +34,16 @@ var (
 	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource     = "periodic:metadata:refresh_datasource"
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
-	RefreshBcsMonitorInfo  = "periodic:metadata:refresh_bcs_monitor_info"
-	RefreshDefaultRp       = "periodic:metadata:refresh_default_rp"
-	RefreshBkccSpaceName   = "periodic:metadata:refresh_bkcc_space_name"
-	RefreshKafkaTopicInfo  = "periodic:metadata:refresh_kafka_topic_info"
-	CleanExpiredRestore    = "periodic:metadata:clean_expired_restore"
-	RefreshESRestore       = "periodic:metadata:refresh_es_restore"
-	RefreshBcsMetricsLabel = "periodic:metadata:refresh_bcs_metrics_label"
+	RefreshBcsMonitorInfo   = "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshDefaultRp        = "periodic:metadata:refresh_default_rp"
+	RefreshBkccSpaceName    = "periodic:metadata:refresh_bkcc_space_name"
+	RefreshKafkaTopicInfo   = "periodic:metadata:refresh_kafka_topic_info"
+	CleanExpiredRestore     = "periodic:metadata:clean_expired_restore"
+	RefreshESRestore        = "periodic:metadata:refresh_es_restore"
+	RefreshBcsMetricsLabel  = "periodic:metadata:refresh_bcs_metrics_label"
+	SyncBkccSpaceDataSource = "periodic:metadata:sync_bkcc_space_data_source"
+	RefreshBkccSpace        = "periodic:metadata:refresh_bkcc_space"
+	RefreshClusterResource  = "periodic:metadata:refresh_cluster_resource"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
@@ -96,6 +99,18 @@ var (
 		RefreshBcsMetricsLabel: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMetricsLabel,
+		},
+		RefreshBkccSpace: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBkccSpace,
+		},
+		SyncBkccSpaceDataSource: {
+			Cron:    "*/1 * * * *",
+			Handler: metadataTask.SyncBkccSpaceDataSource,
+		},
+		RefreshClusterResource: {
+			Cron:    "*/30 * * * *",
+			Handler: metadataTask.RefreshClusterResource,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

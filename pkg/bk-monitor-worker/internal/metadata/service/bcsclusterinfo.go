@@ -35,12 +35,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -315,7 +319,7 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/"), clusterId, sourceType, field))
+	target, err := url.Parse(fmt.Sprintf(urlTemplate, strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/"), clusterId, sourceType, field))
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +398,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	if count != 0 {
 		return nil, errors.Errorf("failed to register cluster_id [%s] under project_id [%s] for cluster is already register, nothing will do any more", clusterId, projectId)
 	}
-	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiGatewayDomain)
+	bcsUrl, err := url.ParseRequestURI(cfg.BkApiBcsApiMicroGwUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -496,12 +500,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
 		return nil, err
 	}
-	if err != nil {
-		return nil, err
-	}
-
 	logger.Infof("cluster [%s] all datasource info save to database success.", cluster.ClusterID)
-
 	return &cluster, nil
 }
 
@@ -696,7 +695,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 		return nil, errors.New("BCSClusterInfo obj can not be nil")
 	}
 
-	parsedUrl, err := url.Parse(cfg.BkApiBcsApiGatewayDomain)
+	parsedUrl, err := url.Parse(cfg.BkApiBcsApiMicroGwUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -1281,4 +1280,215 @@ type DatasourceRegister struct {
 	IsSpitMeasurement bool
 	IsSystem          bool
 	Usage             string
+}
+
+// RefreshClusterResource 当绑定资源的集群信息变动时，刷新绑定的集群资源
+func (b BcsClusterInfoSvc) RefreshClusterResource() error {
+	db := mysql.GetDBSession().DB
+	srDimensionMap := make(map[string][]map[string]interface{})
+	var srList []space.SpaceResource
+	if err := space.NewSpaceResourceQuerySet(db).Select(space.SpaceResourceDBSchema.ResourceId, space.SpaceResourceDBSchema.DimensionValues).SpaceTypeIdEq(models.SpaceTypeBKCI).ResourceTypeEq(models.SpaceTypeBCS).All(&srList); err != nil {
+		return errors.Wrapf(err, "query SpaceResource with space_type_id [%s] resource_type [%s] failed", models.SpaceTypeBKCI, models.SpaceTypeBCS)
+	}
+	for _, sr := range srList {
+		dm, err := sr.GetDimensionValues()
+		if err != nil {
+			return errors.Wrapf(err, "get DimensionValues of SpaceResource [%v] failed", sr.Id)
+		}
+		srDimensionMap[*sr.ResourceId] = dm
+	}
+	var spList []space.Space
+	if err := space.NewSpaceQuerySet(db).Select(space.SpaceDBSchema.SpaceId, space.SpaceDBSchema.SpaceCode).SpaceTypeIdEq(models.SpaceTypeBKCI).IsBcsValidEq(true).SpaceCodeNe("").All(&spList); err != nil {
+		return errors.Wrapf(err, "query Space with space_type_id [%s] is_bcs_calid [%v] failed", models.SpaceTypeBKCI, true)
+	}
+
+	// 根据项目查询项目下资源的变化
+	var metadataClusters []string
+	var bcsClusterInfoList []bcs.BCSClusterInfo
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+		return errors.Wrapf(err, "query BCSClusterInfo with status [%s] failed", models.BcsClusterStatusRunning)
+	}
+	for _, c := range bcsClusterInfoList {
+		metadataClusters = append(metadataClusters, c.ClusterID)
+	}
+	spaceDataIdsMap := make(map[string][]uint)
+	sharedSpaceDataIdsMap := make(map[string][]uint)
+	spaceIdSet := mapset.NewSet[string]()
+	for _, sp := range spList {
+		clusterInfos, err := apiservice.BcsClusterManager.GetProjectClusters(sp.SpaceCode, false)
+		if err != nil {
+			logger.Errorf("GetProjectClusters for code [%s] failed, %v", sp.SpaceCode, err)
+			continue
+		}
+		if len(clusterInfos) == 0 {
+			continue
+		}
+
+		usedClusterSet := mapset.NewSet[string]()
+		projectClusterSet := mapset.NewSet[string]()
+		shardClusterSet := mapset.NewSet[string]()
+		shardClusterNsMap := make(map[string][]string)
+		var dimensionValues []map[string]interface{}
+		var skip bool
+		for _, c := range clusterInfos {
+			clusterId, ok := c["clusterId"].(string)
+			// 防止共享集群所在项目返回相同集群的场景
+			if !ok || usedClusterSet.Contains(clusterId) || !slicex.IsExistItem(metadataClusters, clusterId) {
+				continue
+			}
+			usedClusterSet.Add(clusterId)
+			// 构造dimensionValue
+			isShared, _ := c["isShared"].(bool)
+			if isShared {
+				nsDataList, err := apiservice.Bcs.FetchSharedClusterNamespaces(clusterId, sp.SpaceCode)
+				if err != nil {
+					logger.Errorf("FetchSharedClusterNamespaces for cluster_id [%s] code [%s] failed,%v", clusterId, sp.SpaceCode, err)
+					skip = true
+					break
+				}
+				nsSet := mapset.NewSet[string]()
+				for _, i := range nsDataList {
+					if i["clusterId"] == clusterId {
+						nsSet.Add(i["namespace"])
+					}
+				}
+				nsList := nsSet.ToSlice()
+				dimensionValues = append(dimensionValues, map[string]interface{}{"cluster_id": clusterId, "namespace": nsList, "cluster_type": models.BcsClusterTypeShared})
+				shardClusterNsMap[clusterId] = nsList
+				shardClusterSet.Add(clusterId)
+			} else {
+				dimensionValues = append(dimensionValues, map[string]interface{}{"cluster_id": clusterId, "namespace": nil, "cluster_type": models.BcsClusterTypeSingle})
+				projectClusterSet.Add(clusterId)
+			}
+		}
+		if skip {
+			continue
+		}
+
+		projectClusterList := projectClusterSet.ToSlice()
+		shardClusterList := shardClusterSet.ToSlice()
+
+		dataids, err := b.getClusterDataIds(projectClusterList)
+		if err != nil {
+			logger.Errorf("getClusterDataIds for project cluster failed, %v", err)
+			continue
+		}
+		mapx.AddSliceItems(spaceDataIdsMap, sp.SpaceId, dataids...)
+		logger.Infof("cluster data id info [%v]", spaceDataIdsMap)
+
+		dataids, err = b.getClusterDataIds(shardClusterList)
+		if err != nil {
+			logger.Errorf("getClusterDataIds for project cluster failed, %v", err)
+			continue
+		}
+		mapx.AddSliceItems(sharedSpaceDataIdsMap, sp.SpaceId, dataids...)
+		logger.Infof("shared cluster data id info [%v]", sharedSpaceDataIdsMap)
+
+		dms, ok := srDimensionMap[sp.SpaceId]
+		// 不存在则新建
+		if !ok {
+			sr := space.SpaceResource{
+				SpaceTypeId:  models.SpaceTypeBKCI,
+				SpaceId:      sp.SpaceId,
+				ResourceType: models.SpaceTypeBCS,
+				ResourceId:   &sp.SpaceId,
+			}
+			if err := sr.SetDimensionValues(dimensionValues); err != nil {
+				logger.Errorf("set dimensionValues for sapce_id [%s] failed, %v", sp.SpaceId, err)
+				continue
+			}
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create SpaceResource [%#v]", sr)
+			} else {
+				if err := sr.Create(db); err != nil {
+					logger.Errorf("create SpaceResource [%#v] failed", sr)
+					continue
+				}
+			}
+			spaceIdSet.Add(sp.SpaceId)
+			logger.Infof("create bcs space resource successfully, space [%s]", sr.SpaceId)
+			continue
+		}
+		// 获取现存的，判断是否有变化
+		existProjectClusterSet := mapset.NewSet[string]()
+		existShardClusterNs := make(map[string]interface{})
+		var needUpdate bool
+		for _, dm := range dms {
+			clusterId, ok := dm["cluster_id"].(string)
+			if !ok {
+				needUpdate = true
+				break
+			}
+			ns := dm["namespace"]
+			if ns != nil {
+				existShardClusterNs[clusterId] = ns
+			} else {
+				existProjectClusterSet.Add(clusterId)
+			}
+		}
+		equal, err := jsonx.CompareObjects(existShardClusterNs, shardClusterNsMap)
+		if err != nil {
+			logger.Errorf("CompareObjects [%#v] and [%#v] failed, %v", existShardClusterNs, shardClusterNsMap, err)
+		}
+		// 有差异则更新dimensionValues 并记录space_uid
+		if needUpdate || !projectClusterSet.Equal(existProjectClusterSet) || !equal {
+			dmStr, err := jsonx.MarshalString(dimensionValues)
+			if err != nil {
+				logger.Errorf("marshal dimensionValues [%#v] failed, %v", dimensionValues, err)
+				continue
+			}
+			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] update SpaceResource space_id [%s], dimension_values is different old [%v] new [%v]", sp.SpaceId, dms, dimensionValues)
+			} else {
+				if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(sp.SpaceId).ResourceTypeEq(models.SpaceTypeBCS).ResourceIdEq(sp.SpaceId).GetUpdater().SetDimensionValues(dmStr).SetUpdateTime(time.Now()).Update(); err != nil {
+					logger.Errorf("update dimensionValues [%s] for SpaceResource with space_id [%s] failed,  %v", dmStr, sp.SpaceId, err)
+					continue
+				}
+			}
+			spaceIdSet.Append(sp.SpaceId)
+		}
+	}
+	// 根据空间 data id，判断是否已经添加
+	// 创建专用集群下的数据源 ID 记录
+	// 因为共享集群在所属项目下会返回两次，因此，需要先创建属于专用集群的数据源关联
+	changedSpaceIds, err := NewSpaceDataSourceSvc(nil).BulkCreateRecords(models.SpaceTypeBKCI, spaceDataIdsMap, false)
+	if err != nil {
+		logger.Errorf("BulkCreate SpaceDataSource for spaceDataIdsMap failed, %v", err)
+	}
+	spaceIdSet.Append(changedSpaceIds...)
+	// 创建共享集群下的数据源 ID 记录
+	changedSpaceIds, err = NewSpaceDataSourceSvc(nil).BulkCreateRecords(models.SpaceTypeBKCI, sharedSpaceDataIdsMap, false)
+	if err != nil {
+		logger.Errorf("BulkCreate SpaceDataSource for sharedSpaceDataIdsMap failed, %v", err)
+	}
+	spaceIdSet.Append(changedSpaceIds...)
+
+	spaceIdList := spaceIdSet.ToSlice()
+	if len(spaceIdList) != 0 {
+		pusher := NewSpaceRedisSvc(0)
+		if err := pusher.PushAndPublishSpaceRouter(models.SpaceTypeBKCI, "", spaceIdList); err != nil {
+			return errors.Wrapf(err, "PushAndPublishSpaceRouter for space_type [%s] space_ids [%v] failed", models.SpaceTypeBKCI, spaceIdList)
+		}
+	}
+	return nil
+}
+
+func (b BcsClusterInfoSvc) getClusterDataIds(clusterIdList []string) ([]uint, error) {
+	// 如果指定结果表, 则仅过滤结果表对应的数据源
+	db := mysql.GetDBSession().DB
+	var clusterList []bcs.BCSClusterInfo
+	if len(clusterIdList) != 0 {
+		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.K8sEventDataID).StatusEq(models.BcsClusterStatusRunning).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
+			return nil, errors.Wrapf(err, "query BCSClusterInfo with cluster_id [%v] failed", clusterList)
+		}
+	}
+	dataidSet := mapset.NewSet[uint]()
+	for _, cluster := range clusterList {
+		dataidSet.Add(cluster.K8sMetricDataID)
+		dataidSet.Add(cluster.CustomMetricDataID)
+		dataidSet.Add(cluster.K8sEventDataID)
+	}
+	return dataidSet.ToSlice(), nil
 }

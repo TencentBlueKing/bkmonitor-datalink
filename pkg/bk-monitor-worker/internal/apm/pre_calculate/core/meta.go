@@ -10,7 +10,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -79,7 +78,7 @@ var (
 
 // CreateMetadataCenter globally unique config provider
 func CreateMetadataCenter() error {
-	consulClient, err := consul.GetInstance(context.Background())
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		logger.Errorf("Failed to create consul client. error: %s", err)
 		return err

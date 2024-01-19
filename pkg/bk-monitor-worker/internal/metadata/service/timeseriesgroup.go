@@ -10,7 +10,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"time"
@@ -94,8 +93,7 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 	// NOTE: 使用ADD，参数为负值
 	validBeginTimeStamp := nowTime.Add(-time.Duration(expiredTime) * time.Second).Unix()
 	validBeginTimeStampStr := fmt.Sprintf("%d", validBeginTimeStamp)
-	ctx := context.Background()
-	redisClient, err := redisStore.GetInstance(ctx)
+	redisClient, err := redisStore.GetInstance()
 	if err != nil {
 		return nil, err
 	}

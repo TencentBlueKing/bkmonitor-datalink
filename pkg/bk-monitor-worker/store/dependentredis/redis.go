@@ -50,11 +50,12 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 }
 
 // GetInstance get a redis instance
-func GetInstance(ctx context.Context) (*Instance, error) {
+func GetInstance() (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	return NewInstance(ctx)
+
+	return NewInstance(context.TODO())
 }
 
 // Open new a instance

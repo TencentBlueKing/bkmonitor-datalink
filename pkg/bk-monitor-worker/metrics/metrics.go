@@ -326,9 +326,18 @@ var (
 	redisCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "metadata_redis_count",
-			Help: "es change count",
+			Help: "redis change count",
 		},
 		[]string{"key", "operation"},
+	)
+
+	// mysql数据操作统计
+	mysqlCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "metadata_mysql_count",
+			Help: "mysql change count",
+		},
+		[]string{"table", "operation"},
 	)
 )
 
@@ -387,6 +396,17 @@ func RedisCount(key, operation string) error {
 	return nil
 }
 
+// MysqlCount mysql count
+func MysqlCount(tableName, operation string, count float64) error {
+	metric, err := mysqlCount.GetMetricWithLabelValues(tableName, operation)
+	if err != nil {
+		logger.Errorf("prom get mysql count metric failed: %s", err)
+		return err
+	}
+	metric.Add(count)
+	return nil
+}
+
 var Registry *prometheus.Registry
 
 func init() {
@@ -406,5 +426,6 @@ func init() {
 		gseCount,
 		esCount,
 		redisCount,
+		mysqlCount,
 	)
 }

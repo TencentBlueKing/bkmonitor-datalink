@@ -70,11 +70,11 @@ func NewInstance(ctx context.Context) (*Instance, error) {
 var consulOnce sync.Once
 
 // GetInstance get a consul instance
-func GetInstance(ctx context.Context) (*Instance, error) {
+func GetInstance() (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	return NewInstance(ctx)
+	return NewInstance(context.TODO())
 }
 
 // Open new a instance

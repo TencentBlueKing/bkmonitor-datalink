@@ -32,7 +32,7 @@ func NewKafkaTopicInfoSvc(obj *storage.KafkaTopicInfo) KafkaTopicInfoSvc {
 }
 
 // CreateInfo 创建一个新的Topic信息
-func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize, flushInterval, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
+func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int, batchSize *int64, flushInterval *string, consumeRate *int64) (*storage.KafkaTopicInfo, error) {
 	db := mysql.GetDBSession().DB
 	count, err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdEq(bkDataId).Count()
 	if err != nil {

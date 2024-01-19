@@ -25,10 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -539,4 +541,125 @@ func TestBcsClusterInfoSvc_RefreshMetricLabel(t *testing.T) {
 		}
 		assert.Equal(t, target, m.Label)
 	}
+}
+
+func TestBcsClusterInfoSvc_RefreshClusterResource(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	sp := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "bkci_biz_test",
+		SpaceName:   "bkci_biz_test",
+		SpaceCode:   "1234561234567f3e750477982c23",
+		IsBcsValid:  true,
+	}
+	db.Delete(&sp, "space_id = ?", sp.SpaceId)
+	err := sp.Create(db)
+	assert.NoError(t, err)
+
+	cluster := bcs.BCSClusterInfo{
+		ClusterID:          "space_resource_test_cluster",
+		BCSApiClusterId:    "space_resource_test_cluster",
+		BkBizId:            22,
+		ProjectId:          "1234561234567f3e750477982c23",
+		K8sMetricDataID:    1880001,
+		CustomMetricDataID: 1880003,
+		K8sEventDataID:     1880002,
+	}
+	db.Delete(&cluster, "cluster_id = ?", cluster.ClusterID)
+	err = cluster.Create(db)
+	assert.NoError(t, err)
+
+	clusterShared := bcs.BCSClusterInfo{
+		ClusterID:          "space_resource_test_cluster_shared",
+		BCSApiClusterId:    "space_resource_test_cluster_shared",
+		BkBizId:            22,
+		ProjectId:          "1234561234567f3e750477982c23",
+		K8sMetricDataID:    1880011,
+		CustomMetricDataID: 1880013,
+		K8sEventDataID:     1880012,
+	}
+	db.Delete(&clusterShared, "cluster_id = ?", clusterShared.ClusterID)
+	err = clusterShared.Create(db)
+	assert.NoError(t, err)
+
+	db.Delete(&space.SpaceResource{}, "space_id = ?", sp.SpaceId)
+	db.Delete(&space.SpaceDataSource{}, "space_id = ?", sp.SpaceId)
+
+	gomonkey.ApplyFunc(apiservice.BcsClusterManagerService.GetProjectClusters, func(s apiservice.BcsClusterManagerService, projectId string, excludeSharedCluster bool) ([]map[string]interface{}, error) {
+		if projectId != "1234561234567f3e750477982c23" {
+			return nil, nil
+		}
+		return []map[string]interface{}{
+			{
+				"projectId": "1234561234567f3e750477982c23",
+				"clusterId": "space_resource_test_cluster",
+				"bkBizId":   "2",
+				"isShared":  false,
+			},
+			{
+				"projectId": "1234561234567f3e750477982c23",
+				"clusterId": "space_resource_test_cluster_shared",
+				"bkBizId":   "2",
+				"isShared":  true,
+			},
+		}, nil
+	})
+
+	gomonkey.ApplyFunc(apiservice.Bcs.FetchSharedClusterNamespaces, func(s apiservice.BcsClusterManagerService, clusterId string, projectCode string) ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "shared_cluster",
+				"projectCode": projectCode,
+				"clusterId":   clusterId,
+				"namespace":   "n1",
+			},
+			{
+				"projectId":   "shared_cluster",
+				"projectCode": projectCode,
+				"clusterId":   clusterId,
+				"namespace":   "n2",
+			},
+		}, nil
+	})
+
+	err = NewBcsClusterInfoSvc(nil).RefreshClusterResource()
+	assert.NoError(t, err)
+
+	var spdsList []space.SpaceDataSource
+	err = space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(sp.SpaceId).All(&spdsList)
+	assert.NoError(t, err)
+
+	var dataids []uint
+	for _, spds := range spdsList {
+		dataids = append(dataids, spds.BkDataId)
+	}
+	assert.ElementsMatch(t, dataids, []uint{1880001, 1880002, 1880003, 1880011, 1880012, 1880013})
+
+	var sr space.SpaceResource
+	err = space.NewSpaceResourceQuerySet(db).SpaceIdEq(sp.SpaceId).One(&sr)
+	assert.NoError(t, err)
+
+	equal, err := jsonx.CompareJson(sr.DimensionValues, `[{"cluster_id":"space_resource_test_cluster","cluster_type":"single","namespace":null},{"cluster_id":"space_resource_test_cluster_shared","cluster_type":"shared","namespace":["n2","n1"]}]`)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
+	dm, err := sr.GetDimensionValues()
+	assert.NoError(t, err)
+	err = sr.SetDimensionValues(dm[:1])
+	assert.NoError(t, err)
+	err = sr.Update(db, space.SpaceResourceDBSchema.DimensionValues)
+	assert.NoError(t, err)
+
+	err = NewBcsClusterInfoSvc(nil).RefreshClusterResource()
+	assert.NoError(t, err)
+
+	var sr2 space.SpaceResource
+	err = space.NewSpaceResourceQuerySet(db).SpaceIdEq(sp.SpaceId).One(&sr2)
+	assert.NoError(t, err)
+
+	equal, err = jsonx.CompareJson(sr2.DimensionValues, `[{"cluster_id":"space_resource_test_cluster","cluster_type":"single","namespace":null},{"cluster_id":"space_resource_test_cluster_shared","cluster_type":"shared","namespace":["n2","n1"]}]`)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
 }

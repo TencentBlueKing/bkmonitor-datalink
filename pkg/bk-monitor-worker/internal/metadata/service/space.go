@@ -259,6 +259,7 @@ func (s *SpaceSvc) SyncBcsSpace() error {
 	for _, projectId := range updateProjects {
 		spaceCode := projectIdMap[projectId]["projectId"]
 		spaceName := projectIdMap[projectId]["name"]
+		_ = metrics.MysqlCount(space.Space{}.TableName(), "SyncBcsSpace_update", 1)
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] update Space space_type [%s] space_id [%s] with space_code [%s] space_name [%s] is_bcs_valid [%v]", models.SpaceTypeBKCI, projectId, spaceCode, spaceName, true)
 		} else {
@@ -316,10 +317,11 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		SpaceCode:   projectId,
 		IsBcsValid:  true,
 	}
+	logger.Infof("[db_diff]create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v]", models.SpaceTypeBKCI, projectCode, name, projectId, true)
+	_ = metrics.MysqlCount(sp.TableName(), "CreateBcsSpace_create_bkci", 1)
 	if err := sp.Create(tx); err != nil {
 		tx.Rollback()
 		return errors.Wrapf(err, "create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v] fialed", models.SpaceTypeBKCI, projectCode, name, projectId, true)
-
 	}
 	// 获取业务下的 data id, 然后授权给项目使用
 	var dataIdList []uint
@@ -354,6 +356,8 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		tx.Rollback()
 		return errors.Wrapf(err, "set dimention_values [%v] for SpaceResource failed", dmForBkcc)
 	}
+	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
+	_ = metrics.MysqlCount(srForBkcc.TableName(), "CreateBcsSpace_create_bkcc", 1)
 	if err := srForBkcc.Create(tx); err != nil {
 		tx.Rollback()
 		return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
@@ -389,7 +393,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		}
 		var clusterDataIdList []uint
 		var cluster bcs.BCSClusterInfo
-		if err := bcs.NewBCSClusterInfoQuerySet(db).StatusEq(models.BcsClusterStatusRunning).ClusterIDEq(clusterId).One(&cluster); err != nil {
+		if err := bcs.NewBCSClusterInfoQuerySet(tx).StatusEq(models.BcsClusterStatusRunning).ClusterIDEq(clusterId).One(&cluster); err != nil {
 			tx.Rollback()
 			return errors.Wrapf(err, "query BCSClusterInfo with cluster_id [%s] status [%s] failed", clusterId, models.BcsClusterStatusRunning)
 		}
@@ -423,6 +427,8 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		tx.Rollback()
 		return errors.Wrapf(err, "set dimention_values [%v] for SpaceResource failed", projectClusterNsList)
 	}
+	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
+	_ = metrics.MysqlCount(srForBcs.TableName(), "CreateBcsSpace_create_bcs", 1)
 	if err := srForBcs.Create(tx); err != nil {
 		tx.Rollback()
 		return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
@@ -434,12 +440,18 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		return errors.Wrapf(err, "composeBcsSpaceDataSource with space_type_id [%s] space_id [%s] data_id_list [%v] project_cluster_data_id_list [%v] shared_cluster_data_id_list [%v] failed", models.SpaceTypeBKCI, projectCode, dataIdList, projectClusterDataIdList, sharedClusterDataIdList)
 	}
 	for _, sds := range spaceDataSourceList {
+		logger.Infof("[db_diff]create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
+		_ = metrics.MysqlCount(sds.TableName(), "CreateBcsSpace_create_sds", 1)
 		if err := sds.Create(tx); err != nil {
 			tx.Rollback()
 			return errors.Wrapf(err, "create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
 		}
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
 	return nil
 }
 

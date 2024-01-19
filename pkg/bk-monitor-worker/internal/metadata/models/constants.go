@@ -192,6 +192,9 @@ const (
 	Bkci1001TableIdPrefix = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
 	Dbm1001TableIdPrefix  = "dbm_system."  // 1001 仅允许访问 dbm 相关结果表的前缀
 	SystemTableIdPrefix   = "system."
+
+	QueryVmSpaceUidListKey    = "bkmonitorv3:vm-query:space_uid"
+	QueryVmSpaceUidChannelKey = "bkmonitorv3:vm-query"
 )
 
 // VM
@@ -209,6 +212,8 @@ const (
 	TimeStampLenNanosecondLen  = 19 // Unix Time Stamp(nanosecond)
 )
 
+const SystemUser = "system"
+
 var TimeStampLenValeMap = map[int]string{
 	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",
 	TimeStampLenMillisecondLen: "Unix Time Stamp(milliseconds)",
@@ -221,3 +226,20 @@ var BcsMetricLabelPrefix = map[string]string{
 	"container_": "kubernetes",
 	"kube_":      "kubernetes",
 }
+
+// SpaceDataSourceETLList 数据源 ETL 配置
+var SpaceDataSourceETLList = []string{
+	ETLConfigTypeBkSystemBasereport,
+	ETLConfigTypeBkUptimecheckHeartbeat,
+	ETLConfigTypeBkUptimecheckHttp,
+	ETLConfigTypeBkUptimecheckTcp,
+	ETLConfigTypeBkUptimecheckUdp,
+	ETLConfigTypeBkSystemProcPort,
+	ETLConfigTypeBkSystemProc,
+	ETLConfigTypeBkStandardV2TimeSeries,
+	ETLConfigTypeBkExporter,
+	ETLConfigTypeBkStandard,
+}
+
+// SkipDataIdListForBkcc 枚举 0 业务，但不是 bkcc 类型的数据源ID
+var SkipDataIdListForBkcc = []uint{1110000}

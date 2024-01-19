@@ -187,11 +187,11 @@ var (
 	TaskListenPort int
 	// ControllerListenHost http listen host
 	ControllerListenHost string
-	// TaskListenPort http listen port
+	// ControllerListenPort http listen port
 	ControllerListenPort int
-	// TaskListenHost http listen host
+	// WorkerListenHost http listen host
 	WorkerListenHost string
-	// TaskListenPort http listen port
+	// WorkerListenPort http listen port
 	WorkerListenPort int
 
 	// AesKey project aes key
@@ -207,10 +207,12 @@ var (
 	BkApiAppCode string
 	// BkApiAppSecret bk-apigw app secret
 	BkApiAppSecret string
-	// BkApiBcsApiGatewayDomain bk-apigw bcs domain
-	BkApiBcsApiGatewayDomain string
+	// BkApiBcsApiMicroGwUrl bk-apigw bcs micro gateway url
+	BkApiBcsApiMicroGwUrl string
 	// BkApiBcsApiGatewayToken bk-apigw bcs token
 	BkApiBcsApiGatewayToken string
+	// BkApiBcsApiGatewayBaseUrl bk-apigw bcs base url
+	BkApiBcsApiGatewayBaseUrl string
 	// BkApiNodemanApiBaseUrl bk-apigw nodeman base url
 	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
@@ -369,8 +371,9 @@ func initVariables() {
 	BkApiStage = GetValue("taskConfig.common.bkapi.stage", "stag")
 	BkApiAppCode = GetValue("taskConfig.common.bkapi.appCode", "appCode")
 	BkApiAppSecret = GetValue("taskConfig.common.bkapi.appSecret", "appSecret")
-	BkApiBcsApiGatewayDomain = GetValue("taskConfig.common.bkapi.bcsApiGatewayDomain", "")
+	BkApiBcsApiMicroGwUrl = GetValue("taskConfig.common.bkapi.bcsApiMicroGwUrl", "")
 	BkApiBcsApiGatewayToken = GetValue("taskConfig.common.bkapi.bcsApiGatewayToken", "")
+	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
 	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
 	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")

@@ -54,7 +54,7 @@ func GetInstance() (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	
+
 	return NewInstance(context.TODO())
 }
 

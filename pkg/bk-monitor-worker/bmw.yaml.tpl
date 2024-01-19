@@ -123,8 +123,9 @@ taskConfig:
       stage: stag
       appCode: appCode
       appSecret: appSecret
-      bcsApiGatewayDomain: ""
+      bcsApiMicroGwUrl: ""
       bcsApiGatewayToken: ""
+      bcsApiGatewayBaseUrl: ""
       nodemanApiBaseUrl: ""
       bkdataApiBaseUrl: ""
       bkssmUrl: ""

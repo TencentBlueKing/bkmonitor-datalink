@@ -10,12 +10,26 @@
 package hashconsul
 
 import (
+	"fmt"
+	"unicode/utf8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func Put(c *consul.Instance, key, val string) error {
+	// 将中文转化为unicode
+	var unicodeVal string
+	for _, runeValue := range val {
+		if utf8.ValidRune(runeValue) && runeValue >= 128 {
+			unicodeVal += fmt.Sprintf("\\u%04X", runeValue)
+		} else {
+			unicodeVal += string(runeValue)
+		}
+	}
+	val = unicodeVal
+
 	oldValueBytes, err := c.Get(key)
 	if err != nil {
 		logger.Infof("can not get old value from [%s] because of [%v], will refresh consul", key, err)

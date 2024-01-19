@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs_cc"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
@@ -31,6 +32,7 @@ import (
 
 var (
 	muForGseApi            sync.Mutex
+	muForBcsApi            sync.Mutex
 	muForBcsCcApi          sync.Mutex
 	muForBcsClusterManager sync.Mutex
 	muForCmdbApi           sync.Mutex
@@ -38,9 +40,9 @@ var (
 	muForBkdataApi         sync.Mutex
 	muForBkssmAPi          sync.Mutex
 )
-
 var (
 	gseApi            *bkgse.Client
+	bcsApi            *bcs.Client
 	bcsCcApi          *bcs_cc.Client
 	bcsClusterManager *bcsclustermanager.Client
 	cmdbApi           *cmdb.Client
@@ -82,6 +84,30 @@ func GetGseApi() (*bkgse.Client, error) {
 		return nil, err
 	}
 	return gseApi, nil
+}
+
+// GetBcsApi 获取BcsApi客户端
+func GetBcsApi() (*bcs.Client, error) {
+	muForBcsApi.Lock()
+	defer muForBcsApi.Unlock()
+	if bcsApi != nil {
+		return bcsApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint: strings.TrimRight(cfg.BkApiBcsApiGatewayBaseUrl, "/"),
+		AuthorizationParams: map[string]string{
+			"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken),
+		},
+		AppCode:       cfg.BkApiAppCode,
+		AppSecret:     cfg.BkApiAppSecret,
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsApi, err = bcs.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return bcsApi, nil
 }
 
 // GetBkssmApi 获取BkssmApi客户端
@@ -132,7 +158,7 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiGatewayDomain, "/")),
+		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
 		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
 		JsonMarshaler:       jsonx.Marshal,
 	}

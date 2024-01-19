@@ -23,7 +23,7 @@ import (
 func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
-			logger.Errorf("Runtime panic caught: %v\n", err)
+			logger.Errorf("RefreshBkccSpaceName Runtime panic caught: %v", err)
 		}
 	}()
 	logger.Info("start sync bkcc space name task")
@@ -32,6 +32,54 @@ func RefreshBkccSpaceName(ctx context.Context, t *t.Task) error {
 		return errors.Wrap(err, "refresh bkcc space name failed")
 	}
 	logger.Info("refresh bkcc space name successfully")
+	return nil
+}
+
+// RefreshClusterResource 检测集群资源的变化,当绑定资源的集群信息变动时，刷新绑定的集群资源
+func RefreshClusterResource(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshClusterResource Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Infof("start sync bcs space cluster resource task")
+	if err := service.NewBcsClusterInfoSvc(nil).RefreshClusterResource(); err != nil {
+		logger.Errorf("sync bcs space cluster resource failed, %v", err)
+		return err
+	}
+	logger.Infof("sync bcs space cluster resource success")
+	return nil
+}
+
+// RefreshBkccSpace 同步 bkcc 的业务，自动创建对应的空间
+func RefreshBkccSpace(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBkccSpace Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bkcc space task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.RefreshBkccSpace(false); err != nil {
+		return errors.Wrap(err, "refresh bkcc space failed")
+	}
+	logger.Info("refresh bkcc space successfully")
+	return nil
+}
+
+// SyncBkccSpaceDataSource 同步bkcc数据源和空间的关系及数据源的所属类型
+func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("SyncBkccSpaceDataSource Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bkcc space data source task")
+	svc := service.NewSpaceDataSourceSvc(nil)
+	if err := svc.SyncBkccSpaceDataSource(); err != nil {
+		return errors.Wrap(err, "sync bkcc space data source failed")
+	}
+	logger.Info("sync bkcc space data source successfully")
 	return nil
 }
 

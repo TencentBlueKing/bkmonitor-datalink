@@ -27,7 +27,7 @@ func parseProcessors(typ string, conf *confengine.Config, subConfigs map[string]
 
 	for i := 0; i < len(processorConfigs); i++ {
 		pcf := processorConfigs[i]
-		logger.Infof("%s processor config: %+v", typ, pcf)
+		logger.Debugf("%s processor config: %+v", typ, pcf)
 	}
 
 	processors := map[string]processor.Instance{}

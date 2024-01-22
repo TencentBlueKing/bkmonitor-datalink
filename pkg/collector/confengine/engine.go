@@ -125,7 +125,7 @@ func LoadConfigPath(path string) (*Config, error) {
 		return nil, err
 	}
 
-	logger.Infof("load config file '%v'", path)
+	logger.Debugf("load config file '%v'", path)
 	DefaultMetricMonitor.IncLoadConfigSuccessCounter()
 	return New((*beat.Config)(config)), err
 }

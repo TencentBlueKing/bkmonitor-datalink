@@ -27,6 +27,7 @@ func (BcsCcService) BatchGetProjects(limit int, desireAllData, filterK8sKind boo
 		limit = 2000
 	}
 	params := make(map[string]interface{})
+	params["limit"] = limit
 	if desireAllData {
 		params["desire_all_data"] = 1
 	} else {
@@ -37,7 +38,7 @@ func (BcsCcService) BatchGetProjects(limit int, desireAllData, filterK8sKind boo
 		return nil, errors.Wrap(err, "get bcsCcApi failed")
 	}
 	var resp bcs_cc.GetProjectsResp
-	_, err = bcsCcApi.GetProjects().SetResult(&resp).Request()
+	_, err = bcsCcApi.GetProjects().SetBody(params).SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrap(err, "GetProjects failed")
 	}

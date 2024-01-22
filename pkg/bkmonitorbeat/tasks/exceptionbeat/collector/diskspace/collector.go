@@ -46,13 +46,13 @@ func init() {
 }
 
 func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Info("collector is running...")
+	logger.Info("diskspace collector is running...")
 	if (conf.CheckBit & configs.DiskSpace) == 0 {
-		logger.Infof("collector closed by config: %s", conf.CheckMethod)
+		logger.Infof("diskspace collector closed by config: %s", conf.CheckMethod)
 		return
 	}
 	if c.state == runningState {
-		logger.Info("collector already started")
+		logger.Info("diskspace collector already started")
 		return
 	}
 	c.dataid = int(conf.DataID)
@@ -64,7 +64,7 @@ func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *conf
 	c.minSpace = conf.DiskMinFreeSpace
 	c.deviceMap = make(map[string]bool)
 
-	logger.Infof("Collector start success with config: %v", c)
+	logger.Infof("diskspace collector start success with config: %v", c)
 	go c.statistic(ctx, e)
 }
 
@@ -72,10 +72,10 @@ func (c *Collector) Reload(conf *configs.ExceptionBeatConfig) {}
 
 func (c *Collector) Stop() {
 	if c.state == closeState {
-		logger.Errorf("collector stop failed: collector not open")
+		logger.Errorf("diskspace collector stop failed: already closed")
 		return
 	}
-	logger.Info("collector stopped")
+	logger.Info("diskspace collector stopped")
 	c.state = closeState
 	close(c.done)
 }

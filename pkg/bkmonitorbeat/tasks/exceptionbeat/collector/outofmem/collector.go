@@ -28,9 +28,12 @@ import (
 )
 
 const (
-	runningState = iota
-	closeState
-	IEG_DOCKER_FILE = "/etc/ieg-docker.conf"
+	closeState = iota
+	runningState
+)
+
+const (
+	iegDockerFile = "/etc/ieg-docker.conf"
 )
 
 // OomInstance struct that contains information related to an OOM kill instance
@@ -69,20 +72,19 @@ type OutOfMemCollector struct {
 
 func init() {
 	tmpCollector := new(OutOfMemCollector)
-	tmpCollector.state = closeState
 	tmpCollector.startup = time.Now().Unix()
 	collector.RegisterCollector(tmpCollector)
 }
 
 func (c *OutOfMemCollector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Info("OutOfMemCollector is running...")
+	logger.Info("oom collector is running...")
 	if (conf.CheckBit & configs.OOM) == 0 {
-		logger.Infof("OutOfMemCollector closed by config: %s", conf.CheckMethod)
+		logger.Infof("oom collector closed by config: %s", conf.CheckMethod)
 		return
 	}
 
 	if c.state == runningState {
-		logger.Info("OutOfMemCollector has been already started")
+		logger.Info("oom collector has been already started")
 		return
 	}
 
@@ -94,8 +96,8 @@ func (c *OutOfMemCollector) Start(ctx context.Context, e chan<- define.Event, co
 	}
 
 	// 判断是否存在docker标记位，如果是，则不启动oom实际监控
-	if _, err := os.Stat(IEG_DOCKER_FILE); err == nil {
-		logger.Warnf("IEG docker file->[%s] exists, this is docker os, oom service won't start", IEG_DOCKER_FILE)
+	if _, err := os.Stat(iegDockerFile); err == nil {
+		logger.Warnf("IEG docker file->[%s] exists, this is docker os, oom service won't start", iegDockerFile)
 		return
 	}
 

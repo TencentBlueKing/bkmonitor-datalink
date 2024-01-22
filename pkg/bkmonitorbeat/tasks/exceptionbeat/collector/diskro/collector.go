@@ -46,18 +46,14 @@ func init() {
 	collector.RegisterCollector(new(Collector))
 }
 
-func (c *Collector) String() string {
-	return "Collector/DiskRO"
-}
-
 func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Infof("%s is running...", c)
+	logger.Infof("diskro collector is running...")
 	if (conf.CheckBit & configs.DiskRO) == 0 {
-		logger.Infof("%s closed by config: %s", c, conf.CheckMethod)
+		logger.Infof("diskro collector closed by config: %s", conf.CheckMethod)
 		return
 	}
 	if c.state == runningState {
-		logger.Infof("%s already started", c)
+		logger.Info("diskro collector already started")
 		return
 	}
 
@@ -70,7 +66,7 @@ func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *conf
 	c.state = runningState
 	c.deviceMap = make(map[string]bool)
 
-	logger.Infof("%s start successful", c)
+	logger.Info("diskro collector start successful")
 	go c.statistic(ctx, e)
 }
 
@@ -78,10 +74,10 @@ func (c *Collector) Reload(_ *configs.ExceptionBeatConfig) {}
 
 func (c *Collector) Stop() {
 	if c.state == closeState {
-		logger.Errorf("%s stop failed: collector not open", c)
+		logger.Error("diskro collector stop failed: already closed")
 		return
 	}
-	logger.Infof("%s stopped", c)
+	logger.Info("diskro collector stopped")
 	c.state = closeState
 	close(c.done)
 }
@@ -91,7 +87,7 @@ func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 		select {
 		case <-ctx.Done():
 			c.Stop()
-			logger.Infof("%s collector exit", c)
+			logger.Info("diskro collector collector exit")
 			return
 
 		case <-c.ticker.C:
@@ -179,7 +175,7 @@ func (c *Collector) getRODisk() []beat.MapStr {
 
 		// 保留当次状态内容
 		if err := mp.SaveStatus(); err != nil {
-			logger.Errorf("failed to save mount_point->[%s] for err->[%s]", mp.MountPoint, err)
+			logger.Errorf("failed to save mount_point->[%s], err: %v", mp.MountPoint, err)
 			continue
 		}
 		logger.Debugf("mount_point->[%s] status is saved now", mp.MountPoint)

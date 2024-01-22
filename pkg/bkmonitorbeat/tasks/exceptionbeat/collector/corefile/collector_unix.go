@@ -91,7 +91,7 @@ func (c *Collector) Reload(conf *configs.ExceptionBeatConfig) {}
 
 func (c *Collector) Stop() {
 	if c.state == closeState {
-		logger.Error("collector stop failed: collector not open")
+		logger.Error("corefile collector stop failed: already closed")
 		return
 	}
 	c.state = closeState

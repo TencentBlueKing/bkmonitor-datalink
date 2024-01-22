@@ -7,26 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
+
 package collector
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
-func TestGetMemInfo(t *testing.T) {
-	config := configs.MemConfig{
-		InfoTimes:     3,
-		InfoPeriod:    time.Second,
-		SpecialSource: true,
-	}
-
-	info, err := GetMemInfo(config)
+func TestQueryCpuInfo(t *testing.T) {
+	info := &CpuReport{}
+	err := queryCpuInfo(info, 0, 0)
 	assert.NoError(t, err)
-	assert.NotNil(t, info)
-	t.Logf("MemInfo: %#v", info)
 }

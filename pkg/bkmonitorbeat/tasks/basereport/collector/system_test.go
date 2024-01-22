@@ -11,22 +11,13 @@ package collector
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
-func TestGetMemInfo(t *testing.T) {
-	config := configs.MemConfig{
-		InfoTimes:     3,
-		InfoPeriod:    time.Second,
-		SpecialSource: true,
-	}
-
-	info, err := GetMemInfo(config)
+func TestGetSystemInfo(t *testing.T) {
+	info, err := GetSystemInfo()
 	assert.NoError(t, err)
 	assert.NotNil(t, info)
-	t.Logf("MemInfo: %#v", info)
+	t.Logf("SystemInfo: %#v", info)
 }

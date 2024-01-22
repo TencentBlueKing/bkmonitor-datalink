@@ -19,6 +19,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -94,4 +95,39 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("101").SpaceNameEq("biz_101").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp101))
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("102").SpaceNameEq("biz_102").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp102))
 
+}
+
+func TestSpaceSvc_RefreshBkciSpaceName(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	gomonkey.ApplyFunc(apiservice.BcsCcService.BatchGetProjects, func(s apiservice.BcsCcService, limit int, desireAllData, filterK8sKind bool) ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "project_id_131",
+				"projectCode": "project_code_01",
+				"name":        "project_name_01_new",
+				"bkBizId":     "51",
+			},
+			{
+				"projectId":   "project_id_132",
+				"projectCode": "project_code_02",
+				"name":        "project_name_02_new",
+				"bkBizId":     "52",
+			},
+		}, nil
+	})
+	db := mysql.GetDBSession().DB
+	sp := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_01",
+		SpaceName:   "project_name_01_old",
+	}
+	db.Delete(&space.Space{}, "space_id in (?)", []string{"project_code_01", "project_code_02"})
+	err := sp.Create(db)
+	assert.NoError(t, err)
+	svc := NewSpaceSvc(nil)
+	err = svc.RefreshBkciSpaceName()
+	assert.NoError(t, err)
+	err = space.NewSpaceQuerySet(db).SpaceIdEq("project_code_01").One(&sp)
+	assert.NoError(t, err)
+	assert.Equal(t, "project_name_01_new", sp.SpaceName)
 }

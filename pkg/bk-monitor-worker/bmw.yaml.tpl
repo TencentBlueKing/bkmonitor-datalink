@@ -126,6 +126,10 @@ taskConfig:
       bcsApiMicroGwUrl: ""
       bcsApiGatewayToken: ""
       bcsApiGatewayBaseUrl: ""
+      nodemanApiBaseUrl: ""
+      bkdataApiBaseUrl: ""
+      bkssmUrl: ""
+      bcsCcApiUrl: ""
   # metadata: metadata任务配置
   metadata:
     metricDimension:

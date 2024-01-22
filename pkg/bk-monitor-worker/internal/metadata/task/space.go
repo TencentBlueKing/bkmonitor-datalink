@@ -82,3 +82,19 @@ func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 	logger.Info("sync bkcc space data source successfully")
 	return nil
 }
+
+// RefreshBkciSpaceName 刷新 bkci 类型空间名称
+func RefreshBkciSpaceName(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBkciSpaceName Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bkci space name task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.RefreshBkciSpaceName(); err != nil {
+		return errors.Wrap(err, "refresh bkci space name failed")
+	}
+	logger.Info("refresh bkci space name successfully")
+	return nil
+}

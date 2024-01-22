@@ -16,12 +16,15 @@ import (
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
+	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs_cc"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkssm"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -30,18 +33,22 @@ import (
 var (
 	muForGseApi            sync.Mutex
 	muForBcsApi            sync.Mutex
+	muForBcsCcApi          sync.Mutex
 	muForBcsClusterManager sync.Mutex
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
+	muForBkssmAPi          sync.Mutex
 )
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client
+	bcsCcApi          *bcs_cc.Client
 	bcsClusterManager *bcsclustermanager.Client
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
+	bkssmApi          *bkssm.Client
 )
 
 // GetGseApi 获取GseApi客户端
@@ -101,6 +108,46 @@ func GetBcsApi() (*bcs.Client, error) {
 		return nil, err
 	}
 	return bcsApi, nil
+}
+
+// GetBkssmApi 获取BkssmApi客户端
+func GetBkssmApi() (*bkssm.Client, error) {
+	muForBkssmAPi.Lock()
+	defer muForBkssmAPi.Unlock()
+	if bkssmApi != nil {
+		return bkssmApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:      fmt.Sprintf("%s/api/v1/auth/", cfg.BkApiBkssmUrl),
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bkssmApi, err = bkssm.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"X-Bk-App-Code": cfg.BkApiAppCode, "X-Bk-App-Secret": cfg.BkApiAppSecret}))
+	if err != nil {
+		return nil, err
+	}
+	return bkssmApi, nil
+}
+
+// GetBcsCcApi 获取BcsCcApi客户端
+func GetBcsCcApi() (*bcs_cc.Client, error) {
+	muForBcsCcApi.Lock()
+	defer muForBcsCcApi.Unlock()
+	if bcsCcApi != nil {
+		return bcsCcApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:      cfg.BkApiBcsCcApiUrl,
+		AppCode:       cfg.BkApiAppCode,
+		AppSecret:     cfg.BkApiAppSecret,
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsCcApi, err = bcs_cc.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewBkssmTokenProvider())
+	if err != nil {
+		return nil, err
+	}
+	return bcsCcApi, nil
 }
 
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端
@@ -198,4 +245,60 @@ func GetBkdataApi() (*bkdata.Client, error) {
 		return nil, err
 	}
 	return bkdataApi, nil
+}
+
+// HeaderProvider provide request header.
+type HeaderProvider struct {
+	Header map[string]string
+}
+
+// NewHeaderProvider creates a new HeaderProvider.
+func NewHeaderProvider(header map[string]string) *HeaderProvider {
+	return &HeaderProvider{
+		Header: header,
+	}
+}
+
+// ApplyToClient will add to the operation operations.
+func (p *HeaderProvider) ApplyToClient(cli define.BkApiClient) error {
+	return cli.AddOperationOptions(p)
+}
+
+// ApplyToOperation will set the body provider.
+func (p *HeaderProvider) ApplyToOperation(op define.Operation) error {
+	op.SetHeaders(p.Header)
+	return nil
+}
+
+// BkssmTokenProvider provide bkssm token to header.
+type BkssmTokenProvider struct{}
+
+// NewBkssmTokenProvider creates a new BkssmTokenProvider.
+func NewBkssmTokenProvider() *BkssmTokenProvider {
+	return &BkssmTokenProvider{}
+}
+
+// ApplyToClient will add to the operation operations.
+func (p *BkssmTokenProvider) ApplyToClient(cli define.BkApiClient) error {
+	return cli.AddOperationOptions(p)
+}
+
+// ApplyToOperation will set the body provider.
+func (p *BkssmTokenProvider) ApplyToOperation(op define.Operation) error {
+	bkssmApi, err := GetBkssmApi()
+	if err != nil {
+		return errors.Wrap(err, "get bkssmApi failed")
+	}
+	var resp bkssm.GetAccessTokenResp
+	_, err = bkssmApi.GetAccessToken().SetResult(&resp).Request()
+	if err != nil {
+		return errors.Wrap(err, "get bkssm token failed")
+	}
+	token := map[string]string{"access_token": resp.Data.AccessToken}
+	tokenJson, err := jsonx.MarshalString(token)
+	if err != nil {
+		return errors.Wrapf(err, "unmarshal bkssm token [%v] failed", token)
+	}
+	op.SetHeaders(map[string]string{"X-Bkapi-Authorization": tokenJson})
+	return nil
 }

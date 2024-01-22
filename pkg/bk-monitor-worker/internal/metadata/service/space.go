@@ -12,6 +12,7 @@ package service
 import (
 	"fmt"
 	"strconv"
+	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
@@ -19,6 +20,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -63,9 +65,9 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		// 名称变动，需要更新
 		if name != oldName {
 			sp.SpaceName = name
-			err := sp.Update(db, space.SpaceDBSchema.SpaceName)
-			if err != nil {
-				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName)
+			sp.UpdateTime = time.Now()
+			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
 				continue
 			}
 			logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
@@ -208,4 +210,51 @@ func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
 		}
 	}
 	return bizIdNameMap, nil
+}
+
+// RefreshBkciSpaceName 刷新 bkci 类型空间名称
+func (s *SpaceSvc) RefreshBkciSpaceName() error {
+	projects, err := apiservice.BcsCc.BatchGetProjects(2000, false, false)
+	if err != nil {
+		return errors.Wrap(err, "GetBkciProjects failed")
+	}
+	if len(projects) == 0 {
+		return nil
+	}
+	projectCodeNameMap := make(map[string]string)
+	for _, p := range projects {
+		projectCodeNameMap[p["projectCode"]] = p["name"]
+	}
+
+	// 更新数据库中记录
+	db := mysql.GetDBSession().DB
+	var spaceList []space.Space
+	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).All(&spaceList); err != nil {
+		return errors.Wrap(err, "query bkci space failed")
+	}
+	for _, sp := range spaceList {
+		oldName := sp.SpaceName
+		name, ok := projectCodeNameMap[sp.SpaceId]
+		// 不存在则跳过
+		if !ok {
+			logger.Errorf("space not found from bkci api, space_id [%s] space_name [%s]", sp.SpaceId, sp.SpaceName)
+			continue
+		}
+		// 名称变动，需要更新
+		if name != oldName {
+			sp.SpaceName = name
+			sp.UpdateTime = time.Now()
+			_ = metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
+			} else {
+				if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+					logger.Errorf("update bkci space_name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
+					continue
+				}
+			}
+			logger.Infof("update bkci space name [%s] to [%s]", oldName, sp.SpaceName)
+		}
+	}
+	return nil
 }

@@ -13,19 +13,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestGetDiskInfo(t *testing.T) {
-	config := configs.DiskConfig{
-		StatTimes:     3,
-		StatPeriod:    time.Second,
-		CollectAllDev: true,
+func TestGetMemInfo(t *testing.T) {
+	config := configs.MemConfig{
+		InfoTimes:     3,
+		InfoPeriod:    time.Second,
+		SpecialSource: true,
 	}
-	info, err := GetDiskInfo(config)
+
+	info, err := GetMemInfo(config)
 	assert.NoError(t, err)
 	assert.NotNil(t, info)
-	t.Logf("DiskInfo: %#v", info)
+	t.Logf("MemInfo: %#v", info)
 }

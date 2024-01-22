@@ -18,14 +18,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
-func TestGetDiskInfo(t *testing.T) {
-	config := configs.DiskConfig{
+func TestGetCPUInfo(t *testing.T) {
+	config := configs.CpuConfig{
 		StatTimes:     3,
 		StatPeriod:    time.Second,
-		CollectAllDev: true,
+		InfoPeriod:    time.Second,
+		InfoTimeout:   1,
+		ReportCpuFlag: true,
 	}
-	info, err := GetDiskInfo(config)
+	info, err := GetCPUInfo(config)
 	assert.NoError(t, err)
 	assert.NotNil(t, info)
-	t.Logf("DiskInfo: %#v", info)
+	t.Logf("CPUInfo: %#v", info)
 }

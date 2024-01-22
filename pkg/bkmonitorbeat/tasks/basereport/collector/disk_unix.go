@@ -113,12 +113,12 @@ diskStatsLoop:
 }
 
 func getDiskName(name string) string {
-	// 使用正则匹配disk名 例: sda1 => sda
+	// 使用正则匹配 disk 名 例: sda1 => sda
 	submatchList := partitionRegex.FindStringSubmatch(name)
-	// 遇到匹配失败的异常情况，则忽略掉disk过滤
+	// 遇到匹配失败的异常情况，则忽略掉 disk 过滤
 	if len(submatchList) == 2 {
 		diskName := submatchList[1]
-		// disk层级黑白名单
+		// disk 层级黑白名单
 		return diskName
 	}
 	logger.Warnf("get disk name from device name failed, submatch length not as expected, device name: %s", name)
@@ -126,12 +126,12 @@ func getDiskName(name string) string {
 }
 
 func getDevName(name string) string {
-	// 使用正则匹配partition名 例: /dev/sda1 => sda1
+	// 使用正则匹配 partition名 例: /dev/sda1 => sda1
 	submatchList := devPartitionRegex.FindStringSubmatch(name)
 	// 遇到匹配失败的异常情况，则忽略掉disk过滤
 	if len(submatchList) == 2 {
 		partitionName := submatchList[1]
-		// disk层级黑白名单
+		// disk 层级黑白名单
 		return partitionName
 	}
 	return name
@@ -142,7 +142,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 	deviceMap := make(map[string]bool)
 	resultPartitionStats := make([]disk.PartitionStat, 0, len(partitionStats))
 	for _, partition := range partitionStats {
-		// 处理mountpoint路径上有特殊字符的情况
+		// 处理 mountpoint 路径上有特殊字符的情况
 		mountpoint := formatMountPoint(partition.Mountpoint)
 		partition.Mountpoint = mountpoint
 
@@ -157,12 +157,12 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 
 		// /dev/sda1 => sda1
 		devName := getDevName(partition.Device)
-		// device(partition)层级黑白名单
+		// device(partition) 层级黑白名单
 		if !checkBlackWhiteList(devName, config.PartitionWhiteList, config.PartitionBlackList) {
 			logger.Debugf("filtered disk stats by partition black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
 		}
-		// mountpoint层级黑白名单
+		// mountpoint 层级黑白名单
 		if !checkBlackWhiteList(partition.Mountpoint, config.MountpointWhiteList, config.MountpointBlackList) {
 			logger.Debugf("filtered disk stats by mountpoint black-white list, device=%s, mountpoint=%s", partition.Device, partition.Mountpoint)
 			continue
@@ -174,7 +174,7 @@ func FilterPartitions(partitionStats []disk.PartitionStat, config configs.DiskCo
 			continue
 		}
 
-		// device上报去重
+		// device上 报去重
 		if config.DropDuplicateDevice {
 			if _, ok := deviceMap[partition.Device]; ok {
 				logger.Debugf("duplicate device name=%s, mountpoint=%s, will dropped", partition.Device, partition.Mountpoint)

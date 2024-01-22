@@ -18,14 +18,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
-func TestGetDiskInfo(t *testing.T) {
-	config := configs.DiskConfig{
-		StatTimes:     3,
-		StatPeriod:    time.Second,
-		CollectAllDev: true,
+func TestGetNetInfo(t *testing.T) {
+	config := configs.NetConfig{
+		StatTimes:  3,
+		StatPeriod: time.Second,
 	}
-	info, err := GetDiskInfo(config)
+	info, err := GetNetInfo(config)
 	assert.NoError(t, err)
 	assert.NotNil(t, info)
-	t.Logf("DiskInfo: %#v", info)
+	t.Logf("NetInfo: %#v", info)
 }

@@ -11,21 +11,13 @@ package collector
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
-func TestGetDiskInfo(t *testing.T) {
-	config := configs.DiskConfig{
-		StatTimes:     3,
-		StatPeriod:    time.Second,
-		CollectAllDev: true,
-	}
-	info, err := GetDiskInfo(config)
+func TestGetEnvInfo(t *testing.T) {
+	info, err := GetEnvInfo()
 	assert.NoError(t, err)
 	assert.NotNil(t, info)
-	t.Logf("DiskInfo: %#v", info)
+	t.Logf("EnvInfo: %#v", info)
 }

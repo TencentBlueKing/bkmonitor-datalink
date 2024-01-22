@@ -480,13 +480,15 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
 		fieldOp := promql.EqualOperator
+		valueType := promql.StringType
 		if q.IsRegexp {
 			fieldOp = promql.RegexpOperator
+			valueType = promql.RegexpType
 		}
 		whereList.Append(
 			promql.AndOperator,
 			promql.NewWhere(
-				promql.StaticMetricName, metricName, fieldOp, promql.StringType,
+				promql.StaticMetricName, metricName, fieldOp, valueType,
 			),
 		)
 	// 多指标单表，字段名为指标名

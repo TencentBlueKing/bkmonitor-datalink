@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"strconv"
 	"strings"
 	"time"
@@ -183,11 +184,12 @@ func makeInfluxQLListBySpaceUid(
 	if span != nil {
 		defer span.End()
 	}
-
+	user := metadata.GetUser(ctx)
 	tsDBs, err = structured.GetTsDBList(ctx, &structured.TsDBOption{
-		SpaceUid:  spaceUid,
-		TableID:   params.TableID,
-		FieldName: params.Metric,
+		SpaceUid:    spaceUid,
+		TableID:     params.TableID,
+		FieldName:   params.Metric,
+		IsSkipSpace: user.IsSkipSpace(),
 	})
 	if err != nil {
 		return nil, err

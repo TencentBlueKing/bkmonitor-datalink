@@ -16,13 +16,11 @@ import (
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
-	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
@@ -70,15 +68,8 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
-	redisClient := &mocker.RedisClientMocker{
-		SetMap: map[string]mapset.Set[string]{},
-	}
-	p := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
-		return &redis.Instance{
-			Client: redisClient,
-		}
-	})
-	defer p.Reset()
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
 
 	spaceIds := []string{"100", "101", "102"}
 	spaceUids := []string{"bkcc__100", "bkcc__101", "bkcc__102"}

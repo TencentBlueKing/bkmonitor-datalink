@@ -87,7 +87,7 @@ func (c *Collector) statistic(ctx context.Context, e chan<- define.Event) {
 		select {
 		case <-ctx.Done():
 			c.Stop()
-			logger.Info("diskro collector collector exit")
+			logger.Info("diskro collector exit")
 			return
 
 		case <-c.ticker.C:

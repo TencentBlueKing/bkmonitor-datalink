@@ -64,13 +64,13 @@ func init() {
 }
 
 func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Info("collector is running...")
+	logger.Info("corefile collector is running...")
 	if (conf.CheckBit & configs.Core) == 0 {
-		logger.Info(" corefile collector closed by config: %s", conf.CheckMethod)
+		logger.Infof("corefile collector closed by config: %s", conf.CheckMethod)
 		return
 	}
 	if c.state == runningState {
-		logger.Info(" corefile collector already started")
+		logger.Info("corefile collector already started")
 		return
 	}
 

@@ -29,7 +29,7 @@ func (BcsService) FetchSharedClusterNamespaces(clusterId string, projectCode str
 
 	api, err := api.GetBcsApi()
 	if err != nil {
-		return nil, errors.Wrap(err, "get bcs  api failed")
+		return nil, errors.Wrap(err, "get bcs api failed")
 	}
 	var resp bcs.FetchSharedClusterNamespacesResp
 	_, err = api.FetchSharedClusterNamespaces().SetPathParams(map[string]string{

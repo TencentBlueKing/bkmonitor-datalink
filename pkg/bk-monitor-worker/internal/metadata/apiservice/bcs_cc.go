@@ -26,19 +26,19 @@ func (BcsCcService) BatchGetProjects(limit int, desireAllData, filterK8sKind boo
 	if limit == 0 {
 		limit = 2000
 	}
-	params := make(map[string]interface{})
-	params["limit"] = limit
+	params := make(map[string]string)
+	params["limit"] = strconv.Itoa(limit)
 	if desireAllData {
-		params["desire_all_data"] = 1
+		params["desire_all_data"] = "1"
 	} else {
-		params["desire_all_data"] = 0
+		params["desire_all_data"] = "0"
 	}
 	bcsCcApi, err := api.GetBcsCcApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bcsCcApi failed")
 	}
 	var resp bcs_cc.GetProjectsResp
-	_, err = bcsCcApi.GetProjects().SetBody(params).SetResult(&resp).Request()
+	_, err = bcsCcApi.GetProjects().SetQueryParams(params).SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrap(err, "GetProjects failed")
 	}

@@ -45,9 +45,10 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	var space routerInfluxdb.Space
 	// 判断是否跳过空间限制
 	if opt.IsSkipSpace {
+		tableID := string(opt.TableID)
 		space = map[string]*routerInfluxdb.SpaceResultTable{
-			opt.SpaceUid: {
-				TableId: string(opt.TableID),
+			tableID: {
+				TableId: tableID,
 			},
 		}
 	} else {

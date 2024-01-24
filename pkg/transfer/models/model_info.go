@@ -64,11 +64,12 @@ func (modelInfo *CCTopoBaseModelInfo) GetInfo() CCTemplateInfo {
 // 按照Host 上报cc cache 结构
 type CCHostInfo struct {
 	*CCTopoBaseModelInfo
-	IP       string `json:"ip"`
-	CloudID  int    `json:"bk_cloud_id"`
-	OuterIP  string `json:"outer_ip,omitempty"`
-	DbmMeta  string `json:"dbm_meta"`
-	DevxMeta string `json:"devx_meta"`
+	IP           string `json:"ip"`
+	CloudID      int    `json:"bk_cloud_id"`
+	OuterIP      string `json:"outer_ip,omitempty"`
+	DbmMeta      string `json:"dbm_meta"`
+	DevxMeta     string `json:"devx_meta"`
+	PerforceMeta string `json:"perforce_meta"`
 }
 
 // 返回前缀 + cloud ID + IP

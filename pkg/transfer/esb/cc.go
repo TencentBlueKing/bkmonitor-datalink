@@ -128,7 +128,16 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 				Sort:  "bk_host_id",
 			},
 			BkBizID: bizID,
-			Fields:  []string{"bk_cloud_id", "bk_host_innerip", "bk_host_outerip", "bk_host_id", "dbm_meta", "devx_meta", "bk_agent_id"},
+			Fields: []string{
+				"bk_cloud_id",
+				"bk_host_innerip",
+				"bk_host_outerip",
+				"bk_host_id",
+				"dbm_meta",
+				"devx_meta",
+				"perforce_meta",
+				"bk_agent_id",
+			},
 		},
 	}
 	response, err := c.Agent().Post("list_biz_hosts_topo").BodyProvider(reqBody).Receive(&result /* success */, &result /* failed */)

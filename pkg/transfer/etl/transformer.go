@@ -379,22 +379,26 @@ func NewTransformByField(field *config.MetaFieldConfig, rt *config.MetaResultTab
 		rtOpt := utils.NewMapHelper(rt.Option)
 		originString, _ = rtOpt.GetBool(config.MataFieldOptEnableOriginString)
 	}
+
 	if field.Type == define.MetaFieldTypeString && originString {
 		return func(from interface{}) (interface{}, error) {
 			if from == nil {
 				return nil, nil
 			}
 
-			var txt []byte
-			var err error
-			switch obj := from.(type) {
+			var matched bool
+			switch from.(type) {
 			case map[string]interface{}:
-				txt, err = json.Marshal(obj)
+				matched = true
 			case []interface{}:
-				txt, err = json.Marshal(obj)
+				matched = true
 			}
-			if err == nil {
-				return string(txt), nil
+
+			if matched {
+				txt, err := json.Marshal(from)
+				if err == nil {
+					return string(txt), nil
+				}
 			}
 
 			// 退避处理

@@ -99,7 +99,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 
 func TestSpaceSvc_RefreshBkciSpaceName(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	gomonkey.ApplyFunc(apiservice.BcsCcService.BatchGetProjects, func(s apiservice.BcsCcService, limit int, desireAllData, filterK8sKind bool) ([]map[string]string, error) {
+	gomonkey.ApplyFunc(apiservice.BcsProjectService.BatchGetProjects, func(s apiservice.BcsProjectService, kind string) ([]map[string]string, error) {
 		return []map[string]string{
 			{
 				"projectId":   "project_id_131",

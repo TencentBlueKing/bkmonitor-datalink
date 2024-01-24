@@ -214,7 +214,7 @@ func (*SpaceSvc) getBkccBizIdNameMap() (map[string]string, error) {
 
 // RefreshBkciSpaceName 刷新 bkci 类型空间名称
 func (s *SpaceSvc) RefreshBkciSpaceName() error {
-	projects, err := apiservice.BcsCc.BatchGetProjects(2000, false, false)
+	projects, err := apiservice.BcsProject.BatchGetProjects("k8s")
 	if err != nil {
 		return errors.Wrap(err, "GetBkciProjects failed")
 	}

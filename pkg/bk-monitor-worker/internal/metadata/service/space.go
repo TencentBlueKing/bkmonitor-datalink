@@ -288,7 +288,7 @@ func (s *SpaceSvc) GetValidBcsProjects() ([]map[string]string, error) {
 	}
 	bizIdList := mapx.GetMapKeys(bizIdNameMap)
 	// 返回有效的项目记录
-	projectList, err := apiservice.BcsCc.BatchGetProjects(2000, false, true)
+	projectList, err := apiservice.BcsProject.BatchGetProjects("k8s")
 	if err != nil {
 		return nil, errors.Wrap(err, "BatchGetProjects failed")
 	}

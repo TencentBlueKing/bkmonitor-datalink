@@ -334,7 +334,7 @@ type DbmRecord struct {
 }
 
 // NewTransformByField :
-func NewTransformByField(field *config.MetaFieldConfig) TransformFn {
+func NewTransformByField(field *config.MetaFieldConfig, rt *config.MetaResultTableConfig) TransformFn {
 	options := utils.NewMapHelper(field.Option)
 
 	// dbm_* 代表数据来源自 dbm 需要解析
@@ -374,7 +374,11 @@ func NewTransformByField(field *config.MetaFieldConfig) TransformFn {
 
 	// 保留原始字符串 而不是 golang 数据模型
 	// map[string]string{} => {"foo":"bar"}
-	originString, _ := options.GetBool(config.MataFieldOptEnableOriginString)
+	var originString bool
+	if rt != nil {
+		rtOpt := utils.NewMapHelper(rt.Option)
+		originString, _ = rtOpt.GetBool(config.MataFieldOptEnableOriginString)
+	}
 	if field.Type == define.MetaFieldTypeString && originString {
 		return func(from interface{}) (interface{}, error) {
 			if from == nil {

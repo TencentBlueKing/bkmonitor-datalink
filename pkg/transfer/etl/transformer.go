@@ -372,6 +372,36 @@ func NewTransformByField(field *config.MetaFieldConfig) TransformFn {
 		}
 	}
 
+	// 保留原始字符串 而不是 golang 数据模型
+	// map[string]string{} => {"foo":"bar"}
+	originString, _ := options.GetBool(config.MataFieldOptEnableOriginString)
+	if field.Type == define.MetaFieldTypeString && originString {
+		return func(from interface{}) (interface{}, error) {
+			if from == nil {
+				return nil, nil
+			}
+
+			var txt []byte
+			var err error
+			switch obj := from.(type) {
+			case map[string]interface{}:
+				txt, err = json.Marshal(obj)
+			case []interface{}:
+				txt, err = json.Marshal(obj)
+			}
+			if err == nil {
+				return string(txt), nil
+			}
+
+			// 退避处理
+			result, err := conv.DefaultConv.String(from)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+
 	switch field.Type {
 	case define.MetaFieldTypeTimestamp:
 		if options.Exists(config.MetaFieldOptTimeFormat) {

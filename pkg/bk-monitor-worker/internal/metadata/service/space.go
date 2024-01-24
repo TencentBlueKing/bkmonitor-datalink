@@ -241,14 +241,17 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 		return errors.Wrap(err, "query Space with space_type_id [bkci] failed")
 	}
 	for _, sp := range spaceList {
+		// 获取project对应的业务信息
 		bizId, ok := projectIdBizIdMap[sp.SpaceId]
 		if !ok {
+			// 获取不到则跳过
 			continue
 		}
+		// 构造dimension_values
 		dm := []map[string]interface{}{{"bk_biz_id": bizId}}
 		res, ok := spaceIdResourceMap[sp.SpaceId]
 		if !ok {
-			// 不存在则创建
+			// SpaceResource不存在则创建
 			sr := space.SpaceResource{
 				SpaceTypeId:  models.SpaceTypeBKCI,
 				SpaceId:      sp.SpaceId,
@@ -271,10 +274,11 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 			createSpaceIdList = append(createSpaceIdList, sp.SpaceId)
 			continue
 		}
+		// ResourceId与业务id一致则跳过
 		if res.ResourceId != nil && *res.ResourceId == bizId {
 			continue
 		}
-
+		// 更新ResourceId和dimension_values
 		res.ResourceId = &bizId
 		if err := res.SetDimensionValues(dm); err != nil {
 			logger.Errorf("set dimension_values [%v] for SpaceResource failed, %v", dm, err)

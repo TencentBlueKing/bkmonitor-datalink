@@ -7,17 +7,9 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkssm
+package apiservice
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
-
-type GetAccessTokenResp struct {
-	define.ApiCommonRespMeta
-	Data GetAccessTokenData `json:"data"`
-}
-type GetAccessTokenData struct {
-	AccessToken  string            `json:"access_token"`
-	RefreshToken string            `json:"refresh_token"`
-	ExpiresIn    int               `json:"expires_in"`
-	Identity     map[string]string `json:"identity"`
-}
+const (
+	ApiPageLimit    = 3000
+	ApiPageLimitStr = "3000"
+)

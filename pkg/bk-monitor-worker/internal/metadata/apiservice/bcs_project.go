@@ -10,51 +10,38 @@
 package apiservice
 
 import (
-	"strconv"
-
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs_cc"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsproject"
 )
 
-var BcsCc BcsCcService
+var BcsProject BcsProjectService
 
-type BcsCcService struct{}
+type BcsProjectService struct{}
 
-func (BcsCcService) BatchGetProjects(limit int, desireAllData, filterK8sKind bool) ([]map[string]string, error) {
-	if limit == 0 {
-		limit = 2000
+func (BcsProjectService) BatchGetProjects(kind string) ([]map[string]string, error) {
+	if kind == "" {
+		kind = "k8s"
 	}
-	params := make(map[string]string)
-	params["limit"] = strconv.Itoa(limit)
-	if desireAllData {
-		params["desire_all_data"] = "1"
-	} else {
-		params["desire_all_data"] = "0"
-	}
-	bcsCcApi, err := api.GetBcsCcApi()
+	bcsProjectApi, err := api.GetBcsProjectApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bcsCcApi failed")
 	}
-	var resp bcs_cc.GetProjectsResp
-	_, err = bcsCcApi.GetProjects().SetQueryParams(params).SetResult(&resp).Request()
+	var result []map[string]string
+	params := map[string]string{"limit": ApiPageLimitStr, "kind": kind}
+	var resp bcsproject.FetchClustersResp
+	_, err = bcsProjectApi.GetProjects().SetQueryParams(params).SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrap(err, "GetProjects failed")
 	}
-	var result []map[string]string
 	for _, i := range resp.Data.Results {
-		// 是否过滤掉非 k8s 类型数据
-		if filterK8sKind && i.Kind != 1 {
-			continue
-		}
 		result = append(result, map[string]string{
-			"projectId":   i.ProjectId,
-			"name":        i.ProjectName,
-			"projectCode": i.EnglishName,
-			"bkBizId":     strconv.Itoa(i.CcAppId),
+			"projectId":   i.ProjectID,
+			"name":        i.Name,
+			"projectCode": i.ProjectCode,
+			"bkBizId":     i.BusinessID,
 		})
 	}
-
 	return result, nil
 }

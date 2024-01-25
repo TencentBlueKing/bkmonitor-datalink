@@ -19,7 +19,7 @@ type Client struct {
 	define.BkApiClient
 }
 
-// New bk_gse client
+// New cmdb client
 func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
 	client, err := bkapi.NewBkApiClient("cmdb", configProvider, opts...)
 	if err != nil {

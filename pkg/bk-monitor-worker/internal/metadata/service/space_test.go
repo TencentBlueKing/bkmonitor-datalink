@@ -100,6 +100,85 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 
 }
 
+func TestSpaceSvc_RefreshBcsProjectBiz(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	sp1 := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_1",
+		SpaceName:   "project_name_1",
+		SpaceCode:   "code_1",
+		IsBcsValid:  true,
+	}
+	sp2 := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_2",
+		SpaceName:   "project_name_2",
+		SpaceCode:   "code_2",
+		IsBcsValid:  true,
+	}
+	db.Delete(&space.Space{}, "space_type_id = 'bkci' and space_id in (?)", []string{"project_code_1", "project_code_2"})
+	err := sp1.Create(db)
+	assert.NoError(t, err)
+	err = sp2.Create(db)
+	assert.NoError(t, err)
+
+	db.Delete(&space.SpaceResource{}, "space_id in (?)", []string{"project_code_1", "project_code_2"})
+	bizId := "999"
+	sr := space.SpaceResource{
+		SpaceTypeId:     models.SpaceTypeBKCI,
+		SpaceId:         "project_code_2",
+		ResourceType:    models.SpaceTypeBKCC,
+		ResourceId:      &bizId,
+		DimensionValues: "{}",
+		BaseModel:       models.BaseModel{},
+	}
+	db.Delete(&sr, "space_type_id = 'bkci' and resource_type = 'bkcc' and space_id in (?)", []string{"project_code_1", "project_code_2"})
+	err = sr.Create(db)
+	assert.NoError(t, err)
+	spaceSvcTarget := SpaceSvc{}
+	patch := gomonkey.ApplyMethod(&spaceSvcTarget, "GetValidBcsProjects", func() ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "project_id_1",
+				"name":        "project_name_1",
+				"projectCode": "project_code_1",
+				"bkBizId":     "31",
+			},
+			{
+				"projectId":   "project_id_2",
+				"name":        "project_name_2",
+				"projectCode": "project_code_2",
+				"bkBizId":     "32",
+			},
+		}, nil
+	})
+	defer patch.Reset()
+	svc := NewSpaceSvc(nil)
+	err = svc.RefreshBcsProjectBiz()
+	assert.NoError(t, err)
+	var sr1, sr2 space.SpaceResource
+	err = space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_1").ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdEq("31").One(&sr1)
+	assert.NoError(t, err)
+	err = space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_2").ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdEq("32").One(&sr2)
+	assert.NoError(t, err)
+
+	dm1 := []map[string]interface{}{{"bk_biz_id": "31"}}
+	sr1Dm, err := sr1.GetDimensionValues()
+	assert.NoError(t, err)
+	equal, err := jsonx.CompareObjects(dm1, sr1Dm)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
+	dm2 := []map[string]interface{}{{"bk_biz_id": "32"}}
+	sr2Dm, err := sr2.GetDimensionValues()
+	assert.NoError(t, err)
+	equal, err = jsonx.CompareObjects(dm2, sr2Dm)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
+}
+
 func TestSpaceSvc_SyncBcsSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB

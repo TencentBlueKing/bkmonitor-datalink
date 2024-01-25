@@ -37,6 +37,7 @@ var (
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
 )
+
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client

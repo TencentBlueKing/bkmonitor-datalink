@@ -33,7 +33,6 @@ require (
 	github.com/josephburnett/jd v1.7.1
 	github.com/json-iterator/go v1.1.12
 	github.com/minio/highwayhash v1.0.2
-	github.com/nsf/jsondiff v0.0.0-20230430225905-43f6cf3098c1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.13.0

@@ -18,9 +18,13 @@ import (
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
@@ -85,4 +89,227 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("101").SpaceNameEq("biz_101").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp101))
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("102").SpaceNameEq("biz_102").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp102))
 
+}
+
+func TestSpaceSvc_RefreshBcsProjectBiz(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	sp1 := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_1",
+		SpaceName:   "project_name_1",
+		SpaceCode:   "code_1",
+		IsBcsValid:  true,
+	}
+	sp2 := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_2",
+		SpaceName:   "project_name_2",
+		SpaceCode:   "code_2",
+		IsBcsValid:  true,
+	}
+	db.Delete(&space.Space{}, "space_type_id = 'bkci' and space_id in (?)", []string{"project_code_1", "project_code_2"})
+	err := sp1.Create(db)
+	assert.NoError(t, err)
+	err = sp2.Create(db)
+	assert.NoError(t, err)
+
+	db.Delete(&space.SpaceResource{}, "space_id in (?)", []string{"project_code_1", "project_code_2"})
+	bizId := "999"
+	sr := space.SpaceResource{
+		SpaceTypeId:     models.SpaceTypeBKCI,
+		SpaceId:         "project_code_2",
+		ResourceType:    models.SpaceTypeBKCC,
+		ResourceId:      &bizId,
+		DimensionValues: "{}",
+		BaseModel:       models.BaseModel{},
+	}
+	db.Delete(&sr, "space_type_id = 'bkci' and resource_type = 'bkcc' and space_id in (?)", []string{"project_code_1", "project_code_2"})
+	err = sr.Create(db)
+	assert.NoError(t, err)
+	spaceSvcTarget := SpaceSvc{}
+	patch := gomonkey.ApplyMethod(&spaceSvcTarget, "GetValidBcsProjects", func() ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "project_id_1",
+				"name":        "project_name_1",
+				"projectCode": "project_code_1",
+				"bkBizId":     "31",
+			},
+			{
+				"projectId":   "project_id_2",
+				"name":        "project_name_2",
+				"projectCode": "project_code_2",
+				"bkBizId":     "32",
+			},
+		}, nil
+	})
+	defer patch.Reset()
+	svc := NewSpaceSvc(nil)
+	err = svc.RefreshBcsProjectBiz()
+	assert.NoError(t, err)
+	var sr1, sr2 space.SpaceResource
+	err = space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_1").ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdEq("31").One(&sr1)
+	assert.NoError(t, err)
+	err = space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_2").ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdEq("32").One(&sr2)
+	assert.NoError(t, err)
+
+	dm1 := []map[string]interface{}{{"bk_biz_id": "31"}}
+	sr1Dm, err := sr1.GetDimensionValues()
+	assert.NoError(t, err)
+	equal, err := jsonx.CompareObjects(dm1, sr1Dm)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
+	dm2 := []map[string]interface{}{{"bk_biz_id": "32"}}
+	sr2Dm, err := sr2.GetDimensionValues()
+	assert.NoError(t, err)
+	equal, err = jsonx.CompareObjects(dm2, sr2Dm)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+
+}
+
+func TestSpaceSvc_SyncBcsSpace(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	sp := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_11",
+		IsBcsValid:  true,
+	}
+	db.Delete(&space.Space{}, "space_id in (?)", []string{"project_code_11", "project_code_22"})
+	assert.NoError(t, sp.Create(db))
+
+	db.Delete(&space.SpaceResource{}, "space_id = ?", "project_code_22")
+	db.Delete(&space.SpaceDataSource{}, "space_id = ?", "project_code_22")
+
+	clusterSingle := bcs.BCSClusterInfo{
+		ClusterID:          "bcs_space_test_cluster_single",
+		K8sMetricDataID:    176001,
+		CustomMetricDataID: 176002,
+	}
+	clusterShared := bcs.BCSClusterInfo{
+		ClusterID:          "bcs_space_test_cluster_shared",
+		K8sMetricDataID:    176011,
+		CustomMetricDataID: 176012,
+	}
+	db.Delete(&bcs.BCSClusterInfo{}, "cluster_id in (?)", []string{"bcs_space_test_cluster_single", "bcs_space_test_cluster_shared"})
+	assert.NoError(t, clusterSingle.Create(db))
+	assert.NoError(t, clusterShared.Create(db))
+
+	ds1 := resulttable.DataSource{
+		BkDataId:        176001,
+		DataName:        "ds_176001",
+		DataDescription: "ds_176001",
+		EtlConfig:       models.ETLConfigTypeBkStandardV2TimeSeries,
+		IsEnable:        true,
+	}
+	ds2 := resulttable.DataSource{
+		BkDataId:        176002,
+		DataName:        "ds_176002",
+		DataDescription: "ds_176002",
+		EtlConfig:       models.ETLConfigTypeBkStandardV2TimeSeries,
+		IsEnable:        true,
+	}
+	ds3 := resulttable.DataSource{
+		BkDataId:        176011,
+		DataName:        "ds_176011",
+		DataDescription: "ds_176011",
+		EtlConfig:       models.ETLConfigTypeBkStandardV2TimeSeries,
+		IsEnable:        true,
+	}
+	ds4 := resulttable.DataSource{
+		BkDataId:        176012,
+		DataName:        "ds_176012",
+		DataDescription: "ds_176012",
+		EtlConfig:       models.ETLConfigTypeBkStandardV2TimeSeries,
+		IsEnable:        true,
+	}
+	db.Delete(&resulttable.DataSource{}, "bk_data_id in (?)", []uint{176001, 176002, 176011, 176012})
+	assert.NoError(t, ds1.Create(db))
+	assert.NoError(t, ds2.Create(db))
+	assert.NoError(t, ds3.Create(db))
+	assert.NoError(t, ds4.Create(db))
+
+	spaceSvcTarget := SpaceSvc{}
+	patch := gomonkey.ApplyMethod(&spaceSvcTarget, "GetValidBcsProjects", func() ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "project_id_11",
+				"name":        "project_name_11",
+				"projectCode": "project_code_11",
+				"bkBizId":     "41",
+			},
+			{
+				"projectId":   "project_id_22",
+				"name":        "project_name_22",
+				"projectCode": "project_code_22",
+				"bkBizId":     "42",
+			},
+		}, nil
+	})
+	defer patch.Reset()
+	gomonkey.ApplyFunc(apiservice.BcsClusterManagerService.GetProjectClusters, func(s apiservice.BcsClusterManagerService, projectId string, excludeSharedCluster bool) ([]map[string]interface{}, error) {
+		if projectId != "project_id_22" {
+			return nil, nil
+		}
+		return []map[string]interface{}{
+			{
+				"projectId": "project_id_22",
+				"clusterId": "bcs_space_test_cluster_single",
+				"bkBizId":   "42",
+				"isShared":  false,
+			},
+			{
+				"projectId": "project_id_22",
+				"clusterId": "bcs_space_test_cluster_shared",
+				"bkBizId":   "42",
+				"isShared":  true,
+			},
+		}, nil
+	})
+	gomonkey.ApplyFunc(apiservice.BcsService.FetchSharedClusterNamespaces, func(s apiservice.BcsService, clusterId string, projectCode string) ([]map[string]string, error) {
+		if projectCode != "project_code_22" {
+			return nil, nil
+		}
+		return []map[string]string{
+			{
+				"projectId":   "project_id_22",
+				"projectCode": projectCode,
+				"clusterId":   clusterId,
+				"namespace":   "n1",
+			},
+			{
+				"projectId":   "project_id_22",
+				"projectCode": projectCode,
+				"clusterId":   clusterId,
+				"namespace":   "n2",
+			},
+		}, nil
+	})
+	svc := NewSpaceSvc(nil)
+	assert.NoError(t, svc.SyncBcsSpace())
+	// 已存在的space更新
+	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq(sp.SpaceId).One(&sp))
+	assert.Equal(t, "project_name_11", sp.SpaceName)
+	assert.Equal(t, "project_id_11", sp.SpaceCode)
+
+	// 新创建的space
+	var sp22 space.Space
+	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_22").SpaceNameEq("project_name_22").SpaceCodeEq("project_id_22").IsBcsValidEq(true).One(&sp22))
+	// spaceDataSource
+	count, err := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_22").BkDataIdIn(176001, 176002, 176011, 176012).FromAuthorizationEq(false).Count()
+	assert.NoError(t, err)
+	assert.Equal(t, 4, count)
+	// spaceResource
+	var srBkcc, srBcs space.SpaceResource
+	assert.NoError(t, space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_22").ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdEq("42").One(&srBkcc))
+	assert.NoError(t, space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq("project_code_22").ResourceTypeEq(models.SpaceTypeBCS).ResourceIdEq("project_code_22").One(&srBcs))
+	equal, err := jsonx.CompareJson(`[{"bk_biz_id":"42"}]`, srBkcc.DimensionValues)
+	assert.NoError(t, err)
+	assert.True(t, equal)
+	equal, err = jsonx.CompareJson(`[{"cluster_id":"bcs_space_test_cluster_single","cluster_type":"single","namespace":null},{"cluster_id":"bcs_space_test_cluster_shared","cluster_type":"shared","namespace":["n1","n2"]}]`, srBcs.DimensionValues)
+	assert.NoError(t, err)
+	assert.True(t, equal)
 }

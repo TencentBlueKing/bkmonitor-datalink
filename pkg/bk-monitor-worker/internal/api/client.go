@@ -20,6 +20,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsproject"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -31,6 +32,7 @@ import (
 var (
 	muForGseApi            sync.Mutex
 	muForBcsApi            sync.Mutex
+	muForBcsProjectApi     sync.Mutex
 	muForBcsClusterManager sync.Mutex
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
@@ -41,6 +43,7 @@ var (
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client
+	bcsProjectApi     *bcsproject.Client
 	bcsClusterManager *bcsclustermanager.Client
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
@@ -124,6 +127,25 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return nil, err
 	}
 	return bcsClusterManager, nil
+}
+
+// GetBcsProjectApi 获取GetBcsProjectApi客户端
+func GetBcsProjectApi() (*bcsproject.Client, error) {
+	muForBcsProjectApi.Lock()
+	defer muForBcsProjectApi.Unlock()
+	if bcsProjectApi != nil {
+		return bcsProjectApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsProjectApi, err = bcsproject.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken), "X-Project-Username": "admin"}))
+	if err != nil {
+		return nil, err
+	}
+	return bcsProjectApi, nil
 }
 
 // GetCmdbApi 获取CmdbApi客户端

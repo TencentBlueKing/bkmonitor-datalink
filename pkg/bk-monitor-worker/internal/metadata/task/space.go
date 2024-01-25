@@ -82,3 +82,35 @@ func SyncBkccSpaceDataSource(ctx context.Context, t *t.Task) error {
 	logger.Info("sync bkcc space data source successfully")
 	return nil
 }
+
+// RefreshBcsProjectBiz 检测 bcs 项目绑定的业务的变化
+func RefreshBcsProjectBiz(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshBcsProjectBiz Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start check and update the bind biz of bcs project task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.RefreshBcsProjectBiz(); err != nil {
+		return errors.Wrap(err, "refresh bcs project biz failed")
+	}
+	logger.Info("refresh bcs project biz successfully")
+	return nil
+}
+
+// SyncBcsSpace 同步 BCS 项目空间数据
+func SyncBcsSpace(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("SyncBcsSpace Runtime panic caught: %v", err)
+		}
+	}()
+	logger.Info("start sync bcs space task")
+	svc := service.NewSpaceSvc(nil)
+	if err := svc.SyncBcsSpace(); err != nil {
+		return errors.Wrap(err, "sync bcs space task failed")
+	}
+	logger.Info("sync bcs space task successfully")
+	return nil
+}

@@ -32,7 +32,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -383,7 +385,7 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 	db.Delete(&resulttable.DataSourceOption{}, "bk_data_id > ?", initChannelId)
 	db.Delete(&customreport.TimeSeriesGroup{}, fmt.Sprintf("time_series_group_name like '%%%s%%'", clusterID))
 	db.Delete(&customreport.EventGroup{}, "bk_data_id > ?", initChannelId)
-	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+	httpPatch := gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "add_route") {
 			initChannelId += 1
@@ -401,10 +403,12 @@ func TestBcsClusterInfoSvc_RegisterCluster(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
+	defer httpPatch.Reset()
 	patch := gomonkey.ApplyMethod(ResultTableSvc{}, "CreateResultTable", func(ResultTableSvc, uint, int, string, string, bool, string, string, string, map[string]interface{}, []map[string]interface{}, bool, map[string]interface{}, string, map[string]interface{}) error {
 		return nil
 	})
 	defer patch.Reset()
+	gomonkey.ApplyFunc(hashconsul.Put, func(c *consul.Instance, key, val string) error { return nil })
 	cluster, err := NewBcsClusterInfoSvc(nil).RegisterCluster(bkBizId, clusterID, projectId, "test")
 	assert.NoError(t, err)
 	dataIdList := []uint{cluster.K8sMetricDataID, cluster.CustomMetricDataID, cluster.K8sEventDataID}
@@ -606,7 +610,7 @@ func TestBcsClusterInfoSvc_RefreshClusterResource(t *testing.T) {
 		}, nil
 	})
 
-	gomonkey.ApplyFunc(apiservice.Bcs.FetchSharedClusterNamespaces, func(s apiservice.BcsClusterManagerService, clusterId string, projectCode string) ([]map[string]string, error) {
+	gomonkey.ApplyFunc(apiservice.BcsService.FetchSharedClusterNamespaces, func(s apiservice.BcsService, clusterId string, projectCode string) ([]map[string]string, error) {
 		return []map[string]string{
 			{
 				"projectId":   "shared_cluster",

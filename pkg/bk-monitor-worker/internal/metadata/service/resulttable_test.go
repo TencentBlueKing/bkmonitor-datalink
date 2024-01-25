@@ -23,13 +23,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestResultTableSvc_CreateResultTable(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	gomonkey.ApplyPrivateMethod(InfluxdbStorageSvc{}, "syncDb", func(_ InfluxdbStorageSvc) error { return nil })
+	gomonkey.ApplyFunc(hashconsul.Put, func(c *consul.Instance, key, val string) error { return nil })
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "v1/kv") {

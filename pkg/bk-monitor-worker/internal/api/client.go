@@ -20,6 +20,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsproject"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -30,14 +31,17 @@ import (
 var (
 	muForGseApi            sync.Mutex
 	muForBcsApi            sync.Mutex
+	muForBcsProjectApi     sync.Mutex
 	muForBcsClusterManager sync.Mutex
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
 )
+
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client
+	bcsProjectApi     *bcsproject.Client
 	bcsClusterManager *bcsclustermanager.Client
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
@@ -111,16 +115,34 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
-		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
-		JsonMarshaler:       jsonx.Marshal,
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		JsonMarshaler: jsonx.Marshal,
 	}
 	var err error
-	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)}))
 	if err != nil {
 		return nil, err
 	}
 	return bcsClusterManager, nil
+}
+
+// GetBcsProjectApi 获取GetBcsProjectApi客户端
+func GetBcsProjectApi() (*bcsproject.Client, error) {
+	muForBcsProjectApi.Lock()
+	defer muForBcsProjectApi.Unlock()
+	if bcsProjectApi != nil {
+		return bcsProjectApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsProjectApi, err = bcsproject.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken), "X-Project-Username": "admin"}))
+	if err != nil {
+		return nil, err
+	}
+	return bcsProjectApi, nil
 }
 
 // GetCmdbApi 获取CmdbApi客户端
@@ -198,4 +220,27 @@ func GetBkdataApi() (*bkdata.Client, error) {
 		return nil, err
 	}
 	return bkdataApi, nil
+}
+
+// HeaderProvider provide request header.
+type HeaderProvider struct {
+	Header map[string]string
+}
+
+// NewHeaderProvider creates a new HeaderProvider.
+func NewHeaderProvider(header map[string]string) *HeaderProvider {
+	return &HeaderProvider{
+		Header: header,
+	}
+}
+
+// ApplyToClient will add to the operation operations.
+func (p *HeaderProvider) ApplyToClient(cli define.BkApiClient) error {
+	return cli.AddOperationOptions(p)
+}
+
+// ApplyToOperation will set the body provider.
+func (p *HeaderProvider) ApplyToOperation(op define.Operation) error {
+	op.SetHeaders(p.Header)
+	return nil
 }

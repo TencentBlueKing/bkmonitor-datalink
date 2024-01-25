@@ -45,6 +45,7 @@ var (
 	RefreshBkccSpace        = "periodic:metadata:refresh_bkcc_space"
 	RefreshClusterResource  = "periodic:metadata:refresh_cluster_resource"
 	RefreshBcsProjectBiz    = "periodic:metadata:refresh_bcs_project_biz"
+	SyncBcsSpace            = "periodic:metadata:sync_bcs_space"
 	RefreshBkciSpaceName    = "periodic:metadata:refresh_bkci_space_name"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
@@ -117,6 +118,10 @@ var (
 		RefreshBcsProjectBiz: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsProjectBiz,
+		},
+		SyncBcsSpace: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.SyncBcsSpace,
 		},
 		RefreshBkciSpaceName: {
 			Cron:    "0 3 * * *",

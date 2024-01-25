@@ -196,6 +196,12 @@ var (
 
 	// AesKey project aes key
 	AesKey string
+	// BkdataTokenSalt bkdata token salt
+	BkdataTokenSalt string
+	// BkdataAESIv bkdata AES IV
+	BkdataAESIv string
+	// BkdataAESKey bkdata AES Key
+	BkdataAESKey string
 
 	// BkApiEnabled enabled bk-apigw
 	BkApiEnabled bool
@@ -361,6 +367,9 @@ func initVariables() {
 	WorkerListenPort = GetValue("service.worker.port", 10213)
 
 	AesKey = GetValue("aes.key", "")
+	BkdataTokenSalt = GetValue("aes.bkdataToken", "bk")
+	BkdataAESIv = GetValue("aes.bkdataAESIv", "bkbkbkbkbkbkbkbk")
+	BkdataAESKey = GetValue("aes.bkdataAESKey", "")
 
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
 	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")

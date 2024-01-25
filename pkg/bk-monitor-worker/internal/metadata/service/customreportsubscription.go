@@ -12,18 +12,21 @@ package service
 import (
 	"strconv"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/jinzhu/gorm"
-	"github.com/nsf/jsondiff"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -39,8 +42,58 @@ func NewCustomReportSubscriptionSvc(obj *customreport.CustomReportSubscription) 
 	}
 }
 
+func (s CustomReportSubscriptionSvc) RefreshCustomReport2Config(bkBizId *int) error {
+	var BkBizIdStr string
+	if bkBizId == nil {
+		BkBizIdStr = "nil"
+	} else {
+		BkBizIdStr = strconv.Itoa(*bkBizId)
+	}
+	// 判定节点管理是否上传支持v2新配置模版的bk-collector版本0.16.1061
+	defaultVersion := "0.0.0"
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return err
+	}
+	var resp nodeman.PluginInfoResp
+	_, err = nodemanApi.PluginInfo().SetQueryParams(map[string]string{"name": "bk-collector"}).SetResult(&resp).Request()
+	if err != nil {
+		return errors.Wrap(err, "get PluginInfo with name [bk-collector] failed")
+	}
+	var versionStrList []string
+	for _, plugin := range resp.Data {
+		if plugin.IsReady {
+			if plugin.Version == "" {
+				versionStrList = append(versionStrList, defaultVersion)
+			} else {
+				versionStrList = append(versionStrList, plugin.Version)
+			}
+		}
+	}
+	maxVersion := getMaxVersion(defaultVersion, versionStrList)
+
+	if compareVersion(maxVersion, models.RecommendedBkCollectorVersion) > 0 {
+		if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(bkBizId, "bk-collector", "add"); err != nil {
+			return errors.Wrapf(err, "RefreshCollectorCustomConf with bk_biz_id [%s] plugin_name [bk-collector] op_type [add] failed", BkBizIdStr)
+		}
+	} else {
+		logger.Infof("bk-collector version [%s] lower than supported version %s, stop refresh bk-collector config", maxVersion, models.RecommendedBkCollectorVersion)
+	}
+	// bkmonitorproxy全量更新
+	if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(nil, "bkmonitorproxy", "add"); err != nil {
+		return errors.Wrapf(err, "RefreshCollectorCustomConf with bk_biz_id [nil] plugin_name [bkmonitorproxy] op_type [add] failed")
+	}
+	return nil
+}
+
 // RefreshCollectorCustomConf 指定业务ID更新，或者更新全量业务
 func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pluginName, opType string) error {
+	if opType == "" {
+		opType = "add"
+	}
+	if pluginName == "" {
+		pluginName = "bkmonitorproxy"
+	}
 	var BkBizIdStr string
 	if bkBizId == nil {
 		BkBizIdStr = "nil"
@@ -48,26 +101,19 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		BkBizIdStr = strconv.Itoa(*bkBizId)
 	}
 	logger.Infof("refresh custom report config to proxy on bk_biz_id [%s]", BkBizIdStr)
-	if opType == "" {
-		opType = "add"
-	}
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return err
-	}
-	var bizResp cmdb.SearchBusinessResp
-	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
-		return err
-	}
 
-	customEventConfig, err := s.GetCustomEventConfig(bkBizId, pluginName)
+	customEventConfig, err := s.GetCustomConfig(bkBizId, "event", pluginName)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "GetCustomConfig with bk_biz_id [%s] data_type [event] plugin_name [%s] failed", BkBizIdStr, pluginName)
 	}
-	customTSConfig, err := s.GetCustomTSConfig(bkBizId, pluginName)
+	logger.Infof("get custom event config success, bk_biz_id [%v], len(config) [%v]", bkBizId, len(customEventConfig))
+	customTSConfig, err := s.GetCustomConfig(bkBizId, "time_series", pluginName)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "GetCustomTSConfig with bk_biz_id [%s] data_type [time_series] plugin_name [%s] failed", BkBizIdStr, pluginName)
 	}
+	logger.Infof("get custom time_series config success, bk_biz_id [%v], len(config) [%v]", bkBizId, len(customTSConfig))
+
+	// 合并配置信息
 	dictItems := make(map[int][]map[string]interface{})
 	for k, v := range customEventConfig {
 		dictItems[k] = v
@@ -84,37 +130,52 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 	if bkBizId == nil {
 		isAllBizRefresh = true
 	}
+	cmdbApi, err := api.GetCmdbApi()
+	if err != nil {
+		return errors.Wrap(err, "GetCmdbApi failed")
+	}
+	var bizResp cmdb.SearchBusinessResp
+	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
+		return errors.Wrap(err, "SearchBusinessResp failed")
+	}
+	allBizIdSet := mapset.NewSet[int]()
+	for _, info := range bizResp.Data.Info {
+		allBizIdSet.Add(info.BkBizId)
+	}
 	var bizIdToProxy = make(map[int][]cmdb.ListBizHostsTopoDataInfo)
-	for _, bizInfo := range bizResp.Data.Info {
-		if !isAllBizRefresh && *bkBizId != bizInfo.BkBizId {
+	bizIter := allBizIdSet.Iterator()
+	defer bizIter.Stop()
+	for bizId := range bizIter.C {
+		if !isAllBizRefresh && *bkBizId != bizId {
 			// 如果仅仅是只刷新一个业务，则跳过其他业务的proxy获取
 			continue
 		}
 		nodemanApi, err := api.GetNodemanApi()
 		if err != nil {
-			return err
+			return errors.Wrap(err, "GetNodemanApi failed")
 		}
 		var proxiesResp nodeman.GetProxiesResp
-		_, err = nodemanApi.GetProxiesByBiz().SetQueryParams(map[string]string{"bk_biz_id": strconv.Itoa(bizInfo.BkBizId)}).SetResult(&proxiesResp).Request()
+		_, err = nodemanApi.GetProxiesByBiz().SetQueryParams(map[string]string{"bk_biz_id": strconv.Itoa(bizId)}).SetResult(&proxiesResp).Request()
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "GetProxiesByBiz with bk_biz_id [%v] failed", bizId)
 		}
-		var proxyBizIdList []int
+		proxyBizIdSet := mapset.NewSet[int]()
 		for _, proxy := range proxiesResp.Data {
-			proxyBizIdList = append(proxyBizIdList, proxy.BkBizId)
+			proxyBizIdSet.Add(proxy.BkBizId)
 		}
+		var proxyBizIdList = proxyBizIdSet.ToSlice()
 		var proxyHostList []cmdb.ListBizHostsTopoDataInfo
 		for _, proxyBizId := range proxyBizIdList {
-			var params []GetHostByIpParams
+			var params []apiservice.GetHostByIpParams
 			for _, proxy := range proxiesResp.Data {
 				if proxy.BkBizId == proxyBizId {
-					params = append(params, GetHostByIpParams{
+					params = append(params, apiservice.GetHostByIpParams{
 						Ip:        proxy.InnerIp,
 						BkCloudId: proxy.BkCloudId,
 					})
 				}
 			}
-			hostInfos, err := NewBcsClusterInfoSvc(nil).getHostByIp(params, proxyBizId)
+			hostInfos, err := apiservice.CMDB.GetHostByIp(params, proxyBizId)
 			if err != nil {
 				return err
 			}
@@ -123,29 +184,20 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 			}
 		}
 		for _, host := range proxyHostList {
-			if ls, ok := bizIdToProxy[bizInfo.BkBizId]; ok {
-				bizIdToProxy[bizInfo.BkBizId] = append(ls, host)
+			if ls, ok := bizIdToProxy[bizId]; ok {
+				bizIdToProxy[bizId] = append(ls, host)
 			} else {
-				bizIdToProxy[bizInfo.BkBizId] = []cmdb.ListBizHostsTopoDataInfo{host}
+				bizIdToProxy[bizId] = []cmdb.ListBizHostsTopoDataInfo{host}
 			}
 		}
 
 	}
 
 	for bizId, items := range dictItems {
-		if bizId > 0 {
-			var exist bool
-			for _, bizInfo := range bizResp.Data.Info {
-				if bizId == bizInfo.BkBizId {
-					exist = true
-					break
-				}
-			}
+		if !allBizIdSet.Contains(bizId) && bizId > 0 {
 			// 如果cmdb不存在这个业务，那么需要跳过这个业务的下发
-			if !exist {
-				logger.Infof("biz_id [%v] does not exists in cmdb", bizId)
-				continue
-			}
+			logger.Infof("biz_id [%v] does not exists in cmdb", bizId)
+			continue
 		}
 		if !isAllBizRefresh && *bkBizId != bizId {
 			// 如果仅仅是只刷新一个业务，则跳过其他业务的下发
@@ -164,177 +216,201 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		// 通过节点管理下发配置
 		err := s.CreateSubscription(bizId, items, bkHostIdList, pluginName, opType)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "CreateSubscription with bk_biz_id [%v] items [%v] bk_host_id_list [%v] plugin_name [%s] op_type [%s] failed, %v", bizId, items, bkHostIdList, pluginName, opType, err)
 		}
+	}
+	// 通过节点管理下发直连区域配置，下发全部bk_data_id
+	var allItems []map[string]interface{}
+	for _, items := range dictItems {
+		allItems = append(allItems, items...)
+	}
+	proxyIps := cfg.GlobalCustomReportDefaultProxyIp
+	if len(proxyIps) == 0 {
+		logger.Warn("update custom report config to default cloud area failed, The default cloud area is not deployed")
+		return nil
+	}
+	hosts, err := apiservice.CMDB.GetHostWithoutBiz(proxyIps)
+	if err != nil {
+		return errors.Wrapf(err, "GetHostWithoutBiz with host_ips [%v] failed", proxyIps)
+	}
+	if len(hosts) == 0 {
+		logger.Warn("update custom report config to default cloud area failed, not found host from cmdb")
+		return nil
+	}
+	var proxyHostIds []int
+	for _, h := range hosts {
+		proxyHostIds = append(proxyHostIds, h.BkHostId)
+	}
+	if err := s.CreateSubscription(0, allItems, proxyHostIds, pluginName, opType); err != nil {
+		return errors.Wrapf(err, "CreateSubscription with bk_biz_id [0] items [%v] bk_host_id [%v] plugin_name [%s] op_type [%s]", allItems, proxyHostIds, pluginName, opType)
 	}
 	return nil
 }
 
-// GetCustomEventConfig 获取自定义上报event配置的数据
-func (CustomReportSubscriptionSvc) GetCustomEventConfig(bkBizId *int, pluginName string) (map[int][]map[string]interface{}, error) {
+// GetCustomConfig 获取自定义上报配置的数据
+func (s CustomReportSubscriptionSvc) GetCustomConfig(bkBizId *int, dataType, pluginName string) (map[int][]map[string]interface{}, error) {
+	if dataType == "" {
+		dataType = "event"
+	}
 	var BkBizIdStr string
 	if bkBizId == nil {
 		BkBizIdStr = "nil"
 	} else {
 		BkBizIdStr = strconv.Itoa(*bkBizId)
 	}
-	logger.Infof("get custom event config, bk_biz_id [%v]", BkBizIdStr)
-	db := mysql.GetDBSession().DB
-	eventGroupQS := customreport.NewEventGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
-	if bkBizId != nil {
-		eventGroupQS = eventGroupQS.BkBizIDEq(*bkBizId)
-	}
-	var eventGroupList []customreport.EventGroup
-	if err := eventGroupQS.All(&eventGroupList); err != nil {
-		return nil, err
-	}
-	if len(eventGroupList) == 0 {
-		return nil, nil
-	}
-	var bkDataIdList []uint
-	for _, eg := range eventGroupList {
-		bkDataIdList = append(bkDataIdList, eg.BkDataID)
-	}
-
+	logger.Infof("get custom event config, bk_biz_id [%s]", BkBizIdStr)
 	// 从数据库查询到bk_biz_id到自定义上报配置的数据
-	var dsList []resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
-		return nil, err
-	}
-	var dsMap = make(map[uint]resulttable.DataSource)
-	for _, ds := range dsList {
-		dsMap[ds.BkDataId] = ds
-	}
-	var result = make(map[int][]map[string]interface{})
-	for _, eg := range eventGroupList {
-		ds, ok := dsMap[eg.BkDataID]
-		if !ok {
-			continue
+	db := mysql.GetDBSession().DB
+	var bkDataIdList []uint
+	var groups []customreport.CustomGroupBase
+	if dataType == "event" {
+		eventGroupQS := customreport.NewEventGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
+		if bkBizId != nil {
+			eventGroupQS = eventGroupQS.BkBizIDEq(*bkBizId)
 		}
-		maxRate := eg.MaxRate
-		if maxRate < 0 {
-			maxRate = models.MaxDataIdThroughPut
+		var eventGroupList []customreport.EventGroup
+		if err := eventGroupQS.All(&eventGroupList); err != nil {
+			return nil, errors.Wrapf(err, "query EventGroup failed")
 		}
-		var dataIdConfig = map[string]interface{}{
-			"dataid":                 eg.BkDataID,
-			"datatype":               "event",
-			"version":                "v2",
-			"access_token":           ds.Token,
-			"max_rate":               maxRate,
-			"max_future_time_offset": models.MaxFutureTimeOffset,
+		if len(eventGroupList) == 0 {
+			return nil, nil
 		}
-		if pluginName == "bk-collector" {
-			dataIdConfig["bk_data_token"] = ds.Token
-			dataIdConfig["bk_data_id"] = eg.BkDataID
-			dataIdConfig["token_config"] = map[string]interface{}{
-				"name":         "token_checker/proxy",
-				"proxy_dataid": eg.BkDataID,
-				"proxy_token":  ds.Token,
-			}
-			dataIdConfig["qps_config"] = map[string]interface{}{
-				"name": "rate_limiter/token_bucket",
-				"type": "token_bucket",
-				"qps":  maxRate,
-			}
-			dataIdConfig["validator_config"] = map[string]interface{}{
-				"name":                   "proxy_validator/common",
-				"type":                   "event",
-				"version":                "v2",
-				"max_future_time_offset": models.MaxFutureTimeOffset,
-			}
+		for _, eg := range eventGroupList {
+			bkDataIdList = append(bkDataIdList, eg.BkDataID)
+			groups = append(groups, eg.CustomGroupBase)
 		}
-		if configs, ok := result[eg.BkBizID]; ok {
-			result[eg.BkBizID] = append(configs, dataIdConfig)
-		} else {
-			result[eg.BkBizID] = []map[string]interface{}{dataIdConfig}
-		}
-	}
-	return result, nil
-}
-
-// GetCustomTSConfig 获取自定义上报TS配置的数据
-func (CustomReportSubscriptionSvc) GetCustomTSConfig(bkBizId *int, pluginName string) (map[int][]map[string]interface{}, error) {
-	var BkBizIdStr string
-	if bkBizId == nil {
-		BkBizIdStr = "nil"
 	} else {
-		BkBizIdStr = strconv.Itoa(*bkBizId)
+		tsGroupQS := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
+		if bkBizId != nil {
+			tsGroupQS = tsGroupQS.BkBizIDEq(*bkBizId)
+		}
+		var tsGroupList []customreport.TimeSeriesGroup
+		if err := tsGroupQS.All(&tsGroupList); err != nil {
+			return nil, errors.Wrapf(err, "query TimeSeriesGroup failed")
+		}
+		if len(tsGroupList) == 0 {
+			return nil, nil
+		}
+		for _, ts := range tsGroupList {
+			bkDataIdList = append(bkDataIdList, ts.BkDataID)
+			groups = append(groups, ts.CustomGroupBase)
+		}
 	}
-	logger.Infof("get custom ts config, bk_biz_id [%v]", BkBizIdStr)
-	db := mysql.GetDBSession().DB
-	tsGroupQS := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false)
-	if bkBizId != nil {
-		tsGroupQS = tsGroupQS.BkBizIDEq(*bkBizId)
-	}
-	var tsGroupList []customreport.TimeSeriesGroup
-	if err := tsGroupQS.All(&tsGroupList); err != nil {
-		return nil, err
-	}
-	if len(tsGroupList) == 0 {
-		return nil, nil
-	}
-	var bkDataIdList []uint
-	for _, ts := range tsGroupList {
-		bkDataIdList = append(bkDataIdList, ts.BkDataID)
-	}
-
-	// 从数据库查询到bk_biz_id到自定义上报配置的数据
+	// 查询对应datasource信息
 	var dsList []resulttable.DataSource
 	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdIn(bkDataIdList...).All(&dsList); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query DataSource with bk_data_id [%v] failed", bkDataIdList)
 	}
-	var dsMap = make(map[uint]resulttable.DataSource)
+	if len(dsList) == 0 {
+		logger.Info("no event report config in database")
+		return nil, nil
+	}
+	var dsMap = make(map[uint]*resulttable.DataSource)
 	for _, ds := range dsList {
-		dsMap[ds.BkDataId] = ds
+		dsMap[ds.BkDataId] = &ds
+	}
+
+	subConfigMap := map[string]string{
+		"json":       "bk-collector-report-v2.conf",
+		"prometheus": "bk-collector-application.conf",
 	}
 	var result = make(map[int][]map[string]interface{})
-	for _, ts := range tsGroupList {
-		ds, ok := dsMap[ts.BkDataID]
+	for _, gp := range groups {
+		ds, ok := dsMap[gp.BkDataID]
 		if !ok {
 			continue
 		}
-		maxRate := ts.MaxRate
+		maxRate := gp.MaxRate
 		if maxRate < 0 {
 			maxRate = models.MaxDataIdThroughPut
 		}
 		var dataIdConfig = map[string]interface{}{
-			"dataid":                 ts.BkDataID,
-			"datatype":               "time_series",
+			"dataid":                 gp.BkDataID,
+			"datatype":               dataType,
 			"version":                "v2",
 			"access_token":           ds.Token,
 			"max_rate":               maxRate,
 			"max_future_time_offset": models.MaxFutureTimeOffset,
 		}
+
 		if pluginName == "bk-collector" {
-			dataIdConfig["bk_data_token"] = ds.Token
-			dataIdConfig["bk_data_id"] = ts.BkDataID
-			dataIdConfig["token_config"] = map[string]interface{}{
-				"name":         "token_checker/proxy",
-				"proxy_dataid": ts.BkDataID,
-				"proxy_token":  ds.Token,
+			dataIdConfig = map[string]interface{}{}
+			protocol, err := s.getProtocol(gp.BkDataID)
+			if err != nil {
+				logger.Errorf("getProtocol with bk_data_id [%v] failed, %v", gp.BkDataID, err)
+				continue
 			}
-			dataIdConfig["qps_config"] = map[string]interface{}{
-				"name": "rate_limiter/token_bucket",
-				"type": "token_bucket",
-				"qps":  maxRate,
+			subConfigName := subConfigMap[protocol]
+			dataIdConfig["sub_config_name"] = subConfigName
+			// 根据格式决定使用那种配置
+			if protocol == "json" {
+				// json格式: bk-collector-report-v2.conf
+				dataIdConfig["bk_data_token"] = ds.Token
+				dataIdConfig["bk_data_id"] = gp.BkDataID
+				dataIdConfig["token_config"] = map[string]interface{}{
+					"name":         "token_checker/proxy",
+					"proxy_dataid": gp.BkDataID,
+					"proxy_token":  ds.Token,
+				}
+				dataIdConfig["qps_config"] = map[string]interface{}{
+					"name": "rate_limiter/token_bucket",
+					"type": "token_bucket",
+					"qps":  maxRate,
+				}
+				dataIdConfig["validator_config"] = map[string]interface{}{
+					"name":                   "proxy_validator/common",
+					"type":                   dataType,
+					"version":                "v2",
+					"max_future_time_offset": models.MaxFutureTimeOffset,
+				}
+			} else {
+				// prometheus格式: bk-collector-application.conf
+				dataIdConfig["bk_data_token"] = cipher.TransformDataidToToken(int(gp.BkDataID), -1, -1, -1, "")
+				dataIdConfig["bk_biz_id"] = gp.BkBizID
+				dataIdConfig["bk_data_id"] = gp.BkDataID
+				dataIdConfig["bk_app_name"] = "prometheus_report"
+				dataIdConfig["qps_config"] = map[string]interface{}{
+					"name": "rate_limiter/token_bucket",
+					"type": "token_bucket",
+					"qps":  maxRate,
+				}
 			}
-			dataIdConfig["validator_config"] = map[string]interface{}{
-				"name":                   "proxy_validator/common",
-				"type":                   "time_series",
-				"version":                "v2",
-				"max_future_time_offset": models.MaxFutureTimeOffset,
-			}
+
 		}
-		if configs, ok := result[ts.BkBizID]; ok {
-			result[ts.BkBizID] = append(configs, dataIdConfig)
+		if configs, ok := result[gp.BkBizID]; ok {
+			result[gp.BkBizID] = append(configs, dataIdConfig)
 		} else {
-			result[ts.BkBizID] = []map[string]interface{}{dataIdConfig}
+			result[gp.BkBizID] = []map[string]interface{}{dataIdConfig}
 		}
 	}
 	return result, nil
 }
 
+func (CustomReportSubscriptionSvc) getProtocol(bkDataId uint) (string, error) {
+	db := mysql.GetDBSession().DB
+	var ts customreport.TimeSeriesGroup
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).BkDataIDEq(bkDataId).One(&ts); err != nil {
+		if gorm.IsRecordNotFoundError(err) {
+			return "json", nil
+		}
+		return "", errors.Wrapf(err, "query TimeSeriesGroup with bk_data_id [%v] failed", bkDataId)
+	}
+
+	tsDetail, err := apiservice.Metadata.CustomTimeSeriesDetail(ts.BkBizID, ts.TimeSeriesGroupID, true)
+	if err != nil {
+		return "", errors.Wrapf(err, "get CustomTimeSeriesDetail with bk_biz_id [%v] ts_group_id [%v] failed", ts.BkBizID, ts.TimeSeriesGroupID)
+	}
+	if tsDetail.Protocol != "" {
+		return tsDetail.Protocol, nil
+	}
+	return "json", nil
+}
+
+// CreateSubscription 创建订阅
 func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map[string]interface{}, bkHostIds []int, pluginName, opType string) error {
+	if opType == "" {
+		opType = "add"
+	}
 	logger.Infof("update or create subscription task, bk_biz_id [%v], target_hosts [%v], plugin [%s]", bkBizId, bkHostIds, pluginName)
 	nodes := make([]map[string]interface{}, 0)
 	for _, hostId := range bkHostIds {
@@ -371,9 +447,18 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 				},
 			},
 		}
-		return s.CreateOrUpdateConfig(subscriptionParams, bkBizId, "bkmonitorproxy", 0)
+		if err := s.CreateOrUpdateConfig(subscriptionParams, bkBizId, "bkmonitorproxy", 0); err != nil {
+			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%v] plugin_name [bkmonitorproxy] bk_data_id [0] failed, %v", subscriptionParams, bkBizId, err)
+		}
 	}
 	for _, item := range items {
+		//从item中取出subConfigName
+		subConfigName, ok := item["sub_config_name"].(string)
+		if !ok {
+			// bk-collector 默认自定义事件，和json的自定义指标使用bk-collector-report-v2.conf
+			subConfigName = "bk-collector-report-v2.conf"
+		}
+
 		context := map[string]interface{}{
 			"bk_biz_id": bkBizId,
 		}
@@ -390,7 +475,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 						"plugin_name":    pluginName,
 						"plugin_version": "latest",
 						"config_templates": []interface{}{
-							map[string]interface{}{"name": "bk-collector-report-v2.conf", "version": "latest"},
+							map[string]interface{}{"name": subConfigName, "version": "latest"},
 						},
 					},
 					"params": map[string]interface{}{
@@ -399,107 +484,89 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 				},
 			},
 		}
-		bkDataIdInterface, ok := item["bk_data_id"]
+		bkDataId, ok := item["bk_data_id"].(uint)
 		if !ok {
-			return errors.New("config lack of bk_data_id")
-		}
-		bkDataId, ok := bkDataIdInterface.(uint)
-		if !ok {
-			return errors.New("bk_data_id asset error")
+			return errors.New("get bk_data_id from item failed")
 		}
 		if err := s.CreateOrUpdateConfig(subscriptionParams, bkBizId, pluginName, bkDataId); err != nil {
-			return err
+			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%v] plugin_name [%s] bk_data_id [%v] failed, %v", subscriptionParams, bkBizId, pluginName, bkDataId, err)
+			continue
 		}
-
 	}
 	return nil
 }
 
+// CreateOrUpdateConfig 创建或更新订阅
 func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]interface{}, bkBizId int, pluginName string, bkDataId uint) error {
 	db := mysql.GetDBSession().DB
 	nodemanApi, err := api.GetNodemanApi()
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "GetNodemanApi failed")
 	}
 	// 若订阅存在则判定是否更新，若不存在则创建
 	// 使用proxy下发bk_data_id为默认值0，一个业务下的多个data_id对应一个订阅
-	var subscrip customreport.CustomReportSubscription
-	if err := customreport.NewCustomReportSubscriptionQuerySet(db).BkBizIdEq(bkBizId).BkDataIDEq(bkDataId).One(&subscrip); err != nil {
-		if !gorm.IsRecordNotFoundError(err) {
-			return err
-		}
+	var subscripList []customreport.CustomReportSubscription
+	qs := customreport.NewCustomReportSubscriptionQuerySet(db).BkBizIdEq(bkBizId).BkDataIDEq(bkDataId)
+	if err := qs.All(&subscripList); err != nil {
+		return errors.Wrapf(err, "query CustomReportSubscription with bk_biz_id [%v] bk_data_id [%v] failed", bkBizId, bkDataId)
 	}
-
-	if subscrip.ID != 0 {
+	// 存在则更新
+	if len(subscripList) != 0 {
 		logger.Infof("subscription task already exists")
+		subscrip := subscripList[0]
 		params["subscription_id"] = subscrip.SubscriptionId
 		params["run_immediately"] = true
-		// bkmonitorproxy原订阅scope配置为空则不再管理该订阅
 		var subscripConfig map[string]interface{}
-
 		if err := jsonx.UnmarshalString(subscrip.Config, &subscripConfig); err != nil {
 			return err
 		}
-		scopeInterface, ok := subscripConfig["scope"]
-		if !ok {
-			return errors.New("subscription config parse error")
-		}
-		scope, ok := scopeInterface.(map[string]interface{})
+		scope, ok := subscripConfig["scope"].(map[string]interface{})
 		if !ok {
 			return errors.New("subscription config parse error")
 		}
 		var oldNodes []interface{}
-		oldNodesInterface, ok := scope["nodes"]
+		oldNodes, ok = scope["nodes"].([]interface{})
 		if !ok {
 			oldNodes = nil
-		} else {
-			oldNodes, ok = oldNodesInterface.([]interface{})
-			if !ok {
-				return errors.New("subscription config parse error")
-			}
 		}
+		// bkmonitorproxy原订阅scope配置为空则不再管理该订阅
 		if pluginName == "bkmonitorproxy" && len(oldNodes) == 0 {
 			logger.Infof("[bkmonitorproxy] target_hosts is None, don't need to update subscription task.")
 			return nil
 		}
-		oldConfigBytes := []byte(subscrip.Config)
-		newConfigBytes, err := jsonx.Marshal(params)
+		newConfig, err := jsonx.MarshalString(params)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "marshal newConfig [%v] failed", params)
 		}
-		options := jsondiff.DefaultJSONOptions()
-		compared, _ := jsondiff.Compare(newConfigBytes, oldConfigBytes, &options)
-		if compared != jsondiff.FullMatch {
+		// 对比新老配置
+		equal, _ := jsonx.CompareJson(subscrip.Config, newConfig)
+		if !equal {
 			logger.Infof("subscription task config has changed, update it")
 			var resp define.APICommonResp
 			_, err = nodemanApi.UpdateSubscription().SetBody(params).SetResult(&resp).Request()
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "UpdateSubscription with body [%v] failed", params)
 			}
 			logger.Infof("update subscription successful, result [%s]", resp.Message)
 
-			subscrip.Config = string(newConfigBytes)
-			if err := subscrip.Update(db, customreport.CustomReportSubscriptionDBSchema.Config); err != nil {
-				return err
+			if err := qs.GetUpdater().SetConfig(newConfig).Update(); err != nil {
+				return errors.Wrapf(err, "update subscrips bk_biz_id [%v] bk_data_id [%v] with config [%s] failed", subscrip.BkBizId, bkDataId, newConfig)
 			}
 		}
+		return nil
 	}
-	logger.Infof("subscription task not exists, create it")
-	var resp define.APICommonResp
+	// 不存在则创建订阅
+	logger.Info("subscription task not exists, create it")
+	var resp define.APICommonMapResp
 	_, err = nodemanApi.CreateSubscription().SetBody(params).SetResult(&resp).Request()
-	logger.Infof("create subscription successful, result: %s", resp.Message)
+	if err != nil {
+		return errors.Wrapf(err, "CreateSubscription with body [%v] failed", params)
+	}
+	logger.Infof("create subscription successful, result: %v", resp.Data)
 	// 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失
-	dataMap, ok := resp.Data.(map[string]interface{})
+	subscripId, ok := resp.Data["subscription_id"].(float64)
 	if !ok {
-		return errors.New("parse api response error")
-	}
-	subscripIdInterface, ok := dataMap["subscription_id"]
-	if !ok {
-		return errors.New("parse api response error")
-	}
-	subscripId, ok := subscripIdInterface.(int64)
-	if !ok {
-		return errors.New("parse api response error")
+		return errors.New("parse api response subscription_id error")
 	}
 	newConfig, err := jsonx.MarshalString(params)
 	if err != nil {
@@ -512,15 +579,15 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		Config:         newConfig,
 	}
 	if err := newSub.Create(db); err != nil {
-		return err
+		return errors.Wrapf(err, "create CustomReportSubscription with bk_biz_id [%v] subscription_id [%v] bk_data_id [%v] config [%s] failed", bkBizId, subscripId, bkDataId, newConfig)
 	}
 	var installResp define.APICommonResp
 	_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{
 		"subscription_id": subscripId, "actions": map[string]interface{}{pluginName: "INSTALL"},
 	}).SetResult(&installResp).Request()
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "RunSubscription with subscription_id [%v] actions [{%s: %s}] failed", subscripId, pluginName, "INSTALL")
 	}
-	logger.Infof("run subscription result [%s]", installResp.Message)
+	logger.Infof("run subscription result [%v]", installResp.Data)
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -34,7 +35,9 @@ var (
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
+	muForMetadataApi       sync.Mutex
 )
+
 var (
 	gseApi            *bkgse.Client
 	bcsApi            *bcs.Client
@@ -42,6 +45,7 @@ var (
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
+	metadataApi       *metadata.Client
 )
 
 // GetGseApi 获取GseApi客户端
@@ -111,12 +115,11 @@ func GetBcsClusterManagerApi() (*bcsclustermanager.Client, error) {
 		return bcsClusterManager, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:            fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
-		AuthorizationParams: map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)},
-		JsonMarshaler:       jsonx.Marshal,
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		JsonMarshaler: jsonx.Marshal,
 	}
 	var err error
-	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	bcsClusterManager, err = bcsclustermanager.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)}))
 	if err != nil {
 		return nil, err
 	}
@@ -198,4 +201,50 @@ func GetBkdataApi() (*bkdata.Client, error) {
 		return nil, err
 	}
 	return bkdataApi, nil
+}
+
+// GetMetadataApi 获取metadataApi客户端
+func GetMetadataApi() (*metadata.Client, error) {
+	muForMetadataApi.Lock()
+	defer muForMetadataApi.Unlock()
+	if metadataApi != nil {
+		return metadataApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	metadataApi, err = metadata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return metadataApi, nil
+}
+
+// HeaderProvider provide request header.
+type HeaderProvider struct {
+	Header map[string]string
+}
+
+// NewHeaderProvider creates a new HeaderProvider.
+func NewHeaderProvider(header map[string]string) *HeaderProvider {
+	return &HeaderProvider{
+		Header: header,
+	}
+}
+
+// ApplyToClient will add to the operation operations.
+func (p *HeaderProvider) ApplyToClient(cli define.BkApiClient) error {
+	return cli.AddOperationOptions(p)
+}
+
+// ApplyToOperation will set the body provider.
+func (p *HeaderProvider) ApplyToOperation(op define.Operation) error {
+	op.SetHeaders(p.Header)
+	return nil
 }

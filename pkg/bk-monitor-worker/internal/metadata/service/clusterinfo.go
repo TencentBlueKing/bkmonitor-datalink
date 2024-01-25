@@ -62,7 +62,7 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 		},
 		ClusterType: k.ClusterType,
 		AuthInfo: AuthInfo{
-			Password: cipher.AESDecrypt(k.Password),
+			Password: cipher.DBAESCipher.AESDecrypt(k.Password),
 			Username: k.Username,
 		},
 	}

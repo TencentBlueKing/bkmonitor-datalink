@@ -27,7 +27,7 @@ func (BcsClusterManagerService) GetProjectClusters(projectId string, excludeShar
 		return nil, errors.Wrap(err, "get bcs cluster manager api failed")
 	}
 	var resp bcsclustermanager.FetchClustersResp
-	_, err = api.FetchClusters().SetBody(map[string]interface{}{"projectID": projectId}).SetResult(&resp).Request()
+	_, err = api.FetchClusters().SetQueryParams(map[string]string{"projectID": projectId}).SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrapf(err, "FetchClusters with projectID [%s] failed", projectId)
 	}

@@ -217,6 +217,10 @@ var (
 	BkApiNodemanApiBaseUrl string
 	// BkApiBkdataApiBaseUrl bk-apigw bkdata base url
 	BkApiBkdataApiBaseUrl string
+	// BkApiBkssmUrl bk-api bkssm url
+	BkApiBkssmUrl string
+	// BkApiBcsCcApiUrl bk-api bcs cc url
+	BkApiBcsCcApiUrl string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
@@ -372,6 +376,8 @@ func initVariables() {
 	BkApiBcsApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bcsApiGatewayBaseUrl", "")
 	BkApiNodemanApiBaseUrl = GetValue("taskConfig.common.bkapi.nodemanApiBaseUrl", "")
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
+	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
+	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 }

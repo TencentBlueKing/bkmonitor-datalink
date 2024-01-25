@@ -99,7 +99,8 @@ func TestEventGroup_GetESData(t *testing.T) {
 }
 
 func TestEventGroup_UpdateEventDimensionsFromES(t *testing.T) {
-	gomonkey.ApplyMethod(EventGroup{}, "GetESData", func() (map[string][]string, error) { return map[string][]string{}, nil })
+	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
+	gomonkey.ApplyFuncReturn(EventGroup.GetESData, map[string][]string{}, nil)
 	eg := EventGroup{}
 	err := eg.UpdateEventDimensionsFromES(context.Background())
 	assert.NoError(t, err)

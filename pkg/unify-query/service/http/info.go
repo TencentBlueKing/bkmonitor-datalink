@@ -454,7 +454,9 @@ func HandleTsDBPrint(c *gin.Context) {
 		SpaceUid:  spaceId,
 		TableID:   tableId,
 		FieldName: fieldName,
-		IsRegexp:  false}
+		IsRegexp:  false,
+	}
+
 	tsDBs, err := structured.GetTsDBList(ctx, &option)
 	results = append(results, fmt.Sprintf("GetTsDBList count: %d, result: %v, err: %v", len(tsDBs), tsDBs, err))
 

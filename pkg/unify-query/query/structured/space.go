@@ -73,7 +73,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	fieldName, tableID string, isK8s, isK8sFeatureFlag bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
-		log.Infof(s.ctx, "skip rt(%s), rt detail is empty", tableID)
+		log.Debugf(s.ctx, "skip rt(%s), rt detail is empty", tableID)
 		return nil
 	}
 
@@ -84,7 +84,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 
 		// 容器下只能查单指标单表
 		if !isSplitMeasurement {
-			log.Infof(s.ctx, "skip rt(%s), measurement type (%s) is not split", tableID, rtDetail.MeasurementType)
+			log.Debugf(s.ctx, "skip rt(%s), measurement type (%s) is not split", tableID, rtDetail.MeasurementType)
 			return nil
 		}
 
@@ -103,14 +103,14 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		}
 
 		if !compareResult {
-			log.Infof(s.ctx, "skip rt(%s), clusterID: %s, allConditions: %+v", tableID, rtDetail.BcsClusterID, allConditions)
+			log.Debugf(s.ctx, "skip rt(%s), clusterID: %s, allConditions: %+v", tableID, rtDetail.BcsClusterID, allConditions)
 			return nil
 		}
 
 		if isK8sFeatureFlag {
 			// 如果是只查询 k8s 的 rt，则需要判断 bcsClusterID 字段不为空
 			if rtDetail.BcsClusterID == "" {
-				log.Infof(s.ctx, "skip rt(%s), clusterID is empty", tableID)
+				log.Debugf(s.ctx, "skip rt(%s), clusterID is empty", tableID)
 				return nil
 			}
 		}

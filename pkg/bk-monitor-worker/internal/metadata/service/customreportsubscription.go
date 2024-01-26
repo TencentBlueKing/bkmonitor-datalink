@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -422,6 +423,9 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 		"nodes":       nodes,
 	}
 	if pluginName == "bkmonitorproxy" {
+		for _, i := range items {
+			delete(i, "sub_config_name")
+		}
 		subscriptionParams := map[string]interface{}{
 			"scope": scope,
 			"steps": []interface{}{
@@ -449,6 +453,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 		}
 		if err := s.CreateOrUpdateConfig(subscriptionParams, bkBizId, "bkmonitorproxy", 0); err != nil {
 			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%v] plugin_name [bkmonitorproxy] bk_data_id [0] failed, %v", subscriptionParams, bkBizId, err)
+			return nil
 		}
 	}
 	for _, item := range items {
@@ -458,6 +463,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 			// bk-collector 默认自定义事件，和json的自定义指标使用bk-collector-report-v2.conf
 			subConfigName = "bk-collector-report-v2.conf"
 		}
+		delete(item, "sub_config_name")
 
 		context := map[string]interface{}{
 			"bk_biz_id": bkBizId,
@@ -541,13 +547,18 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		// 对比新老配置
 		equal, _ := jsonx.CompareJson(subscrip.Config, newConfig)
 		if !equal {
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] subscription task config has changed, old [%s] new [%s]", subscrip.Config, newConfig)
+				_ = metrics.MysqlCount(subscrip.TableName(), "CreateOrUpdateConfig_update_config", float64(len(subscripList)))
+				return nil
+			}
 			logger.Infof("subscription task config has changed, update it")
 			var resp define.APICommonResp
 			_, err = nodemanApi.UpdateSubscription().SetBody(params).SetResult(&resp).Request()
 			if err != nil {
 				return errors.Wrapf(err, "UpdateSubscription with body [%v] failed", params)
 			}
-			logger.Infof("update subscription successful, result [%s]", resp.Message)
+			logger.Infof("update subscription successful, result [%s]", resp.Data)
 
 			if err := qs.GetUpdater().SetConfig(newConfig).Update(); err != nil {
 				return errors.Wrapf(err, "update subscrips bk_biz_id [%v] bk_data_id [%v] with config [%s] failed", subscrip.BkBizId, bkDataId, newConfig)
@@ -557,6 +568,15 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	}
 	// 不存在则创建订阅
 	logger.Info("subscription task not exists, create it")
+	newConfig, err := jsonx.MarshalString(params)
+	if err != nil {
+		return err
+	}
+	if cfg.BypassSuffixPath != "" {
+		logger.Infof("[db_diff]create CustomReportSubscription with bk_biz_id [%v] bk_data_id [%v] config [%s]", bkBizId, bkDataId, newConfig)
+		_ = metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)
+		return nil
+	}
 	var resp define.APICommonMapResp
 	_, err = nodemanApi.CreateSubscription().SetBody(params).SetResult(&resp).Request()
 	if err != nil {
@@ -567,10 +587,6 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	subscripId, ok := resp.Data["subscription_id"].(float64)
 	if !ok {
 		return errors.New("parse api response subscription_id error")
-	}
-	newConfig, err := jsonx.MarshalString(params)
-	if err != nil {
-		return err
 	}
 	newSub := customreport.CustomReportSubscription{
 		BkBizId:        bkBizId,

@@ -132,6 +132,10 @@ taskConfig:
       bcsCcApiUrl: ""
   # metadata: metadata任务配置
   metadata:
+    global:
+      enablePingAlarm: true
+      enableDirectAreaPingCollect: true
+      pingServerDataid: 1100005
     metricDimension:
       metricKeyPrefix: bkmonitor:metrics_
       metricDimensionKeyPrefix: bkmonitor:metric_dimensions_

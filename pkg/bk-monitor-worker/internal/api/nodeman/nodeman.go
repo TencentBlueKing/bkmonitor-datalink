@@ -29,7 +29,7 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 	return &Client{BkApiClient: client}, nil
 }
 
-// PluginInfo for nodeman resource search_cloud_area
+// PluginInfo for nodeman resource plugin_info
 // 查询插件信息
 func (c *Client) PluginInfo(opts ...define.OperationOption) define.Operation {
 	/*
@@ -37,9 +37,9 @@ func (c *Client) PluginInfo(opts ...define.OperationOption) define.Operation {
 		name	| string | 插件名 | required
 		version | string | 版本号
 	*/
-	path := "plugin_info"
+	path := "plugin_info/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "search_cloud_area",
+		Name:   "plugin_info",
 		Method: "GET",
 		Path:   path,
 	}, opts...)
@@ -105,6 +105,57 @@ func (c *Client) RunSubscription(opts ...define.OperationOption) define.Operatio
 	path := "subscription_run/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "subscription_run",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// SwitchSubscription for nodeman resource subscription_switch
+func (c *Client) SwitchSubscription(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		subscription_id	| int | 采集配置订阅id | required
+		actions	| ["enable", "disable"] | 启停选项
+	*/
+	path := "subscription_switch/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "subscription_switch",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// GetProxies for nodeman resource get_proxies
+func (c *Client) GetProxies(opts ...define.OperationOption) define.Operation {
+	/*
+		【节点管理2.0】查询云区域下的proxy列表
+		@params
+		bk_cloud_id	| int | 云区域ID | required
+	*/
+	path := "api/host/proxies/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_proxies",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// PluginSearch for nodeman resource plugin_search
+func (c *Client) PluginSearch(opts ...define.OperationOption) define.Operation {
+	/*
+		【节点管理2.0】插件查询接口
+		@params
+		bk_biz_id	| [int] | 业务ID
+		conditions	| [string] | 搜索条件
+		bk_host_id	| [int] | 主机ID
+		exclude_hosts	| [int] | 跨页全选排除主机
+		detail	| bool | 是否为详情
+		page	| int | 页数 | required
+		pagesize	| int | 每页数量 | required
+	*/
+	path := "api/plugin/search/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "plugin_search",
 		Method: "POST",
 		Path:   path,
 	}, opts...)

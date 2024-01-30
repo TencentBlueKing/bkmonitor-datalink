@@ -59,7 +59,8 @@ var (
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
 	GlobalAccessDbmRtSpaceUid []string
 	// GlobalTsDataSavedDays 监控采集数据保存天数
-	GlobalTsDataSavedDays            int
+	GlobalTsDataSavedDays int
+	// GlobalCustomReportDefaultProxyIp 自定义上报默认服务器
 	GlobalCustomReportDefaultProxyIp []string
 
 	// SpaceRedisKey redis 中空间的 key

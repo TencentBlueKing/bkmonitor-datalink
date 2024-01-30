@@ -155,12 +155,12 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 		} else {
 			ipv4List = append(ipv4List, ip)
 		}
-		if len(ipv4List) != 0 {
-			filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip", "operator": "in", "value": ipv4List})
-		}
-		if len(ipv6List) != 0 {
-			filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6List})
-		}
+	}
+	if len(ipv4List) != 0 {
+		filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip", "operator": "in", "value": ipv4List})
+	}
+	if len(ipv6List) != 0 {
+		filterRules = append(filterRules, map[string]interface{}{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6List})
 	}
 	if len(bkCloudIds) != 0 {
 		filterRules = append(filterRules, map[string]interface{}{"field": "bk_cloud_id", "operator": "in", "value": bkCloudIds})

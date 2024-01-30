@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/pingserver"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -106,7 +107,6 @@ func (s PingServerSubscriptionConfigSvc) RefreshPingConf(pluginName string) erro
 			}
 			for _, host := range hosts {
 				targetHosts = []hostInfo{{
-
 					IP:           host.BkHostInnerip,
 					BkCloudId:    0,
 					BkHostId:     host.BkHostId,
@@ -143,7 +143,8 @@ func (s PingServerSubscriptionConfigSvc) RefreshPingConf(pluginName string) erro
 			// 若是 bkmonitorproxy 则校验proxy插件状态
 			proxiesHostIds, err = s.GetProxyHostIds(proxiesHostIds)
 			if err != nil {
-				return errors.Wrapf(err, "GetProxyHostIds with bk_host_ids [%v] failed", proxiesHostIds)
+				logger.Errorf("GetProxyHostIds with bk_host_ids [%v] failed, %v", proxiesHostIds, err)
+				continue
 			}
 		}
 		if len(proxiesHostIds) == 0 {
@@ -338,9 +339,14 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		}
 		if config != nil && config.BkHostId == nil {
 			config.BkHostId = &host.BkHostId
-			if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.BkHostId); err != nil {
-				logger.Errorf("update PingServerSubscriptionConfig [%v] with bk_host_id [%v] failed, %v", config.SubscriptionId, config.BkHostId, err)
-				continue
+			_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_bkHostId", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with bk_host_id [%v]", config.SubscriptionId, config.BkHostId)
+			} else {
+				if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.BkHostId); err != nil {
+					logger.Errorf("update PingServerSubscriptionConfig [%v] with bk_host_id [%v] failed, %v", config.SubscriptionId, config.BkHostId, err)
+					continue
+				}
 			}
 		}
 
@@ -357,25 +363,30 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			equal, _ := jsonx.CompareJson(subscriptionParamsStr, config.Config)
 			if !equal {
 				logger.Infof("ping server subscription task [%v] config has changed, update it", config.SubscriptionId)
-				var resp define.APICommonResp
-				_, err := nodemanApi.UpdateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
-				if err != nil {
-					logger.Errorf("UpdateSubscription with config [%s] faild, %v", subscriptionParamsStr, err)
-					continue
-				}
-				logger.Infof("update ping server subscription [%v] successful, %v", config.SubscriptionId, resp.Message)
-				config.Config = subscriptionParamsStr
-				if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.Config); err != nil {
-					logger.Errorf("update PingServerSubscriptionConfig [%v] with config [%s] failed, %v", config.SubscriptionId, subscriptionParamsStr, err)
-					continue
-				}
-				_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{"subscription_id": config.SubscriptionId}).Request()
-				if err != nil {
-					logger.Errorf("RunSubscription with subscription_id [%v] failed, %v", config.SubscriptionId, err)
-					continue
+				_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_config", 1)
+				if cfg.BypassSuffixPath != "" {
+					logger.Infof("[db_diff] UpdateSubscription with config [%s]", subscriptionParamsStr)
+					logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with config [%s]", config.SubscriptionId, subscriptionParamsStr)
+				} else {
+					var resp define.APICommonResp
+					_, err := nodemanApi.UpdateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
+					if err != nil {
+						logger.Errorf("UpdateSubscription with config [%s] faild, %v", subscriptionParamsStr, err)
+						continue
+					}
+					logger.Infof("update ping server subscription [%v] successful, %v", config.SubscriptionId, resp.Message)
+					config.Config = subscriptionParamsStr
+					if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.Config); err != nil {
+						logger.Errorf("update PingServerSubscriptionConfig [%v] with config [%s] failed, %v", config.SubscriptionId, subscriptionParamsStr, err)
+						continue
+					}
+					_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{"subscription_id": config.SubscriptionId}).Request()
+					if err != nil {
+						logger.Errorf("RunSubscription with subscription_id [%v] failed, %v", config.SubscriptionId, err)
+						continue
+					}
 				}
 			}
-
 		} else {
 			logger.Info("ping server subscription task not exists, create it")
 			subscriptionParamsStr, err := jsonx.MarshalString(subscriptionParams)
@@ -383,36 +394,42 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 				logger.Errorf("marshal PingServerSubscriptionConfig new config [%v] failed, %v", subscriptionParams, err)
 				continue
 			}
-			var resp define.APICommonMapResp
-			_, err = nodemanApi.CreateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
-			logger.Infof("create subscription successful, result: %s", resp.Message)
-			// 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失
-			subscripId, ok := resp.Data["subscription_id"].(float64)
-			if !ok {
-				logger.Errorf("parse api response subscription_id error, %v", err)
-				continue
+			_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_create", 1)
+			if cfg.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] CreateSubscription with config [%s]", subscriptionParamsStr)
+				logger.Infof("[db_diff] create PingServerSubscriptionConfig with config [%s]", subscriptionParamsStr)
+			} else {
+				var resp define.APICommonMapResp
+				_, err = nodemanApi.CreateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
+				logger.Infof("create subscription successful, result: %s", resp.Message)
+				// 创建订阅成功后，优先存储下来，不然因为其他报错会导致订阅ID丢失
+				subscripId, ok := resp.Data["subscription_id"].(float64)
+				if !ok {
+					logger.Errorf("parse api response subscription_id error, %v", err)
+					continue
+				}
+				newSub := pingserver.PingServerSubscriptionConfig{
+					SubscriptionId: int(subscripId),
+					IP:             ip,
+					BkCloudId:      host.BkCloudId,
+					BkHostId:       &host.BkHostId,
+					Config:         subscriptionParamsStr,
+					PluginName:     pluginName,
+				}
+				if err := newSub.Create(db); err != nil {
+					logger.Errorf("create PingServerSubscriptionConfig with subscription_id [%v] IP [%s] bk_cloud_id [%v] bk_host_id [%v] config [%s] plugin_name [%s] failed, %v", newSub.SubscriptionId, newSub.IP, newSub.BkCloudId, newSub.BkHostId, newSub.Config, pluginName, err)
+					continue
+				}
+				var installResp define.APICommonResp
+				_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{
+					"subscription_id": subscripId, "actions": map[string]interface{}{pluginName: "INSTALL"},
+				}).SetResult(&installResp).Request()
+				if err != nil {
+					logger.Errorf("RunSubscription with subscription_id [%v] action [INSTALL] failed, %v", config.SubscriptionId, err)
+					continue
+				}
+				logger.Infof("run subscription result [%v]", installResp.Data)
 			}
-			newSub := pingserver.PingServerSubscriptionConfig{
-				SubscriptionId: int(subscripId),
-				IP:             ip,
-				BkCloudId:      host.BkCloudId,
-				BkHostId:       &host.BkHostId,
-				Config:         subscriptionParamsStr,
-				PluginName:     pluginName,
-			}
-			if err := newSub.Create(db); err != nil {
-				logger.Errorf("create PingServerSubscriptionConfig with subscription_id [%v] IP [%s] bk_cloud_id [%v] bk_host_id [%v] config [%s] plugin_name [%s] failed, %v", newSub.SubscriptionId, newSub.IP, newSub.BkCloudId, newSub.BkHostId, newSub.Config, pluginName, err)
-				continue
-			}
-			var installResp define.APICommonResp
-			_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{
-				"subscription_id": subscripId, "actions": map[string]interface{}{pluginName: "INSTALL"},
-			}).SetResult(&installResp).Request()
-			if err != nil {
-				logger.Errorf("RunSubscription with subscription_id [%v] action [INSTALL] failed, %v", config.SubscriptionId, err)
-				continue
-			}
-			logger.Infof("run subscription result [%v]", installResp.Data)
 		}
 	}
 
@@ -440,21 +457,27 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		if status == "STOP" {
 			continue
 		}
-		_, err := nodemanApi.SwitchSubscription().SetBody(map[string]interface{}{"subscription_id": config.SubscriptionId, "action": "disable"}).Request()
-		if err != nil {
-			logger.Errorf("SwitchSubscription to disable for subscription_id [%v] failed, %v", config.SubscriptionId, err)
-			continue
-		}
-		configObj["status"] = "STOP"
-		newConfigStr, err := jsonx.MarshalString(configObj)
-		if err != nil {
-			logger.Errorf("marsharl new config [%v] for PingServerSubscriptionConfig [%v] failed, %v", configObj, config.SubscriptionId, err)
-			continue
-		}
-		config.Config = newConfigStr
-		if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.Config); err != nil {
-			logger.Errorf("update PingServerSubscriptionConfig with config [%s] failed, %v", newConfigStr, err)
-			continue
+		_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_status", 1)
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] SwitchSubscription to disable for subscription_id [%v]", config.SubscriptionId)
+			logger.Infof("[db_diff] update PingServerSubscriptionConfig to disable for subscription_id [%v]", config.SubscriptionId)
+		} else {
+			_, err := nodemanApi.SwitchSubscription().SetBody(map[string]interface{}{"subscription_id": config.SubscriptionId, "action": "disable"}).Request()
+			if err != nil {
+				logger.Errorf("SwitchSubscription to disable for subscription_id [%v] failed, %v", config.SubscriptionId, err)
+				continue
+			}
+			configObj["status"] = "STOP"
+			newConfigStr, err := jsonx.MarshalString(configObj)
+			if err != nil {
+				logger.Errorf("marsharl new config [%v] for PingServerSubscriptionConfig [%v] failed, %v", configObj, config.SubscriptionId, err)
+				continue
+			}
+			config.Config = newConfigStr
+			if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.Config); err != nil {
+				logger.Errorf("update PingServerSubscriptionConfig with config [%s] failed, %v", newConfigStr, err)
+				continue
+			}
 		}
 	}
 	return nil

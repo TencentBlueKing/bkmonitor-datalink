@@ -169,19 +169,23 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 		"job_type":      "MAIN_INSTALL_PLUGIN",
 		"bk_host_id":    deployHostList,
 	}
-	nodemanApi, err := api.GetNodemanApi()
-	if err != nil {
-		return errors.Wrap(err, "GetNodemanApi failed")
+	if cfg.BypassSuffixPath != "" {
+		logger.Infof("[db_diff] update [%s] to version [%s] for host_id [%v]", pluginName, version, deployHostList)
+	} else {
+		nodemanApi, err := api.GetNodemanApi()
+		if err != nil {
+			return errors.Wrap(err, "GetNodemanApi failed")
+		}
+		var resp define.APICommonResp
+		_, err = nodemanApi.PluginOperate().SetBody(params).SetResult(&resp).Request()
+		if err != nil {
+			return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
+		}
+		if err := resp.Err(); err != nil {
+			return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
+		}
+		logger.Infof("update [%s] to version [%s] for host_id [%v], result: %v", pluginName, version, deployHostList, resp)
 	}
-	var resp define.APICommonResp
-	_, err = nodemanApi.PluginOperate().SetBody(params).SetResult(&resp).Request()
-	if err != nil {
-		return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
-	}
-	if err := resp.Err(); err != nil {
-		return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
-	}
-	logger.Infof("update [%s] to version [%s] for host_id [%v], result: %v", pluginName, version, deployHostList, resp)
 	logger.Infof("refresh bk_cloud_id [%v] proxy finished", bkCloudId)
 	return nil
 }

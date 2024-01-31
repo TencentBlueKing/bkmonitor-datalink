@@ -18,15 +18,32 @@ import (
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestAutoDeployProxySvc_Refresh(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	patchA := gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+	cfg.GlobalCustomReportDefaultProxyIp = []string{"1.0.0.110", "1.0.0.111"}
+	patchA := gomonkey.ApplyMethod(&http.Client{}, "Do", func(c *http.Client, req *http.Request) (*http.Response, error) {
+		payload, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
+		defer req.Body.Close()
+		payloadStr := string(payload)
+		if strings.Contains(payloadStr, "100") {
+			equal, _ := jsonx.CompareJson(payloadStr, `{"bk_host_id":[100,101],"job_type":"MAIN_INSTALL_PLUGIN","plugin_params":{"name":"bk-collector","version":"v3.2.2"}}`)
+			assert.True(t, equal)
+		}
+		if strings.Contains(payloadStr, "111") {
+			equal, _ := jsonx.CompareJson(payloadStr, `{"bk_host_id":[111],"job_type":"MAIN_INSTALL_PLUGIN","plugin_params":{"name":"bk-collector","version":"v3.2.2"}}`)
+			assert.True(t, equal)
+		}
 		var data string
 		if strings.Contains(req.URL.Path, "api/plugin/operate/") {
 			data = `{"result":true,"data":{},"code":0,"message":"","request_id":"96f7a8aa498646b8a84c5f446f286893"}`

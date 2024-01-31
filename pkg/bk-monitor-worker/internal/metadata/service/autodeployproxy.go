@@ -148,9 +148,9 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 				procList = append(procList, i)
 			}
 		}
-		var proc *nodeman.PluginSearchDataItemPluginStatus
+		var proc nodeman.PluginSearchDataItemPluginStatus
 		if len(procList) != 0 {
-			proc = &procList[0]
+			proc = procList[0]
 		}
 		currentPluginVersion := s.findVersion(proc.Version)
 		// 已经是最新的版本，则无需部署

@@ -274,7 +274,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				}
 
 				// 字段类型转换
-				fieldTypeTransformFn := etl.NewTransformByField(config)
+				fieldTypeTransformFn := etl.NewTransformByField(config, nil)
 				field, err = fieldTypeTransformFn(field)
 				if err != nil {
 					logging.Errorf("%s transform field %s failed: %+v", name, config.FieldName, err)

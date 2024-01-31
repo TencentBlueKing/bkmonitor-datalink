@@ -200,6 +200,8 @@ const (
 	MetaFieldOptESType = "es_type"
 	// MetaFieldOptESFormat : es 对应格式(string)
 	MetaFieldOptESFormat = "es_format"
+	// MataFieldOptEnableOriginString 保留原始字符串格式（map[string]interface{}/[]interface{} -> string）
+	MataFieldOptEnableOriginString = "enable_origin_string"
 )
 
 // InitPipelineOptions : 初始化通用 pipeline option

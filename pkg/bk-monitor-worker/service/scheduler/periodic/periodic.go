@@ -125,7 +125,7 @@ var (
 		},
 		RefreshPingServer2Nodeman: {
 			Cron:    "*/10 * * * *",
-			Handler: metadataTask.SyncBcsSpace,
+			Handler: metadataTask.RefreshPingServer2Nodeman,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

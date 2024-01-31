@@ -89,6 +89,7 @@ func (s AutoDeployProxySvc) findLatestVersion(pluginName string) (string, error)
 }
 
 func (s AutoDeployProxySvc) deployWithCloudId(pluginName, version string, bkCloudId int) error {
+	logger.Infof("deploy plugin_name [%s] version [%s] with cloude_id [%v]", pluginName, version, bkCloudId)
 	proxyList, err := apiservice.Nodeman.GetProxies(bkCloudId)
 	if err != nil {
 		return errors.Wrapf(err, "GetProxies with bk_cloud_id [%v] failed", bkCloudId)
@@ -134,7 +135,11 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 	if err != nil {
 		return errors.Wrapf(err, "PluginSearch for bk_host_ids [%v] failed", bkHostIds)
 	}
-	logger.Infof("get plugin info from nodeman [%v]", pluginInfoList)
+	var pluginIps []string
+	for _, i := range pluginInfoList {
+		pluginIps = append(pluginIps, i.InnerIp)
+	}
+	logger.Infof("get plugin info from nodeman [%v]", pluginIps)
 	var deployHostList []int
 	for _, p := range pluginInfoList {
 		var procList []nodeman.PluginSearchDataItemPluginStatus
@@ -171,6 +176,9 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 	var resp define.APICommonResp
 	_, err = nodemanApi.PluginOperate().SetBody(params).SetResult(&resp).Request()
 	if err != nil {
+		return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
+	}
+	if err := resp.Err(); err != nil {
 		return errors.Wrapf(err, "update [%s] to version [%s] for host_id [%v] failed", pluginName, version, deployHostList)
 	}
 	logger.Infof("update [%s] to version [%s] for host_id [%v], result: %v", pluginName, version, deployHostList, resp)

@@ -54,6 +54,9 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 	if err != nil {
 		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
 	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
+	}
 	return resp.Data.Info, nil
 }
 
@@ -65,6 +68,9 @@ func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
 	var resp cmdb.SearchCloudAreaResp
 	_, err = cmdbApi.SearchCloudArea().SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&resp).Request()
 	if err != nil {
+		return nil, errors.Wrap(err, "SearchCloudArea failed")
+	}
+	if err := resp.Err(); err != nil {
 		return nil, errors.Wrap(err, "SearchCloudArea failed")
 	}
 	return resp.Data.Info, nil

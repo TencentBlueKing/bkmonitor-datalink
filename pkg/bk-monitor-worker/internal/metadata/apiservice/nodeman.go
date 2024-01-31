@@ -32,6 +32,9 @@ func (s NodemanService) GetProxies(bkCloudId int) ([]nodeman.ProxyData, error) {
 	if _, err := nodemanApi.GetProxies().SetQueryParams(map[string]string{"bk_cloud_id": strconv.Itoa(bkCloudId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrap(err, "GetProxiesResp failed")
 	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrap(err, "GetProxiesResp failed")
+	}
 	return resp.Data, nil
 }
 
@@ -50,6 +53,9 @@ func (s NodemanService) PluginInfo(pluginName, version string) ([]nodeman.Plugin
 		params["version"] = version
 	}
 	if _, err := nodemanApi.PluginInfo().SetQueryParams(params).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrap(err, "get PluginInfo failed")
+	}
+	if err := resp.Err(); err != nil {
 		return nil, errors.Wrap(err, "get PluginInfo failed")
 	}
 	return resp.Data, nil
@@ -84,6 +90,9 @@ func (s NodemanService) PluginSearch(bkBizIds, bkHostIds, excludeHosts []int, co
 		"exclude_hosts": excludeHosts,
 	}).SetResult(&resp).Request()
 	if err != nil {
+		return nil, errors.Wrapf(err, "PluginSearch with bk_host_id [%v] bk_biz_id [%v] exclude_hosts [%v] conditions [%v] failed", bkHostIds, bkBizIds, excludeHosts, conditions)
+	}
+	if err := resp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "PluginSearch with bk_host_id [%v] bk_biz_id [%v] exclude_hosts [%v] conditions [%v] failed", bkHostIds, bkBizIds, excludeHosts, conditions)
 	}
 	return resp.Data.List, nil

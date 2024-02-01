@@ -7,37 +7,15 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package apiservice
 
-import "github.com/pkg/errors"
+import "net"
 
-type ApiCommonRespMeta struct {
-	Message string `json:"message"`
-	Result  bool   `json:"result"`
-	Code    int    `json:"code"`
-}
-
-func (m ApiCommonRespMeta) Err() error {
-	if !m.Result {
-		return errors.Errorf("api result is false, message [%s]", m.Message)
+// IsIPv6 判断ip是否为ipv6
+func IsIPv6(ip string) bool {
+	parsedIp := net.ParseIP(ip)
+	if parsedIp != nil && parsedIp.To4() == nil {
+		return true
 	}
-	return nil
-}
-
-// APICommonResp api通用返回结构体
-type APICommonResp struct {
-	ApiCommonRespMeta
-	Data interface{} `json:"data"`
-}
-
-// APICommonMapResp api通用返回结构体Map
-type APICommonMapResp struct {
-	ApiCommonRespMeta
-	Data map[string]interface{} `json:"data"`
-}
-
-// APICommonListResp api通用返回结构体List
-type APICommonListResp struct {
-	ApiCommonRespMeta
-	Data []interface{} `json:"data"`
+	return false
 }

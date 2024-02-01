@@ -60,6 +60,10 @@ var (
 	GlobalAccessDbmRtSpaceUid []string
 	// GlobalTsDataSavedDays 监控采集数据保存天数
 	GlobalTsDataSavedDays int
+	// GlobalCustomReportDefaultProxyIp 自定义上报默认服务器
+	GlobalCustomReportDefaultProxyIp []string
+	// GlobalIsAutoDeployCustomReportServer 是否自动部署自定义上报服务
+	GlobalIsAutoDeployCustomReportServer bool
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -100,6 +104,8 @@ func initMetadataVariables() {
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
+	GlobalCustomReportDefaultProxyIp = GetValue("taskConfig.metadata.global.customReportDefaultProxyIp", []string{})
+	GlobalIsAutoDeployCustomReportServer = GetValue("taskConfig.metadata.global.isAutoDeployCustomReportServer", true)
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))

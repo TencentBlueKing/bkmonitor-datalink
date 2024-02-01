@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cstockton/go-conv"
+	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
@@ -250,6 +251,28 @@ func FillDefaultValueCreator(enable bool, rt *config.MetaResultTableConfig) defi
 					record.Metrics[value.FieldName] = value.DefaultValue
 				}
 			}
+		}
+		return next(record)
+	}
+}
+
+func UpsertDimensionsHandler(opts interface{}) define.ETLRecordChainingHandler {
+	if opts == nil {
+		return nil
+	}
+
+	var dimensions map[string]string
+	if err := mapstructure.Decode(opts, &dimensions); err != nil {
+		return nil
+	}
+	if len(dimensions) == 0 {
+		return nil
+	}
+
+	// 当且仅当 upsert dimensions 存在才生成函数
+	return func(record *define.ETLRecord, next define.ETLRecordHandler) error {
+		for k, v := range dimensions {
+			record.Dimensions[k] = v
 		}
 		return next(record)
 	}

@@ -15,6 +15,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -133,9 +134,13 @@ func (s CMDBService) GetHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmd
 	}
 	params := s.processGetHostByIpParams(BkBizId, ipList)
 	var topoResp cmdb.ListBizHostsTopoResp
-	_, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request()
-	if err != nil {
-		return nil, err
+	if _, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListBizHostsTopo with params [%s] failed", paramStr)
+	}
+	if err := topoResp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListBizHostsTopo with params [%s] failed", paramStr)
 	}
 	return topoResp.Data.Info, nil
 }
@@ -170,9 +175,13 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 		params["host_property_filter"] = map[string]interface{}{"condition": "AND", "rules": filterRules}
 	}
 	var resp cmdb.ListHostsWithoutBizResp
-	_, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request()
-	if err != nil {
-		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
+	if _, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%s] failed", paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with params [%s] failed", paramStr)
 	}
 	return resp.Data.Info, nil
 }
@@ -185,8 +194,14 @@ func (s CMDBService) FindHostBizRelationMap(bkHostIds []int) (map[int]int, error
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var bizResp cmdb.FindHostBizRelationResp
-	if _, err := cmdbApi.FindHostBizRelation().SetBody(map[string]interface{}{"bk_host_id": bkHostIds}).SetResult(&bizResp).Request(); err != nil {
-		return nil, errors.Wrap(err, "FindHostBizRelation failed")
+	params := map[string]interface{}{"bk_host_id": bkHostIds}
+	if _, err := cmdbApi.FindHostBizRelation().SetBody(params).SetResult(&bizResp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "FindHostBizRelation with params [%s] failed", paramStr)
+	}
+	if err := bizResp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "FindHostBizRelation with params [%s] failed", paramStr)
 	}
 	result := make(map[int]int)
 	for _, r := range bizResp.Data {
@@ -205,6 +220,9 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 	var bizResp cmdb.SearchBusinessResp
 	if _, err := cmdbApi.SearchBusiness().SetResult(&bizResp).Request(); err != nil {
 		return nil, errors.Wrap(err, "SearchBusinessResp failed")
+	}
+	if err := bizResp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "SearchBusinessResp failed")
 	}
 
 	fields := []string{"bk_host_innerip",
@@ -237,16 +255,22 @@ func (s CMDBService) GetAllHost() ([]Host, error) {
 	}
 	var hostInfoList []Host
 	for _, info := range bizResp.Data.Info {
-		var topoResp cmdb.ListBizHostsTopoResp
-		_, err = cmdbApi.ListBizHostsTopo().SetBody(map[string]interface{}{
+		params := map[string]interface{}{
 			"bk_biz_id": info.BkBizId,
 			"fields":    fields,
 			"page": map[string]int{
 				"limit": 500,
 			},
-		}).SetResult(&topoResp).Request()
+		}
+		var topoResp cmdb.ListBizHostsTopoResp
+		_, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request()
 		if err != nil {
 			logger.Errorf("ListBizHostsTopo with bk_biz_id [%v] failed, %v", info.BkBizId, err)
+			continue
+		}
+		if err := topoResp.Err(); err != nil {
+			paramStr, _ := jsonx.MarshalString(topoResp)
+			logger.Errorf("ListBizHostsTopo with params [%s] failed, %v", paramStr, err)
 			continue
 		}
 		for _, topoInfo := range topoResp.Data.Info {
@@ -265,12 +289,13 @@ type Host struct {
 	BkBizId int `json:"bk_biz_id"`
 }
 
-// IgnoreMonitoring 是否忽略监控
-func (h Host) IgnoreMonitoring() bool {
+// IgnoreMonitorByStatus 根据状态判断是否忽略监控
+func (h Host) IgnoreMonitorByStatus() bool {
 	status, _ := h.BkState.(string)
 	return slicex.IsExistItem(cfg.GlobalHostDisableMonitorStates, status)
 }
 
+// IsIPV6Biz 所属业务是否是ipv6业务
 func (h Host) IsIPV6Biz() bool {
 	return slicex.IsExistItem(cfg.GlobalIPV6SupportBizList, h.BkBizId)
 }

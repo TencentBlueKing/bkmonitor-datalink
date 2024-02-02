@@ -70,7 +70,7 @@ func (s PingServerSubscriptionConfigSvc) RefreshPingConf(pluginName string) erro
 		} else {
 			ip = h.BkHostInnerip
 		}
-		if h.IgnoreMonitoring() || ip == "" {
+		if h.IgnoreMonitorByStatus() || ip == "" {
 			continue
 		}
 		mapx.AddSliceItems(cloudToHostsMap, h.BkCloudId, hostInfo{
@@ -156,7 +156,7 @@ func (s PingServerSubscriptionConfigSvc) RefreshPingConf(pluginName string) erro
 			proxiesHostIdMap[id] = 1
 		}
 		hostInfoMap := make(map[int][]map[string]interface{})
-		if cfg.GlobalEnablePingAlarm {
+		if cfg.PingServerEnablePingAlarm {
 			// 如果开启了PING服务，则按hash分配给不同的server执行
 			hostRing := hashring.NewHashRing(proxiesHostIdMap, 1<<16)
 			for _, h := range targetIps {
@@ -175,7 +175,7 @@ func (s PingServerSubscriptionConfigSvc) RefreshPingConf(pluginName string) erro
 		}
 
 		// 针对直连区域做一定处理，如果关闭直连区域的PING采集，则清空目标Proxy上的任务iplist
-		if bkCloudId == 0 && !cfg.GlobalEnableDirectAreaPingCollect {
+		if bkCloudId == 0 && !cfg.PingServerEnableDirectAreaPingCollect {
 			for _, id := range proxiesHostIds {
 				hostInfoMap[id] = make([]map[string]interface{}, 0)
 			}
@@ -307,7 +307,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			},
 			"params": map[string]interface{}{
 				"context": map[string]interface{}{
-					"dataid":          cfg.GlobalPingServerDataid,
+					"dataid":          cfg.PingServerDataid,
 					"period":          models.PingServerDefaultDataReportInterval,
 					"total_num":       models.PingServerDefaultExecTotalNum,
 					"max_batch_size":  models.PingServerDefaultMaxBatchSize,

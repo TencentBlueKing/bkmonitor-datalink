@@ -29,4 +29,22 @@ func TestNewHashRing(t *testing.T) {
 	for k, v := range items {
 		assert.Equal(t, hr.GetNode(k), v)
 	}
+
+	nodes2 := map[string]int{"node1": 1, "node2": 3, "node3": 5}
+	hr2 := NewHashRing(nodes2, 1<<16)
+	items2 := map[string]string{
+		"1":  "node1",
+		"2":  "node2",
+		"3":  "node2",
+		"4":  "node2",
+		"5":  "node2",
+		"6":  "node3",
+		"7":  "node2",
+		"8":  "node3",
+		"9":  "node3",
+		"10": "node1",
+	}
+	for k, v := range items2 {
+		assert.Equal(t, hr2.GetNode(k), v)
+	}
 }

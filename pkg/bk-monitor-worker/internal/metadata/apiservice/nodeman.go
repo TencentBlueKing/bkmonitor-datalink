@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var Nodeman NodemanService
@@ -28,12 +29,15 @@ func (s NodemanService) GetProxies(bkCloudId int) ([]nodeman.ProxyData, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "nodemanApi failed")
 	}
+	params := map[string]string{"bk_cloud_id": strconv.Itoa(bkCloudId)}
 	var resp nodeman.GetProxiesResp
-	if _, err := nodemanApi.GetProxies().SetQueryParams(map[string]string{"bk_cloud_id": strconv.Itoa(bkCloudId)}).SetResult(&resp).Request(); err != nil {
-		return nil, errors.Wrap(err, "GetProxiesResp failed")
+	if _, err := nodemanApi.GetProxies().SetQueryParams(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "GetProxiesResp with params [%s] failed", paramStr)
 	}
 	if err := resp.Err(); err != nil {
-		return nil, errors.Wrap(err, "GetProxiesResp failed")
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "GetProxiesResp with params [%s] failed", paramStr)
 	}
 	return resp.Data, nil
 }
@@ -53,10 +57,12 @@ func (s NodemanService) PluginInfo(pluginName, version string) ([]nodeman.Plugin
 		params["version"] = version
 	}
 	if _, err := nodemanApi.PluginInfo().SetQueryParams(params).SetResult(&resp).Request(); err != nil {
-		return nil, errors.Wrap(err, "get PluginInfo failed")
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "get PluginInfo with params [%s] failed", paramStr)
 	}
 	if err := resp.Err(); err != nil {
-		return nil, errors.Wrap(err, "get PluginInfo failed")
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "get PluginInfo params [%s] failed", paramStr)
 	}
 	return resp.Data, nil
 }

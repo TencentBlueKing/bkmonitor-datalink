@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var CMDB CMDBService
@@ -50,12 +51,13 @@ func (s CMDBService) GetHostWithoutBiz(ips []string, bkCloudIds []int) ([]cmdb.L
 		params["host_property_filter"] = map[string]interface{}{"condition": "AND", "rules": filterRules}
 	}
 	var resp cmdb.ListHostsWithoutBizResp
-	_, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request()
-	if err != nil {
-		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
+	if _, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%s] failed", paramStr)
 	}
 	if err := resp.Err(); err != nil {
-		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with params [%s] failed", paramStr)
 	}
 	return resp.Data.Info, nil
 }

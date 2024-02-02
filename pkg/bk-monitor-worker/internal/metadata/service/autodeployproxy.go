@@ -149,6 +149,7 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 			}
 		}
 		var proc nodeman.PluginSearchDataItemPluginStatus
+		// 为空时说明没有对应插件，将找不到version，则进行部署操作
 		if len(procList) != 0 {
 			proc = procList[0]
 		}
@@ -165,7 +166,7 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 		return nil
 	}
 	params := map[string]interface{}{
-		"plugin_params": map[string]interface{}{"name": pluginName, "version": version},
+		"plugin_params": map[string]string{"name": pluginName, "version": version},
 		"job_type":      "MAIN_INSTALL_PLUGIN",
 		"bk_host_id":    deployHostList,
 	}

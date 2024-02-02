@@ -25,7 +25,8 @@ func Test_isIPv6(t *testing.T) {
 		want bool
 	}{
 		{"ipv4", args{ip: "1.1.2.3"}, false},
-		{"err", args{ip: "127.0.0.1"}, false},
+		{"ipv4_2", args{ip: "127.0.0.1"}, false},
+		{"empty", args{ip: ""}, false},
 		{"ipv6", args{ip: "fe80::eca3:77af:98e1:725c"}, true},
 	}
 	for _, tt := range tests {

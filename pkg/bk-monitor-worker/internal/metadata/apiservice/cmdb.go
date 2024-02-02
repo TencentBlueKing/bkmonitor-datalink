@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var CMDB CMDBService
@@ -166,7 +167,8 @@ func (s CMDBService) GetHostWithoutBiz(ips []string) ([]cmdb.ListHostsWithoutBiz
 	var resp cmdb.ListHostsWithoutBizResp
 	_, err = cmdbApi.ListHostsWithoutBiz().SetBody(params).SetResult(&resp).Request()
 	if err != nil {
-		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", params)
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "ListHostsWithoutBizResp with body [%v] failed", paramStr)
 	}
 	return resp.Data.Info, nil
 }

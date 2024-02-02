@@ -158,7 +158,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		var proxiesResp nodeman.GetProxiesResp
 		_, err = nodemanApi.GetProxiesByBiz().SetQueryParams(map[string]string{"bk_biz_id": strconv.Itoa(bizId)}).SetResult(&proxiesResp).Request()
 		if err != nil {
-			return errors.Wrapf(err, "GetProxiesByBiz with bk_biz_id [%v] failed", bizId)
+			return errors.Wrapf(err, "GetProxiesByBiz with bk_biz_id [%d] failed", bizId)
 		}
 		proxyBizIdSet := mapset.NewSet[int]()
 		for _, proxy := range proxiesResp.Data {
@@ -197,7 +197,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 	for bizId, items := range dictItems {
 		if !allBizIdSet.Contains(bizId) && bizId > 0 {
 			// 如果cmdb不存在这个业务，那么需要跳过这个业务的下发
-			logger.Infof("biz_id [%v] does not exists in cmdb", bizId)
+			logger.Infof("biz_id [%d] does not exists in cmdb", bizId)
 			continue
 		}
 		if !isAllBizRefresh && *bkBizId != bizId {
@@ -207,7 +207,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		// 从节点管理查询到biz_id下的Proxy机器
 		hostList := bizIdToProxy[bizId]
 		if len(hostList) == 0 {
-			logger.Warnf("Update custom report config to biz_id [%v] error, No proxy found", bizId)
+			logger.Warnf("Update custom report config to biz_id [%d] error, No proxy found", bizId)
 			continue
 		}
 		var bkHostIdList []int
@@ -217,7 +217,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		// 通过节点管理下发配置
 		err := s.CreateSubscription(bizId, items, bkHostIdList, pluginName, opType)
 		if err != nil {
-			return errors.Wrapf(err, "CreateSubscription with bk_biz_id [%v] items [%v] bk_host_id_list [%v] plugin_name [%s] op_type [%s] failed, %v", bizId, items, bkHostIdList, pluginName, opType, err)
+			return errors.Wrapf(err, "CreateSubscription with bk_biz_id [%d] items [%v] bk_host_id_list [%v] plugin_name [%s] op_type [%s] failed, %v", bizId, items, bkHostIdList, pluginName, opType, err)
 		}
 	}
 	// 通过节点管理下发直连区域配置，下发全部bk_data_id
@@ -243,7 +243,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		proxyHostIds = append(proxyHostIds, h.BkHostId)
 	}
 	if err := s.CreateSubscription(0, allItems, proxyHostIds, pluginName, opType); err != nil {
-		return errors.Wrapf(err, "CreateSubscription with bk_biz_id [0] items [%v] bk_host_id [%v] plugin_name [%s] op_type [%s]", allItems, proxyHostIds, pluginName, opType)
+		return errors.Wrapf(err, "CreateSubscription with bk_biz_id [0] items [%v] bk_host_id [%d] plugin_name [%s] op_type [%s]", allItems, proxyHostIds, pluginName, opType)
 	}
 	return nil
 }
@@ -338,7 +338,7 @@ func (s CustomReportSubscriptionSvc) GetCustomConfig(bkBizId *int, dataType, plu
 			dataIdConfig = map[string]interface{}{}
 			protocol, err := s.getProtocol(gp.BkDataID)
 			if err != nil {
-				logger.Errorf("getProtocol with bk_data_id [%v] failed, %v", gp.BkDataID, err)
+				logger.Errorf("getProtocol with bk_data_id [%d] failed, %v", gp.BkDataID, err)
 				continue
 			}
 			subConfigName := subConfigMap[protocol]
@@ -394,12 +394,12 @@ func (CustomReportSubscriptionSvc) getProtocol(bkDataId uint) (string, error) {
 		if gorm.IsRecordNotFoundError(err) {
 			return "json", nil
 		}
-		return "", errors.Wrapf(err, "query TimeSeriesGroup with bk_data_id [%v] failed", bkDataId)
+		return "", errors.Wrapf(err, "query TimeSeriesGroup with bk_data_id [%d] failed", bkDataId)
 	}
 
 	tsDetail, err := apiservice.Metadata.CustomTimeSeriesDetail(ts.BkBizID, ts.TimeSeriesGroupID, true)
 	if err != nil {
-		return "", errors.Wrapf(err, "get CustomTimeSeriesDetail with bk_biz_id [%v] ts_group_id [%v] failed", ts.BkBizID, ts.TimeSeriesGroupID)
+		return "", errors.Wrapf(err, "get CustomTimeSeriesDetail with bk_biz_id [%d] ts_group_id [%d] failed", ts.BkBizID, ts.TimeSeriesGroupID)
 	}
 	if tsDetail.Protocol != "" {
 		return tsDetail.Protocol, nil
@@ -412,7 +412,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 	if opType == "" {
 		opType = "add"
 	}
-	logger.Infof("update or create subscription task, bk_biz_id [%v], target_hosts [%v], plugin [%s]", bkBizId, bkHostIds, pluginName)
+	logger.Infof("update or create subscription task, bk_biz_id [%d], target_hosts [%v], plugin [%s]", bkBizId, bkHostIds, pluginName)
 	nodes := make([]map[string]interface{}, 0)
 	for _, hostId := range bkHostIds {
 		nodes = append(nodes, map[string]interface{}{"bk_host_id": hostId})
@@ -452,7 +452,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 			},
 		}
 		if err := s.CreateOrUpdateConfig(subscriptionParams, bkBizId, "bkmonitorproxy", 0); err != nil {
-			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%v] plugin_name [bkmonitorproxy] bk_data_id [0] failed, %v", subscriptionParams, bkBizId, err)
+			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%d] plugin_name [bkmonitorproxy] bk_data_id [0] failed, %v", subscriptionParams, bkBizId, err)
 			return nil
 		}
 	}
@@ -495,7 +495,7 @@ func (s CustomReportSubscriptionSvc) CreateSubscription(bkBizId int, items []map
 			return errors.New("get bk_data_id from item failed")
 		}
 		if err := s.CreateOrUpdateConfig(subscriptionParams, bkBizId, pluginName, bkDataId); err != nil {
-			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%v] plugin_name [%s] bk_data_id [%v] failed, %v", subscriptionParams, bkBizId, pluginName, bkDataId, err)
+			logger.Errorf("CreateOrUpdateConfig with subscription_params [%v] bk_biz_id [%d] plugin_name [%s] bk_data_id [%d] failed, %v", subscriptionParams, bkBizId, pluginName, bkDataId, err)
 			continue
 		}
 	}
@@ -514,7 +514,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	var subscripList []customreport.CustomReportSubscription
 	qs := customreport.NewCustomReportSubscriptionQuerySet(db).BkBizIdEq(bkBizId).BkDataIDEq(bkDataId)
 	if err := qs.All(&subscripList); err != nil {
-		return errors.Wrapf(err, "query CustomReportSubscription with bk_biz_id [%v] bk_data_id [%v] failed", bkBizId, bkDataId)
+		return errors.Wrapf(err, "query CustomReportSubscription with bk_biz_id [%d] bk_data_id [%d] failed", bkBizId, bkDataId)
 	}
 	// 存在则更新
 	if len(subscripList) != 0 {
@@ -561,7 +561,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 			logger.Infof("update subscription successful, result [%s]", resp.Data)
 
 			if err := qs.GetUpdater().SetConfig(newConfig).Update(); err != nil {
-				return errors.Wrapf(err, "update subscrips bk_biz_id [%v] bk_data_id [%v] with config [%s] failed", subscrip.BkBizId, bkDataId, newConfig)
+				return errors.Wrapf(err, "update subscrips bk_biz_id [%d] bk_data_id [%d] with config [%s] failed", subscrip.BkBizId, bkDataId, newConfig)
 			}
 		}
 		return nil
@@ -573,7 +573,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		return err
 	}
 	if cfg.BypassSuffixPath != "" {
-		logger.Infof("[db_diff]create CustomReportSubscription with bk_biz_id [%v] bk_data_id [%v] config [%s]", bkBizId, bkDataId, newConfig)
+		logger.Infof("[db_diff]create CustomReportSubscription with bk_biz_id [%d] bk_data_id [%d] config [%s]", bkBizId, bkDataId, newConfig)
 		_ = metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)
 		return nil
 	}
@@ -595,7 +595,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		Config:         newConfig,
 	}
 	if err := newSub.Create(db); err != nil {
-		return errors.Wrapf(err, "create CustomReportSubscription with bk_biz_id [%v] subscription_id [%v] bk_data_id [%v] config [%s] failed", bkBizId, subscripId, bkDataId, newConfig)
+		return errors.Wrapf(err, "create CustomReportSubscription with bk_biz_id [%d] subscription_id [%v] bk_data_id [%d] config [%s] failed", bkBizId, subscripId, bkDataId, newConfig)
 	}
 	var installResp define.APICommonResp
 	_, err = nodemanApi.RunSubscription().SetBody(map[string]interface{}{

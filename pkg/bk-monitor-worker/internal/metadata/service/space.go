@@ -65,8 +65,14 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		if !ok {
 			continue
 		}
+		if name == oldName {
+			continue
+		}
 		// 名称变动，需要更新
-		if name != oldName {
+		metrics.MysqlCount(sp.TableName(), "RefreshBkccSpaceName_update", 1)
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
+		} else {
 			sp.SpaceName = name
 			sp.UpdateTime = time.Now()
 			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
@@ -618,18 +624,19 @@ func (s *SpaceSvc) RefreshBkciSpaceName() error {
 			logger.Errorf("space not found from bkci api, space_id [%s] space_name [%s]", sp.SpaceId, sp.SpaceName)
 			continue
 		}
+		if name == oldName {
+			continue
+		}
 		// 名称变动，需要更新
-		if name != oldName {
-			sp.SpaceName = name
-			sp.UpdateTime = time.Now()
-			_ = metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
-			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
-			} else {
-				if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
-					logger.Errorf("update bkci space_name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
-					continue
-				}
+		sp.SpaceName = name
+		sp.UpdateTime = time.Now()
+		_ = metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
+		} else {
+			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+				logger.Errorf("update bkci space_name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
+				continue
 			}
 			logger.Infof("update bkci space name [%s] to [%s]", oldName, sp.SpaceName)
 		}

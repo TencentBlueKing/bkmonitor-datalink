@@ -9,11 +9,11 @@
 
 package customreport
 
-//go:generate goqueryset -in logreportsubscription.go -out qs_logreportsubscription_gen.go
+//go:generate goqueryset -in logsubscriptionconfig.go -out qs_logsubscriptionconfig_gen.go
 
-// LogReportSubscription log report subscription
+// LogSubscriptionConfig log subscription config model
 // gen:qs
-type LogReportSubscription struct {
+type LogSubscriptionConfig struct {
 	ID             uint   `json:"id" gorm:"primary_key"`
 	BkBizId        int    `json:"bk_biz_id" gorm:"column:bk_biz_id"`
 	SubscriptionId int    `json:"subscription_id" gorm:"column:subscription_id"`
@@ -22,6 +22,6 @@ type LogReportSubscription struct {
 }
 
 // TableName 用于设置表的别名
-func (LogReportSubscription) TableName() string {
-	return "metadata_logreportsubscription"
+func (LogSubscriptionConfig) TableName() string {
+	return "metadata_logsubscriptionconfig"
 }

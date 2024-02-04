@@ -137,10 +137,10 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 		},
 	}
 	db := mysql.GetDBSession().DB
-	var subscripList []customreport.LogReportSubscription
-	qs := customreport.NewLogReportSubscriptionQuerySet(db).BkBizIdEq(s.BkBizID).LogNameEq(s.LogGroupName)
+	var subscripList []customreport.LogSubscriptionConfig
+	qs := customreport.NewLogSubscriptionConfigQuerySet(db).BkBizIdEq(s.BkBizID).LogNameEq(s.LogGroupName)
 	if err := qs.All(&subscripList); err != nil {
-		return errors.Wrapf(err, "query LogReportSubscription with bk_biz_id [%v] log_name [%s] failed", s.BkBizID, s.LogGroupName)
+		return errors.Wrapf(err, "query LogSubscriptionConfig with bk_biz_id [%v] log_name [%s] failed", s.BkBizID, s.LogGroupName)
 	}
 	// 存在则更新
 	if len(subscripList) != 0 {
@@ -180,8 +180,8 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 		return err
 	}
 	if cfg.BypassSuffixPath != "" {
-		logger.Infof("[db_diff]create LogReportSubscription with bk_biz_id [%v] log_name [%v] config [%s]", s.BkBizID, s.LogGroupName, newConfig)
-		_ = metrics.MysqlCount(customreport.LogReportSubscription{}.TableName(), "deploy_create", 1)
+		logger.Infof("[db_diff]create LogSubscriptionConfig with bk_biz_id [%v] log_name [%v] config [%s]", s.BkBizID, s.LogGroupName, newConfig)
+		_ = metrics.MysqlCount(customreport.LogSubscriptionConfig{}.TableName(), "deploy_create", 1)
 		return nil
 	}
 	resp, err := apiservice.Nodeman.CreateSubscription(subscriptionParams)
@@ -194,14 +194,14 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 	if !ok {
 		return errors.New("parse api response subscription_id error")
 	}
-	newSub := customreport.LogReportSubscription{
+	newSub := customreport.LogSubscriptionConfig{
 		BkBizId:        s.BkBizID,
 		SubscriptionId: int(subscripId),
 		LogName:        s.LogGroupName,
 		Config:         newConfig,
 	}
 	if err := newSub.Create(db); err != nil {
-		return errors.Wrapf(err, "create LogReportSubscription with bk_biz_id [%v] subscription_id [%v] log_name [%v] config [%s] failed", s.BkBizID, subscripId, s.LogGroupName, newConfig)
+		return errors.Wrapf(err, "create LogSubscriptionConfig with bk_biz_id [%v] subscription_id [%v] log_name [%v] config [%s] failed", s.BkBizID, subscripId, s.LogGroupName, newConfig)
 	}
 	installResp, err := apiservice.Nodeman.RunSubscription(map[string]interface{}{
 		"subscription_id": subscripId, "actions": map[string]interface{}{s.pluginName: "INSTALL"},

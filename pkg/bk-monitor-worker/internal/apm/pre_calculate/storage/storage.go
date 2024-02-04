@@ -166,7 +166,7 @@ type Proxy struct {
 }
 
 func (p *Proxy) Run(errorReceiveChan chan<- error) {
-	logger.Infof("StorageProxy started.")
+	logger.Infof("StorageProxy started with %d workers", p.config.workerCount)
 	for i := 0; i < p.config.workerCount; i++ {
 		go p.ReceiveSaveRequest(errorReceiveChan)
 	}
@@ -195,10 +195,10 @@ loop:
 				if len(esSaveData) >= p.config.saveHoldMaxCount {
 					// todo 是否需要满时动态调整
 					err := p.saveEs.SaveBatch(esSaveData)
-					esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 					if err != nil {
 						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
 					}
+					esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 				}
 			case Cache:
 				item := r.Data.(CacheStorageData)
@@ -207,10 +207,10 @@ loop:
 				cacheSaveData = append(cacheSaveData, item)
 				if len(cacheSaveData) >= p.config.saveHoldMaxCount {
 					err := p.cache.SaveBatch(cacheSaveData)
-					cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 					if err != nil {
 						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
 					}
+					cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 				}
 			case BloomFilter:
 				// Bloom-filter needs to be added immediately,
@@ -227,24 +227,25 @@ loop:
 		case <-ticker.C:
 			if len(esSaveData) != 0 {
 				err := p.saveEs.SaveBatch(esSaveData)
-				esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 				if err != nil {
 					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
 				}
+				esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 			}
 			if len(cacheSaveData) != 0 {
 				err := p.cache.SaveBatch(cacheSaveData)
-				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 				if err != nil {
 					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
 				}
+				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 			}
 		case <-p.ctx.Done():
-			logger.Infof("Storage proxy receive stop signal, data saving stopped.")
 			ticker.Stop()
 			break loop
 		}
 	}
+
+	logger.Infof("Storage proxy receive stop signal, data saving stopped.")
 }
 
 func (p *Proxy) Query(queryRequest QueryRequest) (any, error) {
@@ -277,11 +278,11 @@ func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, erro
 	for _, setter := range options {
 		setter(&opt)
 	}
-	traceEsInstance, err := newEsStorage(opt.traceEsConfig)
+	traceEsInstance, err := newEsStorage(ctx, opt.traceEsConfig)
 	if err != nil {
 		return nil, err
 	}
-	saveEsInstance, err := newEsStorage(opt.saveEsConfig)
+	saveEsInstance, err := newEsStorage(ctx, opt.saveEsConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +290,7 @@ func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, erro
 	// create cache storage
 	var cache CacheOperator
 	if opt.cacheBackend == CacheTypeRedis {
-		cache, err = newRedisCache(opt.redisCacheConfig)
+		cache, err = newRedisCache(ctx, opt.redisCacheConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +301,6 @@ func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, erro
 		}
 	}
 
-	// todo 由于部署环境可能不支持redis-bloom 故统一使用内存方式进行
 	bloomFilter, err := newLayersCapDecreaseBloomClient(opt.bloomConfig)
 	if err != nil {
 		return nil, err

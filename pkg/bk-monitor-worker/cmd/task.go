@@ -10,6 +10,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -52,7 +53,7 @@ func startTask(cmd *cobra.Command, args []string) {
 	logger.Infof("Starting HTTP server at %s:%d", config.TaskListenHost, config.TaskListenPort)
 
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()

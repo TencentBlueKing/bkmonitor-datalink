@@ -40,11 +40,6 @@ var (
 	// If value is too small, the concurrent performance may be affected
 	DistributiveWindowWatchExpireInterval time.Duration
 
-	// DistributiveWindowConcurrentCount The maximum concurrency.
-	// For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
-	// then each sub-window can have a maximum of 10 traces running at the same time,
-	// and a total of 5 * 10 can be processed at the same time.
-	DistributiveWindowConcurrentCount int
 	// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
 	DistributiveWindowConcurrentExpirationMaximum int
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
@@ -105,7 +100,6 @@ func initApmVariables() {
 
 	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 10)
 	DistributiveWindowWatchExpireInterval = GetValue("taskConfig.apmPreCalculate.window.distributive.watchExpireInterval", 100*time.Millisecond, viper.GetDuration)
-	DistributiveWindowConcurrentCount = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentCount", 1000)
 	DistributiveWindowConcurrentExpirationMaximum = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentExpirationMaximum", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)

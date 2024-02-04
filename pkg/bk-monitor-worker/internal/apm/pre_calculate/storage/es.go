@@ -127,6 +127,8 @@ func EsPassword(p string) EsOption {
 }
 
 type esStorage struct {
+	ctx context.Context
+
 	indexName string
 	client    *elasticsearch.Client
 }
@@ -135,7 +137,7 @@ func (e *esStorage) Save(data EsStorageData) error {
 
 	buf := bytes.NewBuffer(data.Value)
 	req := esapi.IndexRequest{Index: e.getSaveIndexName(e.indexName), DocumentID: data.DocumentId, Body: buf}
-	res, err := req.Do(context.Background(), e.client)
+	res, err := req.Do(e.ctx, e.client)
 	defer func() {
 		if res != nil {
 			err = res.Body.Close()
@@ -161,7 +163,7 @@ func (e *esStorage) SaveBatch(items []EsStorageData) error {
 	}
 
 	req := esapi.BulkRequest{Index: e.getSaveIndexName(e.indexName), Body: &buf}
-	response, err := req.Do(context.Background(), e.client)
+	response, err := req.Do(e.ctx, e.client)
 	defer func() {
 		if response != nil {
 			err = response.Body.Close()
@@ -191,7 +193,7 @@ func (e *esStorage) Query(data any) (any, error) {
 	}
 
 	res, err := e.client.Search(
-		e.client.Search.WithContext(context.Background()),
+		e.client.Search.WithContext(e.ctx),
 		e.client.Search.WithIndex(e.indexName),
 		e.client.Search.WithBody(&buf),
 		e.client.Search.WithTrackTotalHits(true),
@@ -220,7 +222,7 @@ func (e *esStorage) getSaveIndexName(indexName string) string {
 	return fmt.Sprintf("write_%s_%s", time.Now().Format("20060102"), indexName)
 }
 
-func newEsStorage(options EsOptions) (*esStorage, error) {
+func newEsStorage(ctx context.Context, options EsOptions) (*esStorage, error) {
 	c, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses: []string{options.host},
 		Username:  options.username,
@@ -229,6 +231,6 @@ func newEsStorage(options EsOptions) (*esStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	logger.Infof("create ES Client")
-	return &esStorage{client: c, indexName: options.indexName}, nil
+	logger.Infof("create ES Client successfully")
+	return &esStorage{ctx: ctx, client: c, indexName: options.indexName}, nil
 }

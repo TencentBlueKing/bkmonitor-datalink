@@ -12,6 +12,7 @@ package runtimex
 import (
 	"fmt"
 	"runtime"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -56,10 +57,24 @@ func HandleCrashToChan(errorReceiveChan chan<- error) {
 		const size = 64 << 10
 		stacktrace := make([]byte, size)
 		stacktrace = stacktrace[:runtime.Stack(stacktrace, false)]
+
 		if _, ok := r.(string); ok {
-			errorReceiveChan <- fmt.Errorf("observed a panic: %s\n%s", r, stacktrace)
+			err := fmt.Errorf("observed a panic: %s\n%s", r, stacktrace)
+			select {
+			case errorReceiveChan <- err:
+				logger.Infof("send error to receiveChan")
+			case <-time.After(5 * time.Second):
+				logger.Infof("send error to receiveChan timeout, this error(%s) will not be received", err)
+			}
+
 		} else {
-			errorReceiveChan <- fmt.Errorf("observed a panic: %#v (%v)\n%s", r, r, stacktrace)
+			err := fmt.Errorf("observed a panic: %#v (%v)\n%s", r, r, stacktrace)
+			select {
+			case errorReceiveChan <- err:
+				logger.Infof("send error to receiveChan")
+			case <-time.After(5 * time.Second):
+				logger.Infof("send error to receiveChan timeout, this error(%s) will not be received", err)
+			}
 		}
 	}
 }

@@ -90,7 +90,6 @@ loop:
 	for {
 		select {
 		case <-k.ctx.Done():
-			logger.Infof("ConsumerGroup stopped.")
 			break loop
 		default:
 			if err := k.consumerGroup.Consume(k.ctx, []string{k.config.KafkaTopic}, k.handler); err != nil {
@@ -99,9 +98,11 @@ loop:
 			}
 		}
 	}
+	logger.Infof("ConsumerGroup stopped.")
 }
 
 type consumeHandler struct {
+	ctx     context.Context
 	dataId  string
 	spans   chan []window.StandardSpan
 	groupId string
@@ -123,7 +124,7 @@ func (c consumeHandler) Cleanup(_ sarama.ConsumerGroupSession) error {
 // Once the Messages() channel is closed, the Handler must finish its processing
 // loop and exit.
 func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-
+loop:
 	for {
 		select {
 		case msg := <-claim.Messages():
@@ -131,9 +132,13 @@ func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 			c.sendSpans(msg.Value)
 		case <-session.Context().Done():
 			logger.Infof("kafka consume handler session done. topic: %s groupId: %s", c.topic, c.groupId)
-			return nil
+			break loop
+		case <-c.ctx.Done():
+			logger.Infof("kafka consume handler context done. topic: %s groupId: %s", c.topic, c.groupId)
+			break loop
 		}
 	}
+	return nil
 }
 
 func (c consumeHandler) sendSpans(message []byte) {
@@ -157,7 +162,8 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 	}
 	config := args.kafkaConfig
 	logger.Infof(
-		"listen %s topic as groupId: %s, establish a kafka[%s(%s:%s)] connection",
+		"dataId: %s listen %s topic as groupId: %s, establish a kafka[%s(%s:%s)] connection",
+		dataId,
 		config.KafkaTopic,
 		config.KafkaGroupId,
 		config.KafkaHost,
@@ -178,6 +184,7 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 		config:        args.kafkaConfig,
 		consumerGroup: group,
 		handler: consumeHandler{
+			ctx:     args.ctx,
 			dataId:  dataId,
 			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
 			groupId: config.KafkaGroupId,

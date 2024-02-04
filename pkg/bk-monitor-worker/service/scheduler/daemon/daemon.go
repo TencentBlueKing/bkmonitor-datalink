@@ -45,7 +45,7 @@ type Numerator interface {
 }
 
 type Operator interface {
-	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
+	Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte)
 }
 
 type OperatorDefine struct {
@@ -59,12 +59,12 @@ var taskDefine = map[string]OperatorDefine{
 		if err != nil {
 			return nil, err
 		}
-		runSuccessChan := make(chan bool, 1)
+		runSuccessChan := make(chan error, 1)
 		go op.Run(runSuccessChan)
-		runSuccess := <-runSuccessChan
+		runErr := <-runSuccessChan
 		close(runSuccessChan)
-		if !runSuccess {
-			return nil, errors.New("apm.pre_calculate failed to run")
+		if runErr != nil {
+			return nil, errors.New(fmt.Sprintf("apm.pre_calculate failed to initial, error: %s", runErr))
 		}
 		return op, err
 	}},

@@ -147,8 +147,7 @@ func RedisCacheReadTimeout(readTimeout time.Duration) RedisCacheOption {
 }
 
 type RedisCache struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx context.Context
 
 	client goRedis.UniversalClient
 }
@@ -181,8 +180,7 @@ func (r *RedisCache) Query(key string) ([]byte, error) {
 	return res.Bytes()
 }
 
-func newRedisCache(options RedisCacheOptions) (*RedisCache, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+func newRedisCache(ctx context.Context, options RedisCacheOptions) (*RedisCache, error) {
 	client, err := redisUtils.NewRedisClient(
 		context.Background(),
 		&redisUtils.Option{
@@ -199,12 +197,11 @@ func newRedisCache(options RedisCacheOptions) (*RedisCache, error) {
 		},
 	)
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("failed to create redis client. %+v. error: %s", options, err)
 	}
 
 	logger.Infof("create Redis Client successfully")
-	return &RedisCache{client: client, ctx: ctx, cancel: cancel}, nil
+	return &RedisCache{client: client, ctx: ctx}, nil
 }
 
 type MemoryCache struct {

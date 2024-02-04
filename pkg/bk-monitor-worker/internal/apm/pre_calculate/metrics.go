@@ -10,6 +10,7 @@
 package pre_calculate
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/grafana/pyroscope-go"
@@ -18,8 +19,9 @@ import (
 )
 
 type ProfileCollector struct {
-	config      MetricOptions
-	runInstance *RunInstance
+	ctx    context.Context
+	dataId string
+	config MetricOptions
 }
 
 type MetricOption func(options *MetricOptions)
@@ -60,20 +62,20 @@ func ProfileAppIdx(h string) MetricOption {
 	}
 }
 
-func NewProfileCollector(o MetricOptions, instance *RunInstance) ProfileCollector {
-	return ProfileCollector{config: o, runInstance: instance}
+func NewProfileCollector(ctx context.Context, o MetricOptions, dataId string) ProfileCollector {
+	return ProfileCollector{config: o, ctx: ctx, dataId: dataId}
 }
 
 func (r *ProfileCollector) StartReport() {
 	if r.config.enabledProfile {
-		r.startProfiling(r.runInstance.dataId, r.config.profileAppIdx)
+		go r.startProfiling(r.dataId, r.config.profileAppIdx)
 	}
 }
 
 func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 
 	n := fmt.Sprintf("apm_precalculate-%s", appIdx)
-	_, err := pyroscope.Start(pyroscope.Config{
+	profiler, err := pyroscope.Start(pyroscope.Config{
 		ApplicationName: n,
 		ServerAddress:   r.config.profileAddress,
 		Logger:          apmLogger,
@@ -96,8 +98,20 @@ func (r *ProfileCollector) startProfiling(dataId, appIdx string) {
 	})
 
 	if err != nil {
-		apmLogger.Errorf("Start pyroscope failed, err: %s", err)
+		apmLogger.Errorf("Start pyroscope failed, profile data not be reported, error: %s", err)
 		return
 	}
 	apmLogger.Infof("Start profiling at %s(name: %s)", r.config.profileAddress, n)
+
+	for {
+		select {
+		case <-r.ctx.Done():
+			if err = profiler.Stop(); err != nil {
+				apmLogger.Errorf("receive context done, failed to stop profiler, error: %s", err)
+				return
+			}
+			apmLogger.Infof("received context done, stop profiler successfully")
+			return
+		}
+	}
 }

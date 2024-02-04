@@ -105,6 +105,9 @@ func (b *Binding) deleteBinding(taskUniId string) error {
 	ctx := context.Background()
 
 	workerInfoStr, err := b.getWorkerByTask(ctx, taskUniId)
+	if err != nil {
+		return err
+	}
 	var workerBinding WorkerBinding
 	if err = jsoniter.Unmarshal([]byte(workerInfoStr), &workerBinding); err != nil {
 		return fmt.Errorf(
@@ -113,9 +116,6 @@ func (b *Binding) deleteBinding(taskUniId string) error {
 		)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to check field: %s of hash: %s, error: %s", taskUniId, common.DaemonBindingTask(), err)
-	}
 	if workerBinding.WorkerId == "" {
 		return fmt.Errorf(
 			"failed to delete binding from task binding because the binding(%s <----> ?) does not exist",
@@ -137,7 +137,8 @@ func (b *Binding) deleteBinding(taskUniId string) error {
 		)
 	}
 
-	return err
+	logger.Infof("[BINDING DELETE] delete binding (%s <----> %s)", taskUniId, workerBinding.WorkerId)
+	return nil
 }
 
 func (b *Binding) deleteWorkerBinding(workerId string) error {

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
-	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
@@ -42,8 +41,7 @@ type Builder interface {
 
 type PreCalculateProcessor interface {
 	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
-	Run(errorChan chan<- bool)
-	Stop(dataId string)
+	Run(errorChan chan<- error)
 
 	StartByDataId(ctx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption)
 
@@ -60,6 +58,7 @@ type StartInfo struct {
 }
 
 type Precalculate struct {
+	// ctx Root context
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -67,8 +66,7 @@ type Precalculate struct {
 	// If a dataId needs to be configured independently, you can override it using config in the Start method
 	defaultConfig PrecalculateOption
 
-	readySignalChan  chan readySignal
-	runningInstances []*RunInstance
+	readySignalChan chan readySignal
 
 	httpTransport *http.Transport
 }
@@ -149,69 +147,66 @@ func NewPrecalculate() Builder {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	return &Precalculate{readySignalChan: make(chan readySignal, 0), httpTransport: httpMetricTransport}
+	return &Precalculate{readySignalChan: make(chan readySignal), httpTransport: httpMetricTransport}
 }
 
-func (p *Precalculate) Start(ctx context.Context, errorReceiveChan chan<- error, payload []byte) {
+func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
 
 	var startInfo StartInfo
 	if err := jsoniter.Unmarshal(payload, &startInfo); err != nil {
-		logger.Errorf(
-			"Failed to start APM-Precalculate as parse value to StartInfo error, value: %s. error: %s",
-			payload, err,
-		)
+		errorReceiveChan <- fmt.Errorf(
+			"failed to start APM-Precalculate as parse value to StartInfo error, value: %s. error: %s",
+			payload, err)
 		return
 	}
 
-	p.StartByDataId(ctx, startInfo.DataId, errorReceiveChan)
+	p.StartByDataId(runInstanceCtx, startInfo.DataId, errorReceiveChan)
 }
 
-func (p *Precalculate) StartByDataId(ctx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption) {
-	retryCount := 0
-	ticker := time.NewTicker(time.Second)
+func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption) {
+	ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {
 		select {
 		case <-ticker.C:
 			if err := core.GetMetadataCenter().AddDataId(dataId); err != nil {
-				retryCount++
-				if retryCount > 10 {
-					errorReceiveChan <- fmt.Errorf(
-						"failed to start the pre-calculation "+
-							"with dataId: %s after 10 retries, giving up. error: %s", dataId, err,
-					)
-					break loop
-				}
 				apmLogger.Errorf(
 					"Failed to start the pre-calculation with dataId: %s, it will not be executed. error: %s",
 					dataId, err,
 				)
-				ticker = time.NewTicker(time.Duration(retryCount*5) * time.Second)
-			} else {
-				var signal readySignal
-				if len(config) == 0 {
-					signal = readySignal{ctx: ctx, dataId: dataId, config: p.defaultConfig, errorReceiveChan: errorReceiveChan}
-				} else {
-					signal = readySignal{ctx: ctx, dataId: dataId, config: config[0], errorReceiveChan: errorReceiveChan}
-				}
-				p.readySignalChan <- signal
-				break loop
+				continue
 			}
-		case <-ctx.Done():
+
+			var signal readySignal
+			if len(config) == 0 {
+				signal = readySignal{
+					ctx: runInstanceCtx, dataId: dataId, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
+				}
+			} else {
+				// config overwrite
+				signal = readySignal{
+					ctx: runInstanceCtx, dataId: dataId, config: config[0], errorReceiveChan: errorReceiveChan,
+				}
+			}
+			p.readySignalChan <- signal
+			break loop
+		case <-runInstanceCtx.Done():
 			logger.Infof("StartByDataId stopped.")
 			ticker.Stop()
 			break loop
 		}
 	}
+
+	apmLogger.Infof("[StartByDataId] done - %s", dataId)
 }
 
-func (p *Precalculate) Run(runSuccess chan<- bool) {
+func (p *Precalculate) Run(runSuccess chan<- error) {
 	if err := core.CreateMetadataCenter(); err != nil {
-		runSuccess <- false
+		runSuccess <- err
 		return
 	}
 	apmLogger.Infof("Pre-calculate is running...")
-	runSuccess <- true
+	runSuccess <- nil
 loop:
 	for {
 		select {
@@ -225,53 +220,40 @@ loop:
 	}
 }
 
-func (p *Precalculate) Stop(dataId string) {
-	p.runningInstances = slices.DeleteFunc(p.runningInstances, func(e *RunInstance) bool {
-		if e.dataId == dataId {
-			e.cancel()
-			apmLogger.Infof("dataId: %s stopped.", dataId)
-			return true
-		}
-		return false
-	})
-}
-
 func (p *Precalculate) launch(
-	parentCtx context.Context, dataId string, conf PrecalculateOption, errorReceiveChan chan<- error,
+	runInstanceCtx context.Context, dataId string, conf PrecalculateOption, errorReceiveChan chan<- error,
 ) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 
-	ctx, cancel := context.WithCancel(parentCtx)
-	runInstance := RunInstance{dataId: dataId, config: conf, ctx: ctx, cancel: cancel, errorReceiveChan: errorReceiveChan}
+	runInstance := RunInstance{dataId: dataId, config: conf, ctx: runInstanceCtx, errorReceiveChan: errorReceiveChan}
 
 	messageChan, err := runInstance.startNotifier()
 	if err != nil {
-		// go to defer and retry
-		panic(err)
+		errorReceiveChan <- fmt.Errorf("failed to start notifier, dataId: %s, error: %s", dataId, err)
+		return
 	}
+
 	saveReqChan, err := runInstance.startStorageBackend()
 	if err != nil {
-		panic(err)
+		errorReceiveChan <- fmt.Errorf("failed to start storage backend, dataId: %s, error: %s", dataId, err)
+		return
 	}
 
-	runInstance.startWindowHandler(messageChan, saveReqChan, errorReceiveChan)
-
+	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
-	p.runningInstances = append(p.runningInstances, &runInstance)
 }
 
 type RunInstance struct {
+	ctx context.Context
+
 	dataId           string
 	config           PrecalculateOption
 	errorReceiveChan chan<- error
 
-	ctx    context.Context
-	cancel context.CancelFunc
-
 	notifier      notifier.Notifier
-	windowHandler window.Operator
+	windowHandler window.Operation
 	proxy         *storage.Proxy
 
 	profileCollector ProfileCollector
@@ -302,15 +284,22 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	return n.Spans(), nil
 }
 
-func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest, errorReceiveChan chan<- error) {
+func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
 	processor := window.NewProcessor(p.dataId, p.proxy, p.config.processorConfig...)
 
-	operator := window.NewDistributiveWindow(p.dataId, p.ctx, processor, saveReqChan, p.config.distributiveWindowConfig...)
-	operation := window.Operation{Operator: operator}
-	operation.Run(messageChan, errorReceiveChan, p.config.runtimeConfig...)
+	operation := window.Operation{
+		Operator: window.NewDistributiveWindow(
+			p.dataId,
+			p.ctx,
+			processor,
+			saveReqChan,
+			p.config.distributiveWindowConfig...,
+		),
+	}
+	operation.Run(messageChan, p.errorReceiveChan, p.config.runtimeConfig...)
 
-	p.windowHandler = operator
+	p.windowHandler = operation
 }
 
 func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) {
@@ -332,10 +321,11 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.EsPassword(saveEsConfig.Password),
 				storage.EsIndexName(saveEsConfig.IndexName),
 			),
-		}, p.config.storageConfig...)...,
+		}, p.config.storageConfig...,
+		)...,
 	)
 	if err != nil {
-		apmLogger.Errorf("Storage fail to started, the calculated data may not be saved. error: %s", err)
+		apmLogger.Errorf("Storage fail to started, the calculated data not be saved. error: %s", err)
 		return nil, err
 	}
 
@@ -355,6 +345,6 @@ func (p *RunInstance) startProfileReport() {
 		setter(&opt)
 	}
 
-	p.profileCollector = NewProfileCollector(opt, p)
+	p.profileCollector = NewProfileCollector(p.ctx, opt, p.dataId)
 	p.profileCollector.StartReport()
 }

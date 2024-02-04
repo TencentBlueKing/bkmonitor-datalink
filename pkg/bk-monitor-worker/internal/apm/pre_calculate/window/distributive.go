@@ -11,6 +11,7 @@ package window
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -55,9 +56,9 @@ func DistributiveWindowWatchExpiredInterval(interval time.Duration) Distributive
 // For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
 // then each sub-window can have a maximum of 10 traces running at the same time,
 // and a total of 5 * 10 can be processed at the same time.
-func ConcurrentProcessCount(c int) DistributiveWindowOption {
+func ConcurrentProcessCount() DistributiveWindowOption {
 	return func(options *DistributiveWindowOptions) {
-		options.concurrentProcessCount = c
+		options.concurrentProcessCount = runtime.NumCPU() * 2
 	}
 }
 

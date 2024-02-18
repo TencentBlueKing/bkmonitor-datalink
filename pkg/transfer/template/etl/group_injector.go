@@ -34,6 +34,13 @@ type GroupInjector struct {
 
 // Process
 func (p *GroupInjector) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
+	if d.Flag()&define.PayloadFlagNoGroups == define.PayloadFlagNoGroups {
+		logging.Debugf("%v no groups found, playload %#v", p, d)
+		outputChan <- d
+		p.CounterSuccesses.Inc()
+		return
+	}
+
 	raw := new(GroupedRecord)
 	err := d.To(raw)
 	if err != nil {

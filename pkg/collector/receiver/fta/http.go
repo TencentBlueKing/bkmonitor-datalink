@@ -149,7 +149,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "failed to validate record, code: %d, processor: %s", code, processorName)
+		err = errors.Wrapf(err, "run pre-check failed, rtype=fta, code=%d, ip=%s", code, ip)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordFta, processorName, r.Token.Original, code)
 		resp := s.getResponse(statusError, err.Error())
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), resp)

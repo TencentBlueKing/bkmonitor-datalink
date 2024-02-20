@@ -83,10 +83,16 @@ func (r *Report) AsMapStr() common.MapStr {
 		}
 	}
 
+	arch := "x86"
+	if r.System.Arch == "arm" || r.System.Arch == "aarch64" {
+		arch = "arm"
+	}
+
 	if r.System != nil {
 		result["system"] = common.MapStr{
 			"hostname": r.System.HostName,
 			"os":       r.System.OS,
+			"arch":     arch,
 			"platform": r.System.Platform,
 			"platVer":  r.System.PlatVer,
 			"sysType":  r.System.SysType,
@@ -131,6 +137,7 @@ type System struct {
 	PlatVer   string
 	SysType   string
 	BKAgentID string
+	Arch      string
 }
 
 // GetData 采集全部静态数据
@@ -266,6 +273,7 @@ var GetSystemStatus = func(ctx context.Context) (*System, error) {
 		Platform:  info.Platform,
 		PlatVer:   info.PlatformVersion,
 		BKAgentID: bkAgentID,
+		Arch:      info.KernelArch,
 	}, nil
 }
 

@@ -53,6 +53,9 @@ func NewEngine(params *Params) {
 		LookbackDelta:        params.LookbackDelta,
 		EnableNegativeOffset: params.EnableNegativeOffset,
 		EnableAtModifier:     params.EnableAtModifier,
+		NoStepSubqueryIntervalFn: func(rangeMillis int64) int64 {
+			return GetDefaultStep().Milliseconds()
+		},
 	})
 }
 

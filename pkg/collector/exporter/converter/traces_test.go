@@ -50,9 +50,8 @@ func TestTracesRandom(t *testing.T) {
 	traces := g.Generate()
 
 	record := define.Record{
-		RecordType:  define.RecordTraces,
-		RequestType: define.RequestHttp,
-		Data:        traces,
+		RecordType: define.RecordTraces,
+		Data:       traces,
 	}
 
 	events := make([]define.Event, 0)
@@ -73,9 +72,8 @@ func BenchmarkTracesConvert_10_Span(b *testing.B) {
 	g := makeTracesGenerator(10)
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordTraces,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordTraces,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -88,9 +86,8 @@ func BenchmarkTracesConvert_100_Span(b *testing.B) {
 	g := makeTracesGenerator(100)
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordTraces,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordTraces,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -103,9 +100,8 @@ func BenchmarkTracesConvert_1000_Span(b *testing.B) {
 	g := makeTracesGenerator(1000)
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordTraces,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordTraces,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -118,9 +114,8 @@ func BenchmarkTracesConvert_10000_Span(b *testing.B) {
 	g := makeTracesGenerator(10000)
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordTraces,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordTraces,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}

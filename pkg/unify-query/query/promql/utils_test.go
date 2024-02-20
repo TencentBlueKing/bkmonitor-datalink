@@ -50,7 +50,7 @@ func TestNewWhereList(t *testing.T) {
 		},
 	}
 
-	whereList := NewWhereList(false)
+	whereList := NewWhereList()
 	whereList.Append(OrOperator, NewTextWhere(MakeOrExpression(conditions)))
 	whereList.Append(AndOperator, NewWhere("database", "database", EqualOperator, StringType))
 	whereList.Append(AndOperator, NewWhere("tag", "tag", NEqualOperator, StringType))

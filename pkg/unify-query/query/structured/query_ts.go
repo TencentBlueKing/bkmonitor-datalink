@@ -354,12 +354,14 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 	}
 
+	user := metadata.GetUser(ctx)
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:   spaceUid,
-		TableID:    tableID,
-		FieldName:  metricName,
-		IsRegexp:   q.IsRegexp,
-		Conditions: q.Conditions,
+		SpaceUid:    spaceUid,
+		TableID:     tableID,
+		FieldName:   metricName,
+		IsRegexp:    q.IsRegexp,
+		Conditions:  q.Conditions,
+		IsSkipSpace: user.IsSkipSpace(),
 	})
 	if err != nil {
 		return nil, err
@@ -480,13 +482,15 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
 		fieldOp := promql.EqualOperator
+		valueType := promql.StringType
 		if q.IsRegexp {
 			fieldOp = promql.RegexpOperator
+			valueType = promql.RegexpType
 		}
 		whereList.Append(
 			promql.AndOperator,
 			promql.NewWhere(
-				promql.StaticMetricName, metricName, fieldOp, promql.StringType,
+				promql.StaticMetricName, metricName, fieldOp, valueType,
 			),
 		)
 	// 多指标单表，字段名为指标名
@@ -504,36 +508,6 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
-
-	//// 拼入空间自带过滤条件
-	//var filterConditions = make([][]ConditionField, 0, len(tsDB.Filters))
-	//for _, filter := range tsDB.Filters {
-	//	var (
-	//		cond           = make([]ConditionField, 0, len(filter))
-	//		labelsMatchers = make([]*labels.Matcher, 0, len(filter))
-	//	)
-	//	for k, v := range filter {
-	//		if v != "" {
-	//			cond = append(cond, ConditionField{
-	//				DimensionName: k,
-	//				Value:         []string{v},
-	//				Operator:      Contains,
-	//			})
-	//
-	//			matcher, _ := labels.NewMatcher(labels.MatchEqual, k, v)
-	//			labelsMatchers = append(labelsMatchers, matcher)
-	//		}
-	//	}
-	//
-	//	if len(cond) > 0 {
-	//		filterConditions = append(filterConditions, cond)
-	//	}
-	//
-	//	// labelsMatcher 不支持 or 语法，所以只取第一个
-	//	if len(tsDB.Filters) == 1 {
-	//		query.LabelsMatcher = append(query.LabelsMatcher, labelsMatchers...)
-	//	}
-	//}
 
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)

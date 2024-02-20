@@ -213,11 +213,18 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 			ok bool
 		)
 
+		if d == nil {
+			continue
+		}
+
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[timeStamp]; !ok {
 			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
 		}
 
+		if vtLong == nil {
+			continue
+		}
 		switch vtLong.(type) {
 		case int64:
 			vt = vtLong.(int64)
@@ -232,6 +239,9 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 			return res, fmt.Errorf("dimension %s is emtpy", field)
 		}
 
+		if vvDouble == nil {
+			continue
+		}
 		switch vvDouble.(type) {
 		case int64:
 			vv = float64(vvDouble.(int64))
@@ -245,18 +255,11 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 		lbl := make([]prompb.Label, 0, len(dimensions))
 		// 获取维度信息
 		for _, dimName := range dimensions {
-			var (
-				value string
-				v     interface{}
-			)
-			if v, ok = d[dimName]; ok {
-				switch v.(type) {
-				case string:
-					value = v.(string)
-				default:
-					return res, fmt.Errorf("dimensions error type %T, %v in %s with %+v", v, v, dimName, d)
-				}
+			value, err := getValue(dimName, d)
+			if err != nil {
+				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
 			}
+
 			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, value))
 			lbl = append(lbl, prompb.Label{
 				Name:  dimName,
@@ -471,14 +474,12 @@ func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name s
 	}
 
 	for _, d := range data.List {
-		if v, ok := d[name]; ok {
-			var value string
-			switch v.(type) {
-			case string:
-				value = v.(string)
-			default:
-				return nil, fmt.Errorf("dimensions error type %T, %v in %s with %+v", v, v, name, d)
-			}
+		value, err := getValue(name, d)
+		if err != nil {
+			return nil, err
+		}
+
+		if value != "" {
 			lbMap[value] = struct{}{}
 		}
 	}
@@ -498,4 +499,21 @@ func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end 
 
 func (i Instance) GetInstanceType() string {
 	return i.Client.PreferStorage
+}
+
+func getValue(k string, d map[string]interface{}) (string, error) {
+	var value string
+	if v, ok := d[k]; ok {
+		switch v.(type) {
+		case string:
+			value = fmt.Sprintf("%s", v)
+		case float64, float32:
+			value = fmt.Sprintf("%.f", v)
+		case int64, int32, int:
+			value = fmt.Sprintf("%d", v)
+		default:
+			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)
+		}
+	}
+	return value, nil
 }

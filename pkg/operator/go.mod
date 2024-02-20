@@ -31,7 +31,6 @@ require (
 	github.com/Tencent/bk-bcs/bcs-scenarios/kourse v0.0.0-20220914032224-06b1bd3358bc
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
-	github.com/hashicorp/go-version v1.6.0
 )
 
 require (
@@ -115,7 +114,6 @@ require (
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common/sigv4 v0.1.0 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
-	github.com/rapidloop/skv v0.0.0-20180909015525-9def2caac4cc // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20200313005456-10cdbea86bc0 // indirect
 	github.com/spf13/afero v1.9.2 // indirect
 	github.com/spf13/cast v1.3.1 // indirect

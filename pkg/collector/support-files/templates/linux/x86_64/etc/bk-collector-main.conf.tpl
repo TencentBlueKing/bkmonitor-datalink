@@ -152,6 +152,17 @@ bk-collector:
         - "maxconns"
         - "maxbytes"
 
+    # Admin Server Config
+    admin_server:
+      # 是否启动 Http 服务
+      # default: false
+      enabled: true
+      # 服务监听端点
+      # default: ""
+      endpoint: "127.0.0.1:4310"
+      middlewares:
+        - "logging"
+
     # Grpc Server Config
     grpc_server:
       # 是否启动 Grpc 服务

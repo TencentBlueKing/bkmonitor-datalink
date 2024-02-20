@@ -67,10 +67,29 @@ type AggregateMethod struct {
 	ArgsList Args `json:"args_list,omitempty" swaggerignore:"true"`
 	// VArgsList 函数参数，结合 Position 一起使用，类似 topk, histogram_quantile 需要用到
 	VArgsList []interface{} `json:"vargs_list,omitempty" swaggerignore:"true"`
+
+	// Window 聚合周期
+	Window Window `json:"window,omitempty" example:"60s"`
+	// IsSubQuery 判断是否为子查询
+	IsSubQuery bool `json:"is_sub_query,omitempty"`
+	// Step 子查询区间 step
+	Step string `json:"step,omitempty" swaggerignore:"true"`
 }
 
-// ToProm: 将结果返回为一个promql的聚合表达式，但是注意：此时的Expr/Grouping为空，需要在外部进行补充
+// ToProm 将结果返回为一个promql的聚合表达式，但是注意：此时的Expr/Grouping为空，需要在外部进行补充
 func (m *AggregateMethod) ToProm(expr parser.Expr) (parser.Expr, error) {
+	// 支持时间聚合函数
+	if m.Window != "" {
+		timeAggregation := &TimeAggregation{
+			Function:   m.Method,
+			Window:     m.Window,
+			Position:   m.Position,
+			VargsList:  m.VArgsList,
+			IsSubQuery: m.IsSubQuery,
+			Step:       m.Step,
+		}
+		return timeAggregation.ToProm(expr)
+	}
 
 	// 参数在聚合集合里，就用聚合方法
 	if method, ok := AggregateMap[strings.ToLower(m.Method)]; ok {

@@ -21,8 +21,8 @@ import (
 )
 
 func TestRegister(t *testing.T) {
-	RegisterGrpcRoute(nil)
-	RegisterHttpRoute("x", nil)
+	RegisterRecvGrpcRoute(nil)
+	RegisterRecvHttpRoute("x", nil)
 	RegisterReadyFunc("x", func() {})
 }
 
@@ -30,7 +30,7 @@ func TestRoute(t *testing.T) {
 	const configContent = `
   receiver:
     disabled: false
-    http_server:
+    admin_server:
       enabled: true
       endpoint: "localhost:59999"
     grpc_server:
@@ -53,10 +53,6 @@ func TestRoute(t *testing.T) {
 	}
 
 	cases := []Case{
-		{
-			method: http.MethodGet,
-			path:   "/ping",
-		},
 		{
 			method: http.MethodGet,
 			path:   "/metrics",

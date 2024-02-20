@@ -89,7 +89,8 @@ func containElement(slice []string, element string) bool {
 // judgeFilter 判断 filter 是否符合合并压缩的条件
 // 目前仅支持 tsDB 的每一个 filter 的 key 均为一致，并且 key 的长度为 2 的情况
 func judgeFilter(filters []query.Filter) (bool, []string) {
-	if len(filters) == 0 {
+	// 如果只有1个条件或者更少的条件则无需合并
+	if len(filters) < 2 {
 		return false, nil
 	}
 

@@ -46,6 +46,9 @@ type Numerator interface {
 
 type Operator interface {
 	Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte)
+	// GetTaskDimension get the metric dimension of the daemon task,
+	// and the maintainer will report the metric regularly.
+	GetTaskDimension(payload []byte) string
 }
 
 type OperatorDefine struct {

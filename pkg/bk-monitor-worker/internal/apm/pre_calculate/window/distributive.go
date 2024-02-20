@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
@@ -24,6 +25,43 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+var (
+	// apmPreCalcWindowTraceTotal trace count of distributive windows
+	apmPreCalcWindowTraceTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metrics.ApmNamespace,
+			Name:      "window_trace_count",
+			Help:      "window trace count",
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
+	// apmPreCalcWindowSpanTotal apm预计算任务窗口span数量
+	apmPreCalcWindowSpanTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metrics.ApmNamespace,
+			Name:      "window_span_count",
+			Help:      "window span count",
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
+)
+
+func recordApmPreCalcWindowTraceTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowTraceTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
+func recordApmPreCalcWindowSpanTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowSpanTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
+func init() {
+	// register the metrics
+	metrics.Registry.MustRegister(
+		apmPreCalcWindowTraceTotal,
+		apmPreCalcWindowSpanTotal,
+	)
+}
 
 // DistributiveWindowOptions all configs
 type DistributiveWindowOptions struct {
@@ -130,9 +168,11 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 	return window
 }
 
+const maxInt = int(^uint(0) >> 1)
+
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
-	// 计算int的最大值 避免uint超过int最大值计算出下标出现负数
-	const maxInt = int(^uint(0) >> 1)
+	// Based on the maximum value of int,
+	// avoid uint > maximum value of int to calculate the negative number of subscript.
 	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
 	return w.subWindows[hashValue%w.config.subWindowSize]
 }
@@ -157,37 +197,39 @@ func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveC
 	//	go w.Handle(spanChan)
 	//}
 }
+func (w *DistributiveWindow) GetWindowsLength() int {
+	res := 0
 
-func (w *DistributiveWindow) ReportMetric() map[OperatorMetricKey]int {
-	r := make(map[OperatorMetricKey]int, 2)
 	for _, subWindow := range w.subWindows {
-
-		traceCount := 0
-		spanCount := 0
-
-		subWindow.m.Range(func(key, value any) bool {
-			traceCount++
-			v := value.(*CollectTrace)
-			spanCount += len(v.Spans)
-			return true
-		})
-
-		traceV, traceE := r[TraceCount]
-		if traceE {
-			r[TraceCount] = traceV + traceCount
-		} else {
-			r[TraceCount] = traceCount
-		}
-
-		spanV, spanE := r[SpanCount]
-		if spanE {
-			r[SpanCount] = spanV + spanCount
-		} else {
-			r[SpanCount] = spanCount
-		}
+		res += len(subWindow.eventChan)
 	}
 
-	return r
+	return res
+}
+
+func (w *DistributiveWindow) RecordTraceAndSpanCountMetric() {
+
+	for subId := range w.subWindows {
+		traceC, spanC := w.getSUbWindowMetrics(subId)
+		recordApmPreCalcWindowTraceTotal(w.dataId, subId, traceC)
+		recordApmPreCalcWindowSpanTotal(w.dataId, subId, spanC)
+	}
+}
+
+func (w *DistributiveWindow) getSUbWindowMetrics(subId int) (int, int) {
+	subWindow := w.subWindows[subId]
+
+	traceCount := 0
+	spanCount := 0
+
+	subWindow.m.Range(func(key, value any) bool {
+		traceCount++
+		v := value.(*CollectTrace)
+		spanCount += len(v.Spans)
+		return true
+	})
+
+	return traceCount, spanCount
 }
 
 func (w *DistributiveWindow) Handle(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error) {
@@ -198,11 +240,12 @@ loop:
 	for {
 		select {
 		case m := <-spanChan:
-			metrics.DecreaseApmMessageChanCount(w.dataId)
+			start := time.Now()
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)
 				subWindow.add(span)
 			}
+			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
 		case <-w.ctx.Done():
 			w.logger.Infof("Handle span stopped.")
 			break loop
@@ -298,6 +341,7 @@ func (d *distributiveSubWindow) detectNotify() {
 	})
 
 	if len(expiredKeys) > 0 {
+		metrics.RecordApmPreCalcExpiredKeyTotal(d.dataId, d.id, len(expiredKeys))
 		for _, k := range expiredKeys {
 			v, exists := d.m.LoadAndDelete(k)
 			if !exists {
@@ -305,8 +349,6 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(*CollectTrace)
-			metrics.DecreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
-			metrics.DecreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id), len(trace.Spans))
 			d.eventChan <- Event{trace}
 		}
 	}
@@ -318,7 +360,9 @@ loop:
 	for {
 		select {
 		case e := <-d.eventChan:
+			start := time.Now()
 			d.processor.PreProcess(d.writeSaveRequestChan, e)
+			metrics.RecordApmPreCalcProcessEventDuration(d.dataId, d.id, start)
 		case <-d.ctx.Done():
 			break loop
 		}
@@ -328,10 +372,8 @@ loop:
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	d.mLock.Lock()
 	value, exist := d.m.Load(span.TraceId)
-	metrics.IncreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id))
 
 	if !exist {
-		metrics.IncreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
 
 		graph := NewDiGraph()
 		graph.AddNode(&Node{StandardSpan: &span})

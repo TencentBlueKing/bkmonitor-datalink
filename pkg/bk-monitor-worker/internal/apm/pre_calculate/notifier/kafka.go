@@ -128,6 +128,7 @@ loop:
 	for {
 		select {
 		case msg := <-claim.Messages():
+			metrics.AddApmNotifierReceiveMessageCount(c.dataId, c.topic)
 			session.MarkMessage(msg, "")
 			c.sendSpans(msg.Value)
 		case <-session.Context().Done():
@@ -142,6 +143,7 @@ loop:
 }
 
 func (c consumeHandler) sendSpans(message []byte) {
+	start := time.Now()
 	var res []window.StandardSpan
 	v, _ := fastjson.ParseBytes(message)
 	items := v.GetArray("items")
@@ -149,8 +151,8 @@ func (c consumeHandler) sendSpans(message []byte) {
 	for _, item := range items {
 		res = append(res, *window.ToStandardSpan(item))
 	}
+	metrics.RecordNotifierParseSpanDuration(c.dataId, c.topic, start)
 	c.spans <- res
-	metrics.IncreaseApmMessageChanCount(c.dataId)
 }
 
 func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {

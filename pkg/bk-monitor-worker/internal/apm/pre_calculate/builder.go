@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -41,6 +42,7 @@ type Builder interface {
 
 type PreCalculateProcessor interface {
 	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
+	GetTaskDimension(payload []byte) string
 	Run(errorChan chan<- error)
 
 	StartByDataId(ctx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption)
@@ -150,6 +152,18 @@ func NewPrecalculate() Builder {
 	return &Precalculate{readySignalChan: make(chan readySignal), httpTransport: httpMetricTransport}
 }
 
+func (p *Precalculate) GetTaskDimension(payload []byte) string {
+	var startInfo StartInfo
+	if err := jsoniter.Unmarshal(payload, &startInfo); err != nil {
+		logger.Errorf(
+			"failed to start APM-Precalculate as parse value to StartInfo error, value: %s. error: %s",
+			payload, err,
+		)
+		return string(payload)
+	}
+	return startInfo.DataId
+}
+
 func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
 
 	var startInfo StartInfo
@@ -241,6 +255,7 @@ func (p *Precalculate) launch(
 
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
+	runInstance.startRecordSemaphoreAcquired()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
 }
@@ -307,6 +322,7 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 	saveEsConfig := core.GetMetadataCenter().GetSaveEsConfig(p.dataId)
 
 	proxy, err := storage.NewProxyInstance(
+		p.dataId,
 		p.ctx,
 		append([]storage.ProxyOption{
 			storage.TraceEsConfig(
@@ -347,4 +363,25 @@ func (p *RunInstance) startProfileReport() {
 
 	p.profileCollector = NewProfileCollector(p.ctx, opt, p.dataId)
 	p.profileCollector.StartReport()
+}
+
+func (p *RunInstance) startRecordSemaphoreAcquired() {
+
+	ticker := time.NewTicker(1 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			metrics.RecordApmPreCalcSemaphoreTotal(p.dataId, metrics.TaskProcessChan, len(p.notifier.Spans()))
+			metrics.RecordApmPreCalcSemaphoreTotal(
+				p.dataId, metrics.WindowProcessEventChan, p.windowHandler.Operator.GetWindowsLength(),
+			)
+			metrics.RecordApmPreCalcSemaphoreTotal(p.dataId, metrics.SaveRequestChan, len(p.proxy.SaveRequest()))
+			p.windowHandler.Operator.RecordTraceAndSpanCountMetric()
+
+		case <-p.ctx.Done():
+			apmLogger.Infof("[SemaphoreAcquired] receive context done, stopped")
+			ticker.Stop()
+			return
+		}
+	}
 }

@@ -38,6 +38,7 @@ func NewTSFormatter(ctx context.Context, name string) (*Formatter, error) {
 
 	enableDbmMeta, _ := rtOption.GetBool(config.ResultTableListConfigOptEnableDbmMeta)
 	enableDevxMeta, _ := rtOption.GetBool(config.ResultTableListConfigOptEnableDevxMeta)
+	upsertDimensions, _ := rtOption.Get(config.ResultTableConfigOptUpsertDimensions)
 
 	return &Formatter{
 		Processor: NewProcessor(ctx, name, RecordHandlers{
@@ -55,6 +56,7 @@ func NewTSFormatter(ctx context.Context, name string) (*Formatter, error) {
 			schema.TransformDimensionsHandlerCreator(option.GetOrDefault(config.PipelineConfigOptAllowDimensionsMissing, true).(bool)),
 			RoundingTimeHandlerCreator(option.GetOrDefault(config.PipelineConfigOptTimePrecision, "").(string)),
 			AlignTimeUnitHandler(option.GetOrDefault(config.PipelineConfigOptAlignTimeUnit, "").(string)),
+			UpsertDimensionsHandler(upsertDimensions),
 		}),
 	}, nil
 }

@@ -109,6 +109,8 @@ const (
 	ResultTableListConfigOptEnableDbmMeta = "enable_dbm_meta"
 	// ResultTableListConfigOptEnableDevxMeta 是否开启 devx_meta 字段注入
 	ResultTableListConfigOptEnableDevxMeta = "enable_devx_meta"
+	// ResultTableConfigOptUpsertDimensions 插入或更新原有维度
+	ResultTableConfigOptUpsertDimensions = "upsert_dimensions"
 
 	// 事件类
 	// PipelineConfigOptFlatBatchKey: 事件类数据需要进行进行插件的

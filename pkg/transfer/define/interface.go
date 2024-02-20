@@ -52,6 +52,13 @@ type Payload interface {
 	SetTime(t time.Time)
 	// GetTime gets the time received
 	GetTime() time.Time
+
+	// SetFlag 重新设置 flag
+	SetFlag(flag PayloadFlag)
+	// AddFlag 新增 flag
+	AddFlag(flag PayloadFlag)
+	// Flag 返回 payload 所有 flag
+	Flag() PayloadFlag
 }
 
 type payloadCopier interface {

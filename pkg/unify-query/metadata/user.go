@@ -16,19 +16,21 @@ import (
 
 // User
 type User struct {
-	Key      string
-	Source   string
-	Name     string
-	Role     string
-	SpaceUid string
+	Key       string
+	Source    string
+	Name      string
+	Role      string
+	SpaceUid  string
+	SkipSpace string
 }
 
 // SetUser
-func SetUser(ctx context.Context, key, spaceUid string) {
+func SetUser(ctx context.Context, key, spaceUid, skipSpace string) {
 	if md != nil {
 		user := &User{
-			Key:      key,
-			SpaceUid: spaceUid,
+			Key:       key,
+			SpaceUid:  spaceUid,
+			SkipSpace: skipSpace,
 		}
 		arr := strings.Split(key, ":")
 		if len(arr) > 0 {
@@ -52,4 +54,9 @@ func GetUser(ctx context.Context) *User {
 		}
 	}
 	return &User{}
+}
+
+// IsSkipSpace 判断是否跳过路由信息
+func (u *User) IsSkipSpace() bool {
+	return u.SkipSpace != ""
 }

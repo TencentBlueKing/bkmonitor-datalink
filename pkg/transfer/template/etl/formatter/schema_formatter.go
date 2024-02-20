@@ -36,7 +36,7 @@ func NewSchemaFormatterByResultTable(rt *config.MetaResultTableConfig) (*SchemaF
 	metrics := make(map[string]etl.TransformFn)
 	dimensions := make(map[string]etl.TransformFn)
 	err := rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
-		transform := etl.NewTransformByField(config)
+		transform := etl.NewTransformByField(config, nil)
 		switch config.Tag {
 		case define.MetaFieldTagDimension, define.MetaFieldTagGroup:
 			dimensions[config.Name()] = transform

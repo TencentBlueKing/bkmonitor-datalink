@@ -32,10 +32,11 @@ import (
 type Receiver struct {
 	wg sync.WaitGroup
 
-	httpServer *http.Server
-	httpTls    *transport.TLSConfig
-	grpcServer *grpc.Server
-	config     Config
+	config      Config
+	adminServer *http.Server // 管理员服务 一般不对外暴露
+	recvServer  *http.Server // 接收服务
+	recvTls     *transport.TLSConfig
+	grpcServer  *grpc.Server
 }
 
 var (
@@ -93,8 +94,8 @@ func New(conf *confengine.Config) (*Receiver, error) {
 	logger.Infof("receiver config: %+v", c)
 
 	var tlsConfig *tlscommon.TLSConfig
-	if c.HttpServer.TLS != nil {
-		if tlsConfig, err = tlscommon.LoadTLSServerConfig(c.HttpServer.TLS); err != nil {
+	if c.RecvServer.TLS != nil {
+		if tlsConfig, err = tlscommon.LoadTLSServerConfig(c.RecvServer.TLS); err != nil {
 			return nil, err
 		}
 		logger.Infof("receiver start httpserver with tls config: %+v", tlsConfig)
@@ -106,9 +107,14 @@ func New(conf *confengine.Config) (*Receiver, error) {
 
 	return &Receiver{
 		config:  c,
-		httpTls: tlsConfig,
-		httpServer: &http.Server{
-			Handler:      HttpRouter(),
+		recvTls: tlsConfig,
+		recvServer: &http.Server{
+			Handler:      RecvHttpRouter(),
+			ReadTimeout:  time.Minute * 5, // 读超时
+			WriteTimeout: time.Minute * 5, // 写超时
+		},
+		adminServer: &http.Server{
+			Handler:      AdminHttpRouter(),
 			ReadTimeout:  time.Minute * 5, // 读超时
 			WriteTimeout: time.Minute * 5, // 写超时
 		},
@@ -158,24 +164,24 @@ func (r *Receiver) Reload(conf *confengine.Config) {
 	globalSkywalkingConfig = LoadConfigFrom(conf)
 }
 
-func (r *Receiver) startHttpServer() error {
-	for _, mid := range r.config.HttpServer.Middlewares {
+func (r *Receiver) startRecvHttpServer() error {
+	for _, mid := range r.config.RecvServer.Middlewares {
 		fn := httpmiddleware.Get(mid)
 		if fn != nil {
-			logger.Debugf("receiver/http use '%s' middleware", mid)
-			r.httpServer.Handler = fn(r.httpServer.Handler)
+			logger.Debugf("receiver/recv-http use '%s' middleware", mid)
+			r.recvServer.Handler = fn(r.recvServer.Handler)
 		}
 	}
 
-	endpoint := r.config.HttpServer.Endpoint
-	logger.Infof("start to listen http server at: %v", endpoint)
-	if r.httpTls != nil {
-		c := r.httpTls.BuildModuleConfig(endpoint)
+	endpoint := r.config.RecvServer.Endpoint
+	logger.Infof("start to listen http recv server at: %v", endpoint)
+	if r.recvTls != nil {
+		c := r.recvTls.BuildModuleConfig(endpoint)
 		l, err := tls.Listen("tcp", endpoint, c)
 		if err != nil {
 			return err
 		}
-		return r.httpServer.Serve(l)
+		return r.recvServer.Serve(l)
 	}
 
 	l, err := net.Listen("tcp", endpoint)
@@ -183,8 +189,28 @@ func (r *Receiver) startHttpServer() error {
 		return err
 	}
 
-	logger.Infof("register http route: %+v", HttpRoutes())
-	return r.httpServer.Serve(l)
+	logger.Infof("register recv http route: %+v", RecvHttpRoutes())
+	return r.recvServer.Serve(l)
+}
+
+func (r *Receiver) starAdminHttpServer() error {
+	for _, mid := range r.config.AdminServer.Middlewares {
+		fn := httpmiddleware.Get(mid)
+		if fn != nil {
+			logger.Debugf("receiver/admin-http use '%s' middleware", mid)
+			r.adminServer.Handler = fn(r.adminServer.Handler)
+		}
+	}
+
+	endpoint := r.config.AdminServer.Endpoint
+	logger.Infof("start to listen http admin server at: %v", endpoint)
+	l, err := net.Listen("tcp", endpoint)
+	if err != nil {
+		return err
+	}
+
+	logger.Infof("register http admin route: %+v", AdminHttpRouter())
+	return r.adminServer.Serve(l)
 }
 
 func (r *Receiver) startGrpcServer() error {
@@ -218,21 +244,39 @@ func (r *Receiver) Start() error {
 	r.ready()
 	errs := make(chan error, 8)
 
+	// 启动 Recv HTTP 服务
 	r.wg.Add(1)
 	go func() {
 		r.wg.Done()
-		if !r.config.HttpServer.Enabled {
+		if !r.config.RecvServer.Enabled {
 			return
 		}
-		if err := r.startHttpServer(); err != nil {
+		if err := r.startRecvHttpServer(); err != nil {
 			if errors.Is(err, http.ErrServerClosed) {
-				logger.Info("receiver http server stopped")
+				logger.Info("receiver http recv server stopped")
 				return
 			}
 			errs <- err
 		}
 	}()
 
+	// 启动 Admin HTTP 服务
+	r.wg.Add(1)
+	go func() {
+		r.wg.Done()
+		if !r.config.AdminServer.Enabled {
+			return
+		}
+		if err := r.starAdminHttpServer(); err != nil {
+			if errors.Is(err, http.ErrServerClosed) {
+				logger.Info("receiver http admin server stopped")
+				return
+			}
+			errs <- err
+		}
+	}()
+
+	// 启动 Recv GRPC 服务
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
@@ -260,8 +304,14 @@ func (r *Receiver) Start() error {
 }
 
 func (r *Receiver) Stop() error {
-	if r.config.HttpServer.Enabled {
-		if err := r.httpServer.Close(); err != nil {
+	if r.config.RecvServer.Enabled {
+		if err := r.recvServer.Close(); err != nil {
+			return err
+		}
+	}
+
+	if r.config.AdminServer.Enabled {
+		if err := r.adminServer.Close(); err != nil {
 			return err
 		}
 	}

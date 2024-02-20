@@ -129,11 +129,51 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			vm:     `test1="abc", result_table_id="table_id" or test1="abc", test1="abc", result_table_id="table_id"`,
 			sql:    `test1 = 'abc' or (test1 = 'abc' and test1 = 'abc')`,
 		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "job",
+						Operator:      ConditionContains,
+						Value:         []string{"kube-state-metrics"},
+					},
+					{
+						DimensionName: "namespace",
+						Operator:      ConditionNotContains,
+						Value:         []string{""},
+					},
+					{
+						DimensionName: "pod_name",
+						Operator:      ConditionNotContains,
+						Value:         []string{""},
+					},
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionRegEqual,
+						Value:         []string{"BCS-K8S-40822", "BCS-K8S-40839", "BCS-K8S-40840", "BCS-K8S-40989", "BCS-K8S-41105", "BCS-K8S-41106"},
+					},
+					{
+						DimensionName: "container",
+						Operator:      ConditionNotContains,
+						Value:         []string{"fluentd"},
+					},
+				},
+				ConditionList: []string{"and", "and", "and", "and"},
+			},
+			result: []int{5},
+			vm:     `job="kube-state-metrics", namespace!="", pod_name!="", bcs_cluster_id=~"BCS-K8S-40822|BCS-K8S-40839|BCS-K8S-40840|BCS-K8S-40989|BCS-K8S-41105|BCS-K8S-41106", container!="fluentd", result_table_id="table_id"`,
+			sql:    `(job = 'kube-state-metrics' and namespace != '' and pod_name != '' and (bcs_cluster_id REGEXP 'BCS-K8S-40822' or bcs_cluster_id REGEXP 'BCS-K8S-40839' or bcs_cluster_id REGEXP 'BCS-K8S-40840' or bcs_cluster_id REGEXP 'BCS-K8S-40989' or bcs_cluster_id REGEXP 'BCS-K8S-41105' or bcs_cluster_id REGEXP 'BCS-K8S-41106') and container != 'fluentd')`,
+		},
 	}
 
 	for idx, testCase := range testCases {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
 			testResult, err := testCase.condition.AnalysisConditions()
+
+			a, b := testResult.Compare("bcs_cluster_id", "BCS-K8S-408300")
+			fmt.Println(a, b)
+			return
+
 			if testCase.err != nil {
 				assert.NotNil(t, err)
 				return

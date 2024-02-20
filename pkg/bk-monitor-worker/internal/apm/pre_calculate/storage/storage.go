@@ -154,6 +154,8 @@ func SaveReqBufferSize(s int) ProxyOption {
 
 // Proxy storage backend proxy.
 type Proxy struct {
+	dataId string
+
 	config ProxyOptions
 
 	traceEs     *esStorage
@@ -189,37 +191,43 @@ loop:
 			switch r.Target {
 			case SaveEs:
 				item := r.Data.(EsStorageData)
-				metrics.DecreaseApmSaveRequestCount(item.DataId, string(SaveEs))
 
 				esSaveData = append(esSaveData, item)
 				if len(esSaveData) >= p.config.saveHoldMaxCount {
 					// todo 是否需要满时动态调整
 					err := p.saveEs.SaveBatch(esSaveData)
+					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateSave)
+					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageSaveEs, len(esSaveData))
 					if err != nil {
 						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
+						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveEsFailed)
 					}
 					esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 				}
 			case Cache:
 				item := r.Data.(CacheStorageData)
-				metrics.DecreaseApmSaveRequestCount(item.DataId, string(Cache))
+				metrics.RecordApmPreCalcOperateStorageCount(item.DataId, metrics.StorageCache, metrics.OperateSave)
 
 				cacheSaveData = append(cacheSaveData, item)
 				if len(cacheSaveData) >= p.config.saveHoldMaxCount {
 					err := p.cache.SaveBatch(cacheSaveData)
+					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageCache, metrics.OperateSave)
+					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageCache, len(cacheSaveData))
 					if err != nil {
 						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
+						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveCacheFailed)
 					}
 					cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 				}
 			case BloomFilter:
 				// Bloom-filter needs to be added immediately,
 				// otherwise it may not be added and cause an error in judgment.
-				data := r.Data.(BloomStorageData)
-				metrics.DecreaseApmSaveRequestCount(data.DataId, string(BloomFilter))
-
-				if err := p.bloomFilter.Add(data); err != nil {
-					logger.Errorf("Bloom Filter add key: %s failed, error: %s", data.Key, err)
+				item := r.Data.(BloomStorageData)
+				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageBloomFilter, metrics.OperateSave)
+				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageBloomFilter, 1)
+				if err := p.bloomFilter.Add(item); err != nil {
+					logger.Errorf("Bloom Filter add key: %s failed, error: %s", item.Key, err)
+					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			default:
 				logger.Warnf("An invalid storage SAVE request was received: %s", r.Target)
@@ -227,15 +235,21 @@ loop:
 		case <-ticker.C:
 			if len(esSaveData) != 0 {
 				err := p.saveEs.SaveBatch(esSaveData)
+				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateSave)
+				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageSaveEs, len(esSaveData))
 				if err != nil {
 					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to ES, cause: %s", len(esSaveData), err)
+					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveEsFailed)
 				}
 				esSaveData = make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 			}
 			if len(cacheSaveData) != 0 {
 				err := p.cache.SaveBatch(cacheSaveData)
+				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageCache, metrics.OperateSave)
+				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageCache, len(cacheSaveData))
 				if err != nil {
 					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to CACHE, cause: %s", len(cacheSaveData), err)
+					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveCacheFailed)
 				}
 				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 			}
@@ -251,10 +265,13 @@ loop:
 func (p *Proxy) Query(queryRequest QueryRequest) (any, error) {
 	switch queryRequest.Target {
 	case TraceEs:
+		metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageTraceEs, metrics.OperateQuery)
 		return p.traceEs.Query(queryRequest.Data)
 	case SaveEs:
+		metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateQuery)
 		return p.saveEs.Query(queryRequest.Data)
 	case Cache:
+		metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageCache, metrics.OperateQuery)
 		return p.cache.Query(queryRequest.Data.(string))
 	default:
 		info := fmt.Sprintf("An invalid storage QUERY request was received: %s", queryRequest.Target)
@@ -266,6 +283,7 @@ func (p *Proxy) Query(queryRequest QueryRequest) (any, error) {
 func (p *Proxy) Exist(req ExistRequest) (bool, error) {
 	switch req.Target {
 	case BloomFilter:
+		metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageBloomFilter, metrics.OperateQuery)
 		return p.bloomFilter.Exist(req.Key)
 	default:
 		logger.Warnf("Exist method does not support type: %s, it will return false", req.Target)
@@ -273,7 +291,7 @@ func (p *Proxy) Exist(req ExistRequest) (bool, error) {
 	}
 }
 
-func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, error) {
+func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption) (*Proxy, error) {
 	opt := ProxyOptions{}
 	for _, setter := range options {
 		setter(&opt)
@@ -307,6 +325,7 @@ func NewProxyInstance(ctx context.Context, options ...ProxyOption) (*Proxy, erro
 	}
 
 	return &Proxy{
+		dataId:          dataId,
 		config:          opt,
 		traceEs:         traceEsInstance,
 		saveEs:          saveEsInstance,

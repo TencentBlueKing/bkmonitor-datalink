@@ -11,7 +11,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -34,6 +34,9 @@ type runningBinding struct {
 	baseCtx       context.Context
 	baseCtxCancel context.CancelFunc
 	retryValid    bool
+
+	stateCheckerCtx    context.Context
+	stateCheckerCancel context.CancelFunc
 }
 
 type RunMaintainerOptions struct {
@@ -116,6 +119,7 @@ func (r *RunMaintainer) handleAddTaskBinding(taskBinding TaskBinding) {
 	// pass the context of the running instance for upper-level management
 	runInstanceCtx, runInstanceCtxCancel := context.WithCancel(r.ctx)
 	go define.Start(runInstanceCtx, errorReceiveChan, taskBinding.Payload)
+	checkerCtx, checkerCancel := context.WithCancel(r.ctx)
 	now := time.Now()
 	binding := &runningBinding{
 		baseCtx:          runInstanceCtx,
@@ -125,27 +129,34 @@ func (r *RunMaintainer) handleAddTaskBinding(taskBinding TaskBinding) {
 		retryCount:       0,
 		startTime:        now,
 		retryValid:       false,
+
+		stateCheckerCtx:    checkerCtx,
+		stateCheckerCancel: checkerCancel,
 	}
 	r.runningInstance.Store(taskBinding.UniId, binding)
-	go r.listenRunningState(taskBinding.UniId, errorReceiveChan)
+	go r.listenRunningState(taskBinding.UniId, errorReceiveChan, checkerCtx, define.GetTaskDimension(taskBinding.Payload))
 	logger.Infof(
 		"Binding(%s <------> %s) is discovered, task is started, payload: %s",
 		taskBinding.UniId, r.listenWorkerId, taskBinding.Payload,
 	)
 }
 
-func (r *RunMaintainer) listenRunningState(taskUniId string, errorReceiveChan chan error) {
+func (r *RunMaintainer) listenRunningState(
+	taskUniId string, errorReceiveChan chan error, lifeline context.Context, taskDimension string,
+) {
 	retryTicker := &time.Ticker{}
-
 	errorChan := errorReceiveChan
+	runningTicker := time.NewTicker(5 * time.Second)
+
 	for {
 		select {
+		case <-runningTicker.C:
+			metrics.RecordDaemonTask(taskDimension)
 		case receiveErr, isOpen := <-errorChan:
 			if !isOpen {
 				logger.Infof("errorReceiveChan close, return")
 				return
 			}
-			fmt.Printf("%s", receiveErr)
 			v, _ := r.runningInstance.Load(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
@@ -184,14 +195,19 @@ func (r *RunMaintainer) listenRunningState(taskUniId string, errorReceiveChan ch
 				go define.Start(rB.baseCtx, rB.errorReceiveChan, rB.SerializerTask.Payload)
 				logger.Infof("[FAILED RETRY] Task: %s retry performed", taskUniId)
 				retryTicker = &time.Ticker{}
+				metrics.RecordDaemonTaskRetryCount(taskDimension)
 			}
 		case <-r.ctx.Done():
-			logger.Infof("[RetryListen] stopped.")
+			logger.Infof("[RetryListen] receive root context done singal, stopped and return")
 			retryTicker.Stop()
 			v, _ := r.runningInstance.Load(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
 			close(errorChan)
+			return
+		case <-lifeline.Done():
+			logger.Infof("[RetryListen] receive lifeline context done singal, stopped and return")
+			retryTicker.Stop()
 			return
 		}
 	}
@@ -205,6 +221,7 @@ func (r *RunMaintainer) handleDeleteTaskBinding(taskUniId string) {
 	}
 	rB := ins.(*runningBinding)
 	rB.baseCtxCancel()
+	rB.stateCheckerCancel()
 	close(rB.errorReceiveChan)
 	r.runningInstance.Delete(taskUniId)
 	logger.Infof("Binding runInstance removed. taskUniId: %s", taskUniId)

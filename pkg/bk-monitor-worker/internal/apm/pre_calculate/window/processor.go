@@ -81,6 +81,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 				"this traceId: %s will be process as a new window. error: %s",
 			event.TraceId, err,
 		)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryBloomFilterFailed)
 	} else if exist {
 		existSpans := p.listSpanFromStorage(event)
 		p.revertToCollect(&event, existSpans)
@@ -142,18 +143,14 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 				"That data will be ignored, and result may be distorted. error: %s",
 			event.TraceId, err,
 		)
-		if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "error"); err != nil {
-			p.logger.Errorf("Report filter es query metric.error failed, error: %s", err)
-		}
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsFailed)
 		return spans
 	}
 
-	if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "success"); err != nil {
-		p.logger.Errorf("Report filter es query metric.success failed, error: %s", err)
-	}
 	if spanBytes == nil {
 		// The trace does not exist in es. if it occurs frequently, the Bloom-Filter parameter may be set improperly.
 		p.logger.Debug("The data with traceId: %s is empty from ES.", event.TraceId)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsReturnEmpty)
 		return spans
 	}
 	originSpans, err := p.recoverSpans(spanBytes.([]byte))
@@ -162,6 +159,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 			"The data structure in ES is inconsistent, this data will be ignored. traceId: %s. error: %s ",
 			event.TraceId, err,
 		)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryESResponseInvalid)
 		return spans
 	}
 
@@ -311,7 +309,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 				Ttl:    storage.CacheTraceInfoKey.Ttl,
 			},
 		}
-		metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.Cache))
 	}
 
 	receiver <- storage.SaveRequest{
@@ -321,7 +318,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Key:    event.TraceId,
 		},
 	}
-	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.BloomFilter))
 
 	resultBytes, _ := jsoniter.Marshal(result)
 	receiver <- storage.SaveRequest{
@@ -333,7 +329,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Value:      resultBytes,
 		},
 	}
-	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.SaveEs))
 }
 
 func sortNode(nodeDegrees []NodeDegree) func(a, b int) bool {

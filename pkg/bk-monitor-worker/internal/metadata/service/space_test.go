@@ -77,7 +77,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	redisClient := &mocker.RedisClientMocker{
 		SetMap: map[string]mapset.Set[string]{},
 	}
-	p := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
+	p := gomonkey.ApplyFunc(redis.GetStorageRedisInstance, func() *redis.Instance {
 		return &redis.Instance{
 			Client: redisClient,
 		}

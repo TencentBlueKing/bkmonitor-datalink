@@ -21,8 +21,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -57,10 +57,10 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 			"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 		},
 	}
-	gomonkey.ApplyFunc(dependentredis.GetInstance, func() (*dependentredis.Instance, error) {
-		return &dependentredis.Instance{
+	gomonkey.ApplyFunc(redis.GetCacheRedisInstance, func() *redis.Instance {
+		return &redis.Instance{
 			Client: mockerClient,
-		}, nil
+		}
 	})
 
 	svc := NewTimeSeriesGroupSvc(&tsm)

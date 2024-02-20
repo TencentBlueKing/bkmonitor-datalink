@@ -142,15 +142,11 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 				"That data will be ignored, and result may be distorted. error: %s",
 			event.TraceId, err,
 		)
-		if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "error"); err != nil {
-			p.logger.Errorf("Report filter es query metric.error failed, error: %s", err)
-		}
+		metrics.RunApmPreCalcFilterEsQuery(p.dataId, "error")
 		return spans
 	}
 
-	if err = metrics.RunApmPreCalcFilterEsQuery(p.dataId, "success"); err != nil {
-		p.logger.Errorf("Report filter es query metric.success failed, error: %s", err)
-	}
+	metrics.RunApmPreCalcFilterEsQuery(p.dataId, "success")
 	if spanBytes == nil {
 		// The trace does not exist in es. if it occurs frequently, the Bloom-Filter parameter may be set improperly.
 		p.logger.Debug("The data with traceId: %s is empty from ES.", event.TraceId)

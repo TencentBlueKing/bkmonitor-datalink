@@ -212,13 +212,13 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 
 	}
 	if len(dlRtsMap) != 0 {
-		client := redis.GetInstance()
+		client := redis.GetStorageRedisInstance()
 		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
 				return err
 			}
-			if err := client.HSet(cfg.DataLabelToResultTableKey, dl, rtsStr); err != nil {
+			if err := client.HSetWithBypass(cfg.DataLabelToResultTableKey, dl, rtsStr); err != nil {
 				return err
 			}
 			if isPublish {
@@ -333,7 +333,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		return err
 	}
 
-	client := redis.GetInstance()
+	client := redis.GetStorageRedisInstance()
 
 	for tableId, detail := range tableIdDetail {
 		var ok bool
@@ -357,7 +357,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 			return err
 		}
 		// 推送数据
-		if err := client.HSet(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
+		if err := client.HSetWithBypass(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
 			return err
 		}
 		if isPublish {
@@ -753,7 +753,7 @@ func (s SpacePusher) PushSpaceTableIds(spaceType, spaceId string, isPublish bool
 	}
 	// 如果指定要更新，则通知
 	if isPublish {
-		client := redis.GetInstance()
+		client := redis.GetStorageRedisInstance()
 		if err := client.Publish(cfg.SpaceToResultTableChannel, fmt.Sprintf("%s__%s", spaceType, spaceId)); err != nil {
 			return err
 		}
@@ -775,13 +775,13 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 		return err
 	}
 	if len(values) != 0 {
-		client := redis.GetInstance()
+		client := redis.GetStorageRedisInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSet(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -815,13 +815,13 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 	}
 	// 推送数据
 	if len(values) != 0 {
-		client := redis.GetInstance()
+		client := redis.GetStorageRedisInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSet(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -843,13 +843,13 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 	}
 	// 推送数据
 	if len(values) != 0 {
-		client := redis.GetInstance()
+		client := redis.GetStorageRedisInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(values)
 		if err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSet(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}

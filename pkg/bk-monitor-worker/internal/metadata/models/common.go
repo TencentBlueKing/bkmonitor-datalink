@@ -116,12 +116,12 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 
 // PushToRedis 推送数据到 redis, just for influxdb
 func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
-	client := redis.GetInstance()
+	client := redis.GetStorageRedisInstance()
 
 	redisKey := fmt.Sprintf("%s:%s", InfluxdbKeyPrefix, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
 
-	err := client.HSet(redisKey, field, value)
+	err := client.HSetWithBypass(redisKey, field, value)
 	if err != nil {
 		logger.Errorf("push redis failed, %s, err: %v", msgSuffix, err)
 	} else {

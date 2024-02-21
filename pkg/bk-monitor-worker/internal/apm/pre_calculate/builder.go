@@ -17,13 +17,12 @@ import (
 	"sync"
 	"time"
 
-	jsoniter "github.com/json-iterator/go"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -154,7 +153,7 @@ func NewPrecalculate() Builder {
 
 func (p *Precalculate) GetTaskDimension(payload []byte) string {
 	var startInfo StartInfo
-	if err := jsoniter.Unmarshal(payload, &startInfo); err != nil {
+	if err := jsonx.Unmarshal(payload, &startInfo); err != nil {
 		logger.Errorf(
 			"failed to start APM-Precalculate as parse value to StartInfo error, value: %s. error: %s",
 			payload, err,
@@ -167,7 +166,7 @@ func (p *Precalculate) GetTaskDimension(payload []byte) string {
 func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
 
 	var startInfo StartInfo
-	if err := jsoniter.Unmarshal(payload, &startInfo); err != nil {
+	if err := jsonx.Unmarshal(payload, &startInfo); err != nil {
 		errorReceiveChan <- fmt.Errorf(
 			"failed to start APM-Precalculate as parse value to StartInfo error, value: %s. error: %s",
 			payload, err)
@@ -367,7 +366,11 @@ func (p *RunInstance) startProfileReport() {
 
 func (p *RunInstance) startRecordSemaphoreAcquired() {
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(p.profileCollector.config.reportInterval)
+	apmLogger.Infof(
+		"[RecordSemaphoreAcquired] start report chan metric every %s",
+		p.profileCollector.config.reportInterval,
+	)
 	for {
 		select {
 		case <-ticker.C:
@@ -379,7 +382,7 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 			p.windowHandler.Operator.RecordTraceAndSpanCountMetric()
 
 		case <-p.ctx.Done():
-			apmLogger.Infof("[SemaphoreAcquired] receive context done, stopped")
+			apmLogger.Infof("[RecordSemaphoreAcquired] receive context done, stopped")
 			ticker.Stop()
 			return
 		}

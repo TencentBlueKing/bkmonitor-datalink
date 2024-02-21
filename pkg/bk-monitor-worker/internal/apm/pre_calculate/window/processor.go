@@ -16,7 +16,6 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -24,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -104,7 +104,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		infoKey := storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId)
 		data, err := p.proxy.Query(storage.QueryRequest{Target: storage.Cache, Data: infoKey})
 		if err == nil && data != nil {
-			parseErr := jsoniter.Unmarshal(data.([]byte), &spans)
+			parseErr := jsonx.Unmarshal(data.([]byte), &spans)
 			if parseErr != nil {
 				p.logger.Infof(
 					"Cache spans whose traceId is %s was found in traceInfo(key: %s), "+
@@ -298,7 +298,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
 	if p.config.enabledInfoCache {
-		spanBytes, _ := jsoniter.Marshal(event.Spans)
+		spanBytes, _ := jsonx.Marshal(event.Spans)
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
 			Action: storage.SaveTraceCache,
@@ -319,7 +319,7 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 		},
 	}
 
-	resultBytes, _ := jsoniter.Marshal(result)
+	resultBytes, _ := jsonx.Marshal(result)
 	receiver <- storage.SaveRequest{
 		Target: storage.SaveEs,
 		Action: storage.SavePrecalculateResult,

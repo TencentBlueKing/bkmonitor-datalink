@@ -19,7 +19,8 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
-	jsoniter "github.com/json-iterator/go"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 const (
@@ -31,7 +32,7 @@ type Converter func(io.ReadCloser) (any, error)
 var (
 	BytesConverter Converter = func(body io.ReadCloser) (any, error) {
 		var resInstance EsQueryResult
-		if err := jsoniter.NewDecoder(body).Decode(&resInstance); err != nil {
+		if err := jsonx.Decode(body, &resInstance); err != nil {
 			return nil, err
 		}
 
@@ -42,12 +43,12 @@ var (
 		if resMap == nil {
 			return nil, nil
 		}
-		return jsoniter.Marshal(resMap)
+		return jsonx.Marshal(resMap)
 	}
 
 	AggsCountConvert Converter = func(body io.ReadCloser) (any, error) {
 		var resInstance EsQueryResult
-		if err := jsoniter.NewDecoder(body).Decode(&resInstance); err != nil {
+		if err := jsonx.Decode(body, &resInstance); err != nil {
 			return nil, err
 		}
 
@@ -188,7 +189,7 @@ func (e *esStorage) Query(data any) (any, error) {
 	body := data.(EsQueryData)
 	var buf bytes.Buffer
 
-	if err := jsoniter.NewEncoder(&buf).Encode(body.Body); err != nil {
+	if err := jsonx.Encode(&buf, body.Body); err != nil {
 		return nil, err
 	}
 

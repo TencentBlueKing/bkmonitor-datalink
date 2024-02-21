@@ -15,12 +15,12 @@ import (
 	"sync"
 
 	redis "github.com/go-redis/redis/v8"
-	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -85,12 +85,12 @@ func (b *Binding) addBinding(taskBinding TaskBinding, workerBinding WorkerBindin
 		return nil
 	}
 
-	workerBindingBytes, _ := jsoniter.Marshal(workerBinding)
+	workerBindingBytes, _ := jsonx.Marshal(workerBinding)
 	if err = b.redisClient.HSet(ctx, common.DaemonBindingTask(), taskBinding.UniId, workerBindingBytes).Err(); err != nil {
 		return fmt.Errorf("failed to add a task binding, error: %s", err)
 	}
 
-	taskBindingBytes, _ := jsoniter.Marshal(taskBinding)
+	taskBindingBytes, _ := jsonx.Marshal(taskBinding)
 	if err = b.redisClient.HSet(
 		ctx, common.DaemonBindingWorker(workerBinding.WorkerId),
 		taskBinding.UniId, taskBindingBytes,
@@ -109,7 +109,7 @@ func (b *Binding) deleteBinding(taskUniId string) error {
 		return err
 	}
 	var workerBinding WorkerBinding
-	if err = jsoniter.Unmarshal([]byte(workerInfoStr), &workerBinding); err != nil {
+	if err = jsonx.Unmarshal([]byte(workerInfoStr), &workerBinding); err != nil {
 		return fmt.Errorf(
 			"failed to parse value to WokerInfo on taskUniId Binding: %s, value: %s. error: %s",
 			taskUniId, workerInfoStr, err,
@@ -182,7 +182,7 @@ func (b *Binding) deleteWorkerBinding(workerId string) error {
 
 func (b *Binding) toWorkerBinding(workerStr string) (*WorkerBinding, error) {
 	var res WorkerBinding
-	if err := jsoniter.Unmarshal([]byte(workerStr), &res); err != nil {
+	if err := jsonx.Unmarshal([]byte(workerStr), &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -190,7 +190,7 @@ func (b *Binding) toWorkerBinding(workerStr string) (*WorkerBinding, error) {
 
 func (b *Binding) toTaskBinding(taskStr string) (*TaskBinding, error) {
 	var res TaskBinding
-	if err := jsoniter.Unmarshal([]byte(taskStr), &res); err != nil {
+	if err := jsonx.Unmarshal([]byte(taskStr), &res); err != nil {
 		return nil, err
 	}
 

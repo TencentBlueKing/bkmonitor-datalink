@@ -82,6 +82,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			EnabledProfileReport(config.ProfileEnabled),
 			ProfileAddress(config.ProfileHost),
 			ProfileAppIdx(config.ProfileAppIdx),
+			MetricReportInterval(config.SemaphoreReportInterval),
 		).
 		Build(), nil
 }

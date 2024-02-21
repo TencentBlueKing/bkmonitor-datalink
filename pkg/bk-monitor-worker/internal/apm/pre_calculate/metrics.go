@@ -12,6 +12,7 @@ package pre_calculate
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/grafana/pyroscope-go"
 
@@ -30,6 +31,8 @@ type MetricOptions struct {
 	enabledProfile bool
 	profileAddress string
 	profileAppIdx  string
+
+	reportInterval time.Duration
 }
 
 // EnabledProfileReport Whether to enable indicator reporting.
@@ -59,6 +62,12 @@ func ProfileAppIdx(h string) MetricOption {
 		defaultV := "apm_precalculate"
 		logger.Infof("profile appIdx is not specified, %s is used as the default", defaultV)
 		options.profileAppIdx = defaultV
+	}
+}
+
+func MetricReportInterval(t time.Duration) MetricOption {
+	return func(options *MetricOptions) {
+		options.reportInterval = t
 	}
 }
 

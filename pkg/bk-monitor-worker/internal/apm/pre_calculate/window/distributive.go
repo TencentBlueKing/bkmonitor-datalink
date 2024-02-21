@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
@@ -25,43 +24,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-var (
-	// apmPreCalcWindowTraceTotal trace count of distributive windows
-	apmPreCalcWindowTraceTotal = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: metrics.ApmNamespace,
-			Name:      "window_trace_count",
-			Help:      "window trace count",
-		},
-		[]string{"data_id", "sub_window_id"},
-	)
-	// apmPreCalcWindowSpanTotal apm预计算任务窗口span数量
-	apmPreCalcWindowSpanTotal = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: metrics.ApmNamespace,
-			Name:      "window_span_count",
-			Help:      "window span count",
-		},
-		[]string{"data_id", "sub_window_id"},
-	)
-)
-
-func recordApmPreCalcWindowTraceTotal(dataId string, subWindowId int, n int) {
-	apmPreCalcWindowTraceTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
-}
-
-func recordApmPreCalcWindowSpanTotal(dataId string, subWindowId int, n int) {
-	apmPreCalcWindowSpanTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
-}
-
-func init() {
-	// register the metrics
-	metrics.Registry.MustRegister(
-		apmPreCalcWindowTraceTotal,
-		apmPreCalcWindowSpanTotal,
-	)
-}
 
 // DistributiveWindowOptions all configs
 type DistributiveWindowOptions struct {
@@ -197,6 +159,7 @@ func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveC
 	//	go w.Handle(spanChan)
 	//}
 }
+
 func (w *DistributiveWindow) GetWindowsLength() int {
 	res := 0
 
@@ -210,13 +173,13 @@ func (w *DistributiveWindow) GetWindowsLength() int {
 func (w *DistributiveWindow) RecordTraceAndSpanCountMetric() {
 
 	for subId := range w.subWindows {
-		traceC, spanC := w.getSUbWindowMetrics(subId)
-		recordApmPreCalcWindowTraceTotal(w.dataId, subId, traceC)
-		recordApmPreCalcWindowSpanTotal(w.dataId, subId, spanC)
+		traceC, spanC := w.getSubWindowMetrics(subId)
+		metrics.RecordApmPreCalcWindowTraceTotal(w.dataId, subId, traceC)
+		metrics.RecordApmPreCalcWindowSpanTotal(w.dataId, subId, spanC)
 	}
 }
 
-func (w *DistributiveWindow) getSUbWindowMetrics(subId int) (int, int) {
+func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
 	subWindow := w.subWindows[subId]
 
 	traceCount := 0

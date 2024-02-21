@@ -125,6 +125,26 @@ var (
 		},
 		[]string{"data_id"},
 	)
+
+	// **** APM 父子窗口实现指标
+	// apmPreCalcWindowTraceTotal trace count of distributive windows
+	apmPreCalcWindowTraceTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "window_trace_count",
+			Help:      "window trace count",
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
+	// apmPreCalcWindowSpanTotal apm预计算任务窗口span数量
+	apmPreCalcWindowSpanTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "window_span_count",
+			Help:      "window span count",
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
 )
 
 func RecordApmPreCalcLocateSpanDuration(dataId string, t time.Time) {
@@ -164,6 +184,14 @@ func AddApmNotifierReceiveMessageCount(dataId, topic string) {
 	apmPreCalcNotifierReceiveMessageCount.WithLabelValues(dataId, topic).Inc()
 }
 
+func RecordApmPreCalcWindowTraceTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowTraceTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
+func RecordApmPreCalcWindowSpanTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowSpanTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
 func init() {
 	// register the metrics
 	Registry.MustRegister(
@@ -176,5 +204,7 @@ func init() {
 		apmPreCalcSaveStorageTotal,
 		apmPreCalcExpiredKeyTotal,
 		apmPreCalcLocateSpanDuration,
+		apmPreCalcWindowTraceTotal,
+		apmPreCalcWindowSpanTotal,
 	)
 }

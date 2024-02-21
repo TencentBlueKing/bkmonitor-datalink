@@ -177,6 +177,7 @@ taskConfig:
           layers: 10
           divisor: 2
     metrics:
+      semaphoreReportInterval: 5s
       profile:
         enabled: false
         host: http://127.0.0.1:14040

@@ -87,6 +87,8 @@ var (
 	ProfileHost string
 	// ProfileAppIdx app name of profile
 	ProfileAppIdx string
+	// SemaphoreReportInterval time interval for reporting chan amount at the current time
+	SemaphoreReportInterval time.Duration
 )
 
 func initApmVariables() {
@@ -123,4 +125,5 @@ func initApmVariables() {
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
+	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
 }

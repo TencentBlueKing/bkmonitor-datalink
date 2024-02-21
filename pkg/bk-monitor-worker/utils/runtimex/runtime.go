@@ -64,6 +64,7 @@ func HandleCrashToChan(errorReceiveChan chan<- error) {
 			case errorReceiveChan <- err:
 				logger.Infof("send error to receiveChan")
 			case <-time.After(5 * time.Second):
+				// avoid errorReceiveChan blocking caused by multi-exceptions
 				logger.Infof("send error to receiveChan timeout, this error(%s) will not be received", err)
 			}
 

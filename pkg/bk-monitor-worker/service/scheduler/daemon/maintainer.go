@@ -15,12 +15,12 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -81,7 +81,7 @@ loop:
 
 			for taskUniId, taskStr := range taskHash {
 				var taskBinding TaskBinding
-				if err = jsoniter.Unmarshal([]byte(taskStr), &taskBinding); err != nil {
+				if err = jsonx.Unmarshal([]byte(taskStr), &taskBinding); err != nil {
 					logger.Errorf(
 						"failed to parse value to TaskBinding on key: %s field: %s. "+
 							"error: %s", r.listenTaskKey, taskUniId, err,
@@ -146,7 +146,7 @@ func (r *RunMaintainer) listenRunningState(
 ) {
 	retryTicker := &time.Ticker{}
 	errorChan := errorReceiveChan
-	runningTicker := time.NewTicker(5 * time.Second)
+	runningTicker := time.NewTicker(30 * time.Second)
 
 	for {
 		select {

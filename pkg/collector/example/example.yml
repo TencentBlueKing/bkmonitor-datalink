@@ -1071,6 +1071,7 @@ bk-collector:
       type: "fta"
       processors:
           - "token_checker/aes256"
+          - "sampler/drop"
           - "rate_limiter/token_bucket"
 
 

@@ -1766,6 +1766,13 @@ bk-collector:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
 
+    - name: "profiles_pipeline/common"
+      type: "profiles"
+      processors:
+        - "token_checker/aes256"
+        - "sampler/drop"
+        - "pprof_converter/common"
+
   # =============================== Exporter =================================
   exporter:
     queue:

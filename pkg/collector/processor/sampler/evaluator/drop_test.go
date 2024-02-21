@@ -10,22 +10,34 @@
 package evaluator
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
-}
+func TestDropEvaluator(t *testing.T) {
+	t.Run("Disabled", func(t *testing.T) {
+		evaluator := New(Config{
+			Type: evaluatorTypeDrop,
+		})
+		record := &define.Record{
+			RecordType: define.RecordProfiles,
+			Data:       []byte("profiles"),
+		}
+		assert.NoError(t, evaluator.Evaluate(record))
+	})
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
-}
-
-func (alwaysEvaluator) Stop() {}
-
-func (alwaysEvaluator) Evaluate(_ *define.Record) error {
-	return nil
+	t.Run("Enabled", func(t *testing.T) {
+		evaluator := New(Config{
+			Type:    evaluatorTypeDrop,
+			Enabled: true,
+		})
+		record := &define.Record{
+			RecordType: define.RecordProfiles,
+			Data:       []byte("profiles"),
+		}
+		assert.Equal(t, define.ErrSkipEmptyRecord, evaluator.Evaluate(record))
+	})
 }

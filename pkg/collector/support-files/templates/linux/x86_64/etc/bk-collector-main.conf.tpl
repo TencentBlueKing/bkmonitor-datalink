@@ -245,11 +245,17 @@ bk-collector:
             - "resource.bk.data.token"
             - "resource.process.pid"
 
-    # Sampler: 采样处理器
+    # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
       config:
         type: "random"
         sampling_percentage: 100
+
+    # Sampler: 采样处理器（拒绝采样）
+    - name: "sampler/drop"
+      config:
+        type: "drop"
+        enabled: true
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"

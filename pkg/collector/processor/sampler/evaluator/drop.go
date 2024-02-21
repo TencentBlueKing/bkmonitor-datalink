@@ -13,19 +13,24 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func newAlwaysEvaluator() Evaluator {
-	return alwaysEvaluator{}
+func newDropEvaluator(config Config) Evaluator {
+	return dropEvaluator{enabled: config.Enabled}
 }
 
-// alwaysEvaluator 永远采样
-type alwaysEvaluator struct{}
-
-func (alwaysEvaluator) Type() string {
-	return evaluatorTypeAlways
+// dropEvaluator 拒绝采样
+type dropEvaluator struct {
+	enabled bool
 }
 
-func (alwaysEvaluator) Stop() {}
+func (e dropEvaluator) Type() string {
+	return evaluatorTypeDrop
+}
 
-func (alwaysEvaluator) Evaluate(_ *define.Record) error {
+func (e dropEvaluator) Stop() {}
+
+func (e dropEvaluator) Evaluate(_ *define.Record) error {
+	if e.enabled {
+		return define.ErrSkipEmptyRecord
+	}
 	return nil
 }

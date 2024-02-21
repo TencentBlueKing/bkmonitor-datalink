@@ -135,6 +135,10 @@ func fetchCCTopoResponse(record *define.ETLRecord, store define.Store, metaType 
 			if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.DevxMeta) > 0 {
 				extraMeta = obj.DevxMeta
 			}
+		case ExtraMetaPerforce:
+			if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.PerforceMeta) > 0 {
+				extraMeta = obj.PerforceMeta
+			}
 		}
 	}
 
@@ -441,6 +445,7 @@ const (
 	ExtraMetaNone ExtraMetaType = iota
 	ExtraMetaDbm
 	ExtraMetaDevx
+	ExtraMetaPerforce
 )
 
 func TransferRecordCutterByDbmMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
@@ -449,6 +454,10 @@ func TransferRecordCutterByDbmMetaCreator(store define.Store, enabled bool) defi
 
 func TransferRecordCutterByDevxMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
 	return transferRecordCutterByExtraMetaCreator(store, ExtraMetaDevx, enabled)
+}
+
+func TransferRecordCutterByPerforceMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+	return transferRecordCutterByExtraMetaCreator(store, ExtraMetaPerforce, enabled)
 }
 
 func transferRecordCutterByExtraMetaCreator(store define.Store, metaType ExtraMetaType, enabled bool) define.ETLRecordChainingHandler {

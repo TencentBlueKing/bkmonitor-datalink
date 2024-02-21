@@ -10,6 +10,7 @@
 package testkits
 
 import (
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -36,4 +37,8 @@ func FirstSumPoint(metrics pmetric.Metrics) pmetric.NumberDataPoint {
 
 func FirstMetric(metrics pmetric.Metrics) pmetric.Metric {
 	return metrics.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0)
+}
+
+func FirstLogRecord(logs plog.Logs) plog.LogRecord {
+	return logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
 }

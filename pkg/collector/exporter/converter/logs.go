@@ -70,8 +70,13 @@ func (c logsConverter) Convert(record *define.Record, f define.GatherFunc) {
 }
 
 func (c logsConverter) Extract(ip string, logRecord plog.LogRecord, rsAttrs common.MapStr) (common.MapStr, error) {
+	timeUnix := logRecord.Timestamp()
+	if timeUnix <= 0 {
+		timeUnix = logRecord.ObservedTimestamp()
+	}
+
 	m := common.MapStr{
-		"time_unix":       logRecord.Timestamp() / 1000,
+		"time_unix":       timeUnix / 1000,
 		"span_id":         logRecord.SpanID().HexString(),
 		"trace_id":        logRecord.TraceID().HexString(),
 		"attributes":      CleanAttributesMap(logRecord.Attributes().AsRaw()),

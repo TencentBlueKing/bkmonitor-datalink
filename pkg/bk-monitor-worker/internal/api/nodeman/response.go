@@ -14,7 +14,7 @@ import (
 )
 
 type PluginInfoResp struct {
-	define.APICommonResp
+	define.ApiCommonRespMeta
 	Data []PluginInfoData `json:"data"`
 }
 
@@ -39,19 +39,72 @@ type PluginInfoData struct {
 }
 
 type GetProxiesResp struct {
-	define.APICommonResp
+	define.ApiCommonRespMeta
 	Data []ProxyData `json:"data"`
 }
 
 // ProxyData GetProxiesData proxy信息结构体
 type ProxyData struct {
-	BkCloudId    int         `json:"bk_cloud_id"`
-	BkAddressing string      `json:"bk_addressing"`
-	InnerIp      string      `json:"inner_ip"`
-	InnerIpv6    string      `json:"inner_ipv6"`
-	OuterIp      string      `json:"outer_ip"`
-	OuterIpv6    string      `json:"outer_ipv6"`
-	LoginIp      string      `json:"login_ip"`
-	DataIp       interface{} `json:"data_ip"`
-	BkBizId      int         `json:"bk_biz_id"`
+	BkCloudId       int    `json:"bk_cloud_id"`
+	BkHostId        int    `json:"bk_host_id"`
+	InnerIp         string `json:"inner_ip"`
+	InnerIpv6       string `json:"inner_ipv6"`
+	OuterIp         string `json:"outer_ip"`
+	OuterIpv6       string `json:"outer_ipv6"`
+	LoginIp         string `json:"login_ip"`
+	DataIp          string `json:"data_ip"`
+	BkBizId         int    `json:"bk_biz_id"`
+	IsManual        bool   `json:"is_manual"`
+	BkBizName       string `json:"bk_biz_name"`
+	ApId            int    `json:"ap_id"`
+	ApName          string `json:"ap_name"`
+	Status          string `json:"status"`
+	StatusDisplay   string `json:"status_display"`
+	Version         string `json:"version"`
+	Account         string `json:"account"`
+	AuthType        string `json:"auth_type"`
+	Port            int    `json:"port"`
+	ReCertification bool   `json:"re_certification"`
+}
+
+type PluginSearchResp struct {
+	define.ApiCommonRespMeta
+	Data PluginSearchData `json:"data"`
+}
+
+type PluginSearchData struct {
+	Total int                    `json:"total"`
+	List  []PluginSearchDataItem `json:"list"`
+}
+
+type PluginSearchDataItem struct {
+	Status            string                             `json:"status"`
+	InnerIp           string                             `json:"inner_ip"`
+	BkAddressing      string                             `json:"bk_addressing"`
+	BkHostName        string                             `json:"bk_host_name"`
+	BkBizId           int                                `json:"bk_biz_id"`
+	BkAgentId         string                             `json:"bk_agent_id"`
+	CpuArch           string                             `json:"cpu_arch"`
+	OsType            string                             `json:"os_type"`
+	InnerIpv6         string                             `json:"inner_ipv6"`
+	BkCloudId         int                                `json:"bk_cloud_id"`
+	NodeType          string                             `json:"node_type"`
+	NodeFrom          string                             `json:"node_from"`
+	ApId              int                                `json:"ap_id"`
+	BkHostId          int                                `json:"bk_host_id"`
+	Version           string                             `json:"version"`
+	StatusDisplay     string                             `json:"status_display"`
+	BkCloudName       string                             `json:"bk_cloud_name"`
+	BkBizName         string                             `json:"bk_biz_name"`
+	JobResult         interface{}                        `json:"job_result"`
+	PluginStatus      []PluginSearchDataItemPluginStatus `json:"plugin_status"`
+	OperatePermission bool                               `json:"operate_permission"`
+	SetupPath         string                             `json:"setup_path"`
+}
+
+type PluginSearchDataItemPluginStatus struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	HostId  int    `json:"host_id"`
 }

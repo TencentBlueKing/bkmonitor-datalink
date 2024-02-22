@@ -230,7 +230,7 @@ func (s CustomReportSubscriptionSvc) RefreshCollectorCustomConf(bkBizId *int, pl
 		logger.Warn("update custom report config to default cloud area failed, The default cloud area is not deployed")
 		return nil
 	}
-	hosts, err := apiservice.CMDB.GetHostWithoutBiz(proxyIps)
+	hosts, err := apiservice.CMDB.GetHostWithoutBiz(proxyIps, nil)
 	if err != nil {
 		return errors.Wrapf(err, "GetHostWithoutBiz with host_ips [%v] failed", proxyIps)
 	}

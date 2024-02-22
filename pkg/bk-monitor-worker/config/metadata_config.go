@@ -62,6 +62,17 @@ var (
 	GlobalTsDataSavedDays int
 	// GlobalCustomReportDefaultProxyIp 自定义上报默认服务器
 	GlobalCustomReportDefaultProxyIp []string
+	// GlobalIPV6SupportBizList 支持ipv6的业务列表
+	GlobalIPV6SupportBizList []int
+	// GlobalHostDisableMonitorStates 主机不监控字段列表
+	GlobalHostDisableMonitorStates []string
+
+	// PingServerEnablePingAlarm 全局 Ping 告警开关
+	PingServerEnablePingAlarm bool
+	// PingServerEnableDirectAreaPingCollect 是否开启直连区域的PING采集
+	PingServerEnableDirectAreaPingCollect bool
+	// PingServerDataid ping server dataid
+	PingServerDataid uint
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -103,6 +114,12 @@ func initMetadataVariables() {
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 	GlobalCustomReportDefaultProxyIp = GetValue("taskConfig.metadata.global.customReportDefaultProxyIp", []string{})
+	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
+	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
+
+	PingServerEnablePingAlarm = GetValue("taskConfig.metadata.pingserver.enablePingAlarm", true)
+	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)
+	PingServerDataid = GetValue("taskConfig.metadata.pingserver.dataid", uint(1100005), viper.GetUint)
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))

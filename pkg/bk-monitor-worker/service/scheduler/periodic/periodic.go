@@ -48,6 +48,7 @@ var (
 	SyncBcsSpace            = "periodic:metadata:sync_bcs_space"
 	RefreshBkciSpaceName    = "periodic:metadata:refresh_bkci_space_name"
 	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
+	RefreshPingServer2Nodeman = "periodic:metadata:refresh_ping_server_2_node_man"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
 
@@ -131,6 +132,10 @@ var (
 		RefreshCustomReport2Nodeman: {
 			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshCustomReport2Nodeman,
+		},
+		RefreshPingServer2Nodeman: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshPingServer2Nodeman,
 		},
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",

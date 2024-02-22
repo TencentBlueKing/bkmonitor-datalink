@@ -134,17 +134,11 @@ type Handler interface {
 	add(StandardSpan)
 }
 
-type OperatorMetricKey string
-
-var (
-	TraceCount OperatorMetricKey = "traceCount"
-	SpanCount  OperatorMetricKey = "spanCount"
-)
-
 // Operator Window processing strategy
 type Operator interface {
 	Start(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error, runtimeOpt ...RuntimeConfigOption)
-	ReportMetric() map[OperatorMetricKey]int
+	GetWindowsLength() int
+	RecordTraceAndSpanCountMetric()
 }
 
 type Operation struct {

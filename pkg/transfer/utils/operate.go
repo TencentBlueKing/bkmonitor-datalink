@@ -35,7 +35,7 @@ func DivNumber(left, right interface{}) (float64, error) {
 	return leftNum / rightNum, nil
 }
 
-// stringInSlice : in expression
+// IsStringInSlice : in expression
 func IsStringInSlice(a string, list []string) bool {
 	for _, b := range list {
 		if b == a {
@@ -45,7 +45,7 @@ func IsStringInSlice(a string, list []string) bool {
 	return false
 }
 
-// stringInSlice : in expression
+// IsIntInSlice : in expression
 func IsIntInSlice(a int, list []int) bool {
 	for _, b := range list {
 		if b == a {
@@ -53,4 +53,21 @@ func IsIntInSlice(a int, list []int) bool {
 		}
 	}
 	return false
+}
+
+// IsNotEmptyString : not empty string
+func IsNotEmptyString(data interface{}) bool {
+	if data == nil {
+		return false
+	}
+
+	switch data.(type) {
+	case string:
+		if data.(string) == "" {
+			return false
+		}
+		return true
+	default:
+		return false
+	}
 }

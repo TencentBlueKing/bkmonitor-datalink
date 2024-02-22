@@ -54,7 +54,7 @@ func init() {
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceSkywalking)
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourceSkywalking, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceSkywalking, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeV3Segment,
@@ -67,7 +67,7 @@ func Ready() {
 		},
 	})
 
-	receiver.RegisterGrpcRoute(func(s *grpc.Server) {
+	receiver.RegisterRecvGrpcRoute(func(s *grpc.Server) {
 		confv3.RegisterConfigurationDiscoveryServiceServer(s, &ConfigurationDiscoveryService{})
 		eventv3.RegisterEventServiceServer(s, &EventService{})
 		managementv3.RegisterManagementServiceServer(s, &ManagementService{})

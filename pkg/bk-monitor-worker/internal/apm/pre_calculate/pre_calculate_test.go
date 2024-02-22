@@ -28,10 +28,10 @@ func TestApmPreCalculateViaFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	errChan := make(chan bool, 1)
+	errChan := make(chan error, 1)
 	go op.Run(errChan)
-	runSuccess := <-errChan
-	if !runSuccess {
+	runErr := <-errChan
+	if runErr != nil {
 		logger.Fatal("failed to run")
 	}
 	close(errChan)

@@ -38,7 +38,7 @@ func init() {
 }
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourceJaeger, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceJaeger, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeJaegerTraces,
@@ -46,7 +46,7 @@ func Ready() {
 		},
 	})
 
-	receiver.RegisterGrpcRoute(func(s *grpc.Server) {
+	receiver.RegisterRecvGrpcRoute(func(s *grpc.Server) {
 		api_v2.RegisterCollectorServiceServer(s, GrpcService{})
 	})
 }

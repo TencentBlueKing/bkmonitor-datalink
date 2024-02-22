@@ -17,8 +17,6 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -234,44 +232,6 @@ func (s EventGroupSvc) MakeTableId(bkBizId int, bkDataId uint) string {
 		return fmt.Sprintf("%v_bkmonitor_event_%v", bkBizId, bkDataId)
 	}
 	return fmt.Sprintf("_bkmonitor_event_%v", bkDataId)
-}
-
-func RefreshCustomReportConfig(bkBizId int) error {
-	// 判定节点管理是否上传支持v2新配置模版的bk-collector版本0.16.1061
-	defaultVersion := "0.0.0"
-	nodemanApi, err := api.GetNodemanApi()
-	if err != nil {
-		return err
-	}
-	var resp nodeman.PluginInfoResp
-	_, err = nodemanApi.PluginInfo().SetQueryParams(map[string]string{"name": "bk-collector"}).SetResult(&resp).Request()
-	if err != nil {
-		return err
-	}
-	var versionStrList []string
-	for _, plugin := range resp.Data {
-		if plugin.IsReady {
-			if plugin.Version == "" {
-				versionStrList = append(versionStrList, defaultVersion)
-			} else {
-				versionStrList = append(versionStrList, plugin.Version)
-			}
-		}
-	}
-	maxVersion := getMaxVersion(defaultVersion, versionStrList)
-
-	if compareVersion(maxVersion, models.RecommendedBkCollectorVersion) > 0 {
-		if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(&bkBizId, "bk-collector", "add"); err != nil {
-			return err
-		}
-	} else {
-		logger.Infof("bk-collector version [%s] lower than supported version %s, stop refresh bk-collector config", maxVersion, models.RecommendedBkCollectorVersion)
-	}
-	// bkmonitorproxy全量更新
-	if err := NewCustomReportSubscriptionSvc(nil).RefreshCollectorCustomConf(nil, "bkmonitorproxy", "add"); err != nil {
-		return err
-	}
-	return nil
 }
 
 func getMaxVersion(defaultVersion string, versionList []string) string {

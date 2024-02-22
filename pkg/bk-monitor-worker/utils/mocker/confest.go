@@ -10,10 +10,44 @@
 package mocker
 
 import (
+	"github.com/agiledragon/gomonkey/v2"
+	mapset "github.com/deckarep/golang-set/v2"
+	goRedis "github.com/go-redis/redis/v8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 )
 
 func InitTestDBConfig(filePath string) {
 	config.FilePath = filePath
 	config.InitConfig()
+}
+
+func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
+	redisClient := &RedisClientMocker{
+		ZRangeByScoreWithScoresValue: []goRedis.Z{},
+		HMGetValue:                   []interface{}{},
+		SetMap:                       map[string]mapset.Set[string]{},
+	}
+	patch := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
+		return &redis.Instance{
+			Client: redisClient,
+		}
+	})
+	return redisClient, patch
+}
+
+func DependenceRedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
+	redisClient := &RedisClientMocker{
+		ZRangeByScoreWithScoresValue: []goRedis.Z{},
+		HMGetValue:                   []interface{}{},
+		SetMap:                       map[string]mapset.Set[string]{},
+	}
+	patch := gomonkey.ApplyFunc(dependentredis.GetInstance, func() (*dependentredis.Instance, error) {
+		return &dependentredis.Instance{
+			Client: redisClient,
+		}, nil
+	})
+	return redisClient, patch
 }

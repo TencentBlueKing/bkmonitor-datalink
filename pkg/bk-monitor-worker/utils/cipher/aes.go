@@ -27,19 +27,27 @@ const (
 	AESPrefix = "aes_str:::"
 )
 
+var DBAESCipher *AESCipher
+
+type AESCipher struct {
+	XKey   string
+	Prefix string
+	IV     []byte
+}
+
 // AESDecrypt AES解密
-func AESDecrypt(encryptedPwd string) string {
+func (c AESCipher) AESDecrypt(encryptedPwd string) string {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Warnf("decrypt password [%v] failed,return '', %v", encryptedPwd, r)
 		}
 	}()
 	// 非加密串返回原密码
-	if !strings.HasPrefix(encryptedPwd, AESPrefix) {
+	if c.Prefix != "" && !strings.HasPrefix(encryptedPwd, c.Prefix) {
 		return encryptedPwd
 	}
 	// 截取实际加密数据段
-	encryptedPwd = strings.TrimPrefix(encryptedPwd, AESPrefix)
+	encryptedPwd = strings.TrimPrefix(encryptedPwd, c.Prefix)
 	// base64解码
 	decodedData, err := base64.StdEncoding.DecodeString(encryptedPwd)
 	if err != nil {
@@ -47,8 +55,13 @@ func AESDecrypt(encryptedPwd string) string {
 		return ""
 	}
 	// 获取key、IV和加密密码
-	key := sha256.Sum256([]byte(config.AesKey))
-	iv := decodedData[:aes.BlockSize]
+	key := sha256.Sum256([]byte(c.XKey))
+	var iv []byte
+	if len(c.IV) != 0 {
+		iv = c.IV
+	} else {
+		iv = decodedData[:aes.BlockSize]
+	}
 	encryptedData := decodedData[aes.BlockSize:]
 
 	block, err := aes.NewCipher(key[:])
@@ -68,7 +81,7 @@ func AESDecrypt(encryptedPwd string) string {
 }
 
 // AESEncrypt AES加密
-func AESEncrypt(raw string) string {
+func (c AESCipher) AESEncrypt(raw string) string {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Warnf("encrypt password failed, return '', %v", r)
@@ -82,16 +95,21 @@ func AESEncrypt(raw string) string {
 	}
 	padData := append(rawBytes, padText...)
 
-	key := sha256.Sum256([]byte(config.AesKey))
+	key := sha256.Sum256([]byte(c.XKey))
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		logger.Errorf("new cipher error, %s", err)
 		return ""
 	}
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		logger.Errorf("generating IV faield, %s", err)
-		return ""
+	var iv []byte
+	if len(c.IV) != 0 {
+		iv = c.IV
+	} else {
+		iv = make([]byte, aes.BlockSize)
+		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+			logger.Errorf("generating IV faield, %s", err)
+			return ""
+		}
 	}
 	encrypter := cipher.NewCBCEncrypter(block, iv)
 	encryptedData := make([]byte, len(padData))
@@ -102,5 +120,13 @@ func AESEncrypt(raw string) string {
 	data = append(data, encryptedData...)
 	// base64编码
 	encodedData := base64.StdEncoding.EncodeToString(data)
-	return fmt.Sprintf("%s%s", AESPrefix, encodedData)
+	return fmt.Sprintf("%s%s", c.Prefix, encodedData)
+}
+
+func NewAESCipher(xKey, prefix string, iv []byte) *AESCipher {
+	return &AESCipher{XKey: xKey, Prefix: prefix, IV: iv}
+}
+
+func init() {
+	DBAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
 }

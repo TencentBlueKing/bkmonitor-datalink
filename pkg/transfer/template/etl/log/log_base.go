@@ -54,7 +54,7 @@ func NewLogProcessor(ctx context.Context, name string, update func(record *etl.T
 	err := rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
 		field := etl.NewNewSimpleFieldWith(
 			config.Name(), config.DefaultValue, config.HasDefaultValue(),
-			etl.ExtractByPath(config.FieldName), etl.NewTransformByField(config),
+			etl.ExtractByPath(config.FieldName), etl.NewTransformByField(config, nil),
 		)
 		switch config.Tag {
 		case define.MetaFieldTagDimension, define.MetaFieldTagGroup:

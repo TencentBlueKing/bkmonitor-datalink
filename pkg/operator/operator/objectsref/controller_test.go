@@ -7,23 +7,38 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package objectsref
 
-const (
-	BkQuerySourceHeader = "Bk-Query-Source"
-	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
-	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
+import (
+	"testing"
 
-	UserKey               = "user"
-	MessageKey            = "message"
-	QueriesKey            = "queries"
-	QueryReferenceKey     = "query_reference"
-	QueryClusterMetricKey = "query_cluster_metric"
-
-	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
-	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
-
-	SpaceIsNotExists             = "SPACE_IS_NOT_EXISTS"
-	SpaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
-	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
+	"github.com/stretchr/testify/assert"
 )
+
+func TestObjects(t *testing.T) {
+	objs := NewObjects("")
+	objs.Set(Object{
+		ID: ObjectID{
+			Name:      "obj1",
+			Namespace: "ns1",
+		},
+		NodeName: "node1",
+	})
+	objs.Set(Object{
+		ID: ObjectID{
+			Name:      "obj2",
+			Namespace: "ns1",
+		},
+		NodeName: "node1",
+	})
+	assert.Len(t, objs.GetByNamespace("ns1"), 2)
+	assert.Len(t, objs.GetByNodeName("node1"), 2)
+	assert.Len(t, objs.GetByNodeName("node2"), 0)
+
+	objs.Del(ObjectID{
+		Name:      "obj1",
+		Namespace: "ns1",
+	})
+	assert.Len(t, objs.GetByNamespace("ns1"), 1)
+	assert.Len(t, objs.GetByNodeName("node1"), 1)
+}

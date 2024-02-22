@@ -34,18 +34,19 @@ var (
 	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
 	refreshDatasource     = "periodic:metadata:refresh_datasource"
 	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
-	RefreshBcsMonitorInfo       = "periodic:metadata:refresh_bcs_monitor_info"
-	RefreshDefaultRp            = "periodic:metadata:refresh_default_rp"
-	RefreshBkccSpaceName        = "periodic:metadata:refresh_bkcc_space_name"
-	RefreshKafkaTopicInfo       = "periodic:metadata:refresh_kafka_topic_info"
-	CleanExpiredRestore         = "periodic:metadata:clean_expired_restore"
-	RefreshESRestore            = "periodic:metadata:refresh_es_restore"
-	RefreshBcsMetricsLabel      = "periodic:metadata:refresh_bcs_metrics_label"
-	SyncBkccSpaceDataSource     = "periodic:metadata:sync_bkcc_space_data_source"
-	RefreshBkccSpace            = "periodic:metadata:refresh_bkcc_space"
-	RefreshClusterResource      = "periodic:metadata:refresh_cluster_resource"
-	RefreshBcsProjectBiz        = "periodic:metadata:refresh_bcs_project_biz"
-	SyncBcsSpace                = "periodic:metadata:sync_bcs_space"
+	RefreshBcsMonitorInfo   = "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshDefaultRp        = "periodic:metadata:refresh_default_rp"
+	RefreshBkccSpaceName    = "periodic:metadata:refresh_bkcc_space_name"
+	RefreshKafkaTopicInfo   = "periodic:metadata:refresh_kafka_topic_info"
+	CleanExpiredRestore     = "periodic:metadata:clean_expired_restore"
+	RefreshESRestore        = "periodic:metadata:refresh_es_restore"
+	RefreshBcsMetricsLabel  = "periodic:metadata:refresh_bcs_metrics_label"
+	SyncBkccSpaceDataSource = "periodic:metadata:sync_bkcc_space_data_source"
+	RefreshBkccSpace        = "periodic:metadata:refresh_bkcc_space"
+	RefreshClusterResource  = "periodic:metadata:refresh_cluster_resource"
+	RefreshBcsProjectBiz    = "periodic:metadata:refresh_bcs_project_biz"
+	SyncBcsSpace            = "periodic:metadata:sync_bcs_space"
+	RefreshBkciSpaceName    = "periodic:metadata:refresh_bkci_space_name"
 	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
 
 	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
@@ -122,6 +123,10 @@ var (
 		SyncBcsSpace: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.SyncBcsSpace,
+		},
+		RefreshBkciSpaceName: {
+			Cron:    "0 3 * * *",
+			Handler: metadataTask.RefreshBkciSpaceName,
 		},
 		RefreshCustomReport2Nodeman: {
 			Cron:    "*/5 * * * *",

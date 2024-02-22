@@ -313,3 +313,38 @@ func TestSpaceSvc_SyncBcsSpace(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, equal)
 }
+
+func TestSpaceSvc_RefreshBkciSpaceName(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	gomonkey.ApplyFunc(apiservice.BcsProjectService.BatchGetProjects, func(s apiservice.BcsProjectService, kind string) ([]map[string]string, error) {
+		return []map[string]string{
+			{
+				"projectId":   "project_id_131",
+				"projectCode": "project_code_01",
+				"name":        "project_name_01_new",
+				"bkBizId":     "51",
+			},
+			{
+				"projectId":   "project_id_132",
+				"projectCode": "project_code_02",
+				"name":        "project_name_02_new",
+				"bkBizId":     "52",
+			},
+		}, nil
+	})
+	db := mysql.GetDBSession().DB
+	sp := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCI,
+		SpaceId:     "project_code_01",
+		SpaceName:   "project_name_01_old",
+	}
+	db.Delete(&space.Space{}, "space_id in (?)", []string{"project_code_01", "project_code_02"})
+	err := sp.Create(db)
+	assert.NoError(t, err)
+	svc := NewSpaceSvc(nil)
+	err = svc.RefreshBkciSpaceName()
+	assert.NoError(t, err)
+	err = space.NewSpaceQuerySet(db).SpaceIdEq("project_code_01").One(&sp)
+	assert.NoError(t, err)
+	assert.Equal(t, "project_name_01_new", sp.SpaceName)
+}

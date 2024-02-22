@@ -12,7 +12,6 @@ package objectsref
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	tkexv1alpha1 "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/apis/tkex/v1alpha1"
 	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
@@ -34,12 +33,8 @@ type GVRK struct {
 	Kind     string
 }
 
-func (gvrk GVRK) ID() string {
-	return fmt.Sprintf("%s/%s/%s/%s", gvrk.Group, gvrk.Version, gvrk.Resource, gvrk.Kind)
-}
-
-func listServerPreferredResources(discoveryClient discovery.DiscoveryInterface) map[string]GVRK {
-	gvrks := make(map[string]GVRK)
+func listServerPreferredResources(discoveryClient discovery.DiscoveryInterface) map[GVRK]struct{} {
+	gvrks := make(map[GVRK]struct{})
 	resources, _ := discoveryClient.ServerPreferredResources()
 	for _, resource := range resources {
 		gv, err := schema.ParseGroupVersion(resource.GroupVersion)
@@ -54,7 +49,7 @@ func listServerPreferredResources(discoveryClient discovery.DiscoveryInterface) 
 				Resource: r.Name,
 				Kind:     r.Kind,
 			}
-			gvrks[gvrk.ID()] = gvrk
+			gvrks[gvrk] = struct{}{}
 		}
 	}
 	return gvrks
@@ -82,23 +77,22 @@ type tkexObjects struct {
 	gamedeployment  *Objects
 }
 
-func newTkexObjects(ctx context.Context, client tkexversiond.Interface, discoveryClient discovery.DiscoveryInterface) (*tkexObjects, error) {
+func newTkexObjects(ctx context.Context, client tkexversiond.Interface, resources map[GVRK]struct{}) (*tkexObjects, error) {
 	sharedInformer := tkexinformers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, tkexinformers.WithNamespace(metav1.NamespaceAll))
 
 	var err error
 	tkexObjs := &tkexObjects{}
-	gvrks := listServerPreferredResources(discoveryClient)
 
-	if _, ok := gvrks[GameStatefulSetGVRK.ID()]; ok {
-		logger.Infof("found extend workload: %s", GameStatefulSetGVRK.ID())
+	if _, ok := resources[GameStatefulSetGVRK]; ok {
+		logger.Infof("found extend workload: %+v", GameStatefulSetGVRK)
 		tkexObjs.gamestatefulset, err = newGameStatefulObjects(ctx, sharedInformer)
 		if err != nil {
 			return tkexObjs, err
 		}
 	}
 
-	if _, ok := gvrks[GameDeploymentGVRK.ID()]; ok {
-		logger.Infof("found extend workload: %s", GameDeploymentGVRK.ID())
+	if _, ok := resources[GameDeploymentGVRK]; ok {
+		logger.Infof("found extend workload: %+v", GameDeploymentGVRK)
 		tkexObjs.gamedeployment, err = newGameDeploymentObjects(ctx, sharedInformer)
 		if err != nil {
 			return tkexObjs, err

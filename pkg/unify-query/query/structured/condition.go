@@ -302,10 +302,11 @@ func (c AllConditions) Compare(key, value string) (bool, error) {
 					}
 					matched := reExp.Match([]byte(value))
 					// 如果出现匹配不上的情况，可以判定 compare 失败
-					if !matched {
-						return false, nil
+					if matched {
+						return true, nil
 					}
 				}
+				return false, nil
 			case ConditionNotRegEqual:
 				for _, val := range field.Value {
 					reExp, err := regexp.Compile(val)

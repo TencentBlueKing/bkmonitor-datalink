@@ -103,7 +103,7 @@ func TestPublisher(t *testing.T) {
 
 func TestRegisterDuplicateRoutes(t *testing.T) {
 	assert.Panics(t, func() {
-		RegisterHttpRoute("test", []RouteWithFunc{
+		RegisterRecvHttpRoute("test", []RouteWithFunc{
 			{
 				Method:       http.MethodGet,
 				RelativePath: "/route1",

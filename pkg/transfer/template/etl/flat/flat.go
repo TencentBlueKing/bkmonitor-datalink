@@ -84,7 +84,7 @@ func NewFlatProcessor(ctx context.Context, name string) (*template.RecordProcess
 	err := rt.VisitUserSpecifiedFields(func(config *config.MetaFieldConfig) error {
 		field := etl.NewNewSimpleFieldWith(
 			config.Name(), config.DefaultValue, config.HasDefaultValue(),
-			etl.ExtractByJMESPath(config.FieldName), etl.NewTransformByField(config),
+			etl.ExtractByJMESPath(config.FieldName), etl.NewTransformByField(config, nil),
 		)
 		switch config.Tag {
 		case define.MetaFieldTagDimension, define.MetaFieldTagGroup:

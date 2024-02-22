@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -22,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/periodic"
 	commonUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -101,7 +101,7 @@ func (w *WorkerHealthMaintainer) Start() {
 	for {
 		select {
 		case <-ticker.C:
-			data, _ := jsoniter.Marshal(fixInfo)
+			data, _ := jsonx.Marshal(fixInfo)
 			for _, queueName := range w.queues {
 				workerKey := common.WorkerKey(queueName, w.id)
 				w.redisClient.Set(w.ctx, workerKey, data, w.config.infoTtl)

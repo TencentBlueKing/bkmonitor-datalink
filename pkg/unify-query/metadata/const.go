@@ -12,6 +12,7 @@ package metadata
 const (
 	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
+	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
 
 	UserKey               = "user"
 	MessageKey            = "message"

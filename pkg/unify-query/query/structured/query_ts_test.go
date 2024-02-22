@@ -466,6 +466,10 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					},
 				},
 			},
+			"script_tmpfs_monitor.group_default": &ir.SpaceResultTable{
+				TableId: "script_tmpfs_monitor.group_default",
+				Filters: []map[string]string{},
+			},
 		},
 		"influxdb-query": ir.Space{
 			"system.cpu_detail": &ir.SpaceResultTable{
@@ -492,8 +496,19 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 					},
 				},
 			},
+			"script_tmpfs_monitor.group_default": &ir.SpaceResultTable{
+				TableId: "script_tmpfs_monitor.group_default",
+				Filters: []map[string]string{},
+			},
 		},
 	}, ir.ResultTableDetailInfo{
+		"script_tmpfs_monitor.group_default": &ir.ResultTableDetail{
+			TableId:         "script_tmpfs_monitor.group_default",
+			DB:              "script_tmpfs_monitor",
+			Measurement:     "group_default",
+			Fields:          []string{"usage"},
+			MeasurementType: redis.BkExporter,
+		},
 		"system.cpu_detail": &ir.ResultTableDetail{
 			TableId:         "system.cpu_detail",
 			DB:              "system",
@@ -749,6 +764,33 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 							Measurement:    "disk",
 							Field:          "usage",
 							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_disk_raw", __name__="usage_value"`,
+						},
+					},
+				},
+			},
+		},
+		"vm 查询开启 + tableID 未开启单指标单表 = 查询 InfluxDB - 1": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "script_tmpfs_monitor.group_default",
+						FieldName:     ".*",
+						ReferenceName: "b",
+						IsRegexp:      true,
+					},
+				},
+				MetricMerge: "b",
+			},
+			ref: md.QueryReference{
+				"b": &md.QueryMetric{
+					QueryList: md.QueryList{
+						{
+							IsSingleMetric: false,
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							VmCondition:    `bk_biz_id="2", result_table_id="100147_ieod_system_cpu_summary_raw", __name__="usage_value"`,
 						},
 					},
 				},

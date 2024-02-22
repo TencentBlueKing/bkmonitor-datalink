@@ -9,7 +9,9 @@
 
 package jsonx
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestCompareObjects(t *testing.T) {
 	type args struct {

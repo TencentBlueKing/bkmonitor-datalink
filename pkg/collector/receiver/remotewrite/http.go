@@ -32,7 +32,7 @@ func init() {
 }
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourceRemoteWrite, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceRemoteWrite, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeRemoteWrite,

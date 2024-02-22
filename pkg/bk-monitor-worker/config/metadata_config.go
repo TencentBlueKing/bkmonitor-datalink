@@ -62,6 +62,8 @@ var (
 	GlobalTsDataSavedDays int
 	// GlobalCustomReportDefaultProxyIp 自定义上报默认服务器
 	GlobalCustomReportDefaultProxyIp []string
+	// GlobalIsAutoDeployCustomReportServer 是否自动部署自定义上报服务
+	GlobalIsAutoDeployCustomReportServer bool
 	// GlobalIPV6SupportBizList 支持ipv6的业务列表
 	GlobalIPV6SupportBizList []int
 	// GlobalHostDisableMonitorStates 主机不监控字段列表
@@ -114,6 +116,7 @@ func initMetadataVariables() {
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 	GlobalCustomReportDefaultProxyIp = GetValue("taskConfig.metadata.global.customReportDefaultProxyIp", []string{})
+	GlobalIsAutoDeployCustomReportServer = GetValue("taskConfig.metadata.global.isAutoDeployCustomReportServer", true)
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})
 	GlobalHostDisableMonitorStates = GetValue("taskConfig.metadata.global.hostDisableMonitorStates", []string{"备用机", "测试中", "故障中"})
 

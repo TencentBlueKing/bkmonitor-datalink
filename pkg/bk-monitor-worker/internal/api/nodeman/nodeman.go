@@ -160,3 +160,25 @@ func (c *Client) PluginSearch(opts ...define.OperationOption) define.Operation {
 		Path:   path,
 	}, opts...)
 }
+
+// PluginOperate for nodeman resource plugin_operate
+func (c *Client) PluginOperate(opts ...define.OperationOption) define.Operation {
+	/*
+		【节点管理2.0】插件管理接口
+		@params
+		job_type	| ["MAIN_START_PLUGIN","MAIN_STOP_PLUGIN","MAIN_RESTART_PLUGIN","MAIN_RELOAD_PLUGIN","MAIN_DELEGATE_PLUGIN","MAIN_UNDELEGATE_PLUGIN","MAIN_INSTALL_PLUGIN"] | 任务类型 | required
+		bk_biz_id	| [int] | 业务ID
+		bk_cloud_id	| [int] | 云区域ID
+		version		| [string] | Agent版本
+		plugin_params	| map{name|string|插件名称|required, version|string|插件版本, keep_config|bool|保留原有配置, no_restart|bool|不重启进程 } | 插件信息
+		conditions	| [map{}] | 搜索条件
+		bk_host_id	| [int] | 主机ID
+		exclude_hosts	| [int] | 跨页全选排除主机
+	*/
+	path := "api/plugin/operate/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "plugin_operate",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

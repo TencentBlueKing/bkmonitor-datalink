@@ -45,6 +45,7 @@ var (
 	RefreshBkccSpace            = "periodic:metadata:refresh_bkcc_space"
 	RefreshClusterResource      = "periodic:metadata:refresh_cluster_resource"
 	RefreshBcsProjectBiz        = "periodic:metadata:refresh_bcs_project_biz"
+	AutoDeployProxy             = "periodic:metadata:auto_deploy_proxy"
 	SyncBcsSpace                = "periodic:metadata:sync_bcs_space"
 	RefreshBkciSpaceName        = "periodic:metadata:refresh_bkci_space_name"
 	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
@@ -124,6 +125,10 @@ var (
 		SyncBcsSpace: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.SyncBcsSpace,
+		},
+		AutoDeployProxy: {
+			Cron:    "30 */2 * * *",
+			Handler: metadataTask.AutoDeployProxy,
 		},
 		RefreshBkciSpaceName: {
 			Cron:    "0 3 * * *",

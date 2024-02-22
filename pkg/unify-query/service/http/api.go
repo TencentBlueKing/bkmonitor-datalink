@@ -352,6 +352,13 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+
+	// 写入查询缓存
+	metadata.SetQueryParams(ctx, &metadata.QueryParams{
+		Start: start,
+		End:   end,
+	})
+
 	metadata.SetQueryReference(ctx, map[string]*metadata.QueryMetric{
 		prometheus.ReferenceName: queryMetric,
 	})

@@ -196,6 +196,12 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	query.Timezone = timezone
 
+	// 写入查询缓存
+	metadata.SetQueryParams(ctx, &metadata.QueryParams{
+		Start: start.Unix(),
+		End:   end.Unix(),
+	})
+
 	referenceNameMetric := make(map[string]string, len(query.QueryList))
 	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
 

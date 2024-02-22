@@ -319,9 +319,8 @@ func BenchmarkMetricsConvert_10_Gauge_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{gauge: 10})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -334,9 +333,8 @@ func BenchmarkMetricsConvert_10_Counter_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{counter: 10})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -349,9 +347,8 @@ func BenchmarkMetricsConvert_10_Histogram_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{histogram: 10})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -364,9 +361,8 @@ func BenchmarkMetricsConvert_10_Summary_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{summary: 10})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -379,9 +375,8 @@ func BenchmarkMetricsConvert_100_Gauge_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{gauge: 100})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -394,9 +389,8 @@ func BenchmarkMetricsConvert_100_Counter_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{counter: 100})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -409,9 +403,8 @@ func BenchmarkMetricsConvert_100_Histogram_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{histogram: 100})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -424,9 +417,8 @@ func BenchmarkMetricsConvert_100_Summary_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{summary: 100})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -439,9 +431,8 @@ func BenchmarkMetricsConvert_1000_Gauge_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{gauge: 1000})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -454,9 +445,8 @@ func BenchmarkMetricsConvert_1000_Counter_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{counter: 1000})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -469,9 +459,8 @@ func BenchmarkMetricsConvert_1000_Histogram_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{histogram: 1000})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}
@@ -484,9 +473,8 @@ func BenchmarkMetricsConvert_1000_Summary_DataPoint(b *testing.B) {
 	g := makeMetricsGenerator(generatorConfig{summary: 1000})
 	data := g.Generate()
 	record := define.Record{
-		RecordType:  define.RecordMetrics,
-		RequestType: define.RequestHttp,
-		Data:        data,
+		RecordType: define.RecordMetrics,
+		Data:       data,
 	}
 
 	gather := func(evts ...define.Event) {}

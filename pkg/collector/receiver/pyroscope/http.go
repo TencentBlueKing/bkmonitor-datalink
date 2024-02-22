@@ -64,7 +64,7 @@ var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePyroscope)
 
 // Ready 注册 pyroscope 的 http 路由
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourcePyroscope, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourcePyroscope, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routePyroscopeIngest,

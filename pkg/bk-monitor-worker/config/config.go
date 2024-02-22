@@ -196,6 +196,12 @@ var (
 
 	// AesKey project aes key
 	AesKey string
+	// BkdataTokenSalt bkdata token salt
+	BkdataTokenSalt string
+	// BkdataAESIv bkdata AES IV
+	BkdataAESIv string
+	// BkdataAESKey bkdata AES Key
+	BkdataAESKey string
 
 	// BkApiEnabled enabled bk-apigw
 	BkApiEnabled bool
@@ -319,7 +325,7 @@ func initVariables() {
 	WorkerHealthCheckInfoDuration = GetValue("worker.healthCheck.duration", 5*time.Second, viper.GetDuration)
 	// WorkerDaemonTaskMaintainerInterval worker常驻任务检测任务是否正常运行的间隔
 	WorkerDaemonTaskMaintainerInterval = GetValue(
-		"worker.daemonTask.maintainer.interval", 1*time.Second, viper.GetDuration,
+		"worker.daemonTask.maintainer.interval", 5*time.Second, viper.GetDuration,
 	)
 	// WorkerDaemonTaskRetryTolerateCount worker常驻任务配置，当任务重试超过指定数量仍然失败时，下次重试间隔就不断动态增长
 	WorkerDaemonTaskRetryTolerateCount = GetValue("worker.daemonTask.maintainer.tolerateCount", 60)
@@ -365,6 +371,9 @@ func initVariables() {
 	WorkerListenPort = GetValue("service.worker.port", 10213)
 
 	AesKey = GetValue("aes.key", "")
+	BkdataTokenSalt = GetValue("aes.bkdataToken", "bk")
+	BkdataAESIv = GetValue("aes.bkdataAESIv", "bkbkbkbkbkbkbkbk")
+	BkdataAESKey = GetValue("aes.bkdataAESKey", "")
 
 	BkApiEnabled = GetValue("taskConfig.common.bkapi.enabled", false)
 	BkApiUrl = GetValue("taskConfig.common.bkapi.host", "http://127.0.0.1")

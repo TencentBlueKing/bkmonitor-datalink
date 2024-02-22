@@ -71,12 +71,13 @@ func getIPs() []string {
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			span     oleltrace.Span
-			start    = time.Now()
-			ips      = getIPs()
-			source   = c.Request.Header.Get(metadata.BkQuerySourceHeader)
-			spaceUid = c.Request.Header.Get(metadata.SpaceUIDHeader)
-			ctx      = c.Request.Context()
+			span      oleltrace.Span
+			start     = time.Now()
+			ips       = getIPs()
+			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
+			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
+			ctx       = c.Request.Context()
 		)
 
 		ctx = metadata.InitHashID(ctx)
@@ -85,7 +86,7 @@ func Timer(p *Params) gin.HandlerFunc {
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
 
 		// 把用户名注入到 metadata 中
-		metadata.SetUser(ctx, source, spaceUid)
+		metadata.SetUser(ctx, source, spaceUid, skipSpace)
 
 		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid)
 

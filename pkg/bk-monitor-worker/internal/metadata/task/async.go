@@ -144,3 +144,21 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	}
 	return nil
 }
+
+// RefreshCustomReportConfigParams RefreshCustomReportConfig 任务入参
+type RefreshCustomReportConfigParams struct {
+	BkBizId *int `json:"bk_biz_id"`
+}
+
+// RefreshCustomReportConfig refresh custom report to nodeman
+func RefreshCustomReportConfig(ctx context.Context, t *task.Task) error {
+	var params RefreshCustomReportConfigParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrap(err, "parse params error")
+	}
+	logger.Infof("async task start to RefreshCustomReport2Config with bk_biz_id [%v]", params.BkBizId)
+	if err := service.NewCustomReportSubscriptionSvc(nil).RefreshCustomReport2Config(params.BkBizId); err != nil {
+		return errors.Wrap(err, "async RefreshCustomReport2Config failed")
+	}
+	return nil
+}

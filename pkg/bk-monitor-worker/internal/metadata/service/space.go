@@ -65,12 +65,18 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		if !ok {
 			continue
 		}
+		if name == oldName {
+			continue
+		}
 		// 名称变动，需要更新
-		if name != oldName {
+		metrics.MysqlCount(sp.TableName(), "RefreshBkccSpaceName_update", 1)
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
+		} else {
 			sp.SpaceName = name
-			err := sp.Update(db, space.SpaceDBSchema.SpaceName)
-			if err != nil {
-				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName)
+			sp.UpdateTime = time.Now()
+			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
 				continue
 			}
 			logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
@@ -588,4 +594,52 @@ func (s *SpaceSvc) GetValidBcsProjects() ([]map[string]string, error) {
 		projects = append(projects, p)
 	}
 	return projects, nil
+}
+
+// RefreshBkciSpaceName 刷新 bkci 类型空间名称
+func (s *SpaceSvc) RefreshBkciSpaceName() error {
+	projects, err := apiservice.BcsProject.BatchGetProjects("k8s")
+	if err != nil {
+		return errors.Wrap(err, "GetBkciProjects failed")
+	}
+	if len(projects) == 0 {
+		return nil
+	}
+	projectCodeNameMap := make(map[string]string)
+	for _, p := range projects {
+		projectCodeNameMap[p["projectCode"]] = p["name"]
+	}
+
+	// 更新数据库中记录
+	db := mysql.GetDBSession().DB
+	var spaceList []space.Space
+	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).All(&spaceList); err != nil {
+		return errors.Wrap(err, "query bkci space failed")
+	}
+	for _, sp := range spaceList {
+		oldName := sp.SpaceName
+		name, ok := projectCodeNameMap[sp.SpaceId]
+		// 不存在则跳过
+		if !ok {
+			logger.Errorf("space not found from bkci api, space_id [%s] space_name [%s]", sp.SpaceId, sp.SpaceName)
+			continue
+		}
+		if name == oldName {
+			continue
+		}
+		// 名称变动，需要更新
+		sp.SpaceName = name
+		sp.UpdateTime = time.Now()
+		_ = metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
+		if cfg.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
+		} else {
+			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+				logger.Errorf("update bkci space_name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
+				continue
+			}
+			logger.Infof("update bkci space name [%s] to [%s]", oldName, sp.SpaceName)
+		}
+	}
+	return nil
 }

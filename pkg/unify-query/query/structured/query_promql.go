@@ -283,8 +283,18 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 						timeAggregation.VargsList = vargsList
 					}
 
-					// 如果是 matrix 类型，则需要写入到 timeAggregation 里
-					query.TimeAggregation = timeAggregation
+					// 只有第一层的时间聚合函数才放到 TimeAggregation 里面
+					if query.TimeAggregation.Function == "" {
+						query.TimeAggregation = timeAggregation
+					} else {
+						query.AggregateMethodList = append(query.AggregateMethodList, AggregateMethod{
+							Method:     timeAggregation.Function,
+							VArgsList:  timeAggregation.VargsList,
+							Window:     timeAggregation.Window,
+							IsSubQuery: timeAggregation.IsSubQuery,
+							Step:       timeAggregation.Step,
+						})
+					}
 				} else {
 					// 如果是 vector 类型，则需要写入到 aggregateMethodList 里
 					aggregateMethod := AggregateMethod{
@@ -296,6 +306,7 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 					}
 					query.AggregateMethodList = append(query.AggregateMethodList, aggregateMethod)
 				}
+
 			case *parser.AggregateExpr:
 				method := convertMethod(e.Op)
 				if method == "" {

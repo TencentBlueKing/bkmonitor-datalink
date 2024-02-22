@@ -16,13 +16,12 @@ import (
 	"fmt"
 	"math/rand"
 
-	jsoniter "github.com/json-iterator/go"
-
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	apmTasks "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -45,7 +44,10 @@ type Numerator interface {
 }
 
 type Operator interface {
-	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
+	Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte)
+	// GetTaskDimension get the metric dimension of the daemon task,
+	// and the maintainer will report the metric regularly.
+	GetTaskDimension(payload []byte) string
 }
 
 type OperatorDefine struct {
@@ -59,12 +61,12 @@ var taskDefine = map[string]OperatorDefine{
 		if err != nil {
 			return nil, err
 		}
-		runSuccessChan := make(chan bool, 1)
+		runSuccessChan := make(chan error, 1)
 		go op.Run(runSuccessChan)
-		runSuccess := <-runSuccessChan
+		runErr := <-runSuccessChan
 		close(runSuccessChan)
-		if !runSuccess {
-			return nil, errors.New("apm.pre_calculate failed to run")
+		if runErr != nil {
+			return nil, errors.New(fmt.Sprintf("apm.pre_calculate failed to initial, error: %s", runErr))
 		}
 		return op, err
 	}},
@@ -130,7 +132,7 @@ func computeWorker(t task.SerializerTask) (service.WorkerInfo, error) {
 
 	// TODO 从worker列表中选择worker进行调度 待补充更多的调度规则 目前暂时使用随机选择
 	data, _ := redisClient.Get(ctx, keys[rand.Intn(len(keys))]).Bytes()
-	if err = jsoniter.Unmarshal(data, &res); err != nil {
+	if err = jsonx.Unmarshal(data, &res); err != nil {
 		return res, fmt.Errorf("parse workerInfo failed. error: %s", err)
 	}
 	return res, nil

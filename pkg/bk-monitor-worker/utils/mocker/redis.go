@@ -51,6 +51,20 @@ func (r *RedisClientMocker) HMGet(ctx context.Context, key string, fields ...str
 	return c
 }
 
+func (r *RedisClientMocker) HSet(ctx context.Context, key string, values ...interface{}) *goRedis.IntCmd {
+	c := goRedis.NewIntCmd(ctx)
+	s, ok := r.SetMap[key]
+	if !ok {
+		s = mapset.NewSet[string]()
+		r.SetMap[key] = s
+	}
+	for _, v := range values {
+		vStr, _ := v.(string)
+		s.Add(vStr)
+	}
+	return c
+}
+
 func (r *RedisClientMocker) SAdd(ctx context.Context, key string, members ...interface{}) *goRedis.IntCmd {
 	c := goRedis.NewIntCmd(ctx)
 	m, ok := r.SetMap[key]

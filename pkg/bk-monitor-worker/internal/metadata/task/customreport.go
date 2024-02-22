@@ -128,3 +128,16 @@ func RefreshEventDimension(ctx context.Context, t *t.Task) error {
 
 	return nil
 }
+
+// RefreshCustomReport2Nodeman : refresh custom report to nodeman
+func RefreshCustomReport2Nodeman(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("RefreshCustomReport2Nodeman Runtime panic caught: %v", err)
+		}
+	}()
+	if err := service.NewCustomReportSubscriptionSvc(nil).RefreshCustomReport2Config(nil); err != nil {
+		return errors.Wrap(err, "RefreshCustomReport2Config failed")
+	}
+	return nil
+}

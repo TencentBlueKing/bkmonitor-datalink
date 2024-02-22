@@ -1,8 +1,3 @@
-# REQUIRE COMPONENTS
-# https://github.com/mvdan/gofumpt => $go install mvdan.cc/gofumpt@latest
-# https://github.com/incu6us/goimports-reviser => $go install github.com/incu6us/goimports-reviser/v3@v3.1.1
-# https://github.com/golangci/golangci-lint => $go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
-
 GO ?= go
 SHELL := bash
 
@@ -22,6 +17,7 @@ help:
 	@echo " build: Build release package"
 	@echo " dev: Run and test program locally"
 	@echo " bin: Build binary distribution"
+	@echo " install: Install dev tools"
 
 .PHONY: lint
 lint: mod
@@ -56,3 +52,9 @@ bin:
 .PHONY: dev
 dev:
 	$(GO) run . -c ./example/example.yml
+
+.PHONY: install
+install:
+	$(GO) install mvdan.cc/gofumpt@latest
+	$(GO) install github.com/incu6us/goimports-reviser/v3@v3.1.1
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1

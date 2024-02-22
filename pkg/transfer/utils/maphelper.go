@@ -130,6 +130,15 @@ func (c *MapHelper) GetArray(key string) ([]interface{}, bool) {
 	return value, ok
 }
 
+func (c *MapHelper) GetStringArray(key string) ([]string, bool) {
+	result, ok := c.Data[key]
+	if !ok {
+		return nil, ok
+	}
+	value, ok := result.([]string)
+	return value, ok
+}
+
 // MustGetArray : get []interface{} or panic
 func (c *MapHelper) MustGetArray(key string) []interface{} {
 	result, ok := c.Data[key]

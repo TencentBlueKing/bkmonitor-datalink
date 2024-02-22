@@ -15,13 +15,13 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	jsoniter "github.com/json-iterator/go"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -105,7 +105,7 @@ func (d *DefaultWatcher) toWorkerInfo(workerKey string) (service.WorkerInfo, err
 		return res, err
 	}
 
-	if err = jsoniter.Unmarshal(bytesData, &res); err != nil {
+	if err = jsonx.Unmarshal(bytesData, &res); err != nil {
 		return res, err
 	}
 
@@ -180,7 +180,7 @@ func (d *DefaultWatcher) watchTask() {
 
 func (d *DefaultWatcher) toTask(taskStr string) (task.SerializerTask, error) {
 	var res task.SerializerTask
-	if err := jsoniter.Unmarshal([]byte(taskStr), &res); err != nil {
+	if err := jsonx.Unmarshal([]byte(taskStr), &res); err != nil {
 		return res, err
 	}
 	return res, nil

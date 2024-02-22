@@ -29,7 +29,7 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 	return &Client{BkApiClient: client}, nil
 }
 
-// PluginInfo for nodeman resource search_cloud_area
+// PluginInfo for nodeman resource plugin_info
 // 查询插件信息
 func (c *Client) PluginInfo(opts ...define.OperationOption) define.Operation {
 	/*
@@ -37,9 +37,9 @@ func (c *Client) PluginInfo(opts ...define.OperationOption) define.Operation {
 		name	| string | 插件名 | required
 		version | string | 版本号
 	*/
-	path := "plugin_info"
+	path := "plugin_info/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "search_cloud_area",
+		Name:   "plugin_info",
 		Method: "GET",
 		Path:   path,
 	}, opts...)

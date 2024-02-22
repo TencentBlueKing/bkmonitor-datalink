@@ -94,7 +94,14 @@ log:
 
 # ================================ 密钥配置  ===================================
 aes:
+  # 全局AES加密KEY
   key: ""
+  # 用于bk.data.token AES加密的salt值
+  bkdataToken: "bk"
+  # 用于bk.data.token AES加密的IV值
+  bkdataAESIv: "bkbkbkbkbkbkbkbk"
+  # 用于bk.data.token AES加密的key值
+  bkdataAESKey: ""
 
 # ================================ worker配置  ===================================
 worker:

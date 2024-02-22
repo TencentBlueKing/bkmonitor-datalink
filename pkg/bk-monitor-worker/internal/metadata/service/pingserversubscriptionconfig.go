@@ -200,13 +200,12 @@ func (s PingServerSubscriptionConfigSvc) GetProxyHostIds(bkHostIds []int) ([]int
 		return nil, errors.Wrap(err, "GetNodemanApi failed")
 	}
 	var resp nodeman.PluginSearchResp
-	_, err = nodemanApi.PluginSearch().SetBody(map[string]interface{}{
+	if _, err = nodemanApi.PluginSearch().SetBody(map[string]interface{}{
 		"page":       1,
 		"pagesize":   len(bkHostIds),
 		"conditions": []interface{}{},
 		"bk_host_id": bkHostIds,
-	}).SetResult(&resp).Request()
-	if err != nil {
+	}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "PluginSearch with bk_host_id [%v] failed", bkHostIds)
 	}
 	var proxyHostIds []int

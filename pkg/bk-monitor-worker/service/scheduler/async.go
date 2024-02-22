@@ -20,12 +20,13 @@ type Task struct {
 }
 
 var (
-	exampleTask               = "async:test_example"
-	CreateEsStorageIndex      = "async:create_es_storage_index"
-	PushAndPublishSpaceRouter = "async:push_and_publish_space_router"
-	PushSpaceToRedis          = "async:push_space_to_redis"
-	AccessBkdataVm            = "async:access_bkdata_vm"
-	RefreshCustomReportConfig = "async:refresh_custom_report_config"
+	exampleTask                  = "async:test_example"
+	CreateEsStorageIndex         = "async:create_es_storage_index"
+	PushAndPublishSpaceRouter    = "async:push_and_publish_space_router"
+	PushSpaceToRedis             = "async:push_space_to_redis"
+	AccessBkdataVm               = "async:access_bkdata_vm"
+	RefreshCustomReportConfig    = "async:refresh_custom_report_config"
+	RefreshCustomLogReportConfig = "async:refresh_custom_log_report_config"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
@@ -45,6 +46,9 @@ var (
 		},
 		RefreshCustomReportConfig: {
 			Handler: task.RefreshCustomReportConfig,
+		},
+		RefreshCustomLogReportConfig: {
+			Handler: task.RefreshCustomLogReportConfig,
 		},
 	}
 )

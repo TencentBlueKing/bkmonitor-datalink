@@ -15,7 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
-// TransformDataidToToken 将dataid 加密为bk.data.token
+// TransformDataidToToken 将dataid 加密为bk.data.token, 不存在的id填-1
 func TransformDataidToToken(metricDataId, traceDataId, logDataId, BkBizId int, appName string) string {
 	// bk.data.token=${metric_data_id}${salt}${trace_data_id}${salt}${log_data_id}${salt}${bk_biz_id}
 	bkDataTokenRaw := fmt.Sprintf(
@@ -35,7 +35,5 @@ func TransformDataidToToken(metricDataId, traceDataId, logDataId, BkBizId int, a
 	iv := []byte(config.BkdataAESIv)
 	c := NewAESCipher(xKey, "", iv)
 	token := c.AESEncrypt(bkDataTokenRaw)
-	decrypt := c.AESDecrypt(token)
-	fmt.Println(decrypt)
 	return token
 }

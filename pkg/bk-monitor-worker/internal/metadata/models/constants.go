@@ -222,6 +222,8 @@ const (
 
 const SystemUser = "system"
 
+const LogReportMaxQPS = 50000 //Log Report Default QPS
+
 var TimeStampLenValeMap = map[int]string{
 	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",
 	TimeStampLenMillisecondLen: "Unix Time Stamp(milliseconds)",

@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -102,4 +103,55 @@ func (s NodemanService) PluginSearch(bkBizIds, bkHostIds, excludeHosts []int, co
 		return nil, errors.Wrapf(err, "PluginSearch with bk_host_id [%v] bk_biz_id [%v] exclude_hosts [%v] conditions [%v] failed", bkHostIds, bkBizIds, excludeHosts, conditions)
 	}
 	return resp.Data.List, nil
+}
+
+// UpdateSubscription 更新订阅
+func (s NodemanService) UpdateSubscription(params map[string]interface{}) (*define.APICommonResp, error) {
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "nodemanApi failed")
+	}
+	var resp define.APICommonResp
+	_, err = nodemanApi.UpdateSubscription().SetBody(params).SetResult(&resp).Request()
+	if err != nil {
+		return nil, errors.Wrapf(err, "UpdateSubscription with body [%v] failed", params)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "UpdateSubscription with body [%v] failed", params)
+	}
+	return &resp, nil
+}
+
+// CreateSubscription 创建订阅
+func (s NodemanService) CreateSubscription(params map[string]interface{}) (*define.APICommonMapResp, error) {
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "nodemanApi failed")
+	}
+	var resp define.APICommonMapResp
+	_, err = nodemanApi.CreateSubscription().SetBody(params).SetResult(&resp).Request()
+	if err != nil {
+		return nil, errors.Wrapf(err, "CreateSubscription with body [%v] failed", params)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "CreateSubscription with body [%v] failed", params)
+	}
+	return &resp, nil
+}
+
+// RunSubscription 运行订阅
+func (s NodemanService) RunSubscription(params map[string]interface{}) (*define.APICommonMapResp, error) {
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "nodemanApi failed")
+	}
+	var resp define.APICommonMapResp
+	_, err = nodemanApi.RunSubscription().SetBody(params).SetResult(&resp).Request()
+	if err != nil {
+		return nil, errors.Wrapf(err, "RunSubscription with body [%v] failed", params)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "RunSubscription with body [%v] failed", params)
+	}
+	return &resp, nil
 }

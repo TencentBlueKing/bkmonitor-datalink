@@ -66,6 +66,7 @@ type Backend struct {
 	payloadChan           chan define.Payload
 	wg                    sync.WaitGroup
 	producer              Producer
+	dropEmptyMetrics      bool
 
 	Topic     string
 	Key       string
@@ -143,7 +144,8 @@ func (b *Backend) init() error {
 
 	pipelineConfig := config.PipelineConfigFromContext(b.ctx)
 	if pipelineConfig != nil {
-		b.ETLConfig = pipelineConfig.ETLConfig
+		opts := utils.NewMapHelper(pipelineConfig.Option)
+		b.dropEmptyMetrics, _ = opts.GetBool(config.PipelineConfigDropEmptyMetrics)
 	}
 
 	shipper := config.ShipperConfigFromContext(b.ctx)
@@ -241,6 +243,20 @@ func (b *Backend) SendMsg(payload define.Payload) {
 		if drop {
 			b.skipStats.Inc()
 			logging.Warnf("skip useless record: %+v", etlRecord)
+			return
+		}
+	}
+
+	// 丢弃空 metrics
+	if b.dropEmptyMetrics {
+		for k, v := range etlRecord.Metrics {
+			if v == nil {
+				delete(etlRecord.Metrics, k)
+			}
+		}
+		if len(etlRecord.Metrics) <= 0 {
+			b.skipStats.Inc()
+			logging.Warnf("skip empty record: %+v", etlRecord)
 			return
 		}
 	}

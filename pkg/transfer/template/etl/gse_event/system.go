@@ -35,17 +35,25 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	record := new(SystemEventData)
 	err := d.To(record)
 	if err != nil {
+		logging.Errorf("%s parse payload %v failed: %v", p, d, err)
 		p.CounterFails.Inc()
 		return
 	}
 
 	if record.Values == nil {
+		logging.Errorf("%s parse payload failed: values is empty", p)
 		p.CounterFails.Inc()
 		return
 	}
 
-	var eventRecords []EventRecord
+	// 时间字段为空则不处理
+	if record.Time == "" {
+		p.CounterFails.Inc()
+		logging.Errorf("%s time is empty: %v", p, d)
+		return
+	}
 
+	var eventRecords []EventRecord
 	for _, value := range record.Values {
 		extra := value.Extra
 		if extra == nil {
@@ -53,17 +61,14 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		}
 		newEventRecords := parseSystemEvent(extra)
 		if newEventRecords == nil {
+			p.CounterFails.Inc()
 			continue
 		}
 
-		// 时间字段补充
-		eventTime := value.EventTime
-		if eventTime == "" {
-			eventTime = record.Time
-		}
-		// 时间格式转换
-		parse, err := time.Parse("2006-01-02 15:04:05", eventTime)
+		// 时间字段解析
+		parse, err := time.Parse("2006-01-02 15:04:05", record.Time)
 		if err != nil {
+			logging.Errorf("%s parse time %s error: %v", p, record.Time, err)
 			p.CounterFails.Inc()
 			continue
 		}
@@ -76,6 +81,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 	}
 
 	// 补充业务ID
+	sentCount := 0
 	for _, eventRecord := range eventRecords {
 		dimensions := utils.NewMapHelper(eventRecord.EventDimension)
 		ip, _ := dimensions.GetString("ip")
@@ -106,7 +112,7 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 
 		// 业务ID为空则不处理
 		if bkBizID == 0 {
-			p.CounterFails.Inc()
+			logging.Errorf("%s fill bk_biz_id failed, ip: %s, cloud_id: %s, agent_id: %s", p, ip, cloudID, agentId)
 			continue
 		}
 
@@ -122,13 +128,20 @@ func (p *SystemEventProcessor) Process(d define.Payload, outputChan chan<- defin
 		output, err := define.DerivePayload(d, eventRecord)
 		if err != nil {
 			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			logging.Warnf("%s create payload error %v: %v", p, err, d)
 			return
 		}
+		sentCount++
 		outputChan <- output
 	}
 
-	p.CounterSuccesses.Inc()
+	// 发送指标记录
+	if sentCount > 0 {
+		p.CounterSuccesses.Add(float64(sentCount))
+	}
+	if sentCount != len(eventRecords) {
+		p.CounterFails.Add(float64(len(eventRecords) - sentCount))
+	}
 }
 
 func NewSystemEventProcessor(ctx context.Context, name string) *SystemEventProcessor {

@@ -111,7 +111,7 @@ func (p *CustomStringProcessor) Process(d define.Payload, outputChan chan<- defi
 		output, err := define.DerivePayload(d, newEvent)
 		if err != nil {
 			p.CounterFails.Inc()
-			logging.Warnf("%v create payload error %v: %v", p, err, d)
+			logging.Warnf("%s create payload error %v: %v", p, err, d)
 			return
 		}
 		outputChan <- output

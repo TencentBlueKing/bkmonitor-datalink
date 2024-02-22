@@ -25,6 +25,7 @@ type ComponentConfig struct {
 	Zipkin      ComponentZipkin      `config:"zipkin"`
 	Skywalking  ComponentSkywalking  `config:"skywalking"`
 	Pyroscope   ComponentPyroscope   `config:"pyroscope"`
+	Fta         ComponentFta         `config:"fta"`
 }
 
 type ComponentJaeger struct {
@@ -55,10 +56,15 @@ type ComponentPyroscope struct {
 	Enabled bool `config:"enabled"`
 }
 
+type ComponentFta struct {
+	Enabled bool `config:"enabled"`
+}
+
 type Config struct {
-	HttpServer HttpServerConfig `config:"http_server"`
-	GrpcServer GrpcServerConfig `config:"grpc_server"`
-	Components ComponentConfig  `config:"components"`
+	RecvServer  HttpServerConfig `config:"http_server"`
+	AdminServer HttpServerConfig `config:"admin_server"`
+	GrpcServer  GrpcServerConfig `config:"grpc_server"`
+	Components  ComponentConfig  `config:"components"`
 }
 
 type HttpServerConfig struct {

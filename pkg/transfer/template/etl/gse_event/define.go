@@ -15,6 +15,8 @@ import (
 
 	"github.com/cstockton/go-conv"
 	"github.com/mitchellh/mapstructure"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 )
 
 type EventRecord struct {
@@ -29,8 +31,7 @@ type EventRecord struct {
 type SystemEventData struct {
 	Time   string `json:"utctime2"`
 	Values []struct {
-		EventTime string      `json:"event_time"`
-		Extra     interface{} `json:"extra"`
+		Extra interface{} `json:"extra"`
 	} `json:"value"`
 }
 
@@ -94,13 +95,13 @@ func (e *AgentLostEvent) Flat() []EventRecord {
 
 // CoreFileEvent : core file事件
 type CoreFileEvent struct {
-	Host           string `json:"host" mapstructure:"host"`
-	CloudID        int    `json:"cloudid" mapstructure:"cloudid"`
-	Executable     string `json:"executable" mapstructure:"executable"`
-	ExecutablePath string `json:"executable_path" mapstructure:"executable_path"`
-	Signal         string `json:"signal" mapstructure:"signal"`
-	Corefile       string `json:"corefile" mapstructure:"corefile"`
-	Filesize       string `json:"filesize" mapstructure:"filesize"`
+	Host           string  `json:"host" mapstructure:"host"`
+	CloudID        int     `json:"cloudid" mapstructure:"cloudid"`
+	Executable     string  `json:"executable" mapstructure:"executable"`
+	ExecutablePath string  `json:"executable_path" mapstructure:"executable_path"`
+	Signal         string  `json:"signal" mapstructure:"signal"`
+	Corefile       string  `json:"corefile" mapstructure:"corefile"`
+	Filesize       float64 `json:"filesize" mapstructure:"filesize"`
 }
 
 func (e *CoreFileEvent) Flat() []EventRecord {
@@ -240,41 +241,17 @@ func (e *OOMEvent) Flat() []EventRecord {
 	}
 }
 
-// PingUnreachableEvent : ping不可达事件
-type PingUnreachableEvent struct {
-	Hosts   []string `json:"iplist" mapstructure:"iplist"`
-	CloudID int      `json:"cloudid" mapstructure:"cloudid"`
-}
-
-func (e *PingUnreachableEvent) Flat() []EventRecord {
-	events := make([]EventRecord, 0)
-	for _, host := range e.Hosts {
-		events = append(events, EventRecord{
-			EventName: "PingUnreachable",
-			Target:    fmt.Sprintf("%d:%s", e.CloudID, host),
-			Event: map[string]interface{}{
-				"content": "ping_unreachable",
-			},
-			EventDimension: map[string]interface{}{
-				"bk_target_cloud_id": conv.String(e.CloudID),
-				"bk_target_ip":       host,
-				"ip":                 host,
-				"bk_cloud_id":        conv.String(e.CloudID),
-			},
-		})
-	}
-	return events
-}
-
 func parseSystemEvent(data interface{}) []EventRecord {
 	var event EventRecordFlatter
 	var err error
 	dataMap, ok := data.(map[string]interface{})
 	if !ok {
+		logging.Errorf("system event parse data failed, expected map[string]interface{}, but got %T", data)
 		return nil
 	}
 	eventType, ok := dataMap["type"].(float64)
 	if !ok {
+		logging.Errorf("system event parse type failed, expected float64, but got %T", dataMap["type"])
 		return nil
 	}
 
@@ -300,19 +277,18 @@ func parseSystemEvent(data interface{}) []EventRecord {
 		var coreFileEvent CoreFileEvent
 		err = mapstructure.Decode(dataMap, &coreFileEvent)
 		event = &coreFileEvent
-	case 8:
-		// ping
-		var pingUnreachableEvent PingUnreachableEvent
-		err = mapstructure.Decode(dataMap, &pingUnreachableEvent)
-		event = &pingUnreachableEvent
 	case 9:
 		// oom
 		var oomEvent OOMEvent
 		err = mapstructure.Decode(dataMap, &oomEvent)
 		event = &oomEvent
+	default:
+		logging.Errorf("system event unknown type: %f", eventType)
+		return nil
 	}
 
-	if err != nil || event == nil {
+	if err != nil {
+		logging.Errorf("system event parse data failed: %v", err)
 		return nil
 	}
 

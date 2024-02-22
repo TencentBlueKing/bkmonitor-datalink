@@ -75,8 +75,7 @@ type Query struct {
 	Measurements    []string // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
 
 	// 用于 promql 查询
-	LabelsMatcher []*labels.Matcher
-	IsHasOr       bool // 标记是否有 or 条件
+	IsHasOr bool // 标记是否有 or 条件
 
 	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
 
@@ -105,6 +104,31 @@ type QueryMetric struct {
 	MetricName    string
 
 	IsCount bool // 标记是否为 count 方法
+}
+
+// ConditionField 过滤条件的字段描述
+type ConditionField struct {
+	// DimensionName 过滤字段
+	DimensionName string
+	// Value 查询值
+	Value []string
+	// Operator 操作符，包含：eq, ne, erq, nreq, contains, ncontains
+	Operator string
+}
+
+// TimeAggregation 时间聚合字段
+type TimeAggregation struct {
+	// Function 时间聚合方法
+	Function string
+	// Window 聚合周期
+	WindowDuration time.Duration
+}
+
+type QueryClusterMetric struct {
+	MetricName          string
+	AggregateMethodList []AggrMethod       // 聚合方法列表，从内到外排序
+	Conditions          [][]ConditionField // 用户请求的完整过滤条件，来源 structured 定义
+	TimeAggregation     TimeAggregation
 }
 
 type QueryReference map[string]*QueryMetric
@@ -171,64 +195,25 @@ func ReplaceVmCondition(condition string, replaceLabels ReplaceLabels) string {
 }
 
 func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
-	// 判断是否打开 vm-query 特性开关
-	if !GetVMQueryFeatureFlag(ctx) {
-		return false
-	}
-
-	mustVmQueryStatus := true
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
 			for _, query := range reference.QueryList {
 				// 忽略 vmRt 为空的
 				if query.VmRt == "" {
-					continue
+					return false
 				}
 
-				// 忽略本身已经是单指标单表的
-				if query.IsSingleMetric {
-					continue
+				// 如果该 TableID 未配置特性开关则认为不能访问 vm，直接返回 false
+				if !GetMustVmQueryFeatureFlag(ctx, query.TableID) {
+					return false
 				}
-
-				// 如果该 TableID 配置了 vm 查询特制开关则跳过
-				if GetMustVmQueryFeatureFlag(ctx, query.TableID) {
-					continue
-				}
-
-				mustVmQueryStatus = false
 			}
 		}
 	}
 
-	if !mustVmQueryStatus {
-		return false
-	}
-
 	for _, reference := range qRef {
 		for _, query := range reference.QueryList {
-			// 忽略 vmRt 为空的
-			if query.VmRt == "" {
-				continue
-			}
-
-			// 忽略本身已经是单指标单表的
-			if query.IsSingleMetric {
-				continue
-			}
-
-			// 更改为单指标单表
-			replaceLabels := make(ReplaceLabels)
-
-			oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-			newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
 			query.IsSingleMetric = true
-
-			replaceLabels["__name__"] = ReplaceLabel{
-				Source: oldMetric,
-				Target: newMetric,
-			}
-
-			query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)
 		}
 	}
 
@@ -292,14 +277,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 					}
 
 					if !query.IsSingleMetric {
-						oldMetric := fmt.Sprintf("%s_%s", query.Measurement, query.Field)
-						newMetric := fmt.Sprintf("%s_%s", query.Field, StaticField)
 						query.IsSingleMetric = true
-
-						replaceLabels["__name__"] = ReplaceLabel{
-							Source: oldMetric,
-							Target: newMetric,
-						}
 					}
 
 					query.VmCondition = ReplaceVmCondition(query.VmCondition, replaceLabels)
@@ -350,7 +328,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			for _, query := range reference.QueryList {
 
-				// 只有全部为单指标单表
+				// 该字段表示为是否查 VM
 				if !query.IsSingleMetric {
 					return ok, nil, err
 				}

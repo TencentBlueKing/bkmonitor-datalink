@@ -152,6 +152,17 @@ bk-collector:
         - "maxconns"
         - "maxbytes"
 
+    # Admin Server Config
+    admin_server:
+      # 是否启动 Http 服务
+      # default: false
+      enabled: true
+      # 服务监听端点
+      # default: ""
+      endpoint: "127.0.0.1:4310"
+      middlewares:
+        - "logging"
+
     # Grpc Server Config
     grpc_server:
       # 是否启动 Grpc 服务
@@ -179,6 +190,8 @@ bk-collector:
         enabled: false
       skywalking:
         enabled: false
+      fta:
+        enabled: true
 
   processor:
     # ApdexCalculator: 健康度状态计算器
@@ -1746,6 +1759,12 @@ bk-collector:
     - name: "pingserver_pipeline/common"
       type: "pingserver"
       processors:
+
+    - name: "fta_pipeline/common"
+      type: "fta"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

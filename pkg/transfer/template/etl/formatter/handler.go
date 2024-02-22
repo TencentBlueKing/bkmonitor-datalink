@@ -85,16 +85,16 @@ func FormatDimensionsHandler(record *define.ETLRecord, next define.ETLRecordHand
 }
 
 func fetchCCTopoResponseStore(record *define.ETLRecord, store define.Store) (*models.CCTopoBaseModelInfo, error) {
-	info, _, err := fetchCCTopoResponse(record, store)
+	info, _, err := fetchCCTopoResponse(record, store, ExtraMetaNone)
 	return info, err
 }
 
-func fetchExtraMetaResponseStore(record *define.ETLRecord, store define.Store) (string, error) {
-	_, s, err := fetchCCTopoResponse(record, store)
+func fetchExtraMetaResponseStore(record *define.ETLRecord, store define.Store, metaType ExtraMetaType) (string, error) {
+	_, s, err := fetchCCTopoResponse(record, store, metaType)
 	return s, err
 }
 
-func fetchCCTopoResponse(record *define.ETLRecord, store define.Store) (*models.CCTopoBaseModelInfo, string, error) {
+func fetchCCTopoResponse(record *define.ETLRecord, store define.Store, metaType ExtraMetaType) (*models.CCTopoBaseModelInfo, string, error) {
 	var (
 		modelInfo  models.CCInfo
 		err        error
@@ -126,11 +126,19 @@ func fetchCCTopoResponse(record *define.ETLRecord, store define.Store) (*models.
 
 	// 这里 dbm_meta/devx_meta 应该只能两者取其一
 	if isHostInfo {
-		if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.DbmMeta) > 0 {
-			extraMeta = obj.DbmMeta
-		}
-		if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.DevxMeta) > 0 {
-			extraMeta = obj.DevxMeta
+		switch metaType {
+		case ExtraMetaDbm:
+			if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.DbmMeta) > 0 {
+				extraMeta = obj.DbmMeta
+			}
+		case ExtraMetaDevx:
+			if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.DevxMeta) > 0 {
+				extraMeta = obj.DevxMeta
+			}
+		case ExtraMetaPerforce:
+			if obj, ok := modelInfo.(*models.CCHostInfo); ok && len(obj.PerforceMeta) > 0 {
+				extraMeta = obj.PerforceMeta
+			}
 		}
 	}
 
@@ -311,7 +319,16 @@ func transformFields(from map[string]interface{}, transformers map[string]etl.Tr
 		if err != nil {
 			return nil, errors.Wrapf(define.ErrOperationForbidden, "transform field %v error %v", key, err)
 		}
-		to[key] = value
+
+		// TODO(mando): 暂时没有找到优雅的方案处理 db record 先在这里做个断言
+		r, ok := value.(etl.DbmRecord)
+		if !ok {
+			to[key] = value // 普通类型处理
+			continue
+		}
+
+		to[r.BodyFieldName] = r.Body
+		to[r.ResponseFieldName] = r.Response
 	}
 	return to, nil
 }
@@ -422,13 +439,34 @@ func tryDecodeExtraMeta(s string) ([]map[string]string, error) {
 	return ret, nil
 }
 
-func TransferRecordCutterByExtraMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+type ExtraMetaType uint8
+
+const (
+	ExtraMetaNone ExtraMetaType = iota
+	ExtraMetaDbm
+	ExtraMetaDevx
+	ExtraMetaPerforce
+)
+
+func TransferRecordCutterByDbmMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+	return transferRecordCutterByExtraMetaCreator(store, ExtraMetaDbm, enabled)
+}
+
+func TransferRecordCutterByDevxMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+	return transferRecordCutterByExtraMetaCreator(store, ExtraMetaDevx, enabled)
+}
+
+func TransferRecordCutterByPerforceMetaCreator(store define.Store, enabled bool) define.ETLRecordChainingHandler {
+	return transferRecordCutterByExtraMetaCreator(store, ExtraMetaPerforce, enabled)
+}
+
+func transferRecordCutterByExtraMetaCreator(store define.Store, metaType ExtraMetaType, enabled bool) define.ETLRecordChainingHandler {
 	if !enabled {
 		return nil
 	}
 
 	return func(record *define.ETLRecord, next define.ETLRecordHandler) error {
-		body, err := fetchExtraMetaResponseStore(record, store)
+		body, err := fetchExtraMetaResponseStore(record, store, metaType)
 		if err != nil {
 			return errors.Wrap(err, "failed to fetch extra meta response")
 		}

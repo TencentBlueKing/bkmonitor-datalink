@@ -34,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
@@ -554,6 +555,8 @@ func HandlerQueryExemplar(c *gin.Context) {
 	queryStr, _ := json.Marshal(query)
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -614,6 +617,8 @@ func HandlerQueryTs(c *gin.Context) {
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertIntIntoSpan("query-body-size", len(queryStr), span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	res, err := queryTs(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -667,6 +672,8 @@ func HandlerQueryPromQL(c *gin.Context) {
 	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
 	trace.InsertStringIntoSpan("query-promql", queryPromQL.PromQL, span)
 
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
 	if queryPromQL.PromQL == "" {
 		resp.failed(ctx, fmt.Errorf("promql is empty"))
 		return
@@ -696,4 +703,114 @@ func HandleInfluxDBPrint(c *gin.Context) {
 
 	res := influxdbRouter.GetInfluxDBRouter().Print(ctx, refresh != "")
 	c.String(200, res)
+}
+
+// HandlerQueryTsClusterMetrics
+// @Summary  query ClusterMetrics ts
+// @ID       ts-query-request-cluster-metrics
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    data                  	body      structured.QueryTs  			  true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/cluster_metrics [post]
+func HandlerQueryTsClusterMetrics(c *gin.Context) {
+	var (
+		ctx  = c.Request.Context()
+		span oleltrace.Span
+		resp = &response{c: c}
+	)
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-ts-cluster-metrics")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
+	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
+	query := &structured.QueryTs{}
+	err := json.NewDecoder(c.Request.Body).Decode(query)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+	queryStr, _ := json.Marshal(query)
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
+	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+	res, err := QueryTsClusterMetrics(ctx, query)
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+	resp.success(ctx, res)
+}
+
+func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+	var (
+		err  error
+		res  any
+		span oleltrace.Span
+	)
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-cluster-metrics")
+	if span != nil {
+		defer span.End()
+	}
+	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	if err != nil {
+		return nil, err
+	}
+	query.Timezone = timezone
+	queryCM, err := query.ToQueryClusterMetric(ctx)
+	if err != nil {
+		return nil, err
+	}
+	err = metadata.SetQueryClusterMetric(ctx, queryCM)
+	if err != nil {
+		return nil, err
+	}
+	instance := redis.Instance{Ctx: ctx, Timeout: ClusterMetricQueryTimeout, ClusterMetricPrefix: ClusterMetricQueryPrefix}
+	if query.Instant {
+		res, err = instance.Query(ctx, "", end)
+	} else {
+		res, err = instance.QueryRange(ctx, "", start, end, step)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	trace.InsertStringIntoSpan("start", start.String(), span)
+	trace.InsertStringIntoSpan("end", end.String(), span)
+	trace.InsertStringIntoSpan("step", step.String(), span)
+	tables := promql.NewTables()
+	seriesNum := 0
+	pointsNum := 0
+
+	switch v := res.(type) {
+	case promPromql.Matrix:
+		for index, series := range v {
+			tables.Add(promql.NewTable(index, series))
+			seriesNum++
+			pointsNum += len(series.Points)
+		}
+	case promPromql.Vector:
+		for index, series := range v {
+			tables.Add(promql.NewTableWithSample(index, series))
+			seriesNum++
+			pointsNum++
+		}
+	default:
+		err = fmt.Errorf("data type wrong: %T", v)
+		return nil, err
+	}
+
+	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
+	trace.InsertIntIntoSpan("resp-points-num", pointsNum, span)
+
+	resp := NewPromData(query.ResultColumns)
+	err = resp.Fill(tables)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

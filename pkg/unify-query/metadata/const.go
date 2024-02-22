@@ -12,11 +12,13 @@ package metadata
 const (
 	BkQuerySourceHeader = "Bk-Query-Source"
 	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
+	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
 
-	UserKey           = "user"
-	MessageKey        = "message"
-	QueriesKey        = "queries"
-	QueryReferenceKey = "query_reference"
+	UserKey               = "user"
+	MessageKey            = "message"
+	QueriesKey            = "queries"
+	QueryReferenceKey     = "query_reference"
+	QueryClusterMetricKey = "query_cluster_metric"
 
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"

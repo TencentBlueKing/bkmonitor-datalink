@@ -178,7 +178,7 @@ func TestQueryInfo(t *testing.T) {
 	for n, c := range tcs {
 		t.Run(n, func(t *testing.T) {
 			ctx, _ = context.WithCancel(ctx)
-			metadata.SetUser(ctx, c.spaceUid, c.spaceUid)
+			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "skip")
 
 			_, err := queryInfo(ctx, c.key, c.params)
 			if c.err != nil {

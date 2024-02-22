@@ -805,7 +805,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			)
 			ctx = md.InitHashID(ctx)
 
-			md.SetUser(ctx, tc.source, tc.ts.SpaceUid)
+			md.SetUser(ctx, tc.source, tc.ts.SpaceUid, "")
 			ref, err = tc.ts.ToQueryReference(ctx)
 			assert.Nil(t, err)
 			if err == nil {

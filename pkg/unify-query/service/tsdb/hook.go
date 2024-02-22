@@ -42,7 +42,7 @@ func setDefaultConfig() {
 	// victoriaMetrics 配置
 	viper.SetDefault(VmTimeoutConfigPath, "30s")
 	viper.SetDefault(VmContentTypeConfigPath, "application/json")
-	viper.SetDefault(VmMaxConditionNumConfigPath, 2000)
+	viper.SetDefault(VmMaxConditionNumConfigPath, 2e4)
 
 	// vm 支持 influxdb 的查询配置
 	viper.SetDefault(VmInfluxCompatibleConfigPath, true)

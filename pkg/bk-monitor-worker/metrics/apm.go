@@ -10,149 +10,201 @@
 package metrics
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	"strconv"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-var apmTaskNamespace = "bmw_apm_pre_calc"
-
 var (
-	// APM task metric
-	// apmPreCalcFilterEsQueryCount apm预计算任务过滤器返回true然后查询ES的次数
-	apmPreCalcFilterEsQueryCount = prometheus.NewGaugeVec(
+	ApmNamespace      = "bmw_apm_pre_calc"
+	defDurationBucket = []float64{
+		0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1000, 1500, 2000, 3000, 5000,
+	}
+
+	// apmPreCalcNotifierReceiveMessageCount apm预计算任务接收数量
+	apmPreCalcNotifierReceiveMessageCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: apmTaskNamespace,
-			Name: "filter_es_query_count",
-			Help: "apm pre calc filter es query count",
+			Namespace: ApmNamespace,
+			Name:      "notifier_receive_message_count",
+			Help:      "notifier receive message count",
 		},
-		[]string{"data_id", "status"},
+		[]string{"data_id", "topic"},
 	)
-	// apmPreCalcSaveRequestCount apm预计算任务存储需求次数
-	apmPreCalcSaveRequestCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: apmTaskNamespace,
-			Name: "save_request_count",
-			Help: "apm pre calc save request count",
+	apmPreCalcParseSpanDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: ApmNamespace,
+			Name:      "notifier_parse_span_duration",
+			Help:      "notifier parse span duration",
+			Buckets:   defDurationBucket,
 		},
-		[]string{"data_id", "storage_type"},
+		[]string{"data_id", "topic"},
 	)
-	// apmPreCalcMessageCount apm预计算任务消息接收数量
-	apmPreCalcMessageCount = prometheus.NewGaugeVec(
+
+	TaskProcessChan          = "task_process_chan"
+	WindowProcessEventChan   = "window_process_event_chan"
+	SaveRequestChan          = "save_request_chan"
+	apmPreCalcSemaphoreTotal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: apmTaskNamespace,
-			Name: "message_count",
-			Help: "apm pre calc message count",
+			Namespace: ApmNamespace,
+			Name:      "semaphore_total",
+			Help:      "semaphore total",
+		},
+		[]string{"data_id", "scene"},
+	)
+
+	apmPreCalcProcessEventDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: ApmNamespace,
+			Name:      "process_event_duration",
+			Help:      "process event duration",
+			Buckets:   defDurationBucket,
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
+
+	QueryBloomFilterFailed = "query_bloom_filter_failed"
+	QueryEsFailed          = "query_es_failed"
+	QueryEsReturnEmpty     = "query_es_return_empty"
+	QueryESResponseInvalid = "query_es_response_invalid"
+	SaveEsFailed           = "save_es_failed"
+	SaveCacheFailed        = "save_cache_failed"
+	SaveBloomFilterFailed  = "save_bloom_filter_failed"
+	// apmPreCalcOperateStorageFailedTotal apm预计算对 trace 进行预计算时发生存储层失败计数指标
+	apmPreCalcOperateStorageFailedTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "operate_storage_failed",
+			Help:      "operate event storage failed",
+		},
+		[]string{"data_id", "error"},
+	)
+
+	StorageSaveEs      = "save_es"
+	StorageTraceEs     = "trace_es"
+	StorageCache       = "cache"
+	StorageBloomFilter = "bloom_filter"
+	OperateSave        = "save"
+	OperateQuery       = "query"
+	// apmPreCalcOperateStorageCount APM 预计算查询存储层的保存次数
+	apmPreCalcOperateStorageCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "operate_storage_count",
+			Help:      "operate storage count",
+		},
+		[]string{"data_id", "storage", "operate"},
+	)
+	// apmPreCalcSaveStorageTotal APM 预计算保存存储层的保存数量
+	apmPreCalcSaveStorageTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "save_storage_total",
+			Help:      "save storage total",
+		},
+		[]string{"data_id", "storage"},
+	)
+
+	// apmPreCalcExpiredKeyTotal APM 预计算过期 traceId 数量
+	apmPreCalcExpiredKeyTotal = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "expired_key_total",
+			Help:      "expired key total",
+		},
+		[]string{"data_id", "sub_window_id"},
+	)
+
+	// apmPreCalcLocateSpanDuration apm 预计算分配 span 到窗口的耗时
+	apmPreCalcLocateSpanDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: ApmNamespace,
+			Name:      "locate_span_duration",
+			Help:      "locate span duration",
+			Buckets:   defDurationBucket,
 		},
 		[]string{"data_id"},
 	)
-	// apmPreCalcWindowTraceCount apm预计算任务窗口trace数量
-	apmPreCalcWindowTraceCount = prometheus.NewGaugeVec(
+
+	// **** APM 父子窗口实现指标
+	// apmPreCalcWindowTraceTotal trace count of distributive windows
+	apmPreCalcWindowTraceTotal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "bmw",
-			Name: "window_trace_count",
-			Help: "apm pre calc window trace count",
+			Namespace: ApmNamespace,
+			Name:      "window_trace_count",
+			Help:      "window trace count",
 		},
-		[]string{"data_id", "distributive_window_id"},
+		[]string{"data_id", "sub_window_id"},
 	)
-	// apmPreCalcWindowTraceCount apm预计算任务窗口span数量
-	apmPreCalcWindowSpanCount = prometheus.NewGaugeVec(
+	// apmPreCalcWindowSpanTotal apm预计算任务窗口span数量
+	apmPreCalcWindowSpanTotal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "bmw",
-			Name: "window_span_count",
-			Help: "apm pre calc window span count",
+			Namespace: ApmNamespace,
+			Name:      "window_span_count",
+			Help:      "window span count",
 		},
-		[]string{"data_id", "distributive_window_id"},
+		[]string{"data_id", "sub_window_id"},
 	)
 )
 
-// RunApmPreCalcFilterEsQuery APM预计算ES查询次数指标 + 1
-func RunApmPreCalcFilterEsQuery(dataId, status string) {
-	metric, err := apmPreCalcFilterEsQueryCount.GetMetricWithLabelValues(dataId, status)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-
-	metric.Inc()
+func RecordApmPreCalcLocateSpanDuration(dataId string, t time.Time) {
+	apmPreCalcLocateSpanDuration.WithLabelValues(dataId).Observe(time.Since(t).Seconds())
 }
 
-// IncreaseApmSaveRequestCount APM预计算ES存储请求指标 + 1
-func IncreaseApmSaveRequestCount(dataId, storageType string) {
-	metric, err := apmPreCalcSaveRequestCount.GetMetricWithLabelValues(dataId, storageType)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Inc()
+func RecordApmPreCalcExpiredKeyTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcExpiredKeyTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Add(float64(n))
 }
 
-// DecreaseApmSaveRequestCount APM预计算ES存储请求指标 - 1
-func DecreaseApmSaveRequestCount(dataId, storageType string) {
-	metric, err := apmPreCalcSaveRequestCount.GetMetricWithLabelValues(dataId, storageType)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Dec()
+func RecordApmPreCalcSaveStorageTotal(dataId, storage string, n int) {
+	apmPreCalcSaveStorageTotal.WithLabelValues(dataId, storage).Add(float64(n))
 }
 
-// IncreaseApmMessageChanCount APM预计算ES存储请求指标 + 1
-func IncreaseApmMessageChanCount(dataId string) {
-	metric, err := apmPreCalcMessageCount.GetMetricWithLabelValues(dataId)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Inc()
+func RecordApmPreCalcOperateStorageCount(dataId, storage, operate string) {
+	apmPreCalcOperateStorageCount.WithLabelValues(dataId, storage, operate).Add(1)
 }
 
-// DecreaseApmMessageChanCount APM预计算ES存储请求指标 - 1
-func DecreaseApmMessageChanCount(dataId string) {
-	metric, err := apmPreCalcMessageCount.GetMetricWithLabelValues(dataId)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Dec()
+func RecordApmPreCalcOperateStorageFailedTotal(dataId, error string) {
+	apmPreCalcOperateStorageFailedTotal.WithLabelValues(dataId, error).Add(1)
 }
 
-// IncreaseApmWindowsTraceCount APM预计算窗口Trace数量指标 + 1
-func IncreaseApmWindowsTraceCount(dataId, id string) {
-	metric, err := apmPreCalcWindowTraceCount.GetMetricWithLabelValues(dataId, id)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Inc()
+func RecordApmPreCalcProcessEventDuration(dataId string, subWindowId int, t time.Time) {
+	apmPreCalcProcessEventDuration.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Observe(time.Since(t).Seconds())
 }
 
-// DecreaseApmWindowsTraceCount APM预计算窗口Trace数量指标 - 1
-func DecreaseApmWindowsTraceCount(dataId, id string) {
-	metric, err := apmPreCalcWindowTraceCount.GetMetricWithLabelValues(dataId, id)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Dec()
+func RecordNotifierParseSpanDuration(dataId, topic string, t time.Time) {
+	apmPreCalcParseSpanDuration.WithLabelValues(dataId, topic).Observe(time.Since(t).Seconds())
 }
 
-// IncreaseApmWindowsSpanCount APM预计算窗口Span数量指标 + 1
-func IncreaseApmWindowsSpanCount(dataId, id string) {
-	metric, err := apmPreCalcWindowSpanCount.GetMetricWithLabelValues(dataId, id)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Inc()
+func RecordApmPreCalcSemaphoreTotal(dataId, scene string, n int) {
+	apmPreCalcSemaphoreTotal.WithLabelValues(dataId, scene).Set(float64(n))
 }
 
-// DecreaseApmWindowsSpanCount APM预计算窗口Span数量指标 - n
-func DecreaseApmWindowsSpanCount(dataId, id string, n int) {
-	metric, err := apmPreCalcWindowSpanCount.GetMetricWithLabelValues(dataId, id)
-	if err != nil {
-		logger.Errorf("prom get apm pre calc filter es query count metric failed: %s", err)
-		return
-	}
-	metric.Sub(float64(n))
+// AddApmNotifierReceiveMessageCount apm预计算任务接收数量指标 + 1
+func AddApmNotifierReceiveMessageCount(dataId, topic string) {
+	apmPreCalcNotifierReceiveMessageCount.WithLabelValues(dataId, topic).Inc()
+}
+
+func RecordApmPreCalcWindowTraceTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowTraceTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
+func RecordApmPreCalcWindowSpanTotal(dataId string, subWindowId int, n int) {
+	apmPreCalcWindowSpanTotal.WithLabelValues(dataId, strconv.Itoa(subWindowId)).Set(float64(n))
+}
+
+func init() {
+	// register the metrics
+	Registry.MustRegister(
+		apmPreCalcNotifierReceiveMessageCount,
+		apmPreCalcParseSpanDuration,
+		apmPreCalcSemaphoreTotal,
+		apmPreCalcProcessEventDuration,
+		apmPreCalcOperateStorageFailedTotal,
+		apmPreCalcOperateStorageCount,
+		apmPreCalcSaveStorageTotal,
+		apmPreCalcExpiredKeyTotal,
+		apmPreCalcLocateSpanDuration,
+		apmPreCalcWindowTraceTotal,
+		apmPreCalcWindowSpanTotal,
+	)
 }

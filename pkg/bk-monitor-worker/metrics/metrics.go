@@ -25,16 +25,16 @@ var (
 	apiRequestCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: bmwMetricNamespace,
-			Name: "api_request_count",
-			Help: "api request count",
+			Name:      "api_request_count",
+			Help:      "api request count",
 		},
 		[]string{"method", "path", "status"},
 	)
 	apiRequestCost = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: bmwMetricNamespace,
-			Name: "api_request_cost",
-			Help: "api request cost time",
+			Name:      "api_request_cost",
+			Help:      "api request cost time",
 		},
 		[]string{"method", "path"},
 	)
@@ -43,8 +43,8 @@ var (
 	taskCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: bmwMetricNamespace,
-			Name: "task_count",
-			Help: "task run count",
+			Name:      "task_count",
+			Help:      "task run count",
 		},
 		[]string{"name", "status"}, // name 包含类型
 	)
@@ -52,8 +52,8 @@ var (
 	taskCostTime = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: bmwMetricNamespace,
-			Name: "task_cost",
-			Help: "task run cost time",
+			Name:      "task_cost",
+			Help:      "task run cost time",
 		},
 		[]string{"name"},
 	)
@@ -161,21 +161,10 @@ var Registry *prometheus.Registry
 
 func init() {
 	// register the metrics
-	Registry = prometheus.NewRegistry()
 	Registry.MustRegister(
 		apiRequestCount,
 		apiRequestCost,
 		taskCount,
 		taskCostTime,
-		apmPreCalcFilterEsQueryCount,
-		apmPreCalcSaveRequestCount,
-		apmPreCalcMessageCount,
-		apmPreCalcWindowTraceCount,
-		apmPreCalcWindowSpanCount,
-		consulCount,
-		gseCount,
-		esCount,
-		redisCount,
-		mysqlCount,
 	)
 }

@@ -106,7 +106,7 @@ worker:
     duration: 5s
   daemonTask:
     maintainer:
-      interval: 1s
+      interval: 5s
       tolerateCount: 60
       tolerateInterval: 10s
       intolerantFactor: 2
@@ -156,7 +156,6 @@ taskConfig:
       distributive:
         subSize: 10
         watchExpireInterval: 100ms
-        concurrentCount: 1000
         concurrentExpirationMaximum: 100000
     processor:
       enabledTraceInfoCache: 0
@@ -178,6 +177,7 @@ taskConfig:
           layers: 10
           divisor: 2
     metrics:
+      semaphoreReportInterval: 5s
       profile:
         enabled: false
         host: http://127.0.0.1:14040

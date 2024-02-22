@@ -131,3 +131,15 @@ func MysqlCount(tableName, operation string, count float64) {
 	}
 	metric.Add(count)
 }
+
+
+func init() {
+	// register the metrics
+	Registry.MustRegister(
+		consulCount,
+		gseCount,
+		esCount,
+		redisCount,
+		mysqlCount,
+	)
+}

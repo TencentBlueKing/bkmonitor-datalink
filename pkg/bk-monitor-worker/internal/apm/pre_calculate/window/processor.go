@@ -16,7 +16,6 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -24,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -81,6 +81,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 				"this traceId: %s will be process as a new window. error: %s",
 			event.TraceId, err,
 		)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryBloomFilterFailed)
 	} else if exist {
 		existSpans := p.listSpanFromStorage(event)
 		p.revertToCollect(&event, existSpans)
@@ -103,7 +104,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		infoKey := storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId)
 		data, err := p.proxy.Query(storage.QueryRequest{Target: storage.Cache, Data: infoKey})
 		if err == nil && data != nil {
-			parseErr := jsoniter.Unmarshal(data.([]byte), &spans)
+			parseErr := jsonx.Unmarshal(data.([]byte), &spans)
 			if parseErr != nil {
 				p.logger.Infof(
 					"Cache spans whose traceId is %s was found in traceInfo(key: %s), "+
@@ -142,14 +143,14 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 				"That data will be ignored, and result may be distorted. error: %s",
 			event.TraceId, err,
 		)
-		metrics.RunApmPreCalcFilterEsQuery(p.dataId, "error")
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsFailed)
 		return spans
 	}
 
-	metrics.RunApmPreCalcFilterEsQuery(p.dataId, "success")
 	if spanBytes == nil {
 		// The trace does not exist in es. if it occurs frequently, the Bloom-Filter parameter may be set improperly.
 		p.logger.Debug("The data with traceId: %s is empty from ES.", event.TraceId)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsReturnEmpty)
 		return spans
 	}
 	originSpans, err := p.recoverSpans(spanBytes.([]byte))
@@ -158,6 +159,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 			"The data structure in ES is inconsistent, this data will be ignored. traceId: %s. error: %s ",
 			event.TraceId, err,
 		)
+		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryESResponseInvalid)
 		return spans
 	}
 
@@ -296,7 +298,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
 	if p.config.enabledInfoCache {
-		spanBytes, _ := jsoniter.Marshal(event.Spans)
+		spanBytes, _ := jsonx.Marshal(event.Spans)
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
 			Action: storage.SaveTraceCache,
@@ -307,7 +309,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 				Ttl:    storage.CacheTraceInfoKey.Ttl,
 			},
 		}
-		metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.Cache))
 	}
 
 	receiver <- storage.SaveRequest{
@@ -317,9 +318,8 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Key:    event.TraceId,
 		},
 	}
-	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.BloomFilter))
 
-	resultBytes, _ := jsoniter.Marshal(result)
+	resultBytes, _ := jsonx.Marshal(result)
 	receiver <- storage.SaveRequest{
 		Target: storage.SaveEs,
 		Action: storage.SavePrecalculateResult,
@@ -329,7 +329,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 			Value:      resultBytes,
 		},
 	}
-	metrics.IncreaseApmSaveRequestCount(p.dataId, string(storage.SaveEs))
 }
 
 func sortNode(nodeDegrees []NodeDegree) func(a, b int) bool {

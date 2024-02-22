@@ -306,8 +306,7 @@ func (s CMDBService) SearchCloudArea() ([]cmdb.SearchCloudAreaDataInfo, error) {
 		return nil, errors.Wrap(err, "GetCmdbApi failed")
 	}
 	var resp cmdb.SearchCloudAreaResp
-	_, err = cmdbApi.SearchCloudArea().SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&resp).Request()
-	if err != nil {
+	if _, err = cmdbApi.SearchCloudArea().SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrap(err, "SearchCloudArea failed")
 	}
 	if err := resp.Err(); err != nil {

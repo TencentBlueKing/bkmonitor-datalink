@@ -82,15 +82,14 @@ func (s NodemanService) PluginSearch(bkBizIds, bkHostIds, excludeHosts []int, co
 		return nil, errors.Wrap(err, "GetNodemanApi failed")
 	}
 	var resp nodeman.PluginSearchResp
-	_, err = nodemanApi.PluginSearch().SetBody(map[string]interface{}{
+	if _, err = nodemanApi.PluginSearch().SetBody(map[string]interface{}{
 		"page":          1,
 		"pagesize":      len(bkHostIds),
 		"conditions":    conditions,
 		"bk_host_id":    bkHostIds,
 		"bk_biz_id":     bkBizIds,
 		"exclude_hosts": excludeHosts,
-	}).SetResult(&resp).Request()
-	if err != nil {
+	}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "PluginSearch with bk_host_id [%v] bk_biz_id [%v] exclude_hosts [%v] conditions [%v] failed", bkHostIds, bkBizIds, excludeHosts, conditions)
 	}
 	if err := resp.Err(); err != nil {

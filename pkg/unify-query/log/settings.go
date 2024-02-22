@@ -10,7 +10,6 @@
 package log
 
 import (
-	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 	"go.uber.org/zap"
 )
 
@@ -20,8 +19,7 @@ const (
 )
 
 var (
-	ZapLogger   *zap.Logger
-	OtLogger    *otelzap.Logger
-	LoggerLevel = zap.NewAtomicLevel()
-	Syncer      *ReopenableWriteSyncer
+	DefaultLogger *Logger
+	loggerLevel   = zap.NewAtomicLevel()
+	syncer        *ReopenableWriteSyncer
 )

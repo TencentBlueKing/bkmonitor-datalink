@@ -372,7 +372,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 `,
-	}, log.OtLogger)
+	}, log.DefaultLogger)
 
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,

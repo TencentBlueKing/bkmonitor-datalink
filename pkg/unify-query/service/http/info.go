@@ -333,9 +333,6 @@ func HandleFeatureFlag(c *gin.Context) {
 		res += fmt.Sprintln("-------------------------------")
 	}
 
-	res += metadata.GetQueryRouter().Print() + "\n"
-	res += fmt.Sprintln("-------------------------------")
-
 	res += featureFlag.Print() + "\n"
 	res += fmt.Sprintln("-----------------------------------")
 

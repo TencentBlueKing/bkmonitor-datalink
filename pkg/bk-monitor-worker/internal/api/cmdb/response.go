@@ -115,3 +115,73 @@ type BusinessDataInfo struct {
 	Operator          string    `json:"operator"`
 	TimeZone          string    `json:"time_zone"`
 }
+
+type ListHostsWithoutBizResp struct {
+	define.ApiCommonRespMeta
+	Data ListHostsWithoutBizData `json:"data"`
+}
+
+type ListHostsWithoutBizData struct {
+	Count int                           `json:"count"`
+	Info  []ListHostsWithoutBizDataInfo `json:"info"`
+}
+
+type ListHostsWithoutBizDataInfo struct {
+	BkAddressing          string      `json:"bk_addressing"`
+	BkAgentId             string      `json:"bk_agent_id"`
+	BkAssetId             string      `json:"bk_asset_id"`
+	BkBakOperator         string      `json:"bk_bak_operator"`
+	BkCloudHostIdentifier bool        `json:"bk_cloud_host_identifier"`
+	BkCloudHostStatus     interface{} `json:"bk_cloud_host_status"`
+	BkCloudId             int         `json:"bk_cloud_id"`
+	BkCloudInstId         string      `json:"bk_cloud_inst_id"`
+	BkCloudVendor         interface{} `json:"bk_cloud_vendor"`
+	BkComment             string      `json:"bk_comment"`
+	BkCpu                 *int        `json:"bk_cpu"`
+	BkCpuArchitecture     string      `json:"bk_cpu_architecture"`
+	BkCpuModule           string      `json:"bk_cpu_module"`
+	BkDisk                *int        `json:"bk_disk"`
+	BkHostId              int         `json:"bk_host_id"`
+	BkHostInnerip         string      `json:"bk_host_innerip"`
+	BkHostInneripV6       string      `json:"bk_host_innerip_v6"`
+	BkHostName            string      `json:"bk_host_name"`
+	BkHostOuterip         string      `json:"bk_host_outerip"`
+	BkHostOuteripV6       string      `json:"bk_host_outerip_v6"`
+	BkIspName             interface{} `json:"bk_isp_name"`
+	BkMac                 string      `json:"bk_mac"`
+	BkMem                 *int        `json:"bk_mem"`
+	BkOsBit               string      `json:"bk_os_bit"`
+	BkOsName              string      `json:"bk_os_name"`
+	BkOsType              *string     `json:"bk_os_type"`
+	BkOsVersion           string      `json:"bk_os_version"`
+	BkOuterMac            string      `json:"bk_outer_mac"`
+	BkProvinceName        interface{} `json:"bk_province_name"`
+	BkServiceTerm         interface{} `json:"bk_service_term"`
+	BkSla                 interface{} `json:"bk_sla"`
+	BkSn                  string      `json:"bk_sn"`
+	BkState               interface{} `json:"bk_state"`
+	BkStateName           *string     `json:"bk_state_name"`
+	BkSupplierAccount     string      `json:"bk_supplier_account"`
+	BkUpdatedAt           time.Time   `json:"bk_updated_at,omitempty"`
+	BkUpdatedBy           string      `json:"bk_updated_by,omitempty"`
+	CreateTime            time.Time   `json:"create_time"`
+	ImportFrom            *string     `json:"import_from"`
+	LastTime              time.Time   `json:"last_time"`
+	Operator              string      `json:"operator"`
+	DbmMeta               string      `json:"dbm_meta,omitempty"`
+	BkCreatedAt           time.Time   `json:"bk_created_at,omitempty"`
+	BkCreatedBy           string      `json:"bk_created_by,omitempty"`
+}
+
+type FindHostBizRelationResp struct {
+	define.ApiCommonRespMeta
+	Data []FindHostBizRelationData `json:"data"`
+}
+
+type FindHostBizRelationData struct {
+	BkBizId           int    `json:"bk_biz_id"`
+	BkHostId          int    `json:"bk_host_id"`
+	BkModuleId        int    `json:"bk_module_id"`
+	BkSetId           int    `json:"bk_set_id"`
+	BkSupplierAccount string `json:"bk_supplier_account"`
+}

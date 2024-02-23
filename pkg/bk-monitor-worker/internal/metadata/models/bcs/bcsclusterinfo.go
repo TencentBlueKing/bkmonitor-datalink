@@ -28,7 +28,7 @@ type BCSClusterInfo struct {
 	ClusterID          string    `gorm:"size:128;index" json:"cluster_id"`
 	BCSApiClusterId    string    `gorm:"column:bcs_api_cluster_id;index" json:"bcs_api_cluster_id"`
 	BkBizId            int       `gorm:"column:bk_biz_id" json:"bk_biz_id"`
-	BkCloudId          *int      `gorm:"column:bk_cloud_id" json:"BkCloudId"`
+	BkCloudId          *int      `gorm:"column:bk_cloud_id" json:"bk_cloud_id"`
 	ProjectId          string    `gorm:"size:128" json:"project_id"`
 	Status             string    `gorm:"size:50" json:"status"`
 	DomainName         string    `gorm:"size:512" json:"domain_name"`

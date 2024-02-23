@@ -15,8 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/util/rand"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 func TestAESDecrypt(t *testing.T) {
@@ -30,20 +28,20 @@ func TestAESDecrypt(t *testing.T) {
 		"aes_str:::dDFXjpGztB6DGLl6XzbKFStZF4WT4BXQMX8Edm/RAysSfG4OmtpI8OgyDH+EJG6L": "zRD6AqbG5XSBKzz0Flxf",
 		"aes_str:::X91jZcJtY5Yq3Y9oVZlHMqKwDakt950rV3IFY26YOXk=":                     "5gYTZqvd7Z7s",
 	}
-	config.AesKey = "81be7fc6-5476-4934-9417-6d4d593728db"
+	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
 	for encrypetd, plain := range encryptedAndPlainMap {
-		assert.Equal(t, plain, AESDecrypt(encrypetd))
+		assert.Equal(t, plain, c.AESDecrypt(encrypetd))
 	}
 
 }
 
 func TestAESEncrypt(t *testing.T) {
-	config.AesKey = "81be7fc6-5476-4934-9417-6d4d593728db"
+	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
 	for i := 0; i < 100; i++ {
 		pwdSize := rand.IntnRange(0, 20)
 		pwd := rand.String(pwdSize)
-		encrypted := AESEncrypt(pwd)
-		decrypted := AESDecrypt(encrypted)
+		encrypted := c.AESEncrypt(pwd)
+		decrypted := c.AESDecrypt(encrypted)
 		fmt.Println(pwd, decrypted, encrypted)
 		assert.Equal(t, pwd, decrypted)
 	}

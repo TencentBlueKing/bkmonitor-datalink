@@ -15,8 +15,8 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
+	dependentredis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 )
 
 func InitTestDBConfig(filePath string) {
@@ -44,10 +44,10 @@ func DependenceRedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 		HMGetValue:                   []interface{}{},
 		SetMap:                       map[string]mapset.Set[string]{},
 	}
-	patch := gomonkey.ApplyFunc(dependentredis.GetInstance, func() (*dependentredis.Instance, error) {
+	patch := gomonkey.ApplyFunc(dependentredis.GetCacheRedisInstance, func() *dependentredis.Instance {
 		return &dependentredis.Instance{
 			Client: redisClient,
-		}, nil
+		}
 	})
 	return redisClient, patch
 }

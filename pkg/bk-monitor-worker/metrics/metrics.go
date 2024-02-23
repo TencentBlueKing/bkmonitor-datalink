@@ -57,6 +57,24 @@ var (
 		},
 		[]string{"name"},
 	)
+
+	// 常驻任务正在运行的任务统计
+	daemonRunningTaskCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "daemon_running_task_count",
+			Help: "daemon running task count",
+		},
+		[]string{"task_dimension"},
+	)
+
+	// 常驻任务任务重试次数
+	daemonTaskRetryCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "daemon_task_retry_count",
+			Help: "daemon task retry count",
+		},
+		[]string{"task_dimension"},
+	)
 )
 
 // RequestApiCount request api count metric
@@ -157,6 +175,24 @@ func SetTaskCostTime(taskName string) func() {
 	}
 }
 
+func RecordDaemonTask(dimension string) {
+	metric, err := daemonRunningTaskCount.GetMetricWithLabelValues(dimension)
+	if err != nil {
+		logger.Errorf("prom get [daemonRunningTaskCount] metric failed: %s", err)
+		return
+	}
+	metric.Set(1)
+}
+
+func RecordDaemonTaskRetryCount(dimension string) {
+	metric, err := daemonTaskRetryCount.GetMetricWithLabelValues(dimension)
+	if err != nil {
+		logger.Errorf("prom get [daemonTaskRetryCount] metric failed: %s", err)
+		return
+	}
+	metric.Add(1)
+}
+
 var Registry *prometheus.Registry
 
 func init() {
@@ -166,5 +202,7 @@ func init() {
 		apiRequestCost,
 		taskCount,
 		taskCostTime,
+		daemonRunningTaskCount,
+		daemonTaskRetryCount,
 	)
 }

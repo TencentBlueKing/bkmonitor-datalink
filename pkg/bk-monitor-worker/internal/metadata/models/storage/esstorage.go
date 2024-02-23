@@ -886,7 +886,7 @@ func (e *ESStorage) IsMappingSame(ctx context.Context, indexName string) (bool, 
 		currentConfig := currentConfigInterface.(map[string]interface{})
 		dbConfig := dbConfigInterface.(map[string]interface{})
 
-		for _, fieldConfig := range []string{"type", "include_in_all", "doc_values", "format"} {
+		for _, fieldConfig := range []string{"type", "include_in_all", "doc_values", "format", "analyzer"} {
 			dbValue := dbConfig[fieldConfig]
 			currentValue := currentConfig[fieldConfig]
 

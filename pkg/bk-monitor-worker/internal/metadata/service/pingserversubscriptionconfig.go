@@ -338,7 +338,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		}
 		if config != nil && config.BkHostId == nil {
 			config.BkHostId = &host.BkHostId
-			_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_bkHostId", 1)
+			metrics.MysqlCount(config.TableName(), "CreateSubscription_update_bkHostId", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with bk_host_id [%v]", config.SubscriptionId, config.BkHostId)
 			} else {
@@ -362,7 +362,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			equal, _ := jsonx.CompareJson(subscriptionParamsStr, config.Config)
 			if !equal {
 				logger.Infof("ping server subscription task [%v] config has changed, update it", config.SubscriptionId)
-				_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_config", 1)
+				metrics.MysqlCount(config.TableName(), "CreateSubscription_update_config", 1)
 				if cfg.BypassSuffixPath != "" {
 					logger.Infof("[db_diff] UpdateSubscription with config [%s]", subscriptionParamsStr)
 					logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with config [%s]", config.SubscriptionId, subscriptionParamsStr)
@@ -393,7 +393,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 				logger.Errorf("marshal PingServerSubscriptionConfig new config [%v] failed, %v", subscriptionParams, err)
 				continue
 			}
-			_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_create", 1)
+			metrics.MysqlCount(config.TableName(), "CreateSubscription_create", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] CreateSubscription with config [%s]", subscriptionParamsStr)
 				logger.Infof("[db_diff] create PingServerSubscriptionConfig with config [%s]", subscriptionParamsStr)
@@ -456,7 +456,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		if status == "STOP" {
 			continue
 		}
-		_ = metrics.MysqlCount(config.TableName(), "CreateSubscription_update_status", 1)
+		metrics.MysqlCount(config.TableName(), "CreateSubscription_update_status", 1)
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] SwitchSubscription to disable for subscription_id [%v]", config.SubscriptionId)
 			logger.Infof("[db_diff] update PingServerSubscriptionConfig to disable for subscription_id [%v]", config.SubscriptionId)

@@ -44,6 +44,8 @@ var (
 	GlobalIsRestrictDsBelongSpace bool
 	// GlobalDefaultBkdataBizId 接入计算平台使用的业务 ID
 	GlobalDefaultBkdataBizId int
+	// GlobalBkdataProjectId 监控在计算平台使用的公共项目ID
+	GlobalBkdataProjectId int
 	// GlobalDefaultKafkaStorageClusterId 默认 kafka 存储集群ID
 	GlobalDefaultKafkaStorageClusterId uint
 	// GlobalBkdataKafkaBrokerUrl 与计算平台对接的消息队列BROKER地址
@@ -54,12 +56,16 @@ var (
 	GlobalBkdataRtIdPrefix string
 	// GlobalBkdataBkBizId 监控在计算平台使用的公共业务ID
 	GlobalBkdataBkBizId int
+	// GlobalBkdataRawTableSuffix 数据接入前缀
+	GlobalBkdataRawTableSuffix string
 	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
 	GlobalBkdataProjectMaintainer string
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
 	GlobalAccessDbmRtSpaceUid []string
 	// GlobalTsDataSavedDays 监控采集数据保存天数
 	GlobalTsDataSavedDays int
+	// GlobalIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
+	GlobalIsAllowAllCmdbLevel bool
 
 	// SpaceRedisKey redis 中空间的 key
 	SpaceRedisKey string
@@ -93,13 +99,16 @@ func initMetadataVariables() {
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)
+	GlobalBkdataProjectId = GetValue("taskConfig.metadata.global.BkdataProjectId", 1)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
 	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")
 	GlobalBkdataRtIdPrefix = GetValue("taskConfig.metadata.global.bkdataRtIdPrefix", GlobalBkappDeployPlatform)
 	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
+	GlobalBkdataRawTableSuffix = GetValue("taskConfig.metadata.global.bkdataRawTableSuffix", "raw")
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
+	GlobalIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.global.isAllowAllCmdbLevel", false)
 
 	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))

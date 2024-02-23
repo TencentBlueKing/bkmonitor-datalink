@@ -144,3 +144,25 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	}
 	return nil
 }
+
+// AccessToBkDataParams AccessToBkData 任务入参
+type AccessToBkDataParams struct {
+	TableId string `json:"table_id"`
+}
+
+// AccessToBkData 接入bkdata
+func AccessToBkData(ctx context.Context, t *task.Task) error {
+	var params AccessToBkDataParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrapf(err, "parse params for AccessToBkDataParams with [%s] error", t.Payload)
+	}
+	if params.TableId == "" {
+		return errors.New("params table_id can not be empty")
+	}
+	logger.Infof("async task start to access bkdata with table_id [%s]", params.TableId)
+	svc := service.NewBkDataStorageSvc(nil)
+	if err := svc.CreateTable(params.TableId, true); err != nil {
+		return errors.Wrapf(err, "CreateTable for table_id [%s] failed", svc.TableID)
+	}
+	return nil
+}

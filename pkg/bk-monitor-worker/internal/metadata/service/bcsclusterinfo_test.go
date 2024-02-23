@@ -41,7 +41,7 @@ import (
 
 func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-
+	config.BkApiBcsApiMicroGwUrl = "http://127.0.0.1:8080"
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
 		var data string
 		if strings.Contains(req.URL.Path, "list_biz_hosts_topo") {

@@ -104,6 +104,39 @@ func (c *Client) StartDatabusCleans(opts ...define.OperationOption) define.Opera
 	}, opts...)
 }
 
+// StopDatabusCleans for bkdata resource stop_databus_cleans
+// 停止清洗配置
+func (c *Client) StopDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		result_table_id | string | 清洗结果表名称 | required
+		storages | [string] | 分发任务的存储列表
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/tasks/{result_table_id}/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "stop_databus_cleans",
+		Method: "DELETE",
+		Path:   path,
+	}, opts...)
+}
+
+// GetDatabusCleans for bkdata resource get_databus_cleans
+// 停止清洗配置
+func (c *Client) GetDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		raw_data_id | string | 数据接入源ID | required
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/cleans/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_databus_cleans",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
 // CreateDataStorages for bkdata resource create_data_storages
 // 创建数据入库
 func (c *Client) CreateDataStorages(opts ...define.OperationOption) define.Operation {
@@ -127,6 +160,31 @@ func (c *Client) CreateDataStorages(opts ...define.OperationOption) define.Opera
 	}, opts...)
 }
 
+// UpdateDatabusCleans for bkdata resource update_databus_cleans
+// 更新数据清洗
+func (c *Client) UpdateDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		processing_id | string | 清洗配置ID | required
+		raw_data_id | string | 数据接入源ID | required
+		json_config | string | 数据清洗配置，json格式 | required
+		pe_config | string |清洗规则的pe配置
+		bk_biz_id | int | 业务ID | required
+		clean_config_name | string | 清洗配置名称 | required
+		result_table_name | string | 清洗配置输出的结果表英文标识 | required
+		result_table_name_alias | string | 清洗配置输出的结果表别名 | required
+		fields | [map{field_name: string | 字段英文标识 | required, field_type: string | 字段类型 | required, field_alias: string | 字段别名 | required, is_dimension: string | 是否为维度字段 | required, field_index: int | 字段顺序索引 | required}] | 输出字段列表 | required
+		description | string | 清洗配置描述信息
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/cleans/{processing_id}/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "update_databus_cleans",
+		Method: "PUT",
+		Path:   path,
+	}, opts...)
+}
+
 // AccessDeployPlan for bkdata resource access_deploy_plan
 // 提交接入部署计划(数据源接入)
 func (c *Client) AccessDeployPlan(opts ...define.OperationOption) define.Operation {
@@ -142,6 +200,40 @@ func (c *Client) AccessDeployPlan(opts ...define.OperationOption) define.Operati
 	path := "/v3/access/deploy_plan/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "access_deploy_plan",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// AuthProjectsDataCheck for bkdata resource auth_projects_data_check
+// 检查项目是否有结果表权限
+func (c *Client) AuthProjectsDataCheck(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id | int | 计算平台项目 | required
+		result_table_id | string | 结果表名称 | required
+		action_id | string | 动作方式
+	*/
+	path := "/v3/auth/projects/{project_id}/data/check/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "auth_projects_data_check",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// AuthResultTable for bkdata resource auth_result_table
+// 授权接口(管理员接口): 给项目加表权限
+func (c *Client) AuthResultTable(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id | int | 计算平台项目 | required
+		object_id | string | 结果表名称 | required
+		bk_biz_id | int | 业务ID | required
+	*/
+	path := "/v3/auth/projects/{project_id}/data/add/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "auth_result_table",
 		Method: "POST",
 		Path:   path,
 	}, opts...)

@@ -212,6 +212,11 @@ const (
 	TimeStampLenNanosecondLen  = 19 // Unix Time Stamp(nanosecond)
 )
 
+const (
+	DatabusStatusRunning  = "running"
+	DatabusStatusStarting = "starting"
+)
+
 const SystemUser = "system"
 
 var TimeStampLenValeMap = map[int]string{

@@ -61,8 +61,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 	  }`)
 
 	for name, c := range map[string]struct {
-		SpaceUid string
-		TableID  string
+		TableID string
 
 		Start int64
 		End   int64

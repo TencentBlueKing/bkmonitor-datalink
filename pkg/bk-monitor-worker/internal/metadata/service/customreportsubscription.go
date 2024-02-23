@@ -549,7 +549,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		if !equal {
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] subscription task config has changed, old [%s] new [%s]", subscrip.Config, newConfig)
-				_ = metrics.MysqlCount(subscrip.TableName(), "CreateOrUpdateConfig_update_config", float64(len(subscripList)))
+				metrics.MysqlCount(subscrip.TableName(), "CreateOrUpdateConfig_update_config", float64(len(subscripList)))
 				return nil
 			}
 			logger.Infof("subscription task config has changed, update it")
@@ -574,7 +574,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	}
 	if cfg.BypassSuffixPath != "" {
 		logger.Infof("[db_diff]create CustomReportSubscription with bk_biz_id [%d] bk_data_id [%d] config [%s]", bkBizId, bkDataId, newConfig)
-		_ = metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)
+		metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)
 		return nil
 	}
 	var resp define.APICommonMapResp

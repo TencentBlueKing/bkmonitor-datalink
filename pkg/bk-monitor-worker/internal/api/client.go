@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -36,6 +37,7 @@ var (
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
+	muForMetadataApi       sync.Mutex
 )
 
 var (
@@ -46,6 +48,7 @@ var (
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
+	metadataApi       *metadata.Client
 )
 
 // GetGseApi 获取GseApi客户端
@@ -220,6 +223,29 @@ func GetBkdataApi() (*bkdata.Client, error) {
 		return nil, err
 	}
 	return bkdataApi, nil
+}
+
+// GetMetadataApi 获取metadataApi客户端
+func GetMetadataApi() (*metadata.Client, error) {
+	muForMetadataApi.Lock()
+	defer muForMetadataApi.Unlock()
+	if metadataApi != nil {
+		return metadataApi, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
+		AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+		AppCode:             cfg.BkApiAppCode,
+		AppSecret:           cfg.BkApiAppSecret,
+		JsonMarshaler:       jsonx.Marshal,
+	}
+
+	var err error
+	metadataApi, err = metadata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return metadataApi, nil
 }
 
 // HeaderProvider provide request header.

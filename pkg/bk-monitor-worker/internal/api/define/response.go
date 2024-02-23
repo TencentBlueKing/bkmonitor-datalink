@@ -9,10 +9,19 @@
 
 package define
 
+import "github.com/pkg/errors"
+
 type ApiCommonRespMeta struct {
 	Message string `json:"message"`
 	Result  bool   `json:"result"`
 	Code    int    `json:"code"`
+}
+
+func (m ApiCommonRespMeta) Err() error {
+	if !m.Result {
+		return errors.Errorf("api result is false, message [%s]", m.Message)
+	}
+	return nil
 }
 
 // APICommonResp api通用返回结构体

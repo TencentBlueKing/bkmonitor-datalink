@@ -94,7 +94,14 @@ log:
 
 # ================================ 密钥配置  ===================================
 aes:
+  # 全局AES加密KEY
   key: ""
+  # 用于bk.data.token AES加密的salt值
+  bkdataToken: "bk"
+  # 用于bk.data.token AES加密的IV值
+  bkdataAESIv: "bkbkbkbkbkbkbkbk"
+  # 用于bk.data.token AES加密的key值
+  bkdataAESKey: ""
 
 # ================================ worker配置  ===================================
 worker:
@@ -132,6 +139,14 @@ taskConfig:
       bcsCcApiUrl: ""
   # metadata: metadata任务配置
   metadata:
+    global:
+      customReportDefaultProxyIp: []
+      ipv6SupportBizList: []
+      hostDisableMonitorStates: ["备用机", "测试中", "故障中"]
+    pingserver:
+      enablePingAlarm: true
+      enableDirectAreaPingCollect: true
+      dataid: 1100005
     metricDimension:
       metricKeyPrefix: bkmonitor:metrics_
       metricDimensionKeyPrefix: bkmonitor:metric_dimensions_

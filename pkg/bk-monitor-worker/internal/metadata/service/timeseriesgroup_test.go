@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/jinzhu/gorm"
 	"github.com/stretchr/testify/assert"
@@ -45,23 +44,19 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
-	mockerClient := &mocker.RedisClientMocker{
-		ZcountValue: 2,
-		ZRangeByScoreWithScoresValue: []goRedis.Z{
-			{Score: score, Member: "metric_a"},
-			{Score: score, Member: "metric_b"},
-			{Score: score - 100000, Member: "metric_expired"},
-		},
-		HMGetValue: []interface{}{
-			"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
-			"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
-		},
-	}
-	gomonkey.ApplyFunc(redis.GetCacheRedisInstance, func() *redis.Instance {
-		return &redis.Instance{
-			Client: mockerClient,
-		}
-	})
+
+	mockerClient, redisPatch := mocker.DependenceRedisMocker()
+	defer redisPatch.Reset()
+	mockerClient.ZcountValue = 2
+	mockerClient.ZRangeByScoreWithScoresValue = append(mockerClient.ZRangeByScoreWithScoresValue, []goRedis.Z{
+		{Score: score, Member: "metric_a"},
+		{Score: score, Member: "metric_b"},
+		{Score: score - 100000, Member: "metric_expired"},
+	}...)
+	mockerClient.HMGetValue = append(mockerClient.HMGetValue, []interface{}{
+		"{\"dimensions\":{\"d1\":{\"last_update_time\":1685503141,\"values\":[]},\"d2\":{\"last_update_time\":1685503141,\"values\":[]}}}",
+		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
+	}...)
 
 	svc := NewTimeSeriesGroupSvc(&tsm)
 	// 测试新增

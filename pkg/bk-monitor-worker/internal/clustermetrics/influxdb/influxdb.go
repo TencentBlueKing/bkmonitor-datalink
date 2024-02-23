@@ -180,7 +180,7 @@ func (bl *BatchLoader) loadHostMetrics(ctx context.Context, instance *Instance) 
 			Params:   values,
 			Headers:  map[string]string{"Accept": "application/json"},
 			UserName: instance.Host.Username,
-			Password: cipher.AESDecrypt(instance.Host.Password),
+			Password: cipher.DBAESCipher.AESDecrypt(instance.Host.Password),
 		}
 		resp, err := bl.client.Request(ctx, http.MethodGet, options)
 		if err != nil {

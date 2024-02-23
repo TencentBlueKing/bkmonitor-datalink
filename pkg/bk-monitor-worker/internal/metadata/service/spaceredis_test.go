@@ -10,13 +10,11 @@
 package service
 
 import (
-	"io"
-	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -24,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -78,7 +77,8 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
-
+	_, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
 	dsRtMap := map[string]uint{
 		"rt_18000": 18000,
 		"rt_18001": 18001,
@@ -118,6 +118,8 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 
 func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	_, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
 	db := mysql.GetDBSession().DB
 	s := storage.InfluxdbProxyStorage{
 		ProxyClusterId:      2,
@@ -171,17 +173,15 @@ func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {
 
 func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
-		data := ``
-		body := io.NopCloser(strings.NewReader(data))
-		return &http.Response{
-			Status:        "ok",
-			StatusCode:    200,
-			Body:          body,
-			ContentLength: int64(len(data)),
-			Request:       req,
-		}, nil
+	redisClient := &mocker.RedisClientMocker{
+		SetMap: map[string]mapset.Set[string]{},
+	}
+	patch := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
+		return &redis.Instance{
+			Client: redisClient,
+		}
 	})
+	defer patch.Reset()
 	// no panic
 	err := NewSpaceRedisSvc(1).PushAndPublishSpaceRouter("", "", nil)
 	assert.NoError(t, err)

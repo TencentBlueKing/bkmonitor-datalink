@@ -11,6 +11,7 @@ package window
 
 import (
 	"context"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -55,9 +56,9 @@ func DistributiveWindowWatchExpiredInterval(interval time.Duration) Distributive
 // For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
 // then each sub-window can have a maximum of 10 traces running at the same time,
 // and a total of 5 * 10 can be processed at the same time.
-func ConcurrentProcessCount(c int) DistributiveWindowOption {
+func ConcurrentProcessCount() DistributiveWindowOption {
 	return func(options *DistributiveWindowOptions) {
-		options.concurrentProcessCount = c
+		options.concurrentProcessCount = runtime.NumCPU() * 2
 	}
 }
 
@@ -129,9 +130,11 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 	return window
 }
 
+const maxInt = int(^uint(0) >> 1)
+
 func (w *DistributiveWindow) locate(uni string) *distributiveSubWindow {
-	// 计算int的最大值 避免uint超过int最大值计算出下标出现负数
-	const maxInt = int(^uint(0) >> 1)
+	// Based on the maximum value of int,
+	// avoid uint > maximum value of int to calculate the negative number of subscript.
 	hashValue := int(xxhash.Sum64([]byte(uni)) & uint64(maxInt))
 	return w.subWindows[hashValue%w.config.subWindowSize]
 }
@@ -157,36 +160,39 @@ func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveC
 	//}
 }
 
-func (w *DistributiveWindow) ReportMetric() map[OperatorMetricKey]int {
-	r := make(map[OperatorMetricKey]int, 2)
+func (w *DistributiveWindow) GetWindowsLength() int {
+	res := 0
+
 	for _, subWindow := range w.subWindows {
-
-		traceCount := 0
-		spanCount := 0
-
-		subWindow.m.Range(func(key, value any) bool {
-			traceCount++
-			v := value.(*CollectTrace)
-			spanCount += len(v.Spans)
-			return true
-		})
-
-		traceV, traceE := r[TraceCount]
-		if traceE {
-			r[TraceCount] = traceV + traceCount
-		} else {
-			r[TraceCount] = traceCount
-		}
-
-		spanV, spanE := r[SpanCount]
-		if spanE {
-			r[SpanCount] = spanV + spanCount
-		} else {
-			r[SpanCount] = spanCount
-		}
+		res += len(subWindow.eventChan)
 	}
 
-	return r
+	return res
+}
+
+func (w *DistributiveWindow) RecordTraceAndSpanCountMetric() {
+
+	for subId := range w.subWindows {
+		traceC, spanC := w.getSubWindowMetrics(subId)
+		metrics.RecordApmPreCalcWindowTraceTotal(w.dataId, subId, traceC)
+		metrics.RecordApmPreCalcWindowSpanTotal(w.dataId, subId, spanC)
+	}
+}
+
+func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
+	subWindow := w.subWindows[subId]
+
+	traceCount := 0
+	spanCount := 0
+
+	subWindow.m.Range(func(key, value any) bool {
+		traceCount++
+		v := value.(*CollectTrace)
+		spanCount += len(v.Spans)
+		return true
+	})
+
+	return traceCount, spanCount
 }
 
 func (w *DistributiveWindow) Handle(spanChan <-chan []StandardSpan, errorReceiveChan chan<- error) {
@@ -197,11 +203,12 @@ loop:
 	for {
 		select {
 		case m := <-spanChan:
-			metrics.DecreaseApmMessageChanCount(w.dataId)
+			start := time.Now()
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)
 				subWindow.add(span)
 			}
+			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
 		case <-w.ctx.Done():
 			w.logger.Infof("Handle span stopped.")
 			break loop
@@ -297,6 +304,7 @@ func (d *distributiveSubWindow) detectNotify() {
 	})
 
 	if len(expiredKeys) > 0 {
+		metrics.RecordApmPreCalcExpiredKeyTotal(d.dataId, d.id, len(expiredKeys))
 		for _, k := range expiredKeys {
 			v, exists := d.m.LoadAndDelete(k)
 			if !exists {
@@ -304,8 +312,6 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(*CollectTrace)
-			metrics.DecreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
-			metrics.DecreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id), len(trace.Spans))
 			d.eventChan <- Event{trace}
 		}
 	}
@@ -317,7 +323,9 @@ loop:
 	for {
 		select {
 		case e := <-d.eventChan:
+			start := time.Now()
 			d.processor.PreProcess(d.writeSaveRequestChan, e)
+			metrics.RecordApmPreCalcProcessEventDuration(d.dataId, d.id, start)
 		case <-d.ctx.Done():
 			break loop
 		}
@@ -327,10 +335,8 @@ loop:
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	d.mLock.Lock()
 	value, exist := d.m.Load(span.TraceId)
-	metrics.IncreaseApmWindowsSpanCount(d.dataId, strconv.Itoa(d.id))
 
 	if !exist {
-		metrics.IncreaseApmWindowsTraceCount(d.dataId, strconv.Itoa(d.id))
 
 		graph := NewDiGraph()
 		graph.AddNode(&Node{StandardSpan: &span})

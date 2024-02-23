@@ -16,7 +16,6 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	"github.com/go-redis/redis/v8"
-	jsoniter "github.com/json-iterator/go"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -164,7 +164,7 @@ func (d *DefaultNumerator) listWorker() ([]service.WorkerInfo, error) {
 	for _, key := range workers {
 		bytesData, _ := d.redisClient.Get(d.ctx, key).Bytes()
 		var workerInfo service.WorkerInfo
-		if err = jsoniter.Unmarshal(bytesData, &workerInfo); err != nil {
+		if err = jsonx.Unmarshal(bytesData, &workerInfo); err != nil {
 			return res, fmt.Errorf(
 				"failed to unmarshal value to WorkerInfo with key: %s(value: %s). error: %s",
 				key, bytesData, err,
@@ -186,7 +186,7 @@ func (d *DefaultNumerator) listTask() (map[string]task.SerializerTask, error) {
 
 	for _, item := range tasks {
 		var instance task.SerializerTask
-		if err = jsoniter.Unmarshal([]byte(item), &instance); err != nil {
+		if err = jsonx.Unmarshal([]byte(item), &instance); err != nil {
 			return res, fmt.Errorf("failed to unmarshal value(%s) to Task on %s. error: %s", item, common.DaemonTaskKey(), err)
 		}
 		res[ComputeTaskUniId(instance)] = instance

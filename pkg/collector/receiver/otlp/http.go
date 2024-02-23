@@ -45,7 +45,7 @@ func init() {
 }
 
 func Ready() {
-	receiver.RegisterHttpRoute(define.SourceOtlp, []receiver.RouteWithFunc{
+	receiver.RegisterRecvHttpRoute(define.SourceOtlp, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
 			RelativePath: routeV1Traces,
@@ -68,7 +68,7 @@ func Ready() {
 		},
 	})
 
-	receiver.RegisterGrpcRoute(func(s *grpc.Server) {
+	receiver.RegisterRecvGrpcRoute(func(s *grpc.Server) {
 		ptraceotlp.RegisterServer(s, grpcSvc.traces)
 		pmetricotlp.RegisterServer(s, grpcSvc.metrics)
 		plogotlp.RegisterServer(s, grpcSvc.logs)

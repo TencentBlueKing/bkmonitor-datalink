@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -33,7 +32,6 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -215,14 +213,14 @@ func (b BcsClusterInfoSvc) UpdateBcsClusterCloudIdConfig() error {
 	}
 	var ipMap = make(map[string]int)
 	for _, ips := range ipSplits {
-		var params []GetHostByIpParams
+		var params []apiservice.GetHostByIpParams
 		for _, ip := range ips {
-			params = append(params, GetHostByIpParams{
+			params = append(params, apiservice.GetHostByIpParams{
 				Ip:        ip,
 				BkCloudId: -1,
 			})
 		}
-		hostInfo, err := b.getHostByIp(params, b.BkBizId)
+		hostInfo, err := apiservice.CMDB.GetHostByIp(params, b.BkBizId)
 		if err != nil {
 			return err
 		}
@@ -361,26 +359,6 @@ func (b BcsClusterInfoSvc) getPodCountStatistics(bcsClusterId string) (map[strin
 		result[p.NodeIp] = result[p.NodeIp] + 1
 	}
 	return result, nil
-}
-
-type GetHostByIpParams struct {
-	Ip        string
-	BkCloudId int
-}
-
-// 通过IP查询主机信息
-func (BcsClusterInfoSvc) getHostByIp(ipList []GetHostByIpParams, BkBizId int) ([]cmdb.ListBizHostsTopoDataInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, err
-	}
-	params := processParams(BkBizId, ipList)
-	var topoResp cmdb.ListBizHostsTopoResp
-	_, err = cmdbApi.ListBizHostsTopo().SetBody(params).SetResult(&topoResp).Request()
-	if err != nil {
-		return nil, err
-	}
-	return topoResp.Data.Info, nil
 }
 
 // RegisterCluster 注册一个新的bcs集群信息
@@ -530,111 +508,6 @@ func (b BcsClusterInfoSvc) CreateDataSource(usage, etlConfig, operator string, m
 	}
 	logger.Infof("data_source [%v] is create by etl_config [%s] for cluster_id [%s]", dataSource.BkDataId, etlConfig, b.ClusterID)
 	return dataSource, nil
-}
-
-func isIPv6(ip string) bool {
-	parsedIp := net.ParseIP(ip)
-	if parsedIp != nil && parsedIp.To4() == nil {
-		return true
-	}
-	return false
-}
-
-func processParams(bkBizID int, ips []GetHostByIpParams) map[string]interface{} {
-	var cloudDict = make(map[int][]string)
-	for _, param := range ips {
-		if ls, ok := cloudDict[param.BkCloudId]; ok {
-			cloudDict[param.BkCloudId] = append(ls, param.Ip)
-		} else {
-			cloudDict[param.BkCloudId] = []string{param.Ip}
-		}
-	}
-	conditions := []map[string]interface{}{}
-	for cloudId, ipList := range cloudDict {
-		ipv6IPs := []string{}
-		ipv4IPs := []string{}
-		for _, ip := range ipList {
-			if isIPv6(ip) {
-				ipv6IPs = append(ipv6IPs, ip)
-			} else {
-				ipv4IPs = append(ipv4IPs, ip)
-			}
-		}
-		ipv4Rules := []map[string]interface{}{
-			{"field": "bk_host_innerip", "operator": "in", "value": ipv4IPs},
-		}
-
-		ipv6Rules := []map[string]interface{}{
-			{"field": "bk_host_innerip_v6", "operator": "in", "value": ipv6IPs},
-		}
-
-		if cloudId != -1 {
-			ipv4Rules = append(ipv4Rules, map[string]interface{}{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
-			ipv6Rules = append(ipv6Rules, map[string]interface{}{"field": "bk_cloud_id", "operator": "equal", "value": cloudId})
-		}
-
-		ipv4Condition := map[string]interface{}{
-			"condition": "AND",
-			"rules":     ipv4Rules,
-		}
-		ipv6Condition := map[string]interface{}{
-			"condition": "AND",
-			"rules":     ipv6Rules,
-		}
-
-		if len(ipv4IPs) > 0 {
-			conditions = append(conditions, ipv4Condition)
-		}
-		if len(ipv6IPs) > 0 {
-			conditions = append(conditions, ipv6Condition)
-		}
-	}
-
-	var finalCondition interface{}
-
-	if len(conditions) == 1 {
-		finalCondition = conditions[0]
-	} else {
-		finalCondition = map[string]interface{}{
-			"condition": "OR",
-			"rules":     conditions,
-		}
-	}
-
-	return map[string]interface{}{
-		"bk_biz_id":            bkBizID,
-		"host_property_filter": finalCondition,
-		"fields": []string{"bk_host_innerip",
-			"bk_host_innerip_v6",
-			"bk_cloud_id",
-			"bk_host_id",
-			"bk_biz_id",
-			"bk_agent_id",
-			"bk_host_outerip",
-			"bk_host_outerip_v6",
-			"bk_host_name",
-			"bk_os_name",
-			"bk_os_type",
-			"operator",
-			"bk_bak_operator",
-			"bk_state_name",
-			"bk_isp_name",
-			"bk_province_name",
-			"bk_supplier_account",
-			"bk_state",
-			"bk_os_version",
-			"service_template_id",
-			"srv_status",
-			"bk_comment",
-			"idc_unit_name",
-			"net_device_id",
-			"rack_id",
-			"bk_svr_device_cls_name",
-			"svr_device_class"},
-		"page": map[string]int{
-			"limit": 500,
-		},
-	}
 }
 
 // InitResource 初始化resource信息并绑定data_id

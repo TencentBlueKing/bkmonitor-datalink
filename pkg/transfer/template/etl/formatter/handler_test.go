@@ -240,7 +240,7 @@ func (s *HandlerSuite) TestCutterByDbmMetaV0() {
 	s.StoreHost(&hostInfo).AnyTimes()
 	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
 
-	s.runHandler(TransferRecordCutterByExtraMetaCreator(s.Store, true), func(record *define.ETLRecord) {
+	s.runHandler(TransferRecordCutterByDbmMetaCreator(s.Store, true), func(record *define.ETLRecord) {
 		dims := record.Dimensions
 		s.NotNil(dims["role"])
 		s.NotNil(dims["cluster"])
@@ -272,7 +272,7 @@ func (s *HandlerSuite) TestCutterByDbmMetaV1() {
 	s.StoreHost(&hostInfo).AnyTimes()
 	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
 
-	s.runHandler(TransferRecordCutterByExtraMetaCreator(s.Store, true), func(record *define.ETLRecord) {
+	s.runHandler(TransferRecordCutterByDbmMetaCreator(s.Store, true), func(record *define.ETLRecord) {
 		dims := record.Dimensions
 		s.NotNil(dims["role"])
 		s.NotNil(dims["cluster"])

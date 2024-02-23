@@ -17,11 +17,12 @@ import (
 	"time"
 
 	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
-	gover "github.com/hashicorp/go-version"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	networkingv1beta "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -42,7 +43,10 @@ type OwnerRef struct {
 type Object struct {
 	ID        ObjectID
 	OwnerRefs []OwnerRef
-	NodeName  string
+
+	// Pod 属性
+	NodeName string
+	Labels   map[string]string
 }
 
 // ObjectID 代表 workload 对象标识
@@ -103,6 +107,19 @@ func (o *Objects) GetByNodeName(nodeName string) []Object {
 	return ret
 }
 
+func (o *Objects) GetByNamespace(namespace string) []Object {
+	o.mut.Lock()
+	defer o.mut.Unlock()
+
+	var ret []Object
+	for _, obj := range o.objs {
+		if obj.ID.Namespace == namespace {
+			ret = append(ret, obj)
+		}
+	}
+	return ret
+}
+
 func (o *Objects) GetAll() []Object {
 	o.mut.Lock()
 	defer o.mut.Unlock()
@@ -137,6 +154,9 @@ func NewObjects(kind string) *Objects {
 const (
 	kindNode            = "Node"
 	kindPod             = "Pod"
+	kindService         = "Service"
+	kindEndpoints       = "Endpoints"
+	kindIngress         = "Ingress"
 	kindDeployment      = "Deployment"
 	kindReplicaSet      = "ReplicaSet"
 	kindStatefulSet     = "StatefulSet"
@@ -148,8 +168,11 @@ const (
 )
 
 const (
-	resourceNodes = "nodes"
-	resourcePods  = "pods"
+	resourceNodes     = "nodes"
+	resourcePods      = "pods"
+	resourceServices  = "services"
+	resourceEndpoints = "endpoints"
+	resourceIngresses = "ingresses"
 
 	// builtin workload
 	resourceReplicaSets  = "replicasets"
@@ -169,7 +192,9 @@ type ObjectsController struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	client              kubernetes.Interface
+	client kubernetes.Interface
+	mm     *metricMonitor
+
 	podObjs             *Objects
 	replicaSetObjs      *Objects
 	deploymentObjs      *Objects
@@ -177,11 +202,12 @@ type ObjectsController struct {
 	statefulSetObjs     *Objects
 	jobObjs             *Objects
 	cronJobObjs         *Objects
-	gameStatefulSetObjs *Objects // tkex gameStatefulSetObjs 资源监听
-	gameDeploymentsObjs *Objects // tkex gameDeploymentsObjs 资源监听
+	gameStatefulSetObjs *Objects
+	gameDeploymentsObjs *Objects
 	nodeObjs            *NodeMap
-
-	mm *metricMonitor
+	serviceObjs         *ServiceMap
+	endpointsObjs       *EndpointsMap
+	ingressObjs         *IngressMap
 }
 
 func NewController(ctx context.Context, client kubernetes.Interface, tkexClient tkexversiond.Interface) (*ObjectsController, error) {
@@ -198,6 +224,8 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 	}
 	KubernetesServerVersion = version.String()
 	setClusterVersion(KubernetesServerVersion)
+
+	resources := listServerPreferredResources(client.Discovery())
 
 	sharedInformer := informers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, informers.WithNamespace(metav1.NamespaceAll))
 	controller.podObjs, err = newPodObjects(ctx, sharedInformer)
@@ -230,7 +258,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		return nil, err
 	}
 
-	controller.cronJobObjs, err = newCronJobObjects(ctx, sharedInformer, KubernetesServerVersion)
+	controller.cronJobObjs, err = newCronJobObjects(ctx, sharedInformer, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +268,22 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		return nil, err
 	}
 
-	tkexObjs, err := newTkexObjects(ctx, tkexClient, client.Discovery())
+	controller.serviceObjs, err = newServiceObjects(ctx, sharedInformer)
+	if err != nil {
+		return nil, err
+	}
+
+	controller.endpointsObjs, err = newEndpointsObjects(ctx, sharedInformer)
+	if err != nil {
+		return nil, err
+	}
+
+	controller.ingressObjs, err = newIngressObjects(ctx, sharedInformer, resources)
+	if err != nil {
+		return nil, err
+	}
+
+	tkexObjs, err := newTkexObjects(ctx, tkexClient, resources)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +356,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				},
 				OwnerRefs: toRefs(pod.OwnerReferences),
 				NodeName:  pod.Spec.NodeName,
+				Labels:    pod.Labels,
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -328,6 +372,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				},
 				OwnerRefs: toRefs(pod.OwnerReferences),
 				NodeName:  pod.Spec.NodeName,
+				Labels:    pod.Labels,
 			})
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -347,6 +392,249 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	synced := k8sutils.WaitForNamedCacheSync(ctx, kindPod, informer)
 	if !synced {
 		return nil, errors.New("failed to sync Pod caches")
+	}
+	return objs, nil
+}
+
+func newServiceObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*ServiceMap, error) {
+	objs := NewServiceMap()
+
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceServices))
+	if err != nil {
+		return nil, err
+	}
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Set(service)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			service, ok := newObj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", newObj)
+				return
+			}
+			objs.Set(service)
+		},
+		DeleteFunc: func(obj interface{}) {
+			service, ok := obj.(*corev1.Service)
+			if !ok {
+				logger.Errorf("excepted Service type, got %T", obj)
+				return
+			}
+			objs.Del(service)
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindService, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Service caches")
+	}
+	return objs, nil
+}
+
+func newEndpointsObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*EndpointsMap, error) {
+	objs := NewEndpointsMap()
+
+	genericInformer, err := sharedInformer.ForResource(corev1.SchemeGroupVersion.WithResource(resourceEndpoints))
+	if err != nil {
+		return nil, err
+	}
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			endpoints, ok := obj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", obj)
+				return
+			}
+			objs.Set(endpoints)
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			endpoints, ok := newObj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", newObj)
+				return
+			}
+			objs.Set(endpoints)
+		},
+		DeleteFunc: func(obj interface{}) {
+			endpoints, ok := obj.(*corev1.Endpoints)
+			if !ok {
+				logger.Errorf("excepted Endpoints type, got %T", obj)
+				return
+			}
+			objs.Del(endpoints)
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindEndpoints, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Endpoints caches")
+	}
+	return objs, nil
+}
+
+func newIngressObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, resources map[GVRK]struct{}) (*IngressMap, error) {
+	gvrk := GVRK{
+		Group:    "networking.k8s.io",
+		Version:  "v1",
+		Resource: "ingresses",
+		Kind:     "Ingress",
+	}
+
+	_, ok := resources[gvrk]
+	if ok {
+		return newIngressV1Objects(ctx, sharedInformer)
+	}
+
+	return newIngressV1BetaObjects(ctx, sharedInformer)
+}
+
+func newIngressV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
+	objs := NewIngressMap()
+
+	genericInformer, err := sharedInformer.ForResource(networkingv1.SchemeGroupVersion.WithResource(resourceIngresses))
+	if err != nil {
+		return nil, err
+	}
+
+	makeIngress := func(namespace, name string, rules []networkingv1.IngressRule) ingressEntity {
+		set := make(map[string]struct{})
+		for _, rule := range rules {
+			if rule.HTTP == nil {
+				continue
+			}
+
+			for _, path := range rule.HTTP.Paths {
+				svc := path.Backend.Service
+				if svc != nil {
+					set[svc.Name] = struct{}{}
+				}
+			}
+		}
+
+		services := make([]string, 0, len(set))
+		for k := range set {
+			services = append(services, k)
+		}
+
+		return ingressEntity{
+			namespace: namespace,
+			name:      name,
+			services:  services,
+		}
+	}
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			ingress, ok := obj.(*networkingv1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			ingress, ok := newObj.(*networkingv1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", newObj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		DeleteFunc: func(obj interface{}) {
+			ingress, ok := obj.(*networkingv1.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Del(ingress.Namespace, ingress.Name)
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Ingress caches")
+	}
+	return objs, nil
+}
+
+func newIngressV1BetaObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*IngressMap, error) {
+	objs := NewIngressMap()
+
+	genericInformer, err := sharedInformer.ForResource(networkingv1beta.SchemeGroupVersion.WithResource(resourceIngresses))
+	if err != nil {
+		return nil, err
+	}
+
+	makeIngress := func(namespace, name string, rules []networkingv1beta.IngressRule) ingressEntity {
+		set := make(map[string]struct{})
+		for _, rule := range rules {
+			if rule.HTTP == nil {
+				continue
+			}
+
+			for _, path := range rule.HTTP.Paths {
+				set[path.Backend.ServiceName] = struct{}{}
+			}
+		}
+
+		services := make([]string, 0, len(set))
+		for k := range set {
+			services = append(services, k)
+		}
+
+		return ingressEntity{
+			namespace: namespace,
+			name:      name,
+			services:  services,
+		}
+	}
+
+	informer := genericInformer.Informer()
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			ingress, ok := obj.(*networkingv1beta.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		UpdateFunc: func(_, newObj interface{}) {
+			ingress, ok := newObj.(*networkingv1beta.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", newObj)
+				return
+			}
+			objs.Set(makeIngress(ingress.Namespace, ingress.Name, ingress.Spec.Rules))
+		},
+		DeleteFunc: func(obj interface{}) {
+			ingress, ok := obj.(*networkingv1beta.Ingress)
+			if !ok {
+				logger.Errorf("excepted Ingress type, got %T", obj)
+				return
+			}
+			objs.Del(ingress.Namespace, ingress.Name)
+		},
+	})
+	go informer.Run(ctx.Done())
+
+	synced := k8sutils.WaitForNamedCacheSync(ctx, kindIngress, informer)
+	if !synced {
+		return nil, errors.New("failed to sync Ingress caches")
 	}
 	return objs, nil
 }
@@ -641,20 +929,23 @@ func newJobObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 	return objs, nil
 }
 
-func newCronJobObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, version string) (*Objects, error) {
-	v, err := gover.NewVersion(version)
-	if err != nil {
-		return nil, err
+func newCronJobObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory, resources map[GVRK]struct{}) (*Objects, error) {
+	gvrk := GVRK{
+		Group:    "batch",
+		Version:  "v1",
+		Resource: "cronjobs",
+		Kind:     "CronJob",
 	}
 
-	v125, _ := gover.NewVersion("1.25")
-	if v.GreaterThanOrEqual(v125) {
+	_, ok := resources[gvrk]
+	if ok {
 		return newCronJobV1Objects(ctx, sharedInformer)
 	}
-	return newCronJobBetaV1Objects(ctx, sharedInformer)
+
+	return newCronJobV1BetaObjects(ctx, sharedInformer)
 }
 
-func newCronJobBetaV1Objects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
+func newCronJobV1BetaObjects(ctx context.Context, sharedInformer informers.SharedInformerFactory) (*Objects, error) {
 	genericInformer, err := sharedInformer.ForResource(batchv1beta1.SchemeGroupVersion.WithResource(resourceCronJobs))
 	if err != nil {
 		return nil, err

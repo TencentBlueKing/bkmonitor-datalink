@@ -47,6 +47,8 @@ func TestResultTableSvc_CreateResultTable(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
+	_, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
 	db := mysql.GetDBSession().DB
 	var dataId uint = 1800000
 	// 跳过此dataid的推送

@@ -52,7 +52,12 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 			event := tasks.NewPingEvent(g.GetConfig())
 			now := time.Now()
 			// 计算丢包率
-			lossPercent := float64(v.TotalCount-v.RecvCount) / float64(v.TotalCount)
+			var lossPercent float64
+			if v.RecvCount > v.TotalCount {
+				lossPercent = 0
+			} else {
+				lossPercent = float64(v.TotalCount-v.RecvCount) / float64(v.TotalCount)
+			}
 			event.Time = now
 			event.DataID = dataID
 			var resolvedIP string

@@ -12,11 +12,13 @@ package task
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
@@ -36,7 +38,7 @@ type CreateEsStorageIndexParams struct {
 func CreateEsStorageIndex(ctx context.Context, t *task.Task) error {
 	var params CreateEsStorageIndexParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, "parse params error")
+		return errors.Wrapf(err, "parse params for CreateEsStorageIndexParams with [%s] error", t.Payload)
 	}
 	if params.TableId == "" {
 		return errors.New("params table_id can not be empty")
@@ -92,7 +94,7 @@ type AccessBkdataVmParams struct {
 func AccessBkdataVm(ctx context.Context, t *task.Task) error {
 	var params AccessBkdataVmParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, "parse params error")
+		return errors.Wrapf(err, "parse params for AccessBkdataVmParams with [%s] error", t.Payload)
 	}
 	logger.Infof("bk_biz_id [%v] table_id [%s] data_id [%v] start access bkdata vm", params.BkBizId, params.TableId, params.BkDataId)
 	if err := service.NewVmUtils().AccessBkdata(params.BkBizId, params.TableId, params.BkDataId); err != nil {
@@ -113,7 +115,7 @@ type PushAndPublishSpaceRouterParams struct {
 func PushAndPublishSpaceRouter(ctx context.Context, t *task.Task) error {
 	var params PushAndPublishSpaceRouterParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, "parse params error")
+		return errors.Wrapf(err, "parse params for PushAndPublishSpaceRouterParams with [%s] error", t.Payload)
 	}
 	svc := service.NewSpaceRedisSvc(GetGoroutineLimit("push_and_publish_space_router"))
 	return svc.PushAndPublishSpaceRouter(params.SpaceType, params.SpaceId, params.TableIdList)
@@ -129,7 +131,7 @@ type PushSpaceToRedisParams struct {
 func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	var params PushSpaceToRedisParams
 	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
-		return errors.Wrap(err, "parse params error")
+		return errors.Wrapf(err, "parse params for PushSpaceToRedisParams with [%s] error", t.Payload)
 	}
 	if params.SpaceType == "" || params.SpaceId == "" {
 		return errors.New("params space_type or space_id can not be empty")
@@ -142,6 +144,71 @@ func PushSpaceToRedis(ctx context.Context, t *task.Task) error {
 	if err := client.SAdd(cfg.SpaceRedisKey, spaceUid); err != nil {
 		return errors.Wrap(err, "async task push space to redis error")
 	}
+	return nil
+}
+
+// RefreshCustomReportConfigParams RefreshCustomReportConfig 任务入参
+type RefreshCustomReportConfigParams struct {
+	BkBizId *int `json:"bk_biz_id"`
+}
+
+// RefreshCustomReportConfig refresh custom report to nodeman
+func RefreshCustomReportConfig(ctx context.Context, t *task.Task) error {
+	var params RefreshCustomReportConfigParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrap(err, "parse params error")
+	}
+	logger.Infof("async task start to RefreshCustomReport2Config with bk_biz_id [%v]", params.BkBizId)
+	if err := service.NewCustomReportSubscriptionSvc(nil).RefreshCustomReport2Config(params.BkBizId); err != nil {
+		return errors.Wrap(err, "async RefreshCustomReport2Config failed")
+	}
+	return nil
+}
+
+// RefreshCustomLogReportConfigParams RefreshCustomLogReportConfig 任务入参
+type RefreshCustomLogReportConfigParams struct {
+	LogGroupId *uint `json:"log_group_id"`
+}
+
+// RefreshCustomLogReportConfig Refresh Custom Log Config to Bk Collector
+func RefreshCustomLogReportConfig(ctx context.Context, t *task.Task) error {
+	var params RefreshCustomLogReportConfigParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrapf(err, "parse params for RefreshCustomLogReportConfigParams with [%s] error", t.Payload)
+	}
+
+	logger.Info("async task start to refresh custom log config to collector")
+
+	db := mysql.GetDBSession().DB
+	qs := customreport.NewLogGroupQuerySet(db).IsEnableEq(true)
+	if params.LogGroupId != nil {
+		qs = qs.LogGroupIDEq(*params.LogGroupId)
+	}
+	var lgs []customreport.LogGroup
+	if err := qs.All(&lgs); err != nil {
+		return errors.Wrap(err, "query LogGroup failed")
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, GetGoroutineLimit("refresh_custom_log_config"))
+	wg.Add(len(lgs))
+	for _, restore := range lgs {
+		ch <- true
+		go func(lg customreport.LogGroup, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			svc := service.NewLogGroupSvc(&lg)
+			// Deploy Configs
+			if err := svc.Refresh(); err != nil {
+				logger.Errorf("RefreshCustomLogConfig [%v(%s)] failed to cron task, %v", svc.LogGroupID, svc.LogGroupName, err)
+			} else {
+				logger.Infof("RefreshCustomLogConfig [%v(%s)] failed to cron task success", svc.LogGroupID, svc.LogGroupName)
+			}
+		}(restore, wg, ch)
+	}
+	wg.Wait()
 	return nil
 }
 

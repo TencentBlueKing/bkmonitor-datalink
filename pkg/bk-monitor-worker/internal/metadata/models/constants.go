@@ -213,11 +213,21 @@ const (
 )
 
 const (
+	PingServerDefaultDataReportInterval = 60 // 数据上报周期，单位: 秒
+	PingServerDefaultExecTotalNum       = 3  // 单个周期内执行的ping次数
+	PingServerDefaultMaxBatchSize       = 30 // 单次最多同时ping的IP数量，默认20，尽可能的单次少一点ip，避免瞬间包量太多，导致网卡直接丢包
+	PingServerDefaultPingSize           = 16 // ping的大小  默认16个字节
+	PingServerDefaultPingTimeout        = 3  // ping的rtt  默认3秒
+)
+
+const (
 	DatabusStatusRunning  = "running"
 	DatabusStatusStarting = "starting"
 )
 
 const SystemUser = "system"
+
+const LogReportMaxQPS = 50000 //Log Report Default QPS
 
 var TimeStampLenValeMap = map[int]string{
 	TimeStampLenSecondLen:      "Unix Time Stamp(seconds)",

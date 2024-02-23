@@ -47,10 +47,10 @@ func (s *FTARuleSuite) TestInit() {
 			]
 		}
 	`
-	trigger := &fta.Trigger{}
-	err := json.Unmarshal([]byte(triggerCfg), trigger)
+	alert := &fta.Alert{}
+	err := json.Unmarshal([]byte(triggerCfg), alert)
 	s.NoError(err)
-	err = trigger.Init()
+	err = alert.Init()
 	s.NoError(err)
 }
 
@@ -79,7 +79,7 @@ func (s *FTARuleSuite) TestMatch() {
 			]
 		}
 	`
-	trigger := &fta.Trigger{}
+	trigger := &fta.Alert{}
 	err := json.Unmarshal([]byte(triggerCfg), trigger)
 	s.NoError(err)
 	err = trigger.Init()
@@ -146,7 +146,7 @@ func BenchmarkTrigger_IsMatch(b *testing.B) {
 			]
 		}
 	`
-	trigger := &fta.Trigger{}
+	trigger := &fta.Alert{}
 	_ = json.Unmarshal([]byte(triggerCfg), trigger)
 	_ = trigger.Init()
 

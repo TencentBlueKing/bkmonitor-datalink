@@ -15,6 +15,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,22 +33,20 @@ import (
 const (
 	routePyroscopeIngest      = "/pyroscope/ingest"
 	formFieldProfile          = "profile"
-	formFileProfile           = "profile.pprof"
+	formFieldJFR              = "jfr"
 	formFieldPreviousProfile  = "prev_profile"
-	formFilePreviousProfile   = "profile.pprof"
 	formFieldSampleTypeConfig = "sample_type_config"
-	formFileSampleTypeConfig  = "sample_type_config.json"
-)
-
-const (
-	FormatPprof = "pprof"
-	FormatJFR   = "jfr"
-	// TODO: determine the format of c/c++ profiler or start a new receiver instead of pyroscope
 )
 
 const (
 	GoSpy   = "gospy"
-	JavaSpy = "jfr"
+	JavaSpy = "javaspy"
+	PerfSpy = "perf_script"
+)
+
+var (
+	// TagServiceName 需要忽略的服务Tag名称
+	ignoredTagNames = []string{"__session_id__"}
 )
 
 // HttpService 接收 pyroscope 上报的 profile 数据
@@ -81,23 +82,27 @@ func getBearerToken(req *http.Request) string {
 	return token[1]
 }
 
-func parseForm(req *http.Request) (*multipart.Form, error) {
-	raw, err := io.ReadAll(req.Body)
-	if err != nil {
-		return nil, err
-	}
-
+func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
 	if err != nil {
 		return nil, err
 	}
 
-	f, err := multipart.NewReader(bytes.NewReader(raw), boundary).ReadForm(32 << 20)
+	f, err := multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
 	if err != nil {
 		return nil, err
 	}
 
 	return f, nil
+}
+
+func getTimeFromUnixParam(req *http.Request, name string) (time.Time, error) {
+	timeUnix, err := strconv.ParseInt(req.URL.Query().Get(name), 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return time.Unix(timeUnix, 0), nil
 }
 
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
@@ -106,70 +111,93 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 	start := time.Now()
 
-	spyName := req.URL.Query().Get("spyName")
-	format := getFormatBySpy(spyName)
-	if format == "" {
+	b, err := copyBody(req)
+	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("spyName is unknown, spyName: %s", spyName)
+		logger.Errorf("failed to get data, err: %s", err)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		return
+	}
+
+	startSt, startStErr := getTimeFromUnixParam(req, "from")
+	endSt, endStErr := getTimeFromUnixParam(req, "until")
+	if startStErr != nil || endStErr != nil {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		errMsg := fmt.Sprintf("failed to parse start or end time, err: %s", err)
 		logger.Error(errMsg)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 
-	// TODO: if format is not goSpy, we should convert it to pprof format
+	aggregationType := req.URL.Query().Get("aggregationType")
+	units := req.URL.Query().Get("units")
+	spyName := req.URL.Query().Get("spyName")
+	format := req.URL.Query().Get("format")
+	if format == "" {
+		format = getFormatBySpy(spyName)
+	}
+	if format == "" {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		errMsg := fmt.Sprintf("spy: %s data is not supported, may be supported in the future :)", spyName)
+		logger.Error(errMsg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		return
+	}
+
 	token := getBearerToken(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to get valid token in profiles ingestion from %s", ip)
+		errMsg := fmt.Sprintf("failed to get token in profiles ingestion from %s", ip)
 		logger.Error(errMsg)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 
-	f, err := parseForm(req)
+	f, err := parseForm(req, b)
 	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to parse form from %s, err: %s", ip, err)
-		logger.Error(errMsg)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
+		logger.Errorf("failed to parse boundary, err: %s", err)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
 	defer func() {
 		_ = f.RemoveAll()
 	}()
 
-	thisProfile, err := ReadField(f, formFieldProfile)
+	// TODO 处理prev_profile字段
+	origin, err := convertToOrigin(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		logger.Errorf("read profile failed from %s, err: %s", ip, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
-	// TODO: support previous profile
-
-	logger.Debugf("profiles got, previous len: %d, this len: %d \n", len(thisProfile))
-
-	// SampleTypeConfig is used to determine custom sample type in profile
-	c, err := ReadField(f, formFieldSampleTypeConfig)
-	if err != nil {
-		logger.Warnf("failed to get sample type config from %s, err: %s", ip, err)
-		// go on, because sample type config is optional now
-	}
-	if c == nil {
-		// lacking sample type config is not a fatal error
-		logger.Warnf("sample type config is empty")
+	// TODO: handle SampleTypeConfig
+	appName, tags := getApplicationNameAndTags(req)
+	rawProfile := define.ProfilesRawData{
+		Data: origin,
+		Metadata: define.ProfileMetadata{
+			StartTime:       startSt,
+			EndTime:         endSt,
+			SpyName:         spyName,
+			Format:          format,
+			AggregationType: define.AggregationType(aggregationType),
+			Units:           define.Units(units),
+			Tags:            tags,
+			AppName:         appName,
+		},
 	}
 
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordProfiles,
-		Data:          thisProfile,
+		Data:          rawProfile,
 		Token:         define.Token{Original: token},
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+		err = errors.Wrapf(err, "run pre-check %s failed, code=%d, ip=%s", processorName, code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordProfiles, processorName, r.Token.Original, code)
@@ -179,16 +207,83 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	logger.Debugf("record published, ip=%s, token=%s", ip, r.Token.Original)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(thisProfile), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(b), start)
 }
 
 func getFormatBySpy(spyName string) string {
 	switch spyName {
 	case GoSpy:
-		return FormatPprof
+		return define.FormatPprof
 	case JavaSpy:
-		return FormatJFR
+		return define.FormatJFR
+	// TODO 暂不支持PerfScript
+	//case PerfSpy:
+	//	return define.FormatPerfScript
 	default:
 		return ""
 	}
+}
+
+func copyBody(r *http.Request) ([]byte, error) {
+	buf := bytes.NewBuffer(make([]byte, 0, 64<<10))
+	if _, err := io.Copy(buf, r.Body); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// convertToOrigin 将Http.Body转换为converter所需的数据格式
+func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
+	switch spyName {
+	case JavaSpy:
+		dataProfile, err := ReadField(form, "jfr")
+		if err != nil {
+			return nil, errors.Errorf("failed to read field: [jfr] from form of spyName: %s, error: %s", spyName, err)
+		}
+		labelsProfile, err := ReadField(form, "labels")
+		if err != nil {
+			return nil, errors.Errorf("failed to read field: [labels] from form of spyName: %s, error: %s", spyName, err)
+		}
+		logger.Debugf("receive jfr profile data, len: %d, labels len: %d", len(dataProfile), len(labelsProfile))
+		return define.ProfileJfrFormatOrigin{Jfr: dataProfile, Labels: labelsProfile}, nil
+	default:
+		dataProfile, err := ReadField(form, "profile")
+		if err != nil {
+			return nil, errors.Errorf("failed to read field: [profile] from form of spyName: %s, error: %s", spyName, err)
+		}
+		logger.Debugf("receive spyName: %s profile data, len: %d, labels len: %d", spyName, len(dataProfile))
+		return define.ProfilePprofFormatOrigin(dataProfile), nil
+	}
+}
+
+// getApplicationNameAndTags 获取url中的tags信息
+// example: name=appName{key1=value1,key2=value2}
+func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
+	reportTags := make(map[string]string)
+
+	valueDecoded, err := url.QueryUnescape(req.URL.Query().Get("name"))
+	if valueDecoded == "" {
+		return "", reportTags
+	}
+	if err != nil {
+		logger.Warnf("failed to parse query of params: name, error: %s", err)
+		return "", reportTags
+	}
+
+	parts := strings.SplitN(valueDecoded, "{", 2)
+
+	if len(parts) > 1 {
+		pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")
+
+		for _, pair := range pairs {
+			kv := strings.SplitN(pair, "=", 2)
+			if len(kv) == 2 {
+				if !slices.Contains(ignoredTagNames, kv[0]) {
+					reportTags[kv[0]] = kv[1]
+				}
+			}
+		}
+	}
+
+	return parts[0], reportTags
 }

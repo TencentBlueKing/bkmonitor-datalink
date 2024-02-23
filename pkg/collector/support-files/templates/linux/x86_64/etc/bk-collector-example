@@ -339,6 +339,10 @@ bk-collector:
         decoded_iv: "bkbkbkbkbkbkbkbk"
         decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
 
+    # Pprof converter: pprof 协议转换器
+    - name: "pprof_converter/common"
+      config:
+        type: "spy_converter"
 
     # TracesDeriver: Traces 派生处理器
     # Duration

@@ -59,12 +59,13 @@ type TokenDecoder interface {
 func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
 		token: define.Token{
-			Original:      c.FixedToken,
-			TracesDataId:  c.TracesDataId,
-			MetricsDataId: c.MetricsDataId,
-			LogsDataId:    c.LogsDataId,
-			BizId:         c.BizId,
-			AppName:       c.AppName,
+			Original:       c.FixedToken,
+			TracesDataId:   c.TracesDataId,
+			MetricsDataId:  c.MetricsDataId,
+			ProfilesDataId: c.ProfilesDataId,
+			LogsDataId:     c.LogsDataId,
+			BizId:          c.BizId,
+			AppName:        c.AppName,
 		},
 	}
 }

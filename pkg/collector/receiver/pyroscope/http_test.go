@@ -67,7 +67,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=jfr&units=samples&until=1698053100", buf)
+	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=javaspy&units=samples&until=1698053100", buf)
 	assert.NoError(t, err)
 
 	var n int
@@ -90,7 +90,7 @@ func TestHttpValidBody(t *testing.T) {
 	fw.Write([]byte("any profiles"))
 	writer.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=gospy&units=samples&until=1698053100", body)
+	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi&sampleRate=100&spyName=gospy&units=samples&until=1698053100", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer token_instance")
 	assert.NoError(t, err)

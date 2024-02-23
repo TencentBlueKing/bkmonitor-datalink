@@ -12,7 +12,9 @@ package define
 import (
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/google/pprof/profile"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
 )
@@ -158,6 +160,18 @@ type FtaData struct {
 	EventId    string                   `json:"__bk_event_id__"`
 }
 
+type Units string
+
+func (u Units) String() string {
+	return string(u)
+}
+
+type AggregationType string
+
+func (a AggregationType) String() string {
+	return string(a)
+}
+
 type PushMode string
 
 const (
@@ -224,4 +238,44 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 
 func WrapProxyToken(token Token) string {
 	return fmt.Sprintf("%d/%s", token.ProxyDataId, token.Original)
+}
+
+const (
+	FormatPprof = "pprof"
+	FormatJFR   = "jfr"
+)
+
+// ProfileMetadata Profile元数据格式
+type ProfileMetadata struct {
+	StartTime       time.Time
+	EndTime         time.Time
+	AppName         string
+	BkBizID         int
+	SpyName         string
+	Format          string
+	SampleRate      uint32
+	Units           Units
+	AggregationType AggregationType
+	Tags            map[string]string
+}
+
+type ProfilePprofFormatOrigin []byte
+
+type ProfileJfrFormatOrigin struct {
+	Jfr    []byte
+	Labels []byte
+}
+
+type ProfilesRawData struct {
+	Metadata ProfileMetadata
+	// Data Profile原始数据
+	// Format=pprof -> PprofFormatOrigin
+	// Format=jfr -> JfrFormatOrigin
+	Data any
+}
+
+// ProfilesData 为ProfilesRawData经过处理后的数据格式
+type ProfilesData struct {
+	Profiles []*profile.Profile
+	Metadata ProfileMetadata
 }

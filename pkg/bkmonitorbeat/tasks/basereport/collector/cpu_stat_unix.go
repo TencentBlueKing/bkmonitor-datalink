@@ -13,6 +13,7 @@
 package collector
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -53,6 +54,12 @@ func getCPUStatUsage(report *CpuReport) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
+	if l1 != l2 {
+		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
+		return err
 	}
 
 	for index, value := range perCPUTimes {

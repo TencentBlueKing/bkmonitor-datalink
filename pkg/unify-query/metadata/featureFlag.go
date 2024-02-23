@@ -45,15 +45,13 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	trace.InsertStringIntoSpan("must-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 
 	// 根据查询时间范围判断是否满足当前时间配置
-	if status {
-		queryParams := GetQueryParams(ctx)
-		vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)
+	vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)
 
-		if vmDataTime > 0 {
-			status = int64(vmDataTime) < queryParams.Start
-			trace.InsertIntIntoSpan("vm-data-time", vmDataTime, span)
-			trace.InsertStringIntoSpan("range-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
-		}
+	if vmDataTime > 0 {
+		queryParams := GetQueryParams(ctx)
+		status = int64(vmDataTime) < queryParams.Start
+		trace.InsertIntIntoSpan("vm-data-time", vmDataTime, span)
+		trace.InsertStringIntoSpan("range-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
 	}
 
 	return status

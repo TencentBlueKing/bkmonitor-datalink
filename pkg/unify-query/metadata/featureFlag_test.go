@@ -33,7 +33,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 	  			"false": false
 	  		},
 	  		"targeting": [{
-	  			"query": "tableID in [\"table_id_1\", \"table_id_2\"] and spaceUid in [\"space_uid\"]",
+	  			"query": "tableID in [\"table_id_1\", \"table_id_2\"]",
 	  			"percentage": {
 	  				"true": 100,
 	  				"false":0 
@@ -49,7 +49,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 	  			"true": 30000
 	  		},
 			"targeting": [{
-	  			"query": "tableID in [\"table_id_1\"]",
+	  			"query": "tableID in [\"table_id_1\", \"table_id_3\"]",
 	  			"percentage": {
 	  				"true": 100
 	  			}
@@ -70,39 +70,52 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 		Expected bool
 	}{
 		"vm 查询，时间区间不符合配置中的时间 - 1": {
-			SpaceUid: "space_uid",
 			TableID:  "table_id_1",
 			Start:    10000,
 			End:      20000,
 			Expected: false,
 		},
 		"vm 查询，时间区间不符合配置中的时间 - 2": {
-			SpaceUid: "space_uid",
 			TableID:  "table_id_1",
 			Start:    30000,
 			End:      40000,
 			Expected: false,
 		},
 		"vm 查询，时间区间符合配置中的时间": {
-			SpaceUid: "space_uid",
 			TableID:  "table_id_1",
 			Start:    30001,
 			End:      40000,
 			Expected: true,
 		},
 		"vm 未配置时间限制": {
-			SpaceUid: "space_uid",
 			TableID:  "table_id_2",
 			Start:    10000,
 			End:      20000,
 			Expected: true,
+		},
+		"vm 查询，不符合时间区间配置中的时间，但是不在 must-vm-query 中": {
+			TableID:  "table_id_3",
+			Start:    30000,
+			End:      40000,
+			Expected: false,
+		},
+		"vm 查询，时间区间符合配置中的时间，但是不在 must-vm-query 中": {
+			TableID:  "table_id_3",
+			Start:    30001,
+			End:      40000,
+			Expected: true,
+		},
+		"未配置 任何 vm 查询": {
+			TableID:  "table_id_4",
+			Start:    30001,
+			End:      40000,
+			Expected: false,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithCancel(ctx)
 			defer cancel()
-			SetUser(ctx, "", c.SpaceUid, "")
 			SetQueryParams(ctx, &QueryParams{
 				Start: c.Start,
 				End:   c.End,

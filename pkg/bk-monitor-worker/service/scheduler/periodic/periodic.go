@@ -12,6 +12,7 @@ package periodic
 import (
 	"context"
 	"sync"
+	"time"
 
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
@@ -21,10 +22,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// ttl 设置为 10m
+var DefaultTaskTTL = 10 * time.Minute
+
 type PeriodicTask struct {
-	Cron    string
-	Handler processor.HandlerFunc
-	Payload []byte
+	Cron      string
+	Handler   processor.HandlerFunc
+	Payload   []byte
+	UniqueTTL time.Duration
 }
 
 var (
@@ -171,8 +176,14 @@ type PeriodicTaskScheduler struct {
 
 func (p *PeriodicTaskScheduler) Run() {
 	for taskName, config := range p.fullTaskMapping {
+		// 添加指定的 ttl
+		uniqueTTL := DefaultTaskTTL
+		if config.UniqueTTL > 0 {
+			uniqueTTL = config.UniqueTTL
+		}
 		opts := []task.Option{
 			task.TaskID(taskName),
+			task.Unique(uniqueTTL),
 		}
 
 		taskInstance := task.NewTask(taskName, config.Payload, opts...)

@@ -72,6 +72,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 			Request:       req,
 		}, nil
 	})
+
 	redisClient, redisPatch := mocker.RedisMocker()
 	defer redisPatch.Reset()
 

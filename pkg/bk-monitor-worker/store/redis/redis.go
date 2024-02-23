@@ -37,35 +37,60 @@ type Instance struct {
 
 var (
 	storageRedisInstance *Instance
+	cacheRedisInstance *Instance
 )
 
-// GetInstance get a redis instance
-func GetInstance() *Instance {
+// 两个类型的redis使用场景不一样，
+// GetStorageRedisInstance 获取存储类型的 redis
+func GetStorageRedisInstance() *Instance {
 	if storageRedisInstance != nil {
 		return storageRedisInstance
 	}
+	opt := redisUtils.Option{
+		Mode:             config.StorageRedisMode,
+		Host:             config.StorageRedisStandaloneHost,
+		Port:             config.StorageRedisStandalonePort,
+		SentinelAddress:  config.StorageRedisSentinelAddress,
+		MasterName:       config.StorageRedisSentinelMasterName,
+		SentinelPassword: config.StorageRedisSentinelPassword,
+		Password:         config.StorageRedisStandalonePassword,
+		Db:               config.StorageRedisDatabase,
+		DialTimeout:      config.StorageRedisDialTimeout,
+		ReadTimeout:      config.StorageRedisReadTimeout,
+	}
+	return GetInstance(&opt)
+}
 
+// GetCacheRedisInstance 获取缓存类型的 redis
+// 如获取transfer推送的指标等
+func GetCacheRedisInstance() *Instance {
+	if cacheRedisInstance != nil {
+		return cacheRedisInstance
+	}
+	opt := redisUtils.Option{
+		Mode:             config.StorageDependentRedisMode,
+		Host:             config.StorageDependentRedisStandaloneHost,
+		Port:             config.StorageDependentRedisStandalonePort,
+		SentinelAddress:  config.StorageDependentRedisSentinelAddress,
+		MasterName:       config.StorageDependentRedisSentinelMasterName,
+		SentinelPassword: config.StorageDependentRedisSentinelPassword,
+		Password:         config.StorageDependentRedisStandalonePassword,
+		Db:               config.StorageDependentRedisDatabase,
+		DialTimeout:      config.StorageDependentRedisDialTimeout,
+		ReadTimeout:      config.StorageDependentRedisReadTimeout,
+	}
+	return GetInstance(&opt)
+}
+
+// GetInstance get a redis instance
+func GetInstance(opt *redisUtils.Option) *Instance {
 	ctx := context.TODO()
 	var client goRedis.UniversalClient
 	var err error
 
 	err = retry.Do(
 		func() error {
-			client, err = redisUtils.NewRedisClient(
-				ctx,
-				&redisUtils.Option{
-					Mode:             config.StorageRedisMode,
-					Host:             config.StorageRedisStandaloneHost,
-					Port:             config.StorageRedisStandalonePort,
-					SentinelAddress:  config.StorageRedisSentinelAddress,
-					MasterName:       config.StorageRedisSentinelMasterName,
-					SentinelPassword: config.StorageRedisSentinelPassword,
-					Password:         config.StorageRedisStandalonePassword,
-					Db:               config.StorageRedisDatabase,
-					DialTimeout:      config.StorageRedisDialTimeout,
-					ReadTimeout:      config.StorageRedisReadTimeout,
-				},
-			)
+			client, err = redisUtils.NewRedisClient(ctx, opt)
 			if err != nil {
 				logger.Errorf(
 					"Failed to create storageRedis, "+
@@ -82,9 +107,7 @@ func GetInstance() *Instance {
 		logger.Fatalf("failed to create redis storage client, error: %s", err)
 	}
 
-	storageRedisInstance = &Instance{ctx: ctx, Client: client}
-
-	return storageRedisInstance
+	return &Instance{ctx: ctx, Client: client}
 }
 
 // Open new a instance
@@ -137,7 +160,8 @@ func (r *Instance) Close() error {
 	return nil
 }
 
-func (r *Instance) HSet(key, field, value string) error {
+// HSetWithBypass 允许设置旁路
+func (r *Instance) HSetWithBypass(key, field, value string) error {
 	if config.BypassSuffixPath != "" {
 		realKey := strings.ReplaceAll(key, config.BypassSuffixPath, "")
 		oldValue := r.HGet(realKey, field)
@@ -149,7 +173,17 @@ func (r *Instance) HSet(key, field, value string) error {
 			return nil
 		}
 	}
-	_ = metrics.RedisCount(key, "HSet")
+	metrics.RedisCount(key, "HSet")
+	err := r.Client.HSet(r.ctx, key, field, value).Err()
+	if err != nil {
+		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		return err
+	}
+	return nil
+}
+
+// HSet 原生 hset 方法
+func (r *Instance) HSet(key, field, value string) error {
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
 		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)

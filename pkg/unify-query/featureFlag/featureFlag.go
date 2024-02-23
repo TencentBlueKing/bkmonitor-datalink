@@ -55,6 +55,15 @@ func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defa
 	return res
 }
 
+// IntVariation
+func IntVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue int) int {
+	res, err := ffclient.IntVariation(flagKey, user, defaultValue)
+	if err != nil {
+		return defaultValue
+	}
+	return res
+}
+
 // BoolVariation
 func BoolVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue bool) bool {
 	res, err := ffclient.BoolVariation(flagKey, user, defaultValue)

@@ -9,22 +9,32 @@
 
 package metadata
 
-const (
-	BkQuerySourceHeader = "Bk-Query-Source"
-	SpaceUIDHeader      = "X-Bk-Scope-Space-Uid"
-	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
-
-	UserKey               = "user"
-	MessageKey            = "message"
-	QueriesKey            = "queries"
-	QueryParamsKey        = "query_params"
-	QueryReferenceKey     = "query_reference"
-	QueryClusterMetricKey = "query_cluster_metric"
-
-	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
-	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
-
-	SpaceIsNotExists             = "SPACE_IS_NOT_EXISTS"
-	SpaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
-	TableIDProxyISNotExists      = "TABLE_ID_PROXY_IS_NOT_EXISTS"
+import (
+	"context"
 )
+
+// QueryParams 查询信息
+type QueryParams struct {
+	Start int64
+	End   int64
+}
+
+// SetQueryParams 写入
+func SetQueryParams(ctx context.Context, qp *QueryParams) {
+	if md != nil {
+		md.set(ctx, QueryParamsKey, qp)
+	}
+}
+
+// GetQueryParams 读取
+func GetQueryParams(ctx context.Context) *QueryParams {
+	if md != nil {
+		r, ok := md.get(ctx, QueryParamsKey)
+		if ok {
+			if v, ok := r.(*QueryParams); ok {
+				return v
+			}
+		}
+	}
+	return &QueryParams{}
+}

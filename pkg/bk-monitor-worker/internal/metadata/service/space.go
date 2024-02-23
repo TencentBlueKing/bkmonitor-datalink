@@ -630,7 +630,7 @@ func (s *SpaceSvc) RefreshBkciSpaceName() error {
 		// 名称变动，需要更新
 		sp.SpaceName = name
 		sp.UpdateTime = time.Now()
-		_ = metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
+		metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
 		} else {

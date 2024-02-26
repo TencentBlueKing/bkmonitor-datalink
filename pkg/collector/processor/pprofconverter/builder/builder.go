@@ -10,8 +10,6 @@
 package builder
 
 import (
-	"sync"
-
 	"github.com/google/pprof/profile"
 	"github.com/grafana/jfr-parser/parser/types"
 )
@@ -72,16 +70,9 @@ func (p *ProfileBuilder) AddPeriodType(typ, unit string) {
 	}
 }
 
-var poolProfile = sync.Pool{
-	New: func() any {
-		return &profile.Profile{}
-	},
-}
-
 func NewProfileBuilder() *ProfileBuilder {
-
 	return &ProfileBuilder{
-		Profile: poolProfile.Get().(*profile.Profile),
+		Profile: &profile.Profile{},
 
 		visitedSampleIdMapping:   make(map[types.StackTraceRef]*profile.Sample),
 		visitedFunctionIdMapping: make(map[types.MethodRef]*profile.Location),

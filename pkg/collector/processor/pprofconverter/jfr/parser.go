@@ -52,11 +52,6 @@ const (
 // Converter JFR数据解析器
 type Converter struct{}
 
-// Type 解析器解析类型: format=jfr
-func (c *Converter) Type() string {
-	return define.FormatJFR
-}
-
 func (c *Converter) convertBody(body any) ([]byte, *LabelsSnapshot, error) {
 	jfrData, ok := body.(define.ProfileJfrFormatOrigin)
 	if !ok {
@@ -66,7 +61,7 @@ func (c *Converter) convertBody(body any) ([]byte, *LabelsSnapshot, error) {
 	if err != nil {
 		return nil, nil, errors.Errorf("jfr converter failed, can not decompress jfr data, error: %s", err)
 	}
-	var jfrLabels = new(LabelsSnapshot)
+	jfrLabels := new(LabelsSnapshot)
 	depressedLabels, err := Decompress(jfrData.Labels)
 	if err != nil {
 		logger.Warnf("can not decompress jfr labels, error: %s", err)
@@ -90,7 +85,7 @@ func (c *Converter) ParseToPprof(pd define.ProfilesRawData) (*define.ProfilesDat
 
 	builders := newJfrPprofBuilders(jfrParser, jfrLabels, pd.Metadata)
 
-	var values = [2]int64{1, 0}
+	values := [2]int64{1, 0}
 	var event string
 	for {
 		eventType, err := jfrParser.ParseEvent()

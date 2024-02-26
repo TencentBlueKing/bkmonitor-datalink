@@ -91,7 +91,6 @@ func (j *jfrPprofBuilder) addStacktrace(sampleType int64, contextID uint64, ref 
 }
 
 func (j *jfrPprofBuilder) getLabels(contextId uint64) models.Labels {
-
 	res, exist := j.labelMapping[contextId]
 	if exist {
 		return res

@@ -99,7 +99,6 @@ func TestJfrConverter(t *testing.T) {
 	})
 
 	t.Run("valid data", func(t *testing.T) {
-
 		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
 		assert.NoError(t, err)
 
@@ -107,4 +106,14 @@ func TestJfrConverter(t *testing.T) {
 		_, err = c.ParseToPprof(jfrData)
 		assert.NoError(t, err)
 	})
+}
+
+func TestSwitchConverter(t *testing.T) {
+	c := Config{Type: "spy_converter"}
+	entry := NewPprofConverterEntry(c)
+	assert.IsType(t, entry, &spyNameJudgeConverterEntry{})
+
+	c = Config{Type: "default"}
+	entry = NewPprofConverterEntry(c)
+	assert.IsType(t, entry, &spyNameJudgeConverterEntry{})
 }

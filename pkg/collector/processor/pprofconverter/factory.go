@@ -10,6 +10,8 @@
 package pprofconverter
 
 import (
+	"fmt"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
@@ -52,8 +54,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 
 type pprofConverter struct {
 	processor.CommonProcessor
-	configs    *confengine.TierConfig
-	convertors map[string]Pprofable
+	configs *confengine.TierConfig
 }
 
 func (p *pprofConverter) Name() string {
@@ -84,15 +85,12 @@ func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) 
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {
-		logger.Errorf("invalid profile data type: %T", record.Data)
-		return nil, nil
+		return nil, fmt.Errorf("invalid profile data type: %T", record.Data)
 	}
 
-	converter := entry.GetConverter(rawProfile)
-	profileData, err := converter.ParseToPprof(rawProfile)
+	profileData, err := entry.ParseToPprof(rawProfile)
 	if err != nil {
-		logger.Errorf("failed to convert data to pprof format, err: %s", err)
-		return nil, nil
+		return nil, fmt.Errorf("failed to convert data to pprof format, err: %s", err)
 	}
 
 	record.Data = profileData

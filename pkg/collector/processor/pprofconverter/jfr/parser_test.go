@@ -11,16 +11,12 @@ package jfr
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
-
-func TestConverterType(t *testing.T) {
-	c := &Converter{}
-	assert.Equal(t, define.FormatJFR, c.Type())
-}
 
 func TestJfrConvertBody(t *testing.T) {
 	c := &Converter{}
@@ -37,5 +33,37 @@ func TestJfrConvertBody(t *testing.T) {
 		}
 		_, _, err := c.convertBody(jfrData)
 		assert.NoError(t, err)
+	})
+}
+
+func TestConverter_ParseToPprof(t *testing.T) {
+	c := &Converter{}
+	data, err := ReadGzipFile("../testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
+	assert.NoError(t, err)
+
+	pd := define.ProfilesRawData{
+		Metadata: define.ProfileMetadata{
+			StartTime:       time.Now(),
+			EndTime:         time.Now(),
+			AppName:         "testApp",
+			BkBizID:         1,
+			SpyName:         "testSpy",
+			Format:          define.FormatJFR,
+			SampleRate:      100,
+			Units:           UnitNanoseconds,
+			AggregationType: "testAggregation",
+			Tags:            map[string]string{"tag1": "value1"},
+		},
+		Data: define.ProfileJfrFormatOrigin{Jfr: data},
+	}
+
+	t.Run("Test ParseToPprof", func(t *testing.T) {
+		result, err := c.ParseToPprof(pd)
+
+		assert.Nil(t, err)
+
+		assert.Equal(t, pd.Metadata, result.Metadata)
+
+		assert.NotNil(t, result.Profiles)
 	})
 }

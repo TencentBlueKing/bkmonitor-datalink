@@ -19,19 +19,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
 )
 
-type Pprofable interface {
-	// Type Pprof转换器的类型
-	Type() string
-	// ParseToPprof 将特定格式数据转换为Profile
-	ParseToPprof(define.ProfilesRawData) (*define.ProfilesData, error)
-}
+type Pprofable interface{}
 
-type DefaultPprofable struct {
-}
-
-func (d *DefaultPprofable) Type() string {
-	return define.FormatPprof
-}
+type DefaultPprofable struct{}
 
 func (d *DefaultPprofable) ParseToPprof(pd define.ProfilesRawData) (*define.ProfilesData, error) {
 	rawData, success := pd.Data.(define.ProfilePprofFormatOrigin)
@@ -54,8 +44,6 @@ func (d *DefaultPprofable) ParseToPprof(pd define.ProfilesRawData) (*define.Prof
 
 func NewPprofConverterEntry(c Config) ConverterEntry {
 	switch c.Type {
-	case "none":
-		return &noneConverterEntry{}
 	case "spy_converter":
 		return &spyNameJudgeConverterEntry{}
 	default:
@@ -64,22 +52,19 @@ func NewPprofConverterEntry(c Config) ConverterEntry {
 }
 
 type ConverterEntry interface {
-	GetConverter(define.ProfilesRawData) Pprofable
+	// ParseToPprof 将特定格式数据转换为Profile
+	ParseToPprof(define.ProfilesRawData) (*define.ProfilesData, error)
 }
 
 type spyNameJudgeConverterEntry struct{}
 
-func (s *spyNameJudgeConverterEntry) GetConverter(r define.ProfilesRawData) Pprofable {
+func (s *spyNameJudgeConverterEntry) ParseToPprof(r define.ProfilesRawData) (*define.ProfilesData, error) {
 	switch r.Metadata.Format {
 	case define.FormatJFR:
-		return &jfr.Converter{}
+		converter := jfr.Converter{}
+		return converter.ParseToPprof(r)
 	default:
-		return &DefaultPprofable{}
+		converter := DefaultPprofable{}
+		return converter.ParseToPprof(r)
 	}
-}
-
-type noneConverterEntry struct{}
-
-func (n *noneConverterEntry) GetConverter(_ define.ProfilesRawData) Pprofable {
-	return &DefaultPprofable{}
 }

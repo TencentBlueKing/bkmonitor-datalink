@@ -107,3 +107,54 @@ func TestHttpValidBody(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rw.Code)
 	assert.Equal(t, 1, n)
 }
+
+func TestGetBearerToken(t *testing.T) {
+	t.Run("valid token", func(t *testing.T) {
+		expectedToken := "test_token"
+		req, _ := http.NewRequest("GET", "localhost", nil)
+		req.Header.Set("Authorization", "Bearer "+expectedToken)
+
+		resultToken := getBearerToken(req)
+		assert.Equal(t, resultToken, expectedToken)
+	})
+
+	t.Run("invalid data", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "localhost", nil)
+		req.Header.Set("Authorization", "Basic some_base64_credentials")
+
+		resultToken := getBearerToken(req)
+		assert.Empty(t, resultToken)
+	})
+
+	t.Run("no auth header", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "localhost", nil)
+
+		resultToken := getBearerToken(req)
+		assert.Empty(t, resultToken)
+	})
+}
+
+func TestParseForm(t *testing.T) {
+	t.Run("valid data", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.WriteField("test_field", "test_value")
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", "localhost", body)
+		req.Header.Set("Content-Type", "multipart/form-data; boundary="+writer.Boundary())
+
+		form, err := parseForm(req, body.Bytes())
+		assert.NoError(t, err)
+		assert.Equal(t, form.Value["test_field"][0], "test_value")
+	})
+
+	t.Run("invalid data", func(t *testing.T) {
+		req, _ := http.NewRequest("POST", "localhost", nil)
+		req.Header.Set("Content-Type", "application/json")
+
+		form, err := parseForm(req, nil)
+		assert.Error(t, err)
+		assert.Nil(t, form)
+	})
+}

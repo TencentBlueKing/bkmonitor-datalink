@@ -38,7 +38,7 @@ func main() {
 		panic("input format is required")
 	}
 
-	var metadata = define.ProfileMetadata{
+	metadata := define.ProfileMetadata{
 		StartTime:  time.UnixMilli(1000),
 		EndTime:    time.UnixMilli(2000),
 		Format:     *formatPtr,
@@ -58,8 +58,10 @@ func main() {
 
 		jfrConverter := &jfr.Converter{}
 		profiles, err := jfrConverter.ParseToPprof(
-			define.ProfilesRawData{Metadata: metadata,
-				Data: define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes}},
+			define.ProfilesRawData{
+				Metadata: metadata,
+				Data:     define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes},
+			},
 		)
 		fmt.Println(fmt.Sprintf("\n %d profiles converted.", len(profiles.Profiles)))
 		prettyPrintProfiles(profiles.Profiles)
@@ -102,7 +104,7 @@ func writeProfilesToFile(profiles []*profile.Profile) {
 		data = append(data, protoBuf.Bytes()...)
 	}
 
-	if err := os.WriteFile("profiles.pb.gz", data, 0644); err != nil {
+	if err := os.WriteFile("profiles.pb.gz", data, 0o644); err != nil {
 		panic(err)
 	}
 	fmt.Println("writing profiles to file finished -> profiles.pb.gz")

@@ -16,12 +16,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
+	"slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -44,10 +44,8 @@ const (
 	PerfSpy = "perf_script"
 )
 
-var (
-	// TagServiceName 需要忽略的服务Tag名称
-	ignoredTagNames = []string{"__session_id__"}
-)
+// TagServiceName 需要忽略的服务Tag名称
+var ignoredTagNames = []string{"__session_id__"}
 
 // HttpService 接收 pyroscope 上报的 profile 数据
 type HttpService struct {
@@ -217,7 +215,7 @@ func getFormatBySpy(spyName string) string {
 	case JavaSpy:
 		return define.FormatJFR
 	// TODO 暂不支持PerfScript
-	//case PerfSpy:
+	// case PerfSpy:
 	//	return define.FormatPerfScript
 	default:
 		return ""

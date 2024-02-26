@@ -8,3 +8,130 @@
 // specific language governing permissions and limitations under the License.
 
 package pprofconverter
+
+import (
+	"bytes"
+	"testing"
+	"time"
+
+	"github.com/google/pprof/profile"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler/evaluator"
+)
+
+func TestFactory(t *testing.T) {
+	content := `
+processor:
+  - name: "pprof_converter/common"
+    config:
+      type: "spy_converter"
+`
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+
+	customContent := `
+processor:
+  - name: "pprof_converter/common"
+    config:
+      type: "spy_converter"
+`
+	customConf := processor.MustLoadConfigs(customContent)[0].Config
+
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+			Config: processor.Config{
+				Config: customConf,
+			},
+		},
+	})
+	factory := obj.(*pprofConverter)
+	assert.NoError(t, err)
+	assert.Equal(t, mainConf, factory.MainConfig())
+
+	var c evaluator.Config
+	assert.NoError(t, mapstructure.Decode(mainConf, &c))
+
+	assert.Equal(t, define.ProcessorPprofConverter, factory.Name())
+	assert.False(t, factory.IsDerived())
+	assert.False(t, factory.IsPreCheck())
+
+	factory.Reload(mainConf, nil)
+	assert.Equal(t, mainConf, factory.MainConfig())
+	factory.Clean()
+}
+
+func TestFactoryProcess(t *testing.T) {
+	content := `
+processor:
+  - name: "pprof_converter/common"
+    config:
+      type: "spy_converter"
+`
+	mainConf := processor.MustLoadConfigs(content)[0].Config
+	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
+		{
+			Token: "token1",
+			Type:  define.SubConfigFieldDefault,
+		},
+	})
+	factory := obj.(*pprofConverter)
+	assert.NoError(t, err)
+
+	t.Run("invalid data", func(t *testing.T) {
+		record := &define.Record{
+			RequestType:   define.RequestHttp,
+			RequestClient: define.RequestClient{IP: "localhost"},
+			RecordType:    define.RecordProfiles,
+			Data:          "invalid data",
+			Token:         define.Token{Original: "token"},
+		}
+		copyRecord := *record
+
+		r, err := factory.Process(record)
+		assert.Nil(t, r)
+		assert.Error(t, err)
+		assert.Equal(t, *record, copyRecord)
+	})
+
+	t.Run("valid data", func(t *testing.T) {
+		profileData := &profile.Profile{
+			TimeNanos:     time.Now().UnixNano(),
+			DurationNanos: int64(time.Second),
+			SampleType:    []*profile.ValueType{{Type: "samples", Unit: "count"}},
+			Sample:        []*profile.Sample{{Value: []int64{1000}, Location: make([]*profile.Location, 0)}},
+		}
+		var buf bytes.Buffer
+		err := profileData.Write(&buf)
+		assert.NoError(t, err)
+
+		record := &define.Record{
+			RequestType:   define.RequestHttp,
+			RequestClient: define.RequestClient{IP: "localhost"},
+			RecordType:    define.RecordProfiles,
+			Data: define.ProfilesRawData{
+				Data: define.ProfilePprofFormatOrigin(buf.Bytes()),
+				Metadata: define.ProfileMetadata{
+					StartTime:       time.Now(),
+					EndTime:         time.Now(),
+					SpyName:         "testSpy",
+					Format:          "testFormat",
+					AggregationType: define.AggregationType("cpu"),
+					Units:           define.Units("seconds"),
+					AppName:         "testAppName",
+				},
+			},
+			Token: define.Token{Original: "token"},
+		}
+		copyRecord := *record
+		r, err := factory.Process(record)
+
+		assert.Nil(t, r)
+		assert.NoError(t, err)
+		assert.NotEqual(t, *record, copyRecord)
+	})
+}

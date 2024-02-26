@@ -113,7 +113,6 @@ func (c profilesConverter) getSvrNameAndTags(pd *define.ProfilesData) (string, m
 
 // mergeTagsToLabels 将Tags内容合并至Sample.Label中
 func (c profilesConverter) mergeTagsToLabels(pd *profile.Profile, tags map[string][]string) {
-
 	for i := 0; i < len(pd.Sample); i++ {
 		if pd.Sample[i].Label == nil {
 			pd.Sample[i].Label = make(map[string][]string)

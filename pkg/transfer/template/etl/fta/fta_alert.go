@@ -11,6 +11,7 @@ package fta
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -79,7 +80,7 @@ func ExtractTags(
 				if len(k) == 0 {
 					continue
 				}
-				dedupeKeys = append(dedupeKeys, k)
+				dedupeKeys = append(dedupeKeys, fmt.Sprintf("tags.%s", k))
 				dimensions[k] = v
 			}
 		default:

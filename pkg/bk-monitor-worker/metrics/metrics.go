@@ -193,7 +193,7 @@ func RecordDaemonTaskRetryCount(dimension string) {
 	metric.Add(1)
 }
 
-var Registry *prometheus.Registry
+var Registry = prometheus.NewRegistry()
 
 func init() {
 	// register the metrics

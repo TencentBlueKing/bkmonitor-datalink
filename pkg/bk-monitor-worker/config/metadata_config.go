@@ -70,6 +70,8 @@ var (
 	GlobalBkdataDruidStorageClusterName string
 	// GlobalBkdataMysqlStorageClusterName 监控专属tspider存储集群名称
 	GlobalBkdataMysqlStorageClusterName string
+	// GlobalBkdataFlowClusterGroup 计算平台 dataflow 计算集群组
+	GlobalBkdataFlowClusterGroup string
 	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
 	GlobalBkdataProjectMaintainer string
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
@@ -138,6 +140,7 @@ func initMetadataVariables() {
 	GlobalBkdataCMDBSplitTableSuffix = GetValue("taskConfig.metadata.global.bkdataCMDBFSplitTableSuffix", "cmdb")
 	GlobalBkdataDruidStorageClusterName = GetValue("taskConfig.metadata.global.bkdataDruidStorageClusterName", "monitor")
 	GlobalBkdataMysqlStorageClusterName = GetValue("taskConfig.metadata.global.bkdataMysqlStorageClusterName", "jungle_alert")
+	GlobalBkdataFlowClusterGroup = GetValue("taskConfig.metadata.global.bkdataFlowClusterGroup", "default_inland")
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)

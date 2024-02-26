@@ -15,6 +15,15 @@ const (
 	ConsumingModeCurrent = "continue"  // 从当前位置继续(continue), 不填默认continue
 )
 
+const (
+	FlowStatusNoStart  = "no-start"
+	FlowStatusRunning  = "running"
+	FlowStatusStarting = "starting"
+	FlowStatusFailure  = "failure"
+	FlowStatusStopping = "stopping"
+	FlowStatusWarning  = "warning"
+)
+
 const NodeDefaultFrontendOffset = 100
 
 const CMDBHostTopRtId = "591_bkpub_cmdb_host_rels_split_innerip"

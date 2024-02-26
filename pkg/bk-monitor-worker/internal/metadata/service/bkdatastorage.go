@@ -241,10 +241,10 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 		auth := NewDataFlowSvc()
 		auth.EnsureHasPermissionWithRtId(resultTableId, config.GlobalBkdataProjectId)
 	}
-	// filter_unknown_time_with_rt 过滤掉未来时间后再入库
-	if s.filterUnknownTimeWithRt() {
-		if err := s.fullCmdbNodeInfoToResultTable(); err != nil {
-			return errors.Wrapf(err, "fullCmdbNodeInfoToResultTable for result_table [%s] failed", s.TableID)
+	// 过滤掉未来时间后再入库
+	if s.FilterUnknownTimeWithRt() {
+		if err := s.FullCMDBNodeInfoToResultTable(); err != nil {
+			return errors.Wrapf(err, "FullCmdbNodeInfoToResultTable for result_table [%s] failed", s.TableID)
 		}
 	}
 	return nil
@@ -386,8 +386,8 @@ func (s BkDataStorageSvc) getEtlStatus(processingId string) string {
 	return ""
 }
 
-// 通过dataflow过滤掉未来时间, 同时过滤过去时间后，再进行入库
-func (s BkDataStorageSvc) filterUnknownTimeWithRt() bool {
+// FilterUnknownTimeWithRt 通过dataflow过滤掉未来时间, 同时过滤过去时间后，再进行入库
+func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 	db := mysql.GetDBSession().DB
 	var rtfList []resulttable.ResultTableField
 	if err := resulttable.NewResultTableFieldQuerySet(db).TableIDEq(s.TableID).All(&rtfList); err != nil {
@@ -430,7 +430,8 @@ func (s BkDataStorageSvc) filterUnknownTimeWithRt() bool {
 	return false
 }
 
-func (s BkDataStorageSvc) fullCmdbNodeInfoToResultTable() error {
+// FullCMDBNodeInfoToResultTable  接入cmdb节点
+func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
 	if !config.GlobalIsAllowAllCmdbLevel {
 		return nil
 	}

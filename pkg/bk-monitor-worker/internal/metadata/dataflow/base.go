@@ -161,8 +161,7 @@ func (b BaseNode) GetApiParams(flowId int) map[string]interface{} {
 
 func (b BaseNode) Update(flowId, NodeId int) error {
 	params := b.GetApiParams(flowId)
-	params["node_id"] = NodeId
-	resp, err := apiservice.Bkdata.UpdateDataFlowNode(params)
+	resp, err := apiservice.Bkdata.UpdateDataFlowNode(flowId, NodeId, params)
 	if err != nil {
 		return errors.Wrapf(err, "update node [%s] to flow [%d] failed", b.Name(), flowId)
 	}
@@ -173,7 +172,7 @@ func (b BaseNode) Update(flowId, NodeId int) error {
 
 func (b BaseNode) Create(flowId int) error {
 	params := b.GetApiParams(flowId)
-	resp, err := apiservice.Bkdata.AddDataFlowNode(params)
+	resp, err := apiservice.Bkdata.AddDataFlowNode(flowId, params)
 	if err != nil {
 		return errors.Wrapf(err, "add node [%s] to flow [%d] failed", b.Name(), flowId)
 	}

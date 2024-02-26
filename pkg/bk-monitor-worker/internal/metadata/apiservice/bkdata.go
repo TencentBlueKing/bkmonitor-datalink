@@ -183,35 +183,206 @@ func (BkdataService) AuthResultTable(projectId int, objectId string, bkBizId str
 	return resp.Data, nil
 }
 
-func (s BkdataService) UpdateDataFlowNode(params map[string]interface{}) (interface{}, error) {
+func (s BkdataService) UpdateDataFlowNode(flowId, nodeId int, params map[string]interface{}) (interface{}, error) {
+	delete(params, "flow_id")
+	params["node_id"] = nodeId
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
 
-	return nil, nil
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.UpdateDataFlowNode().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "UpdateDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "UpdateDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
+	}
+	return resp.Data, nil
 }
 
-func (s BkdataService) AddDataFlowNode(params map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
+func (s BkdataService) AddDataFlowNode(flowId int, params map[string]interface{}) (map[string]interface{}, error) {
+	delete(params, "flow_id")
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.AddDataFlowNode().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "AddDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "AddDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
+	}
+	return resp.Data, nil
 }
 
 func (s BkdataService) GetLatestDeployDataFlow(flowId int) (map[string]interface{}, error) {
-	return nil, nil
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.GetLatestDeployDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "GetLatestDeployDataFlow with flow_id [%d] failed", flowId)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "GetLatestDeployDataFlow with flow_id [%d] failed", flowId)
+	}
+	return resp.Data, nil
 }
 
 func (s BkdataService) GetDataFlow(flowId int) (map[string]interface{}, error) {
-	return nil, nil
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.GetDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlow with flow_id [%d] failed", flowId)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlow with flow_id [%d] failed", flowId)
+	}
+	return resp.Data, nil
 }
 
+// GetDataFlowGraph 获取DataFlow里的画布信息
 func (s BkdataService) GetDataFlowGraph(flowId int) (map[string]interface{}, error) {
-	return nil, nil
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.GetDataFlowGraph().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlowGraph with flow_id [%d] failed", flowId)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlowGraph with flow_id [%d] failed", flowId)
+	}
+	return resp.Data, nil
 }
 
-func (s BkdataService) GetDataFlowList(params map[string]interface{}) ([]map[string]interface{}, error) {
-	return nil, nil
+func (s BkdataService) GetDataFlowList(projectId int) ([]map[string]interface{}, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonListMapResp
+	if _, err = bkdataApi.GetDataFlowList().SetQueryParams(map[string]string{"project_id": strconv.Itoa(projectId)}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlowList with project_id [%d] failed", projectId)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "GetDataFlowList with project_id [%d] failed", projectId)
+	}
+	return resp.Data, nil
 }
 
-func (s BkdataService) CreateDataFlow(params map[string]interface{}) (map[string]interface{}, error) {
-	return nil, nil
+// CreateDataFlow 创建DataFlow
+func (s BkdataService) CreateDataFlow(flowName string, projectId int, nodes []map[string]interface{}) (map[string]interface{}, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	params := map[string]interface{}{
+		"flow_name":  flowName,
+		"project_id": projectId,
+	}
+	if len(nodes) != 0 {
+		params["nodes"] = nodes
+	}
+	var resp define.APICommonMapResp
+	if _, err = bkdataApi.CreateDataFlow().SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "CreateDataFlow with params [%s] failed", paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "StartDataFlow with params [%s] failed", paramStr)
+	}
+	return resp.Data, nil
 }
 
 func (s BkdataService) StopDataFlow(flowId int) (interface{}, error) {
-	return nil, nil
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp define.APICommonResp
+	if _, err = bkdataApi.StopDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "StopDataFlow for flow_id [%d] failed", flowId)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "StopDataFlow for flow_id [%d] failed", flowId)
+	}
+	return resp.Data, nil
+}
+
+func (s BkdataService) StartDataFlow(flowId int, consumingMode, clusterGroup string) (interface{}, error) {
+	if consumingMode == "" {
+		consumingMode = "continue"
+	}
+	if clusterGroup == "" {
+		clusterGroup = "default"
+	}
+
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	params := map[string]interface{}{
+		"consuming_mode": consumingMode,
+		"cluster_group":  clusterGroup,
+	}
+	var resp define.APICommonResp
+	if _, err = bkdataApi.StartDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "StartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "StartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
+	}
+	return resp.Data, nil
+}
+
+func (s BkdataService) RestartDataFlow(flowId int, consumingMode, clusterGroup string) (interface{}, error) {
+	if consumingMode == "" {
+		consumingMode = "continue"
+	}
+	if clusterGroup == "" {
+		clusterGroup = "default"
+	}
+
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	params := map[string]interface{}{
+		"consuming_mode": consumingMode,
+		"cluster_group":  clusterGroup,
+	}
+	var resp define.APICommonResp
+	if _, err = bkdataApi.RestartDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "RestartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "RestartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
+	}
+	return resp.Data, nil
 }

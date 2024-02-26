@@ -10,6 +10,8 @@
 package dataflow
 
 import (
+	"time"
+
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -37,7 +39,7 @@ func (f DataFlow) FlowInfo() (map[string]interface{}, error) {
 }
 
 // FlowDeployInfo 获取dataflow的最近一次部署信息
-func (f DataFlow) FlowDeployInfo(rebuild bool, projectId int) (map[string]interface{}, error) {
+func (f DataFlow) FlowDeployInfo() (map[string]interface{}, error) {
 	/*
 		1. 如果 f.FlowDeployInfo 为空，说明是no-start状态，需要start
 		2. 如果 f.FlowDeployInfo["status"] 为success则该flow运行正常
@@ -83,18 +85,15 @@ func (f DataFlow) FromBkdataByFlowId(flowId int) (*DataFlow, error) {
 
 // FromBkdataByFlowName 从bkdata接口查询到flow相关信息，根据flow_name，然后初始化一个DataFlow对象返回
 func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlow, error) {
-	params := make(map[string]interface{})
-	if projectId != 0 {
-		params["project_id"] = projectId
-	} else {
-		params["project_id"] = config.GlobalBkdataProjectId
+	if projectId == 0 {
+		projectId = config.GlobalBkdataProjectId
 	}
-	resp, err := apiservice.Bkdata.GetDataFlowList(params)
+	resp, err := apiservice.Bkdata.GetDataFlowList(projectId)
 	if err != nil {
-		return nil, errors.Wrapf(err, "GetDataFlowList with [%v] failed", params)
+		return nil, errors.Wrapf(err, "GetDataFlowList with project_id [%v] failed", projectId)
 	}
 	if len(resp) == 0 {
-		return nil, errors.Errorf("data flow project_id [%v] not exists", params)
+		return nil, errors.Errorf("data flow project_id [%v] not exists", projectId)
 	}
 	for _, flow := range resp {
 		name, _ := flow["flow_name"].(string)
@@ -109,17 +108,16 @@ func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlo
 			}, nil
 		}
 	}
-	return nil, errors.Errorf("data flow project_id [%v] not exists", params)
+	return nil, errors.Errorf("data flow project_id [%v] not exists", projectId)
 }
 
 func (f DataFlow) CreateFlow(flowName string, projectId int) (*DataFlow, error) {
 	params := make(map[string]interface{})
-	if projectId != 0 {
-		params["project_id"] = projectId
-	} else {
-		params["project_id"] = config.GlobalBkdataProjectId
+	params["flow_name"] = flowName
+	if projectId == 0 {
+		projectId = config.GlobalBkdataProjectId
 	}
-	resp, err := apiservice.Bkdata.CreateDataFlow(params)
+	resp, err := apiservice.Bkdata.CreateDataFlow(flowName, projectId, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "GetDataFlowList with [%v] failed", params)
 	}
@@ -154,14 +152,62 @@ func (f DataFlow) EnsureDataFlowExists(flowName string, rebuild bool, projectId 
 	return f.CreateFlow(flowName, projectId)
 }
 
-func (f DataFlow) StartOrRestartFlow(isStart bool, consumingMode string) bool {
-	//TODO implement me
-	panic("implement me")
+func (f DataFlow) StartOrRestartFlow(isStart bool, consumingMode string) error {
+	if isStart {
+		// 新启动，从尾部开始处理
+		if consumingMode == "" {
+			consumingMode = ConsumingModeTail
+		}
+		resp, err := apiservice.Bkdata.StartDataFlow(f.FlowId, consumingMode, config.GlobalBkdataFlowClusterGroup)
+		if err != nil {
+			return err
+		}
+		logger.Infof("start dataflow([%s]%d) success, result [%v]", f.FlowName, f.FlowId, resp)
+	} else {
+		// 重启，从上次停止位置开始处理
+		if consumingMode == "" {
+			consumingMode = ConsumingModeCurrent
+		}
+		resp, err := apiservice.Bkdata.RestartDataFlow(f.FlowId, consumingMode, config.GlobalBkdataFlowClusterGroup)
+		if err != nil {
+			return err
+		}
+		logger.Infof("restart dataflow([%s]%d) success, result [%v]", f.FlowName, f.FlowId, resp)
+	}
+	return nil
 }
 
 func (f DataFlow) Start(consumingMode string) error {
-	//TODO implement me
-	panic("implement me")
+	flowStatus := f.FlowStatus()
+	flowDeployInfo, err := f.FlowDeployInfo()
+	if err != nil {
+		return err
+	}
+	if flowStatus == FlowStatusNoStart {
+		// 该flow的状态为no-start，需要start这个flow
+		// 如果是之前没有部署过的则需要传入从头启动消费模式，如果已有部署信息，则传入参数消费模式
+		mode := consumingMode
+		if len(flowDeployInfo) == 0 {
+			mode = ConsumingModeTail
+		}
+		if err := f.StartOrRestartFlow(true, mode); err != nil {
+			return err
+		}
+	} else if flowStatus == FlowStatusRunning {
+		// 该flow的状态正常启动，需要去判断是否更新如果节点有更新则重启
+		if !f.IsModified {
+			logger.Infof("dataflow([%s]%d) has not changed", f.FlowName, f.FlowId)
+			return nil
+		}
+		if err := f.StartOrRestartFlow(false, consumingMode); err != nil {
+			return err
+		}
+	} else {
+		if err := f.StartOrRestartFlow(false, consumingMode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (f DataFlow) Stop() {
@@ -204,8 +250,32 @@ func (f DataFlow) AddNode(node Node) error {
 }
 
 func (f DataFlow) Delete() error {
-	//TODO implement me
-	panic("implement me")
+	logger.Infof("delete dataflow([%s]%d) start", f.FlowName, f.FlowId)
+	flowInfo, err := apiservice.Bkdata.GetDataFlow(f.FlowId)
+	if err != nil {
+		return err
+	}
+	status, _ := flowInfo["status"]
+	if status != FlowStatusNoStart {
+		// 停用flow
+		logger.Infof(" dataflow([%s]%d) in status [%s], stop first", f.FlowName, f.FlowId, status)
+		f.Stop()
+	}
+	// 轮询flow状态，直到 flow 为"no-start" 状态
+	maxRetries := 300
+	for maxRetries > 0 {
+		status, _ := flowInfo["status"]
+		if status == FlowStatusNoStart {
+			break
+		}
+		time.Sleep(time.Second)
+		flowInfo, err = apiservice.Bkdata.GetDataFlow(f.FlowId)
+		if err != nil {
+			logger.Infof("GetDataFlow with flow_id [%d] failed, %v", f.FlowId, err)
+		}
+		maxRetries -= 1
+	}
+	return nil
 }
 
 // Rebuild 重建flow

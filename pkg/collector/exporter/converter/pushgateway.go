@@ -302,7 +302,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 }
 
 // compactTrpcOTFilter 兼容 trpc 框架 OTfilter 指标格式
-// 当且仅当 `_type`/`_name` 两个维度存在且指标名称以 `trpc_` 开头的才进行转换
+// 当且仅当 `_type`/`_name` 两个维度存在且所有指标名称以 `trpc_` 开头的才进行转换
 func (c pushGatewayConverter) compactTrpcOTFilter(pms []*promMapper) []*promMapper {
 	const (
 		labelType = "_type"
@@ -339,7 +339,8 @@ func (c pushGatewayConverter) compactTrpcOTFilter(pms []*promMapper) []*promMapp
 		metrics := make(common.MapStr)
 		for k, v := range pm.Metrics {
 			metric := utils.NormalizeName(pm.Dimensions[labelName])
-			if strings.HasPrefix(k, "trpc_histogram_") {
+			// trpc_ 框架无 summary 概念 因此只支持 histogram 即可
+			if pm.Dimensions[labelType] == "histogram" {
 				switch {
 				case strings.HasSuffix(k, "_bucket"):
 					metric = metric + "_bucket"

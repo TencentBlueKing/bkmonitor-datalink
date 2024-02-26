@@ -46,6 +46,10 @@ var (
 	GlobalDefaultBkdataBizId int
 	// GlobalBkdataProjectId 监控在计算平台使用的公共项目ID
 	GlobalBkdataProjectId int
+	// GlobalBkdataRealtimeNodeWaitTime 计算平台实时节点等待时间
+	GlobalBkdataRealtimeNodeWaitTime int
+	// GlobalBkdataDataExpiresDays 计算平台中结果表(MYSQL)默认保存天数
+	GlobalBkdataDataExpiresDays int
 	// GlobalDefaultKafkaStorageClusterId 默认 kafka 存储集群ID
 	GlobalDefaultKafkaStorageClusterId uint
 	// GlobalBkdataKafkaBrokerUrl 与计算平台对接的消息队列BROKER地址
@@ -58,6 +62,14 @@ var (
 	GlobalBkdataBkBizId int
 	// GlobalBkdataRawTableSuffix 数据接入前缀
 	GlobalBkdataRawTableSuffix string
+	// GlobalBkdataCMDBFullTableSuffix 补充cmdb节点信息后的表后缀
+	GlobalBkdataCMDBFullTableSuffix string
+	// GlobalBkdataCMDBSplitTableSuffix 补充表拆分后的表后缀
+	GlobalBkdataCMDBSplitTableSuffix string
+	// GlobalBkdataDruidStorageClusterName 监控专属druid存储集群名称
+	GlobalBkdataDruidStorageClusterName string
+	// GlobalBkdataMysqlStorageClusterName 监控专属tspider存储集群名称
+	GlobalBkdataMysqlStorageClusterName string
 	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
 	GlobalBkdataProjectMaintainer string
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
@@ -114,12 +126,18 @@ func initMetadataVariables() {
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
 	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)
-	GlobalBkdataProjectId = GetValue("taskConfig.metadata.global.BkdataProjectId", 1)
+	GlobalBkdataProjectId = GetValue("taskConfig.metadata.global.bkdataProjectId", 1)
+	GlobalBkdataRealtimeNodeWaitTime = GetValue("taskConfig.metadata.global.bkdataRealtimeNodeWaitTime", 10)
+	GlobalBkdataDataExpiresDays = GetValue("taskConfig.metadata.global.bkdataDataExpiresDays", 30)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
 	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")
 	GlobalBkdataRtIdPrefix = GetValue("taskConfig.metadata.global.bkdataRtIdPrefix", GlobalBkappDeployPlatform)
 	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
 	GlobalBkdataRawTableSuffix = GetValue("taskConfig.metadata.global.bkdataRawTableSuffix", "raw")
+	GlobalBkdataCMDBFullTableSuffix = GetValue("taskConfig.metadata.global.bkdataCMDBFullTableSuffix", "full")
+	GlobalBkdataCMDBSplitTableSuffix = GetValue("taskConfig.metadata.global.bkdataCMDBFSplitTableSuffix", "cmdb")
+	GlobalBkdataDruidStorageClusterName = GetValue("taskConfig.metadata.global.bkdataDruidStorageClusterName", "monitor")
+	GlobalBkdataMysqlStorageClusterName = GetValue("taskConfig.metadata.global.bkdataMysqlStorageClusterName", "jungle_alert")
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)

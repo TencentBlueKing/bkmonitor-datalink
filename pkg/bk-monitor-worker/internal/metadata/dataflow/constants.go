@@ -17,4 +17,8 @@ const (
 
 const NodeDefaultFrontendOffset = 100
 
+const CMDBHostTopRtId = "591_bkpub_cmdb_host_rels_split_innerip"
+
+const TmpFullStorageNodeExpires = 1
+
 var NodeDefaultFrontedInfo = []int{100, 100}

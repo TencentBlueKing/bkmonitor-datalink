@@ -9,28 +9,28 @@
 
 package dataflow
 
+import (
+	"fmt"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+)
+
 type FilterUnknownTimeTask struct {
 	BaseTask
-	RtId            string
 	MetricField     []string
 	DimensionFields []string
 }
 
 func NewFilterUnknownTimeTask(rtId string, metricField, dimensionFields []string) *FilterUnknownTimeTask {
-	return &FilterUnknownTimeTask{RtId: rtId, MetricField: metricField, DimensionFields: dimensionFields}
+	t := &FilterUnknownTimeTask{MetricField: metricField, DimensionFields: dimensionFields}
+	t.RtId = rtId
+	streamSourceNode := NewStreamSourceNode(rtId)
+	processNode := NewFilterUnknownTimeNode(streamSourceNode.OutputTableName(), 0, "", metricField, dimensionFields, "", "", "", []Node{streamSourceNode})
+	storageNode := CreateTSpiderOrDruidNode(processNode.OutputTableName(), config.GlobalBkdataDataExpiresDays, []Node{processNode})
+	t.NodeList = []Node{streamSourceNode, processNode, storageNode}
+	return t
 }
 
-func (f FilterUnknownTimeTask) FlowName() string {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f FilterUnknownTimeTask) CreateFlow(rebuild bool, projectId int) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f FilterUnknownTimeTask) StartFlow(consumingMode string) error {
-	//TODO implement me
-	panic("implement me")
+func (t FilterUnknownTimeTask) FlowName() string {
+	return fmt.Sprintf("过滤无效时间 %s", t.RtId)
 }

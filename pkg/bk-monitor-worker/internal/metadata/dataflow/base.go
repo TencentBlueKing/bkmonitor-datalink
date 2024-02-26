@@ -74,6 +74,10 @@ type BaseNode struct {
 	NodeType   string
 }
 
+func NewBaseNode(parentList []Node) *BaseNode {
+	return &BaseNode{ParentList: parentList}
+}
+
 func (b BaseNode) Equal(other map[string]interface{}) bool {
 	equal, _ := jsonx.CompareObjects(b.Config(), other)
 	return equal

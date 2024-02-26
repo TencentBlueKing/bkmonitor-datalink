@@ -22,7 +22,7 @@ skywalking_agent:
 exporter:
   queue:
     logs_batch_size: 2
-    metrics_batch_size: 2
+    metrics_batch_size: 1
     traces_batch_size: 5
 
 default:

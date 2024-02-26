@@ -72,14 +72,11 @@ func TestConvertPushGatewayData(t *testing.T) {
 }
 
 func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
-	t.Run("convertCounter1", func(t *testing.T) {
+	t.Run("convertCounter", func(t *testing.T) {
 		c := &pushGatewayConverter{}
-		labels := map[string]string{
-			"handler": "query",
-		}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds"),
+				Name: proto.String("http_request_total"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_COUNTER.Enum(),
 				Metric: []*dto.Metric{{
@@ -98,10 +95,12 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds": float64(10),
+						"http_request_total": float64(10),
 					},
-					"target":    "unknown",
-					"dimension": labels,
+					"target": "unknown",
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 					"timestamp": fakeTs,
 				}),
 			},
@@ -113,21 +112,14 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		}
 		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
 		assert.Equal(t, input.Event, events)
-
-		id := c.ToDataID(&define.Record{
-			Token: define.Token{MetricsDataId: 10011},
-		})
-		assert.Equal(t, int32(10011), id)
+		assert.Equal(t, int32(10011), c.ToDataID(&define.Record{Token: define.Token{MetricsDataId: 10011}}))
 	})
 
-	t.Run("convertCounter2", func(t *testing.T) {
+	t.Run("convertCounterExemplar", func(t *testing.T) {
 		c := &pushGatewayConverter{}
-		labels := map[string]string{
-			"handler": "query",
-		}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds_with_exemplar"),
+				Name: proto.String("http_request_total"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_COUNTER.Enum(),
 				Metric: []*dto.Metric{{
@@ -158,10 +150,12 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_with_exemplar": float64(10),
+						"http_request_total": float64(10),
 					},
-					"target":    "unknown",
-					"dimension": labels,
+					"target": "unknown",
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 					"timestamp": fakeTs,
 					"exemplar": common.MapStr{
 						"bk_span_id":         "fake_string",
@@ -181,14 +175,61 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		assert.Equal(t, input.Event, events)
 	})
 
-	t.Run("convertGauge1", func(t *testing.T) {
+	t.Run("convertCounterOTFilter", func(t *testing.T) {
 		c := &pushGatewayConverter{}
-		labels := map[string]string{
-			"handler": "query",
-		}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds"),
+				Name: proto.String("trpc_counter_total"),
+				Help: proto.String("foo"),
+				Type: dto.MetricType_COUNTER.Enum(),
+				Metric: []*dto.Metric{{
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
+						},
+						{
+							Name:  proto.String("_name"),
+							Value: proto.String("requests.foo.total"),
+						},
+						{
+							Name:  proto.String("_type"),
+							Value: proto.String("counter"),
+						},
+					},
+					Counter: &dto.Counter{
+						Value: proto.Float64(10),
+					},
+					TimestampMs: &fakeTs,
+				}},
+			},
+			Event: []define.Event{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
+					"metrics": common.MapStr{
+						"requests_foo_total": float64(10),
+					},
+					"target": "unknown",
+					"dimension": map[string]string{
+						"handler": "query",
+					},
+					"timestamp": fakeTs,
+				}),
+			},
+		}
+
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		assert.Equal(t, input.Event, events)
+	})
+
+	t.Run("convertGauge", func(t *testing.T) {
+		c := &pushGatewayConverter{}
+		input := testCase{
+			Family: &dto.MetricFamily{
+				Name: proto.String("active_workers"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_GAUGE.Enum(),
 				Metric: []*dto.Metric{{
@@ -207,11 +248,13 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds": float64(10),
+						"active_workers": float64(10),
 					},
 					"target":    "unknown",
 					"timestamp": fakeTs,
-					"dimension": labels,
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 				}),
 			},
 		}
@@ -224,11 +267,122 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		assert.Equal(t, input.Event, events)
 	})
 
-	t.Run("convertHistogram1", func(t *testing.T) {
+	t.Run("convertGaugeOTFilter", func(t *testing.T) {
 		c := &pushGatewayConverter{}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds"),
+				Name: proto.String("trpc_gauge_total"),
+				Help: proto.String("foo"),
+				Type: dto.MetricType_GAUGE.Enum(),
+				Metric: []*dto.Metric{{
+					Gauge: &dto.Gauge{
+						Value: proto.Float64(10),
+					},
+					TimestampMs: &fakeTs,
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
+						},
+						{
+							Name:  proto.String("_name"),
+							Value: proto.String("active.workers"),
+						},
+						{
+							Name:  proto.String("_type"),
+							Value: proto.String("gauge"),
+						},
+					},
+				}},
+			},
+			Event: []define.Event{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
+					"metrics": common.MapStr{
+						"active_workers": float64(10),
+					},
+					"target":    "unknown",
+					"timestamp": fakeTs,
+					"dimension": map[string]string{
+						"handler": "query",
+					},
+				}),
+			},
+		}
+
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		assert.Equal(t, input.Event, events)
+	})
+
+	t.Run("convertHistogram", func(t *testing.T) {
+		c := &pushGatewayConverter{}
+		input := testCase{
+			Family: &dto.MetricFamily{
+				Name: proto.String("http_request_duration_seconds"),
+				Help: proto.String("foo"),
+				Type: dto.MetricType_HISTOGRAM.Enum(),
+				Metric: []*dto.Metric{{
+					Histogram: &dto.Histogram{
+						SampleCount: proto.Uint64(10),
+						SampleSum:   proto.Float64(10),
+						Bucket: []*dto.Bucket{
+							{
+								UpperBound:      proto.Float64(0.99),
+								CumulativeCount: proto.Uint64(10),
+							},
+						},
+					},
+				}},
+			},
+			Event: []define.Event{
+				c.ToEvent(define.Token{}, 0, common.MapStr{
+					"metrics": common.MapStr{
+						"http_request_duration_seconds_count": uint64(10),
+						"http_request_duration_seconds_sum":   float64(10),
+					},
+					"timestamp": fakeTs,
+					"target":    "unknown",
+					"dimension": map[string]string{},
+				}),
+				c.ToEvent(define.Token{}, 0, common.MapStr{
+					"metrics": common.MapStr{
+						"http_request_duration_seconds_bucket": uint64(10),
+					},
+					"dimension": map[string]string{
+						"le": "0.99",
+					},
+					"target":    "unknown",
+					"timestamp": fakeTs,
+				}),
+				c.ToEvent(define.Token{}, 0, common.MapStr{
+					"metrics": common.MapStr{
+						"http_request_duration_seconds_bucket": uint64(10),
+					},
+					"dimension": map[string]string{
+						"le": "+Inf",
+					},
+					"target":    "unknown",
+					"timestamp": fakeTs,
+				}),
+			},
+		}
+
+		events := make([]define.Event, 0)
+		gather := func(evts ...define.Event) {
+			events = append(events, evts...)
+		}
+		c.publishEventsFromMetricFamily(define.Token{}, &define.PushGatewayData{MetricFamilies: input.Family}, 0, fakeTs, gather)
+		assert.Equal(t, input.Event, events)
+	})
+
+	t.Run("convertHistogramExemplar", func(t *testing.T) {
+		c := &pushGatewayConverter{}
+		input := testCase{
+			Family: &dto.MetricFamily{
+				Name: proto.String("http_request_duration_seconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_HISTOGRAM.Enum(),
 				Metric: []*dto.Metric{{
@@ -259,8 +413,8 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_count": uint64(10),
-						"http_request_duration_microseconds_sum":   float64(10),
+						"http_request_duration_seconds_count": uint64(10),
+						"http_request_duration_seconds_sum":   float64(10),
 					},
 					"timestamp": fakeTs,
 					"target":    "unknown",
@@ -268,7 +422,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				}),
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_bucket": uint64(10),
+						"http_request_duration_seconds_bucket": uint64(10),
 					},
 					"dimension": map[string]string{
 						"le": "0.99",
@@ -284,7 +438,7 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 				}),
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_bucket": uint64(10),
+						"http_request_duration_seconds_bucket": uint64(10),
 					},
 					"dimension": map[string]string{
 						"le": "+Inf",
@@ -303,11 +457,11 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		assert.Equal(t, input.Event, events)
 	})
 
-	t.Run("convertHistogram2", func(t *testing.T) {
+	t.Run("convertHistogramOTFilter", func(t *testing.T) {
 		c := &pushGatewayConverter{}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds_with_exemplar"),
+				Name: proto.String("trpc_histogram_duration_seconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_HISTOGRAM.Enum(),
 				Metric: []*dto.Metric{{
@@ -321,34 +475,52 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 							},
 						},
 					},
+					Label: []*dto.LabelPair{
+						{
+							Name:  proto.String("handler"),
+							Value: proto.String("query"),
+						},
+						{
+							Name:  proto.String("_name"),
+							Value: proto.String("http.request.duration.seconds"),
+						},
+						{
+							Name:  proto.String("_type"),
+							Value: proto.String("histogram"),
+						},
+					},
 				}},
 			},
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_with_exemplar_count": uint64(10),
-						"http_request_duration_microseconds_with_exemplar_sum":   float64(10),
+						"http_request_duration_seconds_count": uint64(10),
+						"http_request_duration_seconds_sum":   float64(10),
 					},
 					"timestamp": fakeTs,
 					"target":    "unknown",
-					"dimension": map[string]string{},
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 				}),
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_with_exemplar_bucket": uint64(10),
+						"http_request_duration_seconds_bucket": uint64(10),
 					},
 					"dimension": map[string]string{
-						"le": "0.99",
+						"handler": "query",
+						"le":      "0.99",
 					},
 					"target":    "unknown",
 					"timestamp": fakeTs,
 				}),
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_with_exemplar_bucket": uint64(10),
+						"http_request_duration_seconds_bucket": uint64(10),
 					},
 					"dimension": map[string]string{
-						"le": "+Inf",
+						"handler": "query",
+						"le":      "+Inf",
 					},
 					"target":    "unknown",
 					"timestamp": fakeTs,
@@ -364,14 +536,11 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		assert.Equal(t, input.Event, events)
 	})
 
-	t.Run("convertUntyped1", func(t *testing.T) {
-		labels := map[string]string{
-			"handler": "query",
-		}
+	t.Run("convertUntyped", func(t *testing.T) {
 		c := &pushGatewayConverter{}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds"),
+				Name: proto.String("go_info"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_UNTYPED.Enum(),
 				Metric: []*dto.Metric{{
@@ -389,10 +558,12 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds": float64(10),
+						"go_info": float64(10),
 					},
-					"target":    "unknown",
-					"dimension": labels,
+					"target": "unknown",
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 					"timestamp": fakeTs,
 				}),
 			},
@@ -406,14 +577,11 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 		assert.Equal(t, input.Event, events)
 	})
 
-	t.Run("convertSummary1", func(t *testing.T) {
-		labels := map[string]string{
-			"handler": "query",
-		}
+	t.Run("convertSummary", func(t *testing.T) {
 		c := &pushGatewayConverter{}
 		input := testCase{
 			Family: &dto.MetricFamily{
-				Name: proto.String("http_request_duration_microseconds"),
+				Name: proto.String("http_request_duration_seconds"),
 				Help: proto.String("foo"),
 				Type: dto.MetricType_SUMMARY.Enum(),
 				Metric: []*dto.Metric{{
@@ -438,16 +606,18 @@ func TestGetPushGatewayEventsFromMetricFamily(t *testing.T) {
 			Event: []define.Event{
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds_count": uint64(10),
-						"http_request_duration_microseconds_sum":   float64(10),
+						"http_request_duration_seconds_count": uint64(10),
+						"http_request_duration_seconds_sum":   float64(10),
 					},
-					"target":    "unknown",
-					"dimension": labels,
+					"target": "unknown",
+					"dimension": map[string]string{
+						"handler": "query",
+					},
 					"timestamp": fakeTs,
 				}),
 				c.ToEvent(define.Token{}, 0, common.MapStr{
 					"metrics": common.MapStr{
-						"http_request_duration_microseconds": float64(10),
+						"http_request_duration_seconds": float64(10),
 					},
 					"dimension": map[string]string{
 						"handler":  "query",

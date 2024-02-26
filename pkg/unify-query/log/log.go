@@ -39,15 +39,19 @@ func (l *Logger) Warnf(ctx context.Context, format string, v ...any) {
 func (l *Logger) Infof(ctx context.Context, format string, v ...any) {
 	l.logger.Info(withTraceID(ctx, format, v...))
 }
+
 func (l *Logger) Errorf(ctx context.Context, format string, v ...any) {
 	l.logger.Error(withTraceID(ctx, format, v...))
 }
+
 func (l *Logger) Debugf(ctx context.Context, format string, v ...any) {
 	l.logger.Debug(withTraceID(ctx, format, v...))
 }
+
 func (l *Logger) Panicf(ctx context.Context, format string, v ...any) {
 	l.logger.Panic(withTraceID(ctx, format, v...))
 }
+
 func (l *Logger) Fatalf(ctx context.Context, format string, v ...any) {
 	l.logger.Fatal(withTraceID(ctx, format, v...))
 }

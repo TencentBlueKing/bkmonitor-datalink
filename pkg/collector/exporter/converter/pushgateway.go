@@ -311,20 +311,19 @@ func (c pushGatewayConverter) compactTrpcOTFilter(pms []*promMapper) []*promMapp
 
 	var ret []*promMapper
 	for _, pm := range pms {
-		if len(pm.Dimensions[labelType]) == 0 || len(pm.Dimensions[labelName]) == 0 {
-			ret = append(ret, pm)
-			continue
-		}
-
 		var seen bool
+		if len(pm.Dimensions[labelType]) == 0 || len(pm.Dimensions[labelName]) == 0 {
+			seen = true
+		}
 		for k := range pm.Metrics {
 			if !strings.HasPrefix(k, "trpc_") {
-				ret = append(ret, pm)
 				seen = true
 				break
 			}
 		}
+
 		if seen {
+			ret = append(ret, pm)
 			continue
 		}
 

@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -276,7 +275,7 @@ func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
 		for _, pair := range pairs {
 			kv := strings.SplitN(pair, "=", 2)
 			if len(kv) == 2 {
-				if !slices.Contains(ignoredTagNames, kv[0]) {
+				if !contains(ignoredTagNames, kv[0]) {
 					reportTags[kv[0]] = kv[1]
 				}
 			}
@@ -284,4 +283,17 @@ func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
 	}
 
 	return parts[0], reportTags
+}
+
+func contains[S ~[]E, E comparable](s S, v E) bool {
+	return index(s, v) >= 0
+}
+
+func index[S ~[]E, E comparable](s S, v E) int {
+	for i := range s {
+		if v == s[i] {
+			return i
+		}
+	}
+	return -1
 }

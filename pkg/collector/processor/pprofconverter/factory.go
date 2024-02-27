@@ -93,8 +93,6 @@ func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) 
 		return nil, fmt.Errorf("failed to convert data to pprof format, err: %s", err)
 	}
 
-	// todo remove
-	logger.Infof("parseToPprof finished, profileData: %T", profileData)
 	record.Data = profileData
 	return nil, nil
 }

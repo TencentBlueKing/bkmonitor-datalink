@@ -251,7 +251,7 @@ func (s VmUtils) getBkbaseDataNameAndTopic(tableId string) (string, string) {
 	// 清洗结果表不能出现双下划线
 	dataName = fmt.Sprintf("vm_%s", dataName)
 	dataName = strings.ReplaceAll(dataName, "__", "_")
-	topicName := fmt.Sprintf("%s%v", dataName, cfg.GlobalDefaultBkdataBizId)
+	topicName := fmt.Sprintf("%s%v", dataName, cfg.BkdataDefaultBizId)
 	return dataName, topicName
 }
 
@@ -343,7 +343,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 	}
 	cleanData["bk_app_code"] = cfg.BkApiAppCode
 	cleanData["bk_username"] = "admin"
-	cleanData["bk_biz_id"] = cfg.GlobalDefaultBkdataBizId
+	cleanData["bk_biz_id"] = cfg.BkdataDefaultBizId
 	cleanData["raw_data_id"] = bkBaseData.RawDataID
 	cleanData["clean_config_name"] = rawDataName
 	cleanData["kafka_storage_exist"] = kafkaStorageExist
@@ -385,7 +385,7 @@ func (s VmUtils) AccessVmByKafka(tableId, rawDataName, vmClusterName string, tim
 		return nil, errors.Errorf("table_id [%s] BkDataStorage raw_data_id is still -1", tableId)
 	}
 	return map[string]interface{}{
-		"clean_rt_id":         fmt.Sprintf("%v_%s", cfg.GlobalDefaultBkdataBizId, rawDataName),
+		"clean_rt_id":         fmt.Sprintf("%v_%s", cfg.BkdataDefaultBizId, rawDataName),
 		"bk_data_id":          uint(bkBaseData.RawDataID),
 		"cluster_id":          kafkaStorage.StorageClusterID,
 		"kafka_storage_exist": kafkaStorageExist,
@@ -469,7 +469,7 @@ func NewBkDataAccessor(bkTableId, dataHubName, vmCluster, vmRetentionTime, desc 
 		vmRetentionTime = models.VmRetentionTime
 	}
 	if bkBizId == 0 {
-		bkBizId = cfg.GlobalDefaultBkdataBizId
+		bkBizId = cfg.BkdataDefaultBizId
 	}
 	return &BkDataAccessor{
 		BkTableId:       bkTableId,

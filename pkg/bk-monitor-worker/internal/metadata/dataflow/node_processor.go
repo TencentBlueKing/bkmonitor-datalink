@@ -129,8 +129,8 @@ func (n RealTimeNode) Config() map[string]interface{} {
 		"sql":                   n.Sql,
 	}
 	if n.AggInterval != 0 {
-		baseConfig["window_type"] = "scroll"                                 // 滚动窗口
-		baseConfig["waiting_time"] = config.GlobalBkdataRealtimeNodeWaitTime // 此时添加等待时间，是为了有可能数据延时的情况
+		baseConfig["window_type"] = "scroll"                           // 滚动窗口
+		baseConfig["waiting_time"] = config.BkdataRealtimeNodeWaitTime // 此时添加等待时间，是为了有可能数据延时的情况
 		baseConfig["count_freq"] = n.AggInterval
 	}
 	return baseConfig
@@ -165,7 +165,7 @@ func (n FilterUnknownTimeNode) TableName() string {
 	if n.processRtId != "" {
 		return n.processRtId
 	}
-	return fmt.Sprintf("%s_%s", n.ProcessRtId, config.GlobalBkdataRawTableSuffix)
+	return fmt.Sprintf("%s_%s", n.ProcessRtId, config.BkdataRawTableSuffix)
 }
 
 func (n FilterUnknownTimeNode) GenStatisticSql(rtId, aggMethod string, metricFields, dimensionFields []string) string {
@@ -200,7 +200,7 @@ func (n CMDBPrepareAggregateFullNode) TableName() string {
 
 	processRtId := n.ProcessRtId[:strings.LastIndexAny(n.ProcessRtId, "_")]
 
-	return fmt.Sprintf("%s_%s", processRtId, config.GlobalBkdataCMDBFullTableSuffix)
+	return fmt.Sprintf("%s_%s", processRtId, config.BkdataCMDBFullTableSuffix)
 }
 
 // Name 节点名
@@ -254,7 +254,7 @@ func (n CMDBPrepareAggregateSplitNode) TableName() string {
 
 	processRtId := n.ProcessRtId[:strings.LastIndexAny(n.ProcessRtId, "_")]
 
-	return fmt.Sprintf("%s_%s", processRtId, config.GlobalBkdataCMDBSplitTableSuffix)
+	return fmt.Sprintf("%s_%s", processRtId, config.BkdataCMDBSplitTableSuffix)
 }
 
 // Name 节点名

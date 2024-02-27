@@ -89,7 +89,7 @@ func (f DataFlow) FromBkdataByFlowId(flowId int) (*DataFlow, error) {
 // FromBkdataByFlowName 从bkdata接口查询到flow相关信息，根据flow_name，然后初始化一个DataFlow对象返回
 func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlow, error) {
 	if projectId == 0 {
-		projectId = config.GlobalBkdataProjectId
+		projectId = config.BkdataProjectId
 	}
 	resp, err := apiservice.Bkdata.GetDataFlowList(projectId)
 	if err != nil {
@@ -118,7 +118,7 @@ func (f DataFlow) CreateFlow(flowName string, projectId int) (*DataFlow, error) 
 	params := make(map[string]interface{})
 	params["flow_name"] = flowName
 	if projectId == 0 {
-		projectId = config.GlobalBkdataProjectId
+		projectId = config.BkdataProjectId
 	}
 	resp, err := apiservice.Bkdata.CreateDataFlow(flowName, projectId, nil)
 	if err != nil {
@@ -161,7 +161,7 @@ func (f DataFlow) StartOrRestartFlow(isStart bool, consumingMode string) error {
 		if consumingMode == "" {
 			consumingMode = ConsumingModeTail
 		}
-		resp, err := apiservice.Bkdata.StartDataFlow(f.FlowId, consumingMode, config.GlobalBkdataFlowClusterGroup)
+		resp, err := apiservice.Bkdata.StartDataFlow(f.FlowId, consumingMode, config.BkdataFlowClusterGroup)
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func (f DataFlow) StartOrRestartFlow(isStart bool, consumingMode string) error {
 		if consumingMode == "" {
 			consumingMode = ConsumingModeCurrent
 		}
-		resp, err := apiservice.Bkdata.RestartDataFlow(f.FlowId, consumingMode, config.GlobalBkdataFlowClusterGroup)
+		resp, err := apiservice.Bkdata.RestartDataFlow(f.FlowId, consumingMode, config.BkdataFlowClusterGroup)
 		if err != nil {
 			return err
 		}

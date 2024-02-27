@@ -37,8 +37,8 @@ func TestGenBkdataRtIdWithoutBizId(t *testing.T) {
 		args args
 		want string
 	}{
-		{name: "abcdef123456789011121314151617181920.group1", args: args{tableId: "abcdef123456789011121314151617181920.group1"}, want: fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, "6789011121314151617181920_group1")},
-		{name: "abcdef.group1", args: args{tableId: "abcdef.group1"}, want: fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, "abcdef_group1")},
+		{name: "abcdef123456789011121314151617181920.group1", args: args{tableId: "abcdef123456789011121314151617181920.group1"}, want: fmt.Sprintf("%s_%s", config.BkdataRtIdPrefix, "6789011121314151617181920_group1")},
+		{name: "abcdef.group1", args: args{tableId: "abcdef.group1"}, want: fmt.Sprintf("%s_%s", config.BkdataRtIdPrefix, "abcdef_group1")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

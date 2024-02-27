@@ -44,8 +44,8 @@ func NewStorageNode(sourceRtId string, storageExpires int, parentList []Node) *S
 		n.BkBizId = bizId
 		n.ProcessRtId = splitStr[1]
 	}
-	if storageExpires < 0 || storageExpires > config.GlobalBkdataDataExpiresDays {
-		n.StorageExpires = config.GlobalBkdataDataExpiresDays
+	if storageExpires < 0 || storageExpires > config.BkdataDataExpiresDays {
+		n.StorageExpires = config.BkdataDataExpiresDays
 	} else {
 		n.StorageExpires = storageExpires
 	}
@@ -96,7 +96,7 @@ func (n DruidStorageNode) Config() map[string]interface{} {
 		"result_table_id":       n.SourceRtId,
 		"name":                  n.Instance.Name(),
 		"expires":               n.StorageExpires,
-		"cluster":               config.GlobalBkdataDruidStorageClusterName,
+		"cluster":               config.BkdataDruidStorageClusterName,
 	}
 }
 
@@ -107,7 +107,7 @@ type TSpiderStorageNode struct {
 
 func NewTSpiderStorageNode(sourceRtId string, storageExpires int, parentList []Node) *TSpiderStorageNode {
 	n := &TSpiderStorageNode{StorageNode: *NewStorageNode(sourceRtId, storageExpires, parentList)}
-	n.NodeType = config.GlobalBkdataMysqlStorageClusterType
+	n.NodeType = config.BkdataMysqlStorageClusterType
 	n.Instance = n
 	return n
 }
@@ -119,13 +119,13 @@ func (n TSpiderStorageNode) Config() map[string]interface{} {
 		"result_table_id":       n.SourceRtId,
 		"name":                  n.Name(),
 		"expires":               n.StorageExpires,
-		"cluster":               config.GlobalBkdataMysqlStorageClusterName,
+		"cluster":               config.BkdataMysqlStorageClusterName,
 	}
 }
 
 func CreateTSpiderOrDruidNode(sourceRtId string, storageExpires int, parentList []Node) Node {
-	isSystemRt := strings.HasPrefix(sourceRtId, fmt.Sprintf("%d_%s_system_", config.GlobalBkdataBkBizId, config.GlobalBkdataRtIdPrefix))
-	if config.GlobalBkdataDruidStorageClusterName != "" && isSystemRt {
+	isSystemRt := strings.HasPrefix(sourceRtId, fmt.Sprintf("%d_%s_system_", config.BkdataBkBizId, config.BkdataRtIdPrefix))
+	if config.BkdataDruidStorageClusterName != "" && isSystemRt {
 		return NewDruidStorageNode(sourceRtId, storageExpires, parentList)
 	} else {
 		return NewTSpiderStorageNode(sourceRtId, storageExpires, parentList)

@@ -21,11 +21,11 @@ func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, use
 		"bk_app_code":   config.BkApiAppCode,
 		"bk_username":   "admin",
 		"data_scenario": "queue",
-		"bk_biz_id":     config.GlobalBkdataBkBizId,
+		"bk_biz_id":     config.BkdataBkBizId,
 		"description":   "",
 		"access_raw_data": map[string]interface{}{
 			"raw_data_name":    rawDataName,
-			"maintainer":       config.GlobalBkdataProjectMaintainer,
+			"maintainer":       config.BkdataProjectMaintainer,
 			"raw_data_alias":   rawDataAlias,
 			"data_source":      "kafka",
 			"data_encoding":    "UTF-8",

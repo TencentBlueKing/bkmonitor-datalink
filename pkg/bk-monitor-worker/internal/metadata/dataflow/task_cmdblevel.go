@@ -42,7 +42,7 @@ func NewCMDBPrepareAggregateTask(rtId string, aggInterval int, aggMethod string,
 	fullStorageNode := CreateTSpiderOrDruidNode(fullProcessNode.OutputTableName(), TmpFullStorageNodeExpires, []Node{fullProcessNode})
 	// 将补充的信息进行拆解， 1对多
 	splitProcessNode := NewCMDBPrepareAggregateSplitNode(fullProcessNode.OutputTableName(), aggInterval, aggMethod, metricField, dimensionFields, "", "", "", []Node{fullProcessNode})
-	splitStorageNode := CreateTSpiderOrDruidNode(splitProcessNode.OutputTableName(), config.GlobalBkdataDataExpiresDays, []Node{splitProcessNode})
+	splitStorageNode := CreateTSpiderOrDruidNode(splitProcessNode.OutputTableName(), config.BkdataDataExpiresDays, []Node{splitProcessNode})
 
 	t.NodeList = []Node{streamSourceNode, cmdbHostTopSourceNode, fullProcessNode, fullStorageNode, splitProcessNode, splitStorageNode}
 	t.Instance = t

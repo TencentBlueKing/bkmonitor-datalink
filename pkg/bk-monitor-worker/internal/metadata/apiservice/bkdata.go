@@ -29,7 +29,7 @@ func (BkdataService) DatabusCleans(params map[string]interface{}) (map[string]in
 	if params == nil {
 		params = map[string]interface{}{}
 	}
-	params["bk_username"] = config.GlobalBkdataProjectMaintainer
+	params["bk_username"] = config.BkdataProjectMaintainer
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
@@ -71,7 +71,7 @@ func (BkdataService) UpdateDatabusCleans(params map[string]interface{}) (interfa
 	if params == nil {
 		params = map[string]interface{}{}
 	}
-	params["bk_username"] = config.GlobalBkdataProjectMaintainer
+	params["bk_username"] = config.BkdataProjectMaintainer
 	processingId, _ := params["processing_id"].(string)
 	if processingId == "" {
 		return nil, errors.New("processing_id can not be empty")

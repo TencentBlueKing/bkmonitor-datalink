@@ -26,7 +26,7 @@ func NewFilterUnknownTimeTask(rtId string, metricField, dimensionFields []string
 	t.RtId = rtId
 	streamSourceNode := NewStreamSourceNode(rtId)
 	processNode := NewFilterUnknownTimeNode(streamSourceNode.OutputTableName(), 0, "", metricField, dimensionFields, "", "", "", []Node{streamSourceNode})
-	storageNode := CreateTSpiderOrDruidNode(processNode.OutputTableName(), config.GlobalBkdataDataExpiresDays, []Node{processNode})
+	storageNode := CreateTSpiderOrDruidNode(processNode.OutputTableName(), config.BkdataDataExpiresDays, []Node{processNode})
 	t.NodeList = []Node{streamSourceNode, processNode, storageNode}
 	t.Instance = t
 	return t

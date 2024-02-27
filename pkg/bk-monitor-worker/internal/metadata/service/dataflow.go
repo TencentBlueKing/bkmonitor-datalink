@@ -34,7 +34,7 @@ func (s DataFlowSvc) checkHasPermission(projectId int, rtId string) bool {
 
 func (s DataFlowSvc) EnsureHasPermissionWithRtId(rtId string, projectId int) bool {
 	if projectId == 0 {
-		projectId = cfg.GlobalBkdataProjectId
+		projectId = cfg.BkdataProjectId
 	}
 	if !s.checkHasPermission(projectId, rtId) {
 		// 针对结果表直接授权给项目

@@ -65,7 +65,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	domain := consulConfig.ClusterConfig.DomainName
 	port := consulConfig.ClusterConfig.Port
 	// kafka broker_url 以实际配置为准，如果没有配置，再使用默认的 broker url
-	brokerUrl := config.GlobalBkdataKafkaBrokerUrl
+	brokerUrl := config.BkdataKafkaBrokerUrl
 	if domain != "" && port != 0 {
 		brokerUrl = fmt.Sprintf("%s:%v", domain, port)
 	}
@@ -77,7 +77,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	// 计算平台要求，raw_data_name不能超过50个字符
 	rtId := strings.ReplaceAll(rt.TableId, ".", "__")
 	rtId = stringx.LimitLengthSuffix(rtId, 50)
-	rawDataName := fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, rtId)
+	rawDataName := fmt.Sprintf("%s_%s", config.BkdataRtIdPrefix, rtId)
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return err
@@ -166,12 +166,12 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 	}
 
 	bkDataRtIdWithoutBizId := GenBkdataRtIdWithoutBizId(s.TableID)
-	resultTableId := fmt.Sprintf("%v_%s", config.GlobalBkdataBkBizId, bkDataRtIdWithoutBizId)
+	resultTableId := fmt.Sprintf("%v_%s", config.BkdataBkBizId, bkDataRtIdWithoutBizId)
 	params := map[string]interface{}{
 		"raw_data_id":             s.RawDataID,
 		"json_config":             etlConfigJson,
 		"pe_config":               "",
-		"bk_biz_id":               config.GlobalBkdataBkBizId,
+		"bk_biz_id":               config.BkdataBkBizId,
 		"description":             fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
 		"clean_config_name":       fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
 		"result_table_name":       bkDataRtIdWithoutBizId,
@@ -239,7 +239,7 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 		}
 		// 提前做一次授权，授权给某个项目
 		auth := NewDataFlowSvc()
-		auth.EnsureHasPermissionWithRtId(resultTableId, config.GlobalBkdataProjectId)
+		auth.EnsureHasPermissionWithRtId(resultTableId, config.BkdataProjectId)
 	}
 	// 过滤掉未来时间后再入库
 	if s.FilterUnknownTimeWithRt() {
@@ -436,7 +436,7 @@ func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 
 // FullCMDBNodeInfoToResultTable  接入cmdb节点
 func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
-	if !config.GlobalBkdataIsAllowAllCmdbLevel {
+	if !config.BkdataIsAllowAllCmdbLevel {
 		return nil
 	}
 	db := mysql.GetDBSession().DB
@@ -457,7 +457,7 @@ func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
 		}
 	}
 	task := dataflow.NewCMDBPrepareAggregateTask(
-		ToBkdataRtId(s.TableID, config.GlobalBkdataRawTableSuffix),
+		ToBkdataRtId(s.TableID, config.BkdataRawTableSuffix),
 		0,
 		"",
 		metricFields,
@@ -479,7 +479,7 @@ func ToBkdataRtId(tableId, suffix string) string {
 	if tableId == "" {
 		return ""
 	}
-	prefixList := []string{strconv.Itoa(config.GlobalBkdataBkBizId), GenBkdataRtIdWithoutBizId(tableId)}
+	prefixList := []string{strconv.Itoa(config.BkdataBkBizId), GenBkdataRtIdWithoutBizId(tableId)}
 	if suffix != "" {
 		prefixList = append(prefixList, suffix)
 	}
@@ -488,7 +488,7 @@ func ToBkdataRtId(tableId, suffix string) string {
 
 // GenBkdataRtIdWithoutBizId 生成bkdata result id
 func GenBkdataRtIdWithoutBizId(tableId string) string {
-	rawDataName := fmt.Sprintf("%s_%s", config.GlobalBkdataRtIdPrefix, strings.ReplaceAll(tableId, ".", "_"))
+	rawDataName := fmt.Sprintf("%s_%s", config.BkdataRtIdPrefix, strings.ReplaceAll(tableId, ".", "_"))
 	rawDataName = stringx.LimitLengthSuffix(rawDataName, 32)
 	rtId := strings.TrimLeft(strings.ToLower(rawDataName), "_")
 	return rtId

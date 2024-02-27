@@ -46,8 +46,8 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 	profileData, ok := record.Data.(*define.ProfilesData)
 	if !ok {
 		logger.Errorf(
-			"failed to convert to []*Profile, token: %s app: %d-%s",
-			record.Token.Original, record.Token.BizId, record.Token.AppName,
+			"failed to convert to []*Profile, recordDataType: %T, token: %s app: %d-%s",
+			record.Data, record.Token.Original, record.Token.BizId, record.Token.AppName,
 		)
 		return
 	}

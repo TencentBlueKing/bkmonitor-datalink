@@ -82,6 +82,11 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			"service_name": svrName,
 		})}
 
+		logger.Infof(
+			"send events to token: %s dataLen: %d type: %s app: %s biz_id: %d serviceName: %s",
+			record.Token.Original, len(protoBuf.Bytes()),
+			p.PeriodType.Type, record.Token.AppName, record.Token.BizId, svrName,
+		)
 		f(events...)
 	}
 }

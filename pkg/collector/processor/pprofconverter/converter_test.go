@@ -65,6 +65,15 @@ func TestDefaultConverter(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("invalid profile data", func(t *testing.T) {
+		pd := define.ProfilesRawData{
+			Data: define.ProfilePprofFormatOrigin("any"),
+		}
+		profilesData, err := d.Parse(pd)
+		assert.Error(t, err)
+		assert.Nil(t, profilesData)
+	})
+
 	t.Run("valid data", func(t *testing.T) {
 		p := &profile.Profile{
 			TimeNanos:     time.Now().UnixNano(),
@@ -102,8 +111,24 @@ func TestJfrConverter(t *testing.T) {
 		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
 		assert.NoError(t, err)
 
-		jfrData := define.ProfilesRawData{Data: define.ProfileJfrFormatOrigin{Jfr: data}}
+		jfrData := define.ProfilesRawData{
+			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
+			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
+		}
 		_, err = c.Parse(jfrData)
+		assert.NoError(t, err)
+	})
+
+	t.Run("valid data by convert entry", func(t *testing.T) {
+		entry := spyNameJudgeConverter{}
+		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
+		assert.NoError(t, err)
+
+		jfrData := define.ProfilesRawData{
+			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
+			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
+		}
+		_, err = entry.Parse(jfrData)
 		assert.NoError(t, err)
 	})
 }

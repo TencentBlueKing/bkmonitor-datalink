@@ -42,8 +42,6 @@ func (x *Context) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Context) ProtoMessage() {}
-
 func (x *Context) ProtoReflect() protoreflect.Message {
 	mi := &file_jfr_labels_proto_msgTypes[0]
 	if protoimpl.UnsafeEnabled && x != nil {
@@ -56,16 +54,8 @@ func (x *Context) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Context.ProtoReflect.Descriptor instead.
-func (*Context) Descriptor() ([]byte, []int) {
-	return file_jfr_labels_proto_rawDescGZIP(), []int{0}
-}
-
 func (x *Context) GetLabels() map[int64]int64 {
-	if x != nil {
-		return x.Labels
-	}
-	return nil
+	return x.Labels
 }
 
 type LabelsSnapshot struct {
@@ -86,12 +76,6 @@ func (x *LabelsSnapshot) Reset() {
 	}
 }
 
-func (x *LabelsSnapshot) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LabelsSnapshot) ProtoMessage() {}
-
 func (x *LabelsSnapshot) ProtoReflect() protoreflect.Message {
 	mi := &file_jfr_labels_proto_msgTypes[1]
 	if protoimpl.UnsafeEnabled && x != nil {
@@ -104,23 +88,12 @@ func (x *LabelsSnapshot) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use LabelsSnapshot.ProtoReflect.Descriptor instead.
-func (*LabelsSnapshot) Descriptor() ([]byte, []int) {
-	return file_jfr_labels_proto_rawDescGZIP(), []int{1}
-}
-
 func (x *LabelsSnapshot) GetContexts() map[int64]*Context {
-	if x != nil {
-		return x.Contexts
-	}
-	return nil
+	return x.Contexts
 }
 
 func (x *LabelsSnapshot) GetStrings() map[int64]string {
-	if x != nil {
-		return x.Strings
-	}
-	return nil
+	return x.Strings
 }
 
 var File_jfr_labels_proto protoreflect.FileDescriptor
@@ -165,13 +138,6 @@ var (
 	file_jfr_labels_proto_rawDescData = file_jfr_labels_proto_rawDesc
 )
 
-func file_jfr_labels_proto_rawDescGZIP() []byte {
-	file_jfr_labels_proto_rawDescOnce.Do(func() {
-		file_jfr_labels_proto_rawDescData = protoimpl.X.CompressGZIP(file_jfr_labels_proto_rawDescData)
-	})
-	return file_jfr_labels_proto_rawDescData
-}
-
 var file_jfr_labels_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_jfr_labels_proto_goTypes = []interface{}{
 	(*Context)(nil),        // 0: Context
@@ -196,32 +162,6 @@ func init() { file_jfr_labels_proto_init() }
 func file_jfr_labels_proto_init() {
 	if File_jfr_labels_proto != nil {
 		return
-	}
-	if !protoimpl.UnsafeEnabled {
-		file_jfr_labels_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Context); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_jfr_labels_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*LabelsSnapshot); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

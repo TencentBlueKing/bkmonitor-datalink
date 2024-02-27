@@ -208,3 +208,12 @@ func TestDescriptorMethods(t *testing.T) {
 		assert.Equal(t, expectedStrings, snapshot.GetStrings())
 	})
 }
+
+func TestString(t *testing.T) {
+	t.Run("empty string", func(t *testing.T) {
+		c := Context{
+			Labels: map[int64]int64{},
+		}
+		assert.Equal(t, "", c.String())
+	})
+}

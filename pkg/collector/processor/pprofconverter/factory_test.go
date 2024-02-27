@@ -98,6 +98,22 @@ processor:
 		assert.Equal(t, *record, copyRecord)
 	})
 
+	t.Run("invalid profile data", func(t *testing.T) {
+		record := &define.Record{
+			RequestType:   define.RequestHttp,
+			RequestClient: define.RequestClient{IP: "localhost"},
+			RecordType:    define.RecordProfiles,
+			Data:          define.ProfilesRawData{Data: "any"},
+			Token:         define.Token{Original: "token"},
+		}
+		copyRecord := *record
+
+		r, err := factory.Process(record)
+		assert.Nil(t, r)
+		assert.Error(t, err)
+		assert.Equal(t, *record, copyRecord)
+	})
+
 	t.Run("valid data", func(t *testing.T) {
 		profileData := &profile.Profile{
 			TimeNanos:     time.Now().UnixNano(),

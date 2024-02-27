@@ -100,6 +100,7 @@ func (s *Service) Reload(ctx context.Context) {
 	registerSpaceKeyPrint(s.g)
 	registerTsDBPrint(s.g)
 	registerFeatureFlag(s.g)
+	registerCheckService(s.g)
 	registerSwagger(s.g)
 
 	api.RegisterRelation(ctx, s.g)

@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
-// ErrResponse
+// ErrResponse 输出结构体
 type ErrResponse struct {
 	Err string `json:"error"`
 }

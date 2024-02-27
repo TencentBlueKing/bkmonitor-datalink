@@ -47,3 +47,29 @@ type APICommonListMapResp struct {
 	ApiCommonRespMeta
 	Data []map[string]interface{} `json:"data"`
 }
+
+// for bkdata api, code为字符串类型
+
+// APIBkdataCommonResp api bkdata通用返回结构体
+type APIBkdataCommonResp struct {
+	APICommonResp
+	Code string `json:"code"`
+}
+
+// APIBkdataCommonMapResp api bkdata通用返回结构体Map
+type APIBkdataCommonMapResp struct {
+	APICommonMapResp
+	Code string `json:"code"`
+}
+
+// APIBkdataCommonListResp api bkdata通用返回结构体List
+type APIBkdataCommonListResp struct {
+	APICommonListResp
+	Code string `json:"code"`
+}
+
+// APIBkdataCommonListMapResp api bkdata通用返回结构体List-Map
+type APIBkdataCommonListMapResp struct {
+	APICommonListMapResp
+	Code string `json:"code"`
+}

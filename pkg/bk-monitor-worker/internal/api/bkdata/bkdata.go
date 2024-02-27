@@ -76,7 +76,7 @@ func (c *Client) DataBusCleans(opts ...define.OperationOption) define.Operation 
 		result_table_name_alias | string | 清洗配置输出的结果表别名 | required
 		fields | [map{field_name: string | 字段英文标识 | required, field_type: string | 字段类型 | required, field_alias: string | 字段别名 | required, is_dimension: string | 是否为维度字段 | required, field_index: int | 字段顺序索引 | required}] | 输出字段列表 | required
 		description | string | 清洗配置描述信息
-		bk_username | string | 用户名
+		bk_username | string | 用户名 | required
 	*/
 	path := "/v3/databus/cleans/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{

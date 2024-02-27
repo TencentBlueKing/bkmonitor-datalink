@@ -31,7 +31,6 @@ type StorageNode struct {
 func NewStorageNode(sourceRtId string, storageExpires int, parentList []Node) *StorageNode {
 	n := &StorageNode{BaseNode: *NewBaseNode(parentList)}
 	n.SourceRtId = sourceRtId
-	n.SourceRtId = sourceRtId
 	splitStr := strings.SplitN(sourceRtId, "_", 2)
 	if len(splitStr) != 2 {
 		return nil
@@ -123,7 +122,7 @@ func (n TSpiderStorageNode) Config() map[string]interface{} {
 }
 
 func CreateTSpiderOrDruidNode(sourceRtId string, storageExpires int, parentList []Node) Node {
-	isSystemRt := strings.HasPrefix(sourceRtId, fmt.Sprintf("%s_%s_system_", config.GlobalBkdataBkBizId, config.GlobalBkdataRtIdPrefix))
+	isSystemRt := strings.HasPrefix(sourceRtId, fmt.Sprintf("%d_%s_system_", config.GlobalBkdataBkBizId, config.GlobalBkdataRtIdPrefix))
 	if config.GlobalBkdataDruidStorageClusterName != "" && isSystemRt {
 		return NewDruidStorageNode(sourceRtId, storageExpires, parentList)
 	} else {

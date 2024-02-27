@@ -136,7 +136,7 @@ func (b BaseNode) GetNodeType() string {
 }
 
 func (b BaseNode) GetApiParams(flowId int) map[string]interface{} {
-	var fromLinks []map[string]interface{}
+	fromLinks := make([]map[string]interface{}, 0)
 	for _, p := range b.ParentList {
 		fromLinks = append(fromLinks, map[string]interface{}{
 			"source": map[string]interface{}{

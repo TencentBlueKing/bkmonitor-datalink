@@ -40,7 +40,7 @@ func (s DataFlowSvc) EnsureHasPermissionWithRtId(rtId string, projectId int) boo
 		// 针对结果表直接授权给项目
 		result, err := apiservice.Bkdata.AuthResultTable(projectId, rtId, strings.Split(rtId, "_")[0])
 		if err != nil {
-			logger.Errorf("failed to grant permission [%s]", rtId)
+			logger.Errorf("failed to grant permission [%s], %v", rtId, err)
 			return false
 		}
 		logger.Infof("grant permission successfully [%s], result [%v]", rtId, result)

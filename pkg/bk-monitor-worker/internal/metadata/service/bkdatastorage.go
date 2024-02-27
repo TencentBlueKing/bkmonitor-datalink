@@ -49,7 +49,7 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	}
 	db := mysql.GetDBSession().DB
 	var kafkaStorage storage.KafkaStorage
-	if err := storage.NewKafkaStorageQuerySet(db.New()).TableIDEq(rt.TableId).One(&kafkaStorage); err != nil {
+	if err := storage.NewKafkaStorageQuerySet(db).TableIDEq(rt.TableId).One(&kafkaStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			logger.Errorf("result table [%s] data not write into mq", rt.TableId)
 		}
@@ -107,9 +107,9 @@ func (s BkDataStorageSvc) CreateTable(tableId string, isSyncDb bool) error {
 			bkDataStorage.TableID = tableId
 			if err := bkDataStorage.Create(db); err != nil {
 				return errors.Wrapf(err, "create BkDataStorage with table_id [%s] failed", tableId)
-			} else {
-				return err
 			}
+		} else {
+			return err
 		}
 	}
 	s.BkDataStorage = &bkDataStorage
@@ -198,7 +198,8 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 		if err != nil {
 			return errors.Wrap(err, "update databus clean failed")
 		}
-		logger.Infof("update databus clean, result [%v]", result)
+		resultStr, _ := jsonx.MarshalString(result)
+		logger.Infof("update databus clean, result [%s]", resultStr)
 	}
 	// 获取对应的etl任务状态，如果不是running则start三次，如果还不行，则报错
 	etlStatus := s.getEtlStatus(resultTableId)
@@ -214,7 +215,7 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 			for j := 0; j < 10; j++ {
 				status := s.getEtlStatus(resultTableId)
 				if status == models.DatabusStatusRunning {
-					logger.Info("start bkdata databus clean success, result [%v]", resp)
+					logger.Infof("start bkdata databus clean success, result [%v]", resp)
 					done = true
 					break
 				} else if status == models.DatabusStatusStarting {
@@ -231,7 +232,6 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 			// 启动清洗任务不成功，则报错
 			return errors.Errorf("start bkdata databus clean failed, param [%v]", params)
 		}
-		// todo 确认下这里是if内还是if外
 		s.EtlJSONConfig = etlConfigJson
 		s.BkDataResultTableID = resultTableId
 		if err := s.Update(db, storage.BkDataStorageDBSchema.EtlJSONConfig, storage.BkDataStorageDBSchema.BkDataResultTableID); err != nil {
@@ -256,7 +256,7 @@ func (s BkDataStorageSvc) generateBkDataEtlConfig() (map[string]interface{}, []m
 	if err := resulttable.NewResultTableFieldQuerySet(db).TableIDEq(s.TableID).All(&rtfList); err != nil {
 		return nil, nil, errors.Wrapf(err, "query ResultTableField with [%s] failed", s.TableID)
 	}
-	var fields []map[string]interface{}
+	fields := make([]map[string]interface{}, 0)
 	var etlDimensionAssign []map[string]string
 	var etlMetricAssign []map[string]string
 	var etlTimeAssign []map[string]string

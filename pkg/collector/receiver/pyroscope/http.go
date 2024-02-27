@@ -153,7 +153,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	f, err := parseForm(req, b)
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to parse boundary, err: %s", err)
+		logger.Errorf("failed to parse boundary, err: %s, token: %s", err, token)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
@@ -165,7 +165,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	origin, err := convertToOrigin(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("read profile failed from %s, err: %s", ip, err)
+		logger.Errorf("read profile failed from %s, err: %s, token: %s", ip, err, token)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}

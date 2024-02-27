@@ -45,12 +45,18 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 	profileData, ok := record.Data.(*define.ProfilesData)
 	if !ok {
-		logger.Errorf("failed to convert to []*Profile")
+		logger.Errorf(
+			"failed to convert to []*Profile, token: %s app: %d-%s",
+			record.Token.Original, record.Token.BizId, record.Token.AppName,
+		)
 		return
 	}
 
 	if len(profileData.Profiles) == 0 || profileData == nil {
-		logger.Errorf("[]*Profile is empty, skip")
+		logger.Errorf(
+			"[]*Profile is empty, skip. token: %s app: %d-%s",
+			record.Token.Original, record.Token.BizId, record.Token.AppName,
+		)
 		return
 	}
 

@@ -12,7 +12,7 @@ package main
 import (
 	"bytes"
 	"flag"
-	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -21,60 +21,60 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+// main Profile 命令行工具，用来解析导出的 Pprof 格式、Jfr 格式的 Profile 数据
 func main() {
-	dataPtr := flag.String("data", "", "data file, e.g. cortex-dev-01__kafka-0__cpu__0.jfr.gz")
-	labelsPtr := flag.String("labels", "", "labels file, e.g. dump1.labels.pb.gz")
-	formatPtr := flag.String("type", "", "input format, e.g. jfr")
+	dataFilePath := flag.String("data", "", "data file, e.g. cortex-dev-01__kafka-0__cpu__0.jfr.gz")
+	labelsFilePath := flag.String("labels", "", "labels file, e.g. dump1.labels.pb.gz")
+	inputFormat := flag.String("type", "", "input format, e.g. jfr")
 
 	flag.Parse()
 
-	if *dataPtr == "" {
+	if *dataFilePath == "" {
 		panic("data file is required")
 	}
-	if *formatPtr == "" {
+	if *inputFormat == "" {
 		panic("input format is required")
 	}
 
 	metadata := define.ProfileMetadata{
 		StartTime:  time.UnixMilli(1000),
 		EndTime:    time.UnixMilli(2000),
-		Format:     *formatPtr,
+		Format:     *inputFormat,
 		SampleRate: 100,
 	}
 
-	switch *formatPtr {
+	switch *inputFormat {
 	case define.FormatJFR:
-		data, err := jfr.ReadGzipFile(*dataPtr)
+		data, err := jfr.ReadGzipFile(*dataFilePath)
 		if err != nil {
 			panic(err)
 		}
-		labelsBytes, err := jfr.ReadGzipFile(*labelsPtr)
+		labelsBytes, err := jfr.ReadGzipFile(*labelsFilePath)
 		if err != nil {
-			logger.Errorf("failed to parse ")
+			panic(err)
 		}
 
 		jfrConverter := &jfr.Converter{}
-		profiles, err := jfrConverter.ParseToPprof(
+		profiles, err := jfrConverter.Parse(
 			define.ProfilesRawData{
 				Metadata: metadata,
 				Data:     define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes},
 			},
 		)
-		fmt.Println(fmt.Sprintf("\n %d profiles converted.", len(profiles.Profiles)))
+		log.Printf("\n %d profiles converted. \n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
 	case define.FormatPprof:
-		data, err := os.ReadFile(*dataPtr)
+		data, err := os.ReadFile(*dataFilePath)
 		if err != nil {
 			panic(err)
 		}
 		pprofConverter := &pprofconverter.DefaultPprofable{}
-		profiles, err := pprofConverter.ParseToPprof(
+		profiles, err := pprofConverter.Parse(
 			define.ProfilesRawData{Metadata: metadata, Data: define.ProfilePprofFormatOrigin(data)})
-		fmt.Println(fmt.Sprintf("\n %d profiles converted.", len(profiles.Profiles)))
+		log.Printf("\n %d profiles converted. \n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
 	default:
@@ -85,10 +85,8 @@ func main() {
 func prettyPrintProfiles(profiles []*profile.Profile) {
 	for _, p := range profiles {
 		for _, location := range p.Location {
-			fmt.Printf(
-				"ID: %v Address: %v FirstLine: %d FirstFunction: %s \n",
-				location.ID, location.Address, location.Line[0].Line, location.Line[0].Function.Name,
-			)
+			log.Printf("ID: %v Address: %v FirstLine: %d FirstFunction: %s \n",
+				location.ID, location.Address, location.Line[0].Line, location.Line[0].Function.Name)
 		}
 	}
 }
@@ -107,5 +105,5 @@ func writeProfilesToFile(profiles []*profile.Profile) {
 	if err := os.WriteFile("profiles.pb.gz", data, 0o644); err != nil {
 		panic(err)
 	}
-	fmt.Println("writing profiles to file finished -> profiles.pb.gz")
+	log.Printf("writing profiles to file finished -> profiles.pb.gz")
 }

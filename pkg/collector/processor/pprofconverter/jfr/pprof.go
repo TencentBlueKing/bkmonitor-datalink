@@ -33,14 +33,14 @@ type jfrPprofBuilder struct {
 }
 
 func (j *jfrPprofBuilder) addStacktrace(sampleType int64, contextID uint64, ref types.StackTraceRef, values []int64) {
-	// Step1: 获取事件对应的Label信息
+	// Step1: 获取事件对应的 Label 信息
 	stacktrace := j.parser.GetStacktrace(ref)
 	if stacktrace == nil {
 		return
 	}
 
 	contextIdLabels := j.getLabels(contextID)
-	// Step2: 根据时间ContextId获取ProfileBuilder
+	// Step2: 根据时间 ContextId 获取 ProfileBuilder
 	pb := j.buildersMapping.GetOrCreate(sampleType, contextIdLabels)
 
 	var factor int64 = 1

@@ -1021,7 +1021,6 @@ bk-collector:
         - "traces_deriver/max"
         - "traces_deriver/sum"
         - "traces_deriver/bucket"
-        - "pprof_converter/common"
 
     - name: "logs_pipeline/common"
       type: "logs"

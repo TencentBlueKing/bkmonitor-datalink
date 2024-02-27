@@ -22,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
 )
 
-// isEqual 因为 sdk 里面解析原因 原始数组中空数组会被解析为 nil 所以测试时需要认为他们是一致的
+// isEqual 因为 sdk 里面解析原因，原始数组中空数组会被解析为 nil，所以测试时需要认为他们是一致的
 func isEqual(a, b interface{}) bool {
 	v1 := reflect.ValueOf(a)
 	v2 := reflect.ValueOf(b)
@@ -53,7 +53,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: "invalid",
 		}
-		_, err := d.ParseToPprof(pd)
+		_, err := d.Parse(pd)
 		assert.Error(t, err)
 	})
 
@@ -61,7 +61,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin{},
 		}
-		_, err := d.ParseToPprof(pd)
+		_, err := d.Parse(pd)
 		assert.Error(t, err)
 	})
 
@@ -79,7 +79,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin(buf.Bytes()),
 		}
-		profilesData, err := d.ParseToPprof(pd)
+		profilesData, err := d.Parse(pd)
 		assert.NoError(t, err)
 		assert.Equal(t, pd.Metadata, profilesData.Metadata)
 		assert.Equal(t, 1, len(profilesData.Profiles))
@@ -94,7 +94,7 @@ func TestJfrConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: "invalid",
 		}
-		_, err := c.ParseToPprof(pd)
+		_, err := c.Parse(pd)
 		assert.Error(t, err)
 	})
 
@@ -103,17 +103,17 @@ func TestJfrConverter(t *testing.T) {
 		assert.NoError(t, err)
 
 		jfrData := define.ProfilesRawData{Data: define.ProfileJfrFormatOrigin{Jfr: data}}
-		_, err = c.ParseToPprof(jfrData)
+		_, err = c.Parse(jfrData)
 		assert.NoError(t, err)
 	})
 }
 
 func TestSwitchConverter(t *testing.T) {
 	c := Config{Type: "spy_converter"}
-	entry := NewPprofConverterEntry(c)
-	assert.IsType(t, entry, &spyNameJudgeConverterEntry{})
+	entry := NewPprofConverter(c)
+	assert.IsType(t, entry, &spyNameJudgeConverter{})
 
 	c = Config{Type: "default"}
-	entry = NewPprofConverterEntry(c)
-	assert.IsType(t, entry, &spyNameJudgeConverterEntry{})
+	entry = NewPprofConverter(c)
+	assert.IsType(t, entry, &spyNameJudgeConverter{})
 }

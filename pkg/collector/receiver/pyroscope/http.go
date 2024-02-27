@@ -43,7 +43,7 @@ const (
 	PerfSpy = "perf_script"
 )
 
-// TagServiceName 需要忽略的服务Tag名称
+// TagServiceName 需要忽略的服务 Tag 名称
 var ignoredTagNames = []string{"__session_id__"}
 
 // HttpService 接收 pyroscope 上报的 profile 数据
@@ -85,12 +85,7 @@ func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 		return nil, err
 	}
 
-	f, err := multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
-	if err != nil {
-		return nil, err
-	}
-
-	return f, nil
+	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
 }
 
 func getTimeFromUnixParam(req *http.Request, name string) (time.Time, error) {
@@ -161,7 +156,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		_ = f.RemoveAll()
 	}()
 
-	// TODO 处理prev_profile字段
+	// TODO 处理 prev_profile 字段
 	origin, err := convertToOrigin(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
@@ -178,8 +173,8 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 			EndTime:         endSt,
 			SpyName:         spyName,
 			Format:          format,
-			AggregationType: define.AggregationType(aggregationType),
-			Units:           define.Units(units),
+			AggregationType: aggregationType,
+			Units:           units,
 			Tags:            tags,
 			AppName:         appName,
 		},
@@ -213,7 +208,7 @@ func getFormatBySpy(spyName string) string {
 		return define.FormatPprof
 	case JavaSpy:
 		return define.FormatJFR
-	// TODO 暂不支持PerfScript
+	// TODO 暂不支持 PerfScript
 	// case PerfSpy:
 	//	return define.FormatPerfScript
 	default:
@@ -229,7 +224,7 @@ func copyBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// convertToOrigin 将Http.Body转换为converter所需的数据格式
+// convertToOrigin 将 Http.Body 转换为 converter 所需的数据格式
 func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
 	switch spyName {
 	case JavaSpy:
@@ -253,8 +248,8 @@ func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
 	}
 }
 
-// getApplicationNameAndTags 获取url中的tags信息
-// example: name=appName{key1=value1,key2=value2}
+// getApplicationNameAndTags 获取 url 中的 tags 信息
+// example: name = appName{key1=value1,key2=value2}
 func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
 	reportTags := make(map[string]string)
 
@@ -280,6 +275,8 @@ func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
 				}
 			}
 		}
+	} else {
+		return "", reportTags
 	}
 
 	return parts[0], reportTags

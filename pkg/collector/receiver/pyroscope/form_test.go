@@ -77,7 +77,6 @@ func TestExtraApplicationNameAndTags(t *testing.T) {
 		assert.Empty(t, tags)
 	})
 
-	// test4: invalid tags
 	t.Run("invalid tags", func(t *testing.T) {
 		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7B%7D%7D%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
 		assert.NoError(t, err)

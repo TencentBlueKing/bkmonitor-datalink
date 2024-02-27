@@ -35,7 +35,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		return nil, err
 	}
 
-	configs.SetGlobal(NewPprofConverterEntry(c))
+	configs.SetGlobal(NewPprofConverter(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -43,7 +43,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofConverterEntry(cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofConverter(cfg))
 	}
 
 	return &pprofConverter{
@@ -81,14 +81,14 @@ func (p *pprofConverter) Reload(config map[string]interface{}, customized []proc
 }
 
 func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) {
-	entry := p.configs.GetByToken(record.Token.Original).(ConverterEntry)
+	entry := p.configs.GetByToken(record.Token.Original).(PprofConverter)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {
 		return nil, fmt.Errorf("invalid profile data type: %T", record.Data)
 	}
 
-	profileData, err := entry.ParseToPprof(rawProfile)
+	profileData, err := entry.Parse(rawProfile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert data to pprof format, err: %s", err)
 	}

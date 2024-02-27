@@ -57,8 +57,8 @@ func TestConverter_ParseToPprof(t *testing.T) {
 		Data: define.ProfileJfrFormatOrigin{Jfr: data},
 	}
 
-	t.Run("Test ParseToPprof", func(t *testing.T) {
-		result, err := c.ParseToPprof(pd)
+	t.Run("Test Parse", func(t *testing.T) {
+		result, err := c.Parse(pd)
 
 		assert.Nil(t, err)
 

@@ -23,13 +23,19 @@ type Pprofable interface{}
 
 type DefaultPprofable struct{}
 
-func (d *DefaultPprofable) ParseToPprof(pd define.ProfilesRawData) (*define.ProfilesData, error) {
-	rawData, success := pd.Data.(define.ProfilePprofFormatOrigin)
-	if !success {
-		return nil, errors.Errorf("invalid profile data, skip")
+// Parse 默认 pprof 数据格式
+func (d *DefaultPprofable) Parse(pd define.ProfilesRawData) (*define.ProfilesData, error) {
+	rawData, ok := pd.Data.(define.ProfilePprofFormatOrigin)
+	if !ok {
+		return nil, errors.Errorf(
+			"invalid profile data, skip. rawDataType: %T app: %d-%s",
+			pd.Data, pd.Metadata.BkBizID, pd.Metadata.AppName,
+		)
 	}
 	if len(rawData) == 0 {
-		return nil, errors.Errorf("empty profile data, skip")
+		return nil, errors.Errorf(
+			"empty profile data, skip. app: %d-%s", pd.Metadata.BkBizID, pd.Metadata.AppName,
+		)
 	}
 
 	var buf bytes.Buffer
@@ -42,29 +48,29 @@ func (d *DefaultPprofable) ParseToPprof(pd define.ProfilesRawData) (*define.Prof
 	return &define.ProfilesData{Metadata: pd.Metadata, Profiles: []*profile.Profile{pp}}, nil
 }
 
-func NewPprofConverterEntry(c Config) ConverterEntry {
+func NewPprofConverter(c Config) PprofConverter {
 	switch c.Type {
 	case "spy_converter":
-		return &spyNameJudgeConverterEntry{}
+		return &spyNameJudgeConverter{}
 	default:
-		return &spyNameJudgeConverterEntry{}
+		return &spyNameJudgeConverter{}
 	}
 }
 
-type ConverterEntry interface {
-	// ParseToPprof 将特定格式数据转换为Profile
-	ParseToPprof(define.ProfilesRawData) (*define.ProfilesData, error)
+type PprofConverter interface {
+	// Parse 将特定格式数据转换为 Profile
+	Parse(define.ProfilesRawData) (*define.ProfilesData, error)
 }
 
-type spyNameJudgeConverterEntry struct{}
+type spyNameJudgeConverter struct{}
 
-func (s *spyNameJudgeConverterEntry) ParseToPprof(r define.ProfilesRawData) (*define.ProfilesData, error) {
+func (s *spyNameJudgeConverter) Parse(r define.ProfilesRawData) (*define.ProfilesData, error) {
 	switch r.Metadata.Format {
 	case define.FormatJFR:
 		converter := jfr.Converter{}
-		return converter.ParseToPprof(r)
+		return converter.Parse(r)
 	default:
 		converter := DefaultPprofable{}
-		return converter.ParseToPprof(r)
+		return converter.Parse(r)
 	}
 }

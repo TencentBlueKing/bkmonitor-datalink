@@ -50,7 +50,7 @@ func mergeJVMGeneratedClasses(frame string) string {
 	return frame
 }
 
-// processSymbols 使用正则处理JVM的特定类名模式
+// processSymbols 使用正则处理 JVM 的特定类名模式
 func processSymbols(ref *types.SymbolList) {
 	for i := range ref.Symbol {
 		ref.Symbol[i].String = mergeJVMGeneratedClasses(ref.Symbol[i].String)

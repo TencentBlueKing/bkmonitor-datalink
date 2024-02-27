@@ -160,18 +160,6 @@ type FtaData struct {
 	EventId    string                   `json:"__bk_event_id__"`
 }
 
-type Units string
-
-func (u Units) String() string {
-	return string(u)
-}
-
-type AggregationType string
-
-func (a AggregationType) String() string {
-	return string(a)
-}
-
 type PushMode string
 
 const (
@@ -245,7 +233,7 @@ const (
 	FormatJFR   = "jfr"
 )
 
-// ProfileMetadata Profile元数据格式
+// ProfileMetadata Profile 元数据格式
 type ProfileMetadata struct {
 	StartTime       time.Time
 	EndTime         time.Time
@@ -254,8 +242,8 @@ type ProfileMetadata struct {
 	SpyName         string
 	Format          string
 	SampleRate      uint32
-	Units           Units
-	AggregationType AggregationType
+	Units           string
+	AggregationType string
 	Tags            map[string]string
 }
 
@@ -268,13 +256,13 @@ type ProfileJfrFormatOrigin struct {
 
 type ProfilesRawData struct {
 	Metadata ProfileMetadata
-	// Data Profile原始数据
-	// Format=pprof -> PprofFormatOrigin
-	// Format=jfr -> JfrFormatOrigin
+	// Data Profile 原始数据
+	// Format = pprof -> PprofFormatOrigin
+	// Format = jfr -> JfrFormatOrigin
 	Data any
 }
 
-// ProfilesData 为ProfilesRawData经过处理后的数据格式
+// ProfilesData 为 ProfilesRawData 经过处理后的数据格式
 type ProfilesData struct {
 	Profiles []*profile.Profile
 	Metadata ProfileMetadata

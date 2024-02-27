@@ -52,7 +52,7 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 		return
 	}
 
-	if len(profileData.Profiles) == 0 || profileData == nil {
+	if profileData == nil || len(profileData.Profiles) == 0 {
 		logger.Errorf(
 			"[]*Profile is empty, skip. token: %s app: %d-%s",
 			record.Token.Original, record.Token.BizId, record.Token.AppName,
@@ -70,7 +70,10 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 
 		var protoBuf bytes.Buffer
 		if err := p.WriteUncompressed(&protoBuf); err != nil {
-			logger.Errorf("failed to write uncompressed profile on index: %d: %v", i, err)
+			logger.Errorf(
+				"failed to write uncompressed profile on index: %d: %s token: %s app: %d-%s",
+				i, err, record.Token.Original, record.Token.BizId, record.Token.AppName,
+			)
 			return
 		}
 
@@ -87,13 +90,13 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 }
 
 func (c profilesConverter) getSvrNameAndTags(pd *define.ProfilesData) (string, map[string][]string) {
-	tags := pd.Metadata.Tags
+	metadataTags := pd.Metadata.Tags
 	var svrName string
 	var exist bool
 
-	keysToCheck := []string{"serviceName", "SERVICE_NAME", "service_name", "service", "SERVICE"}
-	for _, key := range keysToCheck {
-		if svrName, exist = tags[key]; exist {
+	svrKeys := []string{"serviceName", "SERVICE_NAME", "service_name", "service", "SERVICE"}
+	for _, key := range svrKeys {
+		if svrName, exist = metadataTags[key]; exist {
 			break
 		}
 	}
@@ -105,19 +108,20 @@ func (c profilesConverter) getSvrNameAndTags(pd *define.ProfilesData) (string, m
 		svrName = "default"
 	}
 
-	for _, key := range keysToCheck {
-		delete(tags, key)
+	for _, key := range svrKeys {
+		delete(metadataTags, key)
 	}
 
-	tagsLabels := make(map[string][]string, len(tags))
-	for k, v := range tags {
-		tagsLabels[k] = []string{v}
+	// 将值转为数组，兼容 Profile.Sample.Labels 的格式
+	tags := make(map[string][]string, len(metadataTags))
+	for k, v := range metadataTags {
+		tags[k] = []string{v}
 	}
 
-	return svrName, tagsLabels
+	return svrName, tags
 }
 
-// mergeTagsToLabels 将Tags内容合并至Sample.Label中
+// mergeTagsToLabels 将 Tags 内容合并至 Sample.Label 中
 func (c profilesConverter) mergeTagsToLabels(pd *profile.Profile, tags map[string][]string) {
 	for i := 0; i < len(pd.Sample); i++ {
 		if pd.Sample[i].Label == nil {

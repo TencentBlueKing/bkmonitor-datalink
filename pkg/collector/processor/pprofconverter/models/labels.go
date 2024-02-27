@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type LabelsHash uint64
@@ -33,18 +35,18 @@ func (l Labels) Less(i, j int) bool { return l.Items[i].Key < l.Items[j].Key }
 func (l Labels) Swap(i, j int) { l.Items[i], l.Items[j] = l.Items[j], l.Items[i] }
 
 func (l Labels) Hash() LabelsHash {
-	pairs := make([]string, 0, len(l.Items))
+	hasher := fnv.New64a()
 	sort.Sort(l)
 	for _, x := range l.Items {
 		if x.Value == 0 {
 			continue
 		}
-		pairs = append(pairs, fmt.Sprintf("%d:%d", x.Key, x.Value))
+		pair := fmt.Sprintf("%d:%d", x.Key, x.Value)
+		if _, err := hasher.Write([]byte(pair)); err != nil {
+			logger.Infof("write pair(%d:%d) to hasher failed, error: %s", x.Key, x.Value, err)
+		}
 	}
-	hasher := fnv.New64a()
-	for _, pair := range pairs {
-		_, _ = hasher.Write([]byte(pair))
-	}
+
 	return LabelsHash(hasher.Sum64())
 }
 

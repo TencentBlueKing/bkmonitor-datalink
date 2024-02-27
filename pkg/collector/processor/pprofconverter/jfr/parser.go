@@ -74,8 +74,8 @@ func (c *Converter) convertBody(body any) ([]byte, *LabelsSnapshot, error) {
 	return depressedData, jfrLabels, nil
 }
 
-// ParseToPprof jfr解析主方法
-func (c *Converter) ParseToPprof(pd define.ProfilesRawData) (*define.ProfilesData, error) {
+// Parse jfr 数据格式解析主方法
+func (c *Converter) Parse(pd define.ProfilesRawData) (*define.ProfilesData, error) {
 	depressedData, jfrLabels, err := c.convertBody(pd.Data)
 	if err != nil {
 		return nil, err

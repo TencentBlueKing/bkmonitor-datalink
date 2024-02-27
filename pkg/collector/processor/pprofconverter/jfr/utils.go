@@ -18,7 +18,7 @@ import (
 	"github.com/klauspost/pgzip"
 )
 
-// Decompress 如果body为压缩包格式 则进行解压缩并读取
+// Decompress 如果 body 为压缩包格式，则进行解压缩并读取
 func Decompress(bs []byte) ([]byte, error) {
 	if len(bs) >= 2 && bs[0] == 0x1f && bs[1] == 0x8b {
 		gzipReader, err := pgzip.NewReader(bytes.NewReader(bs))
@@ -36,7 +36,7 @@ func Decompress(bs []byte) ([]byte, error) {
 	return bs, nil
 }
 
-// ReadGzipFile 读取压缩包 返回文件内容
+// ReadGzipFile 读取压缩包，返回文件内容
 func ReadGzipFile(f string) ([]byte, error) {
 	fd, err := os.Open(f)
 	if err != nil {

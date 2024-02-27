@@ -15,17 +15,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 )
-
-// registerSwagger
-func registerSwagger(g *gin.Engine) {
-	g.GET("/sagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-}
 
 // registerTSQueryService: /query/ts
 func registerTSQueryService(g *gin.Engine) {

@@ -32,32 +32,81 @@ import (
 )
 
 // HandlerFieldKeys
-// @Summary  query monitor by promql
-// @ID       ts-query-request-promql
+// @Summary  info field keys
+// @ID       info_field_keys
 // @Produce  json
-// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
-// @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
-// @Success  200                   	{object}  PromData
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}  []string
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/ts/promql [post]
+// @Router   /query/ts/info/field_keys [post]
 func HandlerFieldKeys(c *gin.Context) {
 	handlerInfo(c, infos.FieldKeys)
 }
 
+// HandlerTagKeys
+// @Summary  info tag keys
+// @ID       info_tag_keys
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}   []string
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/tag_keys [post]
 func HandlerTagKeys(c *gin.Context) {
 	handlerInfo(c, infos.TagKeys)
 }
 
+// HandlerTagValues
+// @Summary  info tag values
+// @ID       info_tag_values
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  TagValuesData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/tag_values [post]
 func HandlerTagValues(c *gin.Context) {
 	handlerInfo(c, infos.TagValues)
 }
 
+// HandlerSeries
+// @Summary  info series
+// @ID       info_series
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  SeriesDataList
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/series [post]
 func HandlerSeries(c *gin.Context) {
 	handlerInfo(c, infos.Series)
 }
 
+// HandlerLabelValues
+// @Summary  info label values
+// @ID       info_label_values
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}   []string
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/label/{label_name}/values [get]
 func HandlerLabelValues(c *gin.Context) {
 	var (
 		key  = infos.TagValues
@@ -278,7 +327,7 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 			}
 		}
 
-		data = []*SeriesData{
+		data = SeriesDataList{
 			{
 				Keys:   keys,
 				Series: series,

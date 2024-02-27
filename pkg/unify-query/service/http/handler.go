@@ -413,13 +413,13 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 
 // HandlerPromQLToStruct
 // @Summary  promql to struct
-// @ID       promql-to-struct
+// @ID       transform_promql_to_struct
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  structured.QueryTs
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/promql_to_struct [post]
 func HandlerPromQLToStruct(c *gin.Context) {
@@ -463,13 +463,13 @@ func HandlerPromQLToStruct(c *gin.Context) {
 
 // HandlerStructToPromQL
 // @Summary  query struct to promql
-// @ID       struct-to-promql
+// @ID       transform_struct_to_promql
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryTs  			  true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  structured.QueryPromQL
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts/struct_to_promql [post]
 func HandlerStructToPromQL(c *gin.Context) {
@@ -514,7 +514,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 
 // HandlerQueryExemplar 查询时序 exemplar 数据
 // @Summary  query monitor by ts exemplar
-// @ID       ts-query-exemplar-request
+// @ID       query_ts_exemplar
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
@@ -576,7 +576,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 
 // HandlerQueryTs
 // @Summary  query monitor by ts
-// @ID       ts-query-request
+// @ID       query_ts
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
@@ -640,7 +640,7 @@ func HandlerQueryTs(c *gin.Context) {
 
 // HandlerQueryPromQL
 // @Summary  query monitor by promql
-// @ID       ts-query-request-promql
+// @ID       query_promql
 // @Produce  json
 // @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
@@ -649,7 +649,7 @@ func HandlerQueryTs(c *gin.Context) {
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
 // @Success  200                   	{object}  PromData
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/ts/promql [post]
+// @Router   /query/promql [post]
 func HandlerQueryPromQL(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
@@ -714,15 +714,6 @@ func HandleInfluxDBPrint(c *gin.Context) {
 	c.String(200, res)
 }
 
-// HandlerQueryTsClusterMetrics
-// @Summary  query ClusterMetrics ts
-// @ID       ts-query-request-cluster-metrics
-// @Produce  json
-// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    data                  	body      structured.QueryTs  			  true   "json data"
-// @Success  200                   	{object}  PromData
-// @Failure  400                   	{object}  ErrResponse
-// @Router   /query/ts/cluster_metrics [post]
 func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()

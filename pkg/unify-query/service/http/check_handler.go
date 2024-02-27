@@ -77,7 +77,7 @@ func (c *CheckResponse) String() string {
 
 // HandlerCheckQueryTs
 // @Summary	query ts monitor check by ts
-// @ID		check-query-ts
+// @ID		check_query_ts
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
@@ -106,7 +106,7 @@ func HandlerCheckQueryTs(c *gin.Context) {
 
 // HandlerCheckQueryPromQL
 // @Summary	query promql monitor check by ts
-// @ID		check-query-promql
+// @ID		check_query_promql
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)

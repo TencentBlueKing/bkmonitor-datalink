@@ -13,6 +13,8 @@ import (
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type CMDBPrepareAggregateTask struct {
@@ -24,6 +26,12 @@ type CMDBPrepareAggregateTask struct {
 }
 
 func NewCMDBPrepareAggregateTask(rtId string, aggInterval int, aggMethod string, metricField, dimensionFields []string) *CMDBPrepareAggregateTask {
+	for _, field := range CMDBHostMustHaveFields {
+		if !slicex.IsExistItem(dimensionFields, field) {
+			logger.Errorf("bk_target_ip && bk_target_cloud_id must in dimension fields")
+			return nil
+		}
+	}
 	t := &CMDBPrepareAggregateTask{MetricField: metricField, DimensionFields: dimensionFields}
 	t.RtId = rtId
 
@@ -37,6 +45,7 @@ func NewCMDBPrepareAggregateTask(rtId string, aggInterval int, aggMethod string,
 	splitStorageNode := CreateTSpiderOrDruidNode(splitProcessNode.OutputTableName(), config.GlobalBkdataDataExpiresDays, []Node{splitProcessNode})
 
 	t.NodeList = []Node{streamSourceNode, cmdbHostTopSourceNode, fullProcessNode, fullStorageNode, splitProcessNode, splitStorageNode}
+	t.Instance = t
 	return t
 }
 

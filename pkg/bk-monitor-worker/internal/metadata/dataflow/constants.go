@@ -28,6 +28,8 @@ const NodeDefaultFrontendOffset = 100
 
 const CMDBHostTopRtId = "591_bkpub_cmdb_host_rels_split_innerip"
 
+var CMDBHostMustHaveFields = []string{"bk_target_ip", "bk_target_cloud_id"}
+
 const TmpFullStorageNodeExpires = 1
 
 var NodeDefaultFrontedInfo = []int{100, 100}

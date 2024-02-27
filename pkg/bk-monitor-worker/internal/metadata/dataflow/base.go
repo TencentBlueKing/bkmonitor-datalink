@@ -26,19 +26,20 @@ type BaseTask struct {
 	NodeList   []Node
 	FlowStatus string
 	RtId       string
+	Instance   Task
 }
 
 // FlowName flow name
-func (b BaseTask) FlowName() string {
+func (b *BaseTask) FlowName() string {
 	return ""
 }
 
 // CreateFlow 尝试创建flow,如果已经存在，则获取到整个flow的相关信息，包括node的信息,一个个比对，
 // 如果有差异，则进行更新动作,如果不存在，则直接创建,对于节点的创建也是同样的逻辑，先看是否存在，存在则更新，不存在则创建之
-func (b BaseTask) CreateFlow(rebuild bool, projectId int) error {
+func (b *BaseTask) CreateFlow(rebuild bool, projectId int) error {
 	var err error
 	// 创建任务
-	b.DataFlow, err = DataFlow{}.EnsureDataFlowExists(b.FlowName(), rebuild, projectId)
+	b.DataFlow, err = DataFlow{}.EnsureDataFlowExists(b.Instance.FlowName(), rebuild, projectId)
 	if err != nil {
 		return err
 	}
@@ -55,7 +56,7 @@ func (b BaseTask) CreateFlow(rebuild bool, projectId int) error {
 	return nil
 }
 
-func (b BaseTask) StartFlow(consumingMode string) error {
+func (b *BaseTask) StartFlow(consumingMode string) error {
 	if b.DataFlow != nil {
 		if consumingMode == "" && b.DataFlow.SqlChanged {
 			consumingMode = ConsumingModeTail
@@ -72,22 +73,23 @@ type BaseNode struct {
 	ParentList []Node
 	nodeId     int
 	NodeType   string
+	Instance   Node
 }
 
 func NewBaseNode(parentList []Node) *BaseNode {
 	return &BaseNode{ParentList: parentList}
 }
 
-func (b BaseNode) Equal(other map[string]interface{}) bool {
-	equal, _ := jsonx.CompareObjects(b.Config(), other)
+func (b *BaseNode) Equal(other map[string]interface{}) bool {
+	equal, _ := jsonx.CompareObjects(b.Instance.Config(), other)
 	return equal
 }
 
-func (b BaseNode) Name() string {
+func (b *BaseNode) Name() string {
 	return reflect.TypeOf(b).Name()
 }
 
-func (b BaseNode) FrontendInfo() map[string]int {
+func (b *BaseNode) FrontendInfo() map[string]int {
 	if len(b.ParentList) != 0 {
 		firstParent := b.ParentList[0]
 		return map[string]int{
@@ -101,12 +103,12 @@ func (b BaseNode) FrontendInfo() map[string]int {
 	}
 }
 
-func (b BaseNode) Config() map[string]interface{} {
+func (b *BaseNode) Config() map[string]interface{} {
 	return map[string]interface{}{}
 }
 
-func (b BaseNode) NeedUpdate(otherConfig map[string]interface{}) bool {
-	for k, v := range b.Config() {
+func (b *BaseNode) NeedUpdate(otherConfig map[string]interface{}) bool {
+	for k, v := range b.Instance.Config() {
 		otherV := otherConfig[k]
 		if equal, _ := jsonx.CompareObjects(v, otherV); !equal {
 			return true
@@ -115,10 +117,10 @@ func (b BaseNode) NeedUpdate(otherConfig map[string]interface{}) bool {
 	return false
 }
 
-func (b BaseNode) NeedRestartFromTail(otherConfig map[string]interface{}) bool {
+func (b *BaseNode) NeedRestartFromTail(otherConfig map[string]interface{}) bool {
 	// 判定 flow 重启，是否需要从尾部直接开始
 	// 表结构变更后，历史数据里没有这个字段，会导致任务执行异常。上游新增字段后，如果下游任务使用到这个字段，最好重启任务时选择从尾部处理
-	sqlConfig, ok := b.Config()["sql"]
+	sqlConfig, ok := b.Instance.Config()["sql"]
 	if !ok {
 		return false
 	}
@@ -131,11 +133,11 @@ func (b BaseNode) NeedRestartFromTail(otherConfig map[string]interface{}) bool {
 	return !equal
 }
 
-func (b BaseNode) GetNodeType() string {
+func (b *BaseNode) GetNodeType() string {
 	return b.NodeType
 }
 
-func (b BaseNode) GetApiParams(flowId int) map[string]interface{} {
+func (b *BaseNode) GetApiParams(flowId int) map[string]interface{} {
 	fromLinks := make([]map[string]interface{}, 0)
 	for _, p := range b.ParentList {
 		fromLinks = append(fromLinks, map[string]interface{}{
@@ -153,14 +155,14 @@ func (b BaseNode) GetApiParams(flowId int) map[string]interface{} {
 	return map[string]interface{}{
 		"flow_id":       flowId,
 		"from_links":    fromLinks,
-		"node_type":     b.GetNodeType(),
-		"config":        b.Config(),
-		"frontend_info": b.FrontendInfo(),
+		"node_type":     b.Instance.GetNodeType(),
+		"config":        b.Instance.Config(),
+		"frontend_info": b.Instance.FrontendInfo(),
 	}
 }
 
-func (b BaseNode) Update(flowId, NodeId int) error {
-	params := b.GetApiParams(flowId)
+func (b *BaseNode) Update(flowId, NodeId int) error {
+	params := b.Instance.GetApiParams(flowId)
 	resp, err := apiservice.Bkdata.UpdateDataFlowNode(flowId, NodeId, params)
 	if err != nil {
 		return errors.Wrapf(err, "update node [%s] to flow [%d] failed", b.Name(), flowId)
@@ -170,22 +172,26 @@ func (b BaseNode) Update(flowId, NodeId int) error {
 	return nil
 }
 
-func (b BaseNode) Create(flowId int) error {
-	params := b.GetApiParams(flowId)
+func (b *BaseNode) Create(flowId int) error {
+	params := b.Instance.GetApiParams(flowId)
 	resp, err := apiservice.Bkdata.AddDataFlowNode(flowId, params)
 	if err != nil {
-		return errors.Wrapf(err, "add node [%s] to flow [%d] failed", b.Name(), flowId)
+		return errors.Wrapf(err, "add node [%s] to flow [%d] failed", b.Instance.Name(), flowId)
 	}
 	nodeId, _ := resp["node_id"].(float64)
 	b.nodeId = int(nodeId)
-	logger.Infof("add node [%s] to flow [%d] success, result [%v]", b.Name(), flowId, resp)
+	logger.Infof("add node [%s] to flow [%d] success, result [%v]", b.Instance.Name(), flowId, resp)
 	return nil
 }
 
-func (b BaseNode) SetNodeId(nodeId int) {
+func (b *BaseNode) SetNodeId(nodeId int) {
 	b.nodeId = nodeId
 }
 
-func (b BaseNode) GetNodeId() int {
+func (b *BaseNode) GetNodeId() int {
 	return b.nodeId
+}
+
+func (b *BaseNode) TableName() string {
+	return ""
 }

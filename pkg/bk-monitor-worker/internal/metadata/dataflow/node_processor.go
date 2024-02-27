@@ -75,11 +75,12 @@ func NewRealTimeNode(sourceRtId string, aggInterval int, aggMethod string, metri
 	} else {
 		n.processRtId = strList[1]
 	}
+	n.Instance = n
 	return n
 }
 
 func (n RealTimeNode) Equal(other map[string]interface{}) bool {
-	c := n.Config()
+	c := n.Instance.Config()
 	if equal, _ := jsonx.CompareObjects(c["from_result_table_ids"], other["from_result_table_ids"]); equal {
 		if equal, _ := jsonx.CompareObjects(c["table_name"], other["table_name"]); equal {
 			if equal, _ := jsonx.CompareObjects(c["bk_biz_id"], other["bk_biz_id"]); equal {
@@ -100,14 +101,14 @@ func (n RealTimeNode) TableName() string {
 
 // OutputTableName 输出表名（带上业务ID前缀）
 func (n RealTimeNode) OutputTableName() string {
-	return fmt.Sprintf("%d_%s", n.BkBizId, n.TableName())
+	return fmt.Sprintf("%d_%s", n.BkBizId, n.Instance.TableName())
 }
 
 // Name 计算节点名称
 func (n RealTimeNode) Name() string {
 	prefix := n.NamePrefix
 	if prefix == "" {
-		prefix = n.GetNodeType()
+		prefix = n.Instance.GetNodeType()
 	}
 	name := fmt.Sprintf("%s(%s)", prefix, n.SourceRtId)
 	if len(name) > 50 {
@@ -120,10 +121,10 @@ func (n RealTimeNode) Name() string {
 func (n RealTimeNode) Config() map[string]interface{} {
 	baseConfig := map[string]interface{}{
 		"from_result_table_ids": []string{n.SourceRtId},
-		"table_name":            n.TableName(),
-		"output_name":           n.TableName(),
+		"table_name":            n.Instance.TableName(),
+		"output_name":           n.Instance.TableName(),
 		"bk_biz_id":             n.BkBizId,
-		"name":                  n.Name(),
+		"name":                  n.Instance.Name(),
 		"window_type":           "none",
 		"sql":                   n.Sql,
 	}
@@ -151,6 +152,11 @@ type FilterUnknownTimeNode struct {
 
 func NewFilterUnknownTimeNode(sourceRtId string, aggInterval int, aggMethod string, metricFields, dimensionFields []string, sql, namePrefix, outputRtId string, parentList []Node) *FilterUnknownTimeNode {
 	n := &FilterUnknownTimeNode{RealTimeNode: *NewRealTimeNode(sourceRtId, aggInterval, aggMethod, metricFields, dimensionFields, sql, namePrefix, outputRtId, parentList), ExpireTime: 3600, FutureTime: 60}
+	if sql == "" {
+		tempSql := n.GenStatisticSql(n.SourceRtId, aggMethod, metricFields, dimensionFields)
+		n.Sql = strings.TrimSpace(tempSql)
+	}
+	n.Instance = n
 	return n
 }
 
@@ -178,6 +184,11 @@ type CMDBPrepareAggregateFullNode struct {
 
 func NewCMDBPrepareAggregateFullNode(sourceRtId string, aggInterval int, aggMethod string, metricFields, dimensionFields []string, sql, namePrefix, outputRtId string, parentList []Node) *CMDBPrepareAggregateFullNode {
 	n := &CMDBPrepareAggregateFullNode{RealTimeNode: *NewRealTimeNode(sourceRtId, aggInterval, aggMethod, metricFields, dimensionFields, sql, namePrefix, outputRtId, parentList)}
+	if sql == "" {
+		tempSql := n.GenStatisticSql(n.SourceRtId, aggMethod, metricFields, dimensionFields)
+		n.Sql = strings.TrimSpace(tempSql)
+	}
+	n.Instance = n
 	return n
 }
 
@@ -201,10 +212,10 @@ func (n CMDBPrepareAggregateFullNode) Name() string {
 func (n CMDBPrepareAggregateFullNode) Config() map[string]interface{} {
 	baseConfig := map[string]interface{}{
 		"from_result_table_ids": []string{n.SourceRtId, CMDBHostTopRtId},
-		"table_name":            n.TableName(),
-		"output_name":           n.TableName(),
+		"table_name":            n.Instance.TableName(),
+		"output_name":           n.Instance.TableName(),
 		"bk_biz_id":             n.BkBizId,
-		"name":                  n.Name(),
+		"name":                  n.Instance.Name(),
 		"window_type":           "none",
 		"sql":                   n.Sql,
 	}
@@ -227,6 +238,11 @@ type CMDBPrepareAggregateSplitNode struct {
 
 func NewCMDBPrepareAggregateSplitNode(sourceRtId string, aggInterval int, aggMethod string, metricFields, dimensionFields []string, sql, namePrefix, outputRtId string, parentList []Node) *CMDBPrepareAggregateSplitNode {
 	n := &CMDBPrepareAggregateSplitNode{RealTimeNode: *NewRealTimeNode(sourceRtId, aggInterval, aggMethod, metricFields, dimensionFields, sql, namePrefix, outputRtId, parentList)}
+	if sql == "" {
+		tempSql := n.GenStatisticSql(n.SourceRtId, aggMethod, metricFields, dimensionFields)
+		n.Sql = strings.TrimSpace(tempSql)
+	}
+	n.Instance = n
 	return n
 }
 
@@ -250,10 +266,10 @@ func (n CMDBPrepareAggregateSplitNode) Name() string {
 func (n CMDBPrepareAggregateSplitNode) Config() map[string]interface{} {
 	baseConfig := map[string]interface{}{
 		"from_result_table_ids": []string{n.SourceRtId},
-		"table_name":            n.TableName(),
-		"output_name":           n.TableName(),
+		"table_name":            n.Instance.TableName(),
+		"output_name":           n.Instance.TableName(),
 		"bk_biz_id":             n.BkBizId,
-		"name":                  n.Name(),
+		"name":                  n.Instance.Name(),
 		"window_type":           "none",
 		"sql":                   n.Sql,
 	}

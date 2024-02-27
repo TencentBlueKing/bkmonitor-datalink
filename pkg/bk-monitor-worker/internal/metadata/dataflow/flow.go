@@ -23,7 +23,6 @@ type DataFlow struct {
 	FlowId        int
 	FlowName      string
 	ProjectId     int
-	flowInfo      map[string]interface{}
 	flowGraphInfo []map[string]interface{}
 	IsModified    bool
 	SqlChanged    bool
@@ -58,13 +57,17 @@ func (f DataFlow) FlowGraphInfo() ([]map[string]interface{}, error) {
 		if err != nil {
 			return nil, errors.Wrapf(err, "GetDataFlowGraph with flow_id [%d] failed", f.FlowId)
 		}
-		f.flowGraphInfo, _ = resp["nodes"].([]map[string]interface{})
+		f.flowGraphInfo = resp.Nodes
 	}
 	return f.flowGraphInfo, nil
 }
 
 func (f DataFlow) FlowStatus() string {
-	status, _ := f.flowInfo["status"].(string)
+	flowInfo, err := apiservice.Bkdata.GetDataFlow(f.FlowId)
+	if err != nil {
+		logger.Errorf("get flow status with flow_id [%d] failed, %v", f.FlowId, err)
+	}
+	status, _ := flowInfo["status"].(string)
 	return status
 }
 
@@ -93,7 +96,7 @@ func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlo
 		return nil, errors.Wrapf(err, "GetDataFlowList with project_id [%v] failed", projectId)
 	}
 	if len(resp) == 0 {
-		return nil, errors.Errorf("data flow project_id [%v] not exists", projectId)
+		return nil, errors.Errorf("data flow in project_id [%v] not exists", projectId)
 	}
 	for _, flow := range resp {
 		name, _ := flow["flow_name"].(string)
@@ -108,7 +111,7 @@ func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlo
 			}, nil
 		}
 	}
-	return nil, errors.Errorf("data flow project_id [%v] not exists", projectId)
+	return nil, errors.Errorf("data flow [%s] in project_id [%v] not exists", flowName, projectId)
 }
 
 func (f DataFlow) CreateFlow(flowName string, projectId int) (*DataFlow, error) {
@@ -228,16 +231,16 @@ func (f DataFlow) AddNode(node Node) error {
 		nodeConfig, _ := graphNode["node_config"].(map[string]interface{})
 		// 判断是否为同样的节点(只判断关键信息，比如输入和输出表ID等信息)
 		if node.GetNodeType() == graphNode["node_type"].(string) && node.Equal(nodeConfig) {
-			nodeId := graphNode["node_id"].(int)
+			nodeId, _ := graphNode["node_id"].(float64)
 			// 如果部分信息不一样，则做一遍更新
 			if node.NeedUpdate(nodeConfig) {
-				if err := node.Update(f.FlowId, nodeId); err != nil {
+				if err := node.Update(f.FlowId, int(nodeId)); err != nil {
 					return err
 				}
 				f.IsModified = true
 				f.SqlChanged = f.SqlChanged || node.NeedRestartFromTail(nodeConfig)
 			}
-			node.SetNodeId(nodeId)
+			node.SetNodeId(int(nodeId))
 			return nil
 		}
 	}
@@ -245,7 +248,7 @@ func (f DataFlow) AddNode(node Node) error {
 		return err
 	}
 	f.IsModified = true
-	f.SqlChanged = f.SqlChanged || node.NeedRestartFromTail(nil)
+	f.SqlChanged = node.NeedRestartFromTail(nil)
 	return nil
 }
 

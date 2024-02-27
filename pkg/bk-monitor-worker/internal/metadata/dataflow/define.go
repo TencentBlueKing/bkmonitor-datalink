@@ -28,4 +28,5 @@ type Node interface {
 	Equal(map[string]interface{}) bool
 	SetNodeId(nodeId int)
 	GetNodeId() int
+	TableName() string
 }

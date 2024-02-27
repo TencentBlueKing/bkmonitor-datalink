@@ -24,11 +24,12 @@ type StreamSourceNode struct {
 func NewStreamSourceNode(sourceRtId string) *StreamSourceNode {
 	n := &StreamSourceNode{SourceRtId: sourceRtId}
 	n.NodeType = "stream_source"
+	n.Instance = n
 	return n
 }
 
 func (n StreamSourceNode) Equal(other map[string]interface{}) bool {
-	config := n.Config()
+	config := n.Instance.Config()
 	if equal, _ := jsonx.CompareObjects(config["from_result_table_ids"], other["from_result_table_ids"]); equal {
 		if equal, _ := jsonx.CompareObjects(config["table_name"], other["table_name"]); equal {
 			return true
@@ -49,7 +50,7 @@ func (n StreamSourceNode) Config() map[string]interface{} {
 	return map[string]interface{}{
 		"from_result_table_ids": []string{n.SourceRtId},
 		"result_table_id":       n.SourceRtId,
-		"name":                  n.Name(),
+		"name":                  n.Instance.Name(),
 	}
 }
 
@@ -61,5 +62,6 @@ type RelationSourceNode struct {
 func NewRelationSourceNode(sourceRtId string) *RelationSourceNode {
 	n := &RelationSourceNode{StreamSourceNode: *NewStreamSourceNode(sourceRtId)}
 	n.NodeType = "redis_kv_source"
+	n.Instance = n
 	return n
 }

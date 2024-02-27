@@ -70,6 +70,8 @@ var (
 	GlobalBkdataDruidStorageClusterName string
 	// GlobalBkdataMysqlStorageClusterName 监控专属tspider存储集群名称
 	GlobalBkdataMysqlStorageClusterName string
+	// GlobalBkdataMysqlStorageClusterType 计算平台 SQL 类存储集群类型
+	GlobalBkdataMysqlStorageClusterType string
 	// GlobalBkdataFlowClusterGroup 计算平台 dataflow 计算集群组
 	GlobalBkdataFlowClusterGroup string
 	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
@@ -78,8 +80,8 @@ var (
 	GlobalAccessDbmRtSpaceUid []string
 	// GlobalTsDataSavedDays 监控采集数据保存天数
 	GlobalTsDataSavedDays int
-	// GlobalIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
-	GlobalIsAllowAllCmdbLevel bool
+	// GlobalBkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
+	GlobalBkdataIsAllowAllCmdbLevel bool
 	// GlobalCustomReportDefaultProxyIp 自定义上报默认服务器
 	GlobalCustomReportDefaultProxyIp []string
 	// GlobalIsAutoDeployCustomReportServer 是否自动部署自定义上报服务
@@ -138,13 +140,14 @@ func initMetadataVariables() {
 	GlobalBkdataRawTableSuffix = GetValue("taskConfig.metadata.global.bkdataRawTableSuffix", "raw")
 	GlobalBkdataCMDBFullTableSuffix = GetValue("taskConfig.metadata.global.bkdataCMDBFullTableSuffix", "full")
 	GlobalBkdataCMDBSplitTableSuffix = GetValue("taskConfig.metadata.global.bkdataCMDBFSplitTableSuffix", "cmdb")
-	GlobalBkdataDruidStorageClusterName = GetValue("taskConfig.metadata.global.bkdataDruidStorageClusterName", "monitor")
+	GlobalBkdataDruidStorageClusterName = GetValue("taskConfig.metadata.global.bkdataDruidStorageClusterName", "")
 	GlobalBkdataMysqlStorageClusterName = GetValue("taskConfig.metadata.global.bkdataMysqlStorageClusterName", "jungle_alert")
+	GlobalBkdataMysqlStorageClusterType = GetValue("taskConfig.metadata.global.bkdataMysqlStorageClusterType", "mysql_storage")
 	GlobalBkdataFlowClusterGroup = GetValue("taskConfig.metadata.global.bkdataFlowClusterGroup", "default_inland")
 	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
-	GlobalIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.global.isAllowAllCmdbLevel", false)
+	GlobalBkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.global.bkdataIsAllowAllCmdbLevel", false)
 	GlobalCustomReportDefaultProxyIp = GetValue("taskConfig.metadata.global.customReportDefaultProxyIp", []string{})
 	GlobalIsAutoDeployCustomReportServer = GetValue("taskConfig.metadata.global.isAutoDeployCustomReportServer", true)
 	GlobalIPV6SupportBizList = GetValue("taskConfig.metadata.global.ipv6SupportBizList", []int{})

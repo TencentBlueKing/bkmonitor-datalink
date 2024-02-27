@@ -406,7 +406,10 @@ func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 		}
 	}
 	task := dataflow.NewFilterUnknownTimeTask(s.BkDataResultTableID, metricFields, dimensionFields)
-
+	if task == nil {
+		logger.Errorf("NewFilterUnknownTimeTask for rt [%s] failed", s.BkDataResultTableID)
+		return false
+	}
 	if err := task.CreateFlow(false, 0); err != nil {
 		logger.Errorf("create flow [%s] failed, result_id [%s], reason [%v]", task.FlowName(), s.BkDataResultTableID, err)
 	}
@@ -420,7 +423,8 @@ func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 			time.Sleep(time.Second)
 			continue
 		}
-		if resp["status"] == "success" {
+		status, _ := resp["status"].(string)
+		if status == "success" {
 			logger.Infof("create flow [%s] successfully, result_id [%s]", task.FlowName(), s.BkDataResultTableID)
 			return true
 		}
@@ -432,7 +436,7 @@ func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 
 // FullCMDBNodeInfoToResultTable  接入cmdb节点
 func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
-	if !config.GlobalIsAllowAllCmdbLevel {
+	if !config.GlobalBkdataIsAllowAllCmdbLevel {
 		return nil
 	}
 	db := mysql.GetDBSession().DB
@@ -459,7 +463,9 @@ func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
 		metricFields,
 		dimensionFields,
 	)
-
+	if task == nil {
+		return errors.Errorf("NewCMDBPrepareAggregateTask for rt [%s] failed", s.TableID)
+	}
 	if err := task.CreateFlow(false, 0); err != nil {
 		logger.Errorf("create flow [%s] failed, result_id [%s], reason [%v]", task.FlowName(), s.BkDataResultTableID, err)
 	}

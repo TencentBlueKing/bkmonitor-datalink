@@ -16,7 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
@@ -34,7 +34,7 @@ func (BkdataService) DatabusCleans(params map[string]interface{}) (map[string]in
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.DataBusCleans().SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "DataBusCleans with params [%s] failed", paramStr)
@@ -56,7 +56,7 @@ func (BkdataService) StopDatabusCleans(resultTableId string, storages []string) 
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.StopDatabusCleans().SetPathParams(map[string]string{"result_table_id": resultTableId}).SetBody(map[string]interface{}{"storages": storages}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "StopDatabusCleans for result_table_id [%s] with storages [%v] failed", resultTableId, storages)
 	}
@@ -81,7 +81,7 @@ func (BkdataService) UpdateDatabusCleans(params map[string]interface{}) (interfa
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.UpdateDatabusCleans().SetPathParams(map[string]string{"processing_id": processingId}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "UpdateDatabusCleans for processing_id [%s] with params [%v] failed", processingId, paramStr)
@@ -104,7 +104,7 @@ func (BkdataService) GetDatabusStatus(rawDataId int) ([]map[string]interface{}, 
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonListMapResp
+	var resp bkdata.CommonListMapResp
 	if _, err = bkdataApi.GetDatabusCleans().SetQueryParams(map[string]string{"raw_data_id": rawDataIdStr}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "GetDatabusStatus with raw_data_id [%s] failed", rawDataIdStr)
 	}
@@ -131,7 +131,7 @@ func (BkdataService) StartDatabusStatus(resultTableId string, storages []string)
 		"result_table_id": resultTableId,
 		"storages":        storages,
 	}
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.StartDatabusCleans().SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "StartDatabusCleans with params [%s] failed", paramStr)
@@ -156,7 +156,7 @@ func (BkdataService) AuthProjectsDataCheck(projectId int, resultTableId, actionI
 	params := map[string]interface{}{
 		"result_table_id": resultTableId,
 	}
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.AuthProjectsDataCheck().SetPathParams(map[string]string{"project_id": strconv.Itoa(projectId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return false, errors.Wrapf(err, "AuthProjectsDataCheck for project_id [%d] with params [%s] failed", projectId, paramStr)
@@ -179,7 +179,7 @@ func (BkdataService) AuthResultTable(projectId int, objectId string, bkBizId str
 		"object_id": objectId,
 		"bk_biz_id": bkBizId,
 	}
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.AuthResultTable().SetPathParams(map[string]string{"project_id": strconv.Itoa(projectId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "AuthResultTable for project_id [%d] with params [%s] failed", projectId, paramStr)
@@ -200,7 +200,7 @@ func (s BkdataService) UpdateDataFlowNode(flowId, nodeId int, params map[string]
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.UpdateDataFlowNode().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "UpdateDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
@@ -213,13 +213,12 @@ func (s BkdataService) UpdateDataFlowNode(flowId, nodeId int, params map[string]
 }
 
 func (s BkdataService) AddDataFlowNode(flowId int, params map[string]interface{}) (map[string]interface{}, error) {
-	delete(params, "flow_id")
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.AddDataFlowNode().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "AddDataFlowNode with flow_id [%d] params [%s] failed", flowId, paramStr)
@@ -237,7 +236,7 @@ func (s BkdataService) GetLatestDeployDataFlow(flowId int) (map[string]interface
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.GetLatestDeployDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "GetLatestDeployDataFlow with flow_id [%d] failed", flowId)
 	}
@@ -253,7 +252,7 @@ func (s BkdataService) GetDataFlow(flowId int) (map[string]interface{}, error) {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.GetDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "GetDataFlow with flow_id [%d] failed", flowId)
 	}
@@ -264,13 +263,13 @@ func (s BkdataService) GetDataFlow(flowId int) (map[string]interface{}, error) {
 }
 
 // GetDataFlowGraph 获取DataFlow里的画布信息
-func (s BkdataService) GetDataFlowGraph(flowId int) (map[string]interface{}, error) {
+func (s BkdataService) GetDataFlowGraph(flowId int) (*bkdata.GetDataFlowGraphRespData, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.GetDataFlowGraphResp
 	if _, err = bkdataApi.GetDataFlowGraph().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "GetDataFlowGraph with flow_id [%d] failed", flowId)
 	}
@@ -286,7 +285,7 @@ func (s BkdataService) GetDataFlowList(projectId int) ([]map[string]interface{},
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonListMapResp
+	var resp bkdata.CommonListMapResp
 	if _, err = bkdataApi.GetDataFlowList().SetQueryParams(map[string]string{"project_id": strconv.Itoa(projectId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "GetDataFlowList with project_id [%d] failed", projectId)
 	}
@@ -310,7 +309,7 @@ func (s BkdataService) CreateDataFlow(flowName string, projectId int, nodes []ma
 	if len(nodes) != 0 {
 		params["nodes"] = nodes
 	}
-	var resp define.APIBkdataCommonMapResp
+	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.CreateDataFlow().SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "CreateDataFlow with params [%s] failed", paramStr)
@@ -328,7 +327,7 @@ func (s BkdataService) StopDataFlow(flowId int) (interface{}, error) {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.StopDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "StopDataFlow for flow_id [%d] failed", flowId)
 	}
@@ -355,7 +354,7 @@ func (s BkdataService) StartDataFlow(flowId int, consumingMode, clusterGroup str
 		"consuming_mode": consumingMode,
 		"cluster_group":  clusterGroup,
 	}
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.StartDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "StartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
@@ -384,7 +383,7 @@ func (s BkdataService) RestartDataFlow(flowId int, consumingMode, clusterGroup s
 		"consuming_mode": consumingMode,
 		"cluster_group":  clusterGroup,
 	}
-	var resp define.APIBkdataCommonResp
+	var resp bkdata.CommonResp
 	if _, err = bkdataApi.RestartDataFlow().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
 		return nil, errors.Wrapf(err, "RestartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)

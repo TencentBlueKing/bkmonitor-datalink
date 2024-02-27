@@ -49,12 +49,12 @@ func NewStorageNode(sourceRtId string, storageExpires int, parentList []Node) *S
 	} else {
 		n.StorageExpires = storageExpires
 	}
-
+	n.Instance = n
 	return n
 }
 
 func (n StorageNode) Equal(other map[string]interface{}) bool {
-	c := n.Config()
+	c := n.Instance.Config()
 	if equal, _ := jsonx.CompareObjects(c["from_result_table_ids"], other["from_result_table_ids"]); equal {
 		if equal, _ := jsonx.CompareObjects(c["table_name"], other["table_name"]); equal {
 			if equal, _ := jsonx.CompareObjects(c["bk_biz_id"], other["bk_biz_id"]); equal {
@@ -69,7 +69,7 @@ func (n StorageNode) Equal(other map[string]interface{}) bool {
 
 // Name 节点名
 func (n StorageNode) Name() string {
-	return fmt.Sprintf("%s(%s)", n.GetNodeType(), n.SourceRtId)
+	return fmt.Sprintf("%s(%s)", n.Instance.GetNodeType(), n.SourceRtId)
 }
 
 // OutputTableName 输出表名（带上业务ID前缀）
@@ -85,6 +85,7 @@ type DruidStorageNode struct {
 func NewDruidStorageNode(sourceRtId string, storageExpires int, parentList []Node) *DruidStorageNode {
 	n := &DruidStorageNode{StorageNode: *NewStorageNode(sourceRtId, storageExpires, parentList)}
 	n.NodeType = "druid_storage"
+	n.Instance = n
 	return n
 }
 
@@ -93,7 +94,7 @@ func (n DruidStorageNode) Config() map[string]interface{} {
 		"from_result_table_ids": []string{n.SourceRtId},
 		"bk_biz_id":             n.BkBizId,
 		"result_table_id":       n.SourceRtId,
-		"name":                  n.Name(),
+		"name":                  n.Instance.Name(),
 		"expires":               n.StorageExpires,
 		"cluster":               config.GlobalBkdataDruidStorageClusterName,
 	}
@@ -106,7 +107,8 @@ type TSpiderStorageNode struct {
 
 func NewTSpiderStorageNode(sourceRtId string, storageExpires int, parentList []Node) *TSpiderStorageNode {
 	n := &TSpiderStorageNode{StorageNode: *NewStorageNode(sourceRtId, storageExpires, parentList)}
-	n.NodeType = "tspider_storage"
+	n.NodeType = config.GlobalBkdataMysqlStorageClusterType
+	n.Instance = n
 	return n
 }
 

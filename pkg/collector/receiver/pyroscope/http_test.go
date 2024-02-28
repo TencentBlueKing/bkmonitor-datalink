@@ -23,6 +23,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+func TestReady(t *testing.T) {
+	assert.NotPanics(t, Ready)
+}
+
 func TestHttpInvalidParams(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
@@ -67,7 +71,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=jfr&units=samples&until=1698053100", buf)
+	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=javaspy&units=samples&until=1698053100", buf)
 	assert.NoError(t, err)
 
 	var n int
@@ -90,7 +94,7 @@ func TestHttpValidBody(t *testing.T) {
 	fw.Write([]byte("any profiles"))
 	writer.Close()
 
-	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi%7B%7D&sampleRate=100&spyName=gospy&units=samples&until=1698053100", body)
+	req, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?aggregationType=sum&from=1698053090&name=fuxi&sampleRate=100&spyName=gospy&units=samples&until=1698053100", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer token_instance")
 	assert.NoError(t, err)
@@ -106,4 +110,55 @@ func TestHttpValidBody(t *testing.T) {
 	svc.ProfilesIngest(rw, req)
 	assert.Equal(t, http.StatusOK, rw.Code)
 	assert.Equal(t, 1, n)
+}
+
+func TestGetBearerToken(t *testing.T) {
+	t.Run("valid token", func(t *testing.T) {
+		expectedToken := "test_token"
+		req, _ := http.NewRequest("GET", "localhost", nil)
+		req.Header.Set("Authorization", "Bearer "+expectedToken)
+
+		resultToken := getBearerToken(req)
+		assert.Equal(t, resultToken, expectedToken)
+	})
+
+	t.Run("invalid data", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "localhost", nil)
+		req.Header.Set("Authorization", "Basic some_base64_credentials")
+
+		resultToken := getBearerToken(req)
+		assert.Empty(t, resultToken)
+	})
+
+	t.Run("no auth header", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "localhost", nil)
+
+		resultToken := getBearerToken(req)
+		assert.Empty(t, resultToken)
+	})
+}
+
+func TestParseForm(t *testing.T) {
+	t.Run("valid data", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		writer.WriteField("test_field", "test_value")
+		writer.Close()
+
+		req, _ := http.NewRequest("POST", "localhost", body)
+		req.Header.Set("Content-Type", "multipart/form-data; boundary="+writer.Boundary())
+
+		form, err := parseForm(req, body.Bytes())
+		assert.NoError(t, err)
+		assert.Equal(t, form.Value["test_field"][0], "test_value")
+	})
+
+	t.Run("invalid data", func(t *testing.T) {
+		req, _ := http.NewRequest("POST", "localhost", nil)
+		req.Header.Set("Content-Type", "application/json")
+
+		form, err := parseForm(req, nil)
+		assert.Error(t, err)
+		assert.Nil(t, form)
+	})
 }

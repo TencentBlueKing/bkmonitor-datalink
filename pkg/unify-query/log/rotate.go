@@ -92,8 +92,8 @@ func init() {
 		for {
 			// 如果有收到信号，则主动触发reload，重新打开文件
 			<-notify
-			if Syncer != nil {
-				if err := Syncer.Reload(); err != nil {
+			if syncer != nil {
+				if err := syncer.Reload(); err != nil {
 					fmt.Printf("signal hup is receviced, but reopen file failed for->[%s]", err)
 				}
 			}

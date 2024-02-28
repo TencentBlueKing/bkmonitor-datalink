@@ -39,7 +39,6 @@ require (
 	github.com/swaggo/swag v1.16.1
 	github.com/thomaspoignant/go-feature-flag v1.0.1
 	github.com/tinylib/msgp v1.1.6
-	github.com/uptrace/opentelemetry-go-extra/otelzap v0.2.1
 	go.etcd.io/bbolt v1.3.3
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.32.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.42.0
@@ -147,6 +146,7 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	github.com/uptrace/opentelemetry-go-extra/otelutil v0.2.1 // indirect
+	github.com/uptrace/opentelemetry-go-extra/otelzap v0.2.1 // indirect
 	github.com/valyala/fastrand v1.1.0 // indirect
 	github.com/valyala/histogram v1.2.0 // indirect
 	github.com/willf/bitset v1.1.3 // indirect

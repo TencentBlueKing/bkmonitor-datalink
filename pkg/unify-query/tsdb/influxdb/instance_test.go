@@ -36,7 +36,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 			`http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_aa_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`:                            mockData,
 			`http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_bb_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`:                            mockData,
 		},
-		log.OtLogger,
+		log.DefaultLogger,
 	)
 
 	testCases := map[string]struct {

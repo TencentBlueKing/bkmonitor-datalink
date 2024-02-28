@@ -102,7 +102,7 @@ func TestPromQL(t *testing.T) {
 			UseNativeOr:          true,
 			Timeout:              time.Second * 30,
 			Curl: &curl.HttpCurl{
-				Log: log.OtLogger,
+				Log: log.DefaultLogger,
 			},
 		}
 	})
@@ -195,7 +195,7 @@ func TestRealQueryRange(t *testing.T) {
 		ContentType:          "application/json",
 		Token:                "token",
 
-		Curl: &curl.HttpCurl{Log: log.OtLogger},
+		Curl: &curl.HttpCurl{Log: log.DefaultLogger},
 
 		InfluxCompatible: true,
 		UseNativeOr:      true,
@@ -239,7 +239,7 @@ func TestInstance_Query_Url(t *testing.T) {
 		`http://127.0.0.1/api/query?query=count+by+%28__bk_db__%2C+bk_biz_id%2C+bcs_cluster_id%29+%28container_cpu_system_seconds_total_value%7B%7D%29&step=60&time=1669600800`: `{"status":"success","isPartial":false,"data":{"resultType":"vector","result":[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"value":[1669600800,"31949"]}]}}`,
 		`http://127.0.0.1/api/query?query=sum%28111gggggggggggggggg11&step=60&time=1669600800`:                                                                                  `{"status":"error","errorType":"422","error":"error when executing query=\"sum(111gggggggggggggggg11\" for (time=1669600800000, step=60000): argList: unexpected token \"gggggggggggggggg11\"; want \",\", \")\"; unparsed data: \"gggggggggggggggg11\""}`,
 		`http://127.0.0.1/api/query?query=top%28sum%28kube_pod_container_resource_limits_value%29%29&step=60&time=1669600800`:                                                   `{"status":"error","errorType":"422","error":"unknown func \"top\""}`,
-	}, log.OtLogger)
+	}, log.DefaultLogger)
 
 	ctx := context.Background()
 	ins := &Instance{
@@ -299,7 +299,7 @@ func TestInstance_QueryRange_Url(t *testing.T) {
 		`http://127.0.0.1/api/query_range?end=1669600800&query=count+by+%28__bk_db__%2C+bk_biz_id%2C+bcs_cluster_id%29+%28container_cpu_system_seconds_total_value%7B%7D%29&start=1669600500&step=60`: `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"values":[[1669600500,"31949"],[1669600560,"31949"],[1669600620,"31949"],[1669600680,"31949"],[1669600740,"31949"],[1669600800,"31949"]]}]}}`,
 		`http://127.0.0.1/api/query_range?end=1669600800&query=sum%28111gggggggggggggggg11&start=1669600500&step=60`:                                                                                  `{"status":"error","errorType":"422","error":"error when executing query=\"sum(111gggggggggggggggg11\" on the time range (start=1669600500000, end=1669600800000, step=60000): argList: unexpected token \"gggggggggggggggg11\"; want \",\", \")\"; unparsed data: \"gggggggggggggggg11\""}`,
 		`http://127.0.0.1/api/query_range?end=1669600800&query=top%28sum%28kube_pod_container_resource_limits_value%29%29&start=1669600500&step=60`:                                                   `{"status":"error","errorType":"422","error":"unknown func \"top\""}`,
-	}, log.OtLogger)
+	}, log.DefaultLogger)
 
 	ins := &Instance{
 		Ctx:     ctx,
@@ -367,7 +367,7 @@ func mockInstance(ctx context.Context) {
 		InfluxCompatible:     true,
 		UseNativeOr:          true,
 		Timeout:              time.Minute,
-		Curl:                 &curl.HttpCurl{Log: log.OtLogger},
+		Curl:                 &curl.HttpCurl{Log: log.DefaultLogger},
 	}
 }
 

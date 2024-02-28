@@ -53,6 +53,9 @@ const (
 	FeatureFlagHandlePathConfigPath           = "http.path.feature_flag_path"
 	ESHandlePathConfigPath                    = "http.path.es"
 
+	CheckQueryTsConfigPath     = "http.path.check_query_ts"
+	CheckQueryPromQLConfigPath = "http.path.check_query_promql"
+
 	// 查询配置
 	InfoDefaultLimit = "http.info.limit"
 

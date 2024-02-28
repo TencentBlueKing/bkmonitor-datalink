@@ -17,6 +17,7 @@ const (
 	UserKey               = "user"
 	MessageKey            = "message"
 	QueriesKey            = "queries"
+	QueryParamsKey        = "query_params"
 	QueryReferenceKey     = "query_reference"
 	QueryClusterMetricKey = "query_cluster_metric"
 

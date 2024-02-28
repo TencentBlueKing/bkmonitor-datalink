@@ -198,7 +198,7 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
-				"dedupe_keys":    []interface{}{"name"},
+				"dedupe_keys":    []interface{}{"tags.name"},
 			}, result)
 		},
 	)
@@ -227,7 +227,7 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
-				"dedupe_keys":    []interface{}{"name"},
+				"dedupe_keys":    []interface{}{"tags.name"},
 			}, result)
 		},
 	)
@@ -257,7 +257,7 @@ func (s *AlertFTATest) TestEvent() {
 				"bk_ingest_time": 1618210322.0,
 				"event_id":       "123",
 				"plugin_id":      "bkplugin",
-				"dedupe_keys":    []interface{}{"name"},
+				"dedupe_keys":    []interface{}{"tags.name"},
 			}, result)
 		},
 	)
@@ -416,7 +416,7 @@ func (s *AlertFTATest) TestCleanConfig() {
 				"event_id":       "google_cloud_alert_2.0.n808anxyygx2",
 				"plugin_id":      "rest_api",
 				"severity":       float64(3),
-				"dedupe_keys":    []interface{}{"log", "method", "metric_type", "project_id", "resource_type", "service", "severity"},
+				"dedupe_keys":    []interface{}{"tags.log", "tags.method", "tags.metric_type", "tags.project_id", "tags.resource_type", "tags.service", "tags.severity"},
 				"tags":           []interface{}{map[string]interface{}{"key": "log", "value": "cloudaudit.googleapis.com/activity"}, map[string]interface{}{"key": "method", "value": "google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy"}, map[string]interface{}{"key": "metric_display_name", "value": "Log bytes"}, map[string]interface{}{"key": "metric_type", "value": "logging.googleapis.com/byte_count"}, map[string]interface{}{"key": "project_id", "value": "e-pulsar-410908"}, map[string]interface{}{"key": "resource_id", "value": ""}, map[string]interface{}{"key": "resource_name", "value": "e-pulsar-410908 Audited Resource labels {project_id=e-pulsar-410908, service=monitoring.googleapis.com, method=google.monitoring.v3.AlertPolicyService.UpdateAlertPolicy}"}, map[string]interface{}{"key": "resource_type", "value": "audited_resource"}, map[string]interface{}{"key": "resource_type_display_name", "value": "Audited Resource"}, map[string]interface{}{"key": "scoping_project_id", "value": "e-pulsar-410908"}, map[string]interface{}{"key": "scoping_project_number", "value": 6.35651495397e+11}, map[string]interface{}{"key": "service", "value": "monitoring.googleapis.com"}, map[string]interface{}{"key": "severity", "value": "NOTICE"}, map[string]interface{}{"key": "url", "value": "https://console.cloud.google.com/monitoring/alerting/incidents/0.n808anxyygx2?project=e-pulsar-410908"}},
 			}, result)
 		},
@@ -471,7 +471,7 @@ func (s *ExtractTagsTest) TestExtractTags() {
 				{"key": "ccc", "value": "ccc"},
 				{"key": "ddd", "value": "ddd"},
 			},
-			expectDedupeKeys: []string{"bbb", "ddd"},
+			expectDedupeKeys: []string{"tags.bbb", "tags.ddd"},
 		},
 		{
 			name: "test tags list",

@@ -353,7 +353,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 	if len(groupList) > 0 {
 		sql = fmt.Sprintf(`%s GROUP BY %s`, sql, strings.Join(groupList, ", "))
 	}
-	sql = fmt.Sprintf(`%s ORDER BY %s ASC`, sql, dtEventTimeStamp)
+	sql = fmt.Sprintf("%s ORDER BY `%s` ASC", sql, timeStamp)
 	if limit > 0 {
 		sql = fmt.Sprintf(`%s LIMIT %d`, sql, limit)
 	}

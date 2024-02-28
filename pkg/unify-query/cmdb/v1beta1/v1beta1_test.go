@@ -378,7 +378,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	timestamp := int64(1693973987)
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			metadata.SetUser(ctx, c.spaceUid, c.spaceUid)
+			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "")
 			source, indexMatcher, matchers, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.matcher)
 			assert.Nil(t, err)
 			if err == nil {

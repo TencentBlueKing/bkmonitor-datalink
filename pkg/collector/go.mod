@@ -17,7 +17,9 @@ require (
 	github.com/google/pprof v0.0.0-20230912144702-c363fe2c2ed8
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
+	github.com/grafana/jfr-parser v0.7.2-0.20230831140626-08fa3a941bf8
 	github.com/jaegertracing/jaeger v1.34.1
+	github.com/klauspost/pgzip v1.2.6
 	github.com/liuwenping/go-fastping v0.0.0-20201022032547-03cfc2cff8ee
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369
 	github.com/mitchellh/mapstructure v1.5.0
@@ -37,6 +39,7 @@ require (
 	go.opentelemetry.io/collector/pdata v0.52.0
 	go.opentelemetry.io/collector/semconv v0.52.0
 	go.uber.org/automaxprocs v1.5.1
+	golang.org/x/exp v0.0.0-20231226003508-02704c960a9b
 	google.golang.org/genproto v0.0.0-20221118155620-16455021b5e6
 	google.golang.org/grpc v1.52.0
 	google.golang.org/protobuf v1.29.0

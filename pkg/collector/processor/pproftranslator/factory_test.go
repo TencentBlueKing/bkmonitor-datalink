@@ -49,7 +49,7 @@ processor:
 			},
 		},
 	})
-	factory := obj.(*pprofConverter)
+	factory := obj.(*pprofTranslator)
 	assert.NoError(t, err)
 	assert.Equal(t, mainConf, factory.MainConfig())
 
@@ -79,7 +79,7 @@ processor:
 			Type:  define.SubConfigFieldDefault,
 		},
 	})
-	factory := obj.(*pprofConverter)
+	factory := obj.(*pprofTranslator)
 	assert.NoError(t, err)
 
 	t.Run("invalid data", func(t *testing.T) {

@@ -27,7 +27,7 @@ func NewFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*pprofConverter, error) {
+func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*pprofTranslator, error) {
 	configs := confengine.NewTierConfig()
 
 	var c Config
@@ -46,30 +46,30 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofTranslator(cfg))
 	}
 
-	return &pprofConverter{
+	return &pprofTranslator{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
 	}, nil
 }
 
-type pprofConverter struct {
+type pprofTranslator struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig
 }
 
-func (p *pprofConverter) Name() string {
+func (p *pprofTranslator) Name() string {
 	return define.ProcessorPprofTranslator
 }
 
-func (p *pprofConverter) IsDerived() bool {
+func (p *pprofTranslator) IsDerived() bool {
 	return false
 }
 
-func (p *pprofConverter) IsPreCheck() bool {
+func (p *pprofTranslator) IsPreCheck() bool {
 	return false
 }
 
-func (p *pprofConverter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *pprofTranslator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -80,7 +80,7 @@ func (p *pprofConverter) Reload(config map[string]interface{}, customized []proc
 	p.configs = f.configs
 }
 
-func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) {
+func (p *pprofTranslator) Process(record *define.Record) (*define.Record, error) {
 	translator := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)

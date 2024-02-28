@@ -57,8 +57,8 @@ func main() {
 			panic(err)
 		}
 
-		jfrConverter := &jfr.Translator{}
-		profiles, err := jfrConverter.Translate(
+		translator := &jfr.Translator{}
+		profiles, err := translator.Translate(
 			define.ProfilesRawData{
 				Metadata: metadata,
 				Data:     define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes},
@@ -73,8 +73,9 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		pprofConverter := &pproftranslator.DefaultTranslator{}
-		profiles, err := pprofConverter.Translate(
+
+		translator := &pproftranslator.DefaultTranslator{}
+		profiles, err := translator.Translate(
 			define.ProfilesRawData{
 				Metadata: metadata,
 				Data:     define.ProfilePprofFormatOrigin(data),

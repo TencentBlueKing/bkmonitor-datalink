@@ -59,7 +59,7 @@ func setDefaultConfig() {
 	viper.SetDefault(InfluxDBPrintHandlePathConfigPath, "/influxdb_print")
 
 	viper.SetDefault(CheckQueryTsConfigPath, "/check/query/ts")
-	viper.SetDefault(CheckQueryPromQLConfigPath, "/check/query/promql")
+	viper.SetDefault(CheckQueryPromQLConfigPath, "/check/query/ts/promql")
 
 	viper.SetDefault(AlignInfluxdbResultConfigPath, true)
 	viper.SetDefault(InfoDefaultLimit, 100)

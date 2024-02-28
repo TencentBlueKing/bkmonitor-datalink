@@ -95,7 +95,7 @@ func TestDefaultTranslator(t *testing.T) {
 	})
 }
 
-func TestSpyNameJudgeTranslator(t *testing.T) {
+func TestSpyNameTranslator(t *testing.T) {
 	c := Config{Type: "spy"}
 	entry := NewPprofTranslator(c)
 	assert.IsType(t, entry, &spyNameTranslator{})

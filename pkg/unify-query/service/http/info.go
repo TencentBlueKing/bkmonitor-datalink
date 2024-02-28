@@ -36,6 +36,8 @@ type TagValuesData struct {
 	Values map[string][]string `json:"values"`
 }
 
+type SeriesDataList []*SeriesData
+
 // SeriesData
 type SeriesData struct {
 	Measurement string     `json:"measurement"`

@@ -197,4 +197,10 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 			}
 		}
 	}
+
+	status := metadata.GetStatus(ctx)
+	if status.Code != "" {
+		r.Step("status code", status.Code)
+		r.Step("status message", status.Message)
+	}
 }

@@ -10,11 +10,11 @@
 package models
 
 import (
-	"fmt"
-	"hash/fnv"
 	"sort"
+	"strconv"
+	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/cespare/xxhash/v2"
 )
 
 type LabelsHash uint64
@@ -34,20 +34,28 @@ func (l Labels) Less(i, j int) bool { return l.Items[i].Key < l.Items[j].Key }
 
 func (l Labels) Swap(i, j int) { l.Items[i], l.Items[j] = l.Items[j], l.Items[i] }
 
+var bytesPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0, 1024)
+	},
+}
+
 func (l Labels) Hash() LabelsHash {
-	hasher := fnv.New64a()
 	sort.Sort(l)
+	b := bytesPool.Get().([]byte)
+	b = b[:0]
 	for _, x := range l.Items {
 		if x.Value == 0 {
 			continue
 		}
-		pair := fmt.Sprintf("%d:%d", x.Key, x.Value)
-		if _, err := hasher.Write([]byte(pair)); err != nil {
-			logger.Infof("write pair(%d:%d) to hasher failed, error: %s", x.Key, x.Value, err)
-		}
+		b = append(b, []byte(strconv.FormatInt(x.Key, 10))...)
+		b = append(b, []byte(":")...)
+		b = append(b, []byte(strconv.FormatInt(x.Value, 10))...)
 	}
-
-	return LabelsHash(hasher.Sum64())
+	h := xxhash.Sum64(b)
+	b = b[:0]
+	bytesPool.Put(b) // nolint:staticcheck
+	return LabelsHash(h)
 }
 
 func NewLabels(items []*Label) Labels {

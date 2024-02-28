@@ -7,8 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+/*
+# PprofTranslator: Pprof 数据协议转换器
 
-type Config struct {
-	Type string `config:"type" mapstructure:"type"`
-}
+processor:
+    - name: "pprof_translator/common"
+      config:
+        type: "spy"
+*/
+
+package pproftranslator

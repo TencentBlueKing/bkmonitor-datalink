@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+package pproftranslator
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/jfr"
 )
 
 // isEqual 因为 sdk 里面解析原因，原始数组中空数组会被解析为 nil，所以测试时需要认为他们是一致的
@@ -46,14 +46,14 @@ func isEqual(a, b interface{}) bool {
 	return true
 }
 
-func TestDefaultConverter(t *testing.T) {
-	d := &DefaultPprofable{}
+func TestDefaultTranslator(t *testing.T) {
+	d := &DefaultTranslator{}
 
 	t.Run("invalid data type", func(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: "invalid",
 		}
-		_, err := d.Parse(pd)
+		_, err := d.Translate(pd)
 		assert.Error(t, err)
 	})
 
@@ -61,7 +61,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin{},
 		}
-		_, err := d.Parse(pd)
+		_, err := d.Translate(pd)
 		assert.Error(t, err)
 	})
 
@@ -69,7 +69,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin("any"),
 		}
-		profilesData, err := d.Parse(pd)
+		profilesData, err := d.Translate(pd)
 		assert.Error(t, err)
 		assert.Nil(t, profilesData)
 	})
@@ -88,7 +88,7 @@ func TestDefaultConverter(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: define.ProfilePprofFormatOrigin(buf.Bytes()),
 		}
-		profilesData, err := d.Parse(pd)
+		profilesData, err := d.Translate(pd)
 		assert.NoError(t, err)
 		assert.Equal(t, pd.Metadata, profilesData.Metadata)
 		assert.Equal(t, 1, len(profilesData.Profiles))
@@ -96,14 +96,14 @@ func TestDefaultConverter(t *testing.T) {
 	})
 }
 
-func TestJfrConverter(t *testing.T) {
-	c := &jfr.Converter{}
+func TestJfrTranslator(t *testing.T) {
+	c := &jfr.Translator{}
 
 	t.Run("invalid data type", func(t *testing.T) {
 		pd := define.ProfilesRawData{
 			Data: "invalid",
 		}
-		_, err := c.Parse(pd)
+		_, err := c.Translate(pd)
 		assert.Error(t, err)
 	})
 
@@ -115,12 +115,12 @@ func TestJfrConverter(t *testing.T) {
 			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
 			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
 		}
-		_, err = c.Parse(jfrData)
+		_, err = c.Translate(jfrData)
 		assert.NoError(t, err)
 	})
 
 	t.Run("valid data by convert entry", func(t *testing.T) {
-		entry := spyNameJudgeConverter{}
+		entry := spyNameTranslator{}
 		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
 		assert.NoError(t, err)
 
@@ -128,17 +128,17 @@ func TestJfrConverter(t *testing.T) {
 			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
 			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
 		}
-		_, err = entry.Parse(jfrData)
+		_, err = entry.Translate(jfrData)
 		assert.NoError(t, err)
 	})
 }
 
-func TestSwitchConverter(t *testing.T) {
-	c := Config{Type: "spy_converter"}
-	entry := NewPprofConverter(c)
-	assert.IsType(t, entry, &spyNameJudgeConverter{})
+func TestSpyNameJudgeTranslator(t *testing.T) {
+	c := Config{Type: "spy"}
+	entry := NewPprofTranslator(c)
+	assert.IsType(t, entry, &spyNameTranslator{})
 
 	c = Config{Type: "default"}
-	entry = NewPprofConverter(c)
-	assert.IsType(t, entry, &spyNameJudgeConverter{})
+	entry = NewPprofTranslator(c)
+	assert.IsType(t, entry, &spyNameTranslator{})
 }

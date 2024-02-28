@@ -17,8 +17,8 @@ import (
 	"github.com/grafana/jfr-parser/parser/types"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/builder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/builder"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/models"
 )
 
 type jfrPprofBuilder struct {

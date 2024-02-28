@@ -15,25 +15,24 @@ import (
 
 	"github.com/grafana/jfr-parser/parser"
 	"github.com/grafana/jfr-parser/parser/types"
-	types2 "github.com/grafana/jfr-parser/parser/types"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func TestAddStacktrace(t *testing.T) {
-	methodIdMap := types2.NewIDMap[types2.MethodRef](0)
-	methodIdMap.Set(types2.MethodRef(1), 1)
-	methodIdMap.Set(types2.MethodRef(2), 2)
+	methodIdMap := types.NewIDMap[types.MethodRef](0)
+	methodIdMap.Set(types.MethodRef(1), 1)
+	methodIdMap.Set(types.MethodRef(2), 2)
 	// 构造一个堆栈
 	mockParser := &parser.Parser{
-		Stacktrace: types2.StackTraceList{
-			IDMap:      map[types2.StackTraceRef]uint32{types2.StackTraceRef(0): 0},
-			StackTrace: []types2.StackTrace{{Truncated: false, Frames: []types2.StackFrame{{Method: 1}}}},
+		Stacktrace: types.StackTraceList{
+			IDMap:      map[types.StackTraceRef]uint32{types.StackTraceRef(0): 0},
+			StackTrace: []types.StackTrace{{Truncated: false, Frames: []types.StackFrame{{Method: 1}}}},
 		},
-		Methods: types2.MethodList{
+		Methods: types.MethodList{
 			IDMap:  methodIdMap,
-			Method: []types2.Method{{Type: sampleTypeCPU, Name: sampleTypeLock}, {Type: sampleTypeCPU, Name: sampleTypeWall}},
+			Method: []types.Method{{Type: sampleTypeCPU, Name: sampleTypeLock}, {Type: sampleTypeCPU, Name: sampleTypeWall}},
 		},
 	}
 

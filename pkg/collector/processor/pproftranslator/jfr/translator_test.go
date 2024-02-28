@@ -19,7 +19,7 @@ import (
 )
 
 func TestJfrConvertBody(t *testing.T) {
-	c := &Converter{}
+	c := &Translator{}
 
 	t.Run("invalid data type", func(t *testing.T) {
 		_, _, err := c.convertBody("invalid")
@@ -36,8 +36,8 @@ func TestJfrConvertBody(t *testing.T) {
 	})
 }
 
-func TestConverter_ParseToPprof(t *testing.T) {
-	c := &Converter{}
+func TestTranslator(t *testing.T) {
+	c := &Translator{}
 	data, err := ReadGzipFile("../testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
 	assert.NoError(t, err)
 
@@ -57,13 +57,10 @@ func TestConverter_ParseToPprof(t *testing.T) {
 		Data: define.ProfileJfrFormatOrigin{Jfr: data},
 	}
 
-	t.Run("Test Parse", func(t *testing.T) {
-		result, err := c.Parse(pd)
-
-		assert.Nil(t, err)
-
+	t.Run("Success", func(t *testing.T) {
+		result, err := c.Translate(pd)
+		assert.NoError(t, err)
 		assert.Equal(t, pd.Metadata, result.Metadata)
-
 		assert.NotNil(t, result.Profiles)
 	})
 }

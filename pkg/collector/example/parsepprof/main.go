@@ -19,11 +19,12 @@ import (
 	"github.com/google/pprof/profile"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/jfr"
 )
 
-// main Profile 命令行工具，用来解析导出的 Pprof 格式、Jfr 格式的 Profile 数据
+// Profile 命令行工具，用来解析导出的 Pprof 格式、Jfr 格式的 Profile 数据
+
 func main() {
 	dataFilePath := flag.String("data", "", "data file, e.g. cortex-dev-01__kafka-0__cpu__0.jfr.gz")
 	labelsFilePath := flag.String("labels", "", "labels file, e.g. dump1.labels.pb.gz")
@@ -56,27 +57,33 @@ func main() {
 			panic(err)
 		}
 
-		jfrConverter := &jfr.Converter{}
-		profiles, err := jfrConverter.Parse(
+		jfrConverter := &jfr.Translator{}
+		profiles, err := jfrConverter.Translate(
 			define.ProfilesRawData{
 				Metadata: metadata,
 				Data:     define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes},
 			},
 		)
-		log.Printf("\n %d profiles converted. \n", len(profiles.Profiles))
+		log.Printf("%d profiles converted.\n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
+
 	case define.FormatPprof:
 		data, err := os.ReadFile(*dataFilePath)
 		if err != nil {
 			panic(err)
 		}
-		pprofConverter := &pprofconverter.DefaultPprofable{}
-		profiles, err := pprofConverter.Parse(
-			define.ProfilesRawData{Metadata: metadata, Data: define.ProfilePprofFormatOrigin(data)})
-		log.Printf("\n %d profiles converted. \n", len(profiles.Profiles))
+		pprofConverter := &pproftranslator.DefaultTranslator{}
+		profiles, err := pprofConverter.Translate(
+			define.ProfilesRawData{
+				Metadata: metadata,
+				Data:     define.ProfilePprofFormatOrigin(data),
+			},
+		)
+		log.Printf("%d profiles converted.\n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
+
 	default:
 		panic("unsupported input type")
 	}
@@ -85,7 +92,7 @@ func main() {
 func prettyPrintProfiles(profiles []*profile.Profile) {
 	for _, p := range profiles {
 		for _, location := range p.Location {
-			log.Printf("ID: %v Address: %v FirstLine: %d FirstFunction: %s \n",
+			log.Printf("ID: %v Address: %v FirstLine: %d FirstFunction: %s\n",
 				location.ID, location.Address, location.Line[0].Line, location.Line[0].Function.Name)
 		}
 	}
@@ -105,5 +112,5 @@ func writeProfilesToFile(profiles []*profile.Profile) {
 	if err := os.WriteFile("profiles.pb.gz", data, 0o644); err != nil {
 		panic(err)
 	}
-	log.Printf("writing profiles to file finished -> profiles.pb.gz")
+	log.Printf("writing profiles to file finished -> profiles.pb.gz\n")
 }

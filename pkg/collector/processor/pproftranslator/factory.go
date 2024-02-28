@@ -7,20 +7,19 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+package pproftranslator
 
 import (
-	"fmt"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/mapstructure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/pkg/errors"
 )
 
 func init() {
-	processor.Register(define.ProcessorPprofConverter, NewFactory)
+	processor.Register(define.ProcessorPprofTranslator, NewFactory)
 }
 
 func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
@@ -35,7 +34,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		return nil, err
 	}
 
-	configs.SetGlobal(NewPprofConverter(c))
+	configs.SetGlobal(NewPprofTranslator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -43,7 +42,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofConverter(cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofTranslator(cfg))
 	}
 
 	return &pprofConverter{
@@ -58,7 +57,7 @@ type pprofConverter struct {
 }
 
 func (p *pprofConverter) Name() string {
-	return define.ProcessorPprofConverter
+	return define.ProcessorPprofTranslator
 }
 
 func (p *pprofConverter) IsDerived() bool {
@@ -81,16 +80,16 @@ func (p *pprofConverter) Reload(config map[string]interface{}, customized []proc
 }
 
 func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) {
-	entry := p.configs.GetByToken(record.Token.Original).(PprofConverter)
+	entry := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {
-		return nil, fmt.Errorf("invalid profile data type: %T", record.Data)
+		return nil, errors.Errorf("invalid profile data type: %T", record.Data)
 	}
 
-	profileData, err := entry.Parse(rawProfile)
+	profileData, err := entry.Translate(rawProfile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert data to pprof format, err: %s", err)
+		return nil, errors.Wrap(err, "failed to translate data to pprof format")
 	}
 
 	record.Data = profileData

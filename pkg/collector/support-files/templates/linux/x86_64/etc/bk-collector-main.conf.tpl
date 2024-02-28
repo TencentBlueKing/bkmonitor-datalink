@@ -266,10 +266,10 @@ bk-collector:
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
 
-    # Pprof converter: pprof 协议转换器
-    - name: "pprof_converter/common"
+    # PprofTranslator: pprof 协议转换器
+    - name: "pprof_translator/common"
       config:
-        type: "spy_converter"
+        type: "spy"
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"

@@ -23,6 +23,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+func TestReady(t *testing.T) {
+	assert.NotPanics(t, Ready)
+}
+
 func TestHttpInvalidParams(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")

@@ -149,6 +149,7 @@ bk-collector 提供了多种内置的 Processor 进行数据的清洗，具体�
 * forwarder: 数据转发器
 * licensecheker: license 校验器
 * metricsfilter: 指标清洗处理器
+* pproftranslator: pprof 数据协议转换器
 * probefilter: 探针根据配置上报数据处理器
 * ratelimiter: 限流处理器
 * resourcefilter: 资源清洗处理器

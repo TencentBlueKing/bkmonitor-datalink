@@ -10,7 +10,6 @@
 package jfr
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/grafana/jfr-parser/parser"
@@ -49,40 +48,40 @@ const (
 	UnitBytes       = "bytes"
 )
 
-// Converter JFR数据解析器
-type Converter struct{}
+// Translator JFR 数据解析器
+type Translator struct{}
 
-func (c *Converter) convertBody(body any) ([]byte, *LabelsSnapshot, error) {
+func (c *Translator) convertBody(body any) ([]byte, *LabelsSnapshot, error) {
 	jfrData, ok := body.(define.ProfileJfrFormatOrigin)
 	if !ok {
-		return nil, nil, errors.Errorf("jfr converter failed, can not convert body to JfrOrigin")
+		return nil, nil, errors.Errorf("excepted JfrFormatOrigin type, but got %T", body)
 	}
 	depressedData, err := Decompress(jfrData.Jfr)
 	if err != nil {
-		return nil, nil, errors.Errorf("jfr converter failed, can not decompress jfr data, error: %s", err)
+		return nil, nil, errors.Wrap(err, "decompress jfr data failed")
 	}
+
 	jfrLabels := new(LabelsSnapshot)
 	depressedLabels, err := Decompress(jfrData.Labels)
 	if err != nil {
-		logger.Warnf("can not decompress jfr labels, error: %s", err)
+		logger.Warnf("decompress jfr labels failed, error: %s", err)
 	} else {
 		err = proto.Unmarshal(depressedLabels, jfrLabels)
 		if err != nil {
-			logger.Warnf("can not convert jfr labels, error: %s", err)
+			logger.Warnf("unmarshal jfr labels failed, error: %s", err)
 		}
 	}
 	return depressedData, jfrLabels, nil
 }
 
-// Parse jfr 数据格式解析主方法
-func (c *Converter) Parse(pd define.ProfilesRawData) (*define.ProfilesData, error) {
+// Translate jfr 数据格式解析主方法
+func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData, error) {
 	depressedData, jfrLabels, err := c.convertBody(pd.Data)
 	if err != nil {
 		return nil, err
 	}
 
 	jfrParser := parser.NewParser(depressedData, parser.Options{SymbolProcessor: processSymbols})
-
 	builders := newJfrPprofBuilders(jfrParser, jfrLabels, pd.Metadata)
 
 	values := [2]int64{1, 0}
@@ -93,7 +92,7 @@ func (c *Converter) Parse(pd define.ProfilesRawData) (*define.ProfilesData, erro
 			if err == io.EOF {
 				break
 			}
-			return nil, fmt.Errorf("jfr parser ParseEvent error: %w", err)
+			return nil, errors.Wrap(err, "jfr parser ParseEvent failed")
 		}
 
 		switch eventType {

@@ -7,10 +7,10 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+package pproftranslator
 
 import (
-	"fmt"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -20,14 +20,14 @@ import (
 )
 
 func init() {
-	processor.Register(define.ProcessorPprofConverter, NewFactory)
+	processor.Register(define.ProcessorPprofTranslator, NewFactory)
 }
 
 func NewFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (processor.Processor, error) {
 	return newFactory(conf, customized)
 }
 
-func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*pprofConverter, error) {
+func newFactory(conf map[string]interface{}, customized []processor.SubConfigProcessor) (*pprofTranslator, error) {
 	configs := confengine.NewTierConfig()
 
 	var c Config
@@ -35,7 +35,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 		return nil, err
 	}
 
-	configs.SetGlobal(NewPprofConverter(c))
+	configs.SetGlobal(NewPprofTranslator(c))
 
 	for _, custom := range customized {
 		var cfg Config
@@ -43,33 +43,33 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
-		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofConverter(cfg))
+		configs.Set(custom.Token, custom.Type, custom.ID, NewPprofTranslator(cfg))
 	}
 
-	return &pprofConverter{
+	return &pprofTranslator{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		configs:         configs,
 	}, nil
 }
 
-type pprofConverter struct {
+type pprofTranslator struct {
 	processor.CommonProcessor
 	configs *confengine.TierConfig
 }
 
-func (p *pprofConverter) Name() string {
-	return define.ProcessorPprofConverter
+func (p *pprofTranslator) Name() string {
+	return define.ProcessorPprofTranslator
 }
 
-func (p *pprofConverter) IsDerived() bool {
+func (p *pprofTranslator) IsDerived() bool {
 	return false
 }
 
-func (p *pprofConverter) IsPreCheck() bool {
+func (p *pprofTranslator) IsPreCheck() bool {
 	return false
 }
 
-func (p *pprofConverter) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
+func (p *pprofTranslator) Reload(config map[string]interface{}, customized []processor.SubConfigProcessor) {
 	f, err := newFactory(config, customized)
 	if err != nil {
 		logger.Errorf("failed to reload processor: %v", err)
@@ -80,17 +80,17 @@ func (p *pprofConverter) Reload(config map[string]interface{}, customized []proc
 	p.configs = f.configs
 }
 
-func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) {
-	entry := p.configs.GetByToken(record.Token.Original).(PprofConverter)
+func (p *pprofTranslator) Process(record *define.Record) (*define.Record, error) {
+	translator := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {
-		return nil, fmt.Errorf("invalid profile data type: %T", record.Data)
+		return nil, errors.Errorf("invalid profile data type: %T", record.Data)
 	}
 
-	profileData, err := entry.Parse(rawProfile)
+	profileData, err := translator.Translate(rawProfile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert data to pprof format, err: %s", err)
+		return nil, errors.Wrap(err, "failed to translate data to pprof format")
 	}
 
 	record.Data = profileData

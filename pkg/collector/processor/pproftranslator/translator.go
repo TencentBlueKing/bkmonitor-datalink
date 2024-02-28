@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+package pproftranslator
 
 import (
 	"bytes"
@@ -16,15 +16,26 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pprofconverter/jfr"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/jfr"
 )
 
-type Pprofable interface{}
+// PprofTranslator pprof 数据类型转换器 将特定格式数据转换为 Profile
+type PprofTranslator interface {
+	Translate(define.ProfilesRawData) (*define.ProfilesData, error)
+}
 
-type DefaultPprofable struct{}
+func NewPprofTranslator(c Config) PprofTranslator {
+	switch c.Type {
+	case "spy":
+		return &spyNameTranslator{}
+	default:
+		return &spyNameTranslator{}
+	}
+}
 
-// Parse 默认 pprof 数据格式
-func (d *DefaultPprofable) Parse(pd define.ProfilesRawData) (*define.ProfilesData, error) {
+type DefaultTranslator struct{}
+
+func (d *DefaultTranslator) Translate(pd define.ProfilesRawData) (*define.ProfilesData, error) {
 	rawData, ok := pd.Data.(define.ProfilePprofFormatOrigin)
 	if !ok {
 		return nil, errors.Errorf(
@@ -42,35 +53,21 @@ func (d *DefaultPprofable) Parse(pd define.ProfilesRawData) (*define.ProfilesDat
 	buf.Write(rawData)
 	pp, err := profile.Parse(&buf)
 	if err != nil {
-		return nil, errors.Errorf("failed to parse profile, error: %s", err)
+		return nil, errors.Wrap(err, "failed to parse profile")
 	}
 
 	return &define.ProfilesData{Metadata: pd.Metadata, Profiles: []*profile.Profile{pp}}, nil
 }
 
-func NewPprofConverter(c Config) PprofConverter {
-	switch c.Type {
-	case "spy_converter":
-		return &spyNameJudgeConverter{}
-	default:
-		return &spyNameJudgeConverter{}
-	}
-}
+type spyNameTranslator struct{}
 
-type PprofConverter interface {
-	// Parse 将特定格式数据转换为 Profile
-	Parse(define.ProfilesRawData) (*define.ProfilesData, error)
-}
-
-type spyNameJudgeConverter struct{}
-
-func (s *spyNameJudgeConverter) Parse(r define.ProfilesRawData) (*define.ProfilesData, error) {
+func (s *spyNameTranslator) Translate(r define.ProfilesRawData) (*define.ProfilesData, error) {
 	switch r.Metadata.Format {
 	case define.FormatJFR:
-		converter := jfr.Converter{}
-		return converter.Parse(r)
+		translator := jfr.Translator{}
+		return translator.Translate(r)
 	default:
-		converter := DefaultPprofable{}
-		return converter.Parse(r)
+		translator := DefaultTranslator{}
+		return translator.Translate(r)
 	}
 }

@@ -224,26 +224,27 @@ func copyBody(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// convertToOrigin 将 Http.Body 转换为 converter 所需的数据格式
+// convertToOrigin 将 Http.Body 转换为 translator 所需的数据格式
 func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
 	switch spyName {
 	case JavaSpy:
 		dataProfile, err := ReadField(form, "jfr")
 		if err != nil {
-			return nil, errors.Errorf("failed to read field: [jfr] from form of spyName: %s, error: %s", spyName, err)
+			return nil, errors.Wrapf(err, "failed to read jfr field from form of spyName: %s", spyName)
 		}
 		labelsProfile, err := ReadField(form, "labels")
 		if err != nil {
-			return nil, errors.Errorf("failed to read field: [labels] from form of spyName: %s, error: %s", spyName, err)
+			return nil, errors.Wrapf(err, "failed to read labels field from form of spyName: %s", spyName)
 		}
 		logger.Debugf("receive jfr profile data, len: %d, labels len: %d", len(dataProfile), len(labelsProfile))
 		return define.ProfileJfrFormatOrigin{Jfr: dataProfile, Labels: labelsProfile}, nil
+
 	default:
 		dataProfile, err := ReadField(form, "profile")
 		if err != nil {
-			return nil, errors.Errorf("failed to read field: [profile] from form of spyName: %s, error: %s", spyName, err)
+			return nil, errors.Wrapf(err, "failed to read profile field: from form of spyName: %s", spyName)
 		}
-		logger.Debugf("receive spyName: %s profile data, len: %d, labels len: %d", spyName, len(dataProfile))
+		logger.Debugf("receive spyName: %s profile data, len: %d", spyName, len(dataProfile))
 		return define.ProfilePprofFormatOrigin(dataProfile), nil
 	}
 }

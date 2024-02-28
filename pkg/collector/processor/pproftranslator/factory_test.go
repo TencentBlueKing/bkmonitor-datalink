@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pprofconverter
+package pproftranslator
 
 import (
 	"bytes"
@@ -26,17 +26,17 @@ import (
 func TestFactory(t *testing.T) {
 	content := `
 processor:
-  - name: "pprof_converter/common"
+  - name: "pprof_translator/common"
     config:
-      type: "spy_converter"
+      type: "spy"
 `
 	mainConf := processor.MustLoadConfigs(content)[0].Config
 
 	customContent := `
 processor:
-  - name: "pprof_converter/common"
+  - name: "pprof_translator/common"
     config:
-      type: "spy_converter"
+      type: "spy"
 `
 	customConf := processor.MustLoadConfigs(customContent)[0].Config
 
@@ -49,14 +49,14 @@ processor:
 			},
 		},
 	})
-	factory := obj.(*pprofConverter)
+	factory := obj.(*pprofTranslator)
 	assert.NoError(t, err)
 	assert.Equal(t, mainConf, factory.MainConfig())
 
 	var c evaluator.Config
 	assert.NoError(t, mapstructure.Decode(mainConf, &c))
 
-	assert.Equal(t, define.ProcessorPprofConverter, factory.Name())
+	assert.Equal(t, define.ProcessorPprofTranslator, factory.Name())
 	assert.False(t, factory.IsDerived())
 	assert.False(t, factory.IsPreCheck())
 
@@ -68,9 +68,9 @@ processor:
 func TestFactoryProcess(t *testing.T) {
 	content := `
 processor:
-  - name: "pprof_converter/common"
+  - name: "pprof_translator/common"
     config:
-      type: "spy_converter"
+      type: "spy"
 `
 	mainConf := processor.MustLoadConfigs(content)[0].Config
 	obj, err := NewFactory(mainConf, []processor.SubConfigProcessor{
@@ -79,7 +79,7 @@ processor:
 			Type:  define.SubConfigFieldDefault,
 		},
 	})
-	factory := obj.(*pprofConverter)
+	factory := obj.(*pprofTranslator)
 	assert.NoError(t, err)
 
 	t.Run("invalid data", func(t *testing.T) {

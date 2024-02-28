@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/pproftranslator/jfr"
 )
 
 // isEqual 因为 sdk 里面解析原因，原始数组中空数组会被解析为 nil，所以测试时需要认为他们是一致的
@@ -93,43 +92,6 @@ func TestDefaultTranslator(t *testing.T) {
 		assert.Equal(t, pd.Metadata, profilesData.Metadata)
 		assert.Equal(t, 1, len(profilesData.Profiles))
 		assert.True(t, isEqual(*p.Sample[0], *profilesData.Profiles[0].Sample[0]))
-	})
-}
-
-func TestJfrTranslator(t *testing.T) {
-	c := &jfr.Translator{}
-
-	t.Run("invalid data type", func(t *testing.T) {
-		pd := define.ProfilesRawData{
-			Data: "invalid",
-		}
-		_, err := c.Translate(pd)
-		assert.Error(t, err)
-	})
-
-	t.Run("valid data", func(t *testing.T) {
-		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
-		assert.NoError(t, err)
-
-		jfrData := define.ProfilesRawData{
-			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
-			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
-		}
-		_, err = c.Translate(jfrData)
-		assert.NoError(t, err)
-	})
-
-	t.Run("valid data by convert entry", func(t *testing.T) {
-		entry := spyNameTranslator{}
-		data, err := jfr.ReadGzipFile("testdata/jfr_cortex-dev-01__kafka-0__cpu_lock_alloc__0.jfr.gz")
-		assert.NoError(t, err)
-
-		jfrData := define.ProfilesRawData{
-			Data:     define.ProfileJfrFormatOrigin{Jfr: data},
-			Metadata: define.ProfileMetadata{Format: define.FormatJFR},
-		}
-		_, err = entry.Translate(jfrData)
-		assert.NoError(t, err)
 	})
 }
 

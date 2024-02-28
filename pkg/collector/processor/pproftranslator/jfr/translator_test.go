@@ -63,4 +63,12 @@ func TestTranslator(t *testing.T) {
 		assert.Equal(t, pd.Metadata, result.Metadata)
 		assert.NotNil(t, result.Profiles)
 	})
+
+	t.Run("Invalid", func(t *testing.T) {
+		pd := define.ProfilesRawData{
+			Data: "invalid",
+		}
+		_, err := c.Translate(pd)
+		assert.Error(t, err)
+	})
 }

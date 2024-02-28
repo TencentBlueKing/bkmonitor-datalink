@@ -92,7 +92,7 @@ func (c *Translator) Translate(pd define.ProfilesRawData) (*define.ProfilesData,
 			if err == io.EOF {
 				break
 			}
-			return nil, errors.Errorf("jfr parser ParseEvent error: %v", err)
+			return nil, errors.Wrap(err, "jfr parser ParseEvent failed")
 		}
 
 		switch eventType {

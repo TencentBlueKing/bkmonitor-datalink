@@ -81,14 +81,14 @@ func (p *pprofConverter) Reload(config map[string]interface{}, customized []proc
 }
 
 func (p *pprofConverter) Process(record *define.Record) (*define.Record, error) {
-	entry := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
+	translator := p.configs.GetByToken(record.Token.Original).(PprofTranslator)
 
 	rawProfile, ok := record.Data.(define.ProfilesRawData)
 	if !ok {
 		return nil, errors.Errorf("invalid profile data type: %T", record.Data)
 	}
 
-	profileData, err := entry.Translate(rawProfile)
+	profileData, err := translator.Translate(rawProfile)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to translate data to pprof format")
 	}

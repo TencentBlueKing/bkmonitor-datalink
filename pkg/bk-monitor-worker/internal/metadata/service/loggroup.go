@@ -157,7 +157,7 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 		if !equal {
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] custom log subscription task config has changed, old [%s] new [%s]", subscrip.Config, newConfig)
-				_ = metrics.MysqlCount(subscrip.TableName(), "deploy_update_config", float64(len(subscripList)))
+				metrics.MysqlCount(subscrip.TableName(), "deploy_update_config", float64(len(subscripList)))
 				return nil
 			}
 			logger.Infof("custom log subscription task config has changed, update it")
@@ -181,7 +181,7 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 	}
 	if cfg.BypassSuffixPath != "" {
 		logger.Infof("[db_diff]create LogSubscriptionConfig with bk_biz_id [%v] log_name [%v] config [%s]", s.BkBizID, s.LogGroupName, newConfig)
-		_ = metrics.MysqlCount(customreport.LogSubscriptionConfig{}.TableName(), "deploy_create", 1)
+		metrics.MysqlCount(customreport.LogSubscriptionConfig{}.TableName(), "deploy_create", 1)
 		return nil
 	}
 	resp, err := apiservice.Nodeman.CreateSubscription(subscriptionParams)

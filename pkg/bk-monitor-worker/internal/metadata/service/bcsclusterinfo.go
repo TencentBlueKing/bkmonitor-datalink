@@ -1270,7 +1270,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				logger.Errorf("set dimensionValues for sapce_id [%s] failed, %v", sp.SpaceId, err)
 				continue
 			}
-			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource", 1)
+			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] create SpaceResource [%#v]", sr)
 			} else {
@@ -1311,7 +1311,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				logger.Errorf("marshal dimensionValues [%#v] failed, %v", dimensionValues, err)
 				continue
 			}
-			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource", 1)
+			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] update SpaceResource space_id [%s], dimension_values is different old [%v] new [%v]", sp.SpaceId, dms, dimensionValues)
 			} else {

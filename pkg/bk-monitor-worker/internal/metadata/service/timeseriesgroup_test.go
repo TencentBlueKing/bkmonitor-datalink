@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
@@ -43,6 +44,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	db.Delete(&customreport.TimeSeriesMetric{}, "group_id = ?", tsm.TimeSeriesGroupID)
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", tsm.TableID)
 	score := float64(time.Now().Add(-600 * time.Second).Unix())
+
 	mockerClient, redisPatch := mocker.DependenceRedisMocker()
 	defer redisPatch.Reset()
 	mockerClient.ZcountValue = 2

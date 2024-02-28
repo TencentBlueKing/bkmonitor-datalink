@@ -66,7 +66,7 @@ func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map
 				BkDataId:          dataid,
 				FromAuthorization: fromAuthorization,
 			}
-			_ = metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
+			metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", spaceType, spaceId, dataid, fromAuthorization)
 			} else {
@@ -97,7 +97,7 @@ func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {
 		return errors.Wrapf(err, "getRealZeroBizDataId failed")
 	}
 	db := mysql.GetDBSession().DB
-	_ = metrics.MysqlCount(resulttable.DataSource{}.TableName(), "SyncBkccSpaceDataSource_updateZeroDataId", float64(len(zeroDataIdList)))
+	metrics.MysqlCount(resulttable.DataSource{}.TableName(), "SyncBkccSpaceDataSource_updateZeroDataId", float64(len(zeroDataIdList)))
 	if cfg.BypassSuffixPath != "" {
 		for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
 			logger.Infof("[db_diff] updated DataSource for [%v](exclude[%v]) with is_platform_data_id [true] space_type_id [%s]", chunkDataIds, models.SkipDataIdListForBkcc, models.SpaceTypeBKCC)
@@ -318,7 +318,7 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 				SpaceId:     strconv.Itoa(bizId),
 				BkDataId:    id,
 			}
-			_ = metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "CreateBkccSpaceDataSource_create_ds", 1)
+			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "CreateBkccSpaceDataSource_create_ds", 1)
 			if cfg.BypassSuffixPath != "" {
 				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v]", sd.SpaceTypeId, sd.SpaceId, sd.BkDataId)
 			} else {
@@ -331,7 +331,7 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 	}
 	// 设置数据源类型为 bkcc
 	if len(dataIdList) != 0 {
-		_ = metrics.MysqlCount(resulttable.DataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds", float64(len(dataIdList)))
+		metrics.MysqlCount(resulttable.DataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds", float64(len(dataIdList)))
 		if cfg.BypassSuffixPath != "" {
 			logger.Infof("[db_diff] updated DataSource with space_type [%s] for bk_data_id [%v]", models.SpaceTypeBKCC, dataIdList)
 		} else {

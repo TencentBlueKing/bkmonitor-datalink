@@ -425,7 +425,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return nil
 	}
 	logger.Infof("data_id [%v] gse route config [%v] is different from gse [%v], will refresh it", d.BkDataId, config, oldRoute)
-	_ = metrics.GSEUpdateCount(d.BkDataId)
+	metrics.GSEUpdateCount(d.BkDataId)
 	var updateResult define.APICommonResp
 	_, err = gseApi.UpdateRoute().SetBody(map[string]interface{}{
 		"condition": map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
@@ -465,7 +465,7 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 	if err != nil {
 		return err
 	}
-	_ = metrics.GSEUpdateCount(d.BkDataId)
+	metrics.GSEUpdateCount(d.BkDataId)
 	var resp define.APICommonResp
 	_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
 	if err != nil {

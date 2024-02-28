@@ -202,7 +202,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	}
 
 	status := metadata.GetStatus(ctx)
-	if status.Code != "" {
+	if status != nil {
 		r.Step("metadata status", status)
 	}
 }

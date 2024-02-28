@@ -144,6 +144,8 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) {
 	var err error
 
+	r.Step("query ts", q)
+
 	user := metadata.GetUser(ctx)
 	r.Step("metadata user", user)
 

@@ -144,6 +144,9 @@ func HandlerCheckQueryPromQL(c *gin.Context) {
 func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) {
 	var err error
 
+	user := metadata.GetUser(ctx)
+	r.Step("metadata user", user)
+
 	// 查询转换信息
 	qr, err := q.ToQueryReference(ctx)
 	if err != nil {
@@ -200,7 +203,6 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 
 	status := metadata.GetStatus(ctx)
 	if status.Code != "" {
-		r.Step("status code", status.Code)
-		r.Step("status message", status.Message)
+		r.Step("metadata status", status)
 	}
 }

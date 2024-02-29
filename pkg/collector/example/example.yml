@@ -482,9 +482,9 @@ bk-collector:
         type: "proxy"
 
     # Pprof converter: pprof 协议转换器
-    - name: "pprof_converter/common"
+    - name: "pprof_translator/common"
       config:
-        type: "spy_converter"
+        type: "spy"
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
@@ -1071,7 +1071,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
-        - "pprof_converter/common"
+        - "pprof_translator/common"
 
     - name: "profiles_pipeline/common"
       type: "fta"

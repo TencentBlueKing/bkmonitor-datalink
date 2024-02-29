@@ -1782,7 +1782,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "sampler/drop"
-        - "pprof_converter/common"
+        - "pprof_translator/common"
 
   # =============================== Exporter =================================
   exporter:

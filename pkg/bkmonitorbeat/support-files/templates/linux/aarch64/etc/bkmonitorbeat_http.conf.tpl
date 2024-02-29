@@ -35,7 +35,7 @@ tasks: {% for task in tasks %}
             {{ key }}: {{ value }}
         {% endfor %}
         available_duration: {{ step.available_duration }}
-        request: "{{ step.request or '' | replace('\r\n', '\\n') | replace('\r', '\\n') | replace('\n', '\\n') }}"
+        request: "{{ (step.request or '') | replace('\r\n', '\n') | replace('\r', '\n') | replace('\n', '\n') }}"
         # 请求格式（raw/hex）
         request_format: {{ step.request_format | default("raw", true) }}
         response: {{ step.response or '' }}

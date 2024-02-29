@@ -350,13 +350,25 @@ func (BcsClusterInfoSvc) fetchBcsStorage(clusterId, field, sourceType string) ([
 
 // 获取BCSPod统计数据
 func (b BcsClusterInfoSvc) getPodCountStatistics(bcsClusterId string) (map[string]int, error) {
-	var bcsPodList []bcs.BCSPod
-	var result = make(map[string]int)
-	if err := bcs.NewBCSPodQuerySet(mysql.GetDBSession().DB).BcsClusterIDEq(bcsClusterId).All(&bcsPodList); err != nil {
-		return nil, err
+	podInfo, err := apiservice.BcsStorage.Fetch(bcsClusterId, "Pod", []string{"data.status.hostIP"})
+	if err != nil {
+		return nil, errors.Wrapf(err, "fetch cluster [%s] Pod Resource failed", bcsClusterId)
 	}
-	for _, p := range bcsPodList {
-		result[p.NodeIp] = result[p.NodeIp] + 1
+	var result = make(map[string]int)
+	for _, p := range podInfo {
+		podData, ok := p["data"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		podStatus, ok := podData["status"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nodeIP, ok := podStatus["hostIP"].(string)
+		if !ok {
+			continue
+		}
+		result[nodeIP] = result[nodeIP] + 1
 	}
 	return result, nil
 }

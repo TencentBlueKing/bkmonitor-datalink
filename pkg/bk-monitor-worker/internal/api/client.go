@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsclustermanager"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsproject"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsstorage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
@@ -34,6 +35,7 @@ var (
 	muForBcsApi            sync.Mutex
 	muForBcsProjectApi     sync.Mutex
 	muForBcsClusterManager sync.Mutex
+	muForBcsStorage        sync.Mutex
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
@@ -45,6 +47,7 @@ var (
 	bcsApi            *bcs.Client
 	bcsProjectApi     *bcsproject.Client
 	bcsClusterManager *bcsclustermanager.Client
+	bcsStorage        *bcsstorage.Client
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
@@ -108,6 +111,25 @@ func GetBcsApi() (*bcs.Client, error) {
 		return nil, err
 	}
 	return bcsApi, nil
+}
+
+// GetBcsStorageApi 获取BcsStorageApi客户端
+func GetBcsStorageApi() (*bcsstorage.Client, error) {
+	muForBcsStorage.Lock()
+	defer muForBcsStorage.Unlock()
+	if bcsClusterManager != nil {
+		return bcsStorage, nil
+	}
+	config := bkapi.ClientConfig{
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/storage/k8s/dynamic/all_resources/clusters", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		JsonMarshaler: jsonx.Marshal,
+	}
+	var err error
+	bcsStorage, err = bcsstorage.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), NewHeaderProvider(map[string]string{"Authorization": fmt.Sprintf("Bearer %s", cfg.BkApiBcsApiGatewayToken)}))
+	if err != nil {
+		return nil, err
+	}
+	return bcsStorage, nil
 }
 
 // GetBcsClusterManagerApi 获取BcsClusterManagerApi客户端

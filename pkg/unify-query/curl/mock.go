@@ -17,12 +17,11 @@ import (
 	"net/url"
 
 	"github.com/pkg/errors"
-	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func NewMockCurl(data map[string]string, log *otelzap.Logger) *TestCurl {
+func NewMockCurl(data map[string]string, log *log.Logger) *TestCurl {
 	return &TestCurl{
 		log:  log,
 		data: data,
@@ -30,7 +29,7 @@ func NewMockCurl(data map[string]string, log *otelzap.Logger) *TestCurl {
 }
 
 type TestCurl struct {
-	log  *otelzap.Logger
+	log  *log.Logger
 	data map[string]string
 
 	Url    string
@@ -51,7 +50,7 @@ func (c *TestCurl) resp(body string) *http.Response {
 }
 
 func (c *TestCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
-	log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
+	c.log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
 
 	c.Url = opt.UrlPath
 	c.Params = opt.Body

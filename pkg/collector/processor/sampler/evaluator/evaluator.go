@@ -26,10 +26,15 @@ type Config struct {
 	// status_code evaluator
 	MaxDuration time.Duration `config:"max_duration" mapstructure:"max_duration"`
 	StatusCode  []string      `config:"status_code" mapstructure:"status_code"`
+
+	// drop evaluator
+	// 目前 enabled 字段只对 drop evaluator 生效
+	Enabled bool `config:"enabled" mapstructure:"enabled"`
 }
 
 const (
 	evaluatorTypeAlways     = "always"
+	evaluatorTypeDrop       = "drop"
 	evaluatorTypeRandom     = "random"
 	evaluatorTypeStatusCode = "status_code"
 )
@@ -37,7 +42,7 @@ const (
 type Evaluator interface {
 	Type() string
 	Stop()
-	Evaluate(record *define.Record)
+	Evaluate(record *define.Record) error
 }
 
 func New(c Config) Evaluator {
@@ -46,6 +51,8 @@ func New(c Config) Evaluator {
 		return newRandomEvaluator(c)
 	case evaluatorTypeStatusCode:
 		return newStatusCodeEvaluator(c)
+	case evaluatorTypeDrop:
+		return newDropEvaluator(c)
 	}
 	return newAlwaysEvaluator() // evaluatorTypeAlways
 }

@@ -244,6 +244,8 @@ func (c *CCHostUpdater) UpdateTo(ctx context.Context, store define.Store) error 
 				hostInfo.Topo = value.Topo
 				hostInfo.DbmMeta = value.Host.DbmMeta
 				hostInfo.DevxMeta = value.Host.DevxMeta
+				hostInfo.PerforceMeta = value.Host.PerforceMeta
+
 				if v, ok := deDuplication.Load(hostInfo.GetStoreKey()); ok {
 					if cache, ok := v.(tempCache); ok {
 						// 利用deDuplication 做去重操作

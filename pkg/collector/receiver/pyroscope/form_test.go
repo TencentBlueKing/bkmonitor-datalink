@@ -12,6 +12,7 @@ package pyroscope
 import (
 	"bytes"
 	"mime/multipart"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,4 +50,38 @@ func TestParseNReadField(t *testing.T) {
 	}
 
 	assert.Equal(t, fileContent, readContent)
+}
+
+func TestExtraApplicationNameAndTags(t *testing.T) {
+	t.Run("valid data", func(t *testing.T) {
+		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7Bcustom1%3D123456%2CserviceName%3Dmy-profiling-proj%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
+		assert.NoError(t, err)
+		appName, tags := getApplicationNameAndTags(validUrl)
+		assert.Equal(t, appName, "profiling-test")
+		assert.Equal(t, tags, map[string]string{"custom1": "123456", "serviceName": "my-profiling-proj"})
+	})
+
+	t.Run("empty tags", func(t *testing.T) {
+		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7B%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
+		assert.NoError(t, err)
+		appName, tags := getApplicationNameAndTags(validUrl)
+		assert.Equal(t, appName, "profiling-test")
+		assert.Empty(t, tags)
+	})
+
+	t.Run("empty tags + empty app", func(t *testing.T) {
+		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
+		assert.NoError(t, err)
+		appName, tags := getApplicationNameAndTags(validUrl)
+		assert.Empty(t, appName)
+		assert.Empty(t, tags)
+	})
+
+	t.Run("invalid tags", func(t *testing.T) {
+		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7B%7D%7D%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
+		assert.NoError(t, err)
+		appName, tags := getApplicationNameAndTags(validUrl)
+		assert.Equal(t, appName, "profiling-test")
+		assert.Empty(t, tags)
+	})
 }

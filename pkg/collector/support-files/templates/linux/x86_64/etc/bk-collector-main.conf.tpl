@@ -245,11 +245,17 @@ bk-collector:
             - "resource.bk.data.token"
             - "resource.process.pid"
 
-    # Sampler: 采样处理器
+    # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
       config:
         type: "random"
         sampling_percentage: 100
+
+    # Sampler: 采样处理器（拒绝采样）
+    - name: "sampler/drop"
+      config:
+        type: "drop"
+        enabled: true
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"
@@ -265,6 +271,11 @@ bk-collector:
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
+
+    # PprofTranslator: pprof 协议转换器
+    - name: "pprof_translator/common"
+      config:
+        type: "spy"
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"

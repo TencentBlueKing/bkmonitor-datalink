@@ -378,7 +378,7 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	trace.InsertStringIntoSpan("storage-uri-path", storage.UriPath, span)
 	trace.InsertStringIntoSpan("storage-password", storage.Password, span)
 
-	curl := &curl.HttpCurl{Log: log.OtLogger}
+	curl := &curl.HttpCurl{Log: log.DefaultLogger}
 	switch storage.Type {
 	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
 	case consul.VictoriaMetricsStorageType:

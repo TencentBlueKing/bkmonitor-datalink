@@ -49,10 +49,10 @@ func mockClient() *Client {
 			BkdataDataToken:            token,
 			BkAppSecret:                secret,
 			Timeout:                    time.Second * 30,
-			Log:                        log.OtLogger,
+			Log:                        log.DefaultLogger,
 			ContentType:                "application/json",
 			Curl: &curl.HttpCurl{
-				Log: log.OtLogger,
+				Log: log.DefaultLogger,
 			},
 		}
 	})

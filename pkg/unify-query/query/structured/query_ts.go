@@ -354,14 +354,13 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 	}
 
-	user := metadata.GetUser(ctx)
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
 		SpaceUid:    spaceUid,
 		TableID:     tableID,
 		FieldName:   metricName,
 		IsRegexp:    q.IsRegexp,
 		Conditions:  q.Conditions,
-		IsSkipSpace: user.IsSkipSpace(),
+		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
 	})
 	if err != nil {
 		return nil, err

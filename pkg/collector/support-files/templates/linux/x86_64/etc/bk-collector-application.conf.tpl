@@ -47,6 +47,13 @@ default:
             {%- endfor %}
 {%- endif %}
 
+{% if token_checker is defined %}
+      # token_checker 配置
+      - name: "{{ token_checker.name }}"
+        config:
+          profiles_data_id: {{ token_checker.profiles_data_id }}
+{%- endif %}
+
 {% if license_config is defined %}
       # license_config: license 配置
       - name: "{{ license_config.name }}"

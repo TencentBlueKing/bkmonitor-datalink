@@ -33,20 +33,10 @@ type Instance struct {
 // consul instance
 var instance *Instance
 
-func NewInstance(ctx context.Context) (*Instance, error) {
+func NewInstance(ctx context.Context, opt consulUtils.InstanceOptions) (*Instance, error) {
 	var e error
 	consulOnce.Do(func() {
-		client, err := consulUtils.NewConsulInstance(
-			ctx,
-			consulUtils.InstanceOptions{
-				SrvName:    config.StorageConsulSrvName,
-				Addr:       config.StorageConsulAddress,
-				Port:       config.StorageConsulPort,
-				ConsulAddr: config.StorageConsulAddr,
-				Tags:       config.StorageConsulTag,
-				TTL:        config.StorageConsulTll,
-			},
-		)
+		client, err := consulUtils.NewConsulInstance(ctx, opt)
 		if err != nil {
 			logger.Errorf("new consul instance error, %v", err)
 			e = err
@@ -74,7 +64,15 @@ func GetInstance() (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	return NewInstance(context.TODO())
+	opt := consulUtils.InstanceOptions{
+		SrvName:    config.StorageConsulSrvName,
+		Addr:       config.StorageConsulAddress,
+		Port:       config.StorageConsulPort,
+		ConsulAddr: config.StorageConsulAddr,
+		Tags:       config.StorageConsulTag,
+		TTL:        config.StorageConsulTll,
+	}
+	return NewInstance(context.TODO(), opt)
 }
 
 // Open new a instance

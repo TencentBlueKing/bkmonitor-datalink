@@ -65,13 +65,25 @@ default:
           tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
 {%- endif %}
 
-{% if drop_sampler_config is defined %}
-      # drop_sampler_config: drop sampler 配置
-      - name: "{{ drop_sampler_config.name }}"
+{% if traces_drop_sampler_config is defined %}
+      # traces_drop_sampler_config: drop sampler 配置
+      # Sampler: traces采样处理器（做直接丢弃处理）
+      - name: "{{ traces_drop_sampler_config.name }}"
         config:
-          type: "{{ drop_sampler_config.type }}"
-          enabled: {{ drop_sampler_config.enabled }}
+          type: "{{ traces_drop_sampler_config.type }}"
+          enabled: {{ traces_drop_sampler_config.enabled }}
 {%- endif %}
+
+
+{% if profiles_drop_sampler_config is defined %}
+      # profiles_drop_sampler_config: drop sampler 配置
+      # Sampler: profiles采样处理器（做直接丢弃处理）
+      - name: "{{ profiles_drop_sampler_config.name }}"
+        config:
+          type: "{{ profiles_drop_sampler_config.type }}"
+          enabled: {{ profiles_drop_sampler_config.enabled }}
+{%- endif %}
+
 
 {% if db_slow_command_config is defined %}
       # db slow command config

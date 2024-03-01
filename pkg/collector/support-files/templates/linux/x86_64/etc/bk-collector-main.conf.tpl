@@ -251,11 +251,17 @@ bk-collector:
         type: "random"
         sampling_percentage: 100
 
-    # Sampler: 采样处理器（拒绝采样）
-    - name: "sampler/drop"
+    # Sampler: profiles采样处理器（做直接丢弃处理）
+    - name: "sampler/drop_profiles"
       config:
         type: "drop"
-        enabled: true
+        enabled: false
+
+    # Sampler: traces采样处理器（做直接丢弃处理）
+    - name: "sampler/drop_traces"
+      config:
+        type: "drop"
+        enabled: false
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"
@@ -1716,6 +1722,7 @@ bk-collector:
       type: "traces"
       processors:
         - "token_checker/aes256"
+        - "sampler/drop_traces"
         - "rate_limiter/token_bucket"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
@@ -1781,7 +1788,7 @@ bk-collector:
       type: "profiles"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop"
+        - "sampler/drop_profiles"
         - "pprof_translator/common"
 
   # =============================== Exporter =================================

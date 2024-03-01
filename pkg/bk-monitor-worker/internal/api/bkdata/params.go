@@ -55,3 +55,41 @@ func AccessDeployPlanParams(rawDataName, rawDataAlias, master, group, topic, use
 		},
 	}
 }
+
+type DatabusCleansParams struct {
+	RawDataId            int                      `json:"raw_data_id"`
+	JsonConfig           string                   `json:"json_config"`
+	PEConfig             string                   `json:"pe_config"`
+	BkBizId              int                      `json:"bk_biz_id"`
+	Description          string                   `json:"description"`
+	CleanConfigName      string                   `json:"clean_config_name"`
+	ResultTableName      string                   `json:"result_table_name"`
+	ResultTableNameAlias string                   `json:"result_table_name_alias"`
+	Fields               []map[string]interface{} `json:"fields"`
+	BkUsername           string                   `json:"bk_username"`
+}
+
+type StopDatabusCleansParams struct {
+	RawDataId            int                      `json:"raw_data_id"`
+	JsonConfig           string                   `json:"json_config"`
+	PEConfig             string                   `json:"pe_config"`
+	BkBizId              int                      `json:"bk_biz_id"`
+	Description          string                   `json:"description"`
+	CleanConfigName      string                   `json:"clean_config_name"`
+	ResultTableName      string                   `json:"result_table_name"`
+	ResultTableNameAlias string                   `json:"result_table_name_alias"`
+	Fields               []map[string]interface{} `json:"fields"`
+	BkUsername           string                   `json:"bk_username"`
+}
+
+type DataFlowNodeParams struct {
+	FromLinks    []map[string]interface{} `json:"from_links"`
+	NodeType     string                   `json:"node_type"`
+	Config       map[string]interface{}   `json:"config"`
+	FrontendInfo map[string]int           `json:"frontend_info"`
+}
+
+type UpdateDataFlowNodeParams struct {
+	DataFlowNodeParams
+	NodeId int `json:"node_id"`
+}

@@ -84,6 +84,11 @@ func (s BkDataStorageSvc) CreateDatabusClean(rt *resulttable.ResultTable) error 
 	}
 	var resp bkdata.AccessDeployPlanResp
 	params := bkdata.AccessDeployPlanParams(rawDataName, rt.TableNameZh, brokerUrl, KafkaConsumerGroupName, svc.Topic, user, passwd, svc.Partition, isSasl)
+	if config.BypassSuffixPath != "" {
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Infof("[db_diff] AccessDeployPlan with params [%s]", paramStr)
+		return errors.New("[db_diff] AccessDeployPlan is not really executed because of BypassSuffixPath")
+	}
 	if _, err := bkdataApi.AccessDeployPlan().SetBody(params).SetResult(&resp).Request(); err != nil {
 		return errors.Wrapf(err, "access to bkdata failed, params [%#v]", params)
 	}
@@ -105,8 +110,13 @@ func (s BkDataStorageSvc) CreateTable(tableId string, isSyncDb bool) error {
 	if err := storage.NewBkDataStorageQuerySet(db).TableIDEq(tableId).One(&bkDataStorage); err != nil {
 		if gorm.IsRecordNotFoundError(err) {
 			bkDataStorage.TableID = tableId
-			if err := bkDataStorage.Create(db); err != nil {
-				return errors.Wrapf(err, "create BkDataStorage with table_id [%s] failed", tableId)
+			if config.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] create BkDataStorage with table_id [%s]", tableId)
+				return nil
+			} else {
+				if err := bkDataStorage.Create(db); err != nil {
+					return errors.Wrapf(err, "create BkDataStorage with table_id [%s] failed", tableId)
+				}
 			}
 		} else {
 			return err
@@ -167,19 +177,24 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 
 	bkDataRtIdWithoutBizId := GenBkdataRtIdWithoutBizId(s.TableID)
 	resultTableId := fmt.Sprintf("%v_%s", config.BkdataBkBizId, bkDataRtIdWithoutBizId)
-	params := map[string]interface{}{
-		"raw_data_id":             s.RawDataID,
-		"json_config":             etlConfigJson,
-		"pe_config":               "",
-		"bk_biz_id":               config.BkdataBkBizId,
-		"description":             fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
-		"clean_config_name":       fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
-		"result_table_name":       bkDataRtIdWithoutBizId,
-		"result_table_name_alias": rt.TableNameZh,
-		"fields":                  fields,
+	params := bkdata.DatabusCleansParams{
+		RawDataId:            s.RawDataID,
+		JsonConfig:           etlConfigJson,
+		PEConfig:             "",
+		BkBizId:              config.BkdataBkBizId,
+		Description:          fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
+		CleanConfigName:      fmt.Sprintf("清洗配置 (%s)", rt.TableNameZh),
+		ResultTableName:      bkDataRtIdWithoutBizId,
+		ResultTableNameAlias: rt.TableNameZh,
+		Fields:               fields,
 	}
 	if len(s.EtlJSONConfig) == 0 {
 		// 执行创建操作
+		if config.BypassSuffixPath != "" {
+			paramStr, _ := jsonx.MarshalString(params)
+			logger.Infof("[db_diff] create DatabusCleans with params [%s]", paramStr)
+			return nil
+		}
 		result, err := apiservice.Bkdata.DatabusCleans(params)
 		if err != nil {
 			return errors.Wrap(err, "add databus clean to bkdata failed")
@@ -187,23 +202,31 @@ func (s BkDataStorageSvc) CheckAndAccessBkdata() error {
 		logger.Infof("add databus clean to bkdata, result [%v]", result)
 	} else {
 		if equal, _ := jsonx.CompareJson(s.EtlJSONConfig, etlConfigJson); !equal {
-			result, err := apiservice.Bkdata.StopDatabusCleans(resultTableId, []string{"kafka"})
-			if err != nil {
-				return errors.Wrap(err, "stop databus clean failed")
+			// 执行更新操作
+			if config.BypassSuffixPath != "" {
+				logger.Infof("[db_diff] update DatabusCleans beacuse etl_config different [%s] and [%s]", s.EtlJSONConfig, etlConfigJson)
+			} else {
+				result, err := apiservice.Bkdata.StopDatabusCleans(resultTableId, []string{"kafka"})
+				if err != nil {
+					return errors.Wrap(err, "stop databus clean failed")
+				}
+				logger.Infof("stop databus clean, result [%v]", result)
+				result, err = apiservice.Bkdata.UpdateDatabusCleans(resultTableId, params)
+				if err != nil {
+					return errors.Wrap(err, "update databus clean failed")
+				}
+				resultStr, _ := jsonx.MarshalString(result)
+				logger.Infof("update databus clean, result [%s]", resultStr)
 			}
-			logger.Infof("stop databus clean, result [%v]", result)
 		}
-		params["processing_id"] = resultTableId
-		result, err := apiservice.Bkdata.UpdateDatabusCleans(params)
-		if err != nil {
-			return errors.Wrap(err, "update databus clean failed")
-		}
-		resultStr, _ := jsonx.MarshalString(result)
-		logger.Infof("update databus clean, result [%s]", resultStr)
 	}
 	// 获取对应的etl任务状态，如果不是running则start三次，如果还不行，则报错
 	etlStatus := s.getEtlStatus(resultTableId)
 	if etlStatus != models.DatabusStatusRunning {
+		if config.BypassSuffixPath != "" {
+			logger.Infof("[db_diff] start bkdata databus clean and update db EtlJSONConfig [%s] and BkDataResultTableID [%s]", etlConfigJson, resultTableId)
+			return nil
+		}
 		var done bool
 		for i := 0; i < 3; i++ {
 			// 启动清洗任务
@@ -410,6 +433,14 @@ func (s BkDataStorageSvc) FilterUnknownTimeWithRt() bool {
 		logger.Errorf("NewFilterUnknownTimeTask for rt [%s] failed", s.BkDataResultTableID)
 		return false
 	}
+	if config.BypassSuffixPath != "" {
+		for i, n := range task.NodeList {
+			nodeConfig, _ := jsonx.MarshalString(n.Config())
+			logger.Infof("[db_diff] rt [%s] create and start data flow with Node %d [%s] config [%s]", s.BkDataResultTableID, i+1, n.Name(), nodeConfig)
+		}
+		return false
+	}
+
 	if err := task.CreateFlow(false, 0); err != nil {
 		logger.Errorf("create flow [%s] failed, result_id [%s], reason [%v]", task.FlowName(), s.BkDataResultTableID, err)
 	}
@@ -465,6 +496,13 @@ func (s BkDataStorageSvc) FullCMDBNodeInfoToResultTable() error {
 	)
 	if task == nil {
 		return errors.Errorf("NewCMDBPrepareAggregateTask for rt [%s] failed", s.TableID)
+	}
+	if config.BypassSuffixPath != "" {
+		for i, n := range task.NodeList {
+			nodeConfig, _ := jsonx.MarshalString(n.Config())
+			logger.Infof("[db_diff] rt [%s] create and start data flow with Node %d [%s] config [%s]", s.BkDataResultTableID, i+1, n.Name(), nodeConfig)
+		}
+		return nil
 	}
 	if err := task.CreateFlow(false, 0); err != nil {
 		logger.Errorf("create flow [%s] failed, result_id [%s], reason [%v]", task.FlowName(), s.BkDataResultTableID, err)

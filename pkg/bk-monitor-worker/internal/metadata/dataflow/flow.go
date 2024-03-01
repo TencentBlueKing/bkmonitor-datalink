@@ -86,8 +86,8 @@ func (f DataFlow) FromBkdataByFlowId(flowId int) (*DataFlow, error) {
 	}, nil
 }
 
-// FromBkdataByFlowName 从bkdata接口查询到flow相关信息，根据flow_name，然后初始化一个DataFlow对象返回
-func (f DataFlow) FromBkdataByFlowName(flowName string, projectId int) (*DataFlow, error) {
+// GetDataFlowByFlowName 从bkdata接口查询到flow相关信息，根据flow_name，然后初始化一个DataFlow对象返回
+func (f DataFlow) GetDataFlowByFlowName(flowName string, projectId int) (*DataFlow, error) {
 	if projectId == 0 {
 		projectId = config.BkdataProjectId
 	}
@@ -136,7 +136,7 @@ func (f DataFlow) CreateFlow(flowName string, projectId int) (*DataFlow, error) 
 // EnsureDataFlowExists 从bkdata接口查询到flow相关信息，根据flow_name，然后初始化一个DataFlow对象返回
 func (f DataFlow) EnsureDataFlowExists(flowName string, rebuild bool, projectId int) (*DataFlow, error) {
 	flow, err := func() (*DataFlow, error) {
-		flow, err := f.FromBkdataByFlowName(flowName, projectId)
+		flow, err := f.GetDataFlowByFlowName(flowName, projectId)
 		if err != nil {
 			return nil, err
 		}

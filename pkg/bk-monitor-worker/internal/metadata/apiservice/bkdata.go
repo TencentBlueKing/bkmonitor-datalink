@@ -25,11 +25,8 @@ var Bkdata BkdataService
 type BkdataService struct{}
 
 // DatabusCleans 接入数据清洗
-func (BkdataService) DatabusCleans(params map[string]interface{}) (map[string]interface{}, error) {
-	if params == nil {
-		params = map[string]interface{}{}
-	}
-	params["bk_username"] = config.BkdataProjectMaintainer
+func (BkdataService) DatabusCleans(params bkdata.DatabusCleansParams) (map[string]interface{}, error) {
+	params.BkUsername = config.BkdataProjectMaintainer
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
@@ -67,12 +64,8 @@ func (BkdataService) StopDatabusCleans(resultTableId string, storages []string) 
 }
 
 // UpdateDatabusCleans 更新数据清洗
-func (BkdataService) UpdateDatabusCleans(params map[string]interface{}) (interface{}, error) {
-	if params == nil {
-		params = map[string]interface{}{}
-	}
-	params["bk_username"] = config.BkdataProjectMaintainer
-	processingId, _ := params["processing_id"].(string)
+func (BkdataService) UpdateDatabusCleans(processingId string, params bkdata.DatabusCleansParams) (interface{}, error) {
+	params.BkUsername = config.BkdataProjectMaintainer
 	if processingId == "" {
 		return nil, errors.New("processing_id can not be empty")
 	}
@@ -93,7 +86,7 @@ func (BkdataService) UpdateDatabusCleans(params map[string]interface{}) (interfa
 	return resp.Data, nil
 }
 
-// GetDatabusStatus 更新数据清洗
+// GetDatabusStatus 查询数据清洗
 func (BkdataService) GetDatabusStatus(rawDataId int) ([]map[string]interface{}, error) {
 	if rawDataId == 0 {
 		return nil, errors.New("rawDataId can not be 0")
@@ -153,7 +146,7 @@ func (BkdataService) AuthProjectsDataCheck(projectId int, resultTableId, actionI
 		return false, errors.Wrap(err, "get bkdata api failed")
 	}
 
-	params := map[string]interface{}{
+	params := map[string]string{
 		"result_table_id": resultTableId,
 	}
 	var resp bkdata.CommonResp
@@ -169,6 +162,7 @@ func (BkdataService) AuthProjectsDataCheck(projectId int, resultTableId, actionI
 	return result, nil
 }
 
+// AuthResultTable 针对结果表授权给项目
 func (BkdataService) AuthResultTable(projectId int, objectId string, bkBizId string) (interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
@@ -192,14 +186,12 @@ func (BkdataService) AuthResultTable(projectId int, objectId string, bkBizId str
 	return resp.Data, nil
 }
 
-func (s BkdataService) UpdateDataFlowNode(flowId, nodeId int, params map[string]interface{}) (interface{}, error) {
-	delete(params, "flow_id")
-	params["node_id"] = nodeId
+// UpdateDataFlowNode 更新dataflow node
+func (s BkdataService) UpdateDataFlowNode(flowId int, params bkdata.UpdateDataFlowNodeParams) (interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
 	}
-
 	var resp bkdata.CommonMapResp
 	if _, err = bkdataApi.UpdateDataFlowNode().SetPathParams(map[string]string{"flow_id": strconv.Itoa(flowId)}).SetBody(params).SetResult(&resp).Request(); err != nil {
 		paramStr, _ := jsonx.MarshalString(params)
@@ -212,7 +204,8 @@ func (s BkdataService) UpdateDataFlowNode(flowId, nodeId int, params map[string]
 	return resp.Data, nil
 }
 
-func (s BkdataService) AddDataFlowNode(flowId int, params map[string]interface{}) (map[string]interface{}, error) {
+// AddDataFlowNode 新增dataflow node
+func (s BkdataService) AddDataFlowNode(flowId int, params bkdata.DataFlowNodeParams) (map[string]interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
@@ -230,6 +223,7 @@ func (s BkdataService) AddDataFlowNode(flowId int, params map[string]interface{}
 	return resp.Data, nil
 }
 
+// GetLatestDeployDataFlow 获取指定dataflow最后一次部署的信息
 func (s BkdataService) GetLatestDeployDataFlow(flowId int) (map[string]interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
@@ -246,6 +240,7 @@ func (s BkdataService) GetLatestDeployDataFlow(flowId int) (map[string]interface
 	return resp.Data, nil
 }
 
+// GetDataFlow 获取dataflow信息
 func (s BkdataService) GetDataFlow(flowId int) (map[string]interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
@@ -279,6 +274,7 @@ func (s BkdataService) GetDataFlowGraph(flowId int) (*bkdata.GetDataFlowGraphRes
 	return resp.Data, nil
 }
 
+// GetDataFlowList 获取项目下的dataflow列表
 func (s BkdataService) GetDataFlowList(projectId int) ([]map[string]interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
@@ -321,6 +317,7 @@ func (s BkdataService) CreateDataFlow(flowName string, projectId int, nodes []ma
 	return resp.Data, nil
 }
 
+// StopDataFlow 停止dataflow
 func (s BkdataService) StopDataFlow(flowId int) (interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
@@ -337,6 +334,7 @@ func (s BkdataService) StopDataFlow(flowId int) (interface{}, error) {
 	return resp.Data, nil
 }
 
+// StartDataFlow 启动dataflow
 func (s BkdataService) StartDataFlow(flowId int, consumingMode, clusterGroup string) (interface{}, error) {
 	if consumingMode == "" {
 		consumingMode = "continue"
@@ -366,6 +364,7 @@ func (s BkdataService) StartDataFlow(flowId int, consumingMode, clusterGroup str
 	return resp.Data, nil
 }
 
+// RestartDataFlow 重启dataflow
 func (s BkdataService) RestartDataFlow(flowId int, consumingMode, clusterGroup string) (interface{}, error) {
 	if consumingMode == "" {
 		consumingMode = "continue"

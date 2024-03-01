@@ -35,7 +35,7 @@ func NewCMDBPrepareAggregateTask(rtId string, aggInterval int, aggMethod string,
 	t := &CMDBPrepareAggregateTask{MetricField: metricField, DimensionFields: dimensionFields}
 	t.RtId = rtId
 
-	cmdbHostTopSourceNode := NewRelationSourceNode(CMDBHostTopRtId)
+	cmdbHostTopSourceNode := NewRelationSourceNode(CMDBHostTopoRtId)
 	streamSourceNode := NewStreamSourceNode(rtId)
 	// 将两张原始表的数据，做合并，维度信息补充，1对1
 	fullProcessNode := NewCMDBPrepareAggregateFullNode(t.RtId, aggInterval, aggMethod, metricField, dimensionFields, "", "", "", []Node{cmdbHostTopSourceNode, streamSourceNode})

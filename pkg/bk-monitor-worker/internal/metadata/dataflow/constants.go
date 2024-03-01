@@ -15,6 +15,7 @@ const (
 	ConsumingModeCurrent = "continue"  // 从当前位置继续(continue), 不填默认continue
 )
 
+// dataflow状态
 const (
 	FlowStatusNoStart  = "no-start"
 	FlowStatusRunning  = "running"
@@ -24,12 +25,12 @@ const (
 	FlowStatusWarning  = "warning"
 )
 
-const NodeDefaultFrontendOffset = 100
+const NodeDefaultFrontendOffset = 100 // dataflow画布node默认偏移量
 
-const CMDBHostTopRtId = "591_bkpub_cmdb_host_rels_split_innerip"
+const CMDBHostTopoRtId = "591_bkpub_cmdb_host_rels_split_innerip" // bkdata中cmdb_host_topo数据源表
 
-var CMDBHostMustHaveFields = []string{"bk_target_ip", "bk_target_cloud_id"}
+var CMDBHostMustHaveFields = []string{"bk_target_ip", "bk_target_cloud_id"} // dataflow中CMDB task必须存在的dimension
 
-const TmpFullStorageNodeExpires = 1
+const TmpFullStorageNodeExpires = 1 // dataflow 存储临时表过期时间（天）
 
-var NodeDefaultFrontedInfo = []int{100, 100}
+var NodeDefaultFrontedInfo = []int{100, 100} // dataflow画布node默认位置坐标

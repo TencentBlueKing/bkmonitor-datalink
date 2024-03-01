@@ -211,7 +211,7 @@ func (n CMDBPrepareAggregateFullNode) Name() string {
 // Config 配置
 func (n CMDBPrepareAggregateFullNode) Config() map[string]interface{} {
 	baseConfig := map[string]interface{}{
-		"from_result_table_ids": []string{n.SourceRtId, CMDBHostTopRtId},
+		"from_result_table_ids": []string{n.SourceRtId, CMDBHostTopoRtId},
 		"table_name":            n.Instance.TableName(),
 		"output_name":           n.Instance.TableName(),
 		"bk_biz_id":             n.BkBizId,
@@ -228,7 +228,7 @@ func (n CMDBPrepareAggregateFullNode) GenStatisticSql(rtId, aggMethod string, me
 		fields = append(fields, fmt.Sprintf("A.`%s`", field))
 	}
 	selectStr := strings.Join(append(fields, "B.bk_host_id", "B.bk_relations"), ",")
-	return fmt.Sprintf(`SELECT %s FROM %s A LEFT JOIN %s B ON A.bk_target_cloud_id = B.bk_cloud_id and A.bk_target_ip = B.bk_host_innerip`, selectStr, rtId, CMDBHostTopRtId)
+	return fmt.Sprintf(`SELECT %s FROM %s A LEFT JOIN %s B ON A.bk_target_cloud_id = B.bk_cloud_id and A.bk_target_ip = B.bk_host_innerip`, selectStr, rtId, CMDBHostTopoRtId)
 }
 
 // CMDBPrepareAggregateSplitNode CMDB 预聚合，将补充的信息进行拆解，1条对多条

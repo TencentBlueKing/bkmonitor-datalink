@@ -38,8 +38,14 @@ type CMDBLevelInjector struct {
 
 // Process
 func (p *CMDBLevelInjector) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
-	var err error
+	if d.Flag()&define.PayloadFlagNoCmdbLevels == define.PayloadFlagNoCmdbLevels {
+		logging.Debugf("%v no cmdblevels found, playload %#v", p, d)
+		outputChan <- d
+		p.CounterSuccesses.Inc()
+		return
+	}
 
+	var err error
 	raw := new(CMDBLevelRecord)
 	err = d.To(raw)
 

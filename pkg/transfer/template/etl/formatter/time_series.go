@@ -38,6 +38,7 @@ func NewTSFormatter(ctx context.Context, name string) (*Formatter, error) {
 
 	enableDbmMeta, _ := rtOption.GetBool(config.ResultTableListConfigOptEnableDbmMeta)
 	enableDevxMeta, _ := rtOption.GetBool(config.ResultTableListConfigOptEnableDevxMeta)
+	enablePerforce, _ := rtOption.GetBool(config.ResultTableListConfigOptEnablePerforceMeta)
 
 	return &Formatter{
 		Processor: NewProcessor(ctx, name, RecordHandlers{
@@ -49,6 +50,7 @@ func NewTSFormatter(ctx context.Context, name string) (*Formatter, error) {
 			FillDefaultValueCreator(rtOption.GetOrDefault(config.ResultTableListConfigOptEnableFillDefault, true).(bool), rt),
 			TransferRecordCutterByDbmMetaCreator(store, enableDbmMeta),
 			TransferRecordCutterByDevxMetaCreator(store, enableDevxMeta),
+			TransferRecordCutterByPerforceMetaCreator(store, enablePerforce),
 			TransferRecordCutterByCmdbLevelCreator(rtOption.GetOrDefault(config.ResultTableListConfigOptMetricSplitLevel, []interface{}{}).([]interface{}), rtOption.GetOrDefault(config.ResultTableListConfigOptEnableKeepCmdbLevel, true).(bool)),
 			TransformAliasNameHandlerCreator(rt, option.GetOrDefault(config.PipelineConfigOptTransformEnableFieldAlias, false).(bool)),
 			schema.TransformMetricsHandlerCreator(option.GetOrDefault(config.PipelineConfigOptAllowMetricsMissing, true).(bool)),

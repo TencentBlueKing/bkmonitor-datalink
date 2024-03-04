@@ -355,11 +355,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	}
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:   spaceUid,
-		TableID:    tableID,
-		FieldName:  metricName,
-		IsRegexp:   q.IsRegexp,
-		Conditions: q.Conditions,
+		SpaceUid:    spaceUid,
+		TableID:     tableID,
+		FieldName:   metricName,
+		IsRegexp:    q.IsRegexp,
+		Conditions:  q.Conditions,
+		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
 	})
 	if err != nil {
 		return nil, err
@@ -480,13 +481,15 @@ func (q *Query) BuildMetadataQuery(
 	case redis.BkExporter:
 		field, fields = promql.StaticMetricValue, []string{promql.StaticMetricValue}
 		fieldOp := promql.EqualOperator
+		valueType := promql.StringType
 		if q.IsRegexp {
 			fieldOp = promql.RegexpOperator
+			valueType = promql.RegexpType
 		}
 		whereList.Append(
 			promql.AndOperator,
 			promql.NewWhere(
-				promql.StaticMetricName, metricName, fieldOp, promql.StringType,
+				promql.StaticMetricName, metricName, fieldOp, valueType,
 			),
 		)
 	// 多指标单表，字段名为指标名

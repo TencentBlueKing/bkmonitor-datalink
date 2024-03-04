@@ -92,7 +92,7 @@ func (s *TransformByFieldSuite) TestUsage() {
 	}
 
 	for i, c := range cases {
-		fn := etl.NewTransformByField(&c.field)
+		fn := etl.NewTransformByField(&c.field, nil)
 		result, err := fn(c.value)
 		s.NoError(err, i)
 		s.Equal(c.excepted, result)
@@ -146,7 +146,7 @@ func (s *TransformByFieldSuite) TestTimeStamp() {
 		}, now.Format("2006-01-02 15:04:05"), now.Unix()},
 	}
 	for i, c := range cases {
-		fn := etl.NewTransformByField(&c.field)
+		fn := etl.NewTransformByField(&c.field, nil)
 		result, err := fn(c.value)
 		s.NoError(err, i)
 		s.Equal(c.timestamp, result.(types.TimeStamp).Int64(), i)

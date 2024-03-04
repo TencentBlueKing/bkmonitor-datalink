@@ -222,11 +222,6 @@ func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
 
 // CheckDruidCheck 判断是否是查询 druid 数据
 func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
-	// 判断是否打开 druid-query 特性开关
-	if !GetDruidQueryFeatureFlag(ctx) {
-		return false
-	}
-
 	druidCheckStatus := false
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {

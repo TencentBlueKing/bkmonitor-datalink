@@ -28,4 +28,5 @@ const (
 	ProcessorForwarder       = "forwarder"
 	ProcessorDbFilter        = "db_filter"
 	ProcessorProbeFilter     = "probe_filter"
+	ProcessorPprofTranslator = "pprof_translator"
 )

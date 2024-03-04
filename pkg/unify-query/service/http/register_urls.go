@@ -15,17 +15,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 )
-
-// registerSwagger
-func registerSwagger(g *gin.Engine) {
-	g.GET("/sagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-}
 
 // registerTSQueryService: /query/ts
 func registerTSQueryService(g *gin.Engine) {
@@ -65,6 +58,17 @@ func registerTSQueryPromQLToStructService(g *gin.Engine) {
 	g.POST(servicePath, HandlerPromQLToStruct)
 	//g.POST(servicePath, HandleTsQueryPromQLToStructRequest)
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+}
+
+// registerCheckService 注册 check 类型接口
+func registerCheckService(g *gin.Engine) {
+	queryTsPath := viper.GetString(CheckQueryTsConfigPath)
+	g.POST(queryTsPath, HandlerCheckQueryTs)
+	log.Infof(context.TODO(), "check service register in path->[%s]", queryTsPath)
+
+	queryPromQLPath := viper.GetString(CheckQueryPromQLConfigPath)
+	g.POST(queryPromQLPath, HandlerCheckQueryPromQL)
+	log.Infof(context.TODO(), "check service register in path->[%s]", queryPromQLPath)
 }
 
 // registerTSQueryInfoService: /query/ts/info

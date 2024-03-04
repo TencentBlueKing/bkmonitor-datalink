@@ -11,6 +11,7 @@ package fta
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -79,7 +80,7 @@ func ExtractTags(
 				if len(k) == 0 {
 					continue
 				}
-				dedupeKeys = append(dedupeKeys, k)
+				dedupeKeys = append(dedupeKeys, fmt.Sprintf("tags.%s", k))
 				dimensions[k] = v
 			}
 		default:
@@ -274,7 +275,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				}
 
 				// 字段类型转换
-				fieldTypeTransformFn := etl.NewTransformByField(config)
+				fieldTypeTransformFn := etl.NewTransformByField(config, nil)
 				field, err = fieldTypeTransformFn(field)
 				if err != nil {
 					logging.Errorf("%s transform field %s failed: %+v", name, config.FieldName, err)

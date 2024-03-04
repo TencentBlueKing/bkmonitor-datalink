@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/uptrace/opentelemetry-go-extra/otelzap"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	oleltrace "go.opentelemetry.io/otel/trace"
 
@@ -47,7 +46,7 @@ type Curl interface {
 
 // HttpCurl http 请求方法
 type HttpCurl struct {
-	Log *otelzap.Logger
+	Log *log.Logger
 }
 
 // Request 公共调用方法实现
@@ -71,7 +70,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
-		c.Log.Ctx(ctx).Error(fmt.Sprintf("client new request error:%s", err))
+		c.Log.Errorf(ctx, "client new request error:%v", err)
 		return nil, err
 	}
 
@@ -82,7 +81,8 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	trace.InsertStringIntoSpan("req-http-method", method, span)
 	trace.InsertStringIntoSpan("req-http-path", opt.UrlPath, span)
 	trace.InsertStringIntoSpan("req-http-headers", fmt.Sprintf("%+v", opt.Headers), span)
-	log.Infof(ctx, "curl request: %s[%s] headers:%s body:%s", method, opt.UrlPath, fmt.Sprintf("%+v", opt.Headers), opt.Body)
+
+	c.Log.Infof(ctx, "curl request: %s[%s] headers:%s body:%s", method, opt.UrlPath, fmt.Sprintf("%+v", opt.Headers), opt.Body)
 
 	for k, v := range opt.Headers {
 		if k != "" && v != "" {

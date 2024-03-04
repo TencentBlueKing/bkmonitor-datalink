@@ -36,6 +36,8 @@ type TagValuesData struct {
 	Values map[string][]string `json:"values"`
 }
 
+type SeriesDataList []*SeriesData
+
 // SeriesData
 type SeriesData struct {
 	Measurement string     `json:"measurement"`
@@ -333,9 +335,6 @@ func HandleFeatureFlag(c *gin.Context) {
 		res += fmt.Sprintln("-------------------------------")
 	}
 
-	res += metadata.GetQueryRouter().Print() + "\n"
-	res += fmt.Sprintln("-------------------------------")
-
 	res += featureFlag.Print() + "\n"
 	res += fmt.Sprintln("-----------------------------------")
 
@@ -454,7 +453,9 @@ func HandleTsDBPrint(c *gin.Context) {
 		SpaceUid:  spaceId,
 		TableID:   tableId,
 		FieldName: fieldName,
-		IsRegexp:  false}
+		IsRegexp:  false,
+	}
+
 	tsDBs, err := structured.GetTsDBList(ctx, &option)
 	results = append(results, fmt.Sprintf("GetTsDBList count: %d, result: %v, err: %v", len(tsDBs), tsDBs, err))
 

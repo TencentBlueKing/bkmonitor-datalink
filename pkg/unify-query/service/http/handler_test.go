@@ -372,7 +372,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=system&q=select+count%28%22usage%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1677081599999000000+and+time+%3C+1677085659999000000++group+by+time%281m0s%29+limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T15:59:00Z",null],["2023-02-22T16:00:00Z",25.124152312094484],["2023-02-22T16:01:00Z",20.724334166696504],["2023-02-22T16:02:00Z",20.426171484280808],["2023-02-22T16:03:00Z",20.327529103992745]],"partial":true}],"partial":true}]}
 `,
-	}, log.OtLogger)
+	}, log.DefaultLogger)
 
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
@@ -744,7 +744,7 @@ func TestVmQueryParams(t *testing.T) {
 				err   error
 			)
 			ctx, _ = context.WithCancel(ctx)
-			metadata.SetUser(ctx, fmt.Sprintf("username:%s", c.username), c.spaceUid)
+			metadata.SetUser(ctx, fmt.Sprintf("username:%s", c.username), c.spaceUid, "skip")
 			if c.promql != "" {
 				var queryPromQL *structured.QueryPromQL
 				err = json.Unmarshal([]byte(c.promql), &queryPromQL)
@@ -1687,6 +1687,98 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				MetricMerge: "a",
 			},
 		},
+		"promq to struct with many time aggregate": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `min_over_time(increase(bkmonitor:metric[1m])[2m:])`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    "bkmonitor",
+						TableID:       "",
+						FieldName:     "metric",
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:  "increase",
+							Window:    "1m0s",
+							NodeIndex: 2,
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method:     "min_over_time",
+								Window:     "2m0s",
+								IsSubQuery: true,
+								Step:       "0s",
+							},
+						},
+						Offset: "0s",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
+		"promq to struct with many time aggregate and funciton": {
+			queryStruct: true,
+			promql: &structured.QueryPromQL{
+				PromQL: `topk(5, floor(sum by (dim) (last_over_time(min_over_time(increase(label_replace(bkmonitor:metric, "name", "$0", "__name__", ".+")[1m:])[2m:])[3m:15s]))))`,
+			},
+			query: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    "bkmonitor",
+						TableID:       "",
+						FieldName:     "metric",
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function:   "increase",
+							Window:     "1m0s",
+							NodeIndex:  3,
+							IsSubQuery: true,
+							Step:       "0s",
+						},
+						AggregateMethodList: []structured.AggregateMethod{
+							{
+								Method: "label_replace",
+								VArgsList: []interface{}{
+									"name",
+									"$0",
+									"__name__",
+									".+",
+								},
+							},
+							{
+								Method:     "min_over_time",
+								Window:     "2m0s",
+								IsSubQuery: true,
+								Step:       "0s",
+							},
+							{
+								Method:     "last_over_time",
+								Window:     "3m0s",
+								IsSubQuery: true,
+								Step:       "15s",
+							},
+							{
+								Method:     "sum",
+								Dimensions: []string{"dim"},
+							},
+							{
+								Method: "floor",
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									5,
+								},
+							},
+						},
+						Offset: "0s",
+					},
+				},
+				MetricMerge: "a",
+			},
+		},
 	}
 
 	for n, c := range testCase {
@@ -1731,7 +1823,7 @@ func equalWithJson(t *testing.T, a, b interface{}) {
 func TestQueryTs_ToQueryReference(t *testing.T) {
 	ctx := context.Background()
 	mockData(ctx, "handler_test", "handler_test")
-	metadata.SetUser(ctx, fmt.Sprintf("username:%s", "bkcc__1068"), "bkcc__1068")
+	metadata.SetUser(ctx, fmt.Sprintf("username:%s", "bkcc__1068"), "bkcc__1068", "")
 	jsonData := `{"space_uid":"bkcc__1068","query_list":[{"data_source":"","table_id":"","field_name":"container_cpu_usage_seconds_total","is_regexp":false,"field_list":null,"function":[{"method":"sum","without":false,"dimensions":["namespace"],"position":0,"args_list":null,"vargs_list":null}],"time_aggregation":{"function":"rate","window":"5m","node_index":0,"position":0,"vargs_list":[],"is_sub_query":false,"step":""},"reference_name":"a","dimensions":["namespace"],"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-common"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["flux-cd-deploy"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kube-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator-bkop"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkmonitor-operator"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-blueking-gse-data-jk"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["kyverno"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-prod"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bkce-bcs-k8s-40980"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-costops-grey"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["ieg-bscp-test"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bkop-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bk-system"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25186"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25451"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25326"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25182"],"op":"contains"},{"field_name":"job","value":["kubelet"],"op":"contains"},{"field_name":"image","value":[""],"op":"ncontains"},{"field_name":"container_name","value":["POD"],"op":"ncontains"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-40899"],"op":"contains"},{"field_name":"namespace","value":["bcs-k8s-25037"],"op":"contains"}],"condition_list":["and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and","or","and","and","and","and"]},"keep_columns":["_time","a","namespace"],"step":""}],"metric_merge":"a","result_columns":null,"start_time":"1702266900","end_time":"1702871700","step":"150s","down_sample_range":"5m","timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`
 	var query *structured.QueryTs
 	err := json.Unmarshal([]byte(jsonData), &query)

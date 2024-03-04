@@ -59,15 +59,17 @@ type randomEvaluator struct {
 	scaledSamplingRate uint32
 }
 
-func (e randomEvaluator) Evaluate(record *define.Record) {
+func (e randomEvaluator) Evaluate(record *define.Record) error {
 	if e.keepAll {
-		return
+		return nil
 	}
 	switch record.RecordType {
 	case define.RecordTraces:
 		pdTraces := record.Data.(ptrace.Traces)
 		record.Data = e.processTraces(pdTraces)
 	}
+
+	return nil
 }
 
 func (e randomEvaluator) Stop() {}

@@ -43,7 +43,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	span2.SetTraceID(t2)
 	span2.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
 
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
@@ -65,7 +65,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	span5 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span5.SetTraceID(t2)
 	span5.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
@@ -88,7 +88,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	span8 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span8.SetTraceID(t2)
 	span8.Status().SetCode(ptrace.StatusCodeOk) // 未采样（缓存 tracesID）
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
@@ -122,7 +122,7 @@ func TestStatusCodeEvaluatorFull(t *testing.T) {
 	span2.SetSpanID(random.SpanID())
 	span2.Status().SetCode(ptrace.StatusCodeOk) // t2 会被缓存
 
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
@@ -146,7 +146,7 @@ func TestStatusCodeEvaluatorFull(t *testing.T) {
 	span5.SetTraceID(t2)
 	span5.SetSpanID(random.SpanID())
 	span5.Status().SetCode(ptrace.StatusCodeError) // 读取 t2 缓存并上报
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})
@@ -168,7 +168,7 @@ func TestStatusCodeEvaluatorFull(t *testing.T) {
 	span8 := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
 	span8.SetTraceID(t2)
 	span8.Status().SetCode(ptrace.StatusCodeOk) // keep
-	evaluator.Evaluate(&define.Record{
+	_ = evaluator.Evaluate(&define.Record{
 		RecordType: define.RecordTraces,
 		Data:       traces,
 	})

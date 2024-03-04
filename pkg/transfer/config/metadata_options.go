@@ -74,8 +74,8 @@ const (
 	PipelineConfigOptAllowDynamicMetricsAsFloat = "dynamic_metrics_as_float"
 	// PipelineConfigOptMaxQps 允许后端写入的最大的 QPS
 	PipelineConfigOptMaxQps = "max_qps"
-	// PipelineConfigDropMetricsETLConfigs 允许丢弃空 metrics 数据的 ELTConfig 列表
-	PipelineConfigDropMetricsETLConfigs = "drop_metrics_etl_configs"
+	// PipelineConfigDropEmptyMetrics 是否丢弃空 metrics
+	PipelineConfigDropEmptyMetrics = "drop_empty_metrics"
 
 	// 日志类
 	// PipelineConfigOptSeparatorNode : "字段提取节点路径"
@@ -109,6 +109,8 @@ const (
 	ResultTableListConfigOptEnableDbmMeta = "enable_dbm_meta"
 	// ResultTableListConfigOptEnableDevxMeta 是否开启 devx_meta 字段注入
 	ResultTableListConfigOptEnableDevxMeta = "enable_devx_meta"
+	// ResultTableListConfigOptEnablePerforceMeta 是否启用 perforce_meta 字段注入
+	ResultTableListConfigOptEnablePerforceMeta = "enable_perforce_meta"
 
 	// 事件类
 	// PipelineConfigOptFlatBatchKey: 事件类数据需要进行进行插件的
@@ -200,6 +202,8 @@ const (
 	MetaFieldOptESType = "es_type"
 	// MetaFieldOptESFormat : es 对应格式(string)
 	MetaFieldOptESFormat = "es_format"
+	// MataFieldOptEnableOriginString 保留原始字符串格式（map[string]interface{}/[]interface{} -> string）
+	MataFieldOptEnableOriginString = "enable_origin_string"
 )
 
 // InitPipelineOptions : 初始化通用 pipeline option

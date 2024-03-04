@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http"
@@ -44,9 +45,11 @@ var rootCmd = &cobra.Command{
 		)
 		config.InitConfig()
 
+		ctx = metadata.InitHashID(ctx)
+
 		// 启动 gops
 		if err := agent.Listen(agent.Options{}); err != nil {
-			log.Warnf(context.TODO(), err.Error())
+			log.Warnf(ctx, err.Error())
 		}
 
 		// 初始化启动任务
@@ -60,7 +63,7 @@ var rootCmd = &cobra.Command{
 			&http.Service{},
 			&featureFlag.Service{},
 		}
-		log.Infof(context.TODO(), "http service started.")
+		log.Infof(ctx, "http service started.")
 
 		// 注册信号（重载配置文件 & 停止）
 		signal.Notify(sc, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
@@ -69,29 +72,29 @@ var rootCmd = &cobra.Command{
 			for _, service := range serviceList {
 				service.Reload(ctx)
 			}
-			log.Warnf(context.TODO(), "reload done")
+			log.Infof(ctx, "reload done")
 			switch <-sc {
 			case syscall.SIGUSR1:
 				// 触发配置重载动作
 				config.InitConfig()
-				log.Debugf(context.TODO(), "SIGUSR1 signal got, will reload server")
+				log.Debugf(ctx, "SIGUSR1 signal got, will reload server")
 			case syscall.SIGTERM, syscall.SIGINT:
-				log.Debugf(context.TODO(), "shutdown signal got, will shutdown server")
+				log.Debugf(ctx, "shutdown signal got, will shutdown server")
 				cancelFunc()
-				log.Warnf(context.TODO(), "shutdown signal process done")
+				log.Warnf(ctx, "shutdown signal process done")
 				break LOOP
 			}
 		}
-		log.Debugf(context.TODO(), "loop break, wait for all service exit.")
+		log.Debugf(ctx, "loop break, wait for all service exit.")
 		for _, service := range serviceList {
-			log.Warnf(context.TODO(), "close service:%s", service.Type())
+			log.Warnf(ctx, "close service:%s", service.Type())
 			service.Close()
-			log.Warnf(context.TODO(), "waiting for service:%s", service.Type())
+			log.Warnf(ctx, "waiting for service:%s", service.Type())
 
 			service.Wait()
-			log.Warnf(context.TODO(), "waiting for service:%s done", service.Type())
+			log.Warnf(ctx, "waiting for service:%s done", service.Type())
 		}
-		log.Debugf(context.TODO(), "all service exit, server exit now.")
+		log.Debugf(ctx, "all service exit, server exit now.")
 		os.Exit(0)
 	},
 }

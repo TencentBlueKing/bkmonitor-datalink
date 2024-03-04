@@ -47,8 +47,8 @@ func getCPUStatUsage(report *CpuReport) error {
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
 
-	// 判断 lastPerCPUTimes 长度，增加重写避免 init 方法失效的情况
-	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 {
+	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
+	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
 		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
 		if err != nil {
 			return err

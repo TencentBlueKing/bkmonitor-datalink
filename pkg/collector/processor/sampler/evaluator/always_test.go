@@ -32,6 +32,6 @@ func TestAlwaysEvaluator(t *testing.T) {
 		Data:       traces,
 	}
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
-	evaluator.Evaluate(record)
+	assert.NoError(t, evaluator.Evaluate(record))
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 }

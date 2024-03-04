@@ -152,6 +152,17 @@ bk-collector:
         - "maxconns"
         - "maxbytes"
 
+    # Admin Server Config
+    admin_server:
+      # 是否启动 Http 服务
+      # default: false
+      enabled: true
+      # 服务监听端点
+      # default: ""
+      endpoint: "127.0.0.1:4310"
+      middlewares:
+        - "logging"
+
     # Grpc Server Config
     grpc_server:
       # 是否启动 Grpc 服务
@@ -234,11 +245,23 @@ bk-collector:
             - "resource.bk.data.token"
             - "resource.process.pid"
 
-    # Sampler: 采样处理器
+    # Sampler: 采样处理器（概率采样）
     - name: "sampler/random"
       config:
         type: "random"
         sampling_percentage: 100
+
+    # Sampler: profiles采样处理器（做直接丢弃处理）
+    - name: "sampler/drop_profiles"
+      config:
+        type: "drop"
+        enabled: false
+
+    # Sampler: traces采样处理器（做直接丢弃处理）
+    - name: "sampler/drop_traces"
+      config:
+        type: "drop"
+        enabled: false
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"
@@ -254,6 +277,11 @@ bk-collector:
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
+
+    # PprofTranslator: pprof 协议转换器
+    - name: "pprof_translator/common"
+      config:
+        type: "spy"
 
     # ProxyValidator: proxy 数据校验器
     - name: "proxy_validator/common"
@@ -1694,6 +1722,7 @@ bk-collector:
       type: "traces"
       processors:
         - "token_checker/aes256"
+        - "sampler/drop_traces"
         - "rate_limiter/token_bucket"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
@@ -1754,6 +1783,13 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+
+    - name: "profiles_pipeline/common"
+      type: "profiles"
+      processors:
+        - "token_checker/aes256"
+        - "sampler/drop_profiles"
+        - "pprof_translator/common"
 
   # =============================== Exporter =================================
   exporter:

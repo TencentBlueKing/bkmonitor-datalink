@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	queryMod "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -183,11 +184,12 @@ func makeInfluxQLListBySpaceUid(
 	if span != nil {
 		defer span.End()
 	}
-
+	user := metadata.GetUser(ctx)
 	tsDBs, err = structured.GetTsDBList(ctx, &structured.TsDBOption{
-		SpaceUid:  spaceUid,
-		TableID:   params.TableID,
-		FieldName: params.Metric,
+		SpaceUid:    spaceUid,
+		TableID:     params.TableID,
+		FieldName:   params.Metric,
+		IsSkipSpace: user.IsSkipSpace(),
 	})
 	if err != nil {
 		return nil, err

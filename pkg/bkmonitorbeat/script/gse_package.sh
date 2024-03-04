@@ -56,7 +56,7 @@ make_package () {
                 ;;
         esac
 
-        if [ ${operating_system} = "linux" ] || [ ${operating_system} = "windows" ] ; then
+        if [ ${operating_system} = "linux" ] || [ ${operating_system} = "windows" ] || [ ${operating_system} = "darwin" ]; then
             #VERSION=$(cat VERSION).$(git describe --dirty="-dev" --always --match "NOT A TAG")
              #GO111MODULE=off
             CGO_ENABLED=0 GO111MODULE=on GOOS=${operating_system} GOARCH=${go_arch} go build -tags "basetask basescheduler bkmonitorbeat" -ldflags=" -X main.BeatName=${plugin_name} -X main.Version=${plugin_version}" -o ${bin_dir}/${plugin_name}${suffix} main.go||exit 1
@@ -88,7 +88,7 @@ package() {
 
 
   # 4. 编译  按系统版本
-  for OS in linux windows; do
+  for OS in linux windows darwin; do
       for CPU_ARCH in x86 x86_64; do
           make_package $OS $CPU_ARCH ${MODULE_NAME} ${VER}
       done

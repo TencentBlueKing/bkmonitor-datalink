@@ -102,7 +102,7 @@ package() {
   fi
 
   # darwin x86_64
-  make_package darwin amd64 ${MODULE_NAME} ${VER}
+  make_package darwin x86_64 ${MODULE_NAME} ${VER}
 
   # 5. 打包
   PACKAGE_NAME_PREFIX=${MODULE_NAME}-${VER}

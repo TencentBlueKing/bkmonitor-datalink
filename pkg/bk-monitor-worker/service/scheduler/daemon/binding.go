@@ -73,15 +73,15 @@ func (b *Binding) addTaskWithUniId(taskUniId string, t task.SerializerTask) {
 func (b *Binding) addBinding(taskBinding TaskBinding, workerBinding WorkerBinding) error {
 	ctx := context.Background()
 
-	existsWorkerId, err := b.getWorkerByTask(ctx, taskBinding.UniId)
+	existsWorkerInfoStr, err := b.getWorkerByTask(ctx, taskBinding.UniId)
 	if err != nil {
 		return fmt.Errorf(
 			"error obtaining field: %s from hash: %s. error: %s",
 			taskBinding.UniId, common.DaemonBindingTask(), err,
 		)
 	}
-	if existsWorkerId != "" {
-		logger.Warnf("Task: %s(except to binding worker: %s) already exists in the current binding(workerId: %s), is same task been submitted repeatedly?", taskBinding.UniId, workerBinding.Id, existsWorkerId)
+	if existsWorkerInfoStr != "" {
+		logger.Warnf("Task: %s(except to binding worker: %s) already exists in the current binding(workerId: %s), is same task been submitted repeatedly?", taskBinding.UniId, workerBinding.Id, existsWorkerInfoStr)
 		return nil
 	}
 
@@ -211,14 +211,42 @@ func (b *Binding) getWorkerByTask(ctx context.Context, taskUniId string) (string
 		return "", fmt.Errorf("error obtaining field: %s from %s", taskUniId, common.DaemonBindingTask())
 	}
 	if exist {
-		existsWorkerId, err := b.redisClient.HGet(ctx, common.DaemonBindingTask(), taskUniId).Result()
+		existsWorkerInfoStr, err := b.redisClient.HGet(ctx, common.DaemonBindingTask(), taskUniId).Result()
 		if err != nil {
 			return "", fmt.Errorf("error obtaining field: %s from %s", taskUniId, common.DaemonBindingTask())
 		}
-		return existsWorkerId, nil
+		return existsWorkerInfoStr, nil
 	}
 
 	return "", nil
+}
+
+// GetBindingByTask Get the worker which bound to the task (maybe not running)
+func (b *Binding) GetBindingByTask(t task.SerializerTask) (string, error) {
+	workerInfoStr, err := b.getWorkerByTask(context.Background(), ComputeTaskUniId(t))
+	if err != nil {
+		return "", err
+	}
+	if workerInfoStr == "" {
+		return "", nil
+	}
+	var workerBinding WorkerBinding
+	if err := jsonx.Unmarshal([]byte(workerInfoStr), &workerBinding); err != nil {
+		return "", err
+	}
+
+	return workerBinding.WorkerId, nil
+}
+
+// IsWorkerAlive Determine whether worker is alive or not.
+func (b *Binding) IsWorkerAlive(workerId, queue string) (bool, error) {
+	aliveKey := common.WorkerKey(queue, workerId)
+	r, err := b.redisClient.Exists(context.Background(), aliveKey).Result()
+	if err != nil {
+		return false, err
+	}
+
+	return r == 1, nil
 }
 
 var (

@@ -44,10 +44,16 @@ type taskParams struct {
 }
 
 type daemonTaskItem struct {
-	UniId   string         `json:"uni_id"`
-	Kind    string         `json:"kind"`
-	Payload map[string]any `json:"payload"`
-	Options task.Options   `json:"options"`
+	UniId   string                 `json:"uni_id"`
+	Kind    string                 `json:"kind"`
+	Payload map[string]any         `json:"payload"`
+	Options task.Options           `json:"options"`
+	Binding *daemonTaskBindingInfo `json:"binding"`
+}
+
+type daemonTaskBindingInfo struct {
+	WorkerId       string `json:"worker_id"`
+	WorkerIsNormal bool   `json:"worker_is_normal"`
 }
 
 type removeTaskParams struct {
@@ -298,21 +304,42 @@ func ListTask(c *gin.Context) {
 				return
 			}
 
+			taskUinId := daemon.ComputeTaskUniId(item)
 			var payload map[string]any
 			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
 				metrics.RequestApiCount(method, ListTaskPath, "failure")
 				return
 			}
-			res = append(
-				res,
-				daemonTaskItem{
-					UniId:   daemon.ComputeTaskUniId(item),
-					Kind:    item.Kind,
-					Options: item.Options,
-					Payload: payload,
-				},
-			)
+
+			// 查询绑定信息
+			workerId, err := daemon.GetBinding().GetBindingByTask(item)
+			if err != nil {
+				ServerErrResponse(c, fmt.Sprintf("failed to get worker for taskUnid: %s", taskUinId), err)
+				metrics.RequestApiCount(method, ListTaskPath, "failure")
+				return
+			}
+			taskRes := daemonTaskItem{
+				UniId:   taskUinId,
+				Kind:    item.Kind,
+				Options: item.Options,
+				Payload: payload,
+			}
+			var bindingInfo daemonTaskBindingInfo
+			var alive bool
+			if workerId != "" {
+				bindingInfo.WorkerId = workerId
+				// 获取 worker 是否存活
+				alive, err = daemon.GetBinding().IsWorkerAlive(workerId, item.Options.Queue)
+				if err != nil {
+					ServerErrResponse(c, fmt.Sprintf("failed to get worker status for taskUnid: %s", taskUinId), err)
+					metrics.RequestApiCount(method, ListTaskPath, "failure")
+					return
+				}
+				bindingInfo.WorkerIsNormal = alive
+				taskRes.Binding = &bindingInfo
+			}
+			res = append(res, taskRes)
 		}
 
 		metrics.RequestApiCount(method, ListTaskPath, "success")

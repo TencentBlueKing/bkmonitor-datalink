@@ -88,7 +88,7 @@ package() {
 
 
   # 4. 编译  按系统版本
-  for OS in linux windows darwin; do
+  for OS in linux windows; do
       for CPU_ARCH in x86 x86_64; do
           make_package $OS $CPU_ARCH ${MODULE_NAME} ${VER}
       done
@@ -101,6 +101,8 @@ package() {
     make_package freebsd x86_64 ${MODULE_NAME} ${VER}
   fi
 
+  # darwin x86_64
+  make_package darwin amd64 ${MODULE_NAME} ${VER}
 
   # 5. 打包
   PACKAGE_NAME_PREFIX=${MODULE_NAME}-${VER}

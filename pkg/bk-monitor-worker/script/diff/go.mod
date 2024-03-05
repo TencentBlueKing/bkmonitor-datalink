@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker v0.0.0-20240301092319-f348d765f0f7
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-20240229122444-77f92ff32a6d
+	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.8.4
@@ -43,7 +44,6 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.0 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.13.0 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect

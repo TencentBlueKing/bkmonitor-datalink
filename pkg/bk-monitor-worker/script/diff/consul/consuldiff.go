@@ -18,48 +18,63 @@ import (
 	consulInst "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
+	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
+	"github.com/pkg/errors"
 )
 
 const separator = "/"
 
-var consulClient *consulInst.Instance
+var (
+	srcConsulClient *consulInst.Instance
+	bypassConsulClient *consulInst.Instance
+	SrcPath, BypassPath string
+)
+
 
 // OutputDiffContent output the different content
 func OutputDiffContent() {
-	fmt.Println("start to diff content from src and dst ...")
-	if err := util.ValidateParams(SrcPath, DstPath); err !=nil {
-		fmt.Printf("validate src and dst error, %v", err)
+	fmt.Println("start to diff content from src and bypass ...")
+	if err := util.ValidateParams(Config.Src.Path, Config.Bypass.Path); err !=nil {
+		fmt.Printf("validate src and bypass error, %v", err)
 		os.Exit(1)
 	}
 
-	consulClient = GetInstance()
-	// 如果没有旁路路径，则进行全匹配
-	if BypassName == "" {
-		if err := output(SrcPath, DstPath); err != nil {
-			fmt.Println(err)
-		}
-		return
-	}
+	srcConsulClient = GetInstance(consulUtils.InstanceOptions{
+		Addr:       Config.Src.Address,
+		Port:       Config.Src.Port,
+	})
+	bypassConsulClient = GetInstance(consulUtils.InstanceOptions{
+		Addr:       Config.Bypass.Address,
+		Port:       Config.Bypass.Port,
+	})
+	SrcPath, BypassPath = Config.Src.Path, Config.Bypass.Path
 
 	// 获取全路径
-	srcFullPath, dstFullPath, err := getConsulPath()
+	srcFullPath, bypassFullPath, err := getConsulPath()
 	if err !=nil {
 		fmt.Printf("get consul path error, %v", err)
 		os.Exit(1)
 	}
+	// 如果只有一个地址，则全路径对比
+	if len(srcFullPath) == 1 && len(bypassFullPath) == 1 {
+		if err := output(SrcPath, BypassPath); err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
 	
 	// 比对路径是否一致
-	onlySrcPath, onlyDstPath := comparePath(&srcFullPath, &dstFullPath)
-	if onlySrcPath != nil || onlyDstPath != nil {
-		fmt.Printf("src path: %s, dst path: %s full path not equal\n", SrcPath, DstPath)
+	onlySrcPath, onlyBypassPath := comparePath(&srcFullPath, &bypassFullPath)
+	if onlySrcPath != nil || onlyBypassPath != nil {
+		fmt.Printf("src path: %s, bypass path: %s full path not equal\n", SrcPath, BypassPath)
 		fmt.Printf("only src path: %v \n", onlySrcPath)
-		fmt.Printf("only dst path: %v \n", onlyDstPath)
+		fmt.Printf("only bypass path: %v \n", onlyBypassPath)
 	}else{
-		fmt.Printf("src path: %s, dst path: %s count is equal\n\n", SrcPath, DstPath)
+		fmt.Printf("src path: %s, bypass path: %s count is equal\n\n", SrcPath, BypassPath)
 	}
 
 	// 开始比对数据
-	comparePathData(&dstFullPath)
+	comparePathData(&bypassFullPath)
 
 	fmt.Println("diff successfully")
 }
@@ -67,20 +82,20 @@ func OutputDiffContent() {
 // get full path to get data
 func getConsulPath()([]string, []string, error){
 	// 获取所有全的子路径
-	srcFullPath := getFullPath(SrcPath)
+	srcFullPath := getFullPath(SrcPath, srcConsulClient)
 	if len(srcFullPath) == 0 {
 		return nil, nil, fmt.Errorf("path: %s not key", SrcPath)
 	}
-	dstFullPath := getFullPath(DstPath)
-	if len(dstFullPath) == 0 {
-		return nil, nil, fmt.Errorf("path: %s not key", DstPath)
+	bypassFullPath := getFullPath(BypassPath, bypassConsulClient)
+	if len(bypassFullPath) == 0 {
+		return nil, nil, fmt.Errorf("path: %s not key", BypassPath)
 	}
-	return srcFullPath, dstFullPath, nil
+	return srcFullPath, bypassFullPath, nil
 }
 
 // get full path
-func getFullPath(path string) []string {
-	keys, _, err := consulClient.APIClient.KV().List(path, nil)
+func getFullPath(path string, client *consulInst.Instance) []string {
+	keys, _, err := client.APIClient.KV().List(path, nil)
 	if err != nil {
 		fmt.Printf("list path: %s keys error, %v", path, err)
 		os.Exit(1)
@@ -95,48 +110,48 @@ func getFullPath(path string) []string {
 }
 
 // compare path
-func comparePath(srcFullPath*[]string, dstFullPath*[]string) ([]string, []string) {
-	if len(*srcFullPath) == len(*dstFullPath) {
+func comparePath(srcFullPath*[]string, bypassFullPath*[]string) ([]string, []string) {
+	if len(*srcFullPath) == len(*bypassFullPath) {
 		return nil, nil
 	}
-	var dstFullPathWithoutBypass []string
-	for _, path := range *dstFullPath {
-		dstFullPathWithoutBypass = append(dstFullPathWithoutBypass, strings.Replace(path, BypassName, "", 1))
+	var bypassFullPathWithoutBypass []string
+	for _, path := range *bypassFullPath {
+		bypassFullPathWithoutBypass = append(bypassFullPathWithoutBypass, strings.Replace(path, Config.Bypass.Path, Config.Src.Path, 1))
 	}
 	// 比对差异, 记录仅存在于原路径中数据和旁路路径数据
 	// NOTE: 仅对比剥离前缀的数据
 	srcFullPathSet := slicex.StringList2Set(*srcFullPath)
-	dstFullPathSet := slicex.StringList2Set(dstFullPathWithoutBypass)
-	onlySrcPath := srcFullPathSet.Difference(dstFullPathSet)
-	onlyDstPath := dstFullPathSet.Difference(srcFullPathSet)
-	return slicex.StringSet2List(onlySrcPath), slicex.StringSet2List(onlyDstPath)
+	bypassFullPathSet := slicex.StringList2Set(bypassFullPathWithoutBypass)
+	onlySrcPath := srcFullPathSet.Difference(bypassFullPathSet)
+	onlyBypassPath := bypassFullPathSet.Difference(srcFullPathSet)
+	return slicex.StringSet2List(onlySrcPath), slicex.StringSet2List(onlyBypassPath)
 }
 
 // compare data from path
-func comparePathData(dstPathList *[]string) {
-	for _, path := range *dstPathList {
-		srcPath := strings.Replace(path, BypassName, "", 1)
+func comparePathData(bypassPathList *[]string) {
+	for _, path := range *bypassPathList {
+		srcPath := strings.Replace(path, BypassPath, SrcPath, 1)
 		if err := output(srcPath, path); err != nil {
 			fmt.Println(err) 
 		}
 	}
 }
 
-func output(srcPath string, dstPath string) error {
-	srcData, _ := consulClient.Get(srcPath)
-	dstData, _ := consulClient.Get(dstPath)
+func output(srcPath string, bypassPath string) error {
+	srcData, _ := srcConsulClient.Get(srcPath)
+	bypassData, _ := bypassConsulClient.Get(bypassPath)
 	srcDataJson := string(srcData)
-	dstDataJson := string(dstData)
-	equal, err := jsonx.CompareJson(srcDataJson, dstDataJson)
+	bypassDataJson := string(bypassData)
+	equal, err := jsonx.CompareJson(srcDataJson, bypassDataJson)
 	if err != nil {
-		return fmt.Errorf("path: %s compare with path: %s error, %v", srcPath, dstPath, err)
+		return errors.Errorf("path: %s compare with path: %s error, %v", srcPath, bypassPath, err)
 	}
 	if equal {
-		fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, dstPath)
+		fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, bypassPath)
 	} else {
-		fmt.Printf("path: %s and path: %s is not equal\n", srcPath, dstPath)
+		fmt.Printf("path: %s and path: %s is not equal\n", srcPath, bypassPath)
 		fmt.Printf("path: %s, data: %s\n", srcPath, srcDataJson)
-		fmt.Printf("path: %s, data: %s\n\n", dstPath, dstDataJson)
+		fmt.Printf("path: %s, data: %s\n\n", bypassPath, bypassDataJson)
 	}
 	return nil
 }

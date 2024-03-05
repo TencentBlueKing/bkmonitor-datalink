@@ -14,50 +14,59 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 
 	consulInst "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
 
+// 源配置
+type SrcConsulConfig struct {
+	Address string `mapstructure:"address"`
+	Port    int    `mapstructure:"port"`
+	Path    string `mapstructure:"path"`
+}
+
+// 旁路配置
+type BypassConsulConfig struct {
+	Address string `mapstructure:"address"`
+	Port    int    `mapstructure:"port"`
+	Path    string `mapstructure:"path"`
+}
+
+type ConsulConfig struct {
+	Src    SrcConsulConfig    `mapstructure:"srcConsul"`
+	Bypass BypassConsulConfig `mapstructure:"bypassConsul"`
+}
+
+// 指定配置文件的路径
 var (
 	ConsulDiffConfigPath string
-	Address              string
-	Port                 int
-	Addr                 string
-	SrcPath              string
-	DstPath              string
-	BypassName           string
+	Config               = &ConsulConfig{}
 )
 
 func InitConfig() error {
 	// 存在则以文件中设置为准
+	fmt.Println(ConsulDiffConfigPath)
 	if ConsulDiffConfigPath != "" {
 		viper.SetConfigFile(ConsulDiffConfigPath)
 
 		if err := viper.ReadInConfig(); err != nil {
-			return fmt.Errorf("read config file: %s error: %s", ConsulDiffConfigPath, err)
+			return errors.Errorf("read config file: %s error: %s", ConsulDiffConfigPath, err)
 		}
-		// 赋值
-		Address = viper.GetString("consul.address")
-		Port = viper.GetInt("consul.port")
-		Addr = viper.GetString("consul.addr")
-		SrcPath = viper.GetString("consul.srcPath")
-		DstPath = viper.GetString("consul.dstPath")
-		BypassName = viper.GetString("consul.bypassName")
+		// 解析配置文件到结构体
+		if err := viper.Unmarshal(Config); err != nil {
+			return errors.Errorf("Error unmarshaling config file: %s", err)
+		}
 		return nil
 	}
 	return nil
 }
 
 // GetInstance get consul instance
-func GetInstance() *consulInst.Instance {
+func GetInstance(opt consulUtils.InstanceOptions) *consulInst.Instance {
 	// 组装实例
-	opt := consulUtils.InstanceOptions{
-		Addr:       Address,
-		Port:       Port,
-		ConsulAddr: Addr,
-	}
 	client, err := consulInst.NewInstance(context.TODO(), opt)
 	if err != nil {
 		fmt.Printf("get consul client error, %v", err)

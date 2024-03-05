@@ -18,11 +18,11 @@ import (
 
 func TestComparePath(t *testing.T) {
 	src := []string{"test/test1", "test/test2", "test/test3"}
-	dst := []string{"test/test1", "test/test4"}
-	onlySrc, onlyDst := comparePath(&src, &dst)
+	bypass := []string{"test/test1", "test/test4"}
+	onlySrc, onlyBypass := comparePath(&src, &bypass)
 	
 	assert.Equal(t, len(onlySrc), 2)
 	assert.Equal(t, onlySrc, []string{"test/test2", "test/test3"})
-	assert.Equal(t, len(onlyDst), 1)
-	assert.Equal(t, onlyDst, []string{"test/test4"})
+	assert.Equal(t, len(onlyBypass), 1)
+	assert.Equal(t, onlyBypass, []string{"test/test4"})
 }

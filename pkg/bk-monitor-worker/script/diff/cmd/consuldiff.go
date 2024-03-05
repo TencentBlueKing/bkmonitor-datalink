@@ -25,23 +25,25 @@ func init() {
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.ConsulDiffConfigPath, "config", "", "config file path",
 	)
+
 	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Address, "address", "127.0.0.1:8500", "consul address",
+		&consul.Config.Src.Address, "srcAddress", "127.0.0.1:8500", "consul address",
 	)
 	consulDiffCmd.PersistentFlags().IntVar(
-		&consul.Port, "port", 8500, "consul port",
+		&consul.Config.Src.Port, "port", 8500, "consul port",
 	)
 	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Addr, "addr", "http://127.0.0.1:8500", "consul address with schema",
+		&consul.Config.Src.Path, "srcPath", "", "consul src path",
+	)
+
+	consulDiffCmd.PersistentFlags().StringVar(
+		&consul.Config.Bypass.Address, "bypassAddress", "127.0.0.1:8500", "consul address",
+	)
+	consulDiffCmd.PersistentFlags().IntVar(
+		&consul.Config.Bypass.Port, "bypassPort", 8500, "consul port",
 	)
 	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.SrcPath, "src_path", "", "consul src path",
-	)
-	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.DstPath, "dst_path", "", "consul dst path",
-	)
-	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.BypassName, "bypass_name", "_bypass", "consul bypass name",
+		&consul.Config.Bypass.Path, "bypassPath", "", "consul src path",
 	)
 }
 
@@ -55,7 +57,12 @@ var consulDiffCmd = &cobra.Command{
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		fmt.Printf("output different consul content, settings: \naddress: %s, port: %d \nsrc path: %s \ndst path: %s\n\n", consul.Address, consul.Port, consul.SrcPath, consul.DstPath)
+		settings := fmt.Sprintf(`output different consul content 
+src address: %s, port: %d src path: %s 
+bypass address: %s, port: %d src path: %s
+`, consul.Config.Src.Address, consul.Config.Src.Port, consul.Config.Src.Path, consul.Config.Bypass.Address, consul.Config.Bypass.Port, consul.Config.Bypass.Path)
+		fmt.Println(settings)
+
 		// 输出原路径和旁路路径的差异
 		consul.OutputDiffContent()
 	},

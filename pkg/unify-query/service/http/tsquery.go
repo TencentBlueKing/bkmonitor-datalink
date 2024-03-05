@@ -19,7 +19,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang/gddo/httputil/header"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -38,15 +37,13 @@ const (
 
 func HandleTSQueryRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-request")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-request")
+	defer span.End(&err)
 
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -61,12 +58,12 @@ func HandleTSQueryRequest(c *gin.Context) {
 
 	log.Debugf(ctx, "X-Bk-Scope-Biz-Id:%v", bizIDs)
 
-	trace.InsertStringIntoSpan("request-space-uid", spaceUid, span)
-	trace.InsertStringSliceIntoSpan("request-biz-ids", bizIDs, span)
+	span.Set("request-space-uid", spaceUid)
+	span.Set("request-biz-ids", bizIDs)
 
-	trace.InsertStringIntoSpan("ts-request-data", string(queryStmt), span)
-	trace.InsertIntIntoSpan("ts-request-data-size", len(queryStmt), span)
-	trace.InsertStringIntoSpan("ts-request-header", fmt.Sprintf("%+v", c.Request.Header), span)
+	span.Set("ts-request-data", string(queryStmt))
+	span.Set("ts-request-data-size", len(queryStmt))
+	span.Set("ts-request-header", fmt.Sprintf("%+v", c.Request.Header))
 
 	respData, err := handleTSQuery(ctx, string(queryStmt), false, bizIDs, spaceUid)
 	if err != nil {
@@ -80,15 +77,13 @@ func HandleTSQueryRequest(c *gin.Context) {
 
 func HandleTSExemplarRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-exemplar-request")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-exemplar-request")
+	defer span.End(&err)
 
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -101,11 +96,11 @@ func HandleTSExemplarRequest(c *gin.Context) {
 	bizIDs := header.ParseList(c.Request.Header, BizHeader)
 	spaceUid := c.Request.Header.Get(SpaceUIDHeader)
 
-	trace.InsertStringIntoSpan("request-space-uid", spaceUid, span)
-	trace.InsertStringSliceIntoSpan("request-biz-ids", bizIDs, span)
+	span.Set("request-space-uid", spaceUid)
+	span.Set("request-biz-ids", bizIDs)
 
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("request-data", string(queryStmt), span)
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-data", string(queryStmt))
 
 	respData, err := handleTSExemplarQuery(ctx, string(queryStmt), bizIDs, spaceUid)
 	if err != nil {
@@ -121,11 +116,13 @@ func HandleTSExemplarRequest(c *gin.Context) {
 func makeInfluxdbQuery(
 	ctx context.Context, query *structured.CombinedQueryParams, bizIDs []string, spaceUid string,
 ) ([]influxdb.SQLInfo, error) {
-	var sqls []influxdb.SQLInfo
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "promql-utils-makeInfluxdbQuery")
-	if span != nil {
-		defer span.End()
-	}
+	var (
+		sqls []influxdb.SQLInfo
+		err  error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "promql-utils-makeInfluxdbQuery")
+	defer span.End(&err)
 	options, err := structured.GenerateOptions(query, false, bizIDs, spaceUid)
 	if err != nil {
 		log.Errorf(ctx, "generate options error ->[%s]", err)
@@ -136,9 +133,9 @@ func makeInfluxdbQuery(
 		log.Errorf(ctx, "get time info: %s", err)
 		return nil, err
 	}
-	trace.InsertStringIntoSpan("start-str", info.Start.String(), span)
-	trace.InsertStringIntoSpan("end-str", info.Stop.String(), span)
-	trace.InsertStringIntoSpan("interval", info.Interval.String(), span)
+	span.Set("start-str", info.Start.String())
+	span.Set("end-str", info.Stop.String())
+	span.Set("interval", info.Interval.String())
 
 	for _, q := range query.QueryList {
 		var (
@@ -259,7 +256,7 @@ func makeInfluxdbQuery(
 				measurement = tableInfo.Measurement
 				field = metricName
 			}
-			trace.InsertStringIntoSpan(fmt.Sprintf("table-info-field-%d", i), field, span)
+			span.Set(fmt.Sprintf("table-info-field-%d", i), field)
 			if sLimit > 0 {
 				sLimitStr = fmt.Sprintf(" slimit %d", sLimit)
 			}
@@ -272,14 +269,14 @@ func makeInfluxdbQuery(
 				field, influxdb.ResultColumnName, influxdb.TimeColumnName, strings.Join(fields, ","),
 				measurement, whereList.String(), limitStr, sLimitStr,
 			)
-			trace.InsertStringIntoSpan(fmt.Sprintf("table-info-db-%d", i), db, span)
-			trace.InsertStringIntoSpan(fmt.Sprintf("table-info-sql-%d", i), sql, span)
-			trace.InsertStringSliceIntoSpan(fmt.Sprintf("table-info-fields-%d", i), fields, span)
+			span.Set(fmt.Sprintf("table-info-db-%d", i), db)
+			span.Set(fmt.Sprintf("table-info-sql-%d", i), sql)
+			span.Set(fmt.Sprintf("table-info-fields-%d", i), fields)
 
 			// sql注入防范
 			err = influxdb.CheckSelectSQL(ctx, sql)
 			if err != nil {
-				trace.InsertStringIntoSpan(fmt.Sprintf("table-info-error-%d", i), err.Error(), span)
+				span.Set(fmt.Sprintf("table-info-error-%d", i), err.Error())
 				return nil, err
 			}
 
@@ -292,13 +289,11 @@ func makeInfluxdbQuery(
 // handleTSExemplarQuery
 func handleTSExemplarQuery(ctx context.Context, queryStmt string, bizIDs []string, spaceUid string) (*PromData, error) {
 	var (
-		span oleltrace.Span
 		sqls []influxdb.SQLInfo
+		err  error
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-exemplar-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-exemplar-query")
+	defer span.End(&err)
 	query, err := structured.AnalysisQuery(queryStmt)
 	if err != nil {
 		log.Errorf(ctx, "anaylize combined query info failed for->[%s]", err)
@@ -345,15 +340,13 @@ func handleTSExemplarQuery(ctx context.Context, queryStmt string, bizIDs []strin
 // HandleTsQueryStructToPromQLRequest 结构化查询转 PromQL 接口
 func HandleTsQueryStructToPromQLRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-struct-to-promql")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-struct-to-promql")
+	defer span.End(&err)
 
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -362,7 +355,7 @@ func HandleTsQueryStructToPromQLRequest(c *gin.Context) {
 		return
 	}
 
-	trace.InsertStringIntoSpan("request_data", string(queryStmt), span)
+	span.Set("request_data", string(queryStmt))
 
 	_, stmt, _, err := handleTsQueryParams(ctx, string(queryStmt), true, nil, "")
 	if err != nil {
@@ -419,10 +412,12 @@ func handleTSQuery(
 // - 如果不请求argus(即请求influxdb)，则将与influxdb对齐操作打开
 func handleTsQueryParams(ctx context.Context, queryStmt string, onlyParse bool, bizIDs []string, spaceUid string) (
 	context.Context, string, *structured.CombinedQueryParams, error) {
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "handle-ts-query")
-	if span != nil {
-		defer span.End()
-	}
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handle-ts-query")
+	defer span.End(&err)
 
 	query, err := structured.AnalysisQuery(queryStmt)
 	if err != nil {
@@ -462,8 +457,8 @@ func handleTsQueryParams(ctx context.Context, queryStmt string, onlyParse bool, 
 	startStr := time.Unix(si, 0).String()
 	endStr := time.Unix(ei, 0).String()
 
-	trace.InsertStringIntoSpan("start-str", startStr, span)
-	trace.InsertStringIntoSpan("end-str", endStr, span)
+	span.Set("start-str", startStr)
+	span.Set("end-str", endStr)
 
 	// 进行promql查询
 	ctx, stmt, err := structured.QueryProm(ctx, query, options)
@@ -472,7 +467,7 @@ func handleTsQueryParams(ctx context.Context, queryStmt string, onlyParse bool, 
 		return ctx, "", nil, err
 	}
 
-	trace.InsertStringIntoSpan("promql-stmt", stmt, span)
+	span.Set("promql-stmt", stmt)
 
 	// tsquery解析后直接走flux的处理流程
 	return ctx, stmt, query, nil

@@ -16,7 +16,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -76,20 +75,17 @@ func (i *Instance) QueryRange(
 ) (promql.Matrix, error) {
 
 	var (
-		span oleltrace.Span
-		err  error
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "prometheus-query-range")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("query-promql", stmt, span)
-	trace.InsertStringIntoSpan("query-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
-	trace.InsertStringIntoSpan("query-step", step.String(), span)
-	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
+	span.Set("query-promql", stmt)
+	span.Set("query-start", start.String())
+	span.Set("query-end", end.String())
+	span.Set("query-step", step.String())
+	span.Set("query-opts-look-back-delta", i.lookBackDelta.String())
 	opt := &promql.QueryOpts{
 		LookbackDelta: i.lookBackDelta,
 	}
@@ -124,21 +120,18 @@ func (i *Instance) Query(
 	end time.Time,
 ) (promql.Vector, error) {
 	var (
-		span oleltrace.Span
-		err  error
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "prometheus-query-range")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "prometheus-query-range")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("query-promql", qs, span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	span.Set("query-promql", qs)
+	span.Set("query-end", end.String())
 	opt := &promql.QueryOpts{
 		LookbackDelta: i.lookBackDelta,
 	}
-	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
+	span.Set("query-opts-look-back-delta", i.lookBackDelta.String())
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
 		log.Errorf(ctx, err.Error())

@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -76,7 +75,7 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Vector, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -89,13 +88,13 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span olel
 	}
 
 	prefix := "response-"
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
-	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+	span.Set(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List))
+	span.Set(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster)
+	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
+	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
+	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
+	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
@@ -133,14 +132,14 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span olel
 			seriesNum++
 		}
 
-		trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
+		span.Set("resp-series-num", seriesNum)
 		return vector, nil
 	}
 
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Matrix, error) {
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -153,13 +152,13 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span olel
 	}
 
 	prefix := "vm-data"
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
-	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+	span.Set(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List))
+	span.Set(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster)
+	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
+	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
+	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
+	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 
 	if len(resp.Data.List) > 0 {
 		data := resp.Data.List[0].Data
@@ -211,15 +210,15 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span olel
 			pointNum += len(points)
 		}
 
-		trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-		trace.InsertIntIntoSpan("resp-point-num", pointNum, span)
+		span.Set("resp-series-num", seriesNum)
+		span.Set("resp-point-num", pointNum)
 		return matrix, nil
 	}
 
 	return nil, nil
 }
 
-func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span oleltrace.Span) ([]string, error) {
+func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -233,13 +232,13 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 	}
 
 	prefix := "vm-data"
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
-	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+	span.Set(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List))
+	span.Set(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster)
+	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
+	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
+	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
+	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 
 	lbsMap := make(map[string]struct{}, 0)
 	for _, d := range resp.Data.List {
@@ -255,7 +254,7 @@ func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse,
 	return lbs, nil
 }
 
-func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, span oleltrace.Span) ([]map[string]string, error) {
+func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, span *trace.Span) ([]map[string]string, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf("%s", resp.Message)
 	}
@@ -264,13 +263,13 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 	}
 
 	prefix := "vm-data"
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
-	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
-	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
-	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+	span.Set(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List))
+	span.Set(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster)
+	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
+	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
+	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
+	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 
 	series := make([]map[string]string, 0)
 	for _, d := range resp.Data.List {
@@ -297,7 +296,7 @@ func (i *Instance) QueryRaw(
 
 // vmQuery
 func (i *Instance) vmQuery(
-	ctx context.Context, sql string, data interface{}, span oleltrace.Span,
+	ctx context.Context, sql string, data interface{}, span *trace.Span,
 ) error {
 	var (
 		cancel        context.CancelFunc
@@ -326,11 +325,11 @@ func (i *Instance) vmQuery(
 	defer cancel()
 	startAnaylize = time.Now()
 
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-address", i.Address, span)
-	trace.InsertStringIntoSpan("query-uri-path", i.UriPath, span)
+	span.Set("query-source", user.Source)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-username", user.Name)
+	span.Set("query-address", i.Address)
+	span.Set("query-uri-path", i.UriPath)
 
 	log.Infof(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
@@ -375,24 +374,21 @@ func (i *Instance) QueryRange(
 	start, end time.Time, step time.Duration,
 ) (promql.Matrix, error) {
 	var (
-		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
 
 		vmResp = &VmResponse{}
 		err    error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-query-range")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query-range")
+	defer span.End(&err)
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	trace.InsertStringIntoSpan("query-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
-	trace.InsertStringIntoSpan("query-step", step.String(), span)
-	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
+	span.Set("query-start", start.String())
+	span.Set("query-end", end.String())
+	span.Set("query-step", step.String())
+	span.Set("query-promql", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Matrix{}, nil
@@ -447,29 +443,26 @@ func (i *Instance) Query(
 	end time.Time,
 ) (promql.Vector, error) {
 	var (
-		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
 
 		vmResp = &VmResponse{}
 		err    error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	defer span.End(&err)
 
 	vmExpand = metadata.GetExpand(ctx)
 
-	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	span.Set("query-promql", promqlStr)
+	span.Set("query-end", end.String())
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		return promql.Vector{}, nil
 	}
 
 	ves, _ := json.Marshal(vmExpand)
-	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
+	span.Set("vm-expand", string(ves))
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
@@ -511,20 +504,18 @@ func (i *Instance) Query(
 
 func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
 
 		resp = &VmLableValuesResponse{}
 		err  error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-instance-metric")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-metric")
+	defer span.End(&err)
+
 	vmExpand = metadata.GetExpand(ctx)
 
-	trace.InsertStringIntoSpan("query-name", name, span)
+	span.Set("query-name", name)
 
 	if vmExpand == nil {
 		return nil, nil
@@ -535,7 +526,7 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 	}
 
 	ves, _ := json.Marshal(vmExpand)
-	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
+	span.Set("vm-expand", string(ves))
 
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
@@ -569,17 +560,14 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 
 func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
 
 		resp = &VmLableValuesResponse{}
 		err  error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	defer span.End(&err)
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -588,15 +576,15 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	}
 
 	ves, _ := json.Marshal(vmExpand)
-	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
+	span.Set("vm-expand", string(ves))
 
 	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
 		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
 	}
 
-	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
-	trace.InsertStringIntoSpan("query-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
+	span.Set("query-start", start.String())
+	span.Set("query-end", end.String())
 
 	paramsQuery := &ParamsSeries{
 		InfluxCompatible: i.InfluxCompatible,
@@ -638,17 +626,14 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 
 func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
 
 		resp = &VmResponse{}
 		err  error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "victoria-metrics-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
+	defer span.End(&err)
 
 	if name == labels.MetricName {
 		return i.metric(ctx, name, matchers...)
@@ -666,11 +651,11 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	}
 
 	ves, _ := json.Marshal(vmExpand)
-	trace.InsertStringIntoSpan("vm-expand", string(ves), span)
-	trace.InsertStringIntoSpan("query-name", name, span)
-	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
-	trace.InsertStringIntoSpan("query-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	span.Set("vm-expand", string(ves))
+	span.Set("query-name", name)
+	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
+	span.Set("query-start", start.String())
+	span.Set("query-end", end.String())
 
 	referenceName := ""
 	for _, m := range matchers {

@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -146,11 +145,13 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 }
 
 func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
-	var qry *Query
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "to-query-cluster-metric")
-	if span != nil {
-		defer span.End()
-	}
+	var (
+		qry *Query
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "to-query-cluster-metric")
+	defer span.End(&err)
+
 	if len(q.QueryList) != 1 {
 		return nil, errors.Errorf("Only one query supported, now %d ", len(q.QueryList))
 	}
@@ -190,11 +191,11 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 			WindowDuration: wDuration,
 		}
 	}
-	trace.InsertStringIntoSpan("query-field", queryCM.MetricName, span)
-	trace.InsertStringIntoSpan("query-aggr-methods", fmt.Sprintf("%+v", qry.AggregateMethodList), span)
-	trace.InsertStringIntoSpan("query-conditions", fmt.Sprintf("%+v", queryCM.Conditions), span)
-	trace.InsertStringIntoSpan("query-time-func", queryCM.TimeAggregation.Function, span)
-	trace.InsertStringIntoSpan("query-time-window", strconv.FormatInt(int64(queryCM.TimeAggregation.WindowDuration), 10), span)
+	span.Set("query-field", queryCM.MetricName)
+	span.Set("query-aggr-methods", fmt.Sprintf("%+v", qry.AggregateMethodList))
+	span.Set("query-conditions", fmt.Sprintf("%+v", queryCM.Conditions))
+	span.Set("query-time-func", queryCM.TimeAggregation.Function)
+	span.Set("query-time-window", strconv.FormatInt(int64(queryCM.TimeAggregation.WindowDuration), 10))
 	return queryCM, nil
 }
 
@@ -313,13 +314,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
 		tableID       = q.TableID
-		span          oleltrace.Span
+		err           error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-to-query-metric")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-ts-to-query-metric")
+	defer span.End(&err)
 
 	queryMetric := &metadata.QueryMetric{
 		ReferenceName: referenceName,
@@ -343,11 +342,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				BkSqlCondition:      allConditions.BkSql(),
 			}
 
-			trace.InsertStringIntoSpan("query-storage-id", qry.StorageID, span)
-			trace.InsertStringIntoSpan("query-measurement", qry.Measurement, span)
-			trace.InsertStringIntoSpan("query-field", qry.Field, span)
-			trace.InsertStringIntoSpan("query-aggr-method-list", fmt.Sprintf("%+v", qry.AggregateMethodList), span)
-			trace.InsertStringIntoSpan("query-bk-sql-condition", qry.BkSqlCondition, span)
+			span.Set("query-storage-id", qry.StorageID)
+			span.Set("query-measurement", qry.Measurement)
+			span.Set("query-field", qry.Field)
+			span.Set("query-aggr-method-list", fmt.Sprintf("%+v", qry.AggregateMethodList))
+			span.Set("query-bk-sql-condition", qry.BkSqlCondition)
 
 			queryMetric.QueryList = []*metadata.Query{qry}
 			return queryMetric, nil
@@ -375,11 +374,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
 
-	trace.InsertStringIntoSpan("query-space-uid", spaceUid, span)
-	trace.InsertStringIntoSpan("query-table-id", string(tableID), span)
-	trace.InsertStringIntoSpan("query-metric", metricName, span)
-	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
-	trace.InsertIntIntoSpan("tsdb-num", len(tsDBs), span)
+	span.Set("query-space-uid", spaceUid)
+	span.Set("query-table-id", string(tableID))
+	span.Set("query-metric", metricName)
+	span.Set("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp))
+	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
 		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
@@ -416,13 +415,11 @@ func (q *Query) BuildMetadataQuery(
 		}
 		allCondition AllConditions
 
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "build-metadata-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "build-metadata-query")
+	defer span.End(&err)
 
 	metricName := q.FieldName
 	expandMetricNames := tsDB.ExpandMetricNames
@@ -436,18 +433,18 @@ func (q *Query) BuildMetadataQuery(
 	measurement = tsDB.Measurement
 	measurements = []string{measurement}
 
-	trace.InsertStringIntoSpan("tsdb-table-id", tsDB.TableID, span)
-	trace.InsertStringSliceIntoSpan("tsdb-field-list", tsDB.Field, span)
-	trace.InsertStringIntoSpan("tsdb-measurement-type", tsDB.MeasurementType, span)
-	trace.InsertStringIntoSpan("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters), span)
-	trace.InsertStringIntoSpan("tsdb-data-label", tsDB.DataLabel, span)
-	trace.InsertStringIntoSpan("tsdb-storage-id", storageID, span)
-	trace.InsertStringIntoSpan("tsdb-storage-name", storageName, span)
-	trace.InsertStringIntoSpan("tsdb-cluster-name", clusterName, span)
-	trace.InsertStringIntoSpan("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys), span)
-	trace.InsertStringIntoSpan("tsdb-vm-rt", vmRt, span)
-	trace.InsertStringIntoSpan("tsdb-db", db, span)
-	trace.InsertStringIntoSpan("tsdb-measurements", fmt.Sprintf("%+v", measurements), span)
+	span.Set("tsdb-table-id", tsDB.TableID)
+	span.Set("tsdb-field-list", tsDB.Field)
+	span.Set("tsdb-measurement-type", tsDB.MeasurementType)
+	span.Set("tsdb-filters", fmt.Sprintf("%+v", tsDB.Filters))
+	span.Set("tsdb-data-label", tsDB.DataLabel)
+	span.Set("tsdb-storage-id", storageID)
+	span.Set("tsdb-storage-name", storageName)
+	span.Set("tsdb-cluster-name", clusterName)
+	span.Set("tsdb-tag-keys", fmt.Sprintf("%+v", tagKeys))
+	span.Set("tsdb-vm-rt", vmRt)
+	span.Set("tsdb-db", db)
+	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -506,7 +503,7 @@ func (q *Query) BuildMetadataQuery(
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("tsdb-fields", fmt.Sprintf("%+v", fields), span)
+	span.Set("tsdb-fields", fmt.Sprintf("%+v", fields))
 
 	filterConditions := make([][]ConditionField, 0)
 	satisfy, tKeys := judgeFilter(tsDB.Filters)
@@ -628,26 +625,26 @@ func (q *Query) BuildMetadataQuery(
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
 
-	trace.InsertStringIntoSpan("query-source-type", query.SourceType, span)
-	trace.InsertStringIntoSpan("query-table-id", query.TableID, span)
-	trace.InsertStringIntoSpan("query-db", query.DB, span)
-	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
-	trace.InsertStringSliceIntoSpan("query-measurements", query.Measurements, span)
-	trace.InsertStringIntoSpan("query-field", query.Field, span)
-	trace.InsertStringSliceIntoSpan("query-fields", query.Fields, span)
-	trace.InsertStringIntoSpan("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo), span)
-	trace.InsertStringIntoSpan("query-timezone", query.Timezone, span)
-	trace.InsertStringIntoSpan("query-condition", query.Condition, span)
-	trace.InsertStringIntoSpan("query-vm-condition", query.VmCondition, span)
-	trace.InsertIntIntoSpan("query-vm-condition-num", query.VmConditionNum, span)
-	trace.InsertStringIntoSpan("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp), span)
+	span.Set("query-source-type", query.SourceType)
+	span.Set("query-table-id", query.TableID)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-measurements", query.Measurements)
+	span.Set("query-field", query.Field)
+	span.Set("query-fields", query.Fields)
+	span.Set("query-offset-info", fmt.Sprintf("%+v", query.OffsetInfo))
+	span.Set("query-timezone", query.Timezone)
+	span.Set("query-condition", query.Condition)
+	span.Set("query-vm-condition", query.VmCondition)
+	span.Set("query-vm-condition-num", query.VmConditionNum)
+	span.Set("query-is-regexp", fmt.Sprintf("%v", q.IsRegexp))
 
-	trace.InsertStringIntoSpan("query-storage-type", query.StorageType, span)
-	trace.InsertStringIntoSpan("query-storage-name", query.StorageName, span)
+	span.Set("query-storage-type", query.StorageType)
+	span.Set("query-storage-name", query.StorageName)
 
-	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
-	trace.InsertStringSliceIntoSpan("query-tag-keys", query.TagsKey, span)
-	trace.InsertStringIntoSpan("query-vm-rt", query.VmRt, span)
+	span.Set("query-cluster-name", query.ClusterName)
+	span.Set("query-tag-keys", query.TagsKey)
+	span.Set("query-vm-rt", query.VmRt)
 
 	return query, nil
 }

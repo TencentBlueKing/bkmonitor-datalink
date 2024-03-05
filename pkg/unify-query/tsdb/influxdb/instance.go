@@ -28,7 +28,6 @@ import (
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	promRemote "github.com/prometheus/prometheus/storage/remote"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 
@@ -109,17 +108,16 @@ func (i *Instance) GetInstanceType() string {
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	var (
-		cancel        context.CancelFunc
-		span          oleltrace.Span
+		cancel context.CancelFunc
+
 		startAnaylize time.Time
 
 		sLimitStr string
 		limitStr  string
+		err       error
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-influxql-query-exemplar")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-exemplar")
+	defer span.End(&err)
 	startAnaylize = time.Now()
 
 	where := fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
@@ -155,24 +153,24 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		"http", i.host, i.port, "query", values.Encode(),
 	)
 
-	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-	trace.InsertStringIntoSpan("http-url", urlPath, span)
+	span.Set("query-params", values.Encode())
+	span.Set("http-url", urlPath)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-q", influxql, span)
-	trace.InsertStringIntoSpan("query-db", query.DB, span)
-	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
-	trace.InsertStringIntoSpan("query-field", query.Field, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-where", where, span)
-	trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-q", influxql)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-field", query.Field)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-where", where)
+	span.Set("query-cost", time.Since(startAnaylize).String())
 
 	log.Debugf(ctx,
 		"influxdb query: %s, where: %s",
@@ -362,8 +360,8 @@ func (i *Instance) query(
 	matchers ...*labels.Matcher,
 ) (*prompb.QueryResult, error) {
 	var (
-		cancel        context.CancelFunc
-		span          oleltrace.Span
+		cancel context.CancelFunc
+
 		startAnaylize time.Time
 
 		seriesNum = 0
@@ -379,11 +377,10 @@ func (i *Instance) query(
 		groupingStr string
 
 		expandTag []prompb.Label
+		err       error
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-influxql-query-raw")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-raw")
+	defer span.End(&err)
 
 	bkTaskIndex := query.TableID
 	if bkTaskIndex == "" {
@@ -471,24 +468,24 @@ func (i *Instance) query(
 		"http", i.host, i.port, "query", values.Encode(),
 	)
 
-	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-	trace.InsertStringIntoSpan("http-url", urlPath, span)
+	span.Set("query-params", values.Encode())
+	span.Set("http-url", urlPath)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 	startAnaylize = time.Now()
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-q", sql, span)
-	trace.InsertStringIntoSpan("query-db", query.DB, span)
-	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
-	trace.InsertStringIntoSpan("query-field", query.Field, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-where", where, span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-q", sql)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-field", query.Field)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-where", where)
 
 	log.Debugf(ctx,
 		"influxdb query: %s, where: %s",
@@ -530,7 +527,7 @@ func (i *Instance) query(
 	}
 
 	queryCost := time.Since(startAnaylize)
-	trace.InsertStringIntoSpan("query-cost", queryCost.String(), span)
+	span.Set("query-cost", queryCost.String())
 
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, fmt.Sprintf("%s_http", consul.InfluxDBStorageType),
@@ -552,7 +549,7 @@ func (i *Instance) query(
 		Timeseries: make([]*prompb.TimeSeries, 0, len(series)),
 	}
 
-	trace.InsertStringIntoSpan("expand-tag", fmt.Sprintf("%+v", expandTag), span)
+	span.Set("expand-tag", fmt.Sprintf("%+v", expandTag))
 
 	for _, s := range series {
 		pointNum += len(s.Values)
@@ -600,8 +597,8 @@ func (i *Instance) query(
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumSlimit, fmt.Sprintf("query series > max: %d", i.maxSLimit))
 	}
 
-	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("resp-point-num", pointNum, span)
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-point-num", pointNum)
 	return result, nil
 }
 
@@ -611,26 +608,25 @@ func (i *Instance) grpcStream(
 	slimit, limit int64,
 ) storage.SeriesSet {
 	var (
-		span   oleltrace.Span
 		client remote.QueryTimeSeriesServiceClient
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-query-raw-grpc-stream")
+	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw-grpc-stream")
 
 	urlPath := fmt.Sprintf("%s:%d", i.host, i.grpcPort)
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-db", db, span)
-	trace.InsertStringIntoSpan("query-rp", rp, span)
-	trace.InsertStringIntoSpan("query-measurement", measurement, span)
-	trace.InsertStringIntoSpan("query-field", field, span)
-	trace.InsertStringIntoSpan("query-where", where, span)
-	trace.InsertIntIntoSpan("query-slimit", int(slimit), span)
-	trace.InsertIntIntoSpan("query-limit", int(limit), span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-db", db)
+	span.Set("query-rp", rp)
+	span.Set("query-measurement", measurement)
+	span.Set("query-field", field)
+	span.Set("query-where", where)
+	span.Set("query-slimit", int(slimit))
+	span.Set("query-limit", int(limit))
 
 	client = influxdb.GetInfluxDBRouter().TimeSeriesClient(ctx, i.protocol, urlPath)
 	if client == nil {
@@ -649,7 +645,7 @@ func (i *Instance) grpcStream(
 	}
 
 	filterRequest, _ := json.Marshal(req)
-	trace.InsertStringIntoSpan("query-filter-request", string(filterRequest), span)
+	span.Set("query-filter-request", string(filterRequest))
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
@@ -660,7 +656,7 @@ func (i *Instance) grpcStream(
 
 	name := fmt.Sprintf("%s://%s", i.protocol, i.host)
 
-	trace.InsertStringIntoSpan("start-stream-series-set", name, span)
+	span.Set("start-stream-series-set", name)
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{
 			Span:    span,
@@ -681,13 +677,11 @@ func (i *Instance) QueryRaw(
 	matchers ...*labels.Matcher,
 ) storage.SeriesSet {
 	var (
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-query-raw")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
+	defer span.End(&err)
 
 	where := fmt.Sprintf("time > %d and time < %d", hints.Start*1e6, hints.End*1e6)
 	if query.Condition != "" {
@@ -697,27 +691,27 @@ func (i *Instance) QueryRaw(
 	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
 
-	trace.InsertStringIntoSpan("query-storage-id", query.StorageID, span)
-	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
-	trace.InsertStringIntoSpan("query-tag-keys", fmt.Sprintf("%+v", query.TagsKey), span)
+	span.Set("query-storage-id", query.StorageID)
+	span.Set("query-cluster-name", query.ClusterName)
+	span.Set("query-tag-keys", fmt.Sprintf("%+v", query.TagsKey))
 
-	trace.InsertStringIntoSpan("query-protocol", i.protocol, span)
-	trace.InsertIntIntoSpan("query-rate-limit", int(i.readRateLimit), span)
+	span.Set("query-protocol", i.protocol)
+	span.Set("query-rate-limit", int(i.readRateLimit))
 
-	trace.InsertIntIntoSpan("query-max-limit", i.maxLimit, span)
-	trace.InsertIntIntoSpan("query-max-slimit", i.maxSLimit, span)
+	span.Set("query-max-limit", i.maxLimit)
+	span.Set("query-max-slimit", i.maxSLimit)
 
-	trace.InsertStringIntoSpan("query-host", i.host, span)
-	trace.InsertStringIntoSpan("query-db", query.DB, span)
-	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
-	trace.InsertStringIntoSpan("query-measurements", strings.Join(query.Measurements, ","), span)
-	trace.InsertStringIntoSpan("query-field", query.Field, span)
-	trace.InsertStringIntoSpan("query-fields", strings.Join(query.Fields, ","), span)
-	trace.InsertStringIntoSpan("query-where", where, span)
+	span.Set("query-host", i.host)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-measurements", strings.Join(query.Measurements, ","))
+	span.Set("query-field", query.Field)
+	span.Set("query-fields", strings.Join(query.Fields, ","))
+	span.Set("query-where", where)
 
 	var sets []storage.SeriesSet
 	// 在指标模糊匹配的情况下，需要检索符合条件的 Measures + Fields，这时候会有多个，最后合并结果输出
@@ -779,17 +773,14 @@ func (i *Instance) Query(
 
 func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span   oleltrace.Span
 		err    error
 		cancel context.CancelFunc
 
 		lbMap = make(map[string]struct{})
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-label-names")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-label-names")
+	defer span.End(&err)
 
 	if query != nil {
 		var (
@@ -818,23 +809,23 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			"http", i.host, i.port, "query", values.Encode(),
 		)
 
-		trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-		trace.InsertStringIntoSpan("http-url", urlPath, span)
+		span.Set("query-params", values.Encode())
+		span.Set("http-url", urlPath)
 
 		ctx, cancel = context.WithTimeout(ctx, i.timeout)
 		defer cancel()
 		startAnaylize := time.Now()
 
 		user := metadata.GetUser(ctx)
-		trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-		trace.InsertStringIntoSpan("query-source", user.Source, span)
-		trace.InsertStringIntoSpan("query-username", user.Name, span)
-		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-		trace.InsertStringIntoSpan("query-db", db, span)
-		trace.InsertStringIntoSpan("query-measurement", measurement, span)
-		trace.InsertStringIntoSpan("query-field", field, span)
-		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-		trace.InsertStringIntoSpan("query-where", where, span)
+		span.Set("query-space-uid", user.SpaceUid)
+		span.Set("query-source", user.Source)
+		span.Set("query-username", user.Name)
+		span.Set("query-url-path", urlPath)
+		span.Set("query-db", db)
+		span.Set("query-measurement", measurement)
+		span.Set("query-field", field)
+		span.Set("query-url-path", urlPath)
+		span.Set("query-where", where)
 
 		log.Debugf(ctx,
 			"influxdb query: %s, where: %s",
@@ -873,7 +864,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			return nil, err
 		}
 
-		trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
+		span.Set("query-cost", time.Since(startAnaylize).String())
 
 		if res.Err != "" {
 			return nil, fmt.Errorf(res.Err)
@@ -894,7 +885,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			}
 		}
 
-		trace.InsertIntIntoSpan("resp-num", respNum, span)
+		span.Set("resp-num", respNum)
 	}
 
 	lbs := make([]string, 0, len(lbMap))
@@ -907,7 +898,6 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 
 func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string, error) {
 	var (
-		span   oleltrace.Span
 		err    error
 		cancel context.CancelFunc
 
@@ -918,10 +908,8 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 
 		sql string
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-metrics")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-metrics")
+	defer span.End(&err)
 
 	if field == "value" {
 		sql = "show measurements"
@@ -940,23 +928,23 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		"http", i.host, i.port, "query", values.Encode(),
 	)
 
-	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-	trace.InsertStringIntoSpan("http-url", urlPath, span)
+	span.Set("query-params", values.Encode())
+	span.Set("http-url", urlPath)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 	startAnaylize := time.Now()
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-	trace.InsertStringIntoSpan("query-q", sql, span)
-	trace.InsertStringIntoSpan("query-db", db, span)
-	trace.InsertStringIntoSpan("query-measurement", measurement, span)
-	trace.InsertStringIntoSpan("query-field", field, span)
-	trace.InsertStringIntoSpan("query-url-path", urlPath, span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-url-path", urlPath)
+	span.Set("query-q", sql)
+	span.Set("query-db", db)
+	span.Set("query-measurement", measurement)
+	span.Set("query-field", field)
+	span.Set("query-url-path", urlPath)
 
 	log.Debugf(ctx,
 		"influxdb query: %s", urlPath,
@@ -994,7 +982,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
+	span.Set("query-cost", time.Since(startAnaylize).String())
 
 	if res.Err != "" {
 		return nil, fmt.Errorf(res.Err)
@@ -1027,24 +1015,21 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		}
 	}
 
-	trace.InsertIntIntoSpan("resp-num", len(lbs), span)
+	span.Set("resp-num", len(lbs))
 
 	return lbs, err
 }
 
 func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span   oleltrace.Span
 		err    error
 		cancel context.CancelFunc
 
 		lbMap = make(map[string]struct{})
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-label-values")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-label-values")
+	defer span.End(&err)
 
 	var (
 		db          = query.DB
@@ -1088,8 +1073,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			"http", i.host, i.port, "query", values.Encode(),
 		)
 
-		trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-		trace.InsertStringIntoSpan("http-url", urlPath, span)
+		span.Set("query-params", values.Encode())
+		span.Set("http-url", urlPath)
 
 		ctx, cancel = context.WithTimeout(ctx, i.timeout)
 		defer cancel()
@@ -1097,16 +1082,16 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 		user := metadata.GetUser(ctx)
 
-		trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-		trace.InsertStringIntoSpan("query-source", user.Source, span)
-		trace.InsertStringIntoSpan("query-username", user.Name, span)
-		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-		trace.InsertStringIntoSpan("query-q", sql, span)
-		trace.InsertStringIntoSpan("query-db", db, span)
-		trace.InsertStringIntoSpan("query-measurement", measurement, span)
-		trace.InsertStringIntoSpan("query-field", field, span)
-		trace.InsertStringIntoSpan("query-url-path", urlPath, span)
-		trace.InsertStringIntoSpan("query-where", where, span)
+		span.Set("query-space-uid", user.SpaceUid)
+		span.Set("query-source", user.Source)
+		span.Set("query-username", user.Name)
+		span.Set("query-url-path", urlPath)
+		span.Set("query-q", sql)
+		span.Set("query-db", db)
+		span.Set("query-measurement", measurement)
+		span.Set("query-field", field)
+		span.Set("query-url-path", urlPath)
+		span.Set("query-where", where)
 
 		log.Debugf(ctx,
 			"influxdb query: %s, where: %s",
@@ -1145,7 +1130,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			return nil, err
 		}
 
-		trace.InsertStringIntoSpan("query-cost", time.Since(startAnaylize).String(), span)
+		span.Set("query-cost", time.Since(startAnaylize).String())
 
 		if res.Err != "" {
 			return nil, fmt.Errorf(res.Err)
@@ -1163,7 +1148,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			}
 		}
 
-		trace.InsertIntIntoSpan("resp-num", respNum, span)
+		span.Set("resp-num", respNum)
 	}
 
 	lbs := make([]string, 0, len(lbMap))

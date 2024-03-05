@@ -19,7 +19,6 @@ import (
 
 	"github.com/influxdata/influxql"
 	"github.com/pkg/errors"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -170,7 +169,6 @@ func makeInfluxQLListBySpaceUid(
 		err          error
 		influxQLList []influxdb.SQLInfo
 		limit        int
-		span         oleltrace.Span
 		tsDBs        []*queryMod.TsDBV2
 	)
 
@@ -180,10 +178,9 @@ func makeInfluxQLListBySpaceUid(
 		limit = defaultLimit
 	}
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "make-influxQL-list-by-space-uid")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "make-influxQL-list-by-space-uid")
+	defer span.End(&err)
+
 	user := metadata.GetUser(ctx)
 	tsDBs, err = structured.GetTsDBList(ctx, &structured.TsDBOption{
 		SpaceUid:    spaceUid,
@@ -304,13 +301,11 @@ func makeInfluxQLList(
 		influxQLList []influxdb.SQLInfo
 		limit        int
 		whereList    = promql.NewWhereList()
-		span         oleltrace.Span
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "make-influxQL-list")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "make-influxQL-list")
+	defer span.End(&err)
+
 	if params.Limit > 0 {
 		limit = params.Limit
 	} else {

@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -44,14 +43,12 @@ type LabelValueOptions struct {
 // 功能相当于influxdb show tag keys
 func HandleLabelValuesRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-request")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-request")
+	defer span.End(&err)
 
 	labelName := c.Param("label_name")
 	// start=<rfc3339 | unix_timestamp>: Start timestamp. Optional.
@@ -67,10 +64,10 @@ func HandleLabelValuesRequest(c *gin.Context) {
 
 	paramsStr := fmt.Sprintf("name:%s, table_id:%s, match[]:%v", labelName, tableID, matches)
 
-	trace.InsertStringIntoSpan("request-space-uid", spaceUid, span)
-	trace.InsertStringSliceIntoSpan("request-biz-ids", bizIDs, span)
-	trace.InsertStringIntoSpan("info-request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("request-data", paramsStr, span)
+	span.Set("request-space-uid", spaceUid)
+	span.Set("request-biz-ids", bizIDs)
+	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-data", paramsStr)
 
 	log.Debugf(ctx, "recevice query info: %s, X-Bk-Scope-Biz-Id:%v ", paramsStr, bizIDs)
 

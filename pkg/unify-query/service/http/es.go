@@ -16,7 +16,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -53,16 +52,16 @@ type Query struct {
 func HandleESQueryRequest(c *gin.Context) {
 	// 这里开始context就使用trace生成的了
 	var (
-		ctx         = c.Request.Context()
-		span        oleltrace.Span
+		ctx = c.Request.Context()
+
 		user        = metadata.GetUser(ctx)
 		servicePath = c.Request.URL.Path
+
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-es-request")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-es-request")
+	defer span.End(&err)
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {

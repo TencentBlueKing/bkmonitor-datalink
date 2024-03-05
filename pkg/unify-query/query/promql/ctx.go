@@ -14,8 +14,6 @@ import (
 	"fmt"
 	"time"
 
-	oleltrace "go.opentelemetry.io/otel/trace"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -74,15 +72,13 @@ func clusterIDToSourceType(clusterID string) (string, error) {
 func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *QueryInfo) (metadata.QueryList, error) {
 
 	var (
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "ts-db-metadata-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "ts-db-metadata-query")
+	defer span.End(&err)
 
-	trace.InsertIntIntoSpan("result_table_num", len(queryInfo.TsDBs), span)
+	span.Set("result_table_num", len(queryInfo.TsDBs))
 
 	queryList := make(metadata.QueryList, 0, len(queryInfo.TsDBs))
 	for _, tsDB := range queryInfo.TsDBs {
@@ -205,13 +201,11 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		tableInfos []*consul.TableID
 		whereList  = NewWhereList()
 		isHasOr    = false
-		span       oleltrace.Span
+		err        error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-info-metadata-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-info-metadata-query")
+	defer span.End(&err)
 
 	if queryInfo.DB != "" && queryInfo.Measurement != "" {
 		tableInfos = append(tableInfos, influxdb.GetTableIDByDBAndMeasurement(
@@ -239,7 +233,7 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		}
 	}
 
-	trace.InsertIntIntoSpan("result_table_num", len(tableInfos), span)
+	span.Set("result_table_num", len(tableInfos))
 
 	queryList := make(metadata.QueryList, 0, len(tableInfos))
 	for _, tableInfo := range tableInfos {
@@ -314,13 +308,10 @@ func QueryInfoIntoContext(ctx context.Context, referenceName, metricName string,
 			MetricName:    metricName,
 			IsCount:       queryInfo.IsCount,
 		}
-		span oleltrace.Span
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-info-into-context")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-info-into-context")
+	defer span.End(&err)
 
 	// 空间内容解析
 	if queryInfo.TsDBs != nil {

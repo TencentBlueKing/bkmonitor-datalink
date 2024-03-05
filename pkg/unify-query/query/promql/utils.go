@@ -20,7 +20,6 @@ import (
 	"github.com/influxdata/influxql"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -268,14 +267,12 @@ func makeInfluxdbQuery(
 		start, stop  string
 		totalSQL     string
 		sqlInfos     []influxdb.SQLInfo
-		span         oleltrace.Span
 		matchersAttr []string
+		err          error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "promql-utils-makeInfluxdbQuery")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "promql-utils-makeInfluxdbQuery")
+	defer span.End(&err)
 
 	// 1. 遍历获取所有的filter条件
 	for _, matcherInfo := range matchers {
@@ -309,8 +306,8 @@ func makeInfluxdbQuery(
 		}
 		matchersAttr = append(matchersAttr, matcherInfo.String())
 	}
-	trace.InsertStringSliceIntoSpan("prom-label-matchers", matchersAttr, span)
-	trace.InsertStringIntoSpan("reference-name", referenceName, span)
+	span.Set("prom-label-matchers", matchersAttr)
+	span.Set("reference-name", referenceName)
 
 	// 先通过context获取查询信息
 	queries, err := QueryInfoFromContext(ctx, referenceName)
@@ -319,7 +316,7 @@ func makeInfluxdbQuery(
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("query-info-is-count", fmt.Sprintf("%v", queries.IsCount), span)
+	span.Set("query-info-is-count", fmt.Sprintf("%v", queries.IsCount))
 
 	for i, query := range queries.QueryList {
 		var (
@@ -334,25 +331,25 @@ func makeInfluxdbQuery(
 			bkTaskValue = fmt.Sprintf("%s%s", query.DB, query.Measurement)
 		}
 
-		trace.InsertStringIntoSpan("query-info-clusterID", query.ClusterID, span)
-		trace.InsertStringIntoSpan("query-info-db", query.DB, span)
-		trace.InsertStringIntoSpan("query-info-measurement", query.Measurement, span)
-		trace.InsertStringIntoSpan("query-info-filed", query.Field, span)
+		span.Set("query-info-clusterID", query.ClusterID)
+		span.Set("query-info-db", query.DB)
+		span.Set("query-info-measurement", query.Measurement)
+		span.Set("query-info-filed", query.Field)
 
-		trace.InsertStringIntoSpan("prom-hints-func", hints.Func, span)
-		trace.InsertStringIntoSpan("prom-hints-start", fmt.Sprintf("%d", hints.Start), span)
-		trace.InsertStringIntoSpan("prom-hints-end", fmt.Sprintf("%d", hints.End), span)
-		trace.InsertStringIntoSpan("prom-hints-step", fmt.Sprintf("%d", hints.Step), span)
-		trace.InsertStringIntoSpan("prom-hints-range", fmt.Sprintf("%d", hints.Range), span)
-		trace.InsertStringSliceIntoSpan("prom-hints-grouping", hints.Grouping, span)
+		span.Set("prom-hints-func", hints.Func)
+		span.Set("prom-hints-start", fmt.Sprintf("%d", hints.Start))
+		span.Set("prom-hints-end", fmt.Sprintf("%d", hints.End))
+		span.Set("prom-hints-step", fmt.Sprintf("%d", hints.Step))
+		span.Set("prom-hints-range", fmt.Sprintf("%d", hints.Range))
+		span.Set("prom-hints-grouping", hints.Grouping)
 
 		startStr := time.Unix(hints.Start/1e3, 0).String()
 		endStr := time.Unix(hints.End/1e3, 0).String()
 		offsetStr := query.OffsetInfo.OffSet.String()
 
-		trace.InsertStringIntoSpan("query-start-str", startStr, span)
-		trace.InsertStringIntoSpan("query-end-str", endStr, span)
-		trace.InsertStringIntoSpan("query-offset-str", offsetStr, span)
+		span.Set("query-start-str", startStr)
+		span.Set("query-end-str", endStr)
+		span.Set("query-offset-str", offsetStr)
 
 		aggr, grouping, dimensions := getDownSampleFunc(query.AggregateMethodList, hints, queries.IsCount)
 
@@ -380,9 +377,9 @@ func makeInfluxdbQuery(
 			)
 		}
 
-		trace.InsertIntIntoSpan(fmt.Sprintf("segmented-count-%d", i), len(queryTimes), span)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("segmented-%d", i), queryStr, span)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("query-dimensions-%d", i), dimensions, span)
+		span.Set(fmt.Sprintf("segmented-count-%d", i), len(queryTimes))
+		span.Set(fmt.Sprintf("segmented-%d", i), queryStr)
+		span.Set(fmt.Sprintf("query-dimensions-%d", i), dimensions)
 
 		// 分段查询
 		for j, q := range queryTimes {
@@ -404,12 +401,12 @@ func makeInfluxdbQuery(
 			totalSQL, withGroupBy, isCountGroup = generateSQL(
 				ctx, query.Field, query.Measurement, query.DB, aggr, queryTimesWhereList, dimensions, grouping,
 			)
-			trace.InsertStringIntoSpan(fmt.Sprintf("query-sql-%d-%d", i, j), totalSQL, span)
+			span.Set(fmt.Sprintf("query-sql-%d-%d", i, j), totalSQL)
 
 			// sql注入防范
 			err = influxdb.CheckSelectSQL(ctx, totalSQL)
 			if err != nil {
-				trace.InsertStringIntoSpan(fmt.Sprintf("query-error-%d-%d", i, j), err.Error(), span)
+				span.Set(fmt.Sprintf("query-error-%d-%d", i, j), err.Error())
 				return nil, err
 			}
 
@@ -453,13 +450,11 @@ func generateSQL(
 		rpName         string
 		isCountGroup   bool
 		newAggregation string
-		span           oleltrace.Span
+		err            error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "generate-sql")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "generate-sql")
+	defer span.End(&err)
 
 	rpName, field, newAggregation = GetRp(ctx, db, measurement, field, aggregation, window, whereList)
 	// 根据RP重新生成measurement

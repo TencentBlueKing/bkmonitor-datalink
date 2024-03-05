@@ -37,7 +37,7 @@ type Instance struct {
 
 var (
 	storageRedisInstance *Instance
-	cacheRedisInstance *Instance
+	cacheRedisInstance   *Instance
 )
 
 // 两个类型的redis使用场景不一样，

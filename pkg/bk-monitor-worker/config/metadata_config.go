@@ -42,20 +42,10 @@ var (
 	GlobalTimeSeriesMetricExpiredSeconds int
 	// GlobalIsRestrictDsBelongSpace 是否限制数据源归属具体空间
 	GlobalIsRestrictDsBelongSpace bool
-	// GlobalDefaultBkdataBizId 接入计算平台使用的业务 ID
-	GlobalDefaultBkdataBizId int
 	// GlobalDefaultKafkaStorageClusterId 默认 kafka 存储集群ID
 	GlobalDefaultKafkaStorageClusterId uint
-	// GlobalBkdataKafkaBrokerUrl 与计算平台对接的消息队列BROKER地址
-	GlobalBkdataKafkaBrokerUrl string
 	// GlobalBkappDeployPlatform 监控平台版本
 	GlobalBkappDeployPlatform string
-	// GlobalBkdataRtIdPrefix 监控在计算平台的数据表前缀
-	GlobalBkdataRtIdPrefix string
-	// GlobalBkdataBkBizId 监控在计算平台使用的公共业务ID
-	GlobalBkdataBkBizId int
-	// GlobalBkdataProjectMaintainer 计算平台项目的维护人员
-	GlobalBkdataProjectMaintainer string
 	// GlobalAccessDbmRtSpaceUid 访问 dbm 结果表的空间 UID
 	GlobalAccessDbmRtSpaceUid []string
 	// GlobalTsDataSavedDays 监控采集数据保存天数
@@ -90,6 +80,39 @@ var (
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
+
+	// BkdataDefaultBizId 接入计算平台使用的业务 ID
+	BkdataDefaultBizId int
+	// BkdataProjectId 监控在计算平台使用的公共项目ID
+	BkdataProjectId int
+	// BkdataRealtimeNodeWaitTime 计算平台实时节点等待时间
+	BkdataRealtimeNodeWaitTime int
+	// BkdataDataExpiresDays 计算平台中结果表(MYSQL)默认保存天数
+	BkdataDataExpiresDays int
+	// BkdataKafkaBrokerUrl 与计算平台对接的消息队列BROKER地址
+	BkdataKafkaBrokerUrl string
+	// BkdataRtIdPrefix 监控在计算平台的数据表前缀
+	BkdataRtIdPrefix string
+	// BkdataBkBizId 监控在计算平台使用的公共业务ID
+	BkdataBkBizId int
+	// BkdataRawTableSuffix 数据接入前缀
+	BkdataRawTableSuffix string
+	// BkdataCMDBFullTableSuffix 补充cmdb节点信息后的表后缀
+	BkdataCMDBFullTableSuffix string
+	// BkdataCMDBSplitTableSuffix 补充表拆分后的表后缀
+	BkdataCMDBSplitTableSuffix string
+	// BkdataDruidStorageClusterName 监控专属druid存储集群名称
+	BkdataDruidStorageClusterName string
+	// BkdataMysqlStorageClusterName 监控专属tspider存储集群名称
+	BkdataMysqlStorageClusterName string
+	// BkdataMysqlStorageClusterType 计算平台 SQL 类存储集群类型
+	BkdataMysqlStorageClusterType string
+	// BkdataFlowClusterGroup 计算平台 dataflow 计算集群组
+	BkdataFlowClusterGroup string
+	// BkdataProjectMaintainer 计算平台项目的维护人员
+	BkdataProjectMaintainer string
+	// BkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
+	BkdataIsAllowAllCmdbLevel bool
 )
 
 func initMetadataVariables() {
@@ -103,16 +126,11 @@ func initMetadataVariables() {
 	BcsKafkaStorageClusterId = GetValue("taskConfig.metadata.bcs.kafkaStorageClusterId", uint(0), viper.GetUint)
 	BcsInfluxdbDefaultProxyClusterNameForK8s = GetValue("taskConfig.metadata.bcs.influxdbDefaultProxyClusterNameForK8s", "default")
 	BcsCustomEventStorageClusterId = GetValue("taskConfig.metadata.bcs.customEventStorageClusterId", uint(0), viper.GetUint)
-
 	GlobalFetchTimeSeriesMetricIntervalSeconds = GetValue("taskConfig.metadata.global.fetchTimeSeriesMetricIntervalSeconds", 7200)
 	GlobalTimeSeriesMetricExpiredSeconds = GetValue("taskConfig.metadata.global.timeSeriesMetricExpiredSeconds", 30*24*3600)
 	GlobalIsRestrictDsBelongSpace = GetValue("taskConfig.metadata.global.isRestrictDsBelongSpace", true)
-	GlobalDefaultBkdataBizId = GetValue("taskConfig.metadata.global.defaultBkdataBizId", 0)
 	GlobalDefaultKafkaStorageClusterId = GetValue("taskConfig.metadata.global.defaultKafkaStorageClusterId", uint(0), viper.GetUint)
 	GlobalBkappDeployPlatform = GetValue("taskConfig.metadata.global.bkappDeployPlatform", "enterprise")
-	GlobalBkdataRtIdPrefix = GetValue("taskConfig.metadata.global.bkdataRtIdPrefix", GlobalBkappDeployPlatform)
-	GlobalBkdataBkBizId = GetValue("taskConfig.metadata.global.bkdataBkBizId", 2)
-	GlobalBkdataProjectMaintainer = GetValue("taskConfig.metadata.global.bkdataProjectMaintainer", "admin")
 	GlobalAccessDbmRtSpaceUid = GetValue("taskConfig.metadata.global.accessDbmRtSpaceUid", []string{})
 	GlobalTsDataSavedDays = GetValue("taskConfig.metadata.global.tsDataSavedDays", 30)
 	GlobalCustomReportDefaultProxyIp = GetValue("taskConfig.metadata.global.customReportDefaultProxyIp", []string{})
@@ -131,4 +149,21 @@ func initMetadataVariables() {
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
+
+	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
+	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)
+	BkdataRealtimeNodeWaitTime = GetValue("taskConfig.metadata.bkdata.realtimeNodeWaitTime", 10)
+	BkdataDataExpiresDays = GetValue("taskConfig.metadata.bkdata.dataExpiresDays", 30)
+	BkdataKafkaBrokerUrl = GetValue("taskConfig.metadata.bkdata.kafkaBrokerUrl", "")
+	BkdataRtIdPrefix = GetValue("taskConfig.metadata.bkdata.rtIdPrefix", GlobalBkappDeployPlatform)
+	BkdataBkBizId = GetValue("taskConfig.metadata.bkdata.bkBizId", 2)
+	BkdataRawTableSuffix = GetValue("taskConfig.metadata.bkdata.rawTableSuffix", "raw")
+	BkdataCMDBFullTableSuffix = GetValue("taskConfig.metadata.bkdata.CMDBFullTableSuffix", "full")
+	BkdataCMDBSplitTableSuffix = GetValue("taskConfig.metadata.bkdata.CMDBFSplitTableSuffix", "cmdb")
+	BkdataDruidStorageClusterName = GetValue("taskConfig.metadata.bkdata.druidStorageClusterName", "")
+	BkdataMysqlStorageClusterName = GetValue("taskConfig.metadata.bkdata.mysqlStorageClusterName", "jungle_alert")
+	BkdataMysqlStorageClusterType = GetValue("taskConfig.metadata.bkdata.mysqlStorageClusterType", "mysql_storage")
+	BkdataFlowClusterGroup = GetValue("taskConfig.metadata.bkdata.flowClusterGroup", "default_inland")
+	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
+	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
 }

@@ -97,7 +97,7 @@ func TestVmUtils_getBkbaseDataNameAndTopic(t *testing.T) {
 		want  string
 		want1 string
 	}{
-		{name: "a-b.c--d.__default__", args: args{tableId: "a-b.c--d.__default__"}, want: "vm_a_b_c_d", want1: fmt.Sprintf("%s%v", "vm_a_b_c_d", cfg.GlobalDefaultBkdataBizId)},
+		{name: "a-b.c--d.__default__", args: args{tableId: "a-b.c--d.__default__"}, want: "vm_a_b_c_d", want1: fmt.Sprintf("%s%v", "vm_a_b_c_d", cfg.BkdataDefaultBizId)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestVmUtils_AccessBkdata(t *testing.T) {
 
 	funcPatch := gomonkey.ApplyFunc(VmUtils.AccessVmByKafka, func(s VmUtils, tableId, rawDataName, vmClusterName string, timestampLen int) (map[string]interface{}, error) {
 		return map[string]interface{}{
-			"clean_rt_id":         fmt.Sprintf("%v_%s", cfg.GlobalDefaultBkdataBizId, "raw_data_name"),
+			"clean_rt_id":         fmt.Sprintf("%v_%s", cfg.BkdataDefaultBizId, "raw_data_name"),
 			"bk_data_id":          ds.BkDataId,
 			"cluster_id":          cluster.ClusterID,
 			"kafka_storage_exist": true,

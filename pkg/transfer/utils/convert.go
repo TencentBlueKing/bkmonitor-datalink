@@ -111,6 +111,6 @@ func ParseTime(v interface{}) (time.Time, error) {
 
 // ParseFixedTimeZone
 func ParseFixedTimeZone(zone int) *time.Location {
-	loc := time.FixedZone(fmt.Sprintf("UTC%d", zone), zone*60*60)
+	loc := time.FixedZone("UTC"+strconv.Itoa(zone), zone*60*60)
 	return loc
 }

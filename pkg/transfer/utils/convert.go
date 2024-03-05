@@ -92,14 +92,14 @@ func ConvertTimeUnitAs(ts int64, unit string) int64 {
 
 // ParseTime
 func ParseTime(v interface{}) (time.Time, error) {
-	value, err := conv.DefaultConv.Time(v)
-	if err == nil {
-		return value, nil
-	}
-
 	ts, err := conv.DefaultConv.Int64(v)
 	if err == nil {
 		return ParseTimeStamp(ts), nil
+	}
+
+	value, err := conv.DefaultConv.Time(v)
+	if err == nil {
+		return value, nil
 	}
 
 	str, err := conv.DefaultConv.String(v)

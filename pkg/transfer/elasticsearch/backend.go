@@ -50,7 +50,7 @@ func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 		buf.WriteString(conv.String(values[key]))
 	}
 	n := xxhash.Sum64(buf.Bytes())
-	return strconv.Itoa(int(n))
+	return strconv.FormatUint(n, 10)
 }
 
 func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {

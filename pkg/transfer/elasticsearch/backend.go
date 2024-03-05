@@ -11,15 +11,17 @@ package elasticsearch
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
+	"github.com/cstockton/go-conv"
 	version "github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
@@ -41,13 +43,14 @@ type BulkHandler struct {
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
-	hash := md5.New()
-	for _, key := range b.uniqueField {
-		_, err := fmt.Fprintf(hash, "%#v", values[key])
-		logging.PanicIf(err)
-	}
+	buf := bufferpool.Get()
+	defer bufferpool.Put(buf)
 
-	return hex.EncodeToString(hash.Sum(nil))
+	for _, key := range b.uniqueField {
+		buf.WriteString(conv.String(values[key]))
+	}
+	n := xxhash.Sum64(buf.Bytes())
+	return strconv.Itoa(int(n))
 }
 
 func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {
@@ -100,13 +103,17 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 	errs := utils.NewMultiErrors()
 	response, err := b.writer.Write(ctx, index, records)
 
+	buf := bufferpool.Get()
+	defer bufferpool.Put(buf)
+
 	var e error
 	var result []byte
 	if response != nil {
 		defer func() {
 			logging.WarnIf("close response error", response.Body.Close())
 		}()
-		result, e = io.ReadAll(response.Body)
+		_, e = io.Copy(buf, response.Body)
+		result = buf.Bytes()
 		errs.Add(e)
 	}
 

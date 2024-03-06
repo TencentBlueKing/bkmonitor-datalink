@@ -358,14 +358,17 @@ func (b BcsClusterInfoSvc) getPodCountStatistics(bcsClusterId string) (map[strin
 	for _, p := range podInfo {
 		podData, ok := p["data"].(map[string]interface{})
 		if !ok {
+			logger.Warnf("asset pod info [%v] data failed, skip", p)
 			continue
 		}
 		podStatus, ok := podData["status"].(map[string]interface{})
 		if !ok {
+			logger.Warnf("asset pod info [%v] status failed, skip", p)
 			continue
 		}
 		nodeIP, ok := podStatus["hostIP"].(string)
 		if !ok {
+			logger.Warnf("asset pod info [%v] hostIP failed, skip", p)
 			continue
 		}
 		result[nodeIP] = result[nodeIP] + 1

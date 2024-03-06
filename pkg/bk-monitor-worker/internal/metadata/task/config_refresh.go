@@ -207,7 +207,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 过滤状态为启用的结果表
 	var enabledResultTableList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).TableIdIn(rtList...).Select("table_id").All(&enabledResultTableList); err != nil {
+	if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(rtList...).Select("table_id").All(&enabledResultTableList); err != nil {
 		logger.Errorf("query enabled result table error, %v", err)
 		return err
 	}

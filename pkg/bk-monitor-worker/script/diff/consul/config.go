@@ -24,14 +24,12 @@ import (
 // 源配置
 type SrcConsulConfig struct {
 	Address string `mapstructure:"address"`
-	Port    int    `mapstructure:"port"`
 	Path    string `mapstructure:"path"`
 }
 
 // 旁路配置
 type BypassConsulConfig struct {
 	Address string `mapstructure:"address"`
-	Port    int    `mapstructure:"port"`
 	Path    string `mapstructure:"path"`
 }
 

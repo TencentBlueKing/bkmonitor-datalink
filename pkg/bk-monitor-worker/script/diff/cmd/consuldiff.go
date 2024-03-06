@@ -18,8 +18,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff/consul"
 )
 
-
-
 func init() {
 	rootCmd.AddCommand(consulDiffCmd)
 	consulDiffCmd.PersistentFlags().StringVar(
@@ -29,18 +27,12 @@ func init() {
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.Config.Src.Address, "srcAddress", "127.0.0.1:8500", "consul address",
 	)
-	consulDiffCmd.PersistentFlags().IntVar(
-		&consul.Config.Src.Port, "port", 8500, "consul port",
-	)
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.Config.Src.Path, "srcPath", "", "consul src path",
 	)
 
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.Config.Bypass.Address, "bypassAddress", "127.0.0.1:8500", "consul address",
-	)
-	consulDiffCmd.PersistentFlags().IntVar(
-		&consul.Config.Bypass.Port, "bypassPort", 8500, "consul port",
 	)
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.Config.Bypass.Path, "bypassPath", "", "consul src path",
@@ -51,16 +43,16 @@ var consulDiffCmd = &cobra.Command{
 	Use:   "consul_diff",
 	Short: "diff for consul",
 	Long:  "diff content from consul src and dst path",
-	Run:   func(cmd *cobra.Command, args []string){
+	Run: func(cmd *cobra.Command, args []string) {
 		// 将命令行参数绑定到 Viper
 		if err := consul.InitConfig(); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 		settings := fmt.Sprintf(`output different consul content 
-src address: %s, port: %d src path: %s 
-bypass address: %s, port: %d src path: %s
-`, consul.Config.Src.Address, consul.Config.Src.Port, consul.Config.Src.Path, consul.Config.Bypass.Address, consul.Config.Bypass.Port, consul.Config.Bypass.Path)
+src address: %s, src path: %s 
+bypass address: %s,  src path: %s
+`, consul.Config.Src.Address, consul.Config.Src.Path, consul.Config.Bypass.Address, consul.Config.Bypass.Path)
 		fmt.Println(settings)
 
 		// 输出原路径和旁路路径的差异

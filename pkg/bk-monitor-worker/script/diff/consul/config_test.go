@@ -18,5 +18,5 @@ import (
 func TestConfigForViper(t *testing.T) {
 	ConsulDiffConfigPath = "../diff_test.yaml"
 	InitConfig()
-	assert.Equal(t, Address, "127.0.0.1:8500")
+	assert.Equal(t, Config.Src.Address, "127.0.0.1:8500")
 }

@@ -7,19 +7,26 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bcs
+package dataflow
 
-//go:generate goqueryset -in bcslabel.go -out qs_bcslabel_gen.go
-
-// BCSLabel BCS label model
-// gen:qs
-type BCSLabel struct {
-	HashID uint   `gorm:"primary_key;column:hash_id" json:"hash_id"`
-	Key    string `gorm:"size:127;" json:"key"`
-	Value  string `gorm:"size:127;" json:"value"`
+type Task interface {
+	FlowName() string
+	CreateFlow(rebuild bool, projectId int) error
+	StartFlow(consumingMode string) error
 }
 
-// TableName 用于设置表的别名
-func (BCSLabel) TableName() string {
-	return "bkmonitor_bcslabel"
+type Node interface {
+	Name() string
+	FrontendInfo() map[string]int
+	Config() map[string]interface{}
+	NeedUpdate(map[string]interface{}) bool
+	NeedRestartFromTail(map[string]interface{}) bool
+	GetNodeType() string
+	GetApiParams(flowId int) map[string]interface{}
+	Update(flowId, NodeId int) error
+	Create(flowId int) error
+	Equal(map[string]interface{}) bool
+	SetNodeId(nodeId int)
+	GetNodeId() int
+	TableName() string
 }

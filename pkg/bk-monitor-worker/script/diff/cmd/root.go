@@ -17,9 +17,8 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "run",
 	Short: "difference of content",
-	Long:  "output diff",
+	Long:  "output difference content from src and bypass",
 }
 
 // Execute a command

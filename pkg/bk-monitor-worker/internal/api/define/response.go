@@ -41,3 +41,9 @@ type APICommonListResp struct {
 	ApiCommonRespMeta
 	Data []interface{} `json:"data"`
 }
+
+// APICommonListMapResp api通用返回结构体List-Map
+type APICommonListMapResp struct {
+	ApiCommonRespMeta
+	Data []map[string]interface{} `json:"data"`
+}

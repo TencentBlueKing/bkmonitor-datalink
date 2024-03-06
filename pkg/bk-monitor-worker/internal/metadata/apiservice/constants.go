@@ -12,4 +12,6 @@ package apiservice
 const (
 	ApiPageLimit    = 3000
 	ApiPageLimitStr = "3000"
+
+	BcsStoragePageSizeStr = "5000"
 )

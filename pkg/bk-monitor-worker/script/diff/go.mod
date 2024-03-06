@@ -5,6 +5,8 @@ go 1.22
 require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker v0.0.0-20240301092319-f348d765f0f7
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-20240229122444-77f92ff32a6d
+	github.com/deckarep/golang-set/v2 v2.3.1
+	github.com/go-redis/redis/v8 v8.11.5
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.8.0
 	github.com/spf13/viper v1.18.2
@@ -14,9 +16,9 @@ require (
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/bytedance/sonic v1.9.1 // indirect
+	github.com/bytedance/sonic v1.11.2 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
-	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
+	github.com/chenzhuoyu/base64x v0.0.0-20230717121745-296ad89f973d // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set v1.8.0 // indirect
 	github.com/fatih/color v1.14.1 // indirect
@@ -32,6 +34,11 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/hashicorp/serf v0.10.1 // indirect
+)
+
+require (
+	github.com/chenzhuoyu/iasm v0.9.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josephburnett/jd v1.7.1 // indirect
 	github.com/josharian/intern v1.0.0 // indirect

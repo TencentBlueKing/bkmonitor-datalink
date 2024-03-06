@@ -143,12 +143,13 @@ type recorder struct {
 	stopped atomic.Bool
 	wg      sync.WaitGroup
 
-	metricName string
-	dataID     int32
-	storID     string
-	gcInterval time.Duration
-	maxSeries  int
-	buckets    []float64
+	metricName          string
+	dataID              int32
+	storID              string
+	gcInterval          time.Duration
+	maxSeries           int
+	buckets             []float64
+	maxSeriesGrowthRate int
 
 	stor labelstore.Storage
 	mut  sync.RWMutex
@@ -156,32 +157,35 @@ type recorder struct {
 	// https://github.com/golang/go/issues/9477
 	// map 中如果 values 为指针类型 gc 扫描的开销会增大不少
 	// 参见 benchmark
-	statsMap map[uint64]rStats
-	exceeded int
+	statsMap         map[uint64]rStats
+	exceeded         int
+	seriesGrowthRate int
 }
 
 type recorderOptions struct {
-	metricName string
-	maxSeries  int
-	dataID     int32
-	buckets    []float64
-	gcInterval time.Duration
-	storID     string
+	metricName          string
+	maxSeries           int
+	dataID              int32
+	buckets             []float64
+	gcInterval          time.Duration
+	storID              string
+	maxSeriesGrowthRate int
 }
 
 func newRecorder(opts recorderOptions, stor labelstore.Storage) *recorder {
 	buckets := opts.buckets
 	sort.Float64s(buckets)
 	r := &recorder{
-		done:       make(chan struct{}, 1),
-		metricName: opts.metricName,
-		dataID:     opts.dataID,
-		storID:     opts.storID,
-		gcInterval: opts.gcInterval,
-		maxSeries:  opts.maxSeries,
-		buckets:    toNanoseconds(buckets),
-		stor:       stor,
-		statsMap:   map[uint64]rStats{},
+		done:                make(chan struct{}, 1),
+		metricName:          opts.metricName,
+		dataID:              opts.dataID,
+		storID:              opts.storID,
+		gcInterval:          opts.gcInterval,
+		maxSeries:           opts.maxSeries,
+		buckets:             toNanoseconds(buckets),
+		maxSeriesGrowthRate: opts.maxSeriesGrowthRate,
+		stor:                stor,
+		statsMap:            map[uint64]rStats{},
 	}
 
 	r.wg.Add(1)
@@ -254,6 +258,14 @@ func (r *recorder) Set(lbs labels.Labels, value float64) bool {
 
 	s, ok := r.statsMap[h]
 	if !ok {
+		r.seriesGrowthRate += 1
+		if r.maxSeriesGrowthRate != 0 && r.seriesGrowthRate > r.maxSeriesGrowthRate {
+			logger.Debug("growth rate exceeded, series labels: %v", lbs)
+			DefaultMetricMonitor.IncSeriesExceededCounter(r.dataID)
+			r.exceeded++
+			return false
+		}
+
 		DefaultMetricMonitor.IncAddedSeriesCounter(r.dataID)
 		s = rStats{}
 		s.min = MaxValue
@@ -310,6 +322,10 @@ func (r *recorder) Clean() {
 		}
 		r.mut.Unlock()
 	}
+}
+
+func (r *recorder) ResetGrowthRate() {
+	r.seriesGrowthRate = 0
 }
 
 func (r *recorder) Min() <-chan *define.Record {
@@ -488,12 +504,13 @@ func (r *recorder) buildMetrics(kind string) <-chan *define.Record {
 }
 
 type Config struct {
-	MetricName      string
-	MaxSeries       int
-	GcInterval      time.Duration
-	PublishInterval time.Duration
-	Buckets         []float64
-	Type            string
+	MetricName          string
+	MaxSeries           int
+	GcInterval          time.Duration
+	PublishInterval     time.Duration
+	Buckets             []float64
+	Type                string
+	MaxSeriesGrowthRate int
 }
 
 // Validate 验证配置默认值
@@ -530,6 +547,7 @@ func New(conf *Config, publishFunc func(r *define.Record)) *Accumulator {
 		gcInterval:      conf.GcInterval / 2, // 以 0.5*gcInterval 频率进行清理
 	}
 	go accumulator.gc()
+	go accumulator.resetGrowthRateLoop()
 
 	if publishFunc != nil {
 		go accumulator.publish()
@@ -623,6 +641,19 @@ func (a *Accumulator) doGc() {
 	DefaultMetricMonitor.ObserveGcDuration(start)
 }
 
+func (a *Accumulator) resetGrowthRate() {
+	a.mut.RLock()
+	rs := make([]*recorder, 0, len(a.recorders))
+	for _, r := range a.recorders {
+		rs = append(rs, r)
+	}
+	a.mut.RUnlock()
+
+	for _, r := range rs {
+		r.ResetGrowthRate()
+	}
+}
+
 func (a *Accumulator) gc() {
 	ticker := time.NewTicker(a.gcInterval)
 	defer ticker.Stop()
@@ -635,6 +666,20 @@ func (a *Accumulator) gc() {
 			a.doGc()
 		}
 	}
+}
+
+func (a *Accumulator) resetGrowthRateLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.done:
+			return
+		case <-ticker.C:
+			a.resetGrowthRate()
+		}
+	}
+
 }
 
 func (a *Accumulator) Stop() {
@@ -685,12 +730,13 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 		id := fmt.Sprintf("%s:%d", a.conf.MetricName, dataID)
 		stor := labelstore.GetOrCreateStorage(id)
 		opts := recorderOptions{
-			metricName: a.conf.MetricName,
-			maxSeries:  a.conf.MaxSeries,
-			dataID:     dataID,
-			storID:     id,
-			buckets:    a.conf.GetBuckets(),
-			gcInterval: a.conf.GcInterval,
+			metricName:          a.conf.MetricName,
+			maxSeries:           a.conf.MaxSeries,
+			dataID:              dataID,
+			storID:              id,
+			buckets:             a.conf.GetBuckets(),
+			gcInterval:          a.conf.GcInterval,
+			maxSeriesGrowthRate: a.conf.MaxSeriesGrowthRate,
 		}
 		r = newRecorder(opts, stor)
 		a.recorders[dataID] = r

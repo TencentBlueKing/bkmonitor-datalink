@@ -11,9 +11,9 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff/redis"
 	"time"
 
-	"diff/redis"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 

@@ -10,7 +10,7 @@
 package main
 
 import (
-	"diff/cmd"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff/cmd"
 )
 
 func main() {

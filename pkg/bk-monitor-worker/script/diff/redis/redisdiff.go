@@ -12,11 +12,10 @@ package redis
 import (
 	"context"
 
-	"diff/utils/jsondiff"
-	"diff/utils/jsonx"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
@@ -130,7 +129,7 @@ func (d *DiffUtil) compareString(originData interface{}, bypassData interface{})
 	if err := jsonx.UnmarshalString(bypass, &b); err != nil {
 		return false, nil
 	}
-	return jsondiff.CompareObjects(o, b)
+	return jsonx.CompareObjects(o, b)
 }
 
 // 对比list/set类型数据差异
@@ -147,7 +146,7 @@ func (d *DiffUtil) compareList(originData interface{}, bypassData interface{}) (
 		return false, nil
 	}
 
-	equal, err := jsondiff.CompareObjects(originList, bypassList)
+	equal, err := jsonx.CompareObjects(originList, bypassList)
 	if err != nil {
 		return false, errors.Wrapf(err, "compare list/set [%v] and [%v] failed", originList, bypassList)
 	}
@@ -172,7 +171,7 @@ func (d *DiffUtil) compareList(originData interface{}, bypassData interface{}) (
 		bList = append(bList, b)
 	}
 
-	return jsondiff.CompareObjects(oList, bList)
+	return jsonx.CompareObjects(oList, bList)
 }
 
 // 对比hash类型数据差异
@@ -186,7 +185,7 @@ func (d *DiffUtil) compareHash(originData interface{}, bypassData interface{}) (
 		return false, errors.Errorf("assert bypass data [%#v] to map failed", bypassData)
 	}
 
-	equal, err := jsondiff.CompareObjects(originMap, bypassMap)
+	equal, err := jsonx.CompareObjects(originMap, bypassMap)
 	if err != nil {
 		return false, errors.Wrapf(err, "compare hash [%v] and [%v] failed", originMap, bypassMap)
 	}
@@ -212,6 +211,6 @@ func (d *DiffUtil) compareHash(originData interface{}, bypassData interface{}) (
 		bMap[k] = b
 	}
 
-	return jsondiff.CompareObjects(oMap, bMap)
+	return jsonx.CompareObjects(oMap, bMap)
 
 }

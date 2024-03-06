@@ -13,11 +13,11 @@ import (
 	"context"
 	"fmt"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
 // redis数据类型
@@ -29,11 +29,7 @@ const (
 )
 
 type DiffUtil struct {
-	KeyType      string
-	SrcKey       string
-	BypassKey    string
-	SrcConfig    *redisUtils.Option
-	BypassConfig *redisUtils.Option
+	Config
 }
 
 // Diff 对比redis中指定key数据差异
@@ -67,8 +63,8 @@ func (d *DiffUtil) Diff() (bool, error) {
 		return false, errors.Wrapf(err, "diff %s data [%s] and [%s] failed", d.KeyType, srcData, bypassData)
 	}
 	if !equal {
-		fmt.Printf("src key [%s] %s data [%s]", d.SrcKey, d.KeyType, srcData)
-		fmt.Printf("bypass key [%s] %s data [%s]", d.BypassKey, d.KeyType, bypassData)
+		fmt.Printf("src key [%s] %s data [%s]\n", d.SrcKey, d.KeyType, srcData)
+		fmt.Printf("bypass key [%s] %s data [%s]\n", d.BypassKey, d.KeyType, bypassData)
 		return equal, nil
 	}
 	return equal, nil
@@ -193,6 +189,8 @@ func (d *DiffUtil) compareHash(srcData interface{}, bypassData interface{}) (boo
 		return true, nil
 	}
 
+	sKeySet := mapset.NewSet[string]()
+	bKeySet := mapset.NewSet[string]()
 	sMap := make(map[string]interface{})
 	bMap := make(map[string]interface{})
 	for k, v := range srcMap {
@@ -201,6 +199,7 @@ func (d *DiffUtil) compareHash(srcData interface{}, bypassData interface{}) (boo
 			return false, nil
 		}
 		sMap[k] = s
+		sKeySet.Add(k)
 	}
 
 	for k, v := range bypassMap {
@@ -209,8 +208,31 @@ func (d *DiffUtil) compareHash(srcData interface{}, bypassData interface{}) (boo
 			return false, nil
 		}
 		bMap[k] = b
+		bKeySet.Add(k)
 	}
 
-	return jsonx.CompareObjects(sMap, bMap)
+	if kOnlyInSrc := sKeySet.Difference(bKeySet).ToSlice(); len(kOnlyInSrc) != 0 {
+		fmt.Printf("hash key [%v] only exsist in srcKey [%s]\n\n", kOnlyInSrc, d.SrcKey)
+	}
 
+	if kOnlyInBypass := bKeySet.Difference(sKeySet).ToSlice(); len(kOnlyInBypass) != 0 {
+		fmt.Printf("hash key [%v] only exsist in bypassKey [%s]\n\n", kOnlyInBypass, d.BypassKey)
+	}
+	equal, _ = jsonx.CompareObjects(sMap, bMap)
+	if equal {
+		return true, nil
+	}
+	// 存在不一致，对比每个key获取详细差异
+
+	for key := range sKeySet.Union(bKeySet).Iter() {
+		sValue := srcMap[key]
+		bValue := bypassMap[key]
+		if equal, _ := jsonx.CompareJson(sValue, bValue); !equal {
+			fmt.Printf("srcKey [%s] and bypassKey [%s] key [%s] value is different\n", d.SrcKey, d.BypassKey, key)
+			fmt.Printf("srcKey [%s] key [%s] value [%s]\n", d.SrcKey, key, sValue)
+			fmt.Printf("bypassKey [%s] key [%s] value [%s]\n\n", d.BypassKey, key, bValue)
+		}
+
+	}
+	return false, nil
 }

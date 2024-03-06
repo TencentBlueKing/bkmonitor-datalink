@@ -25,7 +25,7 @@ var rootCmd = &cobra.Command{
 // Execute 执行命令
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Printf("diff error, %s", err)
+		fmt.Printf("diff error, %s\n", err)
 		os.Exit(1)
 	}
 }
@@ -39,7 +39,7 @@ var ConfigPath string
 func InitConfig() {
 	viper.SetConfigFile(ConfigPath)
 	if err := viper.ReadInConfig(); err != nil {
-		fmt.Printf("read config file: %s error: %s", ConfigPath, err)
+		fmt.Printf("read config file: %s error: %s\n", ConfigPath, err)
 		os.Exit(1)
 	}
 }

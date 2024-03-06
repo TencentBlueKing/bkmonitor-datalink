@@ -15,7 +15,7 @@ import (
 
 func TestDiffUtil_compareString(t *testing.T) {
 	type args struct {
-		originData interface{}
+		srcData    interface{}
 		bypassData interface{}
 	}
 	tests := []struct {
@@ -24,17 +24,17 @@ func TestDiffUtil_compareString(t *testing.T) {
 		want    bool
 		wantErr bool
 	}{
-		{name: "base-equal", args: args{originData: interface{}("abc"), bypassData: interface{}("abc")}, want: true, wantErr: false},
-		{name: "base-not-equal", args: args{originData: interface{}("abc"), bypassData: interface{}("ab")}, want: false, wantErr: false},
-		{name: "json-map-equal", args: args{originData: interface{}(`{"a":1,"b":2}`), bypassData: interface{}(`{"b":2,"a":1}`)}, want: true, wantErr: false},
-		{name: "json-map-not-equal", args: args{originData: interface{}(`{"a":1,"b":3}`), bypassData: interface{}(`{"b":2,"a":1}`)}, want: false, wantErr: false},
-		{name: "json-list-equal", args: args{originData: interface{}(`["a","b"]`), bypassData: interface{}(`["b","a"]`)}, want: true, wantErr: false},
-		{name: "json-list-not-equal", args: args{originData: interface{}(`["a","b","c"`), bypassData: interface{}(`["b","a"]`)}, want: false, wantErr: false},
+		{name: "base-equal", args: args{srcData: interface{}("abc"), bypassData: interface{}("abc")}, want: true, wantErr: false},
+		{name: "base-not-equal", args: args{srcData: interface{}("abc"), bypassData: interface{}("ab")}, want: false, wantErr: false},
+		{name: "json-map-equal", args: args{srcData: interface{}(`{"a":1,"b":2}`), bypassData: interface{}(`{"b":2,"a":1}`)}, want: true, wantErr: false},
+		{name: "json-map-not-equal", args: args{srcData: interface{}(`{"a":1,"b":3}`), bypassData: interface{}(`{"b":2,"a":1}`)}, want: false, wantErr: false},
+		{name: "json-list-equal", args: args{srcData: interface{}(`["a","b"]`), bypassData: interface{}(`["b","a"]`)}, want: true, wantErr: false},
+		{name: "json-list-not-equal", args: args{srcData: interface{}(`["a","b","c"`), bypassData: interface{}(`["b","a"]`)}, want: false, wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &DiffUtil{}
-			got, err := d.compareString(tt.args.originData, tt.args.bypassData)
+			got, err := d.compareString(tt.args.srcData, tt.args.bypassData)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("compareString() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -48,7 +48,7 @@ func TestDiffUtil_compareString(t *testing.T) {
 
 func TestDiffUtil_compareList(t *testing.T) {
 	type args struct {
-		originData interface{}
+		srcData    interface{}
 		bypassData interface{}
 	}
 	tests := []struct {
@@ -57,15 +57,15 @@ func TestDiffUtil_compareList(t *testing.T) {
 		want    bool
 		wantErr bool
 	}{
-		{name: "base-equal", args: args{originData: interface{}([]string{"a", "b", "c"}), bypassData: interface{}([]string{"c", "b", "a"})}, want: true, wantErr: false},
-		{name: "base-equal-2", args: args{originData: interface{}([]string{`{"a": "1", "b": "2"}`, `{"c": "3", "d": "4"}`}), bypassData: interface{}([]string{`{"c": "3", "d": "4"}`, `{"a": "1", "b": "2"}`})}, want: true, wantErr: false},
-		{name: "base-not-equal", args: args{originData: interface{}([]string{"a", "b", "c"}), bypassData: interface{}([]string{"c", "b", "a", "d"})}, want: false, wantErr: false},
-		{name: "base-not-equal-2", args: args{originData: interface{}([]string{`{"a": "1", "b": "2"}`, `{"c": "3", "d": "4"}`}), bypassData: interface{}([]string{`{"c": "3", "d": "4"}`, `{"a": "1", "b": "2"}`, `{"d":5}`})}, want: false, wantErr: false},
+		{name: "base-equal", args: args{srcData: interface{}([]string{"a", "b", "c"}), bypassData: interface{}([]string{"c", "b", "a"})}, want: true, wantErr: false},
+		{name: "base-equal-2", args: args{srcData: interface{}([]string{`{"a": "1", "b": "2"}`, `{"c": "3", "d": "4"}`}), bypassData: interface{}([]string{`{"c": "3", "d": "4"}`, `{"a": "1", "b": "2"}`})}, want: true, wantErr: false},
+		{name: "base-not-equal", args: args{srcData: interface{}([]string{"a", "b", "c"}), bypassData: interface{}([]string{"c", "b", "a", "d"})}, want: false, wantErr: false},
+		{name: "base-not-equal-2", args: args{srcData: interface{}([]string{`{"a": "1", "b": "2"}`, `{"c": "3", "d": "4"}`}), bypassData: interface{}([]string{`{"c": "3", "d": "4"}`, `{"a": "1", "b": "2"}`, `{"d":5}`})}, want: false, wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &DiffUtil{}
-			got, err := d.compareList(tt.args.originData, tt.args.bypassData)
+			got, err := d.compareList(tt.args.srcData, tt.args.bypassData)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("compareList() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -79,7 +79,7 @@ func TestDiffUtil_compareList(t *testing.T) {
 
 func TestDiffUtil_compareHash(t *testing.T) {
 	type args struct {
-		originData interface{}
+		srcData    interface{}
 		bypassData interface{}
 	}
 	tests := []struct {
@@ -88,18 +88,18 @@ func TestDiffUtil_compareHash(t *testing.T) {
 		want    bool
 		wantErr bool
 	}{
-		{name: "base-equal", args: args{originData: interface{}(map[string]string{"a": "1", "b": "2"}), bypassData: interface{}(map[string]string{"a": "1", "b": "2"})}, want: true, wantErr: false},
-		{name: "base-equal-2", args: args{originData: interface{}(map[string]string{"a": "1", "b": "2"}), bypassData: interface{}(map[string]string{"b": "2", "a": "1"})}, want: true, wantErr: false},
-		{name: "base-not-equal", args: args{originData: interface{}(map[string]string{"a": "1", "b": "3"}), bypassData: interface{}(map[string]string{"b": "2", "a": "1"})}, want: false, wantErr: false},
-		{name: "json-map-equal", args: args{originData: interface{}(map[string]string{"a": `{"x":1,"y":"2"}`, "b": `{"p":1,"q":2}`}), bypassData: interface{}(map[string]string{"b": `{"p":1,"q":2}`, "a": `{"y":"2","x":1}`})}, want: true, wantErr: false},
-		{name: "json-map-not-equal", args: args{originData: interface{}(map[string]string{"a": `{"x":1,"y":"2"}`, "b": `{"p":1,"q":2}`}), bypassData: interface{}(map[string]string{"b": `{"p":1,"q":2}`, "a": `{"x":1,"z":"2"}`})}, want: false, wantErr: false},
-		{name: "json-list-equal", args: args{originData: interface{}(map[string]string{"a": `[1,2,3]`, "b": `[true, false]`}), bypassData: interface{}(map[string]string{"b": `[false,true]`, "a": `[3,2,1]`})}, want: true, wantErr: false},
-		{name: "json-list-not-equal", args: args{originData: interface{}(map[string]string{"a": `[1,2,4]`, "b": `[true, false]`}), bypassData: interface{}(map[string]string{"b": `[false,true]`, "a": `[3,2,1]`})}, want: false, wantErr: false},
+		{name: "base-equal", args: args{srcData: interface{}(map[string]string{"a": "1", "b": "2"}), bypassData: interface{}(map[string]string{"a": "1", "b": "2"})}, want: true, wantErr: false},
+		{name: "base-equal-2", args: args{srcData: interface{}(map[string]string{"a": "1", "b": "2"}), bypassData: interface{}(map[string]string{"b": "2", "a": "1"})}, want: true, wantErr: false},
+		{name: "base-not-equal", args: args{srcData: interface{}(map[string]string{"a": "1", "b": "3"}), bypassData: interface{}(map[string]string{"b": "2", "a": "1"})}, want: false, wantErr: false},
+		{name: "json-map-equal", args: args{srcData: interface{}(map[string]string{"a": `{"x":1,"y":"2"}`, "b": `{"p":1,"q":2}`}), bypassData: interface{}(map[string]string{"b": `{"p":1,"q":2}`, "a": `{"y":"2","x":1}`})}, want: true, wantErr: false},
+		{name: "json-map-not-equal", args: args{srcData: interface{}(map[string]string{"a": `{"x":1,"y":"2"}`, "b": `{"p":1,"q":2}`}), bypassData: interface{}(map[string]string{"b": `{"p":1,"q":2}`, "a": `{"x":1,"z":"2"}`})}, want: false, wantErr: false},
+		{name: "json-list-equal", args: args{srcData: interface{}(map[string]string{"a": `[1,2,3]`, "b": `[true, false]`}), bypassData: interface{}(map[string]string{"b": `[false,true]`, "a": `[3,2,1]`})}, want: true, wantErr: false},
+		{name: "json-list-not-equal", args: args{srcData: interface{}(map[string]string{"a": `[1,2,4]`, "b": `[true, false]`}), bypassData: interface{}(map[string]string{"b": `[false,true]`, "a": `[3,2,1]`})}, want: false, wantErr: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			d := &DiffUtil{}
-			got, err := d.compareHash(tt.args.originData, tt.args.bypassData)
+			got, err := d.compareHash(tt.args.srcData, tt.args.bypassData)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("compareHash() error = %v, wantErr %v", err, tt.wantErr)
 				return

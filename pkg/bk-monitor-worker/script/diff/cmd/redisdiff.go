@@ -29,7 +29,7 @@ var redisCmd = &cobra.Command{
 }
 
 func init() {
-	redisCmd.Flags().String("originKey", "", "origin redis key")
+	redisCmd.Flags().String("srcKey", "", "src redis key")
 	redisCmd.Flags().String("bypassKey", "", "bypass redis key")
 	redisCmd.Flags().String("keyType", "", "key type [string, hash, list, set]")
 	rootCmd.AddCommand(redisCmd)
@@ -39,14 +39,14 @@ func startRedisDiff(cmd *cobra.Command, args []string) {
 	InitConfig()
 	initRedisDiffConfig()
 
-	originKey, _ := cmd.Flags().GetString("originKey")
-	if originKey != "" {
+	srcKey, _ := cmd.Flags().GetString("srcKey")
+	if srcKey != "" {
 		// 命令行参数覆盖配置文件参数
-		viper.Set("diffRedis.originKey", originKey)
+		viper.Set("diffRedis.srcKey", srcKey)
 	} else {
-		originKey = viper.GetString("diffRedis.originKey")
-		if originKey == "" {
-			fmt.Printf("originKey can not be empty")
+		srcKey = viper.GetString("diffRedis.srcKey")
+		if srcKey == "" {
+			fmt.Printf("srcKey can not be empty")
 			os.Exit(1)
 		}
 	}
@@ -73,35 +73,35 @@ func startRedisDiff(cmd *cobra.Command, args []string) {
 
 	du := redis.DiffUtil{
 		KeyType:      viper.GetString("diffRedis.keyType"),
-		OriginKey:    originKey,
+		SrcKey:       srcKey,
 		BypassKey:    bypassKey,
-		OriginConfig: getRedisClientOpt("originRedis"),
+		SrcConfig:    getRedisClientOpt("srcRedis"),
 		BypassConfig: getRedisClientOpt("bypassRedis"),
 	}
 	equal, err := du.Diff()
 	if err != nil {
-		fmt.Printf("diff key [%s] and [%s] %s data failed, %v", du.OriginKey, du.BypassKey, du.KeyType, err)
+		fmt.Printf("diff key [%s] and [%s] %s data failed, %v", du.SrcKey, du.BypassKey, du.KeyType, err)
 		os.Exit(1)
 	}
 	if equal {
-		fmt.Printf("key [%s] and [%s] %s data is equal", du.OriginKey, du.BypassKey, du.KeyType)
+		fmt.Printf("key [%s] and [%s] %s data is equal", du.SrcKey, du.BypassKey, du.KeyType)
 	} else {
-		fmt.Printf("key [%s] and [%s] %s data is different", du.OriginKey, du.BypassKey, du.KeyType)
+		fmt.Printf("key [%s] and [%s] %s data is different", du.SrcKey, du.BypassKey, du.KeyType)
 	}
 
 }
 
 func initRedisDiffConfig() {
-	viper.SetDefault("diffRedis.originRedis.mod", "standalone")
-	viper.SetDefault("diffRedis.originRedis.sentinel.masterName", "standalone")
-	viper.SetDefault("diffRedis.originRedis.sentinel.address", []string{"127.0.0.1"})
-	viper.SetDefault("diffRedis.originRedis.sentinel.password", "")
-	viper.SetDefault("diffRedis.originRedis.standalone.host", "127.0.0.1")
-	viper.SetDefault("diffRedis.originRedis.standalone.port", 6379)
-	viper.SetDefault("diffRedis.originRedis.standalone.password", "")
-	viper.SetDefault("diffRedis.originRedis.db", 0)
-	viper.SetDefault("diffRedis.originRedis.dialTimeout", 10*time.Second)
-	viper.SetDefault("diffRedis.originRedis.readTimeout", 10*time.Second)
+	viper.SetDefault("diffRedis.srcRedis.mod", "standalone")
+	viper.SetDefault("diffRedis.srcRedis.sentinel.masterName", "standalone")
+	viper.SetDefault("diffRedis.srcRedis.sentinel.address", []string{"127.0.0.1"})
+	viper.SetDefault("diffRedis.srcRedis.sentinel.password", "")
+	viper.SetDefault("diffRedis.srcRedis.standalone.host", "127.0.0.1")
+	viper.SetDefault("diffRedis.srcRedis.standalone.port", 6379)
+	viper.SetDefault("diffRedis.srcRedis.standalone.password", "")
+	viper.SetDefault("diffRedis.srcRedis.db", 0)
+	viper.SetDefault("diffRedis.srcRedis.dialTimeout", 10*time.Second)
+	viper.SetDefault("diffRedis.srcRedis.readTimeout", 10*time.Second)
 
 	viper.SetDefault("diffRedis.bypassRedis.mod", "standalone")
 	viper.SetDefault("diffRedis.bypassRedis.sentinel.masterName", "standalone")

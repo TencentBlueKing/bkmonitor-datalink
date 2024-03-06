@@ -30,19 +30,19 @@ const (
 
 type DiffUtil struct {
 	KeyType      string
-	OriginKey    string
+	SrcKey       string
 	BypassKey    string
-	OriginConfig *redisUtils.Option
+	SrcConfig    *redisUtils.Option
 	BypassConfig *redisUtils.Option
 }
 
 // Diff 对比redis中指定key数据差异
 func (d *DiffUtil) Diff() (bool, error) {
 	// get client
-	originClient, err := GetRDSClient(d.OriginConfig)
+	srcClient, err := GetRDSClient(d.SrcConfig)
 	if err != nil {
-		rdsConfig, _ := jsonx.MarshalString(d.OriginConfig)
-		return false, errors.Wrapf(err, "get origin redis client with config [%s] failed", rdsConfig)
+		rdsConfig, _ := jsonx.MarshalString(d.SrcConfig)
+		return false, errors.Wrapf(err, "get src redis client with config [%s] failed", rdsConfig)
 	}
 	bypassClient, err := GetRDSClient(d.BypassConfig)
 	if err != nil {
@@ -51,9 +51,9 @@ func (d *DiffUtil) Diff() (bool, error) {
 	}
 
 	// get data
-	originData, err := d.GetData(originClient, d.OriginKey, d.KeyType)
+	srcData, err := d.GetData(srcClient, d.SrcKey, d.KeyType)
 	if err != nil {
-		return false, errors.Wrapf(err, "query originKey [%s] data failed", d.OriginKey)
+		return false, errors.Wrapf(err, "query srcKey [%s] data failed", d.SrcKey)
 
 	}
 	bypassData, err := d.GetData(bypassClient, d.BypassKey, d.KeyType)
@@ -62,12 +62,12 @@ func (d *DiffUtil) Diff() (bool, error) {
 	}
 
 	// compare
-	equal, err := d.DiffData(originData, bypassData, d.KeyType)
+	equal, err := d.DiffData(srcData, bypassData, d.KeyType)
 	if err != nil {
-		return false, errors.Wrapf(err, "diff %s data [%s] and [%s] failed", d.KeyType, originData, bypassData)
+		return false, errors.Wrapf(err, "diff %s data [%s] and [%s] failed", d.KeyType, srcData, bypassData)
 	}
 	if !equal {
-		fmt.Printf("origin key [%s] %s data [%s]", d.OriginKey, d.KeyType, originData)
+		fmt.Printf("src key [%s] %s data [%s]", d.SrcKey, d.KeyType, srcData)
 		fmt.Printf("bypass key [%s] %s data [%s]", d.BypassKey, d.KeyType, bypassData)
 		return equal, nil
 	}
@@ -91,14 +91,14 @@ func (d *DiffUtil) GetData(rds goRedis.UniversalClient, key string, keyType stri
 }
 
 // DiffData 对比数据差异
-func (d *DiffUtil) DiffData(originData interface{}, bypassData interface{}, keyType string) (bool, error) {
+func (d *DiffUtil) DiffData(srcData interface{}, bypassData interface{}, keyType string) (bool, error) {
 	switch keyType {
 	case KeyTypeString:
-		return d.compareString(originData, bypassData)
+		return d.compareString(srcData, bypassData)
 	case KeyTypeHash:
-		return d.compareHash(originData, bypassData)
+		return d.compareHash(srcData, bypassData)
 	case KeyTypeList, KeyTypeSet:
-		return d.compareList(originData, bypassData)
+		return d.compareList(srcData, bypassData)
 	default:
 		return false, errors.Errorf("unsupport type [%s]", keyType)
 	}
@@ -106,61 +106,61 @@ func (d *DiffUtil) DiffData(originData interface{}, bypassData interface{}, keyT
 }
 
 // 对比string类型数据差异
-func (d *DiffUtil) compareString(originData interface{}, bypassData interface{}) (bool, error) {
-	origin, ok := originData.(string)
+func (d *DiffUtil) compareString(srcData interface{}, bypassData interface{}) (bool, error) {
+	src, ok := srcData.(string)
 	if !ok {
-		return false, errors.Errorf("assert origin data [%#v] to string failed", originData)
+		return false, errors.Errorf("assert src data [%#v] to string failed", srcData)
 	}
 	bypass, ok := bypassData.(string)
 	if !ok {
 		return false, errors.Errorf("assert bypass data [%#v] to string failed", bypassData)
 	}
 
-	if origin == bypass {
+	if src == bypass {
 		// 字符串相等直接返回true
 		return true, nil
 	}
 
 	// 若不相等，尝试解析为json对比
-	var o, b interface{}
-	if err := jsonx.UnmarshalString(origin, &o); err != nil {
+	var s, b interface{}
+	if err := jsonx.UnmarshalString(src, &s); err != nil {
 		return false, nil
 	}
 	if err := jsonx.UnmarshalString(bypass, &b); err != nil {
 		return false, nil
 	}
-	return jsonx.CompareObjects(o, b)
+	return jsonx.CompareObjects(s, b)
 }
 
 // 对比list/set类型数据差异
-func (d *DiffUtil) compareList(originData interface{}, bypassData interface{}) (bool, error) {
-	originList, ok := originData.([]string)
+func (d *DiffUtil) compareList(srcData interface{}, bypassData interface{}) (bool, error) {
+	srcList, ok := srcData.([]string)
 	if !ok {
-		return false, errors.Errorf("assert origin data [%#v] to slice failed", originData)
+		return false, errors.Errorf("assert src data [%#v] to slice failed", srcData)
 	}
 	bypassList, ok := bypassData.([]string)
 	if !ok {
 		return false, errors.Errorf("assert bypass data [%#v] to slice failed", bypassData)
 	}
-	if len(originList) != len(bypassList) {
+	if len(srcList) != len(bypassList) {
 		return false, nil
 	}
 
-	equal, err := jsonx.CompareObjects(originList, bypassList)
+	equal, err := jsonx.CompareObjects(srcList, bypassList)
 	if err != nil {
-		return false, errors.Wrapf(err, "compare list/set [%v] and [%v] failed", originList, bypassList)
+		return false, errors.Wrapf(err, "compare list/set [%v] and [%v] failed", srcList, bypassList)
 	}
 	if equal {
 		return true, nil
 	}
 
 	var oList, bList []interface{}
-	for _, origin := range originList {
-		var o interface{}
-		if err := jsonx.UnmarshalString(origin, &o); err != nil {
+	for _, src := range srcList {
+		var s interface{}
+		if err := jsonx.UnmarshalString(src, &s); err != nil {
 			return false, nil
 		}
-		oList = append(oList, o)
+		oList = append(oList, s)
 	}
 
 	for _, bypass := range bypassList {
@@ -175,32 +175,32 @@ func (d *DiffUtil) compareList(originData interface{}, bypassData interface{}) (
 }
 
 // 对比hash类型数据差异
-func (d *DiffUtil) compareHash(originData interface{}, bypassData interface{}) (bool, error) {
-	originMap, ok := originData.(map[string]string)
+func (d *DiffUtil) compareHash(srcData interface{}, bypassData interface{}) (bool, error) {
+	srcMap, ok := srcData.(map[string]string)
 	if !ok {
-		return false, errors.Errorf("assert origin data [%#v] to map failed", originData)
+		return false, errors.Errorf("assert src data [%#v] to map failed", srcData)
 	}
 	bypassMap, ok := bypassData.(map[string]string)
 	if !ok {
 		return false, errors.Errorf("assert bypass data [%#v] to map failed", bypassData)
 	}
 
-	equal, err := jsonx.CompareObjects(originMap, bypassMap)
+	equal, err := jsonx.CompareObjects(srcMap, bypassMap)
 	if err != nil {
-		return false, errors.Wrapf(err, "compare hash [%v] and [%v] failed", originMap, bypassMap)
+		return false, errors.Wrapf(err, "compare hash [%v] and [%v] failed", srcMap, bypassMap)
 	}
 	if equal {
 		return true, nil
 	}
 
-	oMap := make(map[string]interface{})
+	sMap := make(map[string]interface{})
 	bMap := make(map[string]interface{})
-	for k, v := range originMap {
-		var o interface{}
-		if err := jsonx.UnmarshalString(v, &o); err != nil {
+	for k, v := range srcMap {
+		var s interface{}
+		if err := jsonx.UnmarshalString(v, &s); err != nil {
 			return false, nil
 		}
-		oMap[k] = o
+		sMap[k] = s
 	}
 
 	for k, v := range bypassMap {
@@ -211,6 +211,6 @@ func (d *DiffUtil) compareHash(originData interface{}, bypassData interface{}) (
 		bMap[k] = b
 	}
 
-	return jsonx.CompareObjects(oMap, bMap)
+	return jsonx.CompareObjects(sMap, bMap)
 
 }

@@ -7,20 +7,39 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bcs
+package cmd
 
-//go:generate goqueryset -in bcspodlabels.go -out qs_bcspodlabels_gen.go
+import (
+	"fmt"
+	"os"
 
-// BCSPodLabels BCS Pod and labels relation model
-// gen:qs
-type BCSPodLabels struct {
-	ID        uint   `gorm:"primary_key" json:"id"`
-	Resource  uint   `gorm:"column:resource" json:"resource"` // BCSPod id
-	Label     uint   `gorm:"column:label" json:"label"`       // BCSLabel id
-	ClusterID string `gorm:"size:128;index" json:"cluster_id"`
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+var rootCmd = &cobra.Command{
+	Short: "diff data",
+	Long:  "diff data utils",
 }
 
-// TableName: 用于设置表的别名
-func (BCSPodLabels) TableName() string {
-	return "bkmonitor_bcspodlabels"
+// Execute 执行命令
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Printf("diff error, %s\n", err)
+		os.Exit(1)
+	}
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&ConfigPath, "config", "./diff.yaml", "path of diff config files")
+}
+
+var ConfigPath string
+
+func InitConfig() {
+	viper.SetConfigFile(ConfigPath)
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Printf("read config file: %s error: %s\n", ConfigPath, err)
+		os.Exit(1)
+	}
 }

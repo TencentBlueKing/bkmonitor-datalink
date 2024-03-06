@@ -211,3 +211,52 @@ func RefreshCustomLogReportConfig(ctx context.Context, t *task.Task) error {
 	wg.Wait()
 	return nil
 }
+
+// AccessToBkDataParams AccessToBkData 任务入参
+type AccessToBkDataParams struct {
+	TableId string `json:"table_id"`
+}
+
+// AccessToBkData 接入bkdata
+func AccessToBkData(ctx context.Context, t *task.Task) error {
+	var params AccessToBkDataParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrapf(err, "parse params for AccessToBkDataParams with [%s] error", t.Payload)
+	}
+	if params.TableId == "" {
+		return errors.New("params table_id can not be empty")
+	}
+	logger.Infof("async task start to access bkdata with table_id [%s]", params.TableId)
+	svc := service.NewBkDataStorageSvc(nil)
+	if err := svc.CreateTable(params.TableId, true); err != nil {
+		return errors.Wrapf(err, "CreateTable for table_id [%s] failed", svc.TableID)
+	}
+	return nil
+}
+
+// CreateFullCMDBLevelDataFlowParams CreateFullCMDBLevelDataFlow 任务入参
+type CreateFullCMDBLevelDataFlowParams struct {
+	TableId string `json:"table_id"`
+}
+
+// CreateFullCMDBLevelDataFlow 接入计算平台
+func CreateFullCMDBLevelDataFlow(ctx context.Context, t *task.Task) error {
+	var params CreateFullCMDBLevelDataFlowParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrapf(err, "parse params for CreateFullCMDBLevelDataFlowParams with [%s] error", t.Payload)
+	}
+	if params.TableId == "" {
+		return errors.New("params table_id can not be empty")
+	}
+	logger.Infof("async task start to access bkdata with table_id [%s]", params.TableId)
+	db := mysql.GetDBSession().DB
+	var bkdt storage.BkDataStorage
+	if err := storage.NewBkDataStorageQuerySet(db).TableIDEq(params.TableId).One(&bkdt); err != nil {
+		return errors.Wrapf(err, "query BkDataStorage with table_id [%s] failed", params.TableId)
+	}
+	svc := service.NewBkDataStorageSvc(&bkdt)
+	if err := svc.FullCMDBNodeInfoToResultTable(); err != nil {
+		return errors.Wrapf(err, "FullCmdbNodeInfoToResultTable for table_id [%s] failed", svc.TableID)
+	}
+	return nil
+}

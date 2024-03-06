@@ -9,11 +9,37 @@
 
 package bkdata
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+
+// CommonBkdataRespMeta for bkdata api, code为字符串类型
 type CommonBkdataRespMeta struct {
-	Message string      `json:"message"`
-	Result  bool        `json:"result"`
-	Code    string      `json:"code"`
-	Errors  interface{} `json:"errors"`
+	define.ApiCommonRespMeta
+	Code   string      `json:"code"`
+	Errors interface{} `json:"errors"`
+}
+
+// CommonResp api bkdata通用返回结构体
+type CommonResp struct {
+	CommonBkdataRespMeta
+	Data interface{} `json:"data"`
+}
+
+// CommonMapResp api bkdata通用返回结构体Map
+type CommonMapResp struct {
+	CommonBkdataRespMeta
+	Data map[string]interface{} `json:"data"`
+}
+
+// CommonListResp bkdata通用返回结构体List
+type CommonListResp struct {
+	CommonBkdataRespMeta
+	Data []interface{} `json:"data"`
+}
+
+// CommonListMapResp api bkdata通用返回结构体List-Map
+type CommonListMapResp struct {
+	CommonBkdataRespMeta
+	Data []map[string]interface{} `json:"data"`
 }
 
 type CreateDataHubResp struct {
@@ -31,4 +57,15 @@ type AccessDeployPlanResp struct {
 	Data struct {
 		RawDataId int `json:"raw_data_id"`
 	} `json:"data"`
+}
+
+type GetDataFlowGraphResp struct {
+	CommonBkdataRespMeta
+	Data *GetDataFlowGraphRespData `json:"data"`
+}
+
+type GetDataFlowGraphRespData struct {
+	Nodes   []map[string]interface{} `json:"nodes"`
+	Links   []interface{}            `json:"links"`
+	Version string                   `json:"version"`
 }

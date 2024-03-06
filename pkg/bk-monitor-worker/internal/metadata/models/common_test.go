@@ -10,7 +10,9 @@
 package models
 
 import (
+	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseOptionValue(t *testing.T) {
@@ -45,6 +47,46 @@ func TestParseOptionValue(t *testing.T) {
 			}
 			if got1 != tt.want1 {
 				t.Errorf("ParseOptionValue() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
+func TestOptionBase_InterfaceValue(t *testing.T) {
+	type fields struct {
+		ValueType  string
+		Value      string
+		Creator    string
+		CreateTime time.Time
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		want    interface{}
+		wantErr bool
+	}{
+		{name: "string", fields: fields{ValueType: "string", Value: "abcd"}, want: interface{}("abcd"), wantErr: false},
+		{name: "bool-true", fields: fields{ValueType: "bool", Value: "true"}, want: interface{}(true), wantErr: false},
+		{name: "bool-false", fields: fields{ValueType: "bool", Value: "false"}, want: interface{}(false), wantErr: false},
+		{name: "int", fields: fields{ValueType: "int", Value: "123"}, want: interface{}(float64(123)), wantErr: false},
+		{name: "list", fields: fields{ValueType: "list", Value: `["a","b"]`}, want: interface{}([]interface{}{"a", "b"}), wantErr: false},
+		{name: "dict", fields: fields{ValueType: "dict", Value: `{"a":"aa","b":true}`}, want: interface{}(map[string]interface{}{"a": "aa", "b": true}), wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &OptionBase{
+				ValueType:  tt.fields.ValueType,
+				Value:      tt.fields.Value,
+				Creator:    tt.fields.Creator,
+				CreateTime: tt.fields.CreateTime,
+			}
+			got, err := r.InterfaceValue()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("InterfaceValue() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("InterfaceValue() got = %v, want %v", got, tt.want)
 			}
 		})
 	}

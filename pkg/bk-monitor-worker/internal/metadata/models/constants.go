@@ -220,6 +220,11 @@ const (
 	PingServerDefaultPingTimeout        = 3  // ping的rtt  默认3秒
 )
 
+const (
+	DatabusStatusRunning  = "running"
+	DatabusStatusStarting = "starting"
+)
+
 const SystemUser = "system"
 
 const LogReportMaxQPS = 50000 //Log Report Default QPS

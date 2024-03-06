@@ -7,21 +7,26 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bcs
+package dataflow
 
-import (
-	"time"
-)
+type Task interface {
+	FlowName() string
+	CreateFlow(rebuild bool, projectId int) error
+	StartFlow(consumingMode string) error
+}
 
-// BCSResource kubernetes资源描述
-type BCSResource struct {
-	Id                 uint      `gorm:"primary_key" json:"id"`
-	ClusterID          string    `gorm:"size:128" json:"cluster_id"`
-	Namespace          string    `gorm:"size:512" json:"namespace"`
-	Name               string    `gorm:"size:128" json:"name"`
-	BkDataId           uint      `gorm:"column:bk_data_id;" json:"bk_data_id"`
-	IsCustomResource   bool      `gorm:"column:is_custom_resource" json:"is_custom_resource"`
-	IsCommonDataId     bool      `gorm:"column:is_common_data_id" json:"is_common_data_id"`
-	RecordCreateTime   time.Time `json:"record_create_time"`
-	ResourceCreateTime time.Time `json:"resource_create_time"`
+type Node interface {
+	Name() string
+	FrontendInfo() map[string]int
+	Config() map[string]interface{}
+	NeedUpdate(map[string]interface{}) bool
+	NeedRestartFromTail(map[string]interface{}) bool
+	GetNodeType() string
+	GetApiParams(flowId int) map[string]interface{}
+	Update(flowId, NodeId int) error
+	Create(flowId int) error
+	Equal(map[string]interface{}) bool
+	SetNodeId(nodeId int)
+	GetNodeId() int
+	TableName() string
 }

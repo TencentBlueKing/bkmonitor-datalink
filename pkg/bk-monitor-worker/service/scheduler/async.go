@@ -27,6 +27,8 @@ var (
 	AccessBkdataVm               = "async:access_bkdata_vm"
 	RefreshCustomReportConfig    = "async:refresh_custom_report_config"
 	RefreshCustomLogReportConfig = "async:refresh_custom_log_report_config"
+	AccessToBkData               = "async:access_to_bk_data"
+	CreateFullCMDBLevelDataFlow  = "async:create_full_cmdb_level_data_flow"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
@@ -49,6 +51,12 @@ var (
 		},
 		RefreshCustomLogReportConfig: {
 			Handler: task.RefreshCustomLogReportConfig,
+		},
+		AccessToBkData: {
+			Handler: task.AccessToBkData,
+		},
+		CreateFullCMDBLevelDataFlow: {
+			Handler: task.CreateFullCMDBLevelDataFlow,
 		},
 	}
 )

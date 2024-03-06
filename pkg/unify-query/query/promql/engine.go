@@ -103,12 +103,11 @@ func Query(ctx context.Context, q string, now time.Time) (*Tables, error) {
 func QueryRange(ctx context.Context, q string, start, end time.Time, interval time.Duration) (*Tables, error) {
 	var (
 		duration time.Duration
+		err      error
 	)
 
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "promql-query-range")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "promql-query-range")
+	defer span.End(&err)
 
 	startQuery := time.Now()
 

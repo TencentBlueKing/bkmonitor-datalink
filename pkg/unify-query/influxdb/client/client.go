@@ -22,7 +22,6 @@ import (
 	"github.com/influxdata/influxdb1-client/models"
 	influxclient "github.com/influxdata/influxdb1-client/v2"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -59,11 +58,10 @@ func NewBasicClient(address, username, password, contentType string, chunkSize i
 func (c *BasicClient) Query(
 	ctx context.Context, db, sql, precision, contentType string, chunked bool,
 ) (*decoder.Response, error) {
-	var span oleltrace.Span
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-client-query")
-	if span != nil {
-		defer span.End()
-	}
+	var err error
+
+	ctx, span := trace.NewSpan(ctx, "influxdb-client-query")
+	defer span.End(&err)
 
 	values := &url.Values{}
 	values.Set("db", db)
@@ -76,8 +74,8 @@ func (c *BasicClient) Query(
 
 	urlPath := fmt.Sprintf("%s/query?%s", c.address, values.Encode())
 
-	trace.InsertStringIntoSpan("query-params", values.Encode(), span)
-	trace.InsertStringIntoSpan("http-url", urlPath, span)
+	span.Set("query-params", values.Encode())
+	span.Set("http-url", urlPath)
 
 	client := http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	req, err := http.NewRequestWithContext(ctx, "GET", urlPath, nil)
@@ -93,7 +91,7 @@ func (c *BasicClient) Query(
 
 	// chunk 模式下只支持json
 	req.Header.Set("accept", usingContentType)
-	trace.InsertStringIntoSpan("http-request", fmt.Sprintf("%v", req.Header), span)
+	span.Set("http-request", fmt.Sprintf("%v", req.Header))
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -118,7 +116,7 @@ func (c *BasicClient) Query(
 
 	var result *decoder.Response
 	result, err = c.decodeWithContentType(ctx, respContentType, resp)
-	trace.InsertStringIntoSpan("query-cost", time.Since(start).String(), span)
+	span.Set("query-cost", time.Since(start).String())
 
 	return result, err
 }

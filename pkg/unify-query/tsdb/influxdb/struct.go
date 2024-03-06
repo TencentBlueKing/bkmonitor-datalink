@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/prometheus/remote"
-	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // Instance influxDB 查询引擎
@@ -75,7 +75,7 @@ type Options struct {
 }
 
 type StreamSeriesSetOption struct {
-	Span    trace.Span
+	Span    *trace.Span
 	Stream  remote.QueryTimeSeriesService_RawClient
 	Limiter *rate.Limiter
 	Timeout time.Duration

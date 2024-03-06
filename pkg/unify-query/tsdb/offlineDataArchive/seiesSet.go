@@ -22,8 +22,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
@@ -31,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
@@ -77,7 +76,8 @@ func StartStreamSeriesSet(
 	opt *StreamSeriesSetOption,
 ) *streamSeriesSet {
 	var (
-		span trace.Span
+		span *trace.Span
+		err  error
 	)
 	s := &streamSeriesSet{
 		ctx:    ctx,
@@ -104,18 +104,18 @@ func StartStreamSeriesSet(
 			if span != nil {
 				sub := time.Since(start)
 
-				span.SetAttributes(attribute.Int("query-cost-second", int(sub.Seconds())))
-				span.SetAttributes(attribute.String("query-cost", sub.String()))
-				span.SetAttributes(attribute.Int("query-rate-limiter", int(s.limiter.Limit())))
-				span.SetAttributes(attribute.Int("resp-series-num", seriesNum))
-				span.SetAttributes(attribute.Int("resp-point-num", pointsNum))
+				span.Set("query-cost-second", int(sub.Seconds()))
+				span.Set("query-cost", sub.String())
+				span.Set("query-rate-limiter", int(s.limiter.Limit()))
+				span.Set("resp-series-num", seriesNum)
+				span.Set("resp-point-num", pointsNum)
 
 				user := metadata.GetUser(ctx)
 				metric.TsDBRequestSecond(
 					ctx, sub, user.SpaceUid, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType),
 				)
 
-				span.End()
+				span.End(&err)
 			}
 
 			cancel()

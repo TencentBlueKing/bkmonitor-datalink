@@ -21,7 +21,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -39,8 +38,7 @@ import (
 
 func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
-		err  error
-		span oleltrace.Span
+		err error
 
 		tablesCh = make(chan *influxdb.Tables, 1)
 		recvDone = make(chan struct{})
@@ -49,13 +47,11 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		totalTables = influxdb.NewTables()
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-exemplar")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-exemplar")
+	defer span.End(&err)
 
 	qStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-ts", string(qStr), span)
+	span.Set("query-ts", string(qStr))
 
 	// 验证 queryList 限制长度
 	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
@@ -145,8 +141,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
-		err  error
-		span oleltrace.Span
+		err error
 
 		instance tsdb.Instance
 		ok       bool
@@ -158,13 +153,11 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		promQL parser.Expr
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-ts")
+	defer span.End(&err)
 
 	qStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-ts", string(qStr), span)
+	span.Set("query-ts", string(qStr))
 
 	// 验证 queryList 限制长度
 	if DefaultQueryListLimit > 0 && len(query.QueryList) > DefaultQueryListLimit {
@@ -230,8 +223,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			return nil, err
 		}
 
-		trace.InsertIntIntoSpan("query-max-routing", QueryMaxRouting, span)
-		trace.InsertStringIntoSpan("singleflight-timeout", SingleflightTimeout.String(), span)
+		span.Set("query-max-routing", QueryMaxRouting)
+		span.Set("singleflight-timeout", SingleflightTimeout.String())
 
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
@@ -244,7 +237,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
+	span.Set("storage-type", instance.GetInstanceType())
 
 	if query.Instant {
 		res, err = instance.Query(ctx, promQL.String(), end)
@@ -255,10 +248,10 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("promql", promQL.String(), span)
-	trace.InsertStringIntoSpan("start", start.String(), span)
-	trace.InsertStringIntoSpan("end", end.String(), span)
-	trace.InsertStringIntoSpan("step", step.String(), span)
+	span.Set("promql", promQL.String())
+	span.Set("start", start.String())
+	span.Set("end", end.String())
+	span.Set("step", step.String())
 
 	tables := promql.NewTables()
 	seriesNum := 0
@@ -284,8 +277,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("resp-points-num", pointsNum, span)
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-points-num", pointsNum)
 
 	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
@@ -428,18 +421,17 @@ func HandlerPromQLToStruct(c *gin.Context) {
 		resp = &response{
 			c: c,
 		}
-		span oleltrace.Span
+
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-promql-to-struct")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-promql-to-struct")
+	defer span.End(&err)
 
 	// 解析请求 body
 	promQL := &structured.QueryPromQL{}
-	err := json.NewDecoder(c.Request.Body).Decode(promQL)
+	err = json.NewDecoder(c.Request.Body).Decode(promQL)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
@@ -447,7 +439,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	}
 
 	promQLStr, _ := json.Marshal(promQL)
-	trace.InsertStringIntoSpan("promql-body", string(promQLStr), span)
+	span.Set("promql-body", string(promQLStr))
 
 	query, err := promQLToStruct(ctx, promQL)
 	if err != nil {
@@ -456,7 +448,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	}
 
 	queryStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+	span.Set("query-body", string(queryStr))
 
 	resp.success(ctx, gin.H{"data": query})
 }
@@ -478,18 +470,17 @@ func HandlerStructToPromQL(c *gin.Context) {
 		resp = &response{
 			c: c,
 		}
-		span oleltrace.Span
+
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-struct-to-promql")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-struct-to-promql")
+	defer span.End(&err)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
-	err := json.NewDecoder(c.Request.Body).Decode(query)
+	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
@@ -497,7 +488,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 	}
 
 	queryStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+	span.Set("query-body", string(queryStr))
 
 	promQL, err := structToPromQL(ctx, query)
 	if err != nil {
@@ -507,7 +498,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 	}
 
 	promQLStr, _ := json.Marshal(promQL)
-	trace.InsertStringIntoSpan("promql-body", string(promQLStr), span)
+	span.Set("promql-body", string(promQLStr))
 
 	resp.success(ctx, promQL)
 }
@@ -526,28 +517,28 @@ func HandlerStructToPromQL(c *gin.Context) {
 // @Router   /query/ts/exemplar [post]
 func HandlerQueryExemplar(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+
 		resp = &response{
 			c: c,
 		}
 		user = metadata.GetUser(ctx)
+
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-exemplar")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handler-query-exemplar")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
 
-	trace.InsertStringIntoSpan("query-source", user.Key, span)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
+	span.Set("query-source", user.Key)
+	span.Set("query-space-uid", user.SpaceUid)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
-	err := json.NewDecoder(c.Request.Body).Decode(query)
+	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
@@ -560,7 +551,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	}
 
 	queryStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+	span.Set("query-body", string(queryStr))
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 
@@ -570,7 +561,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 		return
 	}
 
-	trace.InsertStringIntoSpan("resp-size", fmt.Sprint(unsafe.Sizeof(res)), span)
+	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 	resp.success(ctx, res)
 }
 
@@ -588,28 +579,28 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Router   /query/ts [post]
 func HandlerQueryTs(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+
 		resp = &response{
 			c: c,
 		}
 		user = metadata.GetUser(ctx)
+
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-ts")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handler-query-ts")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
 
-	trace.InsertStringIntoSpan("query-source", user.Key, span)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
+	span.Set("query-source", user.Key)
+	span.Set("query-space-uid", user.SpaceUid)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
-	err := json.NewDecoder(c.Request.Body).Decode(query)
+	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
@@ -622,8 +613,8 @@ func HandlerQueryTs(c *gin.Context) {
 	}
 
 	queryStr, _ := json.Marshal(query)
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
-	trace.InsertIntIntoSpan("query-body-size", len(queryStr), span)
+	span.Set("query-body", string(queryStr))
+	span.Set("query-body-size", len(queryStr))
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 
@@ -633,7 +624,7 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	trace.InsertStringIntoSpan("resp-size", fmt.Sprint(unsafe.Sizeof(res)), span)
+	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 
 	resp.success(ctx, res)
 }
@@ -652,34 +643,34 @@ func HandlerQueryTs(c *gin.Context) {
 // @Router   /query/promql [post]
 func HandlerQueryPromQL(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+
 		resp = &response{
 			c: c,
 		}
 		user = metadata.GetUser(ctx)
+
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-promql")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handler-query-promql")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("headers", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("query-source", user.Key, span)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
+	span.Set("headers", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("query-source", user.Key)
+	span.Set("query-space-uid", user.SpaceUid)
 
 	// 解析请求 body
 	queryPromQL := &structured.QueryPromQL{}
-	err := json.NewDecoder(c.Request.Body).Decode(queryPromQL)
+	err = json.NewDecoder(c.Request.Body).Decode(queryPromQL)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
 	}
 
 	queryStr, _ := json.Marshal(queryPromQL)
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
-	trace.InsertStringIntoSpan("query-promql", queryPromQL.PromQL, span)
+	span.Set("query-body", string(queryStr))
+	span.Set("query-promql", queryPromQL.PromQL)
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 
@@ -716,19 +707,19 @@ func HandleInfluxDBPrint(c *gin.Context) {
 
 func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
-		resp = &response{c: c}
-	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handler-query-ts-cluster-metrics")
-	if span != nil {
-		defer span.End()
-	}
+		ctx = c.Request.Context()
 
-	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
+		resp = &response{c: c}
+
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "handler-query-ts-cluster-metrics")
+	defer span.End(&err)
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
 	query := &structured.QueryTs{}
-	err := json.NewDecoder(c.Request.Body).Decode(query)
+	err = json.NewDecoder(c.Request.Body).Decode(query)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -737,7 +728,7 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
 
-	trace.InsertStringIntoSpan("query-body", string(queryStr), span)
+	span.Set("query-body", string(queryStr))
 	res, err := QueryTsClusterMetrics(ctx, query)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -748,14 +739,11 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 
 func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
-		err  error
-		res  any
-		span oleltrace.Span
+		err error
+		res any
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts-cluster-metrics")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-ts-cluster-metrics")
+	defer span.End(&err)
 	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
@@ -779,9 +767,9 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 
-	trace.InsertStringIntoSpan("start", start.String(), span)
-	trace.InsertStringIntoSpan("end", end.String(), span)
-	trace.InsertStringIntoSpan("step", step.String(), span)
+	span.Set("start", start.String())
+	span.Set("end", end.String())
+	span.Set("step", step.String())
 	tables := promql.NewTables()
 	seriesNum := 0
 	pointsNum := 0
@@ -804,8 +792,8 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		return nil, err
 	}
 
-	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("resp-points-num", pointsNum, span)
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-points-num", pointsNum)
 
 	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
@@ -35,8 +34,8 @@ import (
 // @Router   /api/v1/relation/multi_resource [post]
 func HandlerAPIRelationMultiResource(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+
 		user = metadata.GetUser(ctx)
 		err  error
 
@@ -45,10 +44,8 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 		}
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "api-relation-multi-resource")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource")
+	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRequest)
 	err = json.NewDecoder(c.Request.Body).Decode(request)
@@ -58,7 +55,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	trace.InsertStringIntoSpan("params-body", string(paramsBody), span)
+	span.Set("params-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {
@@ -96,8 +93,8 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 // @Router   /api/v1/relation/multi_resource_range [post]
 func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+
 		user = metadata.GetUser(ctx)
 		err  error
 
@@ -106,10 +103,8 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 		}
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "api-relation-multi-resource-range")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "api-relation-multi-resource-range")
+	defer span.End(&err)
 
 	request := new(cmdb.RelationMultiResourceRangeRequest)
 	err = json.NewDecoder(c.Request.Body).Decode(request)
@@ -119,7 +114,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	}
 
 	paramsBody, _ := json.Marshal(request)
-	trace.InsertStringIntoSpan("params-body", string(paramsBody), span)
+	span.Set("params-body", string(paramsBody))
 
 	model, err := v1beta1.GetModel(ctx)
 	if err != nil {

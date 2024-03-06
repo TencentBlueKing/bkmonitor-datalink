@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	oleltrace "go.opentelemetry.io/otel/trace"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -69,26 +67,24 @@ func NewInstance(ctx context.Context, params *Params, client client.Client) (*In
 func (i *Instance) query(
 	ctx context.Context, db, sql, precision, contentType string, chunked bool,
 ) (*decoder.Response, error) {
-	var span oleltrace.Span
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "raw-query")
-	if span != nil {
-		defer span.End()
-	}
+	var err error
+	ctx, span := trace.NewSpan(ctx, "raw-query")
+	defer span.End(&err)
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-db", db, span)
-	trace.InsertStringIntoSpan("query-sql", sql, span)
-	trace.InsertStringIntoSpan("query-content-type", contentType, span)
-	trace.InsertStringIntoSpan("query-chunked", fmt.Sprintf("%+v", chunked), span)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-db", db)
+	span.Set("query-sql", sql)
+	span.Set("query-content-type", contentType)
+	span.Set("query-chunked", fmt.Sprintf("%+v", chunked))
 
 	start := time.Now()
 	resp, err := i.cli.Query(ctx, db, sql, precision, contentType, chunked)
 
 	// 即使超时也需要打点
 	left := time.Since(start)
-	trace.InsertStringIntoSpan("query-cost", left.String(), span)
+	span.Set("query-cost", left.String())
 
 	if err != nil {
 		return nil, err
@@ -101,7 +97,6 @@ func (i *Instance) query(
 func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precision string, _ int) (*Tables, error) {
 	var (
 		cancel context.CancelFunc
-		span   oleltrace.Span
 
 		resp   *decoder.Response
 		err    error
@@ -114,10 +109,8 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 		pointsNum  int
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-info-influxdb-query-select")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-info-influxdb-query-select")
+	defer span.End(&err)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
@@ -133,12 +126,12 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 
 	startAnaylize = time.Now()
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-db", db, span)
-	trace.InsertStringIntoSpan("query-metric-name", metricName, span)
-	trace.InsertStringIntoSpan("query-sql", stmt, span)
-	trace.InsertStringIntoSpan("query-cost", startAnaylize.Sub(startQuery).String(), span)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-db", db)
+	span.Set("query-metric-name", metricName)
+	span.Set("query-sql", stmt)
+	span.Set("query-cost", startAnaylize.Sub(startQuery).String())
 
 	log.Debugf(ctx,
 		fmt.Sprintf("influxdb query:[%s][%s], query cost:%s", db, stmt, startAnaylize.Sub(startQuery)),
@@ -167,11 +160,11 @@ func (i *Instance) QueryInfos(ctx context.Context, metricName, db, stmt, precisi
 		}
 	}
 
-	trace.InsertIntIntoSpan("results-num", resultsNum, span)
-	trace.InsertIntIntoSpan("series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("points-num", pointsNum, span)
+	span.Set("results-num", resultsNum)
+	span.Set("series-num", seriesNum)
+	span.Set("points-num", pointsNum)
 
-	trace.InsertStringIntoSpan("analyzer-cost", time.Since(startAnaylize).String(), span)
+	span.Set("analyzer-cost", time.Since(startAnaylize).String())
 
 	log.Debugf(ctx,
 		"influxdb query:[%s][%s], result anaylize cost:%s", db, stmt, time.Since(startAnaylize),
@@ -244,7 +237,6 @@ func (i *Instance) Query(
 ) (*Tables, error) {
 	var (
 		cancel context.CancelFunc
-		span   oleltrace.Span
 
 		resp   *decoder.Response
 		tables *Tables
@@ -262,10 +254,8 @@ func (i *Instance) Query(
 		message string
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "influxdb-query-select")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "influxdb-query-select")
+	defer span.End(&err)
 
 	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
@@ -273,12 +263,12 @@ func (i *Instance) Query(
 	startQuery = time.Now()
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-db", db, span)
-	trace.InsertStringIntoSpan("query-metricName", metricName, span)
-	trace.InsertStringIntoSpan("query-sql", stmt, span)
-	trace.InsertStringIntoSpan("expand-tag", fmt.Sprintf("%v", expandTag), span)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-db", db)
+	span.Set("query-metricName", metricName)
+	span.Set("query-sql", stmt)
+	span.Set("expand-tag", fmt.Sprintf("%v", expandTag))
 
 	stmt = i.setLimitAndSLimit(stmt, limit, slimit)
 	resp, err = i.query(ctx, db, stmt, precision, "", true)
@@ -289,7 +279,7 @@ func (i *Instance) Query(
 
 	startAnaylize = time.Now()
 
-	trace.InsertStringIntoSpan("query-cost", startAnaylize.Sub(startQuery).String(), span)
+	span.Set("query-cost", startAnaylize.Sub(startQuery).String())
 	log.Debugf(ctx, "influxdb query:%s, query cost:%s", stmt, startAnaylize.Sub(startQuery))
 	if resp == nil {
 		log.Warnf(ctx, "query:%s get nil response", stmt)
@@ -332,9 +322,9 @@ func (i *Instance) Query(
 		}
 	}
 
-	trace.InsertIntIntoSpan("resp-result-num", resultNum, span)
-	trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
-	trace.InsertIntIntoSpan("resp-point-num", pointNum, span)
+	span.Set("resp-result-num", resultNum)
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-point-num", pointNum)
 
 	// 由于 ctx 信息无法向上传递，所以增加一个全局 cache 存放异常信息
 	if i.maxLimit > 0 && pointNum > i.maxLimit {
@@ -349,7 +339,7 @@ func (i *Instance) Query(
 		log.Warnf(ctx, message)
 	}
 
-	trace.InsertStringIntoSpan("analyzer_cost", time.Since(startAnaylize).String(), span)
+	span.Set("analyzer_cost", time.Since(startAnaylize).String())
 
 	log.Debugf(ctx, fmt.Sprintf(
 		"influxdb query:%s, result anaylize cost:%s, result num: %d, series num: %d, point num: %d",

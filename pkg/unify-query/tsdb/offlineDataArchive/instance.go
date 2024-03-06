@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -87,28 +86,28 @@ func (i Instance) setClient() error {
 
 func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	var (
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "offline-data-archive-query-raw-grpc-stream")
+	ctx, span := trace.NewSpan(ctx, "offline-data-archive-query-raw-grpc-stream")
 
 	user := metadata.GetUser(ctx)
-	trace.InsertStringIntoSpan("query-space-uid", user.SpaceUid, span)
-	trace.InsertStringIntoSpan("query-source", user.Source, span)
-	trace.InsertStringIntoSpan("query-username", user.Name, span)
-	trace.InsertStringIntoSpan("query-url-path", i.Address, span)
-	trace.InsertStringIntoSpan("query-cluster-name", query.ClusterName, span)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-url-path", i.Address)
+	span.Set("query-cluster-name", query.ClusterName)
 
-	trace.InsertStringIntoSpan("query-db", query.DB, span)
-	trace.InsertStringIntoSpan("query-rp", query.RetentionPolicy, span)
-	trace.InsertStringIntoSpan("query-measurement", query.Measurement, span)
-	trace.InsertStringIntoSpan("query-field", query.Field, span)
-	trace.InsertStringIntoSpan("query-where", query.Condition, span)
+	span.Set("query-db", query.DB)
+	span.Set("query-rp", query.RetentionPolicy)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-field", query.Field)
+	span.Set("query-where", query.Condition)
 
 	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	// 配置 client
-	err := i.setClient()
+	err = i.setClient()
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return storage.ErrSeriesSet(err)
@@ -141,7 +140,7 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	}
 
 	filterRequest, _ := json.Marshal(req)
-	trace.InsertStringIntoSpan("query-filter-request", string(filterRequest), span)
+	span.Set("query-filter-request", string(filterRequest))
 
 	stream, err := client.Raw(ctx, req)
 	if err != nil {
@@ -150,7 +149,7 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.ReadRateLimit), int(i.ReadRateLimit))
 
-	trace.InsertStringIntoSpan("start-stream-series-set", i.Address, span)
+	span.Set("start-stream-series-set", i.Address)
 	return StartStreamSeriesSet(
 		ctx, i.Address, &StreamSeriesSetOption{
 			Span:    span,

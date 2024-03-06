@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -190,18 +191,49 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
-	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select("bk_data_id").All(&dataSourceRtList); err != nil {
+	if err := resulttable.NewDataSourceResultTableQuerySet(db).Select("bk_data_id", "table_id").All(&dataSourceRtList); err != nil {
 		logger.Errorf("query datasourceresulttable record error, %v", err)
 		return err
 	}
-	if len(dataSourceRtList) == 0 {
-		logger.Infof("no data source result table records, skip")
+	// 过滤到结果表
+	var rtList []string
+	for _, dsrt := range dataSourceRtList {
+		rtList = append(rtList, dsrt.TableId)
+	}
+	// 如果全部不可用，则直接返回
+	if len(rtList) == 0{
+		logger.Infof("not enabled result table by data_source_result_table, skip")
 		return nil
 	}
+	// 过滤状态为启用的结果表
+	var enabledResultTableList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(rtList...).Select("table_id").All(&enabledResultTableList); err != nil {
+		logger.Errorf("query enabled result table error, %v", err)
+		return err
+	}
+	// 组装可用的结果表
+	var enabledRtList []string
+	for _, rt := range enabledResultTableList {
+		enabledRtList = append(enabledRtList, rt.TableId)
+	}
+	// 如果可用的结果表为空，则忽略
+	if len(enabledRtList) == 0 {
+		logger.Infof("not found enabled result by result_table, skip")
+		return nil
+	}
+	// 过滤到可用的数据源
 	var dataIdList []uint
 	for _, dsrt := range dataSourceRtList {
-		dataIdList = append(dataIdList, dsrt.BkDataId)
+		if stringx.StringInSlice(dsrt.TableId, enabledRtList){
+			dataIdList = append(dataIdList, dsrt.BkDataId)
+		}
 	}
+	// 如果为空，则认为所有数据源不可用
+	if len(dataIdList) == 0 {
+		logger.Infof("not found data source by enabled result table")
+		return nil
+	}
+
 	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource

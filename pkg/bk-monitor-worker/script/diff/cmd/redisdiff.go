@@ -20,13 +20,14 @@ import (
 )
 
 var redisCmd = &cobra.Command{
-	Use:   "redis",
+	Use:   "redis_diff",
 	Short: "diff redis data",
 	Long:  "diff redis data",
 	Run:   startRedisDiff,
 }
 
 func init() {
+	redisCmd.PersistentFlags().StringVar(&redis.ConfigPath, "config", "./diff.yaml", "path of diff config files")
 	redisCmd.Flags().String("srcKey", "", "src redis key")
 	redisCmd.Flags().String("bypassKey", "", "bypass redis key")
 	redisCmd.Flags().String("keyType", "", "key type [string, hash, list, set]")
@@ -34,7 +35,7 @@ func init() {
 }
 
 func startRedisDiff(cmd *cobra.Command, args []string) {
-	InitConfig()
+	redis.InitConfig()
 	redis.InitRedisDiffConfig()
 
 	srcKey, _ := cmd.Flags().GetString("srcKey")

@@ -7,24 +7,14 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmd
+package util
 
-import (
-	"fmt"
-	"os"
+import "fmt"
 
-	"github.com/spf13/cobra"
-)
-
-var rootCmd = &cobra.Command{
-	Short: "difference of content",
-	Long:  "output difference content from src and bypass",
-}
-
-// Execute a command
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Printf("exec diff cmd error, %v", err)
-		os.Exit(1)
+// ValidateParams validate params
+func ValidateParams(src string, dst string) error {
+	if src == "" || dst == "" {
+		return fmt.Errorf("src or dst is null")
 	}
+	return nil
 }

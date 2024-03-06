@@ -7,24 +7,16 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmd
+package consul
 
 import (
-	"fmt"
-	"os"
+	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 )
 
-var rootCmd = &cobra.Command{
-	Short: "difference of content",
-	Long:  "output difference content from src and bypass",
-}
-
-// Execute a command
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Printf("exec diff cmd error, %v", err)
-		os.Exit(1)
-	}
+func TestConfigForViper(t *testing.T) {
+	ConsulDiffConfigPath = "../diff_test.yaml"
+	InitConfig()
+	assert.Equal(t, Config.Src.Address, "127.0.0.1:8500")
 }

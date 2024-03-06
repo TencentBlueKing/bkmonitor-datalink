@@ -7,24 +7,22 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmd
+package consul
 
 import (
-	"fmt"
-	"os"
+	"testing"
 
-	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 )
 
-var rootCmd = &cobra.Command{
-	Short: "difference of content",
-	Long:  "output difference content from src and bypass",
-}
 
-// Execute a command
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Printf("exec diff cmd error, %v", err)
-		os.Exit(1)
-	}
+func TestComparePath(t *testing.T) {
+	src := []string{"test/test1", "test/test2", "test/test3"}
+	bypass := []string{"test/test1", "test/test4"}
+	onlySrc, onlyBypass := comparePath(&src, &bypass)
+	
+	assert.Equal(t, len(onlySrc), 2)
+	assert.Equal(t, onlySrc, []string{"test/test2", "test/test3"})
+	assert.Equal(t, len(onlyBypass), 1)
+	assert.Equal(t, onlyBypass, []string{"test/test4"})
 }

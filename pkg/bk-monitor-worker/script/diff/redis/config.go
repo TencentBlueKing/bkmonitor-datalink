@@ -12,6 +12,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
@@ -19,6 +20,8 @@ import (
 
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
+
+var ConfigPath string
 
 const (
 	SrcRedisModePath                   = "diffRedis.srcRedis.mod"
@@ -82,6 +85,16 @@ type Config struct {
 	SrcConfig    *redisUtils.Option
 	BypassConfig *redisUtils.Option
 }
+
+
+func InitConfig() {
+	viper.SetConfigFile(ConfigPath)
+	if err := viper.ReadInConfig(); err != nil {
+		fmt.Printf("read config file: %s error: %s\n", ConfigPath, err)
+		os.Exit(1)
+	}
+}
+
 
 func GetRDSClient(cfg *redisUtils.Option) (goRedis.UniversalClient, error) {
 	client, err := redisUtils.NewRedisClient(context.TODO(), cfg)

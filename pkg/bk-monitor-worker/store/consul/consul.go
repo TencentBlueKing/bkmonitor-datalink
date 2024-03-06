@@ -25,7 +25,7 @@ import (
 )
 
 type Instance struct {
-	ctx       context.Context
+	Ctx       context.Context
 	Client    *consulUtils.Instance
 	APIClient *api.Client
 }
@@ -44,14 +44,14 @@ func NewInstance(ctx context.Context, opt consulUtils.InstanceOptions) (*Instanc
 		}
 		// new a kv client
 		conf := api.DefaultConfig()
-		conf.Address = config.StorageConsulAddress
+		conf.Address = opt.Addr
 		apiClient, err := api.NewClient(conf)
 		if err != nil {
 			logger.Errorf("new consul api client error, %v", err)
 			e = err
 			return
 		}
-		instance = &Instance{ctx: ctx, Client: client, APIClient: apiClient}
+		instance = &Instance{Ctx: ctx, Client: client, APIClient: apiClient}
 	})
 
 	return instance, e

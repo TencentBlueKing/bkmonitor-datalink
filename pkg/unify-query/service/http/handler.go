@@ -286,15 +286,18 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		return nil, err
 	}
 
-	var factor float64
-	if ok, factor, err = downsample.CheckDownSampleRange(query.Step, query.DownSampleRange); ok {
-		if err == nil {
+	var (
+		factor          float64
+		downSampleError error
+	)
+	if ok, factor, downSampleError = downsample.CheckDownSampleRange(query.Step, query.DownSampleRange); ok {
+		if downSampleError == nil {
 			var info *TimeInfo
-			if info, err = getTimeInfo(&structured.CombinedQueryParams{
+			if info, downSampleError = getTimeInfo(&structured.CombinedQueryParams{
 				Start: query.Start,
 				End:   query.End,
 				Step:  query.DownSampleRange,
-			}); err == nil {
+			}); downSampleError == nil {
 				log.Debugf(context.TODO(), "respData to down sample: %+v", info)
 				resp.Downsample(factor)
 			}
@@ -302,7 +305,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 
 	resp.Status = metadata.GetStatus(ctx)
-	return resp, nil
+	return resp, err
 }
 
 func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured.QueryPromQL, error) {

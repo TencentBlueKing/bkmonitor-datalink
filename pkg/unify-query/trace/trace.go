@@ -57,14 +57,24 @@ func (s *Span) Set(key string, value interface{}) {
 	}
 	var attr attribute.KeyValue
 	switch value.(type) {
+	case bool:
+		attr = attribute.Bool(key, value.(bool))
 	case int:
 		attr = attribute.Int(key, value.(int))
+	case int64:
+		attr = attribute.Int64(key, value.(int64))
+	case []int64:
+		attr = attribute.Int64Slice(key, value.([]int64))
+	case float64:
+		attr = attribute.Float64(key, value.(float64))
+	case []float64:
+		attr = attribute.Float64Slice(key, value.([]float64))
 	case string:
 		attr = attribute.String(key, value.(string))
 	case []string:
 		attr = attribute.StringSlice(key, value.([]string))
 	default:
-		return
+		attr = attribute.String(key, fmt.Sprintf("%v", value))
 	}
 
 	s.span.SetAttributes(attr)

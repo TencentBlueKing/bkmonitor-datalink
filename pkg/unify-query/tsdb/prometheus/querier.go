@@ -365,7 +365,6 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	span.Set("storage-id", qry.StorageID)
 	span.Set("storage-address", storage.Address)
 	span.Set("storage-uri-path", storage.UriPath)
-	span.Set("storage-password", storage.Password)
 
 	curl := &curl.HttpCurl{Log: log.DefaultLogger}
 	switch storage.Type {

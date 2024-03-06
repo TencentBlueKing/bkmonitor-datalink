@@ -11,12 +11,12 @@ package redis
 
 import (
 	"context"
+	"fmt"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
@@ -67,8 +67,8 @@ func (d *DiffUtil) Diff() (bool, error) {
 		return false, errors.Wrapf(err, "diff %s data [%s] and [%s] failed", d.KeyType, originData, bypassData)
 	}
 	if !equal {
-		logger.Warnf("origin key [%s] %s data [%s]", d.OriginKey, d.KeyType, originData)
-		logger.Warnf("bypass key [%s] %s data [%s]", d.BypassKey, d.KeyType, bypassData)
+		fmt.Printf("origin key [%s] %s data [%s]", d.OriginKey, d.KeyType, originData)
+		fmt.Printf("bypass key [%s] %s data [%s]", d.BypassKey, d.KeyType, bypassData)
 		return equal, nil
 	}
 	return equal, nil

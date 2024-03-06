@@ -11,13 +11,13 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff/redis"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/script/diff/redis"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
@@ -46,7 +46,8 @@ func startRedisDiff(cmd *cobra.Command, args []string) {
 	} else {
 		originKey = viper.GetString("diffRedis.originKey")
 		if originKey == "" {
-			logger.Fatal("originKey can not be empty")
+			fmt.Printf("originKey can not be empty")
+			os.Exit(1)
 		}
 	}
 
@@ -57,7 +58,8 @@ func startRedisDiff(cmd *cobra.Command, args []string) {
 	} else {
 		bypassKey = viper.GetString("diffRedis.bypassKey")
 		if bypassKey == "" {
-			logger.Fatal("bypassKey can not be empty")
+			fmt.Printf("bypassKey can not be empty")
+			os.Exit(1)
 		}
 	}
 
@@ -78,13 +80,13 @@ func startRedisDiff(cmd *cobra.Command, args []string) {
 	}
 	equal, err := du.Diff()
 	if err != nil {
-		logger.Fatalf("diff key [%s] and [%s] %s data failed, %v", du.OriginKey, du.BypassKey, du.KeyType, err)
-		return
+		fmt.Printf("diff key [%s] and [%s] %s data failed, %v", du.OriginKey, du.BypassKey, du.KeyType, err)
+		os.Exit(1)
 	}
 	if equal {
-		logger.Infof("key [%s] and [%s] %s data is equal", du.OriginKey, du.BypassKey, du.KeyType)
+		fmt.Printf("key [%s] and [%s] %s data is equal", du.OriginKey, du.BypassKey, du.KeyType)
 	} else {
-		logger.Warnf("key [%s] and [%s] %s data is different", du.OriginKey, du.BypassKey, du.KeyType)
+		fmt.Printf("key [%s] and [%s] %s data is different", du.OriginKey, du.BypassKey, du.KeyType)
 	}
 
 }

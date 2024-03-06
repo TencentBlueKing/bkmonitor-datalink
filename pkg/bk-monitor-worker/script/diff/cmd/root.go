@@ -15,8 +15,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var rootCmd = &cobra.Command{
@@ -41,6 +39,7 @@ var ConfigPath string
 func InitConfig() {
 	viper.SetConfigFile(ConfigPath)
 	if err := viper.ReadInConfig(); err != nil {
-		logger.Fatalf("read config file: %s error: %s", ConfigPath, err)
+		fmt.Printf("read config file: %s error: %s", ConfigPath, err)
+		os.Exit(1)
 	}
 }

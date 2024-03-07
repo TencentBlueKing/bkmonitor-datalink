@@ -244,34 +244,25 @@ func RemoveTask(c *gin.Context) {
 
 	switch params.TaskType {
 	case DaemonTask:
-		client := rdb.GetRDB()
-		tasks, err := client.Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
+		daemonTaskBytes, err := getDaemonTask(params.TaskUniId)
 		if err != nil {
-			metrics.RequestApiCount(method, DeleteTaskPath, "failed")
-			ServerErrResponse(c, fmt.Sprintf("failed to list task by key: %s.", common.DaemonTaskKey()), err)
+			metrics.RequestApiCount(method, DeleteTaskPath, "failure")
+			BadReqResponse(c, "get daemonTask failed error: %v", err)
 			return
 		}
-		for _, i := range tasks {
-			var item task.SerializerTask
-			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
-				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
-				metrics.RequestApiCount(method, DeleteTaskPath, "failure")
-				return
-			}
-			taskUniId := daemon.ComputeTaskUniId(item)
-			if taskUniId == params.TaskUniId {
-				client.Client().SRem(context.Background(), common.DaemonTaskKey(), i)
-				Response(c, &gin.H{"data": taskUniId})
+		if daemonTaskBytes != nil {
+			rdb.GetRDB().Client().SRem(context.Background(), common.DaemonTaskKey(), daemonTaskBytes)
+			Response(c, &gin.H{"data": params.TaskUniId})
 
-				metrics.RequestApiCount(method, CreateTaskPath, "success")
-				metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
-				return
-			}
+			metrics.RequestApiCount(method, CreateTaskPath, "success")
+			metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
+			return
 		}
 		ServerErrResponse(c, fmt.Sprintf(
 			"failed to remove TaskUniId: %s, not found in key: %s",
 			params.TaskUniId, common.DaemonTaskKey()),
 		)
+		return
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}

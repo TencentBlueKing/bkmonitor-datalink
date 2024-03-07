@@ -24,4 +24,6 @@ const (
 	DeleteTaskPath = "/bmw/task"
 	// DeleteAllTaskPath 删除所有任务
 	DeleteAllTaskPath = "/bmw/task/all"
+	// DaemonTaskReload 常驻任务重载(重新启动)
+	DaemonTaskReload = "/bmw/task/daemon/reload"
 )

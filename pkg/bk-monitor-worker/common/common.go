@@ -161,6 +161,11 @@ func DaemonBindingWorker(workerId string) string {
 	return fmt.Sprintf("bmw:daemonTasks:binding:workerBinding:%s", workerId)
 }
 
+// DaemonReloadReqQueue used by the scheduler to restart a daemon task based on the task_uni_id of the queue
+func DaemonReloadReqQueue() string {
+	return fmt.Sprintf("bmw:daemonTasks:reload:request")
+}
+
 // ValidateQueueName validate queue name
 func ValidateQueueName(queueName string) error {
 	if len(strings.TrimSpace(queueName)) == 0 {

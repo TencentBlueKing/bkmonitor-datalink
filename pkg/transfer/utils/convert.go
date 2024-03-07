@@ -92,14 +92,14 @@ func ConvertTimeUnitAs(ts int64, unit string) int64 {
 
 // ParseTime
 func ParseTime(v interface{}) (time.Time, error) {
-	value, err := conv.DefaultConv.Time(v)
-	if err == nil {
-		return value, nil
-	}
-
 	ts, err := conv.DefaultConv.Int64(v)
 	if err == nil {
 		return ParseTimeStamp(ts), nil
+	}
+
+	value, err := conv.DefaultConv.Time(v)
+	if err == nil {
+		return value, nil
 	}
 
 	str, err := conv.DefaultConv.String(v)
@@ -111,6 +111,6 @@ func ParseTime(v interface{}) (time.Time, error) {
 
 // ParseFixedTimeZone
 func ParseFixedTimeZone(zone int) *time.Location {
-	loc := time.FixedZone(fmt.Sprintf("UTC%d", zone), zone*60*60)
+	loc := time.FixedZone("UTC"+strconv.Itoa(zone), zone*60*60)
 	return loc
 }

@@ -10,6 +10,7 @@
 package cmdb
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
@@ -44,48 +45,62 @@ type SearchCloudAreaDataInfo struct {
 
 type ListBizHostsTopoResp struct {
 	define.ApiCommonRespMeta
-	Data ListBizHostsTopoData `json:"data"`
+	Data ListBizHostsTopoData `json:"data" mapstructure:"data"`
 }
 
 type ListBizHostsTopoData struct {
-	Count int                        `json:"count"`
-	Info  []ListBizHostsTopoDataInfo `json:"info"`
+	Count int                        `json:"count" mapstructure:"count"`
+	Info  []ListBizHostsTopoDataInfo `json:"info" mapstructure:"info"`
 }
 
 type ListBizHostsTopoDataInfoHost struct {
-	BkAgentId         string      `json:"bk_agent_id"`
-	BkBakOperator     string      `json:"bk_bak_operator"`
-	BkCloudId         int         `json:"bk_cloud_id"`
-	BkComment         string      `json:"bk_comment"`
-	BkHostId          int         `json:"bk_host_id"`
-	BkHostInnerip     string      `json:"bk_host_innerip"`
-	BkHostInneripV6   string      `json:"bk_host_innerip_v6"`
-	BkHostName        string      `json:"bk_host_name"`
-	BkHostOuterip     string      `json:"bk_host_outerip"`
-	BkHostOuteripV6   string      `json:"bk_host_outerip_v6"`
-	BkIspName         interface{} `json:"bk_isp_name"`
-	BkOsName          string      `json:"bk_os_name"`
-	BkOsType          string      `json:"bk_os_type"`
-	BkOsVersion       string      `json:"bk_os_version"`
-	BkProvinceName    interface{} `json:"bk_province_name"`
-	BkState           interface{} `json:"bk_state"`
-	BkStateName       interface{} `json:"bk_state_name"`
-	BkSupplierAccount string      `json:"bk_supplier_account"`
-	Operator          string      `json:"operator"`
+	BkBizId             int     `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	BkSupplierAccount   string  `json:"bk_supplier_account" mapstructure:"bk_supplier_account"`
+	BkAgentId           string  `json:"bk_agent_id" mapstructure:"bk_agent_id"`
+	Operator            string  `json:"operator" mapstructure:"operator"`
+	BkBakOperator       string  `json:"bk_bak_operator" mapstructure:"bk_bak_operator"`
+	BkCloudId           int     `json:"bk_cloud_id" mapstructure:"bk_cloud_id"`
+	BkComment           string  `json:"bk_comment" mapstructure:"bk_comment"`
+	BkHostId            int     `json:"bk_host_id" mapstructure:"bk_host_id"`
+	BkHostInnerip       string  `json:"bk_host_innerip" mapstructure:"bk_host_innerip"`
+	BkHostInneripV6     string  `json:"bk_host_innerip_v6" mapstructure:"bk_host_innerip_v6"`
+	BkHostName          string  `json:"bk_host_name" mapstructure:"bk_host_name"`
+	BkHostOuterip       string  `json:"bk_host_outerip" mapstructure:"bk_host_outerip"`
+	BkHostOuteripV6     string  `json:"bk_host_outerip_v6" mapstructure:"bk_host_outerip_v6"`
+	BkOsName            string  `json:"bk_os_name" mapstructure:"bk_os_name"`
+	BkOsType            string  `json:"bk_os_type" mapstructure:"bk_os_type"`
+	BkOsVersion         string  `json:"bk_os_version" mapstructure:"bk_os_version"`
+	BkOsBit             string  `json:"bk_os_bit" mapstructure:"bk_os_bit"`
+	BkProvinceName      *string `json:"bk_province_name" mapstructure:"bk_province_name"`
+	BkState             *string `json:"bk_state" mapstructure:"bk_state"`
+	BkStateName         *string `json:"bk_state_name" mapstructure:"bk_state_name"`
+	BkIspName           *string `json:"bk_isp_name" mapstructure:"bk_isp_name"`
+	BkMem               *int    `json:"bk_mem" mapstructure:"bk_mem"`
+	BkDisk              *int    `json:"bk_disk" mapstructure:"bk_disk"`
+	BkCpu               *int    `json:"bk_cpu" mapstructure:"bk_cpu"`
+	BkCpuModule         string  `json:"bk_cpu_module" mapstructure:"bk_cpu_module"`
+	SrvStatus           *string `json:"srv_status" mapstructure:"srv_status"`
+	IdcUnitName         string  `json:"idc_unit_name" mapstructure:"idc_unit_name"`
+	NetDeviceId         string  `json:"net_device_id" mapstructure:"net_device_id"`
+	RackId              string  `json:"rack_id" mapstructure:"rack_id"`
+	BkSvrDeviceClsName  string  `json:"bk_svr_device_cls_name" mapstructure:"bk_svr_device_cls_name"`
+	SvrDeviceClass      string  `json:"svr_device_class" mapstructure:"svr_device_class"`
+	DockerClientVersion string  `json:"docker_client_version" mapstructure:"docker_client_version"`
+	DockerServerVersion string  `json:"docker_server_version" mapstructure:"docker_server_version"`
 }
 
 type ListBizHostsTopoDataInfoTopo struct {
-	BkSetId   int    `json:"bk_set_id"`
-	BkSetName string `json:"bk_set_name"`
+	BkSetId   int    `json:"bk_set_id" mapstructure:"bk_set_id"`
+	BkSetName string `json:"bk_set_name" mapstructure:"bk_set_name"`
 	Module    []struct {
-		BkModuleId   int    `json:"bk_module_id"`
-		BkModuleName string `json:"bk_module_name"`
-	} `json:"module"`
+		BkModuleId   int    `json:"bk_module_id" mapstructure:"bk_module_id"`
+		BkModuleName string `json:"bk_module_name" mapstructure:"bk_module_name"`
+	} `json:"module" mapstructure:"module"`
 }
 
 type ListBizHostsTopoDataInfo struct {
-	Host ListBizHostsTopoDataInfoHost   `json:"host"`
-	Topo []ListBizHostsTopoDataInfoTopo `json:"topo"`
+	Host ListBizHostsTopoDataInfoHost   `json:"host" mapstructure:"host"`
+	Topo []ListBizHostsTopoDataInfoTopo `json:"topo" mapstructure:"topo"`
 }
 
 type SearchBusinessResp struct {
@@ -184,4 +199,61 @@ type FindHostBizRelationData struct {
 	BkModuleId        int    `json:"bk_module_id"`
 	BkSetId           int    `json:"bk_set_id"`
 	BkSupplierAccount string `json:"bk_supplier_account"`
+}
+
+type SearchBizInstTopoResp struct {
+	define.ApiCommonRespMeta
+	Data []SearchBizInstTopoData `json:"data"`
+}
+
+type SearchBizInstTopoData struct {
+	BkInstId   int                     `json:"bk_inst_id"`
+	BkInstName string                  `json:"bk_inst_name"`
+	BkObjId    string                  `json:"bk_obj_id"`
+	BkObjName  string                  `json:"bk_obj_name"`
+	Child      []SearchBizInstTopoData `json:"child"`
+}
+
+// Traverse 递归遍历
+func (s *SearchBizInstTopoData) Traverse(fn func(*SearchBizInstTopoData)) {
+	fn(s)
+	for _, child := range s.Child {
+		child.Traverse(fn)
+	}
+}
+
+// ToTopoLinks 递归获取模块ID到拓扑链路的映射
+func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]string, parents []string) {
+	parents = append([]string{(*s).GetId()}, parents...)
+
+	// 如果是模块，记录链路
+	if s.BkObjId == "module" {
+		(*result)[s.BkInstId] = parents
+		return
+	}
+
+	// 递归子节点
+	for _, child := range s.Child {
+		child.ToTopoLinks(result, parents)
+	}
+}
+
+// GetId 获取唯一标识
+func (s *SearchBizInstTopoData) GetId() string {
+	topoId := fmt.Sprintf("%s|%d", s.BkObjId, s.BkInstId)
+	return topoId
+}
+
+type GetBizInternalModuleResp struct {
+	define.ApiCommonRespMeta
+	Data GetBizInternalModuleData `json:"data"`
+}
+
+type GetBizInternalModuleData struct {
+	BkSetId   int    `json:"bk_set_id"`
+	BkSetName string `json:"bk_set_name"`
+	Module    []struct {
+		BkModuleId   int    `json:"bk_module_id"`
+		BkModuleName string `json:"bk_module_name"`
+	}
 }

@@ -17,6 +17,8 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v6"
 	"github.com/elastic/go-elasticsearch/v6/esapi"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 )
 
 // ES5Adapter
@@ -56,6 +58,7 @@ func (w *ESv6Writer) Write(ctx context.Context, index string, records Records) (
 	if err != nil {
 		return nil, err
 	}
+	defer bufferpool.Put(body)
 
 	request := w.request
 	request.Body = body

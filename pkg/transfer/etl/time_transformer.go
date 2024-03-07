@@ -10,6 +10,7 @@
 package etl
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/cstockton/go-conv"
@@ -48,7 +49,7 @@ var layoutParsers = map[string]TimeParser{
 func timestampFormatByDuration(d time.Duration) TimeFormatter {
 	duration := int64(d / time.Nanosecond)
 	return func(layout string, t time.Time) string {
-		return conv.String(t.UnixNano() / duration)
+		return strconv.FormatInt(t.UnixNano()/duration, 10)
 	}
 }
 

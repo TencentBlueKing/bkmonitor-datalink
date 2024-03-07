@@ -7,33 +7,24 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package elasticsearch
+package bufferpool
 
 import (
 	"bytes"
-	"net/http"
+	"sync"
 )
 
-// ESWriter :
-type ESWriter struct {
-	transport Transport
+var pool = sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBuffer(make([]byte, 0, 1024))
+	},
 }
 
-func (w *ESWriter) getBodyByRecords(records Records) (*bytes.Buffer, error) {
-	return records.AsBody()
+func Get() *bytes.Buffer {
+	return pool.Get().(*bytes.Buffer)
 }
 
-// Close :
-func (w *ESWriter) Close() error {
-	return nil
+func Put(b *bytes.Buffer) {
+	b.Reset()
+	pool.Put(b)
 }
-
-// NewESWriter :
-func NewESWriter(transport Transport) *ESWriter {
-	return &ESWriter{
-		transport: transport,
-	}
-}
-
-// DefaultTransport
-var DefaultTransport = http.DefaultTransport

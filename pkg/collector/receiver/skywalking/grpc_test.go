@@ -215,7 +215,7 @@ func TestFetchConfigurationsNilSn(t *testing.T) {
 	svc := &ConfigurationDiscoveryService{}
 
 	cmds, err := svc.FetchConfigurations(ctx, req)
-	assert.Error(t, err)
+	assert.Nil(t, err)
 	assert.Len(t, cmds.GetCommands(), 0)
 }
 

@@ -74,7 +74,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 	logger.Debug("not reached check time")
-
 }
 
 // 获取主机静态数据
@@ -114,9 +113,7 @@ func (g *Gather) shouldReportData(nowData *Report) bool {
 func (g *Gather) Report(dataid int32, timestamp int64, e chan<- define.Event, data *Report) {
 	logger.Debug("start report data")
 
-	var (
-		operType string
-	)
+	var operType string
 
 	if g.status.FirstReport {
 		operType = NewOperType

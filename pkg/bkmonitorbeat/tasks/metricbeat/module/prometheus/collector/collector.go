@@ -42,13 +42,11 @@ func newMetricUp(code int) string {
 	return fmt.Sprintf(`%s{code="%d"} 1`, define.MetricBeatUpMetric, code)
 }
 
-var (
-	hostParser = parse.URLHostParserBuilder{
-		DefaultScheme: defaultScheme,
-		DefaultPath:   defaultPath,
-		PathConfigKey: "metrics_path",
-	}.Build()
-)
+var hostParser = parse.URLHostParserBuilder{
+	DefaultScheme: defaultScheme,
+	DefaultPath:   defaultPath,
+	PathConfigKey: "metrics_path",
+}.Build()
 
 func init() {
 	mb.Registry.MustAddMetricSet("prometheus", "collector", New, mb.WithHostParser(hostParser))

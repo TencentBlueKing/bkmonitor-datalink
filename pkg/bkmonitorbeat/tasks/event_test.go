@@ -42,7 +42,6 @@ func TestBaseEvent(t *testing.T) {
 	assert.NotNil(t, res["error_code"])
 	assert.NotNil(t, res["available"])
 	assert.NotNil(t, res["task_duration"])
-
 }
 
 func TestStatusEvent(t *testing.T) {

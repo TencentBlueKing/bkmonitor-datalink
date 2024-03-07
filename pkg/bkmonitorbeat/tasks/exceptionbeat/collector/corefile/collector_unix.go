@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package corefile
 
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -25,9 +25,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+var (
+	ErrPatternDelimiter = errors.New("invalid pattern delimiter")
+	ErrRegexMatch       = errors.New("regex does not match")
+)
+
 const (
-	runningState = iota
-	closeState
+	closeState = iota
+	runningState
 )
 
 type ReportInfo struct {
@@ -36,40 +41,39 @@ type ReportInfo struct {
 	info  beat.MapStr
 }
 
-type CoreFileCollector struct {
+type Collector struct {
 	dataid                  int32
 	done                    chan bool
 	state                   int
 	coreFilePattern         string
 	corePath                string
 	pattern                 string
-	patternArr              [][]string
+	patternList             [][]string
 	coreWatcher             *fsnotify.Watcher
 	isUsesPid               bool
 	isCorePathAddSuccess    bool
 	isCorePatternAddSuccess bool
 	isCoreUsesPidAddSuccess bool
 
-	reportTimeInfo map[string]*ReportInfo // 上报时间缓冲记录区, 注意，这个地方由于有map，在处理循环时注意加锁。目前由于statistic是单线程的，所以并没有加锁保护
+	reportTimeInfo map[string]*ReportInfo // 上报时间缓冲记录区, statistic 是单线程的，无需加锁保护
 	reportTimeGap  time.Duration          // 事件上报缓冲时间间隔
 }
 
 func init() {
-	tmpCollector := new(CoreFileCollector)
-	tmpCollector.state = closeState
-	collector.RegisterCollector(tmpCollector)
+	collector.RegisterCollector(new(Collector))
 }
 
-func (c *CoreFileCollector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
-	logger.Info("CoreFileCollector is running...")
-	if 0 == (conf.CheckBit & configs.Core) {
-		logger.Infof("CoreFileCollector closed by config: %s", conf.CheckMethod)
+func (c *Collector) Start(ctx context.Context, e chan<- define.Event, conf *configs.ExceptionBeatConfig) {
+	logger.Info("corefile collector is running...")
+	if (conf.CheckBit & configs.Core) == 0 {
+		logger.Infof("corefile collector closed by config: %s", conf.CheckMethod)
 		return
 	}
-	if runningState == c.state {
-		logger.Info("CoreFileCollector has been already started")
+	if c.state == runningState {
+		logger.Info("corefile collector already started")
 		return
 	}
+
 	c.dataid = conf.DataID
 	c.done = make(chan bool)
 	c.state = runningState
@@ -79,23 +83,23 @@ func (c *CoreFileCollector) Start(ctx context.Context, e chan<- define.Event, co
 	c.reportTimeInfo = make(map[string]*ReportInfo)
 	c.coreFilePattern = conf.CoreFilePattern
 
-	logger.Infof("CoreFileColletor start success with config data_id->[%d] report_gap->[%s]", c.dataid, c.reportTimeGap)
+	logger.Infof("corefile collector start with data_id->[%d] report_gap->[%s]", c.dataid, c.reportTimeGap)
 	go c.statistic(ctx, e)
 }
 
-func (c *CoreFileCollector) Reload(conf *configs.ExceptionBeatConfig) {}
+func (c *Collector) Reload(conf *configs.ExceptionBeatConfig) {}
 
-func (c *CoreFileCollector) Stop() {
-	if closeState == c.state {
-		logger.Errorf("CoreFileColletor stop failed: collector not open")
+func (c *Collector) Stop() {
+	if c.state == closeState {
+		logger.Error("corefile collector stop failed: already closed")
 		return
 	}
 	c.state = closeState
 	close(c.done)
-	logger.Info("CoreFileColletor stopped")
+	logger.Info("corefile collector stopped")
 }
 
-func (c *CoreFileCollector) buildExtra(path string, dimensions beat.MapStr) beat.MapStr {
+func buildExtra(path string, dimensions beat.MapStr) beat.MapStr {
 	extra := beat.MapStr{
 		"bizid":    collector.BizID,
 		"cloudid":  collector.CloudID,

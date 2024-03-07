@@ -129,7 +129,6 @@ func (client *Processor) handle(event interface{}) (interface{}, error) {
 func (client *Processor) send(event interface{}) {
 	// transfer newmsg to next nodes
 	client.process.Send(event, client.outputs)
-
 }
 
 func New(ctx context.Context, cfg keyword.ProcessConfig, taskType string) (module.Module, error) {

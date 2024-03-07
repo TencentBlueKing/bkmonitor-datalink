@@ -64,7 +64,7 @@ func TestOutOfMemCollector_WatchOOMEvents(t *testing.T) {
 				reportGap: tt.fields.reportGap,
 			}
 			eventChan := make(chan define.Event)
-			//上报间隔1/10作为一个事件周期
+			// 上报间隔1/10作为一个事件周期
 			timeElem := tt.fields.reportGap / 10
 			// 50事件周期后退出
 			ctx, _ := context.WithTimeout(context.Background(), 50*timeElem)

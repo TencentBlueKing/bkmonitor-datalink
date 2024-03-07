@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -217,7 +217,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 	}
 
 	// collect once in one period
-	data.Country, data.City, _ = bkcommon.GetLocation()
+	data.Country, data.City, _ = common.GetLocation()
 	data.City = strings.TrimSpace(data.City)
 
 	data.Load, err = GetLoadInfo()
@@ -235,7 +235,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 			t0 := time.Now()
 			defer envJob.MarkFinished()
 			var err error
-			globalEnvInfo, err = GetEnvInfo(config)
+			globalEnvInfo, err = GetEnvInfo()
 			if err != nil {
 				logger.Errorf("collector env info failed: %v", err)
 			}
@@ -253,7 +253,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 }
 
 type ReportData struct {
-	bkcommon.DateTime
+	common.DateTime
 	Cpu    *CpuReport    `json:"cpu"`
 	Env    *EnvReport    `json:"env"`
 	Disk   *DiskReport   `json:"disk"`
@@ -263,7 +263,7 @@ type ReportData struct {
 	System *SystemReport `json:"system"`
 }
 
-func CounterDiff(now, before uint64) uint64 {
+func calcDelta(now, before uint64) uint64 {
 	// 数值倒流则直接返回 0
 	if before > now {
 		return 0

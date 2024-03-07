@@ -150,12 +150,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	start := time.Now()
 
 	if g.config.TargetHost == "" && len(g.config.TargetHostList) == 0 {
-		//不上报任何数据
+		// 不上报任何数据
 		logger.Debugf("udp TargetHostList is empty.")
 		return
 	}
 
-	//获取配置的host列表
+	// 获取配置的host列表
 	if g.config.TargetHost != "" {
 		hosts = append(hosts, g.config.TargetHost)
 	}
@@ -165,7 +165,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	hostsInfo := tasks.GetHostsInfo(ctx, hosts, g.config.DNSCheckMode, g.config.TargetIPType, configs.Udp)
 	for _, h := range hostsInfo {
 		if h.Errno != define.BeatErrCodeOK {
-			var event = NewEvent(g, start, h.Host)
+			event := NewEvent(g, start, h.Host)
 			event.Fail(h.Errno)
 			e <- event
 			continue
@@ -228,7 +228,7 @@ var NewConn = func(ctx context.Context, config *configs.UDPTaskConfig, targetHos
 	case configs.IPv6:
 		network = "udp6"
 	}
-	//判断addr是否为有效的ipv4 ipv6 或者域名
+	// 判断addr是否为有效的ipv4 ipv6 或者域名
 	ret := utils.CheckIpOrDomainValid(targetHost)
 	if ret == utils.Domain {
 		network = "udp"

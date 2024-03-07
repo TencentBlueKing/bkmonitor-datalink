@@ -58,7 +58,6 @@ func (t *BaseTaskParam) convertLabels() {
 	t.labels = t.Labels
 	// 将Labels置空
 	t.Labels = make([]map[string]string, 0)
-
 }
 
 func (t *BaseTaskParam) resetLabels() {

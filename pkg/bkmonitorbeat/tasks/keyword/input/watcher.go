@@ -54,12 +54,11 @@ func newTail(f *file.File) (*tail.Tail, error) {
 			ReOpen:    false,
 			MustExist: true,
 			// TODO log
-			//Logger:    &helper.LogProxy{},
+			// Logger:    &helper.LogProxy{},
 			Logger:   tail.DiscardingLogger,
 			Location: &tail.SeekInfo{Offset: f.State.Offset, Whence: io.SeekStart},
 		},
 	)
-
 	if err != nil {
 		logger.Errorf("tail file %s err", filename)
 		return nil, err
@@ -145,8 +144,8 @@ func (fw *FileWatcher) loopCollect() {
 				err := fw.FileTail.Err()
 				if err != nil {
 					logger.Errorf("[watcher]tail %s ended with error: %v", fw.FileTail.Filename, err)
-					//time.Sleep(1 * time.Second)
-					//continue
+					// time.Sleep(1 * time.Second)
+					// continue
 				}
 				logger.Info("[watcher]%s closed or moved", fw.FileTail.Filename)
 				return

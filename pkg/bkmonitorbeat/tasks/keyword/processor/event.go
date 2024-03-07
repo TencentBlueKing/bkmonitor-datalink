@@ -87,9 +87,7 @@ func (client *EventProcessor) Filter(event *module.LogEvent) bool {
 }
 
 func (client *EventProcessor) Handle(event *module.LogEvent) (interface{}, error) {
-	var (
-		results = make([]keyword.KeywordTaskResult, 0, len(client.rules))
-	)
+	results := make([]keyword.KeywordTaskResult, 0, len(client.rules))
 
 	logger.Debugf("get event, %v", event)
 	if client.decoder != nil {

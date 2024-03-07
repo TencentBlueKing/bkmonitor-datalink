@@ -80,9 +80,9 @@ func GetHostsInfo(ctx context.Context, hosts []string, dnsMode configs.CheckMode
 		if err == nil && hostTmp != "" {
 			host = hostTmp
 		}
-		//判断host是ip还是域名
+		// 判断host是ip还是域名
 		if utils.CheckIpOrDomainValid(host) == utils.Domain {
-			//host为域名 解析域名获取ip列表
+			// host为域名 解析域名获取ip列表
 			ips, err := LookupIP(ctx, ipType, host)
 			if err != nil {
 				// DNS解析失败
@@ -104,7 +104,7 @@ func GetHostsInfo(ctx context.Context, hosts []string, dnsMode configs.CheckMode
 				hostsInfo = append(hostsInfo, *hostsInfoTmp)
 			}
 		} else {
-			//host为纯ip
+			// host为纯ip
 			ipList = append(ipList, host)
 		}
 
@@ -230,7 +230,7 @@ var LookupIP = func(ctx context.Context, t configs.IPType, domain string) ([]net
 	default:
 		network = "ip"
 	}
-	//判断addr是否为有效的ipv4 ipv6 或者域名
+	// 判断addr是否为有效的ipv4 ipv6 或者域名
 	ret := utils.CheckIpOrDomainValid(domain)
 	if ret == utils.Domain {
 		network = "ip"

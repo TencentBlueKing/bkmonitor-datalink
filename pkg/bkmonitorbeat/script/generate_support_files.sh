@@ -41,7 +41,7 @@ generate_template() {
 
 generate_templates() {
   dir=$1
-  for system in freebsd linux windows
+  for system in freebsd linux windows darwin
   do
     if [ "$system" = 'freebsd' ]; then
         archs='x86_64'
@@ -49,6 +49,8 @@ generate_templates() {
         archs='aarch64 x86 x86_64'
     elif [ "$system" = 'windows' ]; then
         archs='x86 x86_64'
+    elif [ "$system" = 'darwin' ]; then
+        archs='x86_64'
     fi
     for arch in $archs
     do

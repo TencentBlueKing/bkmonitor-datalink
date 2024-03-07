@@ -87,7 +87,6 @@ var NewBatchPingTool = func(
 		return nil, err
 	}
 	return pingTool, nil
-
 }
 
 // Ping 开始分批ping

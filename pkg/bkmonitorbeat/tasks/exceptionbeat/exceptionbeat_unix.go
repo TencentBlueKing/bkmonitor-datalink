@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package exceptionbeat
 
@@ -36,9 +35,7 @@ const (
 	OutOfMemCollection       = "C_OOM"
 )
 
-var (
-	methods []collector.Collector
-)
+var methods []collector.Collector
 
 type Gather struct {
 	config *configs.ExceptionBeatConfig

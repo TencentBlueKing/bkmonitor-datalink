@@ -33,7 +33,7 @@ type PromEvent struct {
 	Value           float64
 	Labels          common.MapStr
 	AggreValue      common.MapStr
-	DimensionString string //ordered dimension string
+	DimensionString string // ordered dimension string
 	HashKey         string
 	TS              int64
 	Exemplar        *exemplar.Exemplar

@@ -222,7 +222,7 @@ func (g *Gather) IsModify(src, dst []byte) bool {
 }
 
 func (g *Gather) writeDstCfgs(content []byte) {
-	if err := os.WriteFile(g.dstfile, content, 0666); err != nil {
+	if err := os.WriteFile(g.dstfile, content, 0o666); err != nil {
 		logger.Errorf("failed to write file: %s, err: %v", g.dstfile, err)
 		return
 	}

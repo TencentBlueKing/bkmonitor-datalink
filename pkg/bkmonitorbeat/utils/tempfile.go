@@ -71,10 +71,10 @@ func CreateTempFile(pattern string) (*os.File, error) {
 		return nil, errors.New("temp dir not init, call InitTempDir first")
 	}
 
-	//First determine whether the tempDir exists. If it does not exist, create it
+	// First determine whether the tempDir exists. If it does not exist, create it
 	_, err := os.Stat(tempDir)
 	if os.IsNotExist(err) {
-		err = os.MkdirAll(tempDir, 0755)
+		err = os.MkdirAll(tempDir, 0o755)
 		if err != nil {
 			return nil, errors.New("tempDir create fail, err:" + err.Error())
 		}

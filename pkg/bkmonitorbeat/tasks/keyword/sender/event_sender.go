@@ -216,7 +216,7 @@ func (s *EventSender) cacheResult(rawResult interface{}) {
 
 	// 3.2 判断如果不存在，则需要创建一个新的counter
 	// 需要将string先转换为interface，方便后续使用
-	var tempDimension = make(map[string]interface{})
+	tempDimension := make(map[string]interface{})
 	for k, v := range keywordResult.Dimensions {
 		tempDimension[k] = v
 	}
@@ -237,7 +237,6 @@ func (s *EventSender) cacheResult(rawResult interface{}) {
 
 // flushCache: 清理发送缓存内容
 func (s *EventSender) flushCache() {
-
 	var (
 		eventList = make([]common.MapStr, 0)
 		eventMap  common.MapStr
@@ -300,7 +299,7 @@ func (s *EventSender) flushCache() {
 
 func (s *EventSender) appendInfo(m common.MapStr) {
 	// 需要追加的函数集合
-	var appendFuncList = []appendFunc{
+	appendFuncList := []appendFunc{
 		s.appendTimeStamp,
 		s.appendTarget,
 	}

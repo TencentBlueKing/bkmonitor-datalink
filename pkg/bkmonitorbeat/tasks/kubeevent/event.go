@@ -164,7 +164,7 @@ func (e *wrapEvent) AsMapStr() common.MapStr {
 			"count":   e.Count,
 		},
 		"dimension": dimensions,
-		"timestamp": e.GetLastTime() * 1000, //ms
+		"timestamp": e.GetLastTime() * 1000, // ms
 	}
 
 	return common.MapStr{

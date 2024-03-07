@@ -80,7 +80,7 @@ func getExceptFuncs() []exceptFunc {
 	return []exceptFunc{
 		{
 			name:    EventCoreDump,
-			raise:   getRegexecFunc(EventCoreDump, "GOTRACEBACK=crash"), //必须有该环境变量才能产生core dump
+			raise:   getRegexecFunc(EventCoreDump, "GOTRACEBACK=crash"), // 必须有该环境变量才能产生core dump
 			recover: func() {},
 		},
 		{

@@ -67,7 +67,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.TaskConfig = taskConfig
 	gather.config = taskConfig.(*configs.MetricBeatConfig)
 
-	var hosts = struct {
+	hosts := struct {
 		Hosts []string `config:"hosts"`
 	}{}
 	if err := gather.config.Module.Unpack(&hosts); err != nil {

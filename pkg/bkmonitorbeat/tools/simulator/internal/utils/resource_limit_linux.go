@@ -39,7 +39,7 @@ func setResourceLimitV1(name string, cpu float64, mem int64) error {
 	res := &specs.LinuxResources{}
 	if cpu > 0 {
 		var period uint64 = 100000
-		var quota = int64(cpu * float64(period))
+		quota := int64(cpu * float64(period))
 		res.CPU = &specs.LinuxCPU{
 			Quota:  &quota,
 			Period: &period,
@@ -89,7 +89,7 @@ func setResourceLimitV2(name string, cpu float64, mem int64) error {
 	res := &cgroup2.Resources{}
 	if cpu > 0 {
 		var period uint64 = 100000
-		var quota = int64(cpu * float64(period))
+		quota := int64(cpu * float64(period))
 		res.CPU = &cgroup2.CPU{
 			Max: cgroup2.NewCPUMax(&quota, &period),
 		}
@@ -100,7 +100,7 @@ func setResourceLimitV2(name string, cpu float64, mem int64) error {
 		}
 	}
 	sliceName := name + ".slice"
-	//存在则使用，不存在则新建
+	// 存在则使用，不存在则新建
 	m, err := cgroup2.LoadSystemd("/", sliceName)
 	if err != nil {
 		m, err = newSystemd(sliceName, res)

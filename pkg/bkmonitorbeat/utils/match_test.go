@@ -20,7 +20,7 @@ import (
 )
 
 func TestWildcardToRegex(t *testing.T) {
-	var cases = []struct{ in, out string }{
+	cases := []struct{ in, out string }{
 		{`?`, `.{1}`},
 		{`*`, `.*`},
 		{`a.b`, `a\.b`},

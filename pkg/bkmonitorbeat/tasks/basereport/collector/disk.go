@@ -119,7 +119,6 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 		var once DiskReport
 		iostats, err := IOCounters()
 		if err != nil {
-			logger.Error("get disk IOCounters failed, error: %s", err)
 			return nil, err
 		}
 
@@ -144,22 +143,20 @@ func GetDiskInfo(config configs.DiskConfig) (*DiskReport, error) {
 		case <-ticker.C:
 		}
 	}
-	// partition
+
 	partitions, err := disk.Partitions(config.CollectAllDev)
 	if err != nil {
 		return nil, err
 	}
-
-	// 过滤掉不要的分区
+	// 分区过滤
 	partitions = FilterPartitions(partitions, config)
 
 	report.Partitions = make([]disk.PartitionStat, 0, len(partitions))
 	report.Usage = make([]disk.UsageStat, 0, len(partitions))
-	// usage
 	for _, partition := range partitions {
-
 		usage, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
+			logger.Errorf("get disk usage failed, mountpoint=%v, err: %v", partition.Mountpoint, err)
 			continue
 		}
 
@@ -187,22 +184,22 @@ func deltaCount(last, current map[string]DiskStats) {
 		interval = 1
 	}
 
-	logger.Debugf("disk interval=%d", int(interval))
+	logger.Debugf("disk interval=%ds", int(interval))
 	diskLastStatTime = now
 
 	for name, stat := range last {
 		newstat := current[name]
-		deltaReadCount := CounterDiff(newstat.ReadCount, stat.ReadCount)
-		deltaReadBytes := CounterDiff(newstat.ReadBytes, stat.ReadBytes)
-		deltaWriteCount := CounterDiff(newstat.WriteCount, stat.WriteCount)
-		deltaWriteBytes := CounterDiff(newstat.WriteBytes, stat.WriteBytes)
+		deltaReadCount := calcDelta(newstat.ReadCount, stat.ReadCount)
+		deltaReadBytes := calcDelta(newstat.ReadBytes, stat.ReadBytes)
+		deltaWriteCount := calcDelta(newstat.WriteCount, stat.WriteCount)
+		deltaWriteBytes := calcDelta(newstat.WriteBytes, stat.WriteBytes)
 		newstat.SpeedIORead = float64(deltaReadCount) / interval
 		newstat.SpeedByteRead = float64(deltaReadBytes) / interval
 		newstat.SpeedIOWrite = float64(deltaWriteCount) / interval
 		newstat.SpeedByteWrite = float64(deltaWriteBytes) / interval
 		deltaIOCompleted := deltaReadCount + deltaWriteCount
 
-		deltaIOTime := CounterDiff(newstat.IoTime, stat.IoTime)
+		deltaIOTime := calcDelta(newstat.IoTime, stat.IoTime)
 
 		if deltaIOCompleted == 0 {
 			newstat.Svctm = 0
@@ -213,24 +210,24 @@ func deltaCount(last, current map[string]DiskStats) {
 			newstat.Svctm = float64(deltaIOTime) / float64(deltaIOCompleted)
 
 			// await：(delta(time spent reading) + delta(time spent writing)) / (delta(reads completed) + delta(writes completed))
-			deltaReadTime := CounterDiff(newstat.ReadTime, stat.ReadTime)
-			deltaWriteTime := CounterDiff(newstat.WriteTime, stat.WriteTime)
+			deltaReadTime := calcDelta(newstat.ReadTime, stat.ReadTime)
+			deltaWriteTime := calcDelta(newstat.WriteTime, stat.WriteTime)
 			newstat.Await = float64(deltaReadTime+deltaWriteTime) / float64(deltaIOCompleted)
 
 			// avgrq-sz：(delta(sectors read) + delta(sectors written)) / (delta(reads completed) + delta(writes completed))
-			deltaReadSectors := CounterDiff(newstat.ReadSectors, stat.ReadSectors)
-			deltaWriteSectors := CounterDiff(newstat.WriteSectors, stat.WriteSectors)
+			deltaReadSectors := calcDelta(newstat.ReadSectors, stat.ReadSectors)
+			deltaWriteSectors := calcDelta(newstat.WriteSectors, stat.WriteSectors)
 			newstat.AvgrqSz = float64(deltaReadSectors+deltaWriteSectors) / float64(deltaIOCompleted)
 		}
 
 		// avgqu-sz：delta(weighted time spent doing I/Os) / t / 1000
-		deltaWeightedIoTime := CounterDiff(newstat.WeightedIO, stat.WeightedIO)
+		deltaWeightedIoTime := calcDelta(newstat.WeightedIO, stat.WeightedIO)
 		newstat.AvgquSz = float64(deltaWeightedIoTime) / interval / 1000.0
 
 		// %util：delta(time spent doing I/Os) / t / 1000 * 100%
 		// 如果是发现这个节点的IO时间超过了现实时间（部分系统有时间倒流的情况），这个是肯定有问题的，那么此时的使用率将会被设置为0
 		if (deltaIOTime / 1000) > uint64(interval) {
-			logger.Errorf("deltaIOTime->[%d] should not larger than interval->[%d], set to 0", deltaIOTime, interval)
+			logger.Errorf("deltaIOTime->[%d] should not larger than interval->[%f], set to 0", deltaIOTime, interval)
 			newstat.Util = 0
 		} else {
 			newstat.Util = float64(deltaIOTime) / interval / 1000.0

@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build windows
+
 package collector
 
 import (
@@ -16,108 +18,61 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shirou/gopsutil/v3/host"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/pkg/errors"
 )
-
-// tasklist
-func GetProcs() (int, error) {
-	cmd := exec.Command("cmd", "/C", "tasklist")
-	std, _ := cmd.StdoutPipe()
-	if err := cmd.Start(); err != nil {
-		logger.Errorf("cmd Start err:%s", err)
-		return 0, nil
-	}
-	content, err := io.ReadAll(std)
-	if err != nil {
-		logger.Errorf("read content err :%s", err)
-		return 0, nil
-	}
-	logger.Debugf("get proclist by tasklist %s", string(content))
-	if err := cmd.Wait(); err != nil {
-		logger.Errorf("cmd Start err:%s", err)
-		return 0, nil
-	}
-	procList := strings.Split(string(content), "\r\n")
-	procCount := len(procList)
-	if procCount >= 4 {
-		return len(procList) - 4, nil
-	}
-	return 0, fmt.Errorf("get procCount from %v failed", procList)
-}
 
 func GetMaxFiles() (int, error) {
 	cmd := exec.Command("REG", "QUERY", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Windows", "/v", "GDIProcessHandleQuota")
-	logger.Debug("exec command: REG QUERY \"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Windows\" /v GDIProcessHandleQuota", "")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		logger.Errorf("can not obtain stdout pipe for command:%s", err)
 		return 0, err
 	}
-	if err := cmd.Start(); err != nil {
-		logger.Errorf("The command is err : %s", err)
+	if err := cmd.Run(); err != nil {
 		return 0, err
 	}
-	bytes, err := io.ReadAll(stdout)
-	res := string(bytes)
+
+	bs, err := io.ReadAll(stdout)
 	if err != nil {
-		logger.Errorf("ReadAll Stdout:%s", err)
 		return 0, err
 	}
-	if err := cmd.Wait(); err != nil {
-		logger.Errorf("wait err:%s", err)
-	}
-	reslist := strings.Split(res, "\r\n")
+
 	var decimal uint64
-	for _, line := range reslist {
+	content := string(bs)
+	for _, line := range strings.Split(content, "\r\n") {
 		if !strings.Contains(line, "GDIProcessHandleQuota") {
 			continue
 		}
-		if ind := strings.Index(line, "0x"); ind != -1 {
-			hexres := line[ind+2:]
-			logger.Debugf("hex: %s", hexres)
-			if decimal, err = strconv.ParseUint(hexres, 16, 32); err != nil {
-				logger.Errorf("Transcoding hex to decimal failed：%s", err)
-				return 0, err
+		if idx := strings.Index(line, "0x"); idx != -1 {
+			hex := line[idx+2:]
+			if decimal, err = strconv.ParseUint(hex, 16, 32); err != nil {
+				return 0, errors.Wrapf(err, "valid decimal line: %s", line)
 			}
 		}
 	}
 	return int(decimal), nil
 }
 
-func GetUname() (string, error) {
-	infoStat, err := host.Info()
-	if err != nil {
-		return "", err
-	}
-	return infoStat.KernelVersion, nil
-}
-
 func GetLoginUsers() (int, error) {
 	cmd := exec.Command("query", "user")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		logger.Errorf("Error:can not obtain stdout pipe for command:%s", err)
 		return 0, err
 	}
-	if err := cmd.Start(); err != nil {
-		logger.Errorf("Error:The command is err :%s", err)
+	if err := cmd.Run(); err != nil {
 		return 0, err
 	}
-	bytes, err := io.ReadAll(stdout)
+
+	bs, err := io.ReadAll(stdout)
 	if err != nil {
-		logger.Errorf("ReadAll Stdout:%s", err)
 		return 0, err
 	}
 	// 除去开头和结尾的两行
-	if userlist := strings.Split(string(bytes), "\r\n"); len(userlist) >= 2 {
-		return len(userlist) - 2, nil
+	if users := strings.Split(string(bs), "\r\n"); len(users) >= 2 {
+		return len(users) - 2, nil
 	}
-	return 0, fmt.Errorf("get userlist error %s", string(bytes))
+	return 0, fmt.Errorf("invalid users '%s'", string(bs))
 }
 
-func GetProcEnv() (runningProc, blockedProc, proc, ctxt int, lasterr error) {
-	runningProc, err := GetProcs()
-	return 0, 0, 0, 0, err
+func GetProcEnv() (runningProc, blockedProc, totalProc, ctxtProc int, lasterr error) {
+	return 0, 0, 0, 0, nil
 }

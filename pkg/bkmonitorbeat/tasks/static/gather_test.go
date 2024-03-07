@@ -68,7 +68,8 @@ func (s *TestSuite) TestGather() {
 						Addrs: []string{"127.0.0.1", "127.0.0.2"},
 						Mac:   "sshhdd::ddd",
 					},
-				}},
+				},
+			},
 			System: &static.System{
 				HostName: "test_host",
 				OS:       "linux",
@@ -78,7 +79,7 @@ func (s *TestSuite) TestGather() {
 			},
 		},
 		{
-			CPU: &static.CPU{ //调整了核数
+			CPU: &static.CPU{ // 调整了核数
 				Total: 10,
 				Model: "test model",
 			},
@@ -94,7 +95,8 @@ func (s *TestSuite) TestGather() {
 						Addrs: []string{"127.0.0.1", "127.0.0.2"},
 						Mac:   "sshhdd::ddd",
 					},
-				}},
+				},
+			},
 			System: &static.System{
 				HostName: "test_host",
 				OS:       "linux",
@@ -159,5 +161,4 @@ func (s *TestSuite) TestGather() {
 		count++
 	}
 	s.Equal(4, count)
-
 }

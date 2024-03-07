@@ -6,10 +6,8 @@
 // Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
-//
 
 //go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly linux netbsd openbsd solaris zos
 
 package tasks
 
@@ -25,12 +23,9 @@ func getMachineHardwareIdentifier() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// 转化byte数组为string
-	machine := string(buf.Machine[:])
-	return machine, nil
+	return string(buf.Machine[:]), nil
 }
 
-// GetSystemType 32-bit or 64-bit or unknown
 func GetSystemType() string {
 	machine, err := getMachineHardwareIdentifier()
 	if err != nil {

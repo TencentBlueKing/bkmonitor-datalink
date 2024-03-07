@@ -24,9 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var (
-	DimensionMissingErr = errors.New("failed to get dimension")
-)
+var DimensionMissingErr = errors.New("failed to get dimension")
 
 const (
 	KeySeparator = "||" // 生成的key连接符

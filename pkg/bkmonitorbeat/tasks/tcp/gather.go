@@ -133,9 +133,7 @@ func (g *Gather) checkTargetHost(
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	var (
-		startAt = time.Now()
-	)
+	startAt := time.Now()
 
 	hosts := make([]string, 0)
 	resultMap := make(map[string][]string)
@@ -144,12 +142,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	defer g.PostRun(ctx)
 
 	if taskConf.TargetHost == "" && len(taskConf.TargetHostList) == 0 {
-		//不上报任何数据
+		// 不上报任何数据
 		logger.Debugf("tcp TargetHostList is empty.")
 		return
 	}
 
-	//获取配置的host列表
+	// 获取配置的host列表
 	if taskConf.TargetHost != "" {
 		hosts = append(hosts, taskConf.TargetHost)
 	}

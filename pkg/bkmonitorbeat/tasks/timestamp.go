@@ -40,7 +40,7 @@ func GetTimestampHandler(timestampUnit string) (TimestampHandler, error) {
 }
 
 func getTimestampNano(nowTSNano, timestamp int64, offsetTime time.Duration) int64 {
-	//处理用户上报采集时间，全部转化为ns级
+	// 处理用户上报采集时间，全部转化为ns级
 	if timestamp < 1e6 { // epoch_minute
 		timestamp = timestamp * int64(time.Minute)
 	} else if timestamp < 1e12 { // epoch_second,
@@ -52,14 +52,14 @@ func getTimestampNano(nowTSNano, timestamp int64, offsetTime time.Duration) int6
 	} else { // epoch_nanosecond
 		timestamp = timestamp * int64(time.Nanosecond)
 	}
-	//计算上报数据时间与当前时间的时间差
+	// 计算上报数据时间与当前时间的时间差
 	offset := time.Since(time.Unix(0, timestamp))
 
-	//如果上报时间在过去且时间偏差超过两年，使用当前时间
-	//当上报时间在未来，保留原本时间
+	// 如果上报时间在过去且时间偏差超过两年，使用当前时间
+	// 当上报时间在未来，保留原本时间
 	if timestamp == 0 || offset > offsetTime {
 		timestamp = nowTSNano
 	}
-	//返回的时间戳为纳秒级
+	// 返回的时间戳为纳秒级
 	return timestamp
 }

@@ -56,7 +56,7 @@ make_package () {
                 ;;
         esac
 
-        if [ ${operating_system} = "linux" ] || [ ${operating_system} = "windows" ] ; then
+        if [ ${operating_system} = "linux" ] || [ ${operating_system} = "windows" ] || [ ${operating_system} = "darwin" ]; then
             #VERSION=$(cat VERSION).$(git describe --dirty="-dev" --always --match "NOT A TAG")
              #GO111MODULE=off
             CGO_ENABLED=0 GO111MODULE=on GOOS=${operating_system} GOARCH=${go_arch} go build -tags "basetask basescheduler bkmonitorbeat" -ldflags=" -X main.BeatName=${plugin_name} -X main.Version=${plugin_version}" -o ${bin_dir}/${plugin_name}${suffix} main.go||exit 1
@@ -101,6 +101,8 @@ package() {
     make_package freebsd x86_64 ${MODULE_NAME} ${VER}
   fi
 
+  # darwin x86_64
+  make_package darwin x86_64 ${MODULE_NAME} ${VER}
 
   # 5. 打包
   PACKAGE_NAME_PREFIX=${MODULE_NAME}-${VER}

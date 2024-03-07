@@ -52,12 +52,12 @@ func (p *procPerfMgr) listProcs() ([]*define.ProcStat, error) {
 		}
 
 		logger.Debugf("proc line: %s", line)
-		//因为是csv的形式，"System Idle Process","0","Services","0","8 K"，将\"去掉
+		// 因为是csv的形式，"System Idle Process","0","Services","0","8 K"，将\"去掉
 		fields := strings.Split(strings.ReplaceAll(line, "\"", ""), ",")
 		if len(fields) < 5 {
 			continue
 		}
-		//内存使用会带， 如csrss.exe,976,Services,0,3,680 K  所以要向前匹配
+		// 内存使用会带， 如csrss.exe,976,Services,0,3,680 K  所以要向前匹配
 		pid, err := strconv.Atoi(fields[1])
 		if err != nil {
 			continue

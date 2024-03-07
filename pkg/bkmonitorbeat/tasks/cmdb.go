@@ -68,7 +68,7 @@ func (s *CmdbEventSender) DuplicateRecordByCMDBLevel(m common.MapStr, labels []c
 	// 判断是否没有任何一条记录命中，如果是，则需要将原始数据放入，确保有一条数据上报
 	if !isAppend {
 		finalResult = []common.MapStr{m}
-		//logger.Info("no cmdb level is match, original message will report.")
+		// logger.Info("no cmdb level is match, original message will report.")
 	}
 
 	return finalResult

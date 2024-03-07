@@ -46,7 +46,6 @@ func GetMemInfo(config configs.MemConfig) (*MemReport, error) {
 			once.Info.UsedPercent = 0
 		}
 
-		// select max usage report
 		if once.Info.UsedPercent >= maxUsedPercent {
 			report = once
 			maxUsedPercent = once.Info.UsedPercent
@@ -69,9 +68,5 @@ func GetMemInfo(config configs.MemConfig) (*MemReport, error) {
 	}
 
 	report.Swapin, report.Swapout, err = GetSwapInfo()
-	if err != nil {
-		return &report, err
-	}
-
-	return &report, nil
+	return &report, err
 }

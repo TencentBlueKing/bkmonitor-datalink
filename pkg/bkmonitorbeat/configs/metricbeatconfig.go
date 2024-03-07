@@ -27,7 +27,7 @@ const (
 // ModulesConfig modules结构体，只用于获取ident过程
 type ModulesConfig struct {
 	Task   BaseTaskParam
-	Module string //将modules序列化成json后存储
+	Module string // 将modules序列化成json后存储
 }
 
 // MetricBeatConfig :

@@ -25,7 +25,6 @@ func TestParamClean(t *testing.T) {
 	assert.Equal(t, define.DefaultTimeout, param.Timeout)
 	assert.Equal(t, define.DefaultTimeout, param.AvailableDuration)
 	assert.Equal(t, define.DefaultPeriod, param.Period)
-
 }
 
 // TestMetaParamClean 测试清洗后的结果是否符合预期

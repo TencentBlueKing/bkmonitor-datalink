@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package static
 
@@ -40,11 +39,11 @@ var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
 	for _, info := range infos {
 		// 非真实设备不录入
 		if !diskSet.Exist(info.Device) {
-			//判断是不是/dev/mapper下的文件
+			// 判断是不是/dev/mapper下的文件
 			if !strings.Contains(info.Device, "/dev/mapper") {
 				continue
 			}
-			//获取软连接的源文件
+			// 获取软连接的源文件
 			infoSymlink, err := filepath.EvalSymlinks(info.Device)
 			if err != nil {
 				logger.Warnf("failed to get file symlink info for: %s", err)

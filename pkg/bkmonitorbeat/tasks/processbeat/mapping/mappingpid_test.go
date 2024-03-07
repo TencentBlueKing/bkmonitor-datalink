@@ -46,15 +46,15 @@ func TestMapping(t *testing.T) {
 	}
 	// 第一次期望获得的pid映射
 	expectedResult1 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			1: 0,
 			2: 1,
 			3: 2,
 		},
-		"test##BK##234": map[int]int{
+		"test##BK##234": {
 			3: 0,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
@@ -80,12 +80,12 @@ func TestMapping(t *testing.T) {
 	}
 	// 第二次期望获得的pid映射
 	expectedResult2 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			1: 0,
 			5: 1,
 			6: 2,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
@@ -93,7 +93,6 @@ func TestMapping(t *testing.T) {
 
 	// 第三次采集到的进程，第一个进程消失
 	currList3 := []Process{
-
 		{
 			5, "test", "233",
 		},
@@ -109,11 +108,11 @@ func TestMapping(t *testing.T) {
 	}
 	// 第三次期望获得的pid映射
 	expectedResult3 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			5: 1,
 			6: 2,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
@@ -144,16 +143,16 @@ func TestMapping(t *testing.T) {
 	}
 	// 第四次期望获得的pid映射
 	expectedResult4 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			2: 0,
 			5: 1,
 			6: 2,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
-		"test2##BK##": map[int]int{
+		"test2##BK##": {
 			21: 0,
 		},
 	}
@@ -185,19 +184,19 @@ func TestMapping(t *testing.T) {
 	}
 	// 第五次期望获得的pid映射
 	expectedResult5 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			2: 0,
 			5: 1,
 			6: 2,
 		},
-		"test##BK##234": map[int]int{
+		"test##BK##234": {
 			7: 0,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
-		"test2##BK##": map[int]int{
+		"test2##BK##": {
 			21: 0,
 		},
 	}
@@ -229,19 +228,19 @@ func TestMapping(t *testing.T) {
 	}
 	// 第六次期望获得的pid映射
 	expectedResult6 := map[string]map[int]int{
-		"test##BK##233": map[int]int{
+		"test##BK##233": {
 			2: 0,
 			5: 1,
 			6: 2,
 		},
-		"test##BK##234": map[int]int{
+		"test##BK##234": {
 			7: 0,
 		},
-		"test1##BK##": map[int]int{
+		"test1##BK##": {
 			4:  0,
 			20: 1,
 		},
-		"test2##BK##": map[int]int{
+		"test2##BK##": {
 			21: 0,
 		},
 	}
@@ -292,5 +291,4 @@ func TestMapping(t *testing.T) {
 
 		}
 	}
-
 }

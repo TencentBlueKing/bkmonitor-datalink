@@ -23,7 +23,7 @@ func MakeDiskSpace() {
 	file := path.Join(dirPath, "test.txt")
 	if raise == "1" {
 		// 塞满目录
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0755)
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o755)
 		if err != nil {
 			log.Fatalln(err)
 		}

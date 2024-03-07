@@ -13,17 +13,15 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// add systemtype info
-type BKInfoStat struct {
+type SystemInfo struct {
 	*host.InfoStat
 	SystemType string `json:"systemtype"`
 }
 
 type SystemReport struct {
-	Info BKInfoStat `json:"info"`
+	Info SystemInfo `json:"info"`
 }
 
 // osSystemType 运行时不会发生变更 可以缓存
@@ -35,7 +33,6 @@ func GetSystemInfo() (*SystemReport, error) {
 
 	report.Info.InfoStat, err = host.Info()
 	if err != nil {
-		logger.Error("get Host Info failed")
 		return nil, err
 	}
 
@@ -43,7 +40,6 @@ func GetSystemInfo() (*SystemReport, error) {
 		osSystemType = tasks.GetSystemType()
 	}
 
-	// get system type, 32-bit or 64-bit or unknown
 	report.Info.SystemType = osSystemType
 	return &report, nil
 }

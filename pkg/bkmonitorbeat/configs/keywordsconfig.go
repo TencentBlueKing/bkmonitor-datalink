@@ -94,13 +94,13 @@ func (l *Label) IsHostStaticIp() bool {
 type KeywordTaskConfig struct {
 	BaseTaskParam `config:"_,inline"`
 	DataID        int `config:"dataid"` // 上报数据ID
-	//Type           string          `config:"type"`           // 任务类型
+	// Type           string          `config:"type"`           // 任务类型
 	Paths         []string      `config:"paths"`          // 采集的文件路径
 	ExcludeFiles  []string      `config:"exclude_files"`  // 需要过滤的文件列表，正则表示
 	Encoding      string        `config:"encoding"`       // 文件编码类型
 	ScanSleep     time.Duration `config:"scan_sleep"`     // 文件扫描休眠时间，用于减少CPU负载，默认1us
 	CloseInactive time.Duration `config:"close_inactive"` // 文件未更新需要关闭的超时等待
-	//Delimiter      string          `config:"delimiter"`      // 行文件的分隔符
+	// Delimiter      string          `config:"delimiter"`      // 行文件的分隔符
 	ReportPeriod    time.Duration   `config:"report_period"`   // 上报周期
 	FilterPatterns  []string        `config:"filter_patterns"` // 过滤规则
 	KeywordConfigs  []KeywordConfig `config:"keywords"`        // 日志关键字匹配规则

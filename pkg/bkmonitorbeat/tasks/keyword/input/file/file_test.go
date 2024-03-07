@@ -21,7 +21,6 @@ import (
 )
 
 func TestIsSameFile(t *testing.T) {
-
 	// 创建测试的文件
 	absPath, err := filepath.Abs(".")
 

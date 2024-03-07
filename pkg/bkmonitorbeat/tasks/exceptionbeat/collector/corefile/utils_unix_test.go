@@ -7,8 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
+//go:build aix || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
 
 package corefile
 
@@ -21,6 +20,51 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 )
+
+func TestTranslate(t *testing.T) {
+	testCases := []struct {
+		text     string
+		expected string
+	}{
+		{"", ""},
+		{"1", "hangup"},
+		{"2", "interrupt"},
+		{"9999", ""},
+		{"abc", "abc"},
+	}
+
+	translator := &SignalTranslator{}
+
+	for _, testCase := range testCases {
+		result := translator.Translate(testCase.text)
+		if result != testCase.expected {
+			t.Errorf("Expected %s, but got %s", testCase.expected, result)
+		}
+	}
+}
+
+func TestExecutablePathTranslator_Translate(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected string
+	}{
+		{"../path!to!file.ext", "../path/to/file.ext"},
+		{"folder!/file!/name.ext", "folder/file/name.ext"},
+		{"root!!file.txt", "root//file.txt"},
+		{"no!exclamation!mark!in!path", "no!exclamation!mark!in!path"},
+		{"!at!the!beginning", "/at/the/beginning"},
+		{"at!the!end!", "at/the/end/"},
+	}
+
+	translator := &ExecutablePathTranslator{}
+
+	for _, test := range tests {
+		result := translator.Translate(test.path)
+		if result != test.expected {
+			t.Errorf("Translate(%q) = %q, want %q", test.path, result, test.expected)
+		}
+	}
+}
 
 type PatternTestCase struct {
 	pattern  string
@@ -78,7 +122,7 @@ func TestCheckPattern(t *testing.T) {
 	}
 	for _, item := range testCases {
 		t.Logf("pattern: %s", item.pattern)
-		c := new(CoreFileCollector)
+		c := new(Collector)
 		c.pattern = item.pattern
 		err := c.checkPattern()
 		assert.Equal(t, item.error, err)
@@ -86,9 +130,9 @@ func TestCheckPattern(t *testing.T) {
 			continue
 		}
 		for i, e := range item.expected {
-			assert.Equal(t, e[0], c.patternArr[i][0])
-			assert.Equal(t, e[1], c.patternArr[i][1])
-			assert.Equal(t, e[2], c.patternArr[i][2])
+			assert.Equal(t, e[0], c.patternList[i][0])
+			assert.Equal(t, e[1], c.patternList[i][1])
+			assert.Equal(t, e[2], c.patternList[i][2])
 		}
 	}
 }
@@ -102,7 +146,7 @@ type DimensionTestCase struct {
 }
 
 func TestBuildDimensionKey(t *testing.T) {
-	var testData = []struct {
+	testData := []struct {
 		dimensions beat.MapStr
 		result     string
 	}{
@@ -133,13 +177,11 @@ func TestBuildDimensionKey(t *testing.T) {
 	}
 }
 
-var (
-	corePatternPathV2 = path.Join(os.TempDir(), "corefile_pattern")
-)
+var corePatternPathV2 = path.Join(os.TempDir(), "corefile_pattern")
 
 func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
 	CorePatternFile = corePatternPathV2
-	err := os.WriteFile(corePatternPathV2, []byte("/data/corefile/core_%e_%t.%p\n"), 0644)
+	err := os.WriteFile(corePatternPathV2, []byte("/data/corefile/core_%e_%t.%p\n"), 0o644)
 	if err != nil {
 		panic(err)
 	}
@@ -172,7 +214,7 @@ func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &CoreFileCollector{coreFilePattern: tt.inputPattern}
+			c := &Collector{coreFilePattern: tt.inputPattern}
 			corePath, _ := c.getCoreFilePath()
 			assert.Equal(t, corePath, tt.resultPath)
 			assert.Equal(t, c.pattern, tt.resultPattern)
@@ -425,7 +467,7 @@ func TestCoreFileCollector_fillDimension(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &CoreFileCollector{
+			c := &Collector{
 				pattern:   tt.fields.pattern,
 				isUsesPid: tt.fields.isUsesPid,
 			}

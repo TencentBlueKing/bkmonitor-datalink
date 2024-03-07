@@ -209,7 +209,10 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 	md := getMetaDataFromContext(ctx)
 	token, err := getTokenFromMetadata(md)
 	if err != nil {
-		return &commonv3.Commands{}, err
+		// 对于 FetchConfigurations 产生的错误返回，有些格式会导致探针侧识别不了
+		// 故在此处通过日志记录错误信息，不将错误信息返回到探针侧
+		logger.Warnf("unable to get Token from metadata, error: %s, ip=%s", err, ip)
+		return &commonv3.Commands{}, nil
 	}
 
 	// SN 长度为 0 的时候直接结束，不继续执行后续代码逻辑
@@ -217,7 +220,7 @@ func (s *ConfigurationDiscoveryService) FetchConfigurations(ctx context.Context,
 	if len(swConf.Sn) == 0 {
 		err = fmt.Errorf("empty SN number, service=%s, ip=%v", req.GetService(), ip)
 		logger.Warn(err)
-		return &commonv3.Commands{}, err
+		return &commonv3.Commands{}, nil
 	}
 
 	// 构建标识

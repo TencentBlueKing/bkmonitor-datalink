@@ -85,12 +85,13 @@ func NewConfigHandler(config Config) *ConfigHandler {
 				gcInterval, _ := time.ParseDuration(conf.GcInterval)
 				publishInterval, _ := time.ParseDuration(conf.PublishInterval)
 				accumulatorConfig = &accumulator.Config{
-					MetricName:      conf.MetricName,
-					MaxSeries:       conf.MaxSeries,
-					GcInterval:      gcInterval,
-					PublishInterval: publishInterval,
-					Buckets:         conf.Buckets,
-					Type:            conf.Type,
+					MetricName:          conf.MetricName,
+					MaxSeries:           conf.MaxSeries,
+					GcInterval:          gcInterval,
+					PublishInterval:     publishInterval,
+					Buckets:             conf.Buckets,
+					Type:                conf.Type,
+					MaxSeriesGrowthRate: conf.MaxSeriesGrowthRate,
 				}
 				accumulatorConfig.Validate()
 			}

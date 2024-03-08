@@ -142,15 +142,15 @@ func TestParseForm(t *testing.T) {
 	t.Run("valid data", func(t *testing.T) {
 		body := &bytes.Buffer{}
 		writer := multipart.NewWriter(body)
-		writer.WriteField("test_field", "test_value")
-		writer.Close()
+		assert.NoError(t, writer.WriteField("test_field", "test_value"))
+		assert.NoError(t, writer.Close())
 
 		req, _ := http.NewRequest("POST", "localhost", body)
 		req.Header.Set("Content-Type", "multipart/form-data; boundary="+writer.Boundary())
 
 		form, err := parseForm(req, body.Bytes())
 		assert.NoError(t, err)
-		assert.Equal(t, form.Value["test_field"][0], "test_value")
+		assert.Equal(t, "test_value", form.Value["test_field"][0])
 	})
 
 	t.Run("invalid data", func(t *testing.T) {

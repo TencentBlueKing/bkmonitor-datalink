@@ -27,11 +27,11 @@ func TestParseNReadField(t *testing.T) {
 	writer := multipart.NewWriter(body)
 
 	fw, err := writer.CreateFormFile(anyFieldName, fileName)
-	fw.Write(fileContent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer.Close()
+	assert.NoError(t, err)
+
+	_, err = fw.Write(fileContent)
+	assert.NoError(t, err)
+	assert.NoError(t, writer.Close())
 
 	contentType := writer.FormDataContentType()
 	boundary, err := ParseBoundary(contentType)
@@ -40,15 +40,10 @@ func TestParseNReadField(t *testing.T) {
 	}
 
 	form, err := multipart.NewReader(body, boundary).ReadForm(32 << 20)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	readContent, err := ReadField(form, anyFieldName)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	assert.NoError(t, err)
 	assert.Equal(t, fileContent, readContent)
 }
 
@@ -57,15 +52,15 @@ func TestExtraApplicationNameAndTags(t *testing.T) {
 		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7Bcustom1%3D123456%2CserviceName%3Dmy-profiling-proj%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
 		assert.NoError(t, err)
 		appName, tags := getApplicationNameAndTags(validUrl)
-		assert.Equal(t, appName, "profiling-test")
-		assert.Equal(t, tags, map[string]string{"custom1": "123456", "serviceName": "my-profiling-proj"})
+		assert.Equal(t, "profiling-test", appName)
+		assert.Equal(t, map[string]string{"custom1": "123456", "serviceName": "my-profiling-proj"}, tags)
 	})
 
 	t.Run("empty tags", func(t *testing.T) {
 		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7B%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
 		assert.NoError(t, err)
 		appName, tags := getApplicationNameAndTags(validUrl)
-		assert.Equal(t, appName, "profiling-test")
+		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})
 
@@ -81,7 +76,7 @@ func TestExtraApplicationNameAndTags(t *testing.T) {
 		validUrl, err := http.NewRequest(http.MethodPost, "http://localhost/pyroscope/ingest?name=profiling-test%7B%7D%7D%7D&units=samples&aggregationType=sum&sampleRate=100&from=1708585375&until=1708585385&spyName=javaspy&format=jfr", &bytes.Buffer{})
 		assert.NoError(t, err)
 		appName, tags := getApplicationNameAndTags(validUrl)
-		assert.Equal(t, appName, "profiling-test")
+		assert.Equal(t, "profiling-test", appName)
 		assert.Empty(t, tags)
 	})
 }

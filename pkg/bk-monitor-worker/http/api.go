@@ -304,7 +304,7 @@ func ListTask(c *gin.Context) {
 			}
 
 			// 查询绑定信息
-			workerId, err := daemon.GetBinding().GetBindingByTask(item)
+			workerId, err := daemon.GetBinding().GetBindingWorkerIdByTask(item)
 			if err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to get worker for taskUnid: %s", taskUinId), err)
 				metrics.RequestApiCount(method, ListTaskPath, "failure")

@@ -11,6 +11,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -28,6 +30,7 @@ type runningBinding struct {
 	errorReceiveChan chan error
 	TaskBinding
 	retryCount    int
+	reloadCount   int
 	startTime     time.Time
 	lastRetryTime time.Time
 	nextRetryTime time.Time
@@ -50,33 +53,45 @@ type RunMaintainer struct {
 	ctx    context.Context
 	config RunMaintainerOptions
 
-	listenWorkerId string
-	listenTaskKey  string
+	listenWorkerId  string
+	listenTaskKey   string
+	listenReloadKey string
 
 	redisClient           redis.UniversalClient
 	methodOperatorMapping map[string]Operator
 	runningInstance       *sync.Map
 }
 
+// ReloadSignal The error type of the overload request, which will be sent to errorreceivechan
+type ReloadSignal struct{}
+
+func (e ReloadSignal) Error() string {
+	return "reload-signal"
+}
+
 func (r *RunMaintainer) Run() {
+	go r.listenReloadSignal()
+
 	logger.Infof(
 		"\nDaemonTask maintainer started. "+
 			"\n - \t workerId: %s \n - \t listen: %s \n - \t queue: %s \n - \t interval: %s\n",
 		r.listenWorkerId, r.listenWorkerId, r.listenTaskKey, r.config.checkInterval,
 	)
 	taskMarkMapping := make(map[string]bool)
-loop:
+	ticker := time.NewTicker(r.config.checkInterval)
+
 	for {
 		select {
 		case <-r.ctx.Done():
 			logger.Infof("DaemonTask maintainer stopped.")
-			break loop
-		default:
+			ticker.Stop()
+			return
+		case <-ticker.C:
 			currentTask := make(map[string]bool)
 			taskHash, err := r.redisClient.HGetAll(r.ctx, r.listenTaskKey).Result()
 			if err != nil {
 				logger.Errorf("DaemonTask maintainer(%s) check %s change failed. error: %s", r.listenWorkerId, r.listenTaskKey, err)
-				goto cont
+				continue
 			}
 
 			for taskUniId, taskStr := range taskHash {
@@ -102,8 +117,6 @@ loop:
 			}
 
 			taskMarkMapping = currentTask
-		cont:
-			time.Sleep(r.config.checkInterval)
 		}
 	}
 }
@@ -127,6 +140,7 @@ func (r *RunMaintainer) handleAddTaskBinding(taskBinding TaskBinding) {
 		errorReceiveChan: errorReceiveChan,
 		TaskBinding:      taskBinding,
 		retryCount:       0,
+		reloadCount:      0,
 		startTime:        now,
 		retryValid:       false,
 
@@ -160,16 +174,21 @@ func (r *RunMaintainer) listenRunningState(
 			v, _ := r.runningInstance.Load(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
-
-			rB.retryCount++
 			rB.lastRetryTime = time.Now()
-
 			var nextRetryTime time.Duration
-			if rB.retryCount < r.config.RetryTolerateCount {
+
+			if errors.Is(ReloadSignal{}, receiveErr) {
+				rB.reloadCount++
 				nextRetryTime = r.config.RetryTolerateInterval
 			} else {
-				nextRetryTime = r.config.RetryTolerateInterval * time.Duration(1<<(rB.retryCount-r.config.RetryIntolerantFactor))
+				rB.retryCount++
+				if rB.retryCount < r.config.RetryTolerateCount {
+					nextRetryTime = r.config.RetryTolerateInterval
+				} else {
+					nextRetryTime = r.config.RetryTolerateInterval * time.Duration(1<<(rB.retryCount-r.config.RetryIntolerantFactor))
+				}
 			}
+
 			rB.nextRetryTime = time.Now().Add(nextRetryTime)
 			rB.errorReceiveChan = make(chan error, 1)
 			newCtx, newCancel := context.WithCancel(r.ctx)
@@ -182,9 +201,9 @@ func (r *RunMaintainer) listenRunningState(
 			errorChan = rB.errorReceiveChan
 
 			logger.Warnf(
-				"[FAILED RETRY] ERROR: %s. Task: %s, %d retry failed. "+
+				"[RETRY] receive ERROR: %s. Task: %s, retryCount: %d reloadCount: %d "+
 					"The retry time of the next attempt is: %s, (%.2f seconds later)",
-				receiveErr, taskUniId, rB.retryCount, rB.nextRetryTime, nextRetryTime.Seconds(),
+				receiveErr, taskUniId, rB.retryCount, rB.reloadCount, rB.nextRetryTime, nextRetryTime.Seconds(),
 			)
 			retryTicker = time.NewTicker(nextRetryTime)
 		case <-retryTicker.C:
@@ -193,7 +212,7 @@ func (r *RunMaintainer) listenRunningState(
 			if rB.retryValid {
 				define, _ := r.methodOperatorMapping[rB.TaskBinding.Kind]
 				go define.Start(rB.baseCtx, rB.errorReceiveChan, rB.SerializerTask.Payload)
-				logger.Infof("[FAILED RETRY] Task: %s retry performed", taskUniId)
+				logger.Infof("[RETRY] Task: %s retry performed", taskUniId)
 				retryTicker = &time.Ticker{}
 				metrics.RecordDaemonTaskRetryCount(taskDimension)
 			}
@@ -227,6 +246,65 @@ func (r *RunMaintainer) handleDeleteTaskBinding(taskUniId string) {
 	logger.Infof("Binding runInstance removed. taskUniId: %s", taskUniId)
 }
 
+func (r *RunMaintainer) listenReloadSignal() {
+	logger.Infof(
+		"\nDaemonTask maintainer listen reload signal. "+
+			"\n - \t workerId: %s \n - \t listen: %s \n - \t queue: %s \n - \t interval: %s\n",
+		r.listenWorkerId, r.listenWorkerId, r.listenReloadKey, r.config.checkInterval,
+	)
+	ticker := time.NewTicker(r.config.checkInterval)
+
+	for {
+		select {
+		case <-ticker.C:
+			// atomic pop + delete
+			tx := rdb.GetRDB().Client().TxPipeline()
+			members := tx.SMembers(r.ctx, r.listenReloadKey)
+			tx.Del(r.ctx, r.listenReloadKey)
+
+			_, err := tx.Exec(r.ctx)
+			if err != nil {
+				logger.Errorf("[listenReloadSignal] Failed to perform redis atomic operation, error: %s", err)
+				continue
+			}
+
+			for index, bindingStr := range members.Val() {
+				var binding TaskBinding
+				if err = json.Unmarshal([]byte(bindingStr), &binding); err != nil {
+					logger.Errorf(
+						"[listenReloadSignal] "+
+							"Failed to unmarshal queues[%d] data to binding, data: %s, error: %s",
+						index, bindingStr, err,
+					)
+					continue
+				}
+				r.handleReloadBinding(binding)
+			}
+		case <-r.ctx.Done():
+			ticker.Stop()
+			logger.Infof("[ReloadSignalListener] receive lifeline context done singal, stopped and return")
+			return
+		}
+	}
+}
+
+func (r *RunMaintainer) handleReloadBinding(taskBinding TaskBinding) {
+	v, exist := r.runningInstance.Load(taskBinding.UniId)
+	if !exist {
+		logger.Errorf(
+			"[handleReloadBinding] receive taskUniId: %s reload request, "+
+				"but not in runningInstance!, ignored it", taskBinding.UniId,
+		)
+		return
+	}
+	runningInstance := v.(*runningBinding)
+	runningInstance.errorReceiveChan <- ReloadSignal{}
+	logger.Infof(
+		"[handleReloadBinding] send reload signal to errorReceiveChan, "+
+			"taskUniId: %s errorReceiveChan", runningInstance.UniId,
+	)
+}
+
 func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMaintainer {
 
 	operatorMapping := make(map[string]Operator, len(taskDefine))
@@ -256,6 +334,7 @@ func NewDaemonTaskRunMaintainer(ctx context.Context, workerId string) *RunMainta
 		config:                options,
 		listenWorkerId:        workerId,
 		listenTaskKey:         common.DaemonBindingWorker(workerId),
+		listenReloadKey:       common.DaemonReloadExecQueue(workerId),
 		redisClient:           rdb.GetRDB().Client(),
 		methodOperatorMapping: operatorMapping,
 		runningInstance:       &sync.Map{},

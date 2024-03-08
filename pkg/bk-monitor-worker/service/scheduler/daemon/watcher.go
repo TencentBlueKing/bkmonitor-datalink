@@ -47,8 +47,12 @@ type DefaultWatcher struct {
 }
 
 func (d *DefaultWatcher) start() {
+	// worker 更改监听
 	go d.watchWorker()
+	// task 更改监听
 	go d.watchTask()
+	// reload 更变监听
+	go d.watchReloadRequest()
 }
 
 func (d *DefaultWatcher) watchWorker() {
@@ -197,6 +201,123 @@ func (d *DefaultWatcher) handleDeleteTask(taskMark watchTaskMark) {
 		return
 	}
 	logger.Infof("[TASK DELETE] Remove Task: %s detect. taskUniId: %s", taskMark.task.Kind, taskMark.taskUniId)
+}
+
+func (d *DefaultWatcher) watchReloadRequest() {
+	ticker := time.NewTicker(d.config.watchTaskInterval)
+	watchKey := common.DaemonReloadReqQueue()
+	logger.Infof("\nDaemonTask [DefaultWatcher] reload-request watcher started\n - \t "+
+		"interval: %s \n - \t watchKey: %s", d.config.watchTaskInterval, watchKey)
+
+	retryRecords := make(map[string]int)
+	for {
+		select {
+		case <-ticker.C:
+			requests, err := d.redisClient.SMembers(d.ctx, watchKey).Result()
+			if err != nil {
+				logger.Errorf("Failed to obtained reload-request from queue: %s", watchKey)
+				continue
+			}
+
+			var reassignTasks []watchTaskMark
+			for index, taskUniId := range requests {
+				// Step1: 判断任务是否存在
+				taskInfo, err := d.getDaemonTask(taskUniId)
+				if err != nil {
+					logger.Errorf(
+						"Failed to execute [isTaskExist] with queue: %s, index: %d, error: %s",
+						watchKey, index, err,
+					)
+					continue
+				}
+				if taskInfo == nil {
+					logger.Errorf(
+						"TaskUniId: %s not found in queue: %s, index: %d, error: %s",
+						taskUniId, common.DaemonTaskKey(), index, err,
+					)
+					continue
+				}
+
+				// Step2: 判断是否超过重试最大次数
+				retryCount, exist := retryRecords[taskUniId]
+				if exist && retryCount >= 5 {
+					d.redisClient.SRem(d.ctx, watchKey)
+					delete(retryRecords, taskUniId)
+					logger.Errorf(
+						"TaskUniId: %s has been retried > 5 times, deleted from queue: %s", taskUniId, watchKey,
+					)
+					continue
+				}
+
+				// Step3: 添加到待重新分配队列
+				reassignTasks = append(reassignTasks, watchTaskMark{taskUniId: taskUniId, task: *taskInfo})
+			}
+
+			d.reassign(reassignTasks, retryRecords)
+		case <-d.ctx.Done():
+			logger.Info("Daemon task scheduler reload-request watcher stopped.")
+			ticker.Stop()
+			return
+		}
+	}
+}
+
+func (d *DefaultWatcher) reassign(tasks []watchTaskMark, retryRecords map[string]int) {
+
+	for index, taskItem := range tasks {
+
+		// Step1: 判断 Binding 是否存在
+		workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(taskItem.taskUniId)
+		if err != nil {
+			logger.Errorf(
+				"[reassign] Failed to obtained binding with taskUniId: %s, error: %s",
+				taskItem.taskUniId, err,
+			)
+			retryRecords[taskItem.taskUniId]++
+			continue
+		}
+		if workerId == "" {
+			// Binding 不存在 -> 直接添加
+			logger.Warnf(
+				"TaskUniId: %s exist in the task queue, but not in the binding queue, this task will be added normally", taskItem.taskUniId,
+			)
+			d.handleAddTask(taskItem)
+		} else {
+			// Binding 存在 -> 保留 WorkerId 关系
+			if err = GetBinding().addReloadExecuteRequest(taskItem.taskUniId, taskItem.task, workerId); err != nil {
+				logger.Errorf("Failed to send reload singal to worker queue, error: %s", err)
+				continue
+			}
+		}
+
+		delete(retryRecords, taskItem.taskUniId)
+		d.redisClient.SRem(d.ctx, common.DaemonReloadReqQueue(), taskItem.taskUniId)
+		logger.Infof("[%d/%d] Reload taskUniId: %s successfully", index+1, len(tasks), taskItem.taskUniId)
+	}
+}
+
+// getDaemonTask obtained the daemon task
+func (d *DefaultWatcher) getDaemonTask(taskUniId string) (*task.SerializerTask, error) {
+	members, err := rdb.GetRDB().Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range members {
+		var t task.SerializerTask
+		if err = jsonx.Unmarshal([]byte(item), &t); err != nil {
+			logger.Errorf(
+				"Failed to unmarshal data to SerializerTask, data: %s, error: %s",
+				item, err,
+			)
+			continue
+		}
+		if ComputeTaskUniId(t) == taskUniId {
+			return &t, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func NewDefaultWatcher(ctx context.Context) Watcher {

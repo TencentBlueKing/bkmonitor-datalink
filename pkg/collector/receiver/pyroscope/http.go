@@ -142,7 +142,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// TODO: handle SampleTypeConfig
-	appName, tags := getApplicationNameAndTags(req)
+	appName, tags := getAppNameAndTags(req)
 	rawProfile := define.ProfilesRawData{
 		Data: origin,
 		Metadata: define.ProfileMetadata{
@@ -248,37 +248,35 @@ func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
 	}
 }
 
-// getApplicationNameAndTags 获取 url 中的 tags 信息
+// getAppNameAndTags 获取 url 中的 tags 信息
 // example: name = appName{key1=value1,key2=value2}
-func getApplicationNameAndTags(req *http.Request) (string, map[string]string) {
+func getAppNameAndTags(req *http.Request) (string, map[string]string) {
 	reportTags := make(map[string]string)
 
 	valueDecoded, err := url.QueryUnescape(req.URL.Query().Get("name"))
-	if valueDecoded == "" {
-		return "", reportTags
-	}
 	if err != nil {
 		logger.Warnf("failed to parse query of params: name, error: %s", err)
 		return "", reportTags
 	}
 
-	parts := strings.SplitN(valueDecoded, "{", 2)
-
-	if len(parts) > 1 {
-		pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")
-
-		for _, pair := range pairs {
-			kv := strings.SplitN(pair, "=", 2)
-			if len(kv) == 2 {
-				if !contains(ignoredTagNames, kv[0]) {
-					reportTags[kv[0]] = kv[1]
-				}
-			}
-		}
-	} else {
+	if valueDecoded == "" {
 		return "", reportTags
 	}
 
+	parts := strings.SplitN(valueDecoded, "{", 2)
+	if len(parts) < 2 {
+		return "", reportTags
+	}
+
+	pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) == 2 {
+			if !contains(ignoredTagNames, kv[0]) {
+				reportTags[kv[0]] = kv[1]
+			}
+		}
+	}
 	return parts[0], reportTags
 }
 

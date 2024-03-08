@@ -82,6 +82,9 @@ func TestClient(t *testing.T) {
 	traces := g.Generate()
 	err := client.ForwardTraces(traces)
 	assert.NoError(t, err)
+
+	client.resolver.(*staticResolver).notifier.Sync([]string{})
+	time.Sleep(time.Millisecond * 100)
 }
 
 func TestRemoteClientChaos(t *testing.T) {

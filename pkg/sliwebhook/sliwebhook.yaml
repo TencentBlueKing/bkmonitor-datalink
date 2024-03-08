@@ -1,0 +1,8 @@
+# sliwebhook 示例配置文件
+
+refresh_interval: 1m
+logger:
+  stdout: true
+  level: debug
+http:
+  listen: localhost:8082

@@ -66,7 +66,7 @@ func NewProxyMapStr(dataId int32, data []common.MapStr) common.MapStr {
 	now := time.Now().Unix()
 	return common.MapStr{
 		"dataid":    dataId,
-		"version":   "v2",
+		"version":   "",
 		"data":      data,
 		"time":      now,
 		"timestamp": now,

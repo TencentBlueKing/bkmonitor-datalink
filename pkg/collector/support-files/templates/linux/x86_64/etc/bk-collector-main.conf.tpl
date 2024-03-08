@@ -251,13 +251,13 @@ bk-collector:
         type: "random"
         sampling_percentage: 100
 
-    # Sampler: profiles采样处理器（做直接丢弃处理）
+    # Sampler: profiles 采样处理器（做直接丢弃处理）
     - name: "sampler/drop_profiles"
       config:
         type: "drop"
         enabled: false
 
-    # Sampler: traces采样处理器（做直接丢弃处理）
+    # Sampler: traces 采样处理器（做直接丢弃处理）
     - name: "sampler/drop_traces"
       config:
         type: "drop"

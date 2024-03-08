@@ -71,49 +71,24 @@ func Ready() {
 	})
 }
 
-func getBearerToken(req *http.Request) string {
-	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
-	if len(token) < 2 {
-		return ""
-	}
-	return token[1]
-}
-
-func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
-	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
-	if err != nil {
-		return nil, err
-	}
-
-	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
-}
-
-func getTimeFromUnixParam(req *http.Request, name string) (time.Time, error) {
-	timeUnix, err := strconv.ParseInt(req.URL.Query().Get(name), 10, 64)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return time.Unix(timeUnix, 0), nil
-}
-
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
 func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 	start := time.Now()
 
-	b, err := copyBody(req)
-	if err != nil {
+	buf := &bytes.Buffer{}
+	if _, err := io.Copy(buf, req.Body); err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to get data, err: %s", err)
+		logger.Errorf("failed to read request body, err: %s", err)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
+	defer req.Body.Close()
 
-	startSt, startStErr := getTimeFromUnixParam(req, "from")
-	endSt, endStErr := getTimeFromUnixParam(req, "until")
-	if startStErr != nil || endStErr != nil {
+	query := req.URL.Query()
+	startTime, endTime, err := getTimeFromQuery(query)
+	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		errMsg := fmt.Sprintf("failed to parse start or end time, err: %s", err)
 		logger.Error(errMsg)
@@ -121,10 +96,11 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	aggregationType := req.URL.Query().Get("aggregationType")
-	units := req.URL.Query().Get("units")
-	spyName := req.URL.Query().Get("spyName")
-	format := req.URL.Query().Get("format")
+	aggregationType := query.Get("aggregationType")
+	units := query.Get("units")
+	spyName := query.Get("spyName")
+
+	format := query.Get("format")
 	if format == "" {
 		format = getFormatBySpy(spyName)
 	}
@@ -145,7 +121,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	f, err := parseForm(req, b)
+	f, err := parseForm(req, buf.Bytes())
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
 		logger.Errorf("failed to parse boundary, err: %s, token: %s", err, token)
@@ -164,13 +140,14 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
+
 	// TODO: handle SampleTypeConfig
 	appName, tags := getApplicationNameAndTags(req)
 	rawProfile := define.ProfilesRawData{
 		Data: origin,
 		Metadata: define.ProfileMetadata{
-			StartTime:       startSt,
-			EndTime:         endSt,
+			StartTime:       startTime,
+			EndTime:         endTime,
 			SpyName:         spyName,
 			Format:          format,
 			AggregationType: aggregationType,
@@ -199,7 +176,37 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	logger.Debugf("record published, ip=%s, token=%s", ip, r.Token.Original)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(b), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(buf.Bytes()), start)
+}
+
+func getBearerToken(req *http.Request) string {
+	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
+	if len(token) < 2 {
+		return ""
+	}
+	return token[1]
+}
+
+func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
+	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, err
+	}
+
+	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
+}
+
+func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
+	startTs, err := strconv.ParseInt(query.Get("from"), 10, 64)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	endTs, err := strconv.ParseInt(query.Get("until"), 10, 64)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	return time.Unix(startTs, 0), time.Unix(endTs, 0), nil
 }
 
 func getFormatBySpy(spyName string) string {
@@ -214,14 +221,6 @@ func getFormatBySpy(spyName string) string {
 	default:
 		return ""
 	}
-}
-
-func copyBody(r *http.Request) ([]byte, error) {
-	buf := bytes.NewBuffer(make([]byte, 0, 64<<10))
-	if _, err := io.Copy(buf, r.Body); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // convertToOrigin 将 Http.Body 转换为 translator 所需的数据格式

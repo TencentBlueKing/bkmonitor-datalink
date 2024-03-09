@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	targetsTotal = prometheus.NewGaugeVec(
+	targetsTotal = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pingserver_targets_total",
@@ -28,7 +29,7 @@ var (
 		[]string{"id"},
 	)
 
-	pingTotal = prometheus.NewCounterVec(
+	pingTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pingserver_ping_total",
@@ -37,7 +38,7 @@ var (
 		[]string{"id"},
 	)
 
-	rollPingTotal = prometheus.NewCounterVec(
+	rollPingTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pingserver_rollping_total",
@@ -46,7 +47,7 @@ var (
 		[]string{"id"},
 	)
 
-	droppedTotal = prometheus.NewCounterVec(
+	droppedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pingserver_dropped_total",
@@ -55,7 +56,7 @@ var (
 		[]string{"id"},
 	)
 
-	pingDuration = prometheus.NewHistogramVec(
+	pingDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pingserver_ping_duration_seconds",
@@ -65,16 +66,6 @@ var (
 		[]string{"id"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		targetsTotal,
-		pingTotal,
-		rollPingTotal,
-		droppedTotal,
-		pingDuration,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

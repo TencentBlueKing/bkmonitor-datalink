@@ -17,13 +17,14 @@ import (
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
-	queueFullTotal = prometheus.NewCounterVec(
+	queueFullTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_queue_full_total",
@@ -32,7 +33,7 @@ var (
 		[]string{"id"},
 	)
 
-	queueTickTotal = prometheus.NewCounterVec(
+	queueTickTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_queue_tick_total",
@@ -41,7 +42,7 @@ var (
 		[]string{"id"},
 	)
 
-	queuePopBatchSize = prometheus.NewHistogramVec(
+	queuePopBatchSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_queue_pop_batch_size",
@@ -51,14 +52,6 @@ var (
 		[]string{"record_type", "id"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		queueFullTotal,
-		queueTickTotal,
-		queuePopBatchSize,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

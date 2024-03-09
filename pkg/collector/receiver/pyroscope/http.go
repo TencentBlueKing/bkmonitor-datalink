@@ -179,14 +179,6 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(buf.Bytes()), start)
 }
 
-func getBearerToken(req *http.Request) string {
-	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
-	if len(token) < 2 {
-		return ""
-	}
-	return token[1]
-}
-
 func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
 	if err != nil {
@@ -194,6 +186,14 @@ func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 	}
 
 	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
+}
+
+func getBearerToken(req *http.Request) string {
+	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
+	if len(token) < 2 {
+		return ""
+	}
+	return token[1]
 }
 
 func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
@@ -227,24 +227,25 @@ func getFormatBySpy(spyName string) string {
 func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
 	switch spyName {
 	case JavaSpy:
-		dataProfile, err := ReadField(form, "jfr")
+		jfrBytes, err := ReadField(form, "jfr")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read jfr field from form of spyName: %s", spyName)
+			return nil, errors.Wrapf(err, "failed to read jfr field, spyName=%s", spyName)
 		}
-		labelsProfile, err := ReadField(form, "labels")
+
+		labelsBytes, err := ReadField(form, "labels")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read labels field from form of spyName: %s", spyName)
+			return nil, errors.Wrapf(err, "failed to read labels field, spyName=%s", spyName)
 		}
-		logger.Debugf("receive jfr profile data, len: %d, labels len: %d", len(dataProfile), len(labelsProfile))
-		return define.ProfileJfrFormatOrigin{Jfr: dataProfile, Labels: labelsProfile}, nil
+		logger.Debugf("receive jfr profile, data len: %d, labels len: %d", len(jfrBytes), len(labelsBytes))
+		return define.ProfileJfrFormatOrigin{Jfr: jfrBytes, Labels: labelsBytes}, nil
 
 	default:
-		dataProfile, err := ReadField(form, "profile")
+		profileBytes, err := ReadField(form, "profile")
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to read profile field: from form of spyName: %s", spyName)
+			return nil, errors.Wrapf(err, "failed to read profile field, spyName=%s", spyName)
 		}
-		logger.Debugf("receive spyName: %s profile data, len: %d", spyName, len(dataProfile))
-		return define.ProfilePprofFormatOrigin(dataProfile), nil
+		logger.Debugf("receive spyName: %s profile data len: %d", spyName, len(profileBytes))
+		return define.ProfilePprofFormatOrigin(profileBytes), nil
 	}
 }
 

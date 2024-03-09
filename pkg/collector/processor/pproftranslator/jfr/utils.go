@@ -11,11 +11,11 @@ package jfr
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"os"
 
 	"github.com/klauspost/pgzip"
+	"github.com/pkg/errors"
 )
 
 // Decompress 如果 body 为压缩包格式，则进行解压缩并读取
@@ -23,13 +23,13 @@ func Decompress(bs []byte) ([]byte, error) {
 	if len(bs) >= 2 && bs[0] == 0x1f && bs[1] == 0x8b {
 		gzipReader, err := pgzip.NewReader(bytes.NewReader(bs))
 		if err != nil {
-			return nil, fmt.Errorf("failed to read gzip header: %w", err)
+			return nil, errors.Wrap(err, "failed to read gzip header")
 		}
 		defer gzipReader.Close()
 
 		buf := bytes.NewBuffer(nil)
 		if _, err = buf.ReadFrom(gzipReader); err != nil {
-			return nil, fmt.Errorf("failed to decompress: %w", err)
+			return nil, errors.Wrap(err, "failed to decompress")
 		}
 		return buf.Bytes(), nil
 	}

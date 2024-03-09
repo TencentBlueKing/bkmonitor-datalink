@@ -25,6 +25,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+const (
+	localJaegerV1TracesURL = "http://localhost/jaeger/v1/traces"
+)
+
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
@@ -33,8 +37,7 @@ func TestHttpInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
 
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/jaeger/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -51,8 +54,7 @@ func TestHttpInvalidBody(t *testing.T) {
 
 func TestHttpReadFailed(t *testing.T) {
 	buf := testkits.NewBrokenReader()
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/jaeger/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -74,9 +76,8 @@ func TestHttpPreCheck(t *testing.T) {
 		assert.NoError(t, err)
 		buf.Write(content)
 
-		req, err := http.NewRequest(http.MethodPut, "http://localhost/jaeger/v1/traces", buf)
+		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 		req.Header.Set("Content-Type", "application/x-thrift")
-		assert.NoError(t, err)
 
 		var n int
 		svc := HttpService{
@@ -97,9 +98,8 @@ func TestHttpPreCheck(t *testing.T) {
 		assert.NoError(t, err)
 		buf.Write(content)
 
-		req, err := http.NewRequest(http.MethodPut, "http://localhost/jaeger/v1/traces", buf)
+		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 		req.Header.Set("Content-Type", "application/x-thrift")
-		assert.NoError(t, err)
 
 		var n int
 		svc := HttpService{

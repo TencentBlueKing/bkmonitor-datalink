@@ -109,8 +109,7 @@ func TestSplitLabels(t *testing.T) {
 
 func TestHttpExportMetricsValidateFailed(t *testing.T) {
 	buf := &bytes.Buffer{}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
@@ -127,8 +126,7 @@ func TestHttpExportMetricsValidateFailed(t *testing.T) {
 
 func TestHttpExportMetricsNoJob(t *testing.T) {
 	buf := &bytes.Buffer{}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/jox/some_job", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/jox/some_job", buf)
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
@@ -146,8 +144,7 @@ func TestHttpExportMetricsNoJob(t *testing.T) {
 func TestHttpExportMetricsInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.Write([]byte("{-}"))
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
@@ -164,8 +161,7 @@ func TestHttpExportMetricsInvalidBody(t *testing.T) {
 
 func TestHttpExportBase64Metrics(t *testing.T) {
 	buf := &bytes.Buffer{}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA", buf)
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
@@ -182,8 +178,7 @@ func TestHttpExportBase64Metrics(t *testing.T) {
 
 func TestHttpExportBase64MetricsFailed(t *testing.T) {
 	buf := &bytes.Buffer{}
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA??", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA??", buf)
 
 	svc := HttpService{
 		receiver.Publisher{Func: func(r *define.Record) {}},
@@ -204,8 +199,7 @@ func TestHttpTokenAfterPreCheck(t *testing.T) {
 	assert.NoError(t, err)
 	buf.Write(content)
 
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job?X-BK-TOKEN=mytoken", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job?X-BK-TOKEN=mytoken", buf)
 
 	var n int
 	svc := HttpService{

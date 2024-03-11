@@ -23,6 +23,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -136,8 +138,16 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 		bcsClusterInfo.LastModifyTime = time.Now()
 		bcsClusterInfo.LastModifyUser = "system"
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.LastModifyTime, bcs.BCSClusterInfoDBSchema.LastModifyUser)
-		if err := bcsClusterInfo.Update(mysql.GetDBSession().DB, updateFields...); err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(bcsClusterInfo.TableName(), map[string]interface{}{
+				bcs.BCSClusterInfoDBSchema.ID.String():            bcsClusterInfo.ID,
+				bcs.BCSClusterInfoDBSchema.ApiKeyContent.String(): bcsClusterInfo.ApiKeyContent,
+				bcs.BCSClusterInfoDBSchema.Status.String():        bcsClusterInfo.Status,
+			}), ""))
+		} else {
+			if err := bcsClusterInfo.Update(mysql.GetDBSession().DB, updateFields...); err != nil {
+				return err
+			}
 		}
 	}
 	if bcsClusterInfo.BkCloudId == nil {

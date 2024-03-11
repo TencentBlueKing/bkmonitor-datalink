@@ -30,6 +30,8 @@ var (
 
 	// BypassSuffixPath 旁路路径后缀，用于consul/redis等数据写入测试
 	BypassSuffixPath string
+	// SkipBypassTasks 跳过旁路配置的任务
+	SkipBypassTasks []string
 
 	// LoggerEnabledStdout enabled logger stdout
 	LoggerEnabledStdout bool
@@ -235,6 +237,7 @@ var (
 func initVariables() {
 	// 旁路路径后缀，用于consul/redis等数据写入测试
 	BypassSuffixPath = GetValue("bypassSuffixPath", "")
+	SkipBypassTasks = GetValue("skipBypassTasks", []string{})
 
 	// LoggerEnabledStdout 是否开启日志文件输出
 	LoggerEnabledStdout = GetValue("log.enableStdout", true)

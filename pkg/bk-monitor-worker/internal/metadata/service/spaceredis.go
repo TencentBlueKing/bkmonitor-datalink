@@ -218,7 +218,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 			if err != nil {
 				return err
 			}
-			if err := client.HSetWithBypass(cfg.DataLabelToResultTableKey, dl, rtsStr); err != nil {
+			if err := client.HSetWithCompare(cfg.DataLabelToResultTableKey, dl, rtsStr); err != nil {
 				return err
 			}
 			if isPublish {
@@ -357,7 +357,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 			return err
 		}
 		// 推送数据
-		if err := client.HSetWithBypass(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
+		if err := client.HSetWithCompare(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
 			return err
 		}
 		if isPublish {
@@ -781,7 +781,7 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 		if err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -821,7 +821,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		if err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -849,7 +849,7 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		if err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSetWithBypass(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}

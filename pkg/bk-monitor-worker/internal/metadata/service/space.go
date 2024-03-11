@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -70,8 +71,11 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		}
 		// 名称变动，需要更新
 		metrics.MysqlCount(sp.TableName(), "RefreshBkccSpaceName_update", 1)
-		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space_name") {
+			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space_name", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
+				space.SpaceDBSchema.Id.String():        sp.Id,
+				space.SpaceDBSchema.SpaceName.String(): sp.SpaceName,
+			}), ""))
 		} else {
 			sp.SpaceName = name
 			sp.UpdateTime = time.Now()
@@ -116,29 +120,47 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 		deleteSpaceIds := diffDelete.ToSlice()
 		// 删除和数据源的关联
 		count := float64(len(deleteSpaceIds))
-		if cfg.BypassSuffixPath != "" {
-			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", count)
-			logger.Infof("[db_diff] delete SpaceDataSource with space_type_id [bkcc] space_id [%v]", deleteSpaceIds)
-			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", count)
-			logger.Infof("[db_diff] delete SpaceResource with space_type_id [bkcc] resource_id [%v]", deleteSpaceIds)
-			metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_delete_Space", count)
-			logger.Infof("[db_diff] delete Space with space_type_id [bkcc] resource_id [%v]", deleteSpaceIds)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
+			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
+				space.SpaceDataSourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
+				space.SpaceDataSourceDBSchema.SpaceId.String():     deleteSpaceIds,
+			}), ""))
 		} else {
 			// 删除和数据源的关联
 			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", count)
 			if err := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdIn(deleteSpaceIds...).Delete(); err != nil {
 				return errors.Wrapf(err, "delete SpaceDataSource with space_type_id [bkcc] space_id [%v] failed", deleteSpaceIds)
 			}
-			// 标识关联空间不可用，这里主要是针对 bcs 资源
-			var srList []space.SpaceResource
-			var needUpdateSpaceIds []string
-			srQs := space.NewSpaceResourceQuerySet(db).ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdIn(deleteSpaceIds...)
-			if err := srQs.All(&srList); err != nil {
-				return errors.Wrapf(err, "query SpaceResource with resource_type [bkcc] resource_id [%v] failed", deleteSpaceIds)
+		}
+		// 标识关联空间不可用，这里主要是针对 bcs 资源
+		var srList []space.SpaceResource
+		var needUpdateSpaceIds []string
+		srQs := space.NewSpaceResourceQuerySet(db).ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdIn(deleteSpaceIds...)
+		if err := srQs.All(&srList); err != nil {
+			return errors.Wrapf(err, "query SpaceResource with resource_type [bkcc] resource_id [%v] failed", deleteSpaceIds)
+		}
+		for _, sr := range srList {
+			needUpdateSpaceIds = append(needUpdateSpaceIds, sr.SpaceId)
+		}
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
+			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceResource{}.TableName(), map[string]interface{}{
+				space.SpaceResourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
+				space.SpaceResourceDBSchema.ResourceId.String():  deleteSpaceIds,
+			}), ""))
+
+			if len(needUpdateSpaceIds) != 0 {
+				logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
+					space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCI,
+					space.SpaceDBSchema.SpaceId.String():     needUpdateSpaceIds,
+					space.SpaceDBSchema.IsBcsValid.String():  false,
+				}), ""))
 			}
-			for _, sr := range srList {
-				needUpdateSpaceIds = append(needUpdateSpaceIds, sr.SpaceId)
-			}
+
+			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
+				space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
+				space.SpaceDBSchema.SpaceId.String():     deleteSpaceIds,
+			}), ""))
+		} else {
 			// 删除关联资源
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", count)
 			if err := srQs.Delete(); err != nil {
@@ -172,8 +194,15 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 			SpaceName:   bizName,
 		}
 		metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_create_Space", 1)
-		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] create Space with space_type_id [%s] space_id [%s] space_name [%s]", models.SpaceTypeBKCC, bizId, bizName)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
+			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
+				space.SpaceDBSchema.SpaceTypeId.String(): sp.SpaceTypeId,
+				space.SpaceDBSchema.SpaceId.String():     sp.SpaceId,
+				space.SpaceDBSchema.SpaceName.String():   sp.SpaceName,
+				space.SpaceDBSchema.Status.String():      "normal",
+				space.SpaceDBSchema.TimeZone.String():    "Asia/Shanghai",
+				space.SpaceDBSchema.Language.String():    "zh-hans",
+			}), ""))
 		} else {
 			if err := sp.Create(db); err != nil {
 				logger.Errorf("create Space with space_type_id [%s] space_id [%s] space_name [%s] failed, %v", models.SpaceTypeBKCC, bizId, bizName, err)
@@ -185,15 +214,15 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 	if len(createdSpaces) != 0 {
 		// 追加业务空间到 vm 查询的白名单中, 并通知到 unifyquery
 		rds := redis.GetStorageRedisInstance()
-		if err := rds.SAdd(models.QueryVmSpaceUidListKey, createdSpaces...); err != nil {
-			logger.Errorf("reids SAdd [%v] to channel [%s] failed, %v", createdSpaces, models.QueryVmSpaceUidListKey, err)
+		if err := rds.SAdd(fmt.Sprintf("%s%s", models.QueryVmSpaceUidListKey, cfg.BypassSuffixPath), createdSpaces...); err != nil {
+			logger.Errorf("reids SAdd [%v] to channel [%s] failed, %v", createdSpaces, fmt.Sprintf("%s%s", models.QueryVmSpaceUidListKey, cfg.BypassSuffixPath), err)
 		}
 		msg, err := jsonx.MarshalString(createdSpaces)
 		if err != nil {
 			return errors.Wrapf(err, "marshal space_id list [%v] failed", createdSpaces)
 		}
-		if err := rds.Publish(models.QueryVmSpaceUidChannelKey, msg); err != nil {
-			return errors.Wrapf(err, "publish [%v] to [%v] failed", msg, models.QueryVmSpaceUidChannelKey)
+		if err := rds.Publish(fmt.Sprintf("%s%s", models.QueryVmSpaceUidChannelKey, cfg.BypassSuffixPath), msg); err != nil {
+			return errors.Wrapf(err, "publish [%v] to [%v] failed", msg, fmt.Sprintf("%s%s", models.QueryVmSpaceUidChannelKey, cfg.BypassSuffixPath))
 		}
 	}
 
@@ -266,8 +295,14 @@ func (s *SpaceSvc) SyncBcsSpace() error {
 		spaceCode := projectIdMap[projectId]["projectId"]
 		spaceName := projectIdMap[projectId]["name"]
 		metrics.MysqlCount(space.Space{}.TableName(), "SyncBcsSpace_update", 1)
-		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] update Space space_type [%s] space_id [%s] with space_code [%s] space_name [%s] is_bcs_valid [%v]", models.SpaceTypeBKCI, projectId, spaceCode, spaceName, true)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
+			logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
+				space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCI,
+				space.SpaceDBSchema.SpaceId.String():     projectId,
+				space.SpaceDBSchema.SpaceCode.String():   spaceCode,
+				space.SpaceDBSchema.SpaceName.String():   spaceName,
+				space.SpaceDBSchema.IsBcsValid.String():  true,
+			}), ""))
 		} else {
 			if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(projectId).GetUpdater().SetSpaceCode(spaceCode).SetSpaceName(spaceName).SetIsBcsValid(true).SetUpdateTime(time.Now()).Update(); err != nil {
 				return errors.Wrapf(err, "update Space space_type [%s] space_id [%s] with space_code [%s] space_name [%s] is_bcs_valid [%v] failed", models.SpaceTypeBKCI, projectId, spaceCode, spaceName, true)
@@ -303,9 +338,22 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v]", models.SpaceTypeBKCI, projectCode, name, projectId, true)
 	metrics.MysqlCount(sp.TableName(), "CreateBcsSpace_create_bkci", 1)
-	if err := sp.Create(tx); err != nil {
-		tx.Rollback()
-		return errors.Wrapf(err, "create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v] fialed", models.SpaceTypeBKCI, projectCode, name, projectId, true)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
+		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
+			space.SpaceDBSchema.SpaceTypeId.String(): sp.SpaceTypeId,
+			space.SpaceDBSchema.SpaceId.String():     sp.SpaceId,
+			space.SpaceDBSchema.SpaceName.String():   sp.SpaceName,
+			space.SpaceDBSchema.SpaceCode.String():   sp.SpaceCode,
+			space.SpaceDBSchema.IsBcsValid.String():  sp.IsBcsValid,
+			space.SpaceDBSchema.Status.String():      "normal",
+			space.SpaceDBSchema.TimeZone.String():    "Asia/Shanghai",
+			space.SpaceDBSchema.Language.String():    "zh-hans",
+		}), ""))
+	} else {
+		if err := sp.Create(tx); err != nil {
+			tx.Rollback()
+			return errors.Wrapf(err, "create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v] fialed", models.SpaceTypeBKCI, projectCode, name, projectId, true)
+		}
 	}
 	// 获取业务下的 data id, 然后授权给项目使用
 	var dataIdList []uint
@@ -342,11 +390,20 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
 	metrics.MysqlCount(srForBkcc.TableName(), "CreateBcsSpace_create_bkcc", 1)
-	if err := srForBkcc.Create(tx); err != nil {
-		tx.Rollback()
-		return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
+		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(srForBkcc.TableName(), map[string]interface{}{
+			space.SpaceResourceDBSchema.SpaceTypeId.String():     srForBkcc.SpaceTypeId,
+			space.SpaceResourceDBSchema.SpaceId.String():         srForBkcc.SpaceId,
+			space.SpaceResourceDBSchema.ResourceType.String():    srForBkcc.ResourceType,
+			space.SpaceResourceDBSchema.ResourceId.String():      srForBkcc.ResourceId,
+			space.SpaceResourceDBSchema.DimensionValues.String(): srForBkcc.DimensionValues,
+		}), ""))
+	} else {
+		if err := srForBkcc.Create(tx); err != nil {
+			tx.Rollback()
+			return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
+		}
 	}
-
 	// 组装空间对应的资源
 	// 获取存储在metadata中的集群数据
 	var metadataClusterId []string
@@ -413,11 +470,20 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
 	metrics.MysqlCount(srForBcs.TableName(), "CreateBcsSpace_create_bcs", 1)
-	if err := srForBcs.Create(tx); err != nil {
-		tx.Rollback()
-		return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
+		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(srForBcs.TableName(), map[string]interface{}{
+			space.SpaceResourceDBSchema.SpaceTypeId.String():     srForBcs.SpaceTypeId,
+			space.SpaceResourceDBSchema.SpaceId.String():         srForBcs.SpaceId,
+			space.SpaceResourceDBSchema.ResourceType.String():    srForBcs.ResourceType,
+			space.SpaceResourceDBSchema.ResourceId.String():      srForBcs.ResourceId,
+			space.SpaceResourceDBSchema.DimensionValues.String(): srForBcs.DimensionValues,
+		}), ""))
+	} else {
+		if err := srForBcs.Create(tx); err != nil {
+			tx.Rollback()
+			return errors.Wrapf(err, "create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] failed", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
+		}
 	}
-
 	spaceDataSourceList, err := s.composeBcsSpaceDataSource(models.SpaceTypeBKCI, projectCode, dataIdList, projectClusterDataIdList, sharedClusterDataIdList)
 	if err != nil {
 		tx.Rollback()
@@ -426,12 +492,21 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	for _, sds := range spaceDataSourceList {
 		logger.Infof("[db_diff]create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
 		metrics.MysqlCount(sds.TableName(), "CreateBcsSpace_create_sds", 1)
-		if err := sds.Create(tx); err != nil {
-			tx.Rollback()
-			return errors.Wrapf(err, "create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
+			logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
+				space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
+				space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
+				space.SpaceDataSourceDBSchema.BkDataId.String():          sds.BkDataId,
+				space.SpaceDataSourceDBSchema.FromAuthorization.String(): sds.FromAuthorization,
+			}), ""))
+		} else {
+			if err := sds.Create(tx); err != nil {
+				tx.Rollback()
+				return errors.Wrapf(err, "create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
+			}
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 		tx.Rollback()
 	} else {
 		tx.Commit()
@@ -538,8 +613,14 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_create", 1)
-			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s]", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_project_biz") {
+				logger.Info(diffutil.BuildLogStr("refresh_bcs_project_biz", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sr.TableName(), map[string]interface{}{
+					space.SpaceResourceDBSchema.SpaceTypeId.String():     sr.SpaceTypeId,
+					space.SpaceResourceDBSchema.SpaceId.String():         sr.SpaceId,
+					space.SpaceResourceDBSchema.ResourceType.String():    sr.ResourceType,
+					space.SpaceResourceDBSchema.ResourceId.String():      sr.ResourceId,
+					space.SpaceResourceDBSchema.DimensionValues.String(): sr.DimensionValues,
+				}), ""))
 			} else {
 				if err := sr.Create(db); err != nil {
 					logger.Errorf("create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v] dimension_values [%s] failed, %v", sr.SpaceTypeId, sr.SpaceId, sr.ResourceType, sr.ResourceId, sr.DimensionValues, err)
@@ -560,8 +641,12 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 			continue
 		}
 		metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_update", 1)
-		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] update SpaceResource id [%v] with dimension_values [%v] resource_id [%v]", res.Id, dm, res.ResourceId)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_project_biz") {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_project_biz", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(res.TableName(), map[string]interface{}{
+				space.SpaceResourceDBSchema.Id.String():              res.Id,
+				space.SpaceResourceDBSchema.ResourceId.String():      res.ResourceId,
+				space.SpaceResourceDBSchema.DimensionValues.String(): res.DimensionValues,
+			}), ""))
 		} else {
 			if err := res.Update(db, space.SpaceResourceDBSchema.ResourceId, space.SpaceResourceDBSchema.DimensionValues, space.SpaceResourceDBSchema.UpdateTime); err != nil {
 				logger.Errorf("update SpaceResource id [%v] with dimension_values [%v] resource_id [%v] failed, %v", res.Id, dm, res.ResourceId, err)
@@ -631,8 +716,11 @@ func (s *SpaceSvc) RefreshBkciSpaceName() error {
 		sp.SpaceName = name
 		sp.UpdateTime = time.Now()
 		metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
-		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] update bkci space_name [%s] to [%s]", oldName, sp.SpaceName)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkci_space_name") {
+			logger.Info(diffutil.BuildLogStr("refresh_bkci_space_name", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
+				space.SpaceDBSchema.Id.String():        sp.Id,
+				space.SpaceDBSchema.SpaceName.String(): sp.SpaceName,
+			}), ""))
 		} else {
 			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
 				logger.Errorf("update bkci space_name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)

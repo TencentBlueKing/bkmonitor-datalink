@@ -95,8 +95,8 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		return err
 	}
 	// 从数据库中生成consul配置信息
-	config := i.GetConsulConfig()
-	configStr, err := jsonx.MarshalString(config)
+	cfg := i.GetConsulConfig()
+	configStr, err := jsonx.MarshalString(cfg)
 	if err != nil {
 		return err
 	}

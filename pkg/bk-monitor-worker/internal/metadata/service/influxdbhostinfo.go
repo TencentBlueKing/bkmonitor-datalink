@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
@@ -156,9 +157,13 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 				break
 			}
 			cmd := fmt.Sprintf("ALTER RETENTION POLICY %s ON %s DURATION %s SHARD DURATION %s DEFAULT", name, dbName, defaultDuration, shardDuration)
-			if _, err := influxdb.QueryDB(c, cmd, dbName, nil); err != nil {
-				logger.Errorf("influxdb [%s] db [%s] queyr [%s] failed, %v", s.HostName, dbName, cmd, err)
-				break
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_default_rp") {
+				logger.Info(diffutil.BuildLogStr("refresh_default_rp", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
+			} else {
+				if _, err := influxdb.QueryDB(c, cmd, dbName, nil); err != nil {
+					logger.Errorf("influxdb [%s] db [%s] queyr [%s] failed, %v", s.HostName, dbName, cmd, err)
+					break
+				}
 			}
 			// 默认的修改完
 			break

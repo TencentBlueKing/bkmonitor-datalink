@@ -65,6 +65,10 @@ func TestReceiver(t *testing.T) {
         enabled: true
       skywalking:
         enabled: true
+      pyroscope:
+        enabled: true
+      fta:
+        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)

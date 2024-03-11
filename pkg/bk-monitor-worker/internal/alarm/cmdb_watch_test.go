@@ -20,7 +20,48 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package models
+package alarm
 
-type CmdbEventRecord struct {
+import (
+	"context"
+	"os"
+	"os/signal"
+	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+)
+
+func TestMain(m *testing.M) {
+	config.FilePath = "../../bmw_test.yaml"
+	config.InitConfig()
+
+	m.Run()
+}
+
+func TestResourceWatch(t *testing.T) {
+	redisOptions := RedisOptions{
+		Mode:  "standalone",
+		Addrs: []string{"127.0.0.1:6379"},
+	}
+
+	// 监听信号
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
+
+	//调用cancel函数取消
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-signalChan
+		cancel()
+	}()
+
+	cw, err := NewCmdbResourceWatcher("test", &WatchCmdbResourceChangeTaskParams{
+		Redis: redisOptions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cw.Run(ctx)
+
 }

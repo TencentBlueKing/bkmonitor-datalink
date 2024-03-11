@@ -276,3 +276,20 @@ type SearchObjectAttributeData struct {
 	BkPropertyType string `json:"bk_property_type"`
 	Creator        string `json:"creator"`
 }
+
+// ResourceWatchResp 监听资源变化返回
+type ResourceWatchResp struct {
+	define.ApiCommonRespMeta
+	Data ResourceWatchData `json:"data"`
+}
+
+// ResourceWatchData 监听资源变化数据
+type ResourceWatchData struct {
+	BkWatched bool `json:"bk_watched"`
+	BkEvents  []struct {
+		BkCursor    string                 `json:"bk_cursor"`
+		BkResource  string                 `json:"bk_resource"`
+		BkEventType string                 `json:"bk_event_type"`
+		BkDetail    map[string]interface{} `json:"bk_detail"`
+	} `json:"bk_events"`
+}

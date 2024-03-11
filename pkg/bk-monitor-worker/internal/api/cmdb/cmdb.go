@@ -132,3 +132,14 @@ func (c *Client) SearchObjectAttribute(opts ...define.OperationOption) define.Op
 		Path:   path,
 	}, opts...)
 }
+
+// ResourceWatch for cmdb resource resource_watch
+// 资源变更订阅
+func (c *Client) ResourceWatch(opts ...define.OperationOption) define.Operation {
+	path := "resource_watch"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "resource_watch",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

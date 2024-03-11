@@ -190,6 +190,8 @@ bk-collector:
         enabled: false
       skywalking:
         enabled: false
+      pyroscope:
+        enabled: true
       fta:
         enabled: true
 
@@ -1797,4 +1799,5 @@ bk-collector:
       metrics_batch_size: 5000
       traces_batch_size: 600
       logs_batch_size: 100
+      proxy_batch_size: 300
       flush_interval: 3s

@@ -85,6 +85,7 @@ type Config struct {
 	MetricsBatchSize int           `config:"metrics_batch_size" mapstructure:"metrics_batch_size"`
 	LogsBatchSize    int           `config:"logs_batch_size" mapstructure:"logs_batch_size"`
 	TracesBatchSize  int           `config:"traces_batch_size" mapstructure:"traces_batch_size"`
+	ProxyBatchSize   int           `config:"proxy_batch_size" mapstructure:"proxy_batch_size"`
 	FlushInterval    time.Duration `config:"flush_interval" mapstructure:"flush_interval"`
 }
 
@@ -227,6 +228,8 @@ func (bq *BatchQueue) Put(events ...define.Event) {
 			batchSize = bq.conf.LogsBatchSize
 		case define.RecordTraces:
 			batchSize = bq.conf.TracesBatchSize
+		case define.RecordProxy:
+			batchSize = bq.conf.ProxyBatchSize
 		default:
 			batchSize = 100
 		}

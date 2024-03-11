@@ -1799,5 +1799,5 @@ bk-collector:
       metrics_batch_size: 5000
       traces_batch_size: 600
       logs_batch_size: 100
-      proxy_batch_size: 300
+      proxy_batch_size: 600
       flush_interval: 3s

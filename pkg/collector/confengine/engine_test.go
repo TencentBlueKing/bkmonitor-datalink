@@ -12,6 +12,7 @@ package confengine
 import (
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -74,7 +75,7 @@ func TestLoadConfigPatterns(t *testing.T) {
 }
 
 func TestLoadPlatformConfigs(t *testing.T) {
-	config := LoadPlatformConfigs([]string{"../example/fixtures/platform.yml"})
+	config := LoadPlatformConfigs([]string{"../example/fixtures/platform.yml"}, define.ConfigTypePlatform)
 	assert.NotNil(t, config)
 
 	conf := make(map[string]interface{})

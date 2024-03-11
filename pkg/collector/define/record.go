@@ -228,6 +228,10 @@ type Token struct {
 	AppName        string
 }
 
+func (t Token) BizApp() string {
+	return fmt.Sprintf("%d-%s", t.BizId, t.AppName)
+}
+
 func (t Token) GetDataID(rtype RecordType) int32 {
 	switch rtype {
 	case RecordTraces, RecordTracesDerived:

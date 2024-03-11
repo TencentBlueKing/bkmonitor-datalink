@@ -42,21 +42,16 @@ func (c profilesConverter) ToEvent(token define.Token, dataId int32, data common
 
 func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataId := c.ToDataID(record)
+	token := record.Token
 
 	profileData, ok := record.Data.(*define.ProfilesData)
 	if !ok {
-		logger.Errorf(
-			"failed to convert to []*Profile, recordDataType: %T, token: %s app: %d-%s",
-			record.Data, record.Token.Original, record.Token.BizId, record.Token.AppName,
-		)
+		logger.Errorf("unxecpted profiles dataType(%T), token: %s app: %s", record.Data, token.Original, token.BizApp())
 		return
 	}
 
 	if profileData == nil || len(profileData.Profiles) == 0 {
-		logger.Errorf(
-			"[]*Profile is empty, skip. token: %s app: %d-%s",
-			record.Token.Original, record.Token.BizId, record.Token.AppName,
-		)
+		logger.Errorf("skip empty profiles, token: %s, app: %s", token.Original, token.BizApp())
 		return
 	}
 
@@ -71,8 +66,7 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 		var protoBuf bytes.Buffer
 		if err := p.WriteUncompressed(&protoBuf); err != nil {
 			logger.Errorf(
-				"failed to write uncompressed profile on index: %d: %s token: %s app: %d-%s",
-				i, err, record.Token.Original, record.Token.BizId, record.Token.AppName,
+				"write uncompressed profile on index(%d) failed, token: %s app: %s, err: %s", i, token.Original, token.BizApp(), err,
 			)
 			return
 		}

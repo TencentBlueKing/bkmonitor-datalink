@@ -30,10 +30,22 @@ const (
 )
 
 const (
+	ConditionExact = "exact"
+	ConditionGt    = "gt"
+	ConditionGte   = "gte"
+	ConditionLt    = "lt"
+	ConditionLte   = "lte"
+)
+
+const (
 	SqlEqual    = "="
 	SqlNotEqual = "!="
 	SqlReg      = "REGEXP"
 	SqlNotReg   = "NOT REGEXP"
+	SqlGt       = ">"
+	SqlGte      = ">="
+	SqlLt       = "<"
+	SqlLte      = "<="
 )
 
 // 特殊处理的字段
@@ -102,18 +114,22 @@ func (c *ConditionField) BkSql() *ConditionField {
 	}
 
 	switch c.Operator {
-	case ConditionEqual:
+	case ConditionEqual, ConditionExact, ConditionContains:
 		c.Operator = SqlEqual
-	case ConditionNotEqual:
-		c.Operator = SqlNotEqual
-	case ConditionContains:
-		c.Operator = SqlEqual
-	case ConditionNotContains:
+	case ConditionNotEqual, ConditionNotContains:
 		c.Operator = SqlNotEqual
 	case ConditionRegEqual:
 		c.Operator = SqlReg
 	case ConditionNotRegEqual:
 		c.Operator = SqlNotReg
+	case ConditionGt:
+		c.Operator = SqlGt
+	case ConditionGte:
+		c.Operator = SqlGte
+	case ConditionLt:
+		c.Operator = SqlLt
+	case ConditionLte:
+		c.Operator = SqlLte
 	}
 
 	return c

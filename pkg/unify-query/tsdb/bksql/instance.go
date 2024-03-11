@@ -21,9 +21,11 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -98,6 +100,8 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 		stateData  *QueryAsyncStateData
 		resultData *QueryAsyncResultData
 
+		startAnaylize time.Time
+
 		ok  bool
 		err error
 	)
@@ -105,14 +109,22 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
 	span.Set("query-sql", sql)
 
+	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
+
+	user := metadata.GetUser(ctx)
+	startAnaylize = time.Now()
+
 	// 发起异步查询
 	res := i.Client.QueryAsync(ctx, sql)
 	if err = i.checkResult(res); err != nil {
 		return resultData, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
+	queryCost := time.Since(startAnaylize)
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	)
 
 	if data, ok = res.Data.(*QueryAsyncData); !ok {
 		return resultData, fmt.Errorf("queryAsyncData type is error: %T", res.Data)
@@ -489,7 +501,7 @@ func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end 
 }
 
 func (i Instance) GetInstanceType() string {
-	return i.Client.PreferStorage
+	return consul.BkSqlStorageType
 }
 
 func getValue(k string, d map[string]interface{}) (string, error) {

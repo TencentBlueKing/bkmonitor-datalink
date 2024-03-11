@@ -33,6 +33,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
 )
 
+const (
+	CmdbApiPageSize = 500
+)
+
 // ManagerRunner 缓存管理器接口
 type ManagerRunner interface {
 	RefreshByBiz(ctx context.Context, bizID int) error
@@ -52,7 +56,7 @@ type BaseCacheManager struct {
 }
 
 // NewBaseCacheManager 创建缓存管理器
-func NewBaseCacheManager(opt *alarm.RedisOptions, prefix string) (*BaseCacheManager, error) {
+func NewBaseCacheManager(prefix string, opt *alarm.RedisOptions) (*BaseCacheManager, error) {
 	client, err := alarm.GetRedisClient(opt)
 	if err != nil {
 		return nil, err

@@ -243,7 +243,7 @@ type HostAndTopoCacheManager struct {
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
 func NewHostAndTopoCacheManager(prefix string, opt *alarm.RedisOptions) (*HostAndTopoCacheManager, error) {
-	manager, err := NewBaseCacheManager(opt, prefix)
+	manager, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache manager failed")
 	}
@@ -451,7 +451,7 @@ func getHostAndTopoByBiz(bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopo
 	req := cmdbApi.ListBizHostsTopo()
 	results, err := api.BatchApiRequest(
 		req,
-		500,
+		CmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var res cmdb.ListBizHostsTopoResp
 			err := mapstructure.Decode(resp, &res)
@@ -461,7 +461,7 @@ func getHostAndTopoByBiz(bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopo
 			return res.Data.Count, nil
 		},
 		func(req define.Operation, page int) define.Operation {
-			return req.SetBody(map[string]interface{}{"page": map[string]int{"start": page * 500, "limit": 500}, "bk_biz_id": bkBizID, "fields": HostFields})
+			return req.SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": HostFields})
 		},
 		10,
 	)

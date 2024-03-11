@@ -121,3 +121,14 @@ func (c *Client) GetBizInternalModule(opts ...define.OperationOption) define.Ope
 		Path:   path,
 	}, opts...)
 }
+
+// SearchObjectAttribute for cmdb resource search_object_attribute
+// 查询对象属性
+func (c *Client) SearchObjectAttribute(opts ...define.OperationOption) define.Operation {
+	path := "search_object_attribute"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_object_attribute",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

@@ -82,7 +82,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 	client, err := alarm.GetRedisClient(rOpts)
 	ctx := context.Background()
 
-	t.Run("RefreshByBiz", func(t *testing.T) {
+	t.Run("Refresh", func(t *testing.T) {
 		err := cacheManager.RefreshByBiz(ctx, 2)
 		if err != nil {
 			t.Error(err)
@@ -95,8 +95,15 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			t.Error(result.Err())
 			return
 		}
-		keys := result.Val()
 
-		assert.Equal(t, 4, len(keys))
+		keySet := make(map[string]struct{})
+		for _, key := range result.Val() {
+			keySet[key] = struct{}{}
+		}
+
+		assert.Contains(t, keySet, "test.cmdb.host")
+		assert.Contains(t, keySet, "test.cmdb.topo")
+		assert.Contains(t, keySet, "test.cmdb.host_id")
+		assert.Contains(t, keySet, "test.cmdb.agent_id")
 	})
 }

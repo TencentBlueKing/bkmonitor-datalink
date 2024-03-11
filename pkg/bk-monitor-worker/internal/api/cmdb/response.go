@@ -105,30 +105,30 @@ type ListBizHostsTopoDataInfo struct {
 
 type SearchBusinessResp struct {
 	define.ApiCommonRespMeta
-	Data BusinessData `json:"data"`
+	Data BusinessData `json:"data" mapstructure:"data"`
 }
 
 type BusinessData struct {
-	Count int                `json:"count"`
-	Info  []BusinessDataInfo `json:"info"`
+	Count int                `json:"count" mapstructure:"count"`
+	Info  []BusinessDataInfo `json:"info" mapstructure:"info"`
 }
 
 type BusinessDataInfo struct {
-	BkBizDeveloper    string    `json:"bk_biz_developer"`
-	BkBizId           int       `json:"bk_biz_id"`
-	BkBizMaintainer   string    `json:"bk_biz_maintainer"`
-	BkBizName         string    `json:"bk_biz_name"`
-	BkBizProductor    string    `json:"bk_biz_productor"`
-	BkBizTester       string    `json:"bk_biz_tester"`
-	BkSupplierAccount string    `json:"bk_supplier_account"`
-	CreateTime        time.Time `json:"create_time"`
-	DbAppAbbr         string    `json:"db_app_abbr,omitempty"`
-	Default           int       `json:"default"`
-	Language          string    `json:"language"`
-	LastTime          time.Time `json:"last_time"`
-	LifeCycle         string    `json:"life_cycle"`
-	Operator          string    `json:"operator"`
-	TimeZone          string    `json:"time_zone"`
+	BkBizDeveloper    string    `json:"bk_biz_developer" mapstructure:"bk_biz_developer"`
+	BkBizId           int       `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	BkBizMaintainer   string    `json:"bk_biz_maintainer" mapstructure:"bk_biz_maintainer"`
+	BkBizName         string    `json:"bk_biz_name" mapstructure:"bk_biz_name"`
+	BkBizProductor    string    `json:"bk_biz_productor" mapstructure:"bk_biz_productor"`
+	BkBizTester       string    `json:"bk_biz_tester" mapstructure:"bk_biz_tester"`
+	BkSupplierAccount string    `json:"bk_supplier_account" mapstructure:"bk_supplier_account"`
+	CreateTime        time.Time `json:"create_time" mapstructure:"create_time"`
+	DbAppAbbr         string    `json:"db_app_abbr,omitempty" mapstructure:"db_app_abbr,omitempty"`
+	Default           int       `json:"default" mapstructure:"default"`
+	Language          string    `json:"language" mapstructure:"language"`
+	LastTime          time.Time `json:"last_time" mapstructure:"last_time"`
+	LifeCycle         string    `json:"life_cycle" mapstructure:"life_cycle"`
+	Operator          string    `json:"operator" mapstructure:"operator"`
+	TimeZone          string    `json:"time_zone" mapstructure:"time_zone"`
 }
 
 type ListHostsWithoutBizResp struct {
@@ -201,11 +201,13 @@ type FindHostBizRelationData struct {
 	BkSupplierAccount string `json:"bk_supplier_account"`
 }
 
+// SearchBizInstTopoResp 查询业务拓扑返回
 type SearchBizInstTopoResp struct {
 	define.ApiCommonRespMeta
 	Data []SearchBizInstTopoData `json:"data"`
 }
 
+// SearchBizInstTopoData 查询业务拓扑数据
 type SearchBizInstTopoData struct {
 	BkInstId   int                     `json:"bk_inst_id"`
 	BkInstName string                  `json:"bk_inst_name"`
@@ -244,11 +246,13 @@ func (s *SearchBizInstTopoData) GetId() string {
 	return topoId
 }
 
+// GetBizInternalModuleResp 查询业务内部模块返回
 type GetBizInternalModuleResp struct {
 	define.ApiCommonRespMeta
 	Data GetBizInternalModuleData `json:"data"`
 }
 
+// GetBizInternalModuleData 查询业务内部模块数据
 type GetBizInternalModuleData struct {
 	BkSetId   int    `json:"bk_set_id"`
 	BkSetName string `json:"bk_set_name"`
@@ -256,4 +260,19 @@ type GetBizInternalModuleData struct {
 		BkModuleId   int    `json:"bk_module_id"`
 		BkModuleName string `json:"bk_module_name"`
 	}
+}
+
+// SearchObjectAttributeResp 查询对象属性返回
+type SearchObjectAttributeResp struct {
+	define.ApiCommonRespMeta
+	Data []SearchObjectAttributeData `json:"data"`
+}
+
+// SearchObjectAttributeData 查询对象属性数据
+type SearchObjectAttributeData struct {
+	BkObjId        string `json:"bk_obj_id"`
+	BkPropertyId   string `json:"bk_property_id"`
+	BkPropertyName string `json:"bk_property_name"`
+	BkPropertyType string `json:"bk_property_type"`
+	Creator        string `json:"creator"`
 }

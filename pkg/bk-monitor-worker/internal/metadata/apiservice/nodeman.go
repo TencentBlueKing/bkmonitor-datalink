@@ -105,6 +105,25 @@ func (s NodemanService) PluginSearch(bkBizIds, bkHostIds, excludeHosts []int, co
 	return resp.Data.List, nil
 }
 
+// PluginOperate 【节点管理2.0】插件管理接口
+func (s NodemanService) PluginOperate(params map[string]interface{}) (interface{}, error) {
+	nodemanApi, err := api.GetNodemanApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "GetNodemanApi failed")
+	}
+	var resp define.APICommonResp
+	_, err = nodemanApi.PluginOperate().SetBody(params).SetResult(&resp).Request()
+	if err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "PluginSearch with params [%s] failed", paramStr)
+	}
+	if err := resp.Err(); err != nil {
+		paramStr, _ := jsonx.MarshalString(params)
+		return nil, errors.Wrapf(err, "PluginSearch with params [%s] failed", paramStr)
+	}
+	return resp.Data, nil
+}
+
 // UpdateSubscription 更新订阅
 func (s NodemanService) UpdateSubscription(params map[string]interface{}) (*define.APICommonResp, error) {
 	nodemanApi, err := api.GetNodemanApi()

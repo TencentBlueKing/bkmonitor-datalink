@@ -18,11 +18,13 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -136,8 +138,14 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 	// 业务为0时更新数据源为平台级
 	if bkBizId == 0 {
 		ds.IsPlatformDataId = true
-		if err := ds.Update(db, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
+				resulttable.DataSourceDBSchema.IsPlatformDataId.String(): ds.IsPlatformDataId,
+			}), ""))
+		} else {
+			if err := ds.Update(db, resulttable.DataSourceDBSchema.IsPlatformDataId); err != nil {
+				return err
+			}
 		}
 	} else {
 		// 当业务不为 0 时，进行空间和数据源的关联
@@ -164,8 +172,17 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 				BkDataId:          ds.BkDataId,
 				FromAuthorization: false,
 			}
-			if err := sds.Create(db); err != nil {
-				return errors.Wrapf(err, "create spacedatasource for %v failed", ds.BkDataId)
+			if cfg.BypassSuffixPath != "" {
+				logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
+					space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
+					space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
+					space.SpaceDataSourceDBSchema.BkDataId.String():          sds.BkDataId,
+					space.SpaceDataSourceDBSchema.FromAuthorization.String(): sds.FromAuthorization,
+				}), ""))
+			} else {
+				if err := sds.Create(db); err != nil {
+					return errors.Wrapf(err, "create spacedatasource for %v failed", ds.BkDataId)
+				}
 			}
 		}
 	}
@@ -225,8 +242,22 @@ func (r ResultTableSvc) CreateResultTable(
 		DataLabel:      nil,
 	}
 	db := mysql.GetDBSession().DB
-	if err := rt.Create(db); err != nil {
-		return err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rt.TableName(), map[string]interface{}{
+			resulttable.ResultTableDBSchema.TableId.String():        rt.TableId,
+			resulttable.ResultTableDBSchema.TableNameZh.String():    rt.TableNameZh,
+			resulttable.ResultTableDBSchema.IsCustomTable.String():  rt.IsCustomTable,
+			resulttable.ResultTableDBSchema.SchemaType.String():     rt.SchemaType,
+			resulttable.ResultTableDBSchema.DefaultStorage.String(): rt.DefaultStorage,
+			resulttable.ResultTableDBSchema.BkBizId.String():        rt.BkBizId,
+			resulttable.ResultTableDBSchema.IsDeleted.String():      rt.IsDeleted,
+			resulttable.ResultTableDBSchema.Label.String():          rt.Label,
+			resulttable.ResultTableDBSchema.IsEnable.String():       rt.IsEnable,
+		}), ""))
+	} else {
+		if err := rt.Create(db); err != nil {
+			return err
+		}
 	}
 
 	// 创建结果表的option内容如果option为非空
@@ -265,9 +296,17 @@ func (r ResultTableSvc) CreateResultTable(
 		Creator:    operator,
 		CreateTime: time.Now(),
 	}
-	if err := dsrt.Create(db); err != nil {
-		return err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(dsrt.TableName(), map[string]interface{}{
+			resulttable.DataSourceResultTableDBSchema.BkDataId.String(): dsrt.BkDataId,
+			resulttable.DataSourceResultTableDBSchema.TableId.String():  dsrt.TableId,
+		}), ""))
+	} else {
+		if err := dsrt.Create(db); err != nil {
+			return err
+		}
 	}
+
 	logger.Infof("result_table [%s] now has relate to bk_data [%v]", tableId, bkDataId)
 
 	// 创建实际结果表

@@ -22,12 +22,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -116,8 +118,27 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		SpaceTypeId:       "all",
 		SpaceUid:          "",
 	}
-	if err := ds.Create(db); err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
+			resulttable.DataSourceDBSchema.BkDataId.String():          ds.BkDataId,
+			resulttable.DataSourceDBSchema.Token.String():             ds.Token,
+			resulttable.DataSourceDBSchema.DataName.String():          ds.DataName,
+			resulttable.DataSourceDBSchema.MqClusterId.String():       ds.MqClusterId,
+			resulttable.DataSourceDBSchema.EtlConfig.String():         ds.EtlConfig,
+			resulttable.DataSourceDBSchema.TypeLabel.String():         ds.TypeLabel,
+			resulttable.DataSourceDBSchema.SourceLabel.String():       ds.SourceLabel,
+			resulttable.DataSourceDBSchema.SourceSystem.String():      ds.SourceSystem,
+			resulttable.DataSourceDBSchema.IsEnable.String():          ds.IsEnable,
+			resulttable.DataSourceDBSchema.TransferClusterId.String(): ds.TransferClusterId,
+			resulttable.DataSourceDBSchema.IsPlatformDataId.String():  ds.IsPlatformDataId,
+			resulttable.DataSourceDBSchema.IsCustomSource.String():    ds.IsCustomSource,
+			resulttable.DataSourceDBSchema.SpaceTypeId.String():       ds.SpaceTypeId,
+			resulttable.DataSourceDBSchema.SpaceUid.String():          ds.SpaceUid,
+		}), ""))
+	} else {
+		if err := ds.Create(db); err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("data_id [%v] data_name [%s] by operator [%s] now is pre-create.", ds.BkDataId, ds.DataName, ds.Creator)
 	// 获取这个数据源对应的配置记录model，并创建一个新的配置记录
@@ -126,9 +147,16 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	ds.MqConfigId = mqConfig.Id
-	err = ds.Update(db, resulttable.DataSourceDBSchema.MqConfigId)
-	if err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
+			resulttable.DataSourceDBSchema.BkDataId.String():   ds.BkDataId,
+			resulttable.DataSourceDBSchema.MqConfigId.String(): ds.MqConfigId,
+		}), ""))
+	} else {
+		err = ds.Update(db, resulttable.DataSourceDBSchema.MqConfigId)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("data_id [%v] now is relate to its mq config id [%v]", ds.BkDataId, ds.MqConfigId)
 
@@ -145,7 +173,11 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		}
 		logger.Infof("bk_data_id [%v] etl_config [%s] so is has now has option [%s] with value->[ms]", ds.BkDataId, etcConfig, models.OptionTimestampUnit)
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
 	// 触发consul刷新
 	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background())
 	if err != nil {
@@ -339,29 +371,18 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	if mqCluster.GseStreamToId == -1 {
 		return errors.Errorf("dataid [%v] mq is not inited", d.BkDataId)
 	}
-	gseApi, err := api.GetGseApi()
+	params := bkgse.QueryRouteParams{}
+	params.Condition.ChannelId = d.BkDataId
+	params.Condition.PlatName = "bkmonitor"
+	params.Operation.OperatorName = "admin"
+	data, err := apiservice.Gse.QueryRoute(params)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "data_id [%v] query gse route failed", d.BkDataId)
 	}
-	var resp define.APICommonResp
-	_, err = gseApi.QueryRoute().SetBody(map[string]interface{}{
-		"condition": map[string]interface{}{
-			"plat_name": "bkmonitor", "channel_id": d.BkDataId,
-		},
-		"operation": map[string]interface{}{
-			"operator_name": "admin",
-		},
-	}).SetResult(&resp).Request()
-	if err != nil {
-		logger.Errorf("data_id [%v] query gse route failed, error: %v", d.BkDataId, err)
-		return err
-	}
-	if resp.Data == nil {
-		logger.Errorf("data_id [%v] can not find route info from gse, %s, please check your datasource config", d.BkDataId, resp.Message)
-		err := d.AddBuiltInChannelIdToGse()
-		if err != nil {
-			logger.Errorf("add builtin channel id [%v] to gse failed, %v", d.BkDataId, err)
-			return err
+	if data == nil {
+		logger.Errorf("data_id [%v] can not find route info from gse, please check your datasource config", d.BkDataId)
+		if err := d.AddBuiltInChannelIdToGse(); err != nil {
+			return errors.Wrapf(err, "add builtin channel id [%v] to gse failed", d.BkDataId)
 		}
 		return nil
 	}
@@ -380,7 +401,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return err
 	}
 
-	dataJSON, err := jsonx.MarshalString(resp.Data)
+	dataJSON, err := jsonx.MarshalString(data)
 	if err != nil {
 		return err
 	}
@@ -426,22 +447,23 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	}
 	logger.Infof("data_id [%v] gse route config [%v] is different from gse [%v], will refresh it", d.BkDataId, config, oldRoute)
 	metrics.GSEUpdateCount(d.BkDataId)
-	var updateResult define.APICommonResp
-	_, err = gseApi.UpdateRoute().SetBody(map[string]interface{}{
-		"condition": map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
-		"operation": map[string]interface{}{"operator_name": "admin"},
-		"specification": map[string]interface{}{
-			"route": []interface{}{config},
+	updateParam := bkgse.UpdateRouteParams{
+		Condition: bkgse.RouteMetadata{
+			ChannelId: d.BkDataId,
+			PlatName:  "bkmonitor",
 		},
-	}).SetResult(&updateResult).Request()
-	if err != nil {
-		return err
+		Specification: map[string]interface{}{"route": []interface{}{config}},
+		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
-	if updateResult.Code != 0 {
-		logger.Errorf("try to update gse route for channel id [%v] failed, %s", d.BkDataId, updateResult.Message)
-		return errors.New(updateResult.Message)
+	if cfg.BypassSuffixPath != "" {
+		paramStr, _ := jsonx.MarshalString(updateParam)
+		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+	} else {
+		if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
+			return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
+		}
+		logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
 	}
-	logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
 	return nil
 }
 
@@ -456,25 +478,24 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		logger.Errorf("make gse route config error, %v", err)
 		return err
 	}
-	params := map[string]interface{}{
-		"metadata":  map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
-		"operation": map[string]interface{}{"operator_name": "admin"},
-		"route":     []interface{}{route},
-	}
-	gseApi, err := api.GetGseApi()
-	if err != nil {
-		return err
-	}
 	metrics.GSEUpdateCount(d.BkDataId)
-	var resp define.APICommonResp
-	_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
-	if err != nil {
-		return err
+	params := bkgse.AddRouteParams{
+		Metadata: bkgse.RouteMetadata{
+			ChannelId: d.BkDataId,
+			PlatName:  "bkmonitor",
+		},
+		Route:     []interface{}{route},
+		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
-	if resp.Code != 0 {
-		logger.Warnf("try to add builtin channel id [%v] to gse, %s", d.BkDataId, resp.Message)
+	if cfg.BypassSuffixPath != "" {
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 	} else {
-		logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
+		data, err := apiservice.Gse.AddRoute(params)
+		if err != nil {
+			return err
+		}
+		logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
 	}
 	return nil
 }
@@ -567,29 +588,36 @@ func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
 	if err != nil {
 		return 0, nil
 	}
-	var resp define.APICommonResp
-	_, err = gseApi.AddRoute().SetBody(map[string]interface{}{
+	params := map[string]interface{}{
 		"metadata": map[string]interface{}{
 			"plat_name": "bkmonitor",
 		},
 		"operation": map[string]interface{}{
 			"operator_name": operator,
 		},
-	}).SetResult(&resp).Request()
-	if err != nil {
-		return 0, err
 	}
-	if resp.Code != 0 {
-		return 0, errors.New(resp.Message)
+	var resp define.APICommonResp
+	if cfg.BypassSuffixPath != "" {
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+		return 0, nil
+	} else {
+		_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
+		if err != nil {
+			return 0, err
+		}
+		if resp.Code != 0 {
+			return 0, errors.New(resp.Message)
+		}
+		data, ok := resp.Data.(map[string]interface{})
+		if !ok {
+			return 0, errors.New("ApplyForDataIdFromGse parse response data failed")
+		}
+		channelIdInterface := data["channel_id"]
+		channelId, ok := channelIdInterface.(float64)
+		if !ok {
+			return 0, errors.New("ApplyForDataIdFromGse parse channel_id failed")
+		}
+		return uint(channelId), nil
 	}
-	data, ok := resp.Data.(map[string]interface{})
-	if !ok {
-		return 0, errors.New("ApplyForDataIdFromGse parse response data failed")
-	}
-	channelIdInterface := data["channel_id"]
-	channelId, ok := channelIdInterface.(float64)
-	if !ok {
-		return 0, errors.New("ApplyForDataIdFromGse parse channel_id failed")
-	}
-	return uint(channelId), nil
 }

@@ -11,6 +11,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"strings"
 	"time"
 
@@ -92,8 +93,20 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 				ResourceCreateTime: time.Now(),
 			},
 		}
-		if err := podMonitor.Create(db); err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(podMonitor.TableName(), map[string]interface{}{
+				bcs.PodMonitorInfoDBSchema.ClusterID.String():        podMonitor.ClusterID,
+				bcs.PodMonitorInfoDBSchema.Namespace.String():        podMonitor.Namespace,
+				bcs.PodMonitorInfoDBSchema.Name.String():             podMonitor.Name,
+				bcs.PodMonitorInfoDBSchema.BkDataId.String():         podMonitor.BkDataId,
+				bcs.PodMonitorInfoDBSchema.IsCustomResource.String(): podMonitor.IsCustomResource,
+				bcs.PodMonitorInfoDBSchema.IsCommonDataId.String():   podMonitor.IsCommonDataId,
+				bcs.PodMonitorInfoDBSchema.ClusterID.String():        podMonitor.ClusterID,
+			}), ""))
+		} else {
+			if err := podMonitor.Create(db); err != nil {
+				return err
+			}
 		}
 		// 新增的记录起来
 		existNameIdMap[identifyName] = podMonitor.Id
@@ -118,8 +131,14 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 	}
 	// 删除已经不存在的resource映射
 	if len(needDeleteIdList) != 0 {
-		if err := db.Delete(&bcs.PodMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(bcs.PodMonitorInfo{}.TableName(), map[string]interface{}{
+				bcs.ServiceMonitorInfoDBSchema.Id.String(): needDeleteIdList,
+			}), ""))
+		} else {
+			if err := db.Delete(&bcs.PodMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
+				return err
+			}
 		}
 		logger.Infof("cluster [%s] delete monitor info [%s] records [%s] success", clusterSvc.ClusterID, models.BcsPodMonitorResourcePlural, strings.Join(needDeleteNameList, ","))
 	}

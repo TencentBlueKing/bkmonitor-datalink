@@ -15,9 +15,12 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // DataSourceOptionSvc data source option service
@@ -75,8 +78,17 @@ func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interf
 		BkDataId: bkDataId,
 		Name:     name,
 	}
-	if err := dso.Create(db); err != nil {
-		return err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(dso.TableName(), map[string]interface{}{
+			resulttable.DataSourceOptionDBSchema.BkDataId.String():  dso.BkDataId,
+			resulttable.DataSourceOptionDBSchema.Name.String():      dso.Name,
+			resulttable.DataSourceOptionDBSchema.ValueType.String(): dso.ValueType,
+			resulttable.DataSourceOptionDBSchema.Value.String():     dso.Value,
+		}), ""))
+	} else {
+		if err := dso.Create(db); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 // ResultTableField: result table field model
 // gen:qs
 type ResultTableField struct {
+	Id             uint      `json:"id" gorm:"primary_key"`
 	TableID        string    `json:"table_id" gorm:"size:128;unique"`
 	FieldName      string    `json:"field_name" gorm:"size:255;unique"`
 	FieldType      string    `json:"field_type" gorm:"size:32"`

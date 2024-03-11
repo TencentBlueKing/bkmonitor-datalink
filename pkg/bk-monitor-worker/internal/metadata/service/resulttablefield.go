@@ -15,9 +15,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -263,9 +265,24 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 			AliasName:      aliasName,
 			IsDisabled:     false,
 		}
-		if err := rtf.Create(tx); err != nil {
-			tx.Rollback()
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
+				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
+				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
+				resulttable.ResultTableFieldDBSchema.FieldType.String():      rtf.FieldType,
+				resulttable.ResultTableFieldDBSchema.Description.String():    rtf.Description,
+				resulttable.ResultTableFieldDBSchema.Unit.String():           rtf.Unit,
+				resulttable.ResultTableFieldDBSchema.Tag.String():            rtf.Tag,
+				resulttable.ResultTableFieldDBSchema.IsConfigByUser.String(): rtf.IsConfigByUser,
+				resulttable.ResultTableFieldDBSchema.DefaultValue.String():   rtf.DefaultValue,
+				resulttable.ResultTableFieldDBSchema.AliasName.String():      rtf.AliasName,
+				resulttable.ResultTableFieldDBSchema.IsDisabled.String():     rtf.IsDisabled,
+			}), ""))
+		} else {
+			if err := rtf.Create(tx); err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
 	logger.Infof("new field [%s] is create for table->[%s]", strings.Join(fieldNameList, ","), tableId)
@@ -275,7 +292,12 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 			return err
 		}
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
+
 	return nil
 }
 

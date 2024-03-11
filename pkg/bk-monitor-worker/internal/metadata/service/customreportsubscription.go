@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -548,8 +549,18 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		equal, _ := jsonx.CompareJson(subscrip.Config, newConfig)
 		if !equal {
 			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] subscription task config has changed, old [%s] new [%s]", subscrip.Config, newConfig)
+				paramStr, _ := jsonx.MarshalString(params)
+				logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+
+				var ids []uint
+				for _, s := range subscripList {
+					ids = append(ids, s.ID)
+				}
 				metrics.MysqlCount(subscrip.TableName(), "CreateOrUpdateConfig_update_config", float64(len(subscripList)))
+				logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(subscrip.TableName(), map[string]interface{}{
+					customreport.CustomReportSubscriptionDBSchema.SubscriptionId.String(): ids,
+					customreport.CustomReportSubscriptionDBSchema.Config.String():         newConfig,
+				}), ""))
 				return nil
 			}
 			logger.Infof("subscription task config has changed, update it")
@@ -573,8 +584,15 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		return err
 	}
 	if cfg.BypassSuffixPath != "" {
-		logger.Infof("[db_diff]create CustomReportSubscription with bk_biz_id [%d] bk_data_id [%d] config [%s]", bkBizId, bkDataId, newConfig)
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 		metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)
+		logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(customreport.CustomReportSubscription{}.TableName(), map[string]interface{}{
+			customreport.CustomReportSubscriptionDBSchema.BkBizId.String():        bkBizId,
+			customreport.CustomReportSubscriptionDBSchema.BkDataID.String():       bkDataId,
+			customreport.CustomReportSubscriptionDBSchema.Config.String():         newConfig,
+			customreport.CustomReportSubscriptionDBSchema.SubscriptionId.String(): 0,
+		}), ""))
 		return nil
 	}
 	var resp define.APICommonMapResp

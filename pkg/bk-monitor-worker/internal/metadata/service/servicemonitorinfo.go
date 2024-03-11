@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -93,8 +94,20 @@ func (ServiceMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDa
 				ResourceCreateTime: time.Now(),
 			},
 		}
-		if err := serviceMonitor.Create(db); err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(serviceMonitor.TableName(), map[string]interface{}{
+				bcs.ServiceMonitorInfoDBSchema.ClusterID.String():        serviceMonitor.ClusterID,
+				bcs.ServiceMonitorInfoDBSchema.Namespace.String():        serviceMonitor.Namespace,
+				bcs.ServiceMonitorInfoDBSchema.Name.String():             serviceMonitor.Name,
+				bcs.ServiceMonitorInfoDBSchema.BkDataId.String():         serviceMonitor.BkDataId,
+				bcs.ServiceMonitorInfoDBSchema.IsCustomResource.String(): serviceMonitor.IsCustomResource,
+				bcs.ServiceMonitorInfoDBSchema.IsCommonDataId.String():   serviceMonitor.IsCommonDataId,
+				bcs.ServiceMonitorInfoDBSchema.ClusterID.String():        serviceMonitor.ClusterID,
+			}), ""))
+		} else {
+			if err := serviceMonitor.Create(db); err != nil {
+				return err
+			}
 		}
 		// 新增的记录起来
 		existNameIdMap[identifyName] = serviceMonitor.Id
@@ -119,8 +132,14 @@ func (ServiceMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDa
 	}
 	// 删除已经不存在的resource映射
 	if len(needDeleteIdList) != 0 {
-		if err := db.Delete(&bcs.ServiceMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(bcs.ServiceMonitorInfo{}.TableName(), map[string]interface{}{
+				bcs.ServiceMonitorInfoDBSchema.Id.String(): needDeleteIdList,
+			}), ""))
+		} else {
+			if err := db.Delete(&bcs.ServiceMonitorInfo{}, "id in (?)", needDeleteIdList).Error; err != nil {
+				return err
+			}
 		}
 		logger.Infof("cluster [%s] delete monitor info [%s] records [%s] success", clusterSvc.ClusterID, models.BcsServiceMonitorResourcePlural, strings.Join(needDeleteNameList, ","))
 	}

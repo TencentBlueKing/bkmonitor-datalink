@@ -15,9 +15,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -96,12 +98,25 @@ func (ResultTableOptionSvc) BulkCreateOptions(tableId string, options map[string
 	}
 	tx := db.Begin()
 	for _, option := range rtoList {
-		if err := option.Create(tx); err != nil {
-			tx.Rollback()
-			return err
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(option.TableName(), map[string]interface{}{
+				resulttable.ResultTableOptionDBSchema.TableID.String():   option.TableID,
+				resulttable.ResultTableOptionDBSchema.Name.String():      option.Name,
+				resulttable.ResultTableOptionDBSchema.ValueType.String(): option.ValueType,
+				resulttable.ResultTableOptionDBSchema.Value.String():     option.Value,
+			}), ""))
+		} else {
+			if err := option.Create(tx); err != nil {
+				tx.Rollback()
+				return err
+			}
 		}
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
 	logger.Infof("table_id [%s] now has options [%#v]", tableId, options)
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -68,7 +69,12 @@ func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
 			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", spaceType, spaceId, dataid, fromAuthorization)
+				logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
+					space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
+					space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
+					space.SpaceDataSourceDBSchema.BkDataId.String():          sds.BkDataId,
+					space.SpaceDataSourceDBSchema.FromAuthorization.String(): sds.FromAuthorization,
+				}), ""))
 			} else {
 				if err := sds.Create(db); err != nil {
 					logger.Errorf("create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v] failed, %v", spaceType, spaceId, dataid, fromAuthorization, err)
@@ -99,9 +105,11 @@ func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {
 	db := mysql.GetDBSession().DB
 	metrics.MysqlCount(resulttable.DataSource{}.TableName(), "SyncBkccSpaceDataSource_updateZeroDataId", float64(len(zeroDataIdList)))
 	if cfg.BypassSuffixPath != "" {
-		for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
-			logger.Infof("[db_diff] updated DataSource for [%v](exclude[%v]) with is_platform_data_id [true] space_type_id [%s]", chunkDataIds, models.SkipDataIdListForBkcc, models.SpaceTypeBKCC)
-		}
+		logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(resulttable.DataSource{}.TableName(), map[string]interface{}{
+			resulttable.DataSourceDBSchema.BkDataId.String():         zeroDataIdList,
+			resulttable.DataSourceDBSchema.IsPlatformDataId.String(): true,
+			resulttable.DataSourceDBSchema.SpaceTypeId.String():      models.SpaceTypeBKCC,
+		}), ""))
 	} else {
 		for _, chunkDataIds := range slicex.ChunkSlice(zeroDataIdList, 0) {
 			if err := resulttable.NewDataSourceQuerySet(db).BkDataIdNotIn(models.SkipDataIdListForBkcc...).BkDataIdIn(chunkDataIds...).GetUpdater().SetIsPlatformDataId(true).SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
@@ -320,7 +328,11 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 			}
 			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "CreateBkccSpaceDataSource_create_ds", 1)
 			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] create SpaceDataSource space_type_id [%s] space_id [%s] bk_data_id [%v]", sd.SpaceTypeId, sd.SpaceId, sd.BkDataId)
+				logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
+					space.SpaceDataSourceDBSchema.SpaceTypeId.String(): sd.SpaceTypeId,
+					space.SpaceDataSourceDBSchema.SpaceId.String():     sd.SpaceId,
+					space.SpaceDataSourceDBSchema.BkDataId.String():    sd.BkDataId,
+				}), ""))
 			} else {
 				if err := sd.Create(tx); err != nil {
 					tx.Rollback()
@@ -333,7 +345,10 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 	if len(dataIdList) != 0 {
 		metrics.MysqlCount(resulttable.DataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds", float64(len(dataIdList)))
 		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] updated DataSource with space_type [%s] for bk_data_id [%v]", models.SpaceTypeBKCC, dataIdList)
+			logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
+				space.SpaceDataSourceDBSchema.BkDataId.String():    dataIdList,
+				space.SpaceDataSourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
+			}), ""))
 		} else {
 			if err := resulttable.NewDataSourceQuerySet(tx).BkDataIdIn(dataIdList...).GetUpdater().SetSpaceTypeId(models.SpaceTypeBKCC).Update(); err != nil {
 				tx.Rollback()

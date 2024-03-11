@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -138,8 +139,20 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 		EventGroupName: customGroupName,
 	}
 	db := mysql.GetDBSession().DB
-	if err := eventGroup.Create(db); err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(eventGroup.TableName(), map[string]interface{}{
+			customreport.EventGroupDBSchema.BkDataID.String():           eventGroup.BkDataID,
+			customreport.EventGroupDBSchema.BkBizID.String():            eventGroup.BkBizID,
+			customreport.EventGroupDBSchema.TableID.String():            eventGroup.TableID,
+			customreport.EventGroupDBSchema.MaxRate.String():            eventGroup.MaxRate,
+			customreport.EventGroupDBSchema.Label.String():              eventGroup.Label,
+			customreport.EventGroupDBSchema.IsDelete.String():           eventGroup.IsDelete,
+			customreport.EventGroupDBSchema.IsSplitMeasurement.String(): eventGroup.IsSplitMeasurement,
+		}), ""))
+	} else {
+		if err := eventGroup.Create(db); err != nil {
+			return nil, err
+		}
 	}
 	tsGroupSvc := NewEventGroupSvc(&eventGroup)
 	logger.Infof("EventGroup [%v] now is created from data_id [%v] by operator [%s]", tsGroupSvc.EventGroupID, bkDataId, operator)
@@ -154,9 +167,16 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 	}
 
 	// 清除历史 DataSourceResultTable 数据
-	if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(resulttable.DataSourceResultTable{}.TableName(), map[string]interface{}{
+			resulttable.DataSourceResultTableDBSchema.BkDataId.String(): bkDataId,
+		}), ""))
+	} else {
+		if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
+			return nil, err
+		}
 	}
+
 	rtSvc := NewResultTableSvc(nil)
 	err = rtSvc.CreateResultTable(
 		eventGroup.BkDataID,
@@ -188,7 +208,11 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 			return nil, err
 		}
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -112,8 +113,18 @@ func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig 
 		StorageClusterID: storageClusterId,
 		Retention:        retention,
 	}
-	if err := kafkaStorage.Create(db); err != nil {
-		return err
+	if config.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(kafkaStorage.TableName(), map[string]interface{}{
+			storage.KafkaStorageDBSchema.TableID.String():          kafkaStorage.TableID,
+			storage.KafkaStorageDBSchema.Topic.String():            kafkaStorage.Topic,
+			storage.KafkaStorageDBSchema.Partition.String():        kafkaStorage.Partition,
+			storage.KafkaStorageDBSchema.StorageClusterID.String(): kafkaStorage.StorageClusterID,
+			storage.KafkaStorageDBSchema.Retention.String():        kafkaStorage.Retention,
+		}), ""))
+	} else {
+		if err := kafkaStorage.Create(db); err != nil {
+			return err
+		}
 	}
 	logger.Infof("table [%s] now has create kafka storage config", tableId)
 	return nil

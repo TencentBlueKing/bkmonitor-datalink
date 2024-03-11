@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -305,9 +306,21 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			LastModifyUser: "system",
 			IsDisabled:     isDisabled,
 		}
-		if err := rtf.Create(db); err != nil {
-			logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", rtf.TableID, rtf.FieldName, err)
-			continue
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
+				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
+				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
+				resulttable.ResultTableFieldDBSchema.FieldType.String():      rtf.FieldType,
+				resulttable.ResultTableFieldDBSchema.Tag.String():            rtf.Tag,
+				resulttable.ResultTableFieldDBSchema.IsConfigByUser.String(): rtf.IsConfigByUser,
+				resulttable.ResultTableFieldDBSchema.DefaultValue.String():   rtf.DefaultValue,
+				resulttable.ResultTableFieldDBSchema.IsDisabled.String():     rtf.IsDisabled,
+			}), ""))
+		} else {
+			if err := rtf.Create(db); err != nil {
+				logger.Errorf("create ResultTableField table_id [%s] field_name [%s], failed, %v", rtf.TableID, rtf.FieldName, err)
+				continue
+			}
 		}
 		logger.Infof("created ResultTableField table_id [%s] field_name [%s]", rtf.TableID, rtf.FieldName)
 	}
@@ -331,9 +344,16 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			rtf.IsDisabled = expectMetricStatus
 			rtf.LastModifyTime = time.Now().UTC()
 			updateRecords = append(updateRecords, rtf)
-			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime, err)
-				continue
+			if cfg.BypassSuffixPath != "" {
+				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
+					resulttable.ResultTableFieldDBSchema.Id.String():         rtf.Id,
+					resulttable.ResultTableFieldDBSchema.IsDisabled.String(): rtf.IsDisabled,
+				}), ""))
+			} else {
+				if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.IsDisabled, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+					logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime, err)
+					continue
+				}
 			}
 			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with is_disabled [%v] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.IsDisabled, rtf.LastModifyTime)
 		}
@@ -361,9 +381,22 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 			LastModifyUser: "system",
 			IsDisabled:     false,
 		}
-		if err := rtf.Create(db); err != nil {
-			logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, err)
-			continue
+		if cfg.BypassSuffixPath != "" {
+			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
+				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
+				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
+				resulttable.ResultTableFieldDBSchema.Description.String():    rtf.Description,
+				resulttable.ResultTableFieldDBSchema.FieldType.String():      rtf.FieldType,
+				resulttable.ResultTableFieldDBSchema.Tag.String():            rtf.Tag,
+				resulttable.ResultTableFieldDBSchema.IsConfigByUser.String(): rtf.IsConfigByUser,
+				resulttable.ResultTableFieldDBSchema.DefaultValue.String():   rtf.DefaultValue,
+				resulttable.ResultTableFieldDBSchema.IsDisabled.String():     rtf.IsDisabled,
+			}), ""))
+		} else {
+			if err := rtf.Create(db); err != nil {
+				logger.Errorf("create ResultTableField table_id [%s] field_name [%s] description [%s], failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, err)
+				continue
+			}
 		}
 		logger.Infof("created ResultTableField table_id [%s] field_name [%s] description [%s]", rtf.TableID, rtf.FieldName, rtf.Description)
 	}
@@ -385,9 +418,16 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 		if rtf.Description != expectTagDescription {
 			rtf.Description = expectTagDescription
 			rtf.LastModifyTime = time.Now().UTC()
-			if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
-				logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime, err)
-				continue
+			if cfg.BypassSuffixPath != "" {
+				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
+					resulttable.ResultTableFieldDBSchema.Id.String():          rtf.Id,
+					resulttable.ResultTableFieldDBSchema.Description.String(): rtf.Description,
+				}), ""))
+			} else {
+				if err := rtf.Update(db, resulttable.ResultTableFieldDBSchema.Description, resulttable.ResultTableFieldDBSchema.LastModifyTime); err != nil {
+					logger.Errorf("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v] failed, %v", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime, err)
+					continue
+				}
 			}
 			logger.Infof("update ResultTableField table_id [%v] field_name [%s] with description [%s] last_modify_time [%v]", rtf.TableID, rtf.FieldName, rtf.Description, rtf.LastModifyTime)
 		}
@@ -397,6 +437,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 }
 
 func (s TimeSeriesGroupSvc) MetricConsulPath() string {
+
 	return fmt.Sprintf("%s/metadata/influxdb_metrics/%v/time_series_metric", cfg.StorageConsulPathPrefix, s.BkDataID)
 }
 
@@ -424,8 +465,21 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		TimeSeriesGroupName: customGroupName,
 	}
 	db := mysql.GetDBSession().DB
-	if err := tsGroup.Create(db); err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(tsGroup.TableName(), map[string]interface{}{
+			customreport.TimeSeriesGroupDBSchema.BkDataID.String():           tsGroup.BkDataID,
+			customreport.TimeSeriesGroupDBSchema.BkBizID.String():            tsGroup.BkBizID,
+			customreport.TimeSeriesGroupDBSchema.TableID.String():            tsGroup.TableID,
+			customreport.TimeSeriesGroupDBSchema.MaxRate.String():            tsGroup.MaxRate,
+			customreport.TimeSeriesGroupDBSchema.Label.String():              tsGroup.Label,
+			customreport.TimeSeriesGroupDBSchema.IsEnable.String():           tsGroup.IsEnable,
+			customreport.TimeSeriesGroupDBSchema.IsDelete.String():           tsGroup.IsDelete,
+			customreport.TimeSeriesGroupDBSchema.IsSplitMeasurement.String(): tsGroup.IsSplitMeasurement,
+		}), ""))
+	} else {
+		if err := tsGroup.Create(db); err != nil {
+			return nil, err
+		}
 	}
 	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup)
 	logger.Infof("TimeSeriesGroup [%v] now is created from data_id [%v] by operator [%s]", tsGroupSvc.TimeSeriesGroupID, bkDataId, operator)
@@ -438,9 +492,16 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		option[k] = v
 	}
 	// 清除历史 DataSourceResultTable 数据
-	if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(resulttable.DataSourceResultTable{}.TableName(), map[string]interface{}{
+			customreport.TimeSeriesGroupDBSchema.BkDataID.String(): bkDataId,
+		}), ""))
+	} else {
+		if err := db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ?", bkDataId).Error; err != nil {
+			return nil, err
+		}
 	}
+
 	rtSvc := NewResultTableSvc(nil)
 	err = rtSvc.CreateResultTable(
 		tsGroup.BkDataID,
@@ -474,7 +535,11 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 			return nil, err
 		}
 	}
-	tx.Commit()
+	if cfg.BypassSuffixPath != "" {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
 	if err != nil {
 		return nil, err
 	}

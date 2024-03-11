@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/pingserver"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashring"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
@@ -340,6 +341,10 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			config.BkHostId = &host.BkHostId
 			metrics.MysqlCount(config.TableName(), "CreateSubscription_update_bkHostId", 1)
 			if cfg.BypassSuffixPath != "" {
+				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{
+					pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): config.SubscriptionId,
+					pingserver.PingServerSubscriptionConfigDBSchema.BkHostId.String():       config.BkHostId,
+				}), ""))
 				logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with bk_host_id [%v]", config.SubscriptionId, config.BkHostId)
 			} else {
 				if err := config.Update(db, pingserver.PingServerSubscriptionConfigDBSchema.BkHostId); err != nil {
@@ -364,8 +369,12 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 				logger.Infof("ping server subscription task [%v] config has changed, update it", config.SubscriptionId)
 				metrics.MysqlCount(config.TableName(), "CreateSubscription_update_config", 1)
 				if cfg.BypassSuffixPath != "" {
-					logger.Infof("[db_diff] UpdateSubscription with config [%s]", subscriptionParamsStr)
-					logger.Infof("[db_diff] update PingServerSubscriptionConfig [%v] with config [%s]", config.SubscriptionId, subscriptionParamsStr)
+					paramStr, _ := jsonx.MarshalString(subscriptionParams)
+					logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+					logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{
+						pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): config.SubscriptionId,
+						pingserver.PingServerSubscriptionConfigDBSchema.Config.String():         config.Config,
+					}), ""))
 				} else {
 					var resp define.APICommonResp
 					_, err := nodemanApi.UpdateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
@@ -395,8 +404,14 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			}
 			metrics.MysqlCount(config.TableName(), "CreateSubscription_create", 1)
 			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] CreateSubscription with config [%s]", subscriptionParamsStr)
-				logger.Infof("[db_diff] create PingServerSubscriptionConfig with config [%s]", subscriptionParamsStr)
+				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(subscriptionParamsStr), ""))
+				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(pingserver.PingServerSubscriptionConfig{}.TableName(), map[string]interface{}{
+					pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): 0,
+					pingserver.PingServerSubscriptionConfigDBSchema.IP.String():             host.BkCloudId,
+					pingserver.PingServerSubscriptionConfigDBSchema.BkHostId.String():       host.BkHostId,
+					pingserver.PingServerSubscriptionConfigDBSchema.Config.String():         subscriptionParamsStr,
+					pingserver.PingServerSubscriptionConfigDBSchema.PluginName.String():     pluginName,
+				}), ""))
 			} else {
 				var resp define.APICommonMapResp
 				_, err = nodemanApi.CreateSubscription().SetBody(subscriptionParams).SetResult(&resp).Request()
@@ -456,12 +471,19 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		if status == "STOP" {
 			continue
 		}
+		params := map[string]interface{}{"subscription_id": config.SubscriptionId, "action": "disable"}
 		metrics.MysqlCount(config.TableName(), "CreateSubscription_update_status", 1)
 		if cfg.BypassSuffixPath != "" {
-			logger.Infof("[db_diff] SwitchSubscription to disable for subscription_id [%v]", config.SubscriptionId)
+			paramStr, _ := jsonx.MarshalString(params)
+			logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+			logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{
+				pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): config.SubscriptionId,
+				pingserver.PingServerSubscriptionConfigDBSchema.Config.String():         config.Config,
+			}), ""))
+
 			logger.Infof("[db_diff] update PingServerSubscriptionConfig to disable for subscription_id [%v]", config.SubscriptionId)
 		} else {
-			_, err := nodemanApi.SwitchSubscription().SetBody(map[string]interface{}{"subscription_id": config.SubscriptionId, "action": "disable"}).Request()
+			_, err := nodemanApi.SwitchSubscription().SetBody(params).Request()
 			if err != nil {
 				logger.Errorf("SwitchSubscription to disable for subscription_id [%v] failed, %v", config.SubscriptionId, err)
 				continue

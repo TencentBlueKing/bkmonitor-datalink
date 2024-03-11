@@ -15,12 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
 func TestComparePath(t *testing.T) {
 	src := []string{"test/test1", "test/test2", "test/test3"}
 	bypass := []string{"test/test1", "test/test4"}
 	onlySrc, onlyBypass := comparePath(&src, &bypass)
-	
+
 	assert.Equal(t, len(onlySrc), 2)
 	assert.Equal(t, onlySrc, []string{"test/test2", "test/test3"})
 	assert.Equal(t, len(onlyBypass), 1)

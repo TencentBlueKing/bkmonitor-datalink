@@ -306,7 +306,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			LastModifyUser: "system",
 			IsDisabled:     isDisabled,
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
 				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
 				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
@@ -344,7 +344,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateMetrics(tableId string, metricMap
 			rtf.IsDisabled = expectMetricStatus
 			rtf.LastModifyTime = time.Now().UTC()
 			updateRecords = append(updateRecords, rtf)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
 					resulttable.ResultTableFieldDBSchema.Id.String():         rtf.Id,
 					resulttable.ResultTableFieldDBSchema.IsDisabled.String(): rtf.IsDisabled,
@@ -381,7 +381,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 			LastModifyUser: "system",
 			IsDisabled:     false,
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
 				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
 				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
@@ -418,7 +418,7 @@ func (s *TimeSeriesGroupSvc) BulkCreateOrUpdateTags(tableId string, tagMap map[s
 		if rtf.Description != expectTagDescription {
 			rtf.Description = expectTagDescription
 			rtf.LastModifyTime = time.Now().UTC()
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
 					resulttable.ResultTableFieldDBSchema.Id.String():          rtf.Id,
 					resulttable.ResultTableFieldDBSchema.Description.String(): rtf.Description,
@@ -465,7 +465,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		TimeSeriesGroupName: customGroupName,
 	}
 	db := mysql.GetDBSession().DB
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(tsGroup.TableName(), map[string]interface{}{
 			customreport.TimeSeriesGroupDBSchema.BkDataID.String():           tsGroup.BkDataID,
 			customreport.TimeSeriesGroupDBSchema.BkBizID.String():            tsGroup.BkBizID,
@@ -492,7 +492,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 		option[k] = v
 	}
 	// 清除历史 DataSourceResultTable 数据
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(resulttable.DataSourceResultTable{}.TableName(), map[string]interface{}{
 			customreport.TimeSeriesGroupDBSchema.BkDataID.String(): bkDataId,
 		}), ""))
@@ -535,7 +535,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 			return nil, err
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		tx.Rollback()
 	} else {
 		tx.Commit()

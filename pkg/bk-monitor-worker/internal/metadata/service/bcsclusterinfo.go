@@ -254,7 +254,7 @@ func (b BcsClusterInfoSvc) UpdateBcsClusterCloudIdConfig() error {
 		}
 	}
 	b.BkCloudId = &maxCountCloudId
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(b.TableName(), map[string]interface{}{
 			bcs.BCSClusterInfoDBSchema.ID.String():        b.ID,
 			bcs.BCSClusterInfoDBSchema.BkCloudId.String(): b.BkCloudId,
@@ -428,7 +428,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		Creator:           creator,
 		LastModifyUser:    creator,
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(cluster.TableName(), map[string]interface{}{
 			bcs.BCSClusterInfoDBSchema.ClusterID.String():         b.ClusterID,
 			bcs.BCSClusterInfoDBSchema.BCSApiClusterId.String():   b.BCSApiClusterId,
@@ -515,7 +515,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 			cluster.K8sEventDataID = bkDataId
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(cluster.TableName(), map[string]interface{}{
 			bcs.BCSClusterInfoDBSchema.ID.String():                 cluster.ID,
 			bcs.BCSClusterInfoDBSchema.K8sMetricDataID.String():    cluster.K8sMetricDataID,
@@ -598,7 +598,7 @@ func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config *unstructure
 	if action == "update" {
 		// 存在则更新
 		config.SetResourceVersion(resp.GetResourceVersion())
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			body, _ := jsonx.MarshalString(config.Object)
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(body), ""))
 		} else {
@@ -608,7 +608,7 @@ func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config *unstructure
 		}
 
 	} else {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			body, _ := jsonx.MarshalString(config.Object)
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(body), ""))
 		} else {
@@ -935,7 +935,7 @@ func (b BcsClusterInfoSvc) RefreshMetricLabel() error {
 	}
 	// 每个label批量更新一下
 	for label, ids := range labelFieldIdMap {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_metrics_label") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_metrics_label", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(customreport.TimeSeriesMetric{}.TableName(), map[string]interface{}{
 				customreport.TimeSeriesMetricDBSchema.FieldID.String(): ids,
 				customreport.TimeSeriesMetricDBSchema.Label.String():   label,
@@ -1337,7 +1337,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_cluster_resource") {
 				logger.Info(diffutil.BuildLogStr("refresh_cluster_resource", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sr.TableName(), map[string]interface{}{
 					space.SpaceResourceDBSchema.SpaceTypeId.String():     sr.SpaceTypeId,
 					space.SpaceResourceDBSchema.SpaceId.String():         sr.SpaceId,
@@ -1384,7 +1384,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_cluster_resource") {
 				logger.Info(diffutil.BuildLogStr("refresh_cluster_resource", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
 					space.SpaceResourceDBSchema.Id.String():              sp.Id,
 					space.SpaceResourceDBSchema.SpaceTypeId.String():     models.SpaceTypeBKCI,

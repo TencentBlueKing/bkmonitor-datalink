@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -139,7 +140,7 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 		EventGroupName: customGroupName,
 	}
 	db := mysql.GetDBSession().DB
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(eventGroup.TableName(), map[string]interface{}{
 			customreport.EventGroupDBSchema.BkDataID.String():           eventGroup.BkDataID,
 			customreport.EventGroupDBSchema.BkBizID.String():            eventGroup.BkBizID,
@@ -167,7 +168,7 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 	}
 
 	// 清除历史 DataSourceResultTable 数据
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(resulttable.DataSourceResultTable{}.TableName(), map[string]interface{}{
 			resulttable.DataSourceResultTableDBSchema.BkDataId.String(): bkDataId,
 		}), ""))
@@ -208,7 +209,7 @@ func (s EventGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, customGroup
 			return nil, err
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		tx.Rollback()
 	} else {
 		tx.Commit()

@@ -157,7 +157,7 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 				break
 			}
 			cmd := fmt.Sprintf("ALTER RETENTION POLICY %s ON %s DURATION %s SHARD DURATION %s DEFAULT", name, dbName, defaultDuration, shardDuration)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_default_rp") {
 				logger.Info(diffutil.BuildLogStr("refresh_default_rp", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
 			} else {
 				if _, err := influxdb.QueryDB(c, cmd, dbName, nil); err != nil {

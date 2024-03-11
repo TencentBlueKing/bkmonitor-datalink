@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -78,7 +79,7 @@ func (DataSourceOptionSvc) CreateOption(bkDataId uint, name string, value interf
 		BkDataId: bkDataId,
 		Name:     name,
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(dso.TableName(), map[string]interface{}{
 			resulttable.DataSourceOptionDBSchema.BkDataId.String():  dso.BkDataId,
 			resulttable.DataSourceOptionDBSchema.Name.String():      dso.Name,

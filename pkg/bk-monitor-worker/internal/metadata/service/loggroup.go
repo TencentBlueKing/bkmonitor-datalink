@@ -19,7 +19,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -155,8 +157,12 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 		// 对比新老配置
 		equal, _ := jsonx.CompareJson(subscrip.Config, newConfig)
 		if !equal {
-			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] custom log subscription task config has changed, old [%s] new [%s]", subscrip.Config, newConfig)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_custom_log_report_config") {
+				logger.Info(diffutil.BuildLogStr("refresh_custom_log_report_config", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(customreport.LogSubscriptionConfig{}.TableName(), map[string]interface{}{
+					customreport.LogSubscriptionConfigDBSchema.BkBizId.String(): s.BkBizID,
+					customreport.LogSubscriptionConfigDBSchema.LogName.String(): s.LogGroupName,
+					customreport.LogSubscriptionConfigDBSchema.Config.String():  newConfig,
+				}), ""))
 				metrics.MysqlCount(subscrip.TableName(), "deploy_update_config", float64(len(subscripList)))
 				return nil
 			}
@@ -179,8 +185,12 @@ func (s *LogGroupSvc) deploy(platformConfig map[string]interface{}, hosts []map[
 	if err != nil {
 		return err
 	}
-	if cfg.BypassSuffixPath != "" {
-		logger.Infof("[db_diff]create LogSubscriptionConfig with bk_biz_id [%v] log_name [%v] config [%s]", s.BkBizID, s.LogGroupName, newConfig)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_custom_log_report_config") {
+		logger.Info(diffutil.BuildLogStr("refresh_custom_log_report_config", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(customreport.LogSubscriptionConfig{}.TableName(), map[string]interface{}{
+			customreport.LogSubscriptionConfigDBSchema.BkBizId.String(): s.BkBizID,
+			customreport.LogSubscriptionConfigDBSchema.LogName.String(): s.LogGroupName,
+			customreport.LogSubscriptionConfigDBSchema.Config.String():  newConfig,
+		}), ""))
 		metrics.MysqlCount(customreport.LogSubscriptionConfig{}.TableName(), "deploy_create", 1)
 		return nil
 	}

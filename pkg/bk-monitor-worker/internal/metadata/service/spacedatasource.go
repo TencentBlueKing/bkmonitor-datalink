@@ -68,7 +68,7 @@ func (SpaceDataSourceSvc) BulkCreateRecords(spaceType string, SpaceDataIdMap map
 				FromAuthorization: fromAuthorization,
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "BulkCreateRecords_create_SpaceDataSource", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bkcc_space_data_source") {
 				logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
 					space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
 					space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
@@ -104,7 +104,7 @@ func (s *SpaceDataSourceSvc) SyncBkccSpaceDataSource() error {
 	}
 	db := mysql.GetDBSession().DB
 	metrics.MysqlCount(resulttable.DataSource{}.TableName(), "SyncBkccSpaceDataSource_updateZeroDataId", float64(len(zeroDataIdList)))
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bkcc_space_data_source") {
 		logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(resulttable.DataSource{}.TableName(), map[string]interface{}{
 			resulttable.DataSourceDBSchema.BkDataId.String():         zeroDataIdList,
 			resulttable.DataSourceDBSchema.IsPlatformDataId.String(): true,
@@ -327,7 +327,7 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 				BkDataId:    id,
 			}
 			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "CreateBkccSpaceDataSource_create_ds", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bkcc_space_data_source") {
 				logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
 					space.SpaceDataSourceDBSchema.SpaceTypeId.String(): sd.SpaceTypeId,
 					space.SpaceDataSourceDBSchema.SpaceId.String():     sd.SpaceId,
@@ -344,7 +344,7 @@ func (s *SpaceDataSourceSvc) CreateBkccSpaceDataSource(bizDataIdsMap map[int][]u
 	// 设置数据源类型为 bkcc
 	if len(dataIdList) != 0 {
 		metrics.MysqlCount(resulttable.DataSource{}.TableName(), "CreateBkccSpaceDataSource_update_ds", float64(len(dataIdList)))
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bkcc_space_data_source") {
 			logger.Info(diffutil.BuildLogStr("sync_bkcc_space_data_source", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
 				space.SpaceDataSourceDBSchema.BkDataId.String():    dataIdList,
 				space.SpaceDataSourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,

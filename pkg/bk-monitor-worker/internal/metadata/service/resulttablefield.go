@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -265,7 +266,7 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 			AliasName:      aliasName,
 			IsDisabled:     false,
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rtf.TableName(), map[string]interface{}{
 				resulttable.ResultTableFieldDBSchema.TableID.String():        rtf.TableID,
 				resulttable.ResultTableFieldDBSchema.FieldName.String():      rtf.FieldName,
@@ -292,7 +293,7 @@ func (s ResultTableFieldSvc) BulkCreateFields(tableId string, fieldList []map[st
 			return err
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		tx.Rollback()
 	} else {
 		tx.Commit()

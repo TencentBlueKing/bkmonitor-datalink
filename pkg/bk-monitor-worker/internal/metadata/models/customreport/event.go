@@ -128,7 +128,7 @@ func (e Event) ModifyEventList(eventInfoList map[string][]string) error {
 				logger.Errorf("update dimension list [%s] for [%s] [%s] error: %s", dimensionList, e.EventID, eventObj.EventName, err)
 				return
 			}
-			if config.BypassSuffixPath != "" {
+			if config.BypassSuffixPath != "" && !slicex.IsExistItem(config.SkipBypassTasks, "refresh_custom_report_2_node_man") {
 				logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(eventObj.TableName(), map[string]interface{}{
 					EventDBSchema.EventID.String():       eventObj.EventID,
 					EventDBSchema.EventName.String():     eventObj.EventName,

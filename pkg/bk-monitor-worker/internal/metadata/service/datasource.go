@@ -118,7 +118,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		SpaceTypeId:       "all",
 		SpaceUid:          "",
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
 			resulttable.DataSourceDBSchema.BkDataId.String():          ds.BkDataId,
 			resulttable.DataSourceDBSchema.Token.String():             ds.Token,
@@ -147,7 +147,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		return nil, err
 	}
 	ds.MqConfigId = mqConfig.Id
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
 			resulttable.DataSourceDBSchema.BkDataId.String():   ds.BkDataId,
 			resulttable.DataSourceDBSchema.MqConfigId.String(): ds.MqConfigId,
@@ -173,7 +173,7 @@ func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLab
 		}
 		logger.Infof("bk_data_id [%v] etl_config [%s] so is has now has option [%s] with value->[ms]", ds.BkDataId, etcConfig, models.OptionTimestampUnit)
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		tx.Rollback()
 	} else {
 		tx.Commit()
@@ -455,7 +455,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		Specification: map[string]interface{}{"route": []interface{}{config}},
 		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
 		paramStr, _ := jsonx.MarshalString(updateParam)
 		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 	} else {
@@ -487,7 +487,7 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		Route:     []interface{}{route},
 		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
 		paramStr, _ := jsonx.MarshalString(params)
 		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 	} else {
@@ -597,7 +597,7 @@ func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
 		},
 	}
 	var resp define.APICommonResp
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		paramStr, _ := jsonx.MarshalString(params)
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 		return 0, nil

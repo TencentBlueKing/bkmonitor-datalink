@@ -125,7 +125,7 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetrics(metricMap map[string]map[string]
 			TagList:        tagListStr,
 			LastModifyTime: time.Now(),
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(tsm.TableName(), map[string]interface{}{
 				customreport.TimeSeriesMetricDBSchema.GroupID.String():   tsm.GroupID,
 				customreport.TimeSeriesMetricDBSchema.TableID.String():   tsm.TableID,
@@ -208,7 +208,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			tsm.TagList = tagListStr
 		}
 		if isNeedUpdate {
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 				logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(tsm.TableName(), map[string]interface{}{
 					customreport.TimeSeriesMetricDBSchema.FieldID.String(): tsm.FieldID,
 					customreport.TimeSeriesMetricDBSchema.TagList.String(): tsm.TagList,
@@ -228,7 +228,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
 	disabledList := whiteListDisabledMetricSet.ToSlice()
 	if len(disabledList) != 0 {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "check_update_ts_metric") {
 			logger.Info(diffutil.BuildLogStr("check_update_ts_metric", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(customreport.TimeSeriesMetric{}.TableName(), map[string]interface{}{
 				customreport.TimeSeriesMetricDBSchema.GroupID.String():   groupId,
 				customreport.TimeSeriesMetricDBSchema.FieldName.String(): disabledList,

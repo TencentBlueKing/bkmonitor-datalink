@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -94,7 +95,7 @@ func (ServiceMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDa
 				ResourceCreateTime: time.Now(),
 			},
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(serviceMonitor.TableName(), map[string]interface{}{
 				bcs.ServiceMonitorInfoDBSchema.ClusterID.String():        serviceMonitor.ClusterID,
 				bcs.ServiceMonitorInfoDBSchema.Namespace.String():        serviceMonitor.Namespace,
@@ -132,7 +133,7 @@ func (ServiceMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDa
 	}
 	// 删除已经不存在的resource映射
 	if len(needDeleteIdList) != 0 {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(bcs.ServiceMonitorInfo{}.TableName(), map[string]interface{}{
 				bcs.ServiceMonitorInfoDBSchema.Id.String(): needDeleteIdList,
 			}), ""))

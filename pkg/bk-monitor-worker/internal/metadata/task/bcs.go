@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -137,7 +138,7 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 		bcsClusterInfo.LastModifyTime = time.Now()
 		bcsClusterInfo.LastModifyUser = "system"
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.LastModifyTime, bcs.BCSClusterInfoDBSchema.LastModifyUser)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(bcsClusterInfo.TableName(), map[string]interface{}{
 				bcs.BCSClusterInfoDBSchema.ID.String():            bcsClusterInfo.ID,
 				bcs.BCSClusterInfoDBSchema.ApiKeyContent.String(): bcsClusterInfo.ApiKeyContent,

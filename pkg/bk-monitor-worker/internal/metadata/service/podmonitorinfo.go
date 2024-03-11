@@ -11,7 +11,6 @@ package service
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"strings"
 	"time"
 
@@ -21,6 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/bcs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -93,7 +94,7 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 				ResourceCreateTime: time.Now(),
 			},
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(podMonitor.TableName(), map[string]interface{}{
 				bcs.PodMonitorInfoDBSchema.ClusterID.String():        podMonitor.ClusterID,
 				bcs.PodMonitorInfoDBSchema.Namespace.String():        podMonitor.Namespace,
@@ -131,7 +132,7 @@ func (PodMonitorInfoSvc) RefreshResource(clusterSvc *BcsClusterInfoSvc, bkDataId
 	}
 	// 删除已经不存在的resource映射
 	if len(needDeleteIdList) != 0 {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(bcs.PodMonitorInfo{}.TableName(), map[string]interface{}{
 				bcs.ServiceMonitorInfoDBSchema.Id.String(): needDeleteIdList,
 			}), ""))

@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -548,7 +549,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 		// 对比新老配置
 		equal, _ := jsonx.CompareJson(subscrip.Config, newConfig)
 		if !equal {
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_custom_report_2_node_man") {
 				paramStr, _ := jsonx.MarshalString(params)
 				logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 
@@ -583,7 +584,7 @@ func (s CustomReportSubscriptionSvc) CreateOrUpdateConfig(params map[string]inte
 	if err != nil {
 		return err
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_custom_report_2_node_man") {
 		paramStr, _ := jsonx.MarshalString(params)
 		logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 		metrics.MysqlCount(customreport.CustomReportSubscription{}.TableName(), "CreateOrUpdateConfig_create", 1)

@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -259,7 +260,7 @@ func (i InfluxdbStorage) CreateDatabase() error {
 	target.RawQuery = params.Encode()
 	req, err := http.NewRequest(http.MethodPost, target.String(), nil)
 	req.Header.Set("Content-type", "application/json")
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
 		logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(params.Encode()), ""))
 	} else {
 		resp, err := client.Do(req)
@@ -361,7 +362,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 					break
 				}
 				cmd := fmt.Sprintf(`ALTER RETENTION POLICY "%s" ON %s DURATION %s SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, shardGroupDuration)
-				if cfg.BypassSuffixPath != "" {
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
 					logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
 				} else {
 					if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {
@@ -387,7 +388,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 				return err
 			}
 			cmd := fmt.Sprintf(`CREATE RETENTION POLICY "%s" ON %s DURATION %s REPLICATION %v SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, 1, shardGroupDuration)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
 				logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
 			} else {
 				if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {

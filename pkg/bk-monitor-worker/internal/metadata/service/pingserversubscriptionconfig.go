@@ -340,7 +340,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		if config != nil && config.BkHostId == nil {
 			config.BkHostId = &host.BkHostId
 			metrics.MysqlCount(config.TableName(), "CreateSubscription_update_bkHostId", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_ping_server_2_node_man") {
 				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{
 					pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): config.SubscriptionId,
 					pingserver.PingServerSubscriptionConfigDBSchema.BkHostId.String():       config.BkHostId,
@@ -368,7 +368,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 			if !equal {
 				logger.Infof("ping server subscription task [%v] config has changed, update it", config.SubscriptionId)
 				metrics.MysqlCount(config.TableName(), "CreateSubscription_update_config", 1)
-				if cfg.BypassSuffixPath != "" {
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_ping_server_2_node_man") {
 					paramStr, _ := jsonx.MarshalString(subscriptionParams)
 					logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 					logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{
@@ -403,7 +403,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 				continue
 			}
 			metrics.MysqlCount(config.TableName(), "CreateSubscription_create", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_ping_server_2_node_man") {
 				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(subscriptionParamsStr), ""))
 				logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(pingserver.PingServerSubscriptionConfig{}.TableName(), map[string]interface{}{
 					pingserver.PingServerSubscriptionConfigDBSchema.SubscriptionId.String(): 0,
@@ -473,7 +473,7 @@ func (s PingServerSubscriptionConfigSvc) CreateSubscription(bkCloudId int, items
 		}
 		params := map[string]interface{}{"subscription_id": config.SubscriptionId, "action": "disable"}
 		metrics.MysqlCount(config.TableName(), "CreateSubscription_update_status", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_ping_server_2_node_man") {
 			paramStr, _ := jsonx.MarshalString(params)
 			logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 			logger.Info(diffutil.BuildLogStr("refresh_ping_server_2_node_man", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(config.TableName(), map[string]interface{}{

@@ -65,7 +65,7 @@ func (*EsSnapshotRestoreSvc) CleanAllExpiredRestore(ctx context.Context, goRouti
 				return
 			}
 			restore.ExpiredDelete = true
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "clean_expired_restore") {
 				logger.Info(diffutil.BuildLogStr("clean_expired_restore", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(restore.TableName(), map[string]interface{}{
 					storage.EsSnapshotRestoreDBSchema.RestoreID.String():     restore.RestoreID,
 					storage.EsSnapshotRestoreDBSchema.ExpiredDelete.String(): restore.ExpiredDelete,
@@ -114,7 +114,7 @@ func (s *EsSnapshotRestoreSvc) DeleteRestoreIndices(ctx context.Context) error {
 	logger.Infof("restore [%v] need delete indices [%s]", s.RestoreID, strings.Join(restoreIndexList, ","))
 	indexChunk := slicex.ChunkStringsBySize(&restoreIndexList, cfg.DefaultStringFilterSize, ",")
 	for _, idxStr := range indexChunk {
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "clean_expired_restore") {
 			body, _ := jsonx.MarshalString(strings.Split(idxStr, ","))
 			logger.Info(diffutil.BuildLogStr("clean_expired_restore", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(body), ""))
 		} else {
@@ -219,7 +219,7 @@ func (s *EsSnapshotRestoreSvc) GetCompleteDocCount(ctx context.Context) (int, er
 	s.CompleteDocCount = completeDocCount
 	s.LastModifyTime = time.Now()
 	updateFields = append(updateFields, storage.EsSnapshotRestoreDBSchema.CompleteDocCount, storage.EsSnapshotRestoreDBSchema.LastModifyTime)
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_restore") {
 		logger.Info(diffutil.BuildLogStr("refresh_es_restore", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
 			storage.EsSnapshotRestoreDBSchema.RestoreID.String():        s.RestoreID,
 			storage.EsSnapshotRestoreDBSchema.CompleteDocCount.String(): s.CompleteDocCount,

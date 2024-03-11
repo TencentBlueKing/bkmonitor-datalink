@@ -71,7 +71,7 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		}
 		// 名称变动，需要更新
 		metrics.MysqlCount(sp.TableName(), "RefreshBkccSpaceName_update", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space_name") {
 			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space_name", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
 				space.SpaceDBSchema.Id.String():        sp.Id,
 				space.SpaceDBSchema.SpaceName.String(): sp.SpaceName,
@@ -120,7 +120,7 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 		deleteSpaceIds := diffDelete.ToSlice()
 		// 删除和数据源的关联
 		count := float64(len(deleteSpaceIds))
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
 			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
 				space.SpaceDataSourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
 				space.SpaceDataSourceDBSchema.SpaceId.String():     deleteSpaceIds,
@@ -142,7 +142,7 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 		for _, sr := range srList {
 			needUpdateSpaceIds = append(needUpdateSpaceIds, sr.SpaceId)
 		}
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
 			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceResource{}.TableName(), map[string]interface{}{
 				space.SpaceResourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
 				space.SpaceResourceDBSchema.ResourceId.String():  deleteSpaceIds,
@@ -194,7 +194,7 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 			SpaceName:   bizName,
 		}
 		metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_create_Space", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
 			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
 				space.SpaceDBSchema.SpaceTypeId.String(): sp.SpaceTypeId,
 				space.SpaceDBSchema.SpaceId.String():     sp.SpaceId,
@@ -295,7 +295,7 @@ func (s *SpaceSvc) SyncBcsSpace() error {
 		spaceCode := projectIdMap[projectId]["projectId"]
 		spaceName := projectIdMap[projectId]["name"]
 		metrics.MysqlCount(space.Space{}.TableName(), "SyncBcsSpace_update", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 			logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
 				space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCI,
 				space.SpaceDBSchema.SpaceId.String():     projectId,
@@ -338,7 +338,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create Space with space_type_id [%s] space_id [%s] space_name [%s] space_code [%s] is_bcs_valid [%v]", models.SpaceTypeBKCI, projectCode, name, projectId, true)
 	metrics.MysqlCount(sp.TableName(), "CreateBcsSpace_create_bkci", 1)
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
 			space.SpaceDBSchema.SpaceTypeId.String(): sp.SpaceTypeId,
 			space.SpaceDBSchema.SpaceId.String():     sp.SpaceId,
@@ -390,7 +390,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBkcc.SpaceTypeId, srForBkcc.SpaceId, srForBkcc.ResourceType, srForBkcc.ResourceId)
 	metrics.MysqlCount(srForBkcc.TableName(), "CreateBcsSpace_create_bkcc", 1)
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(srForBkcc.TableName(), map[string]interface{}{
 			space.SpaceResourceDBSchema.SpaceTypeId.String():     srForBkcc.SpaceTypeId,
 			space.SpaceResourceDBSchema.SpaceId.String():         srForBkcc.SpaceId,
@@ -470,7 +470,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	}
 	logger.Infof("[db_diff]create SpaceResource with space_type_id [%s] space_id [%s] resource_type [%s] resource_id [%v]", srForBcs.SpaceTypeId, srForBcs.SpaceId, srForBcs.ResourceType, srForBcs.ResourceId)
 	metrics.MysqlCount(srForBcs.TableName(), "CreateBcsSpace_create_bcs", 1)
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 		logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(srForBcs.TableName(), map[string]interface{}{
 			space.SpaceResourceDBSchema.SpaceTypeId.String():     srForBcs.SpaceTypeId,
 			space.SpaceResourceDBSchema.SpaceId.String():         srForBcs.SpaceId,
@@ -492,7 +492,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	for _, sds := range spaceDataSourceList {
 		logger.Infof("[db_diff]create SpaceDataSource with space_type_id [%s] space_id [%s] bk_data_id [%v] from_authorization [%v]", sds.SpaceTypeId, sds.SpaceId, sds.BkDataId, sds.FromAuthorization)
 		metrics.MysqlCount(sds.TableName(), "CreateBcsSpace_create_sds", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 			logger.Info(diffutil.BuildLogStr("sync_bcs_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
 				space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
 				space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
@@ -506,7 +506,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 			}
 		}
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "sync_bcs_space") {
 		tx.Rollback()
 	} else {
 		tx.Commit()
@@ -613,7 +613,7 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_create", 1)
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_project_biz") {
 				logger.Info(diffutil.BuildLogStr("refresh_bcs_project_biz", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sr.TableName(), map[string]interface{}{
 					space.SpaceResourceDBSchema.SpaceTypeId.String():     sr.SpaceTypeId,
 					space.SpaceResourceDBSchema.SpaceId.String():         sr.SpaceId,
@@ -641,7 +641,7 @@ func (s *SpaceSvc) RefreshBcsProjectBiz() error {
 			continue
 		}
 		metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBcsProjectBiz_update", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_project_biz") {
 			logger.Info(diffutil.BuildLogStr("refresh_bcs_project_biz", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(res.TableName(), map[string]interface{}{
 				space.SpaceResourceDBSchema.Id.String():              res.Id,
 				space.SpaceResourceDBSchema.ResourceId.String():      res.ResourceId,
@@ -716,7 +716,7 @@ func (s *SpaceSvc) RefreshBkciSpaceName() error {
 		sp.SpaceName = name
 		sp.UpdateTime = time.Now()
 		metrics.MysqlCount(sp.TableName(), "RefreshBkciSpaceName_update", 1)
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkci_space_name") {
 			logger.Info(diffutil.BuildLogStr("refresh_bkci_space_name", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
 				space.SpaceDBSchema.Id.String():        sp.Id,
 				space.SpaceDBSchema.SpaceName.String(): sp.SpaceName,

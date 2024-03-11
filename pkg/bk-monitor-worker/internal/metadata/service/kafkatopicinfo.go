@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -57,7 +58,7 @@ func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 		FlushInterval: flushInterval,
 		ConsumeRate:   consumeRate,
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(info.TableName(), map[string]interface{}{
 			storage.KafkaTopicInfoDBSchema.BkDataId.String():      info.BkDataId,
 			storage.KafkaTopicInfoDBSchema.Topic.String():         info.Topic,
@@ -104,7 +105,7 @@ func (s KafkaTopicInfoSvc) RefreshTopicInfo() error {
 	}
 
 	s.Partition = partitionLen
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_kafka_topic_info") {
 		logger.Info(diffutil.BuildLogStr("refresh_kafka_topic_info", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
 			storage.KafkaTopicInfoDBSchema.Id.String():        s.Id,
 			storage.KafkaTopicInfoDBSchema.Partition.String(): s.Partition,

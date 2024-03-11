@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -113,7 +114,7 @@ func (KafkaStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig 
 		StorageClusterID: storageClusterId,
 		Retention:        retention,
 	}
-	if config.BypassSuffixPath != "" {
+	if config.BypassSuffixPath != "" && !slicex.IsExistItem(config.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(kafkaStorage.TableName(), map[string]interface{}{
 			storage.KafkaStorageDBSchema.TableID.String():          kafkaStorage.TableID,
 			storage.KafkaStorageDBSchema.Topic.String():            kafkaStorage.Topic,

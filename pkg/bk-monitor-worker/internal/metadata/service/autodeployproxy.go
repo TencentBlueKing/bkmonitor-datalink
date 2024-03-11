@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -170,7 +171,7 @@ func (s AutoDeployProxySvc) deployProxy(pluginName, version string, bkCloudId in
 		"job_type":      "MAIN_INSTALL_PLUGIN",
 		"bk_host_id":    deployHostList,
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "auto_deploy_proxy") {
 		paramStr, _ := jsonx.MarshalString(params)
 		logger.Info(diffutil.BuildLogStr("auto_deploy_proxy", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(paramStr), ""))
 	} else {

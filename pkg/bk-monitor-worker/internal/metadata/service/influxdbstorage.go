@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -124,7 +125,7 @@ func (InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConf
 		PartitionTag:           PartitionTag,
 		VmTableId:              VmTableId,
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(influxdb.TableName(), map[string]interface{}{
 			storage.InfluxdbStorageDBSchema.TableID.String():                influxdb.TableID,
 			storage.InfluxdbStorageDBSchema.StorageClusterID.String():       influxdb.StorageClusterID,

@@ -138,7 +138,7 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 	// 业务为0时更新数据源为平台级
 	if bkBizId == 0 {
 		ds.IsPlatformDataId = true
-		if cfg.BypassSuffixPath != "" {
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
 				resulttable.DataSourceDBSchema.IsPlatformDataId.String(): ds.IsPlatformDataId,
 			}), ""))
@@ -172,7 +172,7 @@ func (r ResultTableSvc) dealDataSourceByBizId(bkBizId int, ds *resulttable.DataS
 				BkDataId:          ds.BkDataId,
 				FromAuthorization: false,
 			}
-			if cfg.BypassSuffixPath != "" {
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 				logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sds.TableName(), map[string]interface{}{
 					space.SpaceDataSourceDBSchema.SpaceTypeId.String():       sds.SpaceTypeId,
 					space.SpaceDataSourceDBSchema.SpaceId.String():           sds.SpaceId,
@@ -242,7 +242,7 @@ func (r ResultTableSvc) CreateResultTable(
 		DataLabel:      nil,
 	}
 	db := mysql.GetDBSession().DB
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(rt.TableName(), map[string]interface{}{
 			resulttable.ResultTableDBSchema.TableId.String():        rt.TableId,
 			resulttable.ResultTableDBSchema.TableNameZh.String():    rt.TableNameZh,
@@ -296,7 +296,7 @@ func (r ResultTableSvc) CreateResultTable(
 		Creator:    operator,
 		CreateTime: time.Now(),
 	}
-	if cfg.BypassSuffixPath != "" {
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(dsrt.TableName(), map[string]interface{}{
 			resulttable.DataSourceResultTableDBSchema.BkDataId.String(): dsrt.BkDataId,
 			resulttable.DataSourceResultTableDBSchema.TableId.String():  dsrt.TableId,

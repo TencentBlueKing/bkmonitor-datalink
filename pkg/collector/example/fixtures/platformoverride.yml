@@ -1,0 +1,26 @@
+# 此文件为单测使用 请勿修改
+type: "platform_override"
+processor:
+    - name: "traces_deriver/max"
+      config:
+        operations:
+          - type: "max"
+            metric_name: "bk_apm_duration_max"
+            publish_interval: "10s"
+            gc_interval: "1h"
+            max_series: 1000
+            max_series_growth_rate: 100
+            rules:
+              - kind: "SPAN_KIND_SERVER"
+                predicate_key: ""
+                dimensions:
+                  - "resource.bk.instance.id"
+                  - "span_name"
+                  - "kind"
+                  - "status.code"
+                  - "resource.service.name"
+                  - "resource.service.version"
+                  - "resource.telemetry.sdk.name"
+                  - "resource.telemetry.sdk.version"
+                  - "resource.telemetry.sdk.language"
+                  - "attributes.peer.service"

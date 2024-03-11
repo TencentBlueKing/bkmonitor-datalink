@@ -57,7 +57,7 @@ bk-collector:
   # =============================== SubConfig ================================
   apm:
     patterns:
-      - "../example/fixtures/platform.yml"
+      - "../example/fixtures/platform*.yml"
       - "../example/fixtures/subconfig.yml"
 
   # =============================== Logging ==================================

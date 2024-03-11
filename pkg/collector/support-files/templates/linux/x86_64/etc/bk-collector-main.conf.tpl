@@ -1722,8 +1722,8 @@ bk-collector:
       type: "traces"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop_traces"
         - "rate_limiter/token_bucket"
+        - "sampler/drop_traces"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
         - "service_discover/common"
@@ -1788,8 +1788,8 @@ bk-collector:
       type: "profiles"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop_profiles"
         - "pprof_translator/common"
+        - "sampler/drop_profiles"
 
   # =============================== Exporter =================================
   exporter:

@@ -24,6 +24,7 @@ func TestAddStacktrace(t *testing.T) {
 	methodIdMap := types.NewIDMap[types.MethodRef](0)
 	methodIdMap.Set(types.MethodRef(1), 1)
 	methodIdMap.Set(types.MethodRef(2), 2)
+
 	// 构造一个堆栈
 	mockParser := &parser.Parser{
 		Stacktrace: types.StackTraceList{
@@ -31,18 +32,19 @@ func TestAddStacktrace(t *testing.T) {
 			StackTrace: []types.StackTrace{{Truncated: false, Frames: []types.StackFrame{{Method: 1}}}},
 		},
 		Methods: types.MethodList{
-			IDMap:  methodIdMap,
-			Method: []types.Method{{Type: sampleTypeCPU, Name: sampleTypeLock}, {Type: sampleTypeCPU, Name: sampleTypeWall}},
+			IDMap: methodIdMap,
+			Method: []types.Method{
+				{Type: sampleTypeCPU, Name: sampleTypeLock},
+				{Type: sampleTypeCPU, Name: sampleTypeWall},
+			},
 		},
 	}
 
 	mockLabelsSnapshot := &LabelsSnapshot{}
-
 	mockProfileMetadata := define.ProfileMetadata{
 		StartTime: time.Now(),
 		EndTime:   time.Now().Add(time.Minute),
 	}
-
 	builder := newJfrPprofBuilders(mockParser, mockLabelsSnapshot, mockProfileMetadata)
 
 	t.Run("add stacktrace", func(t *testing.T) {
@@ -53,7 +55,7 @@ func TestAddStacktrace(t *testing.T) {
 	t.Run("stacktrace found", func(t *testing.T) {
 		builder.addStacktrace(0, 0, 0, []int64{1, 2, 3})
 		trace := mockParser.GetStacktrace(0)
-		assert.Equal(t, len(trace.Frames), 1)
+		assert.Len(t, trace.Frames, 1)
 		assert.Equal(t, trace.Frames[0].Method, types.MethodRef(1))
 	})
 }
@@ -75,7 +77,6 @@ func TestGetLabelsFromSnapshot(t *testing.T) {
 		StartTime: time.Now(),
 		EndTime:   time.Now().Add(time.Minute),
 	}
-
 	builder := newJfrPprofBuilders(mockParser, mockLabelsSnapshot, mockProfileMetadata)
 
 	t.Run("contextId not found", func(t *testing.T) {
@@ -87,6 +88,6 @@ func TestGetLabelsFromSnapshot(t *testing.T) {
 	t.Run("contextId found", func(t *testing.T) {
 		labels, success := builder.getLabelsFromSnapshot(1)
 		assert.True(t, success)
-		assert.Equal(t, len(labels.Items), 2)
+		assert.Len(t, labels.Items, 2)
 	})
 }

@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	handledTotal = prometheus.NewCounterVec(
+	handledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "cluster_handled_total",
@@ -28,7 +29,7 @@ var (
 		[]string{"token"},
 	)
 
-	droppedTotal = prometheus.NewCounter(
+	droppedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "cluster_dropped_total",
@@ -36,7 +37,7 @@ var (
 		},
 	)
 
-	handledDuration = prometheus.NewHistogramVec(
+	handledDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "cluster_handled_duration_seconds",
@@ -46,7 +47,7 @@ var (
 		[]string{"token"},
 	)
 
-	preCheckFailedTotal = prometheus.NewCounterVec(
+	preCheckFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "cluster_precheck_failed_total",
@@ -55,15 +56,6 @@ var (
 		[]string{"record_type", "processor", "token", "code"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		handledTotal,
-		droppedTotal,
-		handledDuration,
-		preCheckFailedTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

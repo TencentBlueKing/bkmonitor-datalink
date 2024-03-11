@@ -15,13 +15,14 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 )
 
 var (
-	seriesExceededTotal = prometheus.NewCounterVec(
+	seriesExceededTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_exceeded_total",
@@ -30,7 +31,7 @@ var (
 		[]string{"record_type", "id"},
 	)
 
-	seriesTotal = prometheus.NewGaugeVec(
+	seriesTotal = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_count",
@@ -39,7 +40,7 @@ var (
 		[]string{"record_type", "id"},
 	)
 
-	addedSeriesTotal = prometheus.NewCounterVec(
+	addedSeriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "series_limiter_added_total",
@@ -48,14 +49,6 @@ var (
 		[]string{"record_type", "id"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		seriesExceededTotal,
-		seriesTotal,
-		addedSeriesTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

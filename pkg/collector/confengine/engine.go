@@ -15,6 +15,7 @@ import (
 	"github.com/elastic/go-ucfg"
 	"github.com/elastic/go-ucfg/yaml"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
@@ -22,7 +23,7 @@ import (
 )
 
 var (
-	loadConfigSuccessTotal = prometheus.NewCounter(
+	loadConfigSuccessTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "engine_load_config_success_total",
@@ -30,7 +31,7 @@ var (
 		},
 	)
 
-	loadConfigFailedTotal = prometheus.NewCounter(
+	loadConfigFailedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "engine_load_config_failed_total",
@@ -38,13 +39,6 @@ var (
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		loadConfigSuccessTotal,
-		loadConfigFailedTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

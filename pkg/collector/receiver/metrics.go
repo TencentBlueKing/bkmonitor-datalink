@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	tokenInfo = prometheus.NewGaugeVec(
+	tokenInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_token_info",
@@ -28,7 +29,7 @@ var (
 		[]string{"token", "metrics_id", "traces_id", "logs_id", "app_name", "biz_id"},
 	)
 
-	handledTotal = prometheus.NewCounterVec(
+	handledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_handled_total",
@@ -37,7 +38,7 @@ var (
 		[]string{"source", "protocol", "record_type", "token"},
 	)
 
-	droppedTotal = prometheus.NewCounterVec(
+	droppedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_dropped_total",
@@ -46,7 +47,7 @@ var (
 		[]string{"source", "protocol", "record_type"},
 	)
 
-	skippedTotal = prometheus.NewCounterVec(
+	skippedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_skipped_total",
@@ -55,7 +56,7 @@ var (
 		[]string{"source", "protocol", "record_type", "token"},
 	)
 
-	internalErrorTotal = prometheus.NewCounterVec(
+	internalErrorTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_internal_error_total",
@@ -64,7 +65,7 @@ var (
 		[]string{"source", "protocol", "record_type"},
 	)
 
-	handledDuration = prometheus.NewHistogramVec(
+	handledDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_handled_duration_seconds",
@@ -74,7 +75,7 @@ var (
 		[]string{"source", "protocol", "record_type", "token"},
 	)
 
-	receivedBytesTotal = prometheus.NewCounterVec(
+	receivedBytesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_received_bytes_total",
@@ -83,7 +84,7 @@ var (
 		[]string{"source", "protocol", "record_type", "token"},
 	)
 
-	receivedBytesSize = prometheus.NewHistogramVec(
+	receivedBytesSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_received_bytes_size",
@@ -93,7 +94,7 @@ var (
 		[]string{"source", "protocol", "record_type", "token"},
 	)
 
-	preCheckFailedTotal = prometheus.NewCounterVec(
+	preCheckFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "receiver_precheck_failed_total",
@@ -102,20 +103,6 @@ var (
 		[]string{"source", "protocol", "record_type", "processor", "token", "code"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		tokenInfo,
-		handledTotal,
-		droppedTotal,
-		skippedTotal,
-		receivedBytesTotal,
-		internalErrorTotal,
-		handledDuration,
-		preCheckFailedTotal,
-		receivedBytesSize,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

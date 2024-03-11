@@ -29,6 +29,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+const (
+	localSegmentURL  = "http://127.0.0.1:4318/v3/segment"
+	localSegmentsURL = "http://127.0.0.1:4318/v3/segments"
+)
+
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
@@ -60,10 +65,7 @@ func TestHttpReportSegments(t *testing.T) {
 	segments := []*agentv3.SegmentObject{mockGrpcTraceSegment(1)}
 	data, err := json.Marshal(segments)
 	assert.NoError(t, err)
-
-	url := "http://127.0.0.1:4318/v3/segments"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentsURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -83,10 +85,7 @@ func TestHttpReportSegmentsFailedPreCheck(t *testing.T) {
 	segments := []*agentv3.SegmentObject{mockGrpcTraceSegment(1)}
 	data, err := json.Marshal(segments)
 	assert.NoError(t, err)
-
-	url := "http://127.0.0.1:4318/v3/segments"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentsURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -104,10 +103,7 @@ func TestHttpReportSegmentsFailedPreCheck(t *testing.T) {
 
 func TestHttpReportSegmentsInvalidBody(t *testing.T) {
 	data := []byte("{-}")
-
-	url := "http://127.0.0.1:4318/v3/segments"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentsURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -125,9 +121,7 @@ func TestHttpReportSegmentsInvalidBody(t *testing.T) {
 
 func TestHttpReportSegmentsReadFailed(t *testing.T) {
 	buf := testkits.NewBrokenReader()
-	url := "http://127.0.0.1:4318/v3/segments"
-	req, err := http.NewRequest("POST", url, buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentsURL, buf)
 
 	n := 0
 	svc := HttpService{
@@ -147,10 +141,7 @@ func TestHttpReportSegment(t *testing.T) {
 	segment := mockGrpcTraceSegment(1)
 	data, err := json.Marshal(segment)
 	assert.NoError(t, err)
-
-	url := "http://127.0.0.1:4318/v3/segment"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -170,10 +161,7 @@ func TestHttpReportSegmentFailedPreCheck(t *testing.T) {
 	segment := mockGrpcTraceSegment(1)
 	data, err := json.Marshal(segment)
 	assert.NoError(t, err)
-
-	url := "http://127.0.0.1:4318/v3/segment"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -191,10 +179,7 @@ func TestHttpReportSegmentFailedPreCheck(t *testing.T) {
 
 func TestHttpReportSegmentInvalidBody(t *testing.T) {
 	data := []byte("{-}")
-
-	url := "http://127.0.0.1:4318/v3/segment"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentURL, bytes.NewBuffer(data))
 
 	n := 0
 	svc := HttpService{
@@ -212,9 +197,7 @@ func TestHttpReportSegmentInvalidBody(t *testing.T) {
 
 func TestHttpReportSegmentReadFailed(t *testing.T) {
 	buf := testkits.NewBrokenReader()
-	url := "http://127.0.0.1:4318/v3/segment"
-	req, err := http.NewRequest("POST", url, buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, localSegmentURL, buf)
 
 	n := 0
 	svc := HttpService{

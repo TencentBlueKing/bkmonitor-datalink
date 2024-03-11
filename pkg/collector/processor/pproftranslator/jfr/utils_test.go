@@ -63,21 +63,25 @@ func TestDecompress(t *testing.T) {
 }
 
 func TestReadGzipFile(t *testing.T) {
-	f, err := os.Create("test.gz")
-	if err != nil {
-		t.Fatal(err)
-	}
-	gw := gzip.NewWriter(f)
-	_, err = gw.Write([]byte("test data"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.NoError(t, gw.Close())
-	assert.NoError(t, f.Close())
+	t.Run("Success", func(t *testing.T) {
+		f, err := os.CreateTemp("", "gzip_test1")
+		assert.NoError(t, err)
+		defer os.Remove(f.Name())
 
-	data, err := ReadGzipFile("test.gz")
-	assert.Nil(t, err)
-	assert.Equal(t, []byte("test data"), data)
+		gw := gzip.NewWriter(f)
+		_, err = gw.Write([]byte("test data"))
+		assert.NoError(t, err)
+		assert.NoError(t, gw.Close())
+		assert.NoError(t, f.Close())
 
-	assert.NoError(t, os.Remove("test.gz"))
+		data, err := ReadGzipFile(f.Name())
+		assert.NoError(t, err)
+		assert.Equal(t, []byte("test data"), data)
+	})
+
+	t.Run("Failed", func(t *testing.T) {
+		data, err := ReadGzipFile("/tmp/no_exist.file")
+		assert.Error(t, err)
+		assert.Nil(t, data)
+	})
 }

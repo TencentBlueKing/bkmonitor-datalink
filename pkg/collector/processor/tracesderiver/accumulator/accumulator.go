@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -30,7 +31,7 @@ import (
 )
 
 var (
-	seriesExceededTotal = prometheus.NewCounterVec(
+	seriesExceededTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "accumulator_series_exceeded_total",
@@ -39,7 +40,7 @@ var (
 		[]string{"record_type", "id"},
 	)
 
-	seriesCount = prometheus.NewGaugeVec(
+	seriesCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "accumulator_series_count",
@@ -48,7 +49,7 @@ var (
 		[]string{"record_type", "id"},
 	)
 
-	addedSeriesTotal = prometheus.NewCounterVec(
+	addedSeriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "accumulator_added_series_total",
@@ -57,7 +58,7 @@ var (
 		[]string{"record_type", "id"},
 	)
 
-	gcDuration = prometheus.NewHistogram(
+	gcDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "accumulator_gc_duration_seconds",
@@ -66,7 +67,7 @@ var (
 		},
 	)
 
-	publishDuration = prometheus.NewHistogram(
+	publishDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "accumulator_published_duration_seconds",
@@ -75,16 +76,6 @@ var (
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		seriesExceededTotal,
-		seriesCount,
-		addedSeriesTotal,
-		gcDuration,
-		publishDuration,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

@@ -57,7 +57,7 @@ func (d *DefaultWatcher) start() {
 
 func (d *DefaultWatcher) watchWorker() {
 	ticker := time.NewTicker(d.config.watchWorkerInterval)
-	watchWorkerKeyPrefix := fmt.Sprintf("%s*", common.WorkerKeyPrefix())
+	watchWorkerKeyPrefix := fmt.Sprintf("%squeue:*", common.WorkerKeyPrefix())
 	logger.Infof("\nDaemonTask [DefaultWatcher] worker watcher started\n - \t "+
 		"interval: %s \n - \t watchKey: %s", d.config.watchWorkerInterval, watchWorkerKeyPrefix)
 	workerMarkMapping := make(map[string]watchWorkerMark)
@@ -204,96 +204,69 @@ func (d *DefaultWatcher) handleDeleteTask(taskMark watchTaskMark) {
 }
 
 func (d *DefaultWatcher) watchReloadRequest() {
-	ticker := time.NewTicker(d.config.watchTaskInterval)
-	watchKey := common.DaemonReloadReqQueue()
-	logger.Infof("\nDaemonTask [DefaultWatcher] reload-request watcher started\n - \t "+
-		"interval: %s \n - \t watchKey: %s", d.config.watchTaskInterval, watchKey)
+	watchChannel := common.DaemonReloadReqChannel()
 
-	retryRecords := make(map[string]int)
+	logger.Infof("\nDaemonTask [DefaultWatcher] reload-request watcher started\n - \t "+
+		"interval: %s \n - \t subscribeKey: %s", d.config.watchTaskInterval, watchChannel)
+
+	sub := d.redisClient.Subscribe(d.ctx, watchChannel)
+	ch := sub.Channel()
 	for {
 		select {
-		case <-ticker.C:
-			requests, err := d.redisClient.SMembers(d.ctx, watchKey).Result()
+		case <-d.ctx.Done():
+			sub.Close()
+			logger.Info("Daemon task scheduler reload-request subscribe stopped.")
+			return
+		case msg := <-ch:
+			taskUniId := msg.Payload
+			// Step1: 判断任务是否存在
+			taskInfo, err := d.getDaemonTask(taskUniId)
 			if err != nil {
-				logger.Errorf("Failed to obtained reload-request from queue: %s", watchKey)
+				logger.Errorf(
+					"Failed to get daemon task of taskUniId: %s, error: %s",
+					taskUniId, err,
+				)
 				continue
 			}
-
-			var reassignTasks []watchTaskMark
-			for index, taskUniId := range requests {
-				// Step1: 判断任务是否存在
-				taskInfo, err := d.getDaemonTask(taskUniId)
-				if err != nil {
-					logger.Errorf(
-						"Failed to execute [isTaskExist] with queue: %s, index: %d, error: %s",
-						watchKey, index, err,
-					)
-					continue
-				}
-				if taskInfo == nil {
-					logger.Errorf(
-						"TaskUniId: %s not found in queue: %s, index: %d, error: %s",
-						taskUniId, common.DaemonTaskKey(), index, err,
-					)
-					continue
-				}
-
-				// Step2: 判断是否超过重试最大次数
-				retryCount, exist := retryRecords[taskUniId]
-				if exist && retryCount >= 5 {
-					d.redisClient.SRem(d.ctx, watchKey)
-					delete(retryRecords, taskUniId)
-					logger.Errorf(
-						"TaskUniId: %s has been retried > 5 times, deleted from queue: %s", taskUniId, watchKey,
-					)
-					continue
-				}
-
-				// Step3: 添加到待重新分配队列
-				reassignTasks = append(reassignTasks, watchTaskMark{taskUniId: taskUniId, task: *taskInfo})
+			if taskInfo == nil {
+				logger.Errorf(
+					"TaskUniId: %s not found in queue: %s, error: %s",
+					taskUniId, common.DaemonTaskKey(), err,
+				)
+				continue
 			}
-
-			d.reassign(reassignTasks, retryRecords)
-		case <-d.ctx.Done():
-			logger.Info("Daemon task scheduler reload-request watcher stopped.")
-			ticker.Stop()
-			return
+			d.reassign(watchTaskMark{taskUniId: taskUniId, task: *taskInfo})
 		}
 	}
 }
 
-func (d *DefaultWatcher) reassign(tasks []watchTaskMark, retryRecords map[string]int) {
+func (d *DefaultWatcher) reassign(task watchTaskMark) {
 
-	for index, taskItem := range tasks {
-
-		// Step1: 判断 Binding 是否存在
-		workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(taskItem.taskUniId)
-		if err != nil {
-			logger.Errorf(
-				"[reassign] Failed to obtained binding with taskUniId: %s, error: %s",
-				taskItem.taskUniId, err,
-			)
-			retryRecords[taskItem.taskUniId]++
-			continue
-		}
-		if workerId == "" {
-			// Binding 不存在 -> 直接添加
-			logger.Warnf(
-				"TaskUniId: %s exist in the task queue, but not in the binding queue, this task will be added normally", taskItem.taskUniId,
-			)
-			d.handleAddTask(taskItem)
-		} else {
-			// Binding 存在 -> 保留 WorkerId 关系
-			if err = GetBinding().addReloadExecuteRequest(taskItem.taskUniId, taskItem.task, workerId); err != nil {
-				logger.Errorf("Failed to send reload singal to worker queue, error: %s", err)
-				continue
-			}
-		}
-
-		delete(retryRecords, taskItem.taskUniId)
-		d.redisClient.SRem(d.ctx, common.DaemonReloadReqQueue(), taskItem.taskUniId)
-		logger.Infof("[%d/%d] Reload taskUniId: %s successfully", index+1, len(tasks), taskItem.taskUniId)
+	// Step1: 判断 Binding 是否存在
+	workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(task.taskUniId)
+	if err != nil {
+		logger.Errorf(
+			"[reassign] Failed to obtained binding with taskUniId: %s, error: %s",
+			task.taskUniId, err,
+		)
+		return
 	}
+	if workerId == "" {
+		// Binding 不存在 -> 直接添加
+		logger.Warnf(
+			"TaskUniId: %s exist in the task queue, "+
+				"but not in the binding queue, this task will be added normally", task.taskUniId,
+		)
+		d.handleAddTask(task)
+	} else {
+		// Binding 存在 -> 保留 WorkerId 关系
+		if err = GetBinding().addReloadExecuteRequest(task.taskUniId, task.task, workerId); err != nil {
+			logger.Errorf("Failed to send reload singal to worker queue, error: %s", err)
+			return
+		}
+	}
+
+	logger.Infof("Reload taskUniId: %s successfully", task.taskUniId)
 }
 
 // getDaemonTask obtained the daemon task

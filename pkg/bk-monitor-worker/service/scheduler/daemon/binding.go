@@ -70,21 +70,15 @@ func (b *Binding) addTaskWithUniId(taskUniId string, t task.SerializerTask) {
 	return
 }
 
-func (b *Binding) addTaskToWorkerWithUniId(taskUniId string, t task.SerializerTask, workerId string) {
-	if err := b.addBinding(
-		TaskBinding{UniId: taskUniId, SerializerTask: t},
-		WorkerBinding{WorkerId: workerId},
-	); err != nil {
-		logger.Errorf("[addTaskToWorkerWithUniId] Failed to add taskUniId: %s to specific worker: %s", taskUniId, workerId)
-	}
-}
-
 func (b *Binding) addReloadExecuteRequest(taskUniId string, t task.SerializerTask, workerId string) error {
 	bind := TaskBinding{UniId: taskUniId, SerializerTask: t}
-	workerBindingBytes, _ := jsonx.Marshal(bind)
-	if err := b.redisClient.SAdd(
-		context.Background(), common.DaemonReloadExecQueue(workerId), workerBindingBytes,
-	).Err(); err != nil {
+	workerBindingBytes, err := jsonx.Marshal(bind)
+	if err != nil {
+		return err
+	}
+
+	if err = b.redisClient.Publish(
+		context.Background(), common.DaemonReloadExecQueue(workerId), workerBindingBytes).Err(); err != nil {
 		return err
 	}
 

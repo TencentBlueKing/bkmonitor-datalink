@@ -183,10 +183,7 @@ func (r *RedisCache) Query(key string) ([]byte, error) {
 }
 
 func (r *RedisCache) Close() {
-	if err := r.client.Close(); err != nil {
-		logger.Errorf("close redisCache failed, error: %s", err)
-		return
-	}
+	r.client.Close()
 }
 
 func newRedisCache(ctx context.Context, options RedisCacheOptions) (*RedisCache, error) {

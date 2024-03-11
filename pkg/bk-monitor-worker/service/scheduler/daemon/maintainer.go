@@ -252,38 +252,27 @@ func (r *RunMaintainer) listenReloadSignal() {
 			"\n - \t workerId: %s \n - \t listen: %s \n - \t queue: %s \n - \t interval: %s\n",
 		r.listenWorkerId, r.listenWorkerId, r.listenReloadKey, r.config.checkInterval,
 	)
-	ticker := time.NewTicker(r.config.checkInterval)
 
+	sub := rdb.GetRDB().Client().Subscribe(r.ctx, r.listenReloadKey)
+	ch := sub.Channel()
 	for {
 		select {
-		case <-ticker.C:
-			// atomic pop + delete
-			tx := rdb.GetRDB().Client().TxPipeline()
-			members := tx.SMembers(r.ctx, r.listenReloadKey)
-			tx.Del(r.ctx, r.listenReloadKey)
-
-			_, err := tx.Exec(r.ctx)
-			if err != nil {
-				logger.Errorf("[listenReloadSignal] Failed to perform redis atomic operation, error: %s", err)
-				continue
-			}
-
-			for index, bindingStr := range members.Val() {
-				var binding TaskBinding
-				if err = json.Unmarshal([]byte(bindingStr), &binding); err != nil {
-					logger.Errorf(
-						"[listenReloadSignal] "+
-							"Failed to unmarshal queues[%d] data to binding, data: %s, error: %s",
-						index, bindingStr, err,
-					)
-					continue
-				}
-				r.handleReloadBinding(binding)
-			}
 		case <-r.ctx.Done():
-			ticker.Stop()
+			sub.Close()
 			logger.Infof("[ReloadSignalListener] receive lifeline context done singal, stopped and return")
 			return
+		case msg := <-ch:
+			bindingStr := msg.Payload
+			var binding TaskBinding
+			if err := json.Unmarshal([]byte(bindingStr), &binding); err != nil {
+				logger.Errorf(
+					"[listenReloadSignal] "+
+						"Failed to unmarshal channel:%s data to binding, data: %s, error: %s",
+					r.listenReloadKey, bindingStr, err,
+				)
+				continue
+			}
+			r.handleReloadBinding(binding)
 		}
 	}
 }

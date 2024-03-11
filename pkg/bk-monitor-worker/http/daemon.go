@@ -53,20 +53,25 @@ func ReloadDaemonTask(c *gin.Context) {
 
 	broker := rdb.GetRDB()
 	// 检查是否已经存在于重载队列中
-	exist, err := broker.Client().SIsMember(context.Background(), common.DaemonReloadReqQueue(), params.UniId).Result()
+	exist, err := broker.Client().SIsMember(context.Background(), common.DaemonReloadReqChannel(), params.UniId).Result()
 	if err != nil {
 		metrics.RequestApiCount(c.Request.Method, DaemonTaskReload, "failure")
 		BadReqResponse(c, "found: %s if in queue failed, error: %s", params.UniId, err)
 		return
 	}
 	if exist {
-		metrics.RequestApiCount(c.Request.Method, DaemonTaskReload, "failure")
-		BadReqResponse(c, "task: %s already in %s queue", params.UniId, common.DaemonReloadReqQueue())
+		metrics.RequestApiCount(c.Request.Method, DaemonTaskReload, "success")
+		Response(
+			c,
+			&gin.H{"data": fmt.Sprintf(
+				"task: %s already in %s queue", params.UniId, common.DaemonReloadReqChannel())},
+		)
 		return
 	}
 
 	// 推送重载请求到调度队列中
-	if err = broker.Client().SAdd(context.Background(), common.DaemonReloadReqQueue(), params.UniId).Err(); err != nil {
+	if err = broker.Client().Publish(
+		context.Background(), common.DaemonReloadReqChannel(), params.UniId).Err(); err != nil {
 		metrics.RequestApiCount(c.Request.Method, DaemonTaskReload, "failure")
 		BadReqResponse(c, "get daemonTask failed, error: %v", err)
 		return
@@ -74,7 +79,7 @@ func ReloadDaemonTask(c *gin.Context) {
 
 	metrics.RequestApiCount(c.Request.Method, DaemonTaskReload, "success")
 	metrics.RequestApiCostTime(c.Request.Method, DaemonTaskReload, beginTime)
-	Response(c, &gin.H{"data": fmt.Sprintf("send %s to queue: %s", params.UniId, common.DaemonReloadReqQueue())})
+	Response(c, &gin.H{"data": fmt.Sprintf("send %s to channel: %s", params.UniId, common.DaemonReloadReqChannel())})
 }
 
 func getDaemonTask(taskUniId string) ([]byte, error) {

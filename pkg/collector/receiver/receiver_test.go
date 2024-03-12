@@ -65,6 +65,10 @@ func TestReceiver(t *testing.T) {
         enabled: true
       skywalking:
         enabled: true
+      pyroscope:
+        enabled: true
+      fta:
+        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
@@ -77,6 +81,8 @@ func TestReceiver(t *testing.T) {
 	componentsReady[define.SourceRemoteWrite] = func() { t.Logf("%s ready", define.SourceRemoteWrite) }
 	componentsReady[define.SourceZipkin] = func() { t.Logf("%s ready", define.SourceZipkin) }
 	componentsReady[define.SourceSkywalking] = func() { t.Logf("%s ready", define.SourceSkywalking) }
+	componentsReady[define.SourcePyroscope] = func() { t.Logf("%s ready", define.SourcePyroscope) }
+	componentsReady[define.SourceFta] = func() { t.Logf("%s ready", define.SourceFta) }
 
 	r.ready()
 	assert.NoError(t, r.Start())

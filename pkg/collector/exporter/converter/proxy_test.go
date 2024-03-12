@@ -27,8 +27,8 @@ func unmarshalProxyData(s string) interface{} {
 	return data
 }
 
-func TestConvertProxyEventsData(t *testing.T) {
-	data := `
+const (
+	proxyEventData = `
 [{
 	"event_name": "event1",
 	"event": {
@@ -56,12 +56,15 @@ func TestConvertProxyEventsData(t *testing.T) {
 	"timestamp": 1709899044853
 }]
 `
+)
+
+func TestConvertProxyEventsData(t *testing.T) {
 	pd := &define.ProxyData{
 		DataId:      1001,
 		AccessToken: "1000_accesstoken",
 		Version:     "v2",
 		Type:        define.ProxyEventType,
-		Data:        unmarshalProxyData(data),
+		Data:        unmarshalProxyData(proxyEventData),
 	}
 
 	events := make([]define.Event, 0)
@@ -112,8 +115,25 @@ func TestConvertProxyEventsData(t *testing.T) {
 	}
 }
 
-func TestConvertProxyMetricsData(t *testing.T) {
-	data := `
+func BenchmarkConvertProxyEventsData(b *testing.B) {
+	pd := &define.ProxyData{
+		DataId:      1001,
+		AccessToken: "1000_accesstoken",
+		Version:     "v2",
+		Type:        define.ProxyEventType,
+		Data:        unmarshalProxyData(proxyEventData),
+	}
+
+	for i := 0; i < b.N; i++ {
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProxy,
+			Data:       pd,
+		}, func(evts ...define.Event) {})
+	}
+}
+
+const (
+	proxyMetricData = `
 [{
 	"metrics": {
 		"load1": 1
@@ -139,12 +159,15 @@ func TestConvertProxyMetricsData(t *testing.T) {
 	"timestamp": 1709899044853
 }]
 `
+)
+
+func TestConvertProxyMetricsData(t *testing.T) {
 	pd := &define.ProxyData{
 		DataId:      1001,
 		AccessToken: "1000_accesstoken",
 		Version:     "v2",
 		Type:        define.ProxyMetricType,
-		Data:        unmarshalProxyData(data),
+		Data:        unmarshalProxyData(proxyMetricData),
 	}
 
 	events := make([]define.Event, 0)
@@ -190,5 +213,22 @@ func TestConvertProxyMetricsData(t *testing.T) {
 	assert.Len(t, events, 2)
 	for i, event := range events {
 		assert.Equal(t, excepted[i], event.Data())
+	}
+}
+
+func BenchmarkConvertProxyMetricsData(b *testing.B) {
+	pd := &define.ProxyData{
+		DataId:      1001,
+		AccessToken: "1000_accesstoken",
+		Version:     "v2",
+		Type:        define.ProxyMetricType,
+		Data:        unmarshalProxyData(proxyMetricData),
+	}
+
+	for i := 0; i < b.N; i++ {
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProxy,
+			Data:       pd,
+		}, func(evts ...define.Event) {})
 	}
 }

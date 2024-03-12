@@ -151,6 +151,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		lookBackDelta time.Duration
 
 		promQL parser.Expr
+
+		promExprOpt = &structured.PromExprOption{}
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts")
@@ -195,15 +197,20 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		End:   end.Unix(),
 	})
 
-	referenceNameMetric := make(map[string]string, len(query.QueryList))
-	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
-
 	// 判断是否是直查
 	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
 	if err != nil {
 		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
 	}
 	if ok {
+		// vm 跟 prom 的函数有差异，需要转换一下以完全适配 prometheus。
+		// https://docs.victoriametrics.com/metricsql/#delta
+		promExprOpt.FunctionReplace = map[string]string{
+			"increase": "increase_prometheus",
+			"delta":    "delta_prometheus",
+			"changes":  "changes_prometheus",
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +239,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		}, lookBackDelta)
 	}
 
-	promQL, err = query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+	promQL, err = query.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return nil, err
 	}
@@ -313,9 +320,10 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 		return nil, nil
 	}
 
-	// 是否打开对齐
-	referenceNameMetric := make(map[string]string, len(query.QueryList))
-	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
+	promExprOpt := &structured.PromExprOption{}
+
+	promExprOpt.ReferenceNameMetric = make(map[string]string, len(query.QueryList))
+	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(query.QueryList))
 
 	for _, q := range query.QueryList {
 		// 保留查询条件
@@ -323,16 +331,16 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 		if err != nil {
 			return nil, err
 		}
-		referenceNameLabelMatcher[q.ReferenceName] = matcher
+		promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] = matcher
 
 		router, err := q.ToRouter()
 		if err != nil {
 			return nil, err
 		}
-		referenceNameMetric[q.ReferenceName] = router.RealMetricName()
+		promExprOpt.ReferenceNameMetric[q.ReferenceName] = router.RealMetricName()
 	}
 
-	promQL, err := query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+	promQL, err := query.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err

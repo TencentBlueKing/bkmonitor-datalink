@@ -199,7 +199,16 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 	return queryCM, nil
 }
 
-func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, referenceNameLabelMatcher map[string][]*labels.Matcher) (parser.Expr, error) {
+type PromExprOption struct {
+	ReferenceNameMetric       map[string]string
+	ReferenceNameLabelMatcher map[string][]*labels.Matcher
+	FunctionReplace           map[string]string
+}
+
+func (q *QueryTs) ToPromExpr(
+	ctx context.Context,
+	promExprOpt *PromExprOption,
+) (parser.Expr, error) {
 	var (
 		err     error
 		result  parser.Expr
@@ -221,14 +230,7 @@ func (q *QueryTs) ToPromExpr(ctx context.Context, referenceNameMetric map[string
 
 	// 获取指标查询的表达式
 	for _, query := range q.QueryList {
-		var labelsMatcher []*labels.Matcher
-		if referenceNameLabelMatcher != nil {
-			if v, ok := referenceNameLabelMatcher[query.ReferenceName]; ok {
-				labelsMatcher = v
-			}
-		}
-
-		if expr, err = query.ToPromExpr(ctx, referenceNameMetric, labelsMatcher...); err != nil {
+		if expr, err = query.ToPromExpr(ctx, promExprOpt); err != nil {
 			return nil, err
 		}
 		exprMap[query.ReferenceName] = &PromExpr{
@@ -649,7 +651,7 @@ func (q *Query) BuildMetadataQuery(
 	return query, nil
 }
 
-func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]string, matchers ...*labels.Matcher) (parser.Expr, error) {
+func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (parser.Expr, error) {
 	var (
 		metric string
 		err    error
@@ -658,14 +660,33 @@ func (q *Query) ToPromExpr(ctx context.Context, referenceNameMetric map[string]s
 		step           time.Duration
 		dTmp           model.Duration
 
-		result parser.Expr
+		result   parser.Expr
+		matchers []*labels.Matcher
 	)
 
 	// 判断是否使用别名作为指标
 	metric = q.ReferenceName
-	if referenceNameMetric != nil {
-		if m, ok := referenceNameMetric[q.ReferenceName]; ok {
+	if promExprOpt != nil {
+		// 替换指标名
+		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
 			metric = m
+		}
+
+		// 增加 Matchers
+		for _, m := range promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] {
+			matchers = append(matchers, m)
+		}
+
+		// 替换函数名
+		if nf, ok := promExprOpt.FunctionReplace[q.TimeAggregation.Function]; ok {
+			q.TimeAggregation.Function = nf
+		}
+
+		// 替换函数名
+		for aggIdx, aggrVal := range q.AggregateMethodList {
+			if nf, ok := promExprOpt.FunctionReplace[aggrVal.Method]; ok {
+				q.AggregateMethodList[aggIdx].Method = nf
+			}
 		}
 	}
 

@@ -43,6 +43,10 @@ func NewCacheManagerByType(opt *alarm.RedisOptions, prefix string, cacheType str
 		cacheManager, err = NewHostAndTopoCacheManager(prefix, opt)
 	case "business":
 		cacheManager, err = NewBusinessCacheManager(prefix, opt)
+	case "module":
+		cacheManager, err = NewModuleCacheManager(prefix, opt)
+	case "set":
+		cacheManager, err = NewSetCacheManager(prefix, opt)
 	default:
 		err = errors.Errorf("unsupported cache type: %s", cacheType)
 	}

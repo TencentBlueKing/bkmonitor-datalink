@@ -152,7 +152,7 @@ func (w *CmdbResourceWatcher) SetCmdbResourceEvent(ctx context.Context, resource
 }
 
 // Watch 监听cmdb资源变更
-func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) error {
+func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
 	params := map[string]interface{}{
 		"bk_fields":           CmdbResourceTypeMap[resourceType],
 		"bk_resource":         resourceType,
@@ -163,6 +163,8 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 	bkCursor := w.GetBkCursor(ctx, resourceType)
 	if bkCursor != "" {
 		params["bk_cursor"] = bkCursor
+	} else {
+		params["bk_start_from"] = time.Now().Unix()
 	}
 
 	// 请求cmdb资源变更事件API
@@ -170,13 +172,13 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetBody(params).SetResult(&resp).Request()
 	err = api.HandleApiResultError(resp.ApiCommonRespMeta, err, "watch cmdb resource api failed")
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// 无变更事件
 	if !resp.Data.BkWatched {
 		if len(resp.Data.BkEvents) == 0 {
-			return nil
+			return false, nil
 		}
 		// 无变更事件，但有游标
 		err := w.SetBkCursor(ctx, resourceType, resp.Data.BkEvents[0].BkCursor)
@@ -184,7 +186,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 			logger.Error("set cmdb resource watch cursor error: %v", err)
 		}
 
-		return nil
+		return false, nil
 	}
 
 	// 处理cmdb资源变更事件
@@ -223,7 +225,7 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 			logger.Error("set cmdb resource watch event error: %v", err)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // Run 启动cmdb资源监听任务
@@ -237,18 +239,25 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 		resourceType := resourceType
 		go func() {
 			defer waitGroup.Done()
-
+			lastTime := time.Now()
+			haveEvent, err := true, error(nil)
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					err := w.Watch(ctx, resourceType)
+					// 如果上次监听时间小于5秒且监听无事件，则等待到5秒
+					if !haveEvent && time.Now().Sub(lastTime) < time.Second*5 {
+						time.Sleep(time.Second*5 - time.Now().Sub(lastTime))
+					}
+
+					haveEvent, err = w.Watch(ctx, resourceType)
 					if err != nil {
 						logger.Errorf("watch cmdb resource(%s) error: %v", resourceType, err)
-						return
 					}
 				}
+				// 记录上次监听时间
+				lastTime = time.Now()
 			}
 		}()
 	}

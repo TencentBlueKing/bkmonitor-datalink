@@ -143,3 +143,25 @@ func (c *Client) ResourceWatch(opts ...define.OperationOption) define.Operation 
 		Path:   path,
 	}, opts...)
 }
+
+// SearchModule for cmdb resource search_module
+// 查询模块信息
+func (c *Client) SearchModule(opts ...define.OperationOption) define.Operation {
+	path := "search_module"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_module",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// SearchSet for cmdb resource search_set
+// 查询集群信息
+func (c *Client) SearchSet(opts ...define.OperationOption) define.Operation {
+	path := "search_set"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_set",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

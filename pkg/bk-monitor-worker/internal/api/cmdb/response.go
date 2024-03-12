@@ -17,8 +17,8 @@ import (
 )
 
 type SearchCloudAreaResp struct {
-	define.ApiCommonRespMeta
-	Data SearchCloudAreaData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     SearchCloudAreaData `json:"data"`
 }
 
 type SearchCloudAreaData struct {
@@ -44,8 +44,8 @@ type SearchCloudAreaDataInfo struct {
 }
 
 type ListBizHostsTopoResp struct {
-	define.ApiCommonRespMeta
-	Data ListBizHostsTopoData `json:"data" mapstructure:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ListBizHostsTopoData `json:"data" mapstructure:"data"`
 }
 
 type ListBizHostsTopoData struct {
@@ -104,8 +104,8 @@ type ListBizHostsTopoDataInfo struct {
 }
 
 type SearchBusinessResp struct {
-	define.ApiCommonRespMeta
-	Data BusinessData `json:"data" mapstructure:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     BusinessData `json:"data" mapstructure:"data"`
 }
 
 type BusinessData struct {
@@ -132,8 +132,8 @@ type BusinessDataInfo struct {
 }
 
 type ListHostsWithoutBizResp struct {
-	define.ApiCommonRespMeta
-	Data ListHostsWithoutBizData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ListHostsWithoutBizData `json:"data"`
 }
 
 type ListHostsWithoutBizData struct {
@@ -189,8 +189,8 @@ type ListHostsWithoutBizDataInfo struct {
 }
 
 type FindHostBizRelationResp struct {
-	define.ApiCommonRespMeta
-	Data []FindHostBizRelationData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     []FindHostBizRelationData `json:"data"`
 }
 
 type FindHostBizRelationData struct {
@@ -203,8 +203,8 @@ type FindHostBizRelationData struct {
 
 // SearchBizInstTopoResp 查询业务拓扑返回
 type SearchBizInstTopoResp struct {
-	define.ApiCommonRespMeta
-	Data []SearchBizInstTopoData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     []SearchBizInstTopoData `json:"data"`
 }
 
 // SearchBizInstTopoData 查询业务拓扑数据
@@ -248,8 +248,8 @@ func (s *SearchBizInstTopoData) GetId() string {
 
 // GetBizInternalModuleResp 查询业务内部模块返回
 type GetBizInternalModuleResp struct {
-	define.ApiCommonRespMeta
-	Data GetBizInternalModuleData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     GetBizInternalModuleData `json:"data"`
 }
 
 // GetBizInternalModuleData 查询业务内部模块数据
@@ -264,8 +264,8 @@ type GetBizInternalModuleData struct {
 
 // SearchObjectAttributeResp 查询对象属性返回
 type SearchObjectAttributeResp struct {
-	define.ApiCommonRespMeta
-	Data []SearchObjectAttributeData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     []SearchObjectAttributeData `json:"data"`
 }
 
 // SearchObjectAttributeData 查询对象属性数据
@@ -279,8 +279,8 @@ type SearchObjectAttributeData struct {
 
 // ResourceWatchResp 监听资源变化返回
 type ResourceWatchResp struct {
-	define.ApiCommonRespMeta
-	Data ResourceWatchData `json:"data"`
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ResourceWatchData `json:"data"`
 }
 
 // ResourceWatchData 监听资源变化数据
@@ -292,4 +292,47 @@ type ResourceWatchData struct {
 		BkEventType string                 `json:"bk_event_type"`
 		BkDetail    map[string]interface{} `json:"bk_detail"`
 	} `json:"bk_events"`
+}
+
+// SearchModuleResp 查询模块返回
+type SearchModuleResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     struct {
+		Count int                `json:"count" mapstructure:"count"`
+		Info  []SearchModuleData `json:"info" mapstructure:"info"`
+	} `json:"data" mapstructure:"data"`
+}
+
+// SearchModuleData 查询模块数据
+type SearchModuleData struct {
+	BkBizId           int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	BkModuleId        int    `json:"bk_module_id" mapstructure:"bk_module_id"`
+	BkModuleName      string `json:"bk_module_name" mapstructure:"bk_module_name"`
+	BkSetId           int    `json:"bk_set_id" mapstructure:"bk_set_id"`
+	Operator          string `json:"operator" mapstructure:"operator"`
+	BkBakOperator     string `json:"bk_bak_operator" mapstructure:"bk_bak_operator"`
+	ServiceCategoryId int    `json:"service_category_id" mapstructure:"service_category_id"`
+	ServiceTemplateId int    `json:"service_template_id" mapstructure:"service_template_id"`
+	SetTemplateId     int    `json:"set_template_id" mapstructure:"set_template_id"`
+}
+
+// SearchSetResp 查询集群返回
+type SearchSetResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     struct {
+		Count int             `json:"count" mapstructure:"count"`
+		Info  []SearchSetData `json:"info" mapstructure:"info"`
+	} `json:"data" mapstructure:"data"`
+}
+
+// SearchSetData 查询集群数据
+type SearchSetData struct {
+	BkBizId         int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	BkSetId         int    `json:"bk_set_id" mapstructure:"bk_set_id"`
+	BkSetName       string `json:"bk_set_name" mapstructure:"bk_set_name"`
+	BkSetEnv        string `json:"bk_set_env" mapstructure:"bk_set_env"`
+	BkSetDesc       string `json:"bk_set_desc" mapstructure:"bk_set_desc"`
+	SetTemplateId   int    `json:"set_template_id" mapstructure:"set_template_id"`
+	BkServiceStatus string `json:"bk_service_status" mapstructure:"bk_service_status"`
+	Description     string `json:"description" mapstructure:"description"`
 }

@@ -255,6 +255,7 @@ loop:
 			}
 		case <-p.ctx.Done():
 			ticker.Stop()
+			p.cache.Close()
 			break loop
 		}
 	}
@@ -319,7 +320,7 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		}
 	}
 
-	bloomFilter, err := newLayersCapDecreaseBloomClient(opt.bloomConfig)
+	bloomFilter, err := newLayersCapDecreaseBloomClient(ctx, opt.bloomConfig)
 	if err != nil {
 		return nil, err
 	}

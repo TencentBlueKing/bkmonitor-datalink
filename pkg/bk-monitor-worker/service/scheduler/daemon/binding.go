@@ -18,7 +18,6 @@ import (
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -31,7 +30,6 @@ type TaskBinding struct {
 
 type WorkerBinding struct {
 	WorkerId string
-	service.WorkerInfo
 }
 
 type Binding struct {
@@ -39,7 +37,7 @@ type Binding struct {
 }
 
 func (b *Binding) addTask(t task.SerializerTask) {
-	workerInfo, err := computeWorker(t)
+	workerId, err := computeWorkerId(t)
 	if err != nil {
 		logger.Errorf("handle add task failed. error: %s", err)
 		return
@@ -48,7 +46,7 @@ func (b *Binding) addTask(t task.SerializerTask) {
 
 	if err = b.addBinding(
 		TaskBinding{UniId: taskUniId, SerializerTask: t},
-		WorkerBinding{WorkerId: workerInfo.Id, WorkerInfo: workerInfo},
+		WorkerBinding{WorkerId: workerId},
 	); err != nil {
 		logger.Errorf("add binding failed. %s", err)
 		return
@@ -56,32 +54,49 @@ func (b *Binding) addTask(t task.SerializerTask) {
 }
 
 func (b *Binding) addTaskWithUniId(taskUniId string, t task.SerializerTask) {
-	workerInfo, err := computeWorker(t)
+	workerId, err := computeWorkerId(t)
 	if err != nil {
 		logger.Errorf("handle add task failed. error: %s", err)
 		return
 	}
 	if err = b.addBinding(
 		TaskBinding{UniId: taskUniId, SerializerTask: t},
-		WorkerBinding{WorkerId: workerInfo.Id, WorkerInfo: workerInfo},
+		WorkerBinding{WorkerId: workerId},
 	); err != nil {
 		logger.Errorf("add binding failed. %s", err)
 		return
 	}
+
+	return
+}
+
+func (b *Binding) addReloadExecuteRequest(taskUniId string, t task.SerializerTask, workerId string) error {
+	bind := TaskBinding{UniId: taskUniId, SerializerTask: t}
+	workerBindingBytes, err := jsonx.Marshal(bind)
+	if err != nil {
+		return err
+	}
+
+	if err = b.redisClient.Publish(
+		context.Background(), common.DaemonReloadExecQueue(workerId), workerBindingBytes).Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (b *Binding) addBinding(taskBinding TaskBinding, workerBinding WorkerBinding) error {
 	ctx := context.Background()
 
-	existsWorkerId, err := b.getWorkerByTask(ctx, taskBinding.UniId)
+	existsWorkerInfoStr, err := b.getWorkerByTask(ctx, taskBinding.UniId)
 	if err != nil {
 		return fmt.Errorf(
 			"error obtaining field: %s from hash: %s. error: %s",
 			taskBinding.UniId, common.DaemonBindingTask(), err,
 		)
 	}
-	if existsWorkerId != "" {
-		logger.Warnf("Task: %s(except to binding worker: %s) already exists in the current binding(workerId: %s), is same task been submitted repeatedly?", taskBinding.UniId, workerBinding.Id, existsWorkerId)
+	if existsWorkerInfoStr != "" {
+		logger.Warnf("Task: %s(except to binding worker: %s) already exists in the current binding(workerId: %s), is same task been submitted repeatedly?", taskBinding.UniId, workerBinding.WorkerId, existsWorkerInfoStr)
 		return nil
 	}
 
@@ -97,7 +112,10 @@ func (b *Binding) addBinding(taskBinding TaskBinding, workerBinding WorkerBindin
 	).Err(); err != nil {
 		return fmt.Errorf("failed to add a worker binding, error: %s", err)
 	}
-	logger.Infof("[BINDING ADD] ADD BINDING: %s(taskUniId) <------> %s(workerId)", taskBinding.UniId, workerBinding.Id)
+	logger.Infof(
+		"[BINDING ADD] ADD BINDING: %s(taskUniId) <------> %s(workerId)",
+		taskBinding.UniId, workerBinding.WorkerId,
+	)
 	return nil
 }
 
@@ -211,14 +229,47 @@ func (b *Binding) getWorkerByTask(ctx context.Context, taskUniId string) (string
 		return "", fmt.Errorf("error obtaining field: %s from %s", taskUniId, common.DaemonBindingTask())
 	}
 	if exist {
-		existsWorkerId, err := b.redisClient.HGet(ctx, common.DaemonBindingTask(), taskUniId).Result()
+		existsWorkerInfoStr, err := b.redisClient.HGet(ctx, common.DaemonBindingTask(), taskUniId).Result()
 		if err != nil {
 			return "", fmt.Errorf("error obtaining field: %s from %s", taskUniId, common.DaemonBindingTask())
 		}
-		return existsWorkerId, nil
+		return existsWorkerInfoStr, nil
 	}
 
 	return "", nil
+}
+
+// GetBindingWorkerIdByTask Get the worker which bound to the task (maybe not running)
+func (b *Binding) GetBindingWorkerIdByTask(t task.SerializerTask) (string, error) {
+	taskUniId := ComputeTaskUniId(t)
+	return b.GetBindingWorkerIdByTaskUniId(taskUniId)
+}
+
+func (b *Binding) GetBindingWorkerIdByTaskUniId(taskUniId string) (string, error) {
+	workerInfoStr, err := b.getWorkerByTask(context.Background(), taskUniId)
+	if err != nil {
+		return "", err
+	}
+	if workerInfoStr == "" {
+		return "", nil
+	}
+	var workerBinding WorkerBinding
+	if err := jsonx.Unmarshal([]byte(workerInfoStr), &workerBinding); err != nil {
+		return "", err
+	}
+
+	return workerBinding.WorkerId, nil
+}
+
+// IsWorkerAlive Determine whether worker is alive or not.
+func (b *Binding) IsWorkerAlive(workerId, queue string) (bool, error) {
+	aliveKey := common.WorkerKey(queue, workerId)
+	r, err := b.redisClient.Exists(context.Background(), aliveKey).Result()
+	if err != nil {
+		return false, err
+	}
+
+	return r == 1, nil
 }
 
 var (

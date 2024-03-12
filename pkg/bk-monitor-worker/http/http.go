@@ -46,7 +46,8 @@ func NewHTTPService() *gin.Engine {
 	svr.DELETE(DeleteTaskPath, RemoveTask)
 	// 删除所有任务
 	svr.DELETE(DeleteAllTaskPath, RemoveAllTask)
-
+	// 重新启动常驻任务
+	svr.POST(DaemonTaskReload, ReloadDaemonTask)
 	return svr
 }
 

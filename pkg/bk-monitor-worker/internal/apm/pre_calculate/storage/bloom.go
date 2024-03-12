@@ -336,16 +336,15 @@ func (m *OverlapBloom) Close() {
 	m.cancel()
 }
 
-func newOverlapBloomClient(f boom.Filter, cap uint, fpRate float64, resetDuration time.Duration) boom.Filter {
-	ctx, cancel := context.WithCancel(context.Background())
-
+func newOverlapBloomClient(ctx context.Context, f boom.Filter, cap uint, fpRate float64, resetDuration time.Duration) boom.Filter {
+	childCtx, childCancel := context.WithCancel(ctx)
 	bloom := OverlapBloom{
 		bloomChain:    BloomChain{front: f},
 		resetDuration: resetDuration,
 		cap:           cap,
 		fpRate:        fpRate,
-		ctx:           ctx,
-		cancel:        cancel,
+		ctx:           childCtx,
+		cancel:        childCancel,
 	}
 
 	go bloom.AddOverlap()
@@ -522,7 +521,7 @@ func (l *LayersCapDecreaseOverlapBloom) Exist(originKey string) (bool, error) {
 	return true, nil
 }
 
-func newLayersCapDecreaseBloomClient(options BloomOptions) (BloomOperator, error) {
+func newLayersCapDecreaseBloomClient(ctx context.Context, options BloomOptions) (BloomOperator, error) {
 	var blooms []boom.Filter
 
 	curCap := options.layersCapDecreaseBloomOptions.cap
@@ -530,7 +529,7 @@ func newLayersCapDecreaseBloomClient(options BloomOptions) (BloomOperator, error
 		sbf := boom.NewBloomFilter(uint(curCap), options.fpRate)
 		// select overlapBloom as super stratum
 		bloom := newOverlapBloomClient(
-			sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,
+			ctx, sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,
 		)
 		blooms = append(blooms, bloom)
 		curCap = curCap / options.layersCapDecreaseBloomOptions.divisor

@@ -14,6 +14,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/cstockton/go-conv"
@@ -425,7 +426,8 @@ func tryDecodeExtraMeta(s string) ([]map[string]string, error) {
 		if err := json.Unmarshal(b, &v2Meta); err != nil {
 			return nil, err
 		}
-		b, err := base64.RawStdEncoding.DecodeString(v2Meta.Content)
+
+		b, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(v2Meta.Content, "="))
 		if err != nil {
 			return nil, err
 		}

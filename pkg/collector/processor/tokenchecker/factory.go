@@ -150,15 +150,20 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	var errs []error
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdTraces token key '%s'", config.ResourceKey)
-			return true
+		s := record.Token.Original
+		if len(s) <= 0 {
+			v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
+			if !ok {
+				logger.Debugf("failed to get pdTraces token key '%s'", config.ResourceKey)
+				return true
+			}
+			s = v.AsString()
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdTraces token=%v, err: %v", s, err)
 			return true
 		}
 		return false
@@ -184,15 +189,20 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	var errs []error
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdMetrics token key '%s'", config.ResourceKey)
-			return true
+		s := record.Token.Original
+		if len(s) <= 0 {
+			v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
+			if !ok {
+				logger.Debugf("failed to get pdMetrics token key '%s'", config.ResourceKey)
+				return true
+			}
+			s = v.AsString()
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", s, err)
 			return true
 		}
 		return false
@@ -218,15 +228,20 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 	pdLogs := record.Data.(plog.Logs)
 	var errs []error
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdLogs token key '%s'", config.ResourceKey)
-			return true
+		s := record.Token.Original
+		if len(s) <= 0 {
+			v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
+			if !ok {
+				logger.Debugf("failed to get pdLogs token key '%s'", config.ResourceKey)
+				return true
+			}
+			s = v.AsString()
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdLogs token=%v, err: %v", s, err)
 			return true
 		}
 		return false

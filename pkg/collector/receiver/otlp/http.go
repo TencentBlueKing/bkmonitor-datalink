@@ -34,6 +34,7 @@ import (
 )
 
 const (
+	tokenKey       = "X-BK-TOKEN"
 	routeV1Traces  = "/v1/traces"
 	routeV1Trace   = "/v1/trace"
 	routeV1Metrics = "/v1/metrics"
@@ -133,6 +134,13 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 		RecordType:    rtype,
 		Data:          data,
 	}
+
+	// 允许从 HTTP Header 中读取 token
+	tk := req.Header.Get(tokenKey)
+	if len(tk) > 0 {
+		r.Token = define.Token{Original: tk}
+	}
+
 	prettyprint.Pretty(rtype, data)
 
 	code, processorName, err := s.Validate(r)

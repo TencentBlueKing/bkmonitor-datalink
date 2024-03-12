@@ -113,5 +113,5 @@ func writeProfilesToFile(profiles []*profile.Profile) {
 	if err := os.WriteFile("profiles.pb.gz", data, 0o644); err != nil {
 		panic(err)
 	}
-	log.Printf("writing profiles to file finished -> profiles.pb.gz\n")
+	log.Println("writing profiles to file finished -> profiles.pb.gz")
 }

@@ -203,6 +203,28 @@ func TestTracesAes256Token(t *testing.T) {
 			AppName:       "oneapm-appname",
 		}, record.Token)
 	})
+
+	t.Run("Header Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeTracesGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
 }
 
 func TestMetricsAes256Token(t *testing.T) {
@@ -273,6 +295,28 @@ func TestMetricsAes256Token(t *testing.T) {
 			AppName:       "oneapm-appname",
 		}, record.Token)
 	})
+
+	t.Run("Header Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeMetricsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
 }
 
 func TestLogsAes256Token(t *testing.T) {
@@ -330,6 +374,28 @@ func TestLogsAes256Token(t *testing.T) {
 		record := define.Record{
 			RecordType: define.RecordLogs,
 			Data:       data,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeLogsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
 		}
 
 		_, err := checker.Process(&record)

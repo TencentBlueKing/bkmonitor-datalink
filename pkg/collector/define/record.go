@@ -153,18 +153,18 @@ const (
 )
 
 type ProxyMetric struct {
-	Metrics   map[string]float64 `json:"metrics" mapstructure:"metrics"`
-	Target    string             `json:"target" mapstructure:"target"`
-	Dimension map[string]string  `json:"dimension" mapstructure:"dimension"`
-	Timestamp int64              `json:"timestamp" mapstructure:"timestamp"`
+	Metrics   map[string]float64 `json:"metrics"`
+	Target    string             `json:"target"`
+	Dimension map[string]string  `json:"dimension"`
+	Timestamp int64              `json:"timestamp"`
 }
 
 type ProxyEvent struct {
-	EventName string                 `json:"event_name" mapstructure:"event_name"`
-	Event     map[string]interface{} `json:"event" mapstructure:"event"`
-	Target    string                 `json:"target" mapstructure:"target"`
-	Dimension map[string]string      `json:"dimension" mapstructure:"dimension"`
-	Timestamp int64                  `json:"timestamp" mapstructure:"timestamp"`
+	EventName string                 `json:"event_name"`
+	Event     map[string]interface{} `json:"event"`
+	Target    string                 `json:"target"`
+	Dimension map[string]string      `json:"dimension"`
+	Timestamp int64                  `json:"timestamp"`
 }
 
 type PingserverData struct {

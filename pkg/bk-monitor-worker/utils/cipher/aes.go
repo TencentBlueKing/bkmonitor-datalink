@@ -127,8 +127,10 @@ func NewAESCipher(xKey, prefix string, iv []byte) *AESCipher {
 }
 
 var dbAESCipher *AESCipher
+
 var aesOnce sync.Once
 
+// GetDBAESCipher 获取db中AES字段的AESCipher
 func GetDBAESCipher() *AESCipher {
 	aesOnce.Do(func() {
 		dbAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)

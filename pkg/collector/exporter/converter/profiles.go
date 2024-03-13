@@ -44,12 +44,7 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataId := c.ToDataID(record)
 	token := record.Token
 
-	profileData, ok := record.Data.(*define.ProfilesData)
-	if !ok {
-		logger.Errorf("unxecpted profiles dataType(%T), token: %s app: %s", record.Data, token.Original, token.BizApp())
-		return
-	}
-
+	profileData := record.Data.(*define.ProfilesData)
 	if profileData == nil || len(profileData.Profiles) == 0 {
 		logger.Errorf("skip empty profiles, token: %s, app: %s", token.Original, token.BizApp())
 		return
@@ -71,15 +66,15 @@ func (c profilesConverter) Convert(record *define.Record, f define.GatherFunc) {
 			return
 		}
 
-		events := []define.Event{c.ToEvent(record.Token, dataId, common.MapStr{
+		event := c.ToEvent(record.Token, dataId, common.MapStr{
 			"data":         protoBuf.Bytes(),
 			"type":         p.PeriodType.Type,
 			"app":          record.Token.AppName,
 			"biz_id":       record.Token.BizId,
 			"service_name": svrName,
-		})}
+		})
 
-		f(events...)
+		f(event)
 	}
 }
 

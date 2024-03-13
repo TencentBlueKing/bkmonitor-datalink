@@ -22,7 +22,7 @@ const (
 	defaultMetricsBatchSize = 2000
 	defaultTracesBatchSize  = 200
 	defaultLogsBatchSize    = 100
-	defaultProxyBatchSize   = 600
+	defaultProxyBatchSize   = 2000
 	defaultFlushInterval    = 3 * time.Second
 )
 

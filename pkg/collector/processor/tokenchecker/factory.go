@@ -121,7 +121,6 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 		return err
 	}
 
-	// token 解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode token")
@@ -140,6 +139,16 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 	return nil
 }
 
+// 对于 OT 的 token 解析优先级
+// # HTTP Protocol
+// 1) HTTP Headers -> X-BK-TOKEN
+// 2) Span ResourceKey -> bk.data.token
+//
+// # GRPC Protocol
+// 1) Span ResourceKey -> bk.data.token
+//
+// Note: 理论上来讲，单次请求包只能有一个 token，不支持多 token 场景。
+
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
@@ -148,9 +157,10 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	}
 
 	var errs []error
+	origin := record.Token.Original
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		s := record.Token.Original
+		s := origin
 		if len(s) <= 0 {
 			v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
 			if !ok {
@@ -187,9 +197,10 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	}
 
 	var errs []error
+	origin := record.Token.Original
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		s := record.Token.Original
+		s := origin
 		if len(s) <= 0 {
 			v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
 			if !ok {
@@ -225,10 +236,11 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 		return err
 	}
 
-	pdLogs := record.Data.(plog.Logs)
 	var errs []error
+	origin := record.Token.Original
+	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		s := record.Token.Original
+		s := origin
 		if len(s) <= 0 {
 			v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
 			if !ok {
@@ -271,7 +283,6 @@ func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, reco
 	}
 
 	record.Token, err = decoder.Decode(record.Token.Original)
-
 	if config.ProfilesDataId > 0 {
 		record.Token.ProfilesDataId = config.ProfilesDataId
 	}

@@ -36,6 +36,14 @@ func (t testTracesEvent) RecordType() define.RecordType {
 	return define.RecordTraces
 }
 
+type testLogsEvent struct {
+	define.CommonEvent
+}
+
+func (t testLogsEvent) RecordType() define.RecordType {
+	return define.RecordLogs
+}
+
 func TestQueueOut(t *testing.T) {
 	conf := Config{
 		MetricsBatchSize: 100,
@@ -282,45 +290,66 @@ func TestQueueTick(t *testing.T) {
 func TestQueueResize(t *testing.T) {
 	conf := Config{
 		MetricsBatchSize: 100,
-		LogsBatchSize:    200,
-		TracesBatchSize:  200,
+		LogsBatchSize:    100,
+		TracesBatchSize:  100,
 		FlushInterval:    time.Minute, // 保证测试运行期间不会触发
 	}
-	queue := NewBatchQueue(conf, func(s string) Config {
-		return Config{
-			MetricsBatchSize: 10,
-		}
-	})
-	defer queue.Close()
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+	assertResize := func(event define.Event, key string) {
+		queue := NewBatchQueue(conf, func(s string) Config {
+			return Config{
+				MetricsBatchSize: 10,
+				LogsBatchSize:    10,
+				TracesBatchSize:  10,
+			}
+		})
+		defer queue.Close()
 
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 120; i++ {
-			queue.Put(&testMetricsEvent{
-				CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": i}),
-			})
-		}
-	}()
+		wg := sync.WaitGroup{}
+		wg.Add(1)
 
-	n := 0
-	for {
-		select {
-		case e := <-queue.Pop():
-			_, err := e.GetValue("data")
-			assert.NoError(t, err)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 120; i++ {
+				queue.Put(event)
+			}
+		}()
 
-			dataID, err := e.GetValue("dataid")
-			assert.NoError(t, err)
-			assert.Equal(t, int32(1001), dataID.(int32))
-			n++
-			if n == 3 {
-				return
+		n := 0
+		for {
+			select {
+			case e := <-queue.Pop():
+				_, err := e.GetValue(key)
+				assert.NoError(t, err)
+
+				dataID, err := e.GetValue("dataid")
+				assert.NoError(t, err)
+				assert.Equal(t, int32(1001), dataID.(int32))
+				n++
+				if n == 3 {
+					return
+				}
 			}
 		}
 	}
+
+	t.Run("Metrics", func(t *testing.T) {
+		assertResize(&testMetricsEvent{
+			CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": 1}),
+		}, "data")
+	})
+
+	t.Run("Traces", func(t *testing.T) {
+		assertResize(&testTracesEvent{
+			CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": 1}),
+		}, "items")
+	})
+
+	t.Run("Logs", func(t *testing.T) {
+		assertResize(&testLogsEvent{
+			CommonEvent: define.NewCommonEvent(define.Token{}, 1001, common.MapStr{"count": 1}),
+		}, "items")
+	})
 }
 
 func TestQueueUniqueKey(t *testing.T) {

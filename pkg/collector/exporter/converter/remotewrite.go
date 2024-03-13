@@ -38,11 +38,7 @@ func (c remoteWriteConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc) {
-	rwData, ok := record.Data.(*define.RemoteWriteData)
-	if !ok {
-		return
-	}
-
+	rwData := record.Data.(*define.RemoteWriteData)
 	dataId := c.ToDataID(record)
 	events := make([]define.Event, 0)
 	for i := 0; i < len(rwData.Timeseries); i++ {

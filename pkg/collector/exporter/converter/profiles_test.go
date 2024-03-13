@@ -43,24 +43,11 @@ func TestConvertProfilesData(t *testing.T) {
 		event := events[0]
 		data := event.Data()
 		assert.Equal(t, int32(1), data["biz_id"])
+		assert.Equal(t, define.RecordProfiles, event.RecordType())
+		assert.Equal(t, int32(0), event.DataId())
 		assert.Equal(t, "testa", data["app"])
 		assert.Equal(t, "goroutine", data["type"])
 		assert.Equal(t, "default", data["service_name"])
-	})
-
-	t.Run("Unexpected Type", func(t *testing.T) {
-		var hit bool
-		NewCommonConverter().Convert(&define.Record{
-			RecordType: define.RecordProfiles,
-			Data:       "",
-			Token: define.Token{
-				AppName: "testa",
-				BizId:   1,
-			},
-		}, func(evts ...define.Event) {
-			hit = true
-		})
-		assert.False(t, hit)
 	})
 
 	t.Run("Empty Profiles", func(t *testing.T) {

@@ -204,7 +204,7 @@ func TestTracesAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token", func(t *testing.T) {
+	t.Run("Header Token (OK)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeTracesGenerator(1, nil)
 		data := g.Generate()
@@ -224,6 +224,20 @@ func TestTracesAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeTracesGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -296,7 +310,7 @@ func TestMetricsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token", func(t *testing.T) {
+	t.Run("Header Token (OK)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeMetricsGenerator(1, nil)
 		data := g.Generate()
@@ -316,6 +330,20 @@ func TestMetricsAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeMetricsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -388,7 +416,7 @@ func TestLogsAes256Token(t *testing.T) {
 		}, record.Token)
 	})
 
-	t.Run("Header Token", func(t *testing.T) {
+	t.Run("Header Token (OK)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		g := makeLogsGenerator(1, nil)
 		data := g.Generate()
@@ -408,6 +436,20 @@ func TestLogsAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeLogsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -512,7 +554,7 @@ func TestFtaAes256Token(t *testing.T) {
 		assert.True(t, strings.Contains(err.Error(), "failed to decode token"))
 	})
 
-	t.Run("Incorrect Token - Empty PluginID", func(t *testing.T) {
+	t.Run("Empty PluginID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -532,7 +574,7 @@ func TestFtaAes256Token(t *testing.T) {
 		assert.Equal(t, "reject invalid pluginId", err.Error())
 	})
 
-	t.Run("Incorrect Token - Empty DataID", func(t *testing.T) {
+	t.Run("Empty DataID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -550,5 +592,58 @@ func TestFtaAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Equal(t, "reject invalid dataId", err.Error())
+	})
+}
+
+func TestProfilesAes256Token(t *testing.T) {
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	})
+
+	t.Run("No Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+	})
+
+	t.Run("Skip", func(t *testing.T) {
+		checker := skipTokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
 	})
 }

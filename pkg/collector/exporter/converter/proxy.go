@@ -37,12 +37,9 @@ func (c proxyConverter) ToDataID(_ *define.Record) int32 {
 }
 
 func (c proxyConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pd, ok := record.Data.(*define.ProxyData)
-	if !ok {
-		return
-	}
-
+	pd := record.Data.(*define.ProxyData)
 	var events []define.Event
+
 	if pd.Type == define.ProxyMetricType {
 		events = c.toMetrics(record.Token, pd)
 	} else {

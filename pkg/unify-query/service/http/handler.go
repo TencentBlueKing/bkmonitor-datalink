@@ -203,13 +203,14 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
 	}
 	if ok {
+		// 函数替换逻辑有问题、暂时屏蔽
 		// vm 跟 prom 的函数有差异，需要转换一下以完全适配 prometheus。
 		// https://docs.victoriametrics.com/metricsql/#delta
-		promExprOpt.FunctionReplace = map[string]string{
-			"increase": "increase_prometheus",
-			"delta":    "delta_prometheus",
-			"changes":  "changes_prometheus",
-		}
+		//promExprOpt.FunctionReplace = map[string]string{
+		//	"increase": "increase_prometheus",
+		//	"delta":    "delta_prometheus",
+		//	"changes":  "changes_prometheus",
+		//}
 
 		if err != nil {
 			return nil, err

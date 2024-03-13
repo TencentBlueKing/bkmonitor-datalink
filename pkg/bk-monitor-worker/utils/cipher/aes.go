@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -26,8 +27,6 @@ import (
 const (
 	AESPrefix = "aes_str:::"
 )
-
-var DBAESCipher *AESCipher
 
 type AESCipher struct {
 	XKey   string
@@ -127,6 +126,12 @@ func NewAESCipher(xKey, prefix string, iv []byte) *AESCipher {
 	return &AESCipher{XKey: xKey, Prefix: prefix, IV: iv}
 }
 
-func init() {
-	DBAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
+var dbAESCipher *AESCipher
+var aesOnce sync.Once
+
+func GetDBAESCipher() *AESCipher {
+	aesOnce.Do(func() {
+		dbAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
+	})
+	return dbAESCipher
 }

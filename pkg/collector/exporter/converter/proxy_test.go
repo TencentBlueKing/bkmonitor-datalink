@@ -232,3 +232,45 @@ func BenchmarkConvertProxyMetricsData(b *testing.B) {
 		}, func(evts ...define.Event) {})
 	}
 }
+
+func TestConvertMarshalFailed(t *testing.T) {
+	t.Run("EventType", func(t *testing.T) {
+		pd := &define.ProxyData{
+			DataId:      1001,
+			AccessToken: "1000_accesstoken",
+			Type:        define.ProxyEventType,
+			Data:        "{-}event",
+		}
+
+		var seen bool
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProxy,
+			Data:       pd,
+		}, func(evts ...define.Event) {
+			for i := 0; i < len(evts); i++ {
+				seen = true
+			}
+		})
+		assert.False(t, seen)
+	})
+
+	t.Run("MetricType", func(t *testing.T) {
+		pd := &define.ProxyData{
+			DataId:      1002,
+			AccessToken: "1000_accesstoken",
+			Type:        define.ProxyMetricType,
+			Data:        "{-}metric",
+		}
+
+		var seen bool
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProxy,
+			Data:       pd,
+		}, func(evts ...define.Event) {
+			for i := 0; i < len(evts); i++ {
+				seen = true
+			}
+		})
+		assert.False(t, seen)
+	})
+}

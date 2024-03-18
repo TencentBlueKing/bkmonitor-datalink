@@ -59,8 +59,11 @@ config_templates:
               items:
                 title: interface
                 type: string
-            corefile_pattern_path:
-              title: corefile_pattern_path
+            corefile_pattern:
+              title: corefile_pattern
+              type: string
+            corefile_loose_match:
+              title: corefile_loose_match
               type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf

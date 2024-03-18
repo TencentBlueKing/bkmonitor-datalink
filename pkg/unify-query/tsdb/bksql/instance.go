@@ -517,11 +517,6 @@ func (i Instance) GetInstanceType() string {
 func getValue(k string, d map[string]interface{}) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
-		// 增加 nil 判断，避免回传的数值为空
-		if v == nil {
-			return "", nil
-		}
-
 		switch v.(type) {
 		case string:
 			value = fmt.Sprintf("%s", v)
@@ -530,7 +525,7 @@ func getValue(k string, d map[string]interface{}) (string, error) {
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
 		default:
-			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)
+			return value, nil
 		}
 	}
 	return value, nil

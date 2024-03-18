@@ -530,7 +530,7 @@ func getValue(k string, d map[string]interface{}) (string, error) {
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
 		default:
-			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)
+			return value, nil
 		}
 	}
 	return value, nil

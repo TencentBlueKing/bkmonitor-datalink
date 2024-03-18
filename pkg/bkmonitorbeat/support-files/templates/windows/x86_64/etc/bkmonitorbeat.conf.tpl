@@ -132,7 +132,7 @@ bkmonitorbeat:
 {%- if extra_vars is defined and extra_vars.corefile_pattern is defined %}
     corefile_pattern: {{ extra_vars.corefile_pattern or '' }}
 {%- endif %}
-{%- if extra_vars is defined and extra_vars.corefile_loose_match is defined and extra_vars.corefile_loose_match  == "true" %}
+{%- if extra_vars is defined and extra_vars.corefile_loose_match is defined and extra_vars.corefile_loose_match in [True, "true"]  %}
     corefile_loose_match: true
 {%- endif %}
   # 进程采集：同步 CMDB 进程配置文件到 bkmonitorbeat 子任务文件夹下

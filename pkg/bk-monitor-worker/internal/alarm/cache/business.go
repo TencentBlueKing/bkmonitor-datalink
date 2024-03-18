@@ -32,7 +32,7 @@ import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
@@ -58,7 +58,7 @@ type BusinessCacheManager struct {
 }
 
 // NewBusinessCacheManager 创建业务缓存管理器
-func NewBusinessCacheManager(prefix string, opt *alarm.RedisOptions) (*BusinessCacheManager, error) {
+func NewBusinessCacheManager(prefix string, opt *redis.RedisOptions) (*BusinessCacheManager, error) {
 	manager, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create base cache manager")

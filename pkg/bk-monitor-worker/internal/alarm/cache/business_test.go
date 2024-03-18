@@ -27,11 +27,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 )
 
 func TestBusinessCacheManager(t *testing.T) {
-	rOpts := &alarm.RedisOptions{
+	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
@@ -41,7 +41,7 @@ func TestBusinessCacheManager(t *testing.T) {
 		return
 	}
 
-	client, err := alarm.GetRedisClient(rOpts)
+	client, err := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestBusinessCacheManager", func(t *testing.T) {
@@ -56,7 +56,7 @@ func TestBusinessCacheManager(t *testing.T) {
 			t.Error("RefreshGlobal failed")
 			return
 		}
-		
+
 		result, err := client.HGetAll(ctx, "test.cmdb.business").Result()
 		if err != nil {
 			t.Error(err)

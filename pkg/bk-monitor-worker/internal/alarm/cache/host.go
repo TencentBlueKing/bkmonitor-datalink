@@ -34,7 +34,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -242,7 +242,7 @@ type HostAndTopoCacheManager struct {
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *alarm.RedisOptions) (*HostAndTopoCacheManager, error) {
+func NewHostAndTopoCacheManager(prefix string, opt *redis.RedisOptions) (*HostAndTopoCacheManager, error) {
 	manager, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache manager failed")
@@ -552,4 +552,24 @@ func getHostAndTopoByBiz(bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopo
 	}
 
 	return hosts, &bizInstTopoResp.Data[0], nil
+}
+
+// IsMatchResourceType 是否匹配资源类型
+func (m *HostAndTopoCacheManager) IsMatchResourceType(resourceType string) bool {
+	return resourceType == "host" || resourceType == "topo"
+}
+
+// CleanByIds 通过ID清理缓存，用于cmdb变更事件单独更新
+func (m *HostAndTopoCacheManager) CleanByIds(ctx context.Context, resourceType string, ids []string) error {
+	return nil
+}
+
+// GetBizIdById 通过ID获取业务ID，用于cmdb变更事件获取需要更新的业务ID
+func (m *HostAndTopoCacheManager) GetBizIdById(ctx context.Context, resourceType string, id string) (int, error) {
+	return 0, nil
+}
+
+// SendRefreshBizCacheTask 发送刷新业务缓存任务
+func (m *HostAndTopoCacheManager) SendRefreshBizCacheTask(ctx context.Context, bizIds []int) error {
+	return nil
 }

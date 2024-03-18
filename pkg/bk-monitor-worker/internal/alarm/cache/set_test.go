@@ -27,11 +27,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 )
 
 func TestSetCacheManager(t *testing.T) {
-	rOpts := &alarm.RedisOptions{
+	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
@@ -41,7 +41,7 @@ func TestSetCacheManager(t *testing.T) {
 		return
 	}
 
-	client, err := alarm.GetRedisClient(rOpts)
+	client, err := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestSetCacheManager", func(t *testing.T) {

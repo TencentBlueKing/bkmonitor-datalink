@@ -30,7 +30,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	redis2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 )
 
 const (
@@ -56,8 +56,8 @@ type BaseCacheManager struct {
 }
 
 // NewBaseCacheManager 创建缓存管理器
-func NewBaseCacheManager(prefix string, opt *alarm.RedisOptions) (*BaseCacheManager, error) {
-	client, err := alarm.GetRedisClient(opt)
+func NewBaseCacheManager(prefix string, opt *redis2.RedisOptions) (*BaseCacheManager, error) {
+	client, err := redis2.GetRedisClient(opt)
 	if err != nil {
 		return nil, err
 	}

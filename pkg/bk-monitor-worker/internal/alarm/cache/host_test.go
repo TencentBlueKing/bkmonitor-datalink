@@ -30,7 +30,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
@@ -69,7 +69,7 @@ func TestApiRequest(t *testing.T) {
 }
 
 func TestHostAndTopoCacheManager(t *testing.T) {
-	rOpts := &alarm.RedisOptions{
+	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
@@ -79,7 +79,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		return
 	}
 
-	client, err := alarm.GetRedisClient(rOpts)
+	client, err := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("Refresh", func(t *testing.T) {

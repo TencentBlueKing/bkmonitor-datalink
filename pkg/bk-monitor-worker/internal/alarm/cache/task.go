@@ -28,14 +28,14 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 )
 
 // NewCacheManagerByType 创建缓存管理器
-func NewCacheManagerByType(opt *alarm.RedisOptions, prefix string, cacheType string) (ManagerRunner, error) {
+func NewCacheManagerByType(opt *redis.RedisOptions, prefix string, cacheType string) (ManagerRunner, error) {
 	var cacheManager ManagerRunner
 	var err error
 	switch cacheType {
@@ -55,7 +55,7 @@ func NewCacheManagerByType(opt *alarm.RedisOptions, prefix string, cacheType str
 
 // RefreshHostAndTopoCacheByBizParams 同步业务下的主机及拓扑信息参数
 type RefreshHostAndTopoCacheByBizParams struct {
-	Redis          alarm.RedisOptions `json:"redis" mapstructure:"redis"`
+	Redis          redis.RedisOptions `json:"redis" mapstructure:"redis"`
 	CacheKeyPrefix string             `json:"cache_key_prefix" mapstructure:"cache_key_prefix"`
 	Type           string             `json:"type" mapstructure:"type"`
 }

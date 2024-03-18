@@ -33,7 +33,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
@@ -43,7 +43,7 @@ type ModuleCacheManager struct {
 }
 
 // NewModuleCacheManager 创建模块缓存管理器
-func NewModuleCacheManager(prefix string, opt *alarm.RedisOptions) (*ModuleCacheManager, error) {
+func NewModuleCacheManager(prefix string, opt *redis.RedisOptions) (*ModuleCacheManager, error) {
 	base, err := NewBaseCacheManager(prefix, opt)
 
 	return &ModuleCacheManager{

@@ -230,6 +230,11 @@ var (
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
+
+	// ESClusterMetricReportUrl es metric report config
+	ESClusterMetricReportUrl         string
+	ESClusterMetricReportDataId      int
+	ESClusterMetricReportAccessToken string
 )
 
 func initVariables() {
@@ -389,6 +394,10 @@ func initVariables() {
 	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
+
+	ESClusterMetricReportUrl = GetValue("taskConfig.logSearch.metric.reportUrl", "")
+	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
+	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
 }
 
 var (

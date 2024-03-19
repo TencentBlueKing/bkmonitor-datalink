@@ -164,10 +164,9 @@ func (s *TimeSeriesGroupSvc) GetRedisData(expiredTime int) ([]map[string]interfa
 
 // UpdateMetrics update ts metrics
 func (s *TimeSeriesGroupSvc) UpdateMetrics(MetricInfoList []map[string]interface{}) (bool, error) {
-	// 刷新 ts 中指标和维度
 	isAutoDiscovery, err := s.IsAutoDiscovery()
 	tsmSvc := NewTimeSeriesMetricSvcSvc(nil)
-	// 刷新 rt 表中的指标和维度
+	// 刷新 ts 表中的指标和维度
 	updated, err := tsmSvc.BulkRefreshTSMetrics(s.TimeSeriesGroupID, s.TableID, MetricInfoList, isAutoDiscovery)
 	if err != nil {
 		return false, errors.Wrapf(err, "BulkRefreshRtFields for table id [%s] with metric info [%v] failed", s.TableID, MetricInfoList)
@@ -188,18 +187,15 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 	}
 	db := mysql.GetDBSession().DB
 	// 通过结果表过滤到到指标和维度
+	// NOTE: 因为 `ResultTableField` 字段是打平的，如果指标或维度已经存在，则以存在的数据为准
 	var existRTFields []resulttable.ResultTableField
-	if err := resulttable.NewResultTableFieldQuerySet(db).Select(resulttable.ResultTableFieldDBSchema.FieldName, resulttable.ResultTableFieldDBSchema.Tag).TableIDEq(tableId).All(&existRTFields); err != nil {
+	if err := resulttable.NewResultTableFieldQuerySet(db).Select(resulttable.ResultTableFieldDBSchema.FieldName).TableIDEq(tableId).All(&existRTFields); err != nil {
 		return errors.Wrapf(err, "query ResultTableField with table_id [%s] failed", tableId)
 	}
-	existMetricSet := mapset.NewSet[string]()
-	existTagSet := mapset.NewSet[string]()
+	// 组装结果表包含的字段数据，包含指标和维度
+	existFields := mapset.NewSet[string]()
 	for _, field := range existRTFields {
-		if field.Tag == models.ResultTableFieldTagMetric {
-			existMetricSet.Add(field.FieldName)
-		} else if slicex.IsExistItem([]string{models.ResultTableFieldTagDimension, models.ResultTableFieldTagTimestamp, models.ResultTableFieldTagGroup, models.ResultTableFieldTagMetric}, field.Tag) {
-			existTagSet.Add(field.FieldName)
-		}
+		existFields.Add(field.FieldName)
 	}
 
 	// 过滤需要创建或更新的指标
@@ -208,7 +204,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 		return errors.New("parse metricMap failed")
 	}
 	metricSet := mapset.NewSet[string](mapx.GetMapKeys(metricMap)...)
-	needCreateMetricSet := metricSet.Difference(existMetricSet)
+	needCreateMetricSet := metricSet.Difference(existFields)
 	needUpdateMetricSet := metricSet.Difference(needCreateMetricSet)
 	if err := s.BulkCreateOrUpdateMetrics(tableId, metricMap, needCreateMetricSet.ToSlice(), needUpdateMetricSet.ToSlice()); err != nil {
 		return errors.Wrapf(err, "BulkCreateOrUpdateMetrics for table_id [%s] failed", tableId)
@@ -220,7 +216,7 @@ func (s *TimeSeriesGroupSvc) BulkRefreshRtFields(tableId string, metricInfoList 
 		return errors.New("parse tagMap failed")
 	}
 	tagSet := mapset.NewSet[string](mapx.GetMapKeys(tagMap)...)
-	needCreateTagSet := tagSet.Difference(existTagSet)
+	needCreateTagSet := tagSet.Difference(existFields).Difference(needCreateMetricSet)
 	needUpdateTagSet := tagSet.Difference(needCreateTagSet)
 	isUpdateDescription, ok := metricTagInfo["isUpdateDescription"].(bool)
 	if !ok {

@@ -10,6 +10,8 @@
 package space
 
 import (
+	"fmt"
+
 	"github.com/jinzhu/gorm"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -49,4 +51,9 @@ func (s *Space) BeforeCreate(tx *gorm.DB) error {
 		s.Language = "zh-hans"
 	}
 	return nil
+}
+
+// SpaceUid 组装空间 UID，格式为 `spaceType__spaceId`
+func (s *Space) SpaceUid() string {
+	return fmt.Sprintf("%s__%s", s.SpaceTypeId, s.SpaceId)
 }

@@ -110,6 +110,11 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]uint{"rt_18000": 18000, "rt_18002": 18002}, dataMap)
 
+	// 执行类型，不指定结果表
+	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]uint{"rt_18000": 18000, "rt_18001": 18001, "rt_18002": 18002}, dataMap)
+
 	// 测试排除
 	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, []uint{18000, 18002}, nil)
 	assert.NoError(t, err)
@@ -185,4 +190,59 @@ func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
 	// no panic
 	err := NewSpaceRedisSvc(1).PushAndPublishSpaceRouter("", "", nil)
 	assert.NoError(t, err)
+}
+
+
+func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	// 初始化前置 db 数据
+	spaceType, spaceId := "bkcc", "1"
+	obj := space.Space{Id: 1, SpaceTypeId: spaceType, SpaceId: spaceId, SpaceName: "testTable"}
+	db.Delete(obj)
+	err := obj.Create(db)
+	assert.NoError(t, err)
+
+	data, err := NewSpacePusher().composeAllTypeTableIds(spaceType, spaceId)
+	assert.NoError(t, err)
+	assert.Equal(t, len(data), 2)
+	// 比对数据
+	for _, val := range data {
+		filter := val["filters"]
+		mapFilter := filter.([]map[string]interface{})
+		assert.Equal(t, len(mapFilter), 1)
+	}
+}
+
+
+func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	spaceType, spaceId, resourceType, resourceId := "bkci", "bcs_project", "bkcc", "1"
+	obj := space.SpaceResource{SpaceTypeId: spaceType, SpaceId: spaceId, ResourceType: resourceType, ResourceId: &resourceId}
+	db.Delete(obj)
+	err := obj.Create(db)
+	assert.NoError(t, err)
+
+	// 初始化结果表
+	tableIdOne, tableIdTwo, tableIdThree := "system.mem1", "dbm_system.mem1", "script_p4_connect_monitor.__default__"
+	objone := resulttable.ResultTable{TableId: tableIdOne, TableNameZh: tableIdOne}
+	objtwo := resulttable.ResultTable{TableId: tableIdTwo, TableNameZh: tableIdTwo}
+	objthree := resulttable.ResultTable{TableId: tableIdThree, TableNameZh: tableIdThree}
+	for _, obj := range []resulttable.ResultTable{objone, objtwo, objthree} {
+		db.Delete(obj)
+		err := obj.Create(db)
+		assert.NoError(t, err)
+	}
+	
+	data, err := NewSpacePusher().composeBcsSpaceBizTableIds(spaceType, spaceId)
+	assert.NoError(t, err)
+	assert.NotContains(t, data, tableIdTwo)
+	for _, tid := range []string{tableIdOne, tableIdThree}{
+		assert.Contains(t, data, tid)
+		val := data[tid]["filters"]
+		d := val.([]map[string]interface{})
+		bk_biz_id := d[0]["bk_biz_id"].(string)
+		assert.Equal(t, resourceId, bk_biz_id)
+	}
 }

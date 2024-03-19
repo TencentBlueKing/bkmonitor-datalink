@@ -55,22 +55,21 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			var bcsClusterInfo bcs.BCSClusterInfo
-			if err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
+			err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo)
+			if err != nil {
+				// 如果仅是查询异常，则结束
 				if !gorm.IsRecordNotFoundError(err) {
 					logger.Errorf("query bcs cluster info record from db failed, %v", err)
-					return
+				} else {
+					// 注册不存在的集群
+					err := createBcsCluster(cluster)
+					if err != nil {
+						logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
+					}
 				}
-			}
-			if err != nil {
+			} else {
 				// err为nil表示数据库中存在该集群，检查更新
 				err := updateBcsCluster(cluster, &bcsClusterInfo)
-				if err != nil {
-					logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
-				}
-				return
-			} else {
-				// 注册不存在的集群
-				err := createBcsCluster(cluster)
 				if err != nil {
 					logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
 				}

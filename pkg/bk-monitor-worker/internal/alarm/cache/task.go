@@ -60,8 +60,8 @@ type RefreshHostAndTopoCacheByBizParams struct {
 	Type           string             `json:"type" mapstructure:"type"`
 }
 
-// RefreshCacheTask 刷新缓存任务
-func RefreshCacheTask(ctx context.Context, t *t.Task) error {
+// RefreshAlarmCacheTask 刷新缓存任务
+func RefreshAlarmCacheTask(ctx context.Context, t *t.Task) error {
 	// 参数解析
 	var params RefreshHostAndTopoCacheByBizParams
 	err := json.Unmarshal(t.Payload, &params)

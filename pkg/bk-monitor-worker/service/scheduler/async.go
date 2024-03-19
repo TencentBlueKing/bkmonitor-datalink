@@ -10,6 +10,7 @@
 package scheduler
 
 import (
+	alarmCache "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/example"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
@@ -27,6 +28,7 @@ var (
 	AccessBkdataVm               = "async:access_bkdata_vm"
 	RefreshCustomReportConfig    = "async:refresh_custom_report_config"
 	RefreshCustomLogReportConfig = "async:refresh_custom_log_report_config"
+	RefreshAlarmCache            = "async:refresh_alarm_cache"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
@@ -49,6 +51,9 @@ var (
 		},
 		RefreshCustomLogReportConfig: {
 			Handler: task.RefreshCustomLogReportConfig,
+		},
+		RefreshAlarmCache: {
+			Handler: alarmCache.RefreshAlarmCacheTask,
 		},
 	}
 )

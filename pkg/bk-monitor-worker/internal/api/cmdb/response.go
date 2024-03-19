@@ -285,13 +285,15 @@ type ResourceWatchResp struct {
 
 // ResourceWatchData 监听资源变化数据
 type ResourceWatchData struct {
-	BkWatched bool `json:"bk_watched"`
-	BkEvents  []struct {
-		BkCursor    string                 `json:"bk_cursor"`
-		BkResource  string                 `json:"bk_resource"`
-		BkEventType string                 `json:"bk_event_type"`
-		BkDetail    map[string]interface{} `json:"bk_detail"`
-	} `json:"bk_events"`
+	BkWatched bool                 `json:"bk_watched"`
+	BkEvents  []ResourceWatchEvent `json:"bk_events"`
+}
+
+type ResourceWatchEvent struct {
+	BkCursor    string                 `json:"bk_cursor"`
+	BkResource  string                 `json:"bk_resource"`
+	BkEventType string                 `json:"bk_event_type"`
+	BkDetail    map[string]interface{} `json:"bk_detail"`
 }
 
 // SearchModuleResp 查询模块返回

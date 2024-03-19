@@ -24,8 +24,8 @@ package alarm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -51,28 +51,22 @@ const (
 	CmdbResourceTypeMainlineInstance CmdbResourceType = "mainline_instance"
 )
 
-var CmdbResourceTypeMap = map[CmdbResourceType][]string{
-	CmdbResourceTypeHost:             {"bk_host_id"},
+var CmdbResourceTypeFields = map[CmdbResourceType][]string{
+	CmdbResourceTypeHost:             {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
 	CmdbResourceTypeHostRelation:     {"bk_host_id"},
-	CmdbResourceTypeBiz:              {"bk_biz_id"},
-	CmdbResourceTypeSet:              {"bk_set_id"},
-	CmdbResourceTypeModule:           {"bk_module_id"},
-	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id"},
+	CmdbResourceTypeBiz:              {"bk_biz_id", "bk_biz_name", "bk_biz_maintainer", "bk_biz_tester", "bk_biz_productor", "bk_biz_developer", "operator", "time_zone", "language", "life_cycle"},
+	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "bk_set_name", "bk_set_env", "bk_set_desc", "set_template_id", "bk_service_status", "description"},
+	CmdbResourceTypeModule:           {"bk_module_id", "bk_module_name", "operator", "bk_biz_id", "bk_set_id", "bk_module_status", "service_template_id", "bk_bak_operator", "service_category_id", "set_template_id"},
+	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
 }
 
 // CmdbWatchRunner cmdb资源事件执行接口，支持
 type CmdbWatchRunner interface {
-	// IsMatchResourceType 是否匹配资源类型
-	IsMatchResourceType(resourceType string) bool
+	// CleanByEvents 清理缓存
+	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
 
-	// CleanByIds 清理缓存
-	CleanByIds(ctx context.Context, resourceType string, ids []string) error
-
-	// GetBizIdById 获取资源所属业务ID，用于判断哪些业务需要刷新缓存
-	GetBizIdById(ctx context.Context, resourceType string, id string) (int, error)
-
-	// SendRefreshBizCacheTask 发送刷新业务缓存任务
-	SendRefreshBizCacheTask(ctx context.Context, bizIds []int) error
+	// UpdateByEvents 更新缓存
+	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
 }
 
 // WatchCmdbResourceChangeTaskParams 监听cmdb资源变更任务参数
@@ -172,7 +166,7 @@ func (w *CmdbResourceWatcher) setCmdbResourceEvent(ctx context.Context, resource
 // Watch 监听cmdb资源变更并记录事件
 func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
 	params := map[string]interface{}{
-		"bk_fields":           CmdbResourceTypeMap[resourceType],
+		"bk_fields":           CmdbResourceTypeFields[resourceType],
 		"bk_resource":         resourceType,
 		"bk_supplier_account": "0",
 	}
@@ -208,41 +202,24 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 	}
 
 	// 处理cmdb资源变更事件
+	events := make([]string, 0)
 	for _, event := range resp.Data.BkEvents {
-		// 更新cmdb资源变更游标
-		err := w.setBkCursor(ctx, resourceType, event.BkCursor)
+		val, _ := json.Marshal(event)
+		events = append(events, string(val))
+	}
+
+	// 记录cmdb资源变更事件
+	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, resourceType)
+	w.redisClient.RPush(ctx, bkEventKey, events)
+
+	// 设置cmdb资源变更游标
+	if len(resp.Data.BkEvents) > 0 {
+		err = w.setBkCursor(ctx, resourceType, resp.Data.BkEvents[len(resp.Data.BkEvents)-1].BkCursor)
 		if err != nil {
 			logger.Error("set cmdb resource watch cursor error: %v", err)
 		}
-
-		// 提取资源ID
-		var resourceIds []string
-		for _, field := range CmdbResourceTypeMap[resourceType] {
-			val, ok := event.BkDetail[field]
-			if !ok || val == nil {
-				resourceIds = nil
-				break
-			}
-			switch val.(type) {
-			case float64:
-				resourceIds = append(resourceIds, fmt.Sprintf("%d", int(val.(float64))))
-			case string:
-				resourceIds = append(resourceIds, val.(string))
-			default:
-				continue
-			}
-		}
-
-		if len(resourceIds) == 0 {
-			continue
-		}
-
-		// cmdb资源变更事件记录
-		err = w.setCmdbResourceEvent(ctx, resourceType, strings.Join(resourceIds, "|"), event.BkEventType)
-		if err != nil {
-			logger.Error("set cmdb resource watch event error: %v", err)
-		}
 	}
+
 	return true, nil
 }
 
@@ -252,30 +229,34 @@ func (w *CmdbResourceWatcher) Handle(ctx context.Context, resourceType CmdbResou
 	// 获取cmdb资源变更事件
 	// todo: 加锁
 	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, rt)
-	result := w.redisClient.HGetAll(ctx, bkEventKey)
+	result := w.redisClient.LRange(ctx, bkEventKey, 0, -1)
 	w.redisClient.Del(ctx, bkEventKey)
+
 	if result.Err() != nil {
 		if !errors.Is(result.Err(), redis.Nil) {
 			return errors.Wrap(result.Err(), "get cmdb resource watch event error")
 		}
 	}
-
 	// 无cmdb资源变更事件
 	if result.Val() == nil {
 		return nil
 	}
 
 	// 提取需要处理的资源ID
-	needCleanIds := make([]string, 0)
-	needUpdateIds := make([]string, 0)
-	for resourceId, eventType := range result.Val() {
-		switch eventType {
+	needUpdateDetails := make([]map[string]interface{}, 0)
+	needDeleteDetails := make([]map[string]interface{}, 0)
+	var event cmdb.ResourceWatchEvent
+	for _, eventStr := range result.Val() {
+		err := json.Unmarshal([]byte(eventStr), &event)
+		if err != nil {
+			return errors.Wrap(err, "unmarshal cmdb resource watch event error")
+		}
+
+		switch event.BkEventType {
 		case "create", "update":
-			needUpdateIds = append(needUpdateIds, resourceId)
+			needUpdateDetails = append(needUpdateDetails, event.BkDetail)
 		case "delete":
-			needCleanIds = append(needCleanIds, resourceId)
-		default:
-			continue
+			needDeleteDetails = append(needDeleteDetails, event.BkDetail)
 		}
 	}
 
@@ -287,32 +268,15 @@ func (w *CmdbResourceWatcher) Handle(ctx context.Context, resourceType CmdbResou
 
 	// 处理cmdb资源变更事件
 	for _, runner := range runners {
-		if runner.IsMatchResourceType(rt) {
-			// 清理缓存
-			err := runner.CleanByIds(ctx, rt, needCleanIds)
-			if err != nil {
-				return errors.Wrap(err, fmt.Sprintf("clean cmdb resource(%s) watch event error by %v", rt, runner))
-			}
+		// 清理缓存
+		err := runner.CleanByEvents(ctx, rt, needDeleteDetails)
+		if err != nil {
+			return errors.Wrap(err, fmt.Sprintf("clean cmdb resource(%s) watch event error by %v", rt, runner))
+		}
 
-			// 获取需要刷新的业务ID
-			needUpdateBizIds := make(map[int]struct{})
-			for _, id := range needUpdateIds {
-				bizId, err := runner.GetBizIdById(ctx, rt, id)
-				if err != nil {
-					continue
-				}
-				needUpdateBizIds[bizId] = struct{}{}
-			}
-			bizIds := make([]int, 0, len(needUpdateBizIds))
-			for bizId := range needUpdateBizIds {
-				bizIds = append(bizIds, bizId)
-			}
-
-			// 发送刷新业务缓存任务
-			err = runner.SendRefreshBizCacheTask(ctx, bizIds)
-			if err != nil {
-				return errors.Wrap(err, fmt.Sprintf("send refresh cmdb resource(%s) biz cache task error by %v", rt, runner))
-			}
+		err = runner.UpdateByEvents(ctx, rt, needUpdateDetails)
+		if err != nil {
+			return errors.Wrap(err, fmt.Sprintf("update cmdb resource(%s) watch event error by %v", rt, runner))
 		}
 	}
 
@@ -325,7 +289,7 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 	logger.Info("start watch cmdb resource")
 
 	// 按资源类型启动处理任务
-	for resourceType := range CmdbResourceTypeMap {
+	for resourceType := range CmdbResourceTypeFields {
 		waitGroup.Add(1)
 		resourceType := resourceType
 		// 启动监听任务

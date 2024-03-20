@@ -64,6 +64,7 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	logger.Infof("mando: update rule: %+v", pr)
 	v, ok := pr.Annotations[sliAnnotation]
 	if !ok {
 		return

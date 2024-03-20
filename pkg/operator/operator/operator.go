@@ -416,6 +416,7 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},
+		{"PrometheusRule", c.promRuleInformer},
 	} {
 		// 跳过没有初始化的 informers
 		if infs.informersForResource == nil {

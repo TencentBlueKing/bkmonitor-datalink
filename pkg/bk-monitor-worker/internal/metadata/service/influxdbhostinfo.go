@@ -178,7 +178,7 @@ func (s *InfluxdbHostInfoSvc) updateDefaultRp(databases []string) error {
 func (s InfluxdbHostInfoSvc) GetClient() (client.Client, error) {
 	pwd := s.Password
 	if pwd != "" {
-		pwd = cipher.DBAESCipher.AESDecrypt(pwd)
+		pwd = cipher.GetDBAESCipher().AESDecrypt(pwd)
 	}
 	return influxdb.GetClient(fmt.Sprintf("%s://%s:%v", s.Protocol, s.DomainName, s.Port), s.Username, pwd, 5)
 }

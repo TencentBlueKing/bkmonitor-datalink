@@ -190,7 +190,7 @@ func (c *Controller) GeneratePromScrapeSecret() {
 		Value: c.generateServiceMonitorScrapeConfigs(),
 	})
 
-	b, err := promyaml.Marshal(cfg)
+	b, err := yaml.Marshal(cfg)
 	if err != nil {
 		logger.Errorf("promyaml.Marshal failed: %v", err)
 	}

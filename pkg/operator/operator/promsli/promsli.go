@@ -19,7 +19,6 @@ import (
 
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespace-labeler"
-	"github.com/prometheus/prometheus/model/rulefmt"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +27,7 @@ import (
 )
 
 const (
-	sliAnnotation = "sli_monitor"
+	sliAnnotation = "sliMonitor"
 )
 
 type Controller struct {
@@ -131,13 +130,13 @@ func (c *Controller) GeneratePromRuleConfigMap() corev1.ConfigMap {
 			logger.Errorf("marshal ruleconfig(%s) failed, err: %v", id, err)
 			continue
 		}
-		_, errs := rulefmt.Parse(content)
-		if len(errs) > 0 {
-			for _, err = range errs {
-				logger.Errorf("parse ruleconfig(%s) failed, err: %v", id, err)
-			}
-			continue
-		}
+		//_, errs := rulefmt.Parse(content)
+		//if len(errs) > 0 {
+		//	for _, err = range errs {
+		//		logger.Errorf("parse ruleconfig(%s) failed, err: %v", id, err)
+		//	}
+		//	continue
+		//}
 		data[id] = string(content)
 	}
 

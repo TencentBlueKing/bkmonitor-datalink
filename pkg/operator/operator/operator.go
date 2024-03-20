@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -64,6 +65,9 @@ type Operator struct {
 
 	serviceMonitorInformer *prominformers.ForResource
 	podMonitorInformer     *prominformers.ForResource
+
+	promRuleInformer  *prominformers.ForResource
+	promsliController *promsli.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -166,6 +170,23 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PodMonitor informer failed")
 		}
+	}
+
+	if ConfEnablePromRule {
+		operator.promRuleInformer, err = prominformers.NewInformersForResource(
+			prominformers.NewMonitoringInformerFactories(
+				map[string]struct{}{corev1.NamespaceAll: {}},
+				map[string]struct{}{},
+				operator.promclient,
+				resyncPeriod,
+				nil,
+			),
+			promv1.SchemeGroupVersion.WithResource(promv1.PrometheusRuleName),
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
+		}
+		operator.promsliController = promsli.NewController()
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
@@ -314,6 +335,15 @@ func (c *Operator) Run() error {
 			DeleteFunc: c.handlePodMonitorDelete,
 		})
 		c.podMonitorInformer.Start(c.ctx.Done())
+	}
+
+	if ConfEnablePromRule {
+		c.promRuleInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    c.handlePrometheusRuleAdd,
+			UpdateFunc: c.handlePrometheusRuleUpdate,
+			DeleteFunc: c.handlePrometheusRuleDelete,
+		})
+		c.promRuleInformer.Start(c.ctx.Done())
 	}
 
 	if err := c.waitForCacheSync(c.ctx); err != nil {
@@ -555,6 +585,8 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
 	}
+
+	c.promsliController.UpdateServiceMonitor(serviceMonitor)
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
@@ -578,14 +610,15 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
 		return
 	}
-	if IfRejectServiceMonitor(old) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
-		return
-	}
-
 	cur, ok := newObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", newObj)
+		return
+	}
+
+	c.promsliController.UpdateServiceMonitor(cur)
+	if IfRejectServiceMonitor(old) {
+		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
 		return
 	}
 	if IfRejectServiceMonitor(cur) {
@@ -618,6 +651,8 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
 	}
+
+	c.promsliController.DeleteServiceMonitor(serviceMonitor)
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("delete action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
@@ -744,6 +779,48 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		discovers = append(discovers, podDiscover)
 	}
 	return discovers
+}
+
+func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionAdd)
+	c.promsliController.UpdatePrometheusRule(promRule)
+	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionAdd)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
+}
+
+func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionUpdate)
+	c.promsliController.UpdatePrometheusRule(promRule)
+	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionUpdate)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
+}
+
+func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionDelete)
+	c.promsliController.DeletePrometheusRule(promRule)
+	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionDelete)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
 }
 
 func (c *Operator) handlePodMonitorAdd(obj interface{}) {

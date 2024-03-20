@@ -30,11 +30,13 @@ diffRedis:
       address:
         - 127.0.0.1
       password: ""
-srcConsul:
-  svrName: ""
-  address: "127.0.0.1:8500"
-  path: "test_prefix/"
-bypassConsul:
-  svrName: ""
-  address: "127.0.0.1:8500"
-  path: "test_prefix_bypass/"
+consulDiff:
+  showAllData: false
+  srcConsul:
+    svrName: ""
+    address: "127.0.0.1:8500"
+    path: "test_prefix/"
+  bypassConsul:
+    svrName: ""
+    address: "127.0.0.1:8500"
+    path: "test_prefix_bypass/"

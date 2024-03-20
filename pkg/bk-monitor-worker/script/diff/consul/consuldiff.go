@@ -34,28 +34,28 @@ var (
 // OutputDiffContent output the different content
 func OutputDiffContent() {
 	fmt.Println("start to diff content from src and bypass ...")
-	if err := util.ValidateParams(Config.Src.Path, Config.Bypass.Path); err != nil {
-		fmt.Printf("validate src and bypass error, %v", err)
+	if err := util.ValidateParams(Config.ConsulConfig.Src.Path, Config.ConsulConfig.Bypass.Path); err != nil {
+		fmt.Printf("validate src and bypass error, %v\n", err)
 		os.Exit(1)
 	}
 
 	srcConsulClient = GetInstance(consulUtils.InstanceOptions{
-		Addr: Config.Src.Address,
+		Addr: Config.ConsulConfig.Src.Address,
 	})
 	bypassConsulClient = GetInstance(consulUtils.InstanceOptions{
-		Addr: Config.Bypass.Address,
+		Addr: Config.ConsulConfig.Bypass.Address,
 	})
-	SrcPath, BypassPath = Config.Src.Path, Config.Bypass.Path
+	SrcPath, BypassPath = Config.ConsulConfig.Src.Path, Config.ConsulConfig.Bypass.Path
 
 	// 获取全路径
 	srcFullPath, bypassFullPath, err := getConsulPath()
 	if err != nil {
-		fmt.Printf("get consul path error, %v", err)
+		fmt.Printf("get consul path error, %s", err)
 		os.Exit(1)
 	}
 	// 如果只有一个地址，则全路径对比
 	if len(srcFullPath) == 1 && len(bypassFullPath) == 1 {
-		if err := output(SrcPath, BypassPath); err != nil {
+		if _, err := output(SrcPath, BypassPath); err != nil {
 			fmt.Println(err)
 		}
 		return
@@ -74,7 +74,7 @@ func OutputDiffContent() {
 	// 开始比对数据
 	comparePathData(&bypassFullPath)
 
-	fmt.Println("diff successfully")
+	fmt.Println("diff end!!!")
 }
 
 // get full path to get data
@@ -114,7 +114,7 @@ func comparePath(srcFullPath *[]string, bypassFullPath *[]string) ([]string, []s
 	}
 	var bypassFullPathWithoutBypass []string
 	for _, path := range *bypassFullPath {
-		bypassFullPathWithoutBypass = append(bypassFullPathWithoutBypass, strings.Replace(path, Config.Bypass.Path, Config.Src.Path, 1))
+		bypassFullPathWithoutBypass = append(bypassFullPathWithoutBypass, strings.Replace(path, Config.ConsulConfig.Bypass.Path, Config.ConsulConfig.Src.Path, 1))
 	}
 	// 比对差异, 记录仅存在于原路径中数据和旁路路径数据
 	// NOTE: 仅对比剥离前缀的数据
@@ -127,34 +127,47 @@ func comparePath(srcFullPath *[]string, bypassFullPath *[]string) ([]string, []s
 
 // compare data from path
 func comparePathData(bypassPathList *[]string) {
+	is_all_equal := true
 	for _, path := range *bypassPathList {
 		srcPath := strings.Replace(path, BypassPath, SrcPath, 1)
-		if err := output(srcPath, path); err != nil {
+		is_equal, err := output(srcPath, path)
+		if err != nil {
 			fmt.Println(err)
 		}
+		if !is_equal {
+			is_all_equal = false
+		}
+	}
+
+	if is_all_equal {
+		fmt.Println("the content of src and bypass path are all equal \u2713")
 	}
 }
 
-func output(srcPath string, bypassPath string) error {
+func output(srcPath string, bypassPath string) (bool, error) {
 	srcData, _ := srcConsulClient.Get(srcPath)
 	bypassData, _ := bypassConsulClient.Get(bypassPath)
 	srcDataJson := string(srcData)
 	bypassDataJson := string(bypassData)
 	// 优先判断字符串匹配，如果可以，则进行
 	if srcDataJson == bypassDataJson {
-		fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, bypassPath)
-		return nil
+		if ShowAllData {
+			fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, bypassPath)
+		}
+		return true, nil
 	}
 	equal, err := jsonx.CompareJson(srcDataJson, bypassDataJson)
 	if err != nil {
-		return errors.Errorf("path: %s compare with path: %s error, %v", srcPath, bypassPath, err)
+		return false, errors.Errorf("path: %s compare with path: %s error, %v", srcPath, bypassPath, err)
 	}
 	if equal {
-		fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, bypassPath)
-	} else {
-		fmt.Printf("path: %s and path: %s is not equal\n", srcPath, bypassPath)
-		fmt.Printf("path: %s, data: %s\n", srcPath, srcDataJson)
-		fmt.Printf("path: %s, data: %s\n\n", bypassPath, bypassDataJson)
+		if ShowAllData {
+			fmt.Printf("path: %s and path: %s is equal\n\n", srcPath, bypassPath)
+		}
+		return true, nil
 	}
-	return nil
+	fmt.Printf("path: %s and path: %s is not equal\n", srcPath, bypassPath)
+	fmt.Printf("path: %s, data: %s\n", srcPath, srcDataJson)
+	fmt.Printf("path: %s, data: %s\n\n", bypassPath, bypassDataJson)
+	return false, nil
 }

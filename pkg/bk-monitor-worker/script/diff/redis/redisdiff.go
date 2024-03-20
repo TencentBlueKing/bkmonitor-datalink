@@ -212,11 +212,11 @@ func (d *DiffUtil) compareHash(srcData interface{}, bypassData interface{}) (boo
 	}
 
 	if kOnlyInSrc := sKeySet.Difference(bKeySet).ToSlice(); len(kOnlyInSrc) != 0 {
-		fmt.Printf("hash key [%v] only exsist in srcKey [%s]\n\n", kOnlyInSrc, d.SrcKey)
+		fmt.Printf("hash key [%v] only exist in srcKey [%s]\n\n", kOnlyInSrc, d.SrcKey)
 	}
 
 	if kOnlyInBypass := bKeySet.Difference(sKeySet).ToSlice(); len(kOnlyInBypass) != 0 {
-		fmt.Printf("hash key [%v] only exsist in bypassKey [%s]\n\n", kOnlyInBypass, d.BypassKey)
+		fmt.Printf("hash key [%v] only exist in bypassKey [%s]\n\n", kOnlyInBypass, d.BypassKey)
 	}
 	equal, _ = jsonx.CompareObjects(sMap, bMap)
 	if equal {

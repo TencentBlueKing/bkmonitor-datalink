@@ -17,8 +17,10 @@ import (
 	"sync"
 	"time"
 
+	promyaml "github.com/ghodss/yaml"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespace-labeler"
+	"github.com/prometheus/prometheus/model/rulefmt"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,7 +66,6 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
-	logger.Infof("mando: update rule: %+v", pr)
 	v, ok := pr.Annotations[sliAnnotation]
 	if !ok {
 		return
@@ -126,18 +127,18 @@ func (c *Controller) GeneratePromRuleConfigMap() corev1.ConfigMap {
 			rule.Spec.Groups[i].PartialResponseStrategy = ""
 		}
 
-		content, err := yaml.Marshal(rule.Spec)
+		content, err := promyaml.Marshal(rule.Spec)
 		if err != nil {
 			logger.Errorf("marshal ruleconfig(%s) failed, err: %v", id, err)
 			continue
 		}
-		//_, errs := rulefmt.Parse(content)
-		//if len(errs) > 0 {
-		//	for _, err = range errs {
-		//		logger.Errorf("parse ruleconfig(%s) failed, err: %v", id, err)
-		//	}
-		//	continue
-		//}
+		_, errs := rulefmt.Parse(content)
+		if len(errs) > 0 {
+			for _, err = range errs {
+				logger.Errorf("parse ruleconfig(%s) failed, err: %v", id, err)
+			}
+			continue
+		}
 		data[id] = string(content)
 	}
 
@@ -188,7 +189,12 @@ func (c *Controller) GeneratePromScrapeSecret() {
 		Key:   "scrape_configs",
 		Value: c.generateServiceMonitorScrapeConfigs(),
 	})
-	logger.Infof("render cfg: %+v", cfg) //TODO(remove)
+
+	b, err := promyaml.Marshal(cfg)
+	if err != nil {
+		logger.Errorf("promyaml.Marshal failed: %v", err)
+	}
+	logger.Infof("render cfg: %s", string(b)) //TODO(remove)
 }
 
 func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {

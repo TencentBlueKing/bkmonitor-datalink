@@ -181,6 +181,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.EqualValues(t, expectedHostIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 
+		assert.EqualValues(t, 8, int(client.HLen(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val()))
+
 		// 刷新全局缓存
 		err = cacheManager.RefreshGlobal(ctx)
 		if err != nil {
@@ -196,8 +198,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			return
 		}
 		events := make([]map[string]interface{}, 0, len(allResult.Val()))
-		var host *AlarmHostInfo
 		for _, v := range allResult.Val() {
+			var host *AlarmHostInfo
 			err := json.Unmarshal([]byte(v), &host)
 			if err != nil {
 				t.Error(err)
@@ -224,6 +226,29 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			t.Error(err)
 			return
 		}
+
+		topoEvent := map[string]interface{}{
+			"bk_obj_id":    "module",
+			"bk_inst_id":   6,
+			"bk_inst_name": "测试模块",
+			"bk_obj_name":  "模块",
+		}
+
+		err = cacheManager.CleanByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.False(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
+
+		err = cacheManager.UpdateByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.True(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
 
 		// 判断清理后是否为空
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())

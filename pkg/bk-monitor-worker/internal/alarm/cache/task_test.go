@@ -20,48 +20,33 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package alarm
+package cache
 
-import (
-	"context"
-	"os"
-	"os/signal"
-	"testing"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-)
-
-func TestMain(m *testing.M) {
-	config.FilePath = "../../bmw_test.yaml"
-	config.InitConfig()
-
-	//m.Run()
-}
-
-func TestResourceWatch(t *testing.T) {
-	redisOptions := redis.RedisOptions{
-		Mode:  "standalone",
-		Addrs: []string{"127.0.0.1:6379"},
-	}
-
-	// 监听信号
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-
-	//调用cancel函数取消
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-signalChan
-		cancel()
-	}()
-
-	cw, err := NewCmdbResourceWatcher(t.Name(), &WatchCmdbResourceChangeTaskParams{
-		Redis: redisOptions,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cw.Run(ctx)
-}
+// 正式运行测试
+//func TestAlarmCacheTask(t *testing.T) {
+//	// 业务缓存
+//	rOpts := redis.RedisOptions{
+//		Mode:  "standalone",
+//		Addrs: []string{"127.0.0.1:6379"},
+//	}
+//
+//	ctx := context.Background()
+//	params, err := json.Marshal(RefreshHostAndTopoCacheByBizParams{
+//		Redis:          rOpts,
+//		CacheKeyPrefix: t.Name(),
+//		Type:           "module",
+//	})
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//
+//	tt := &task.Task{
+//		Kind:    "alarm_cache",
+//		Payload: params,
+//	}
+//
+//	err = RefreshAlarmCacheTask(ctx, tt)
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//}

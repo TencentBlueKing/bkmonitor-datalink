@@ -61,6 +61,10 @@ func NewSetCacheManager(prefix string, opt *redis.RedisOptions) (*SetCacheManage
 	}, err
 }
 
+func (m *SetCacheManager) BizEnabled() bool {
+	return true
+}
+
 // getSetListByBizID 通过业务ID获取集群列表
 func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, error) {
 	cmdbApi, err := api.GetCmdbApi()
@@ -70,7 +74,6 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
-		cmdbApi.SearchSet().SetContext(ctx),
 		CmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var result cmdb.SearchSetResp
@@ -85,8 +88,8 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 			return result.Data.Count, nil
 		},
 		// 生成分页请求
-		func(req define.Operation, page int) define.Operation {
-			return req.SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+		func(page int) define.Operation {
+			return cmdbApi.SearchSet().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
 		},
 		10,
 	)
@@ -96,9 +99,9 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 	}
 
 	// 准备缓存数据
-	var res cmdb.SearchSetResp
 	setList := make([]cmdb.SearchSetData, 0)
 	for _, item := range result {
+		var res cmdb.SearchSetResp
 		err = mapstructure.Decode(item, &res)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to decode response")

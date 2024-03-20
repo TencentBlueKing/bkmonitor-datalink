@@ -289,10 +289,10 @@ func HandleApiResultError(result apiDefine.ApiCommonRespMeta, err error, message
 }
 
 // BatchApiRequest send one request first and get the total count, then send the rest requests by pageSize
-func BatchApiRequest(req define.Operation, pageSize int, getTotalFunc func(interface{}) (int, error), setParamsFunc func(define.Operation, int) define.Operation, concurrency int) ([]interface{}, error) {
+func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
 	// send the first request to get the total count
 	var resp interface{}
-	req = setParamsFunc(req, 0)
+	req := getReqFunc(0)
 	_, err := req.SetResult(&resp).Request()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to send the first request")
@@ -309,14 +309,14 @@ func BatchApiRequest(req define.Operation, pageSize int, getTotalFunc func(inter
 	waitGroup := sync.WaitGroup{}
 
 	// 页数计算，向上取整
-	page := (total + pageSize - 1) / pageSize
+	pageCount := (total + pageSize - 1) / pageSize
 
 	// 初始化结果和错误数组
-	results := make([]interface{}, page)
-	errs := make([]error, page)
+	results := make([]interface{}, pageCount)
+	errs := make([]error, pageCount)
 	results[0] = resp
 
-	for p := 1; p < page; p++ {
+	for p := 1; p < pageCount; p++ {
 		limitChan <- struct{}{}
 		waitGroup.Add(1)
 		go func(page int) {
@@ -324,15 +324,16 @@ func BatchApiRequest(req define.Operation, pageSize int, getTotalFunc func(inter
 				<-limitChan
 				waitGroup.Done()
 			}()
-			req = setParamsFunc(req, page)
-			_, err := req.SetResult(&resp).Request()
+			var r interface{}
+			req := getReqFunc(page)
+			_, err := req.SetResult(&r).Request()
 			if err != nil {
 				errs[page] = errors.Wrap(err, fmt.Sprintf("failed to send the request for page %d", page))
 				errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to send the request for page %d", page)))
+				return
 			}
-			results[page] = resp
-		}(page)
-		page++
+			results[page] = r
+		}(p)
 	}
 
 	waitGroup.Wait()

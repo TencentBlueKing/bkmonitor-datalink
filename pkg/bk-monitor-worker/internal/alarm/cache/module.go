@@ -69,7 +69,6 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 	}
 
 	result, err := api.BatchApiRequest(
-		cmdbApi.SearchModule().SetContext(ctx),
 		CmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var result cmdb.SearchModuleResp
@@ -83,8 +82,8 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 			}
 			return result.Data.Count, nil
 		},
-		func(req define.Operation, page int) define.Operation {
-			return req.SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+		func(page int) define.Operation {
+			return cmdbApi.SearchModule().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
 		},
 		10,
 	)
@@ -93,9 +92,13 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 		return nil, errors.Wrap(err, "failed to request cmdb api")
 	}
 
-	var res cmdb.SearchModuleResp
 	var moduleList []cmdb.SearchModuleData
 	for _, item := range result {
+		if item == nil {
+			logger.Warnf("cmdb api response is nil")
+		}
+
+		var res cmdb.SearchModuleResp
 		err = mapstructure.Decode(item, &res)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to decode response")
@@ -107,6 +110,10 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 	}
 
 	return moduleList, nil
+}
+
+func (m *ModuleCacheManager) BizEnabled() bool {
+	return true
 }
 
 // RefreshByBiz 刷新业务模块缓存
@@ -136,6 +143,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 			return errors.Wrap(err, "failed to update module hashmap cache")
 		}
 	}
+	logger.Infof("refresh module cache by biz: %d, module count: %d", bizID, len(moduleList))
 
 	// 更新服务模板关联的模块缓存
 	if templateToModules != nil {
@@ -149,6 +157,8 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 			return errors.Wrap(err, "failed to update service_template hashmap cache")
 		}
 	}
+	logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
+
 	return nil
 }
 

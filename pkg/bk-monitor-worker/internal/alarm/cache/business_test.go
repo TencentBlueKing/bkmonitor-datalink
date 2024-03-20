@@ -56,7 +56,7 @@ var DemoBusinesses = []map[string]interface{}{
 		"bk_biz_developer":  "user1",
 		"bk_biz_productor":  "user1",
 		"bk_biz_tester":     "user1,user2",
-		"bk_biz_maintainer": "user2",
+		"bk_biz_maintainer": "",
 		"operator":          "user1",
 		"time_zone":         "Asia/Shanghai",
 		"language":          "1",
@@ -223,4 +223,60 @@ func TestBusinessCacheManager(t *testing.T) {
 		exists := client.Exists(ctx, cacheManager.GetCacheKey(businessCacheKey))
 		assert.EqualValues(t, 0, exists.Val())
 	})
+
+	t.Run("Event", func(t *testing.T) {
+		// 创建业务缓存管理器
+		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]interface{}{
+			{"bk_biz_id": 2},
+		})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 3)
+
+		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]interface{}{
+			{"bk_biz_id": 2},
+		})
+		err = cacheManager.CleanByEvents(ctx, "other", []map[string]interface{}{
+			{"bk_biz_id": 3},
+		})
+		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]interface{}{
+			{"bk_biz_id": 3},
+		})
+
+		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 2)
+	})
 }
+
+// 真实运行测试
+//func TestRunBusinessCache(t *testing.T) {
+//	rOpts := &redis.RedisOptions{
+//		Mode:  "standalone",
+//		Addrs: []string{"127.0.0.1:6379"},
+//	}
+//
+//	ctx := context.Background()
+//
+//	cm, err := NewCacheManagerByType(rOpts, t.Name(), "business")
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//
+//	err = cm.RefreshGlobal(ctx)
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//
+//	err = cm.CleanGlobal(ctx)
+//	if err != nil {
+//		t.Fatal(err)
+//	}
+//}

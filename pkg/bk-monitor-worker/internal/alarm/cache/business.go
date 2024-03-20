@@ -83,7 +83,6 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 
 	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
-		cmdbApi.SearchBusiness().SetContext(ctx),
 		CmdbApiPageSize,
 		// 获取总数
 		func(resp interface{}) (int, error) {
@@ -98,8 +97,8 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 			return int(count.(float64)), nil
 		},
 		// 设置分页参数
-		func(req define.Operation, page int) define.Operation {
-			return req.SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+		func(page int) define.Operation {
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
 		},
 		10,
 	)
@@ -229,11 +228,10 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 			"language":   "1",
 			"life_cycle": "2",
 		}
-		bizStr, err := json.Marshal(biz)
-		if err != nil {
-			continue
+
+		if bizStr, err := json.Marshal(biz); err == nil {
+			bizCacheData[strconv.Itoa(bkBizId)] = string(bizStr)
 		}
-		bizCacheData[strconv.Itoa(bkBizId)] = string(bizStr)
 	}
 
 	// 更新缓存
@@ -249,8 +247,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 // CleanGlobal 清理全局缓存
 func (m *BusinessCacheManager) CleanGlobal(ctx context.Context) error {
 	key := m.GetCacheKey(businessCacheKey)
-	err := m.DeleteMissingHashMapFields(ctx, key)
-	if err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 	return nil
@@ -258,18 +255,16 @@ func (m *BusinessCacheManager) CleanGlobal(ctx context.Context) error {
 
 // CleanByEvents 根据事件清理缓存
 func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "business" {
+	if resourceType != "biz" {
 		return nil
 	}
 
 	// 获取业务ID
 	bizIds := make([]string, 0, len(events))
 	for _, event := range events {
-		bizID, ok := event["bk_biz_id"].(int)
-		if !ok {
-			continue
+		if bizID, ok := event["bk_biz_id"].(int); ok {
+			bizIds = append(bizIds, strconv.Itoa(bizID))
 		}
-		bizIds = append(bizIds, strconv.Itoa(bizID))
 	}
 
 	// 删除缓存
@@ -282,12 +277,11 @@ func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType s
 
 // UpdateByEvents 根据事件更新缓存
 func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "business" || len(events) == 0 {
+	if resourceType != "biz" || len(events) == 0 {
 		return nil
 	}
 
-	err := m.RefreshGlobal(ctx)
-	if err != nil {
+	if err := m.RefreshGlobal(ctx); err != nil {
 		return err
 	}
 

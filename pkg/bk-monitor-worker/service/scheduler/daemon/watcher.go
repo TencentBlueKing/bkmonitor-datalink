@@ -47,13 +47,17 @@ type DefaultWatcher struct {
 }
 
 func (d *DefaultWatcher) start() {
+	// worker 更改监听
 	go d.watchWorker()
+	// task 更改监听
 	go d.watchTask()
+	// reload 更变监听
+	go d.watchReloadRequest()
 }
 
 func (d *DefaultWatcher) watchWorker() {
 	ticker := time.NewTicker(d.config.watchWorkerInterval)
-	watchWorkerKeyPrefix := fmt.Sprintf("%s*", common.WorkerKeyPrefix())
+	watchWorkerKeyPrefix := fmt.Sprintf("%squeue:*", common.WorkerKeyPrefix())
 	logger.Infof("\nDaemonTask [DefaultWatcher] worker watcher started\n - \t "+
 		"interval: %s \n - \t watchKey: %s", d.config.watchWorkerInterval, watchWorkerKeyPrefix)
 	workerMarkMapping := make(map[string]watchWorkerMark)
@@ -197,6 +201,96 @@ func (d *DefaultWatcher) handleDeleteTask(taskMark watchTaskMark) {
 		return
 	}
 	logger.Infof("[TASK DELETE] Remove Task: %s detect. taskUniId: %s", taskMark.task.Kind, taskMark.taskUniId)
+}
+
+func (d *DefaultWatcher) watchReloadRequest() {
+	watchChannel := common.DaemonReloadReqChannel()
+
+	logger.Infof("\nDaemonTask [DefaultWatcher] reload-request watcher started\n - \t "+
+		"interval: %s \n - \t subscribeKey: %s", d.config.watchTaskInterval, watchChannel)
+
+	sub := d.redisClient.Subscribe(d.ctx, watchChannel)
+	ch := sub.Channel()
+	for {
+		select {
+		case <-d.ctx.Done():
+			sub.Close()
+			logger.Info("Daemon task scheduler reload-request subscribe stopped.")
+			return
+		case msg := <-ch:
+			taskUniId := msg.Payload
+			// Step1: 判断任务是否存在
+			taskInfo, err := d.getDaemonTask(taskUniId)
+			if err != nil {
+				logger.Errorf(
+					"Failed to get daemon task of taskUniId: %s, error: %s",
+					taskUniId, err,
+				)
+				continue
+			}
+			if taskInfo == nil {
+				logger.Errorf(
+					"TaskUniId: %s not found in queue: %s, error: %s",
+					taskUniId, common.DaemonTaskKey(), err,
+				)
+				continue
+			}
+			d.reassign(watchTaskMark{taskUniId: taskUniId, task: *taskInfo})
+		}
+	}
+}
+
+func (d *DefaultWatcher) reassign(task watchTaskMark) {
+
+	// Step1: 判断 Binding 是否存在
+	workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(task.taskUniId)
+	if err != nil {
+		logger.Errorf(
+			"[reassign] Failed to obtained binding with taskUniId: %s, error: %s",
+			task.taskUniId, err,
+		)
+		return
+	}
+	if workerId == "" {
+		// Binding 不存在 -> 直接添加
+		logger.Warnf(
+			"TaskUniId: %s exist in the task queue, "+
+				"but not in the binding queue, this task will be added normally", task.taskUniId,
+		)
+		d.handleAddTask(task)
+	} else {
+		// Binding 存在 -> 保留 WorkerId 关系
+		if err = GetBinding().addReloadExecuteRequest(task.taskUniId, task.task, workerId); err != nil {
+			logger.Errorf("Failed to send reload singal to worker queue, error: %s", err)
+			return
+		}
+	}
+
+	logger.Infof("Reload taskUniId: %s successfully", task.taskUniId)
+}
+
+// getDaemonTask obtained the daemon task
+func (d *DefaultWatcher) getDaemonTask(taskUniId string) (*task.SerializerTask, error) {
+	members, err := rdb.GetRDB().Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range members {
+		var t task.SerializerTask
+		if err = jsonx.Unmarshal([]byte(item), &t); err != nil {
+			logger.Errorf(
+				"Failed to unmarshal data to SerializerTask, data: %s, error: %s",
+				item, err,
+			)
+			continue
+		}
+		if ComputeTaskUniId(t) == taskUniId {
+			return &t, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func NewDefaultWatcher(ctx context.Context) Watcher {

@@ -7,14 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package util
+package resulttable
 
-import "fmt"
+import "strings"
 
-// ValidateParams validate params
-func ValidateParams(src string, dst string) error {
-	if src == "" || dst == "" {
-		return fmt.Errorf("src or dst is null")
-	}
-	return nil
+// TableIdsLike filter many table id by `like`
+// table_id LIKE ? OR table_id LIKE ?", "L12%", "A12%
+func (qs ResultTableQuerySet) TableIdsLike(tableIds []string) ResultTableQuerySet {
+	var sqlList []string
+	interfaceSlice := make([]interface{}, len(tableIds))
+    for i, v := range tableIds {
+		sqlList = append(sqlList, "table_id LIKE ?")
+        interfaceSlice[i] = v
+    }
+	// 以 `OR` 拼接 sql
+	sql := strings.Join(sqlList, " OR ")
+	return qs.w(qs.db.Where(sql, interfaceSlice...))
 }

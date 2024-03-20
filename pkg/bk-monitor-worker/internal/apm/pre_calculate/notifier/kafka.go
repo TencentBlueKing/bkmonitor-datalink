@@ -86,11 +86,14 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 		"KafkaNotifier started. host: %s topic: %s groupId: %s",
 		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId,
 	)
-loop:
 	for {
 		select {
 		case <-k.ctx.Done():
-			break loop
+			if err := k.consumerGroup.Close(); err != nil {
+				logger.Errorf("Failed to close ConsumerGroup, error: %s", err)
+			}
+			logger.Infof("ConsumerGroup stopped.")
+			return
 		default:
 			if err := k.consumerGroup.Consume(k.ctx, []string{k.config.KafkaTopic}, k.handler); err != nil {
 				logger.Errorf("ConsumerGroup fails to consume. error: %s", err)
@@ -98,7 +101,7 @@ loop:
 			}
 		}
 	}
-	logger.Infof("ConsumerGroup stopped.")
+
 }
 
 type consumeHandler struct {

@@ -68,6 +68,8 @@ type CacheOperator interface {
 	SaveBatch([]CacheStorageData) error
 	// Query query cache
 	Query(string) ([]byte, error)
+	// Close resource
+	Close()
 }
 
 // RedisCacheOptions resource: cache config
@@ -180,6 +182,10 @@ func (r *RedisCache) Query(key string) ([]byte, error) {
 	return res.Bytes()
 }
 
+func (r *RedisCache) Close() {
+	r.client.Close()
+}
+
 func newRedisCache(ctx context.Context, options RedisCacheOptions) (*RedisCache, error) {
 	client, err := redisUtils.NewRedisClient(
 		context.Background(),
@@ -226,6 +232,10 @@ func (m *MemoryCache) Query(key string) ([]byte, error) {
 		return r.([]byte), nil
 	}
 	return nil, nil
+}
+
+func (m *MemoryCache) Close() {
+	m.c.Flush()
 }
 
 func newMemoryCache() (*MemoryCache, error) {

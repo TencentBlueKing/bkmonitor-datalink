@@ -23,24 +23,27 @@ func init() {
 	consulDiffCmd.PersistentFlags().StringVar(
 		&consul.ConsulDiffConfigPath, "config", "", "config file path",
 	)
-
-	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Config.Src.Address, "srcAddress", "127.0.0.1:8500", "consul address",
-	)
-	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Config.Src.Path, "srcPath", "", "consul src path",
+	consulDiffCmd.PersistentFlags().BoolVar(
+		&consul.ShowAllData, "showAllData", false, "",
 	)
 
 	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Config.Bypass.Address, "bypassAddress", "127.0.0.1:8500", "consul address",
+		&consul.Config.ConsulConfig.Src.Address, "srcAddress", "127.0.0.1:8500", "consul address",
 	)
 	consulDiffCmd.PersistentFlags().StringVar(
-		&consul.Config.Bypass.Path, "bypassPath", "", "consul src path",
+		&consul.Config.ConsulConfig.Src.Path, "srcPath", "", "consul src path",
+	)
+
+	consulDiffCmd.PersistentFlags().StringVar(
+		&consul.Config.ConsulConfig.Bypass.Address, "bypassAddress", "127.0.0.1:8500", "consul address",
+	)
+	consulDiffCmd.PersistentFlags().StringVar(
+		&consul.Config.ConsulConfig.Bypass.Path, "bypassPath", "", "consul src path",
 	)
 }
 
 var consulDiffCmd = &cobra.Command{
-	Use:   "consul_diff",
+	Use:   "consul",
 	Short: "diff for consul",
 	Long:  "diff content from consul src and dst path",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -52,7 +55,7 @@ var consulDiffCmd = &cobra.Command{
 		settings := fmt.Sprintf(`output different consul content 
 src address: %s, src path: %s 
 bypass address: %s,  src path: %s
-`, consul.Config.Src.Address, consul.Config.Src.Path, consul.Config.Bypass.Address, consul.Config.Bypass.Path)
+`, consul.Config.ConsulConfig.Src.Address, consul.Config.ConsulConfig.Src.Path, consul.Config.ConsulConfig.Bypass.Address, consul.Config.ConsulConfig.Bypass.Path)
 		fmt.Println(settings)
 
 		// 输出原路径和旁路路径的差异

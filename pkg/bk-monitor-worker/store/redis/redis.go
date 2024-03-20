@@ -12,7 +12,6 @@ package redis
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -160,19 +159,16 @@ func (r *Instance) Close() error {
 	return nil
 }
 
-// HSetWithBypass 允许设置旁路
-func (r *Instance) HSetWithBypass(key, field, value string) error {
-	if config.BypassSuffixPath != "" {
-		realKey := strings.ReplaceAll(key, config.BypassSuffixPath, "")
-		oldValue := r.HGet(realKey, field)
-		equal, _ := jsonx.CompareJson(oldValue, value)
-		if !equal {
-			logger.Infof("[redis_diff] HashSet key [%s] and [%s] field [%s] is different, new [%s]  old [%s]", key, realKey, field, value, oldValue)
-		} else {
-			logger.Infof("[redis_diff] HashSet key [%s] and [%s] field [%s] is equal", key, realKey, field)
-			return nil
-		}
+// HSetWithCompare 与redis中数据不同才更新
+func (r *Instance) HSetWithCompare(key, field, value string) error {
+	oldValue := r.HGet(key, field)
+	if oldValue == value {
+		return nil
 	}
+	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
+		return nil
+	}
+	logger.Infof("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
 	metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {

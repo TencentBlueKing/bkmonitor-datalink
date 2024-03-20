@@ -108,7 +108,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
-	dbSession := mysql.GetDBSession()
+	db := mysql.GetDBSession().DB
 	var influxdbHostInfoList []storage.InfluxdbHostInfo
 	var influxdbClusterInfoList []storage.InfluxdbClusterInfo
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -117,32 +117,28 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新influxdb路由信息至consul当中
 	// 更新主机信息
-	err := storage.NewInfluxdbHostInfoQuerySet(dbSession.DB).All(&influxdbHostInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbHostInfoQuerySet(db).All(&influxdbHostInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb host info error, %v", err)
 	} else {
 		storage.RefreshInfluxdbHostInfoConsulClusterConfig(ctx, &influxdbHostInfoList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新集群信息
-	err = storage.NewInfluxdbClusterInfoQuerySet(dbSession.DB).All(&influxdbClusterInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbClusterInfoQuerySet(db).All(&influxdbClusterInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb cluster info error, %v", err)
 	} else {
 		storage.RefreshInfluxdbClusterInfoConsulClusterConfig(ctx, &influxdbClusterInfoList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新结果表信息
-	err = storage.NewInfluxdbStorageQuerySet(dbSession.DB).All(&influxdbStorageList)
-	if err != nil {
+	if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
 	} else {
 		storage.RefreshInfluxdbStorageConsulClusterConfig(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新vm router信息
-	err = storage.NewAccessVMRecordQuerySet(dbSession.DB).All(&accessVMRecordList)
-	if err != nil {
+	if err := storage.NewAccessVMRecordQuerySet(db).All(&accessVMRecordList); err != nil {
 		logger.Errorf("refresh_influxdb_route query access vm record error, %v", err)
 	} else {
 		storage.RefreshVmRouter(ctx, &accessVMRecordList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -150,8 +146,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新version
 	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
-	err = models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath)
-	if err != nil {
+	if err := models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath); err != nil {
 		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)
 	} else {
 		logger.Infof("influxdb router config refresh success")
@@ -159,8 +154,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新TS结果表外部的依赖信息
 	if influxdbStorageList == nil {
-		err := storage.NewInfluxdbStorageQuerySet(dbSession.DB).All(&influxdbStorageList)
-		if err != nil {
+		if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
 			logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
 		} else {
 			storage.RefreshInfluxDBStorageOuterDependence(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -170,8 +164,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	}
 
 	// 更新tag路由信息
-	err = storage.NewInfluxdbTagInfoQuerySet(dbSession.DB).All(&influxdbTagInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbTagInfoQuerySet(db).All(&influxdbTagInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb tag info error, %v", err)
 	} else {
 		storage.RefreshConsulTagConfig(ctx, &influxdbTagInfoList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -201,7 +194,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		rtList = append(rtList, dsrt.TableId)
 	}
 	// 如果全部不可用，则直接返回
-	if len(rtList) == 0{
+	if len(rtList) == 0 {
 		logger.Infof("not enabled result table by data_source_result_table, skip")
 		return nil
 	}
@@ -224,7 +217,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	// 过滤到可用的数据源
 	var dataIdList []uint
 	for _, dsrt := range dataSourceRtList {
-		if stringx.StringInSlice(dsrt.TableId, enabledRtList){
+		if stringx.StringInSlice(dsrt.TableId, enabledRtList) {
 			dataIdList = append(dataIdList, dsrt.BkDataId)
 		}
 	}

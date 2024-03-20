@@ -262,8 +262,14 @@ func (w *CmdbResourceWatcher) Handle(ctx context.Context, resourceType CmdbResou
 
 	// 创建处理器
 	hostCacheManager, _ := cache.NewHostAndTopoCacheManager(w.prefix, w.redisOpt)
+	bizCacheManager, _ := cache.NewBusinessCacheManager(w.prefix, w.redisOpt)
+	setCacheManager, _ := cache.NewSetCacheManager(w.prefix, w.redisOpt)
+	moduleCacheManager, _ := cache.NewModuleCacheManager(w.prefix, w.redisOpt)
 	runners := map[string]CmdbWatchRunner{
 		"host_topo": hostCacheManager,
+		"business":  bizCacheManager,
+		"set":       setCacheManager,
+		"module":    moduleCacheManager,
 	}
 
 	// 处理cmdb资源变更事件

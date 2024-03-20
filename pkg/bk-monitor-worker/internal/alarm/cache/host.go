@@ -125,6 +125,14 @@ type AlarmHostInfo struct {
 	TopoLinks [][]string `json:"topo_links"`
 }
 
+const (
+	hostCacheKey        = "cmdb.host"
+	hostIDCacheKey      = "cmdb.host_id"
+	hostAgentIDCacheKey = "cmdb.agent_id"
+	hostIPCacheKey      = "cmdb.host_ip"
+	topoCacheKey        = "cmdb.topo"
+)
+
 // NewAlarmHostInfoByListBizHostsTopoDataInfo 通过ListBizHostsTopoDataInfo构造AlarmHostInfo
 func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataInfo) *AlarmHostInfo {
 	// 主备负责人处理
@@ -246,6 +254,8 @@ func NewHostAndTopoCacheManager(prefix string, opt *redis.RedisOptions) (*HostAn
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache manager failed")
 	}
+
+	manager.initUpdatedFieldSet(hostCacheKey, hostIDCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
 	return &HostAndTopoCacheManager{
 		BaseCacheManager: manager,
 		hostIpMapping:    make(map[string][]string),
@@ -324,7 +334,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 // RefreshGlobal 刷新全局缓存
 func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	// 刷新主机IP映射缓存
-	key := m.GetCacheKey("cmdb.host_ip")
+	key := m.GetCacheKey(hostIPCacheKey)
 	data := make(map[string]string)
 	for ip, hostIds := range m.hostIpMapping {
 		data[ip] = fmt.Sprintf("[%s]", strings.Join(hostIds, ","))
@@ -339,11 +349,11 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 // CleanGlobal 清理全局缓存
 func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
 	keys := []string{
-		m.GetCacheKey("cmdb.host_id"),
-		m.GetCacheKey("cmdb.host_ip"),
-		m.GetCacheKey("cmdb.host"),
-		m.GetCacheKey("cmdb.topo"),
-		m.GetCacheKey("cmdb.agent_id"),
+		m.GetCacheKey(hostIDCacheKey),
+		m.GetCacheKey(hostIPCacheKey),
+		m.GetCacheKey(hostCacheKey),
+		m.GetCacheKey(topoCacheKey),
+		m.GetCacheKey(hostAgentIDCacheKey),
 	}
 
 	for _, key := range keys {
@@ -357,7 +367,7 @@ func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
 
 // 刷新拓扑缓存
 func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
-	key := m.GetCacheKey("cmdb.topo")
+	key := m.GetCacheKey(topoCacheKey)
 
 	topoNodes := make(map[string]string)
 	m.topo.Traverse(func(node *cmdb.SearchBizInstTopoData) {
@@ -379,7 +389,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
 
 // 刷新主机ID缓存
 func (m *HostAndTopoCacheManager) refreshHostIDCache(ctx context.Context) error {
-	key := m.GetCacheKey("cmdb.host_id")
+	key := m.GetCacheKey(hostIDCacheKey)
 
 	hostIDs := make(map[string]string)
 	for _, host := range m.hosts {
@@ -403,7 +413,7 @@ func (m *HostAndTopoCacheManager) refreshHostIDCache(ctx context.Context) error 
 
 // 刷新主机信息缓存
 func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
-	key := m.GetCacheKey("cmdb.host")
+	key := m.GetCacheKey(hostCacheKey)
 	hosts := make(map[string]string)
 	for _, host := range m.hosts {
 		value, _ := json.Marshal(host)
@@ -421,7 +431,7 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
 
 // 刷新主机AgentID缓存
 func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) error {
-	key := m.GetCacheKey("cmdb.agent_id")
+	key := m.GetCacheKey(hostAgentIDCacheKey)
 
 	agentIDs := make(map[string]string)
 	for _, host := range m.hosts {
@@ -623,7 +633,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
 	switch resourceType {
 	case "host":
-		key := m.GetCacheKey("cmdb.host")
+		key := m.GetCacheKey(hostCacheKey)
 
 		hostKeys := make([]string, 0)
 		for _, event := range events {
@@ -652,11 +662,13 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		}
 
 		for bizID := range needUpdateBizIds {
-			// todo: 业务更新
-			fmt.Printf("update host cache by bizID: %d\n", bizID)
+			err := m.RefreshByBiz(ctx, bizID)
+			if err != nil {
+				logger.Errorf("failed to refresh host cache by biz: %d, err: %v", bizID, err)
+			}
 		}
 	case "topo":
-		key := m.GetCacheKey("cmdb.topo")
+		key := m.GetCacheKey(topoCacheKey)
 		topoNodes := make(map[string]string)
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)

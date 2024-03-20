@@ -24,51 +24,77 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
+var demoSets = []cmdb.SearchSetData{
+	{
+		BkBizId:         2,
+		BkSetId:         1,
+		BkSetName:       "set1",
+		SetTemplateId:   1,
+		BkSetEnv:        "test",
+		BkSetDesc:       "desc1",
+		BkServiceStatus: "1",
+		Description:     "desc",
+	},
+	{
+		BkBizId:         2,
+		BkSetId:         2,
+		BkSetName:       "set2",
+		SetTemplateId:   1,
+		BkSetEnv:        "test",
+		BkSetDesc:       "desc2",
+		BkServiceStatus: "1",
+		Description:     "desc",
+	},
+}
+
 func TestSetCacheManager(t *testing.T) {
+	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bizID int) ([]cmdb.SearchSetData, error) {
+		return demoSets, nil
+	})
+	defer patch.Reset()
+
 	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
-	cacheManager, err := NewCacheManagerByType(rOpts, "test", "set")
-	if err != nil {
-		t.Error(err)
-		return
-	}
 
-	client, err := redis.GetRedisClient(rOpts)
+	client, _ := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestSetCacheManager", func(t *testing.T) {
-		err := cacheManager.RefreshByBiz(ctx, 2)
+		cacheManager, err := NewSetCacheManager(t.Name(), rOpts)
 		if err != nil {
 			t.Error(err)
 			return
 		}
 
-		exists := client.Exists(ctx, "test.cmdb.set")
-		if exists.Val() != 1 {
-			t.Error("set cache failed")
-			return
-		}
-
-		exists = client.Exists(ctx, "test.cmdb.set_template")
-		if exists.Val() != 1 {
-			t.Error("set_template cache failed")
-			return
-		}
-
-		result, err := client.HGetAll(ctx, "test.cmdb.set").Result()
+		err = cacheManager.RefreshByBiz(ctx, 2)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		fmt.Println(result)
+
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
+		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
+
+		cacheManager.initUpdatedFieldSet(setCacheKey, setTemplateCacheKey)
+		err = cacheManager.CleanGlobal(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
+		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
 	})
 
 }

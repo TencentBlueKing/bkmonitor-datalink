@@ -39,6 +39,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
+const (
+	businessCacheKey = "cmdb.business"
+)
+
 type AlarmBusinessInfo struct {
 	BkBizId         int      `json:"bk_biz_id"`
 	BkBizName       string   `json:"bk_biz_name"`
@@ -64,22 +68,24 @@ func NewBusinessCacheManager(prefix string, opt *redis.RedisOptions) (*BusinessC
 		return nil, errors.Wrap(err, "failed to create base cache manager")
 	}
 
+	manager.initUpdatedFieldSet(businessCacheKey)
 	return &BusinessCacheManager{
 		BaseCacheManager: manager,
 	}, nil
 }
 
-// RefreshGlobal 刷新全局缓存
-func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
+// getBusinessList 获取业务列表
+func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
-		return errors.Wrap(err, "failed to get cmdb api")
+		return nil, errors.Wrap(err, "failed to get cmdb api")
 	}
 
-	// 获取业务列表
+	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
-		cmdbApi.SearchBusiness(),
+		cmdbApi.SearchBusiness().SetContext(ctx),
 		CmdbApiPageSize,
+		// 获取总数
 		func(resp interface{}) (int, error) {
 			data, ok := resp.(map[string]interface{})["data"]
 			if !ok {
@@ -91,87 +97,125 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 			}
 			return int(count.(float64)), nil
 		},
+		// 设置分页参数
 		func(req define.Operation, page int) define.Operation {
 			return req.SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
 		},
 		10,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// 获取业务对象字段说明
-	var attrResult cmdb.SearchObjectAttributeResp
-	_, err = cmdbApi.SearchObjectAttribute().SetBody(map[string]interface{}{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
-	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
-	if err != nil {
-		return err
-	}
-
-	// 业务缓存数据准备
-	bizCacheData := make(map[string]string)
+	// 提取业务信息
+	bizList := make([]map[string]interface{}, 0)
 	for _, item := range result {
-		// 业务信息提取
 		bizResp := item.(map[string]interface{})
 		bizData := bizResp["data"].(map[string]interface{})
 		bizInfo := bizData["info"].([]interface{})
 
-		// 业务信息处理
 		for _, info := range bizInfo {
 			biz := info.(map[string]interface{})
-			bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
+			bizList = append(bizList, biz)
+		}
+	}
 
-			// 处理用户类型字段
-			for _, attr := range attrResult.Data {
-				// 跳过非用户类型字段
-				if attr.BkPropertyType != "objuser" {
-					continue
-				}
+	return bizList, nil
+}
 
-				// 跳过不存在的字段
-				userStr, ok := biz[attr.BkPropertyId].(string)
-				if !ok {
-					continue
-				}
+// getBusinessAttribute 获取业务对象字段说明
+func getBusinessAttribute(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
+	cmdbApi, err := api.GetCmdbApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cmdb api")
+	}
 
-				// 转换为数组
-				if userStr == "" {
-					biz[attr.BkPropertyId] = []string{}
-				} else {
-					biz[attr.BkPropertyId] = strings.Split(userStr, ",")
-				}
-			}
+	// 获取业务对象字段说明
+	var attrResult cmdb.SearchObjectAttributeResp
+	_, err = cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]interface{}{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
+	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
+	if err != nil {
+		return nil, err
+	}
 
-			// 转换为json字符串
-			bizStr, err := json.Marshal(biz)
-			if err != nil {
+	return attrResult.Data, nil
+}
+
+// getSpaceList 获取空间列表
+func getSpaceList() ([]space.Space, error) {
+	var spaces []space.Space
+	db := mysql.GetDBSession().DB
+	err := space.NewSpaceQuerySet(db).All(&spaces)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get spaces")
+	}
+	return spaces, nil
+}
+
+// RefreshGlobal 刷新全局缓存
+func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
+	// 获取业务列表
+	bizList, err := getBusinessList(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get business list")
+	}
+
+	// 获取业务对象字段说明
+	bizAttrs, err := getBusinessAttribute(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get business attribute")
+	}
+
+	// 业务缓存数据准备
+	bizCacheData := make(map[string]string)
+
+	// 业务信息处理
+	for _, biz := range bizList {
+		bizID := strconv.Itoa(int(biz["bk_biz_id"].(float64)))
+
+		// 处理用户类型字段
+		for _, attr := range bizAttrs {
+			// 跳过非用户类型字段
+			if attr.BkPropertyType != "objuser" {
 				continue
 			}
-			bizCacheData[bizID] = string(bizStr)
+
+			// 跳过不存在的字段
+			userStr, ok := biz[attr.BkPropertyId].(string)
+			if !ok {
+				continue
+			}
+
+			// 转换为数组
+			if userStr == "" {
+				biz[attr.BkPropertyId] = []string{}
+			} else {
+				biz[attr.BkPropertyId] = strings.Split(userStr, ",")
+			}
 		}
 
+		// 转换为json字符串
+		bizStr, err := json.Marshal(biz)
+		if err != nil {
+			continue
+		}
+		bizCacheData[bizID] = string(bizStr)
 	}
 
 	// 空间查询
-	var spaces []space.Space
-	db := mysql.GetDBSession().DB
-	err = space.NewSpaceQuerySet(db).All(&spaces)
-	if err != nil {
-		return errors.Wrap(err, "failed to get spaces")
-	}
+	spaces, err := getSpaceList()
 
 	// 将空间信息转换为业务信息
 	var bkBizId int
 	for _, s := range spaces {
 		// 业务ID，非bkcc空间为负数
 		if s.SpaceTypeId == "bkcc" {
-			bkBizId, err = strconv.Atoi(s.SpaceId)
-			if err != nil {
-				continue
-			}
+			continue
 		} else {
 			bkBizId = -s.Id
 		}
+
+		// 构造业务信息
 		biz := map[string]interface{}{
 			"bk_biz_id":         bkBizId,
 			"bk_biz_name":       fmt.Sprintf("[%s]%s", s.SpaceId, s.SpaceName),
@@ -193,7 +237,7 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 
 	// 更新缓存
-	key := m.GetCacheKey("cmdb.business")
+	key := m.GetCacheKey(businessCacheKey)
 	err = m.UpdateHashMapCache(ctx, key, bizCacheData)
 	if err != nil {
 		return errors.Wrap(err, "update business cache failed")
@@ -204,10 +248,48 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 
 // CleanGlobal 清理全局缓存
 func (m *BusinessCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey("cmdb.business")
+	key := m.GetCacheKey(businessCacheKey)
 	err := m.DeleteMissingHashMapFields(ctx, key)
 	if err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
+	return nil
+}
+
+// CleanByEvents 根据事件清理缓存
+func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+	if resourceType != "business" {
+		return nil
+	}
+
+	// 获取业务ID
+	bizIds := make([]string, 0, len(events))
+	for _, event := range events {
+		bizID, ok := event["bk_biz_id"].(int)
+		if !ok {
+			continue
+		}
+		bizIds = append(bizIds, strconv.Itoa(bizID))
+	}
+
+	// 删除缓存
+	if len(bizIds) > 0 {
+		m.RedisClient.HDel(ctx, m.GetCacheKey(businessCacheKey), bizIds...)
+	}
+
+	return nil
+}
+
+// UpdateByEvents 根据事件更新缓存
+func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+	if resourceType != "business" || len(events) == 0 {
+		return nil
+	}
+
+	err := m.RefreshGlobal(ctx)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

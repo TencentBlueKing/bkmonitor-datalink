@@ -24,51 +24,77 @@ package cache
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
+var demoModules = []cmdb.SearchModuleData{
+	{
+		BkBizId:           2,
+		BkModuleId:        1,
+		BkModuleName:      "module1",
+		BkSetId:           2,
+		BkBakOperator:     "admin",
+		Operator:          "admin",
+		ServiceCategoryId: 1,
+		ServiceTemplateId: 1,
+		SetTemplateId:     1,
+	},
+	{
+		BkBizId:           2,
+		BkModuleId:        2,
+		BkModuleName:      "module2",
+		BkSetId:           2,
+		BkBakOperator:     "admin",
+		Operator:          "admin,user1",
+		ServiceCategoryId: 1,
+		ServiceTemplateId: 2,
+		SetTemplateId:     1,
+	},
+}
+
 func TestModuleCacheManager(t *testing.T) {
+	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bizID int) ([]cmdb.SearchModuleData, error) {
+		return demoModules, nil
+	})
+	defer patch.Reset()
+
 	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
-	cacheManager, err := NewCacheManagerByType(rOpts, "test", "module")
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	client, err := redis.GetRedisClient(rOpts)
+	client, _ := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestModuleCacheManager", func(t *testing.T) {
-		err := cacheManager.RefreshByBiz(ctx, 2)
+		cacheManager, err := NewModuleCacheManager(t.Name(), rOpts)
 		if err != nil {
 			t.Error(err)
 			return
 		}
 
-		exists := client.Exists(ctx, "test.cmdb.module")
-		if exists.Val() != 1 {
-			t.Error("RefreshGlobal failed")
-			return
-		}
-
-		exists = client.Exists(ctx, "test.cmdb.service_template")
-		if exists.Val() != 1 {
-			t.Error("service_template cache failed")
-			return
-		}
-
-		result, err := client.HGetAll(ctx, "test.cmdb.module").Result()
+		err = cacheManager.RefreshByBiz(ctx, 2)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		fmt.Println(result)
+
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
+
+		cacheManager.initUpdatedFieldSet(moduleCacheKey, serviceTemplateCacheKey)
+		err = cacheManager.CleanGlobal(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
+		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
 	})
-
 }

@@ -24,45 +24,203 @@ package cache
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"testing"
 
+	"github.com/agiledragon/gomonkey/v2"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 )
 
+var DemoBusinesses = []map[string]interface{}{
+	{
+		"bk_biz_id":         2.0,
+		"bk_biz_name":       "BlueKing",
+		"bk_biz_developer":  "admin",
+		"bk_biz_productor":  "admin,user1",
+		"bk_biz_tester":     "admin,user1",
+		"bk_biz_maintainer": "admin,user2",
+		"operator":          "admin",
+		"time_zone":         "Asia/Shanghai",
+		"language":          "1",
+		"life_cycle":        "2",
+		"bk_pmp_qa":         "user1,user2",
+		"bk_pmp_qa2":        "user1,user2",
+	},
+	{
+		"bk_biz_id":         3.0,
+		"bk_biz_name":       "Test",
+		"bk_biz_developer":  "user1",
+		"bk_biz_productor":  "user1",
+		"bk_biz_tester":     "user1,user2",
+		"bk_biz_maintainer": "user2",
+		"operator":          "user1",
+		"time_zone":         "Asia/Shanghai",
+		"language":          "1",
+		"life_cycle":        "2",
+	},
+}
+
+var BusinessAttrs = []cmdb.SearchObjectAttributeData{
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_biz_id",
+		BkPropertyName: "BusinessID",
+		BkPropertyType: "system",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_biz_developer",
+		BkPropertyName: "Developer",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_biz_productor",
+		BkPropertyName: "Productor",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_biz_tester",
+		BkPropertyName: "Tester",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_biz_maintainer",
+		BkPropertyName: "Maintainer",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "operator",
+		BkPropertyName: "Operator",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+	{
+		BkObjId:        "biz",
+		BkPropertyId:   "bk_pmp_qa",
+		BkPropertyName: "PMPQA",
+		BkPropertyType: "objuser",
+		Creator:        "admin",
+	},
+}
+
+var DemoSpaces = []space.Space{
+	{
+		Id:          1,
+		SpaceTypeId: "bkcc",
+		SpaceId:     "2",
+		SpaceName:   "BlueKing",
+		SpaceCode:   "bkcc__2",
+		Status:      "normal",
+		TimeZone:    "Asia/Shanghai",
+		Language:    "zh-hans",
+		IsBcsValid:  false,
+	},
+	{
+		Id:          2,
+		SpaceTypeId: "bkci",
+		SpaceId:     "test",
+		SpaceName:   "Test",
+		SpaceCode:   "bkci__3",
+		Status:      "normal",
+		TimeZone:    "Asia/Shanghai",
+		Language:    "zh-hans",
+		IsBcsValid:  true,
+	},
+}
+
 func TestBusinessCacheManager(t *testing.T) {
+	// mock相关接口调用与数据库查询
+	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context) ([]map[string]interface{}, error) {
+		return DemoBusinesses, nil
+	})
+	defer getBusinessListPatch.Reset()
+	getBusinessAttributePatch := gomonkey.ApplyFunc(getBusinessAttribute, func(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
+		return BusinessAttrs, nil
+	})
+	defer getBusinessAttributePatch.Reset()
+	getSpaceListPatch := gomonkey.ApplyFunc(getSpaceList, func() ([]space.Space, error) {
+		return DemoSpaces, nil
+	})
+	defer getSpaceListPatch.Reset()
+
 	rOpts := &redis.RedisOptions{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
-	cacheManager, err := NewCacheManagerByType(rOpts, "test", "business")
-	if err != nil {
-		t.Error(err)
-		return
-	}
 
-	client, err := redis.GetRedisClient(rOpts)
+	client, _ := redis.GetRedisClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestBusinessCacheManager", func(t *testing.T) {
-		err := cacheManager.RefreshGlobal(ctx)
+		// 创建业务缓存管理器
+		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts)
 		if err != nil {
 			t.Error(err)
 			return
 		}
 
-		exists := client.Exists(ctx, "test.cmdb.business")
-		if exists.Val() != 1 {
-			t.Error("RefreshGlobal failed")
-			return
-		}
-
-		result, err := client.HGetAll(ctx, "test.cmdb.business").Result()
+		// 刷新业务缓存
+		err = cacheManager.RefreshGlobal(ctx)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		fmt.Println(result)
+
+		result := client.HGetAll(ctx, cacheManager.GetCacheKey(businessCacheKey))
+		if result.Err() != nil {
+			t.Error(result.Err())
+			return
+		}
+
+		businesses := make(map[string]map[string]interface{})
+		for k, v := range result.Val() {
+			var business map[string]interface{}
+			err := json.Unmarshal([]byte(v), &business)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			businesses[k] = business
+		}
+
+		// 检查业务缓存数据
+		assert.Len(t, businesses, 3)
+		assert.EqualValues(t, businesses["2"]["bk_biz_name"], "BlueKing")
+		assert.EqualValues(t, businesses["3"]["bk_biz_name"], "Test")
+		assert.EqualValues(t, businesses["-2"]["bk_biz_name"], "[test]Test")
+
+		for _, biz := range businesses {
+			_, ok := biz["operator"].([]interface{})
+			assert.Truef(t, ok, "operator type error, %v", biz["operator"])
+		}
+
+		assert.EqualValues(t, businesses["2"]["bk_pmp_qa"], []interface{}{"user1", "user2"})
+		assert.EqualValues(t, businesses["2"]["bk_pmp_qa2"], "user1,user2")
+
+		// 清理业务缓存
+		cacheManager.initUpdatedFieldSet(businessCacheKey)
+		err = cacheManager.CleanGlobal(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		// 检查业务缓存数据
+		exists := client.Exists(ctx, cacheManager.GetCacheKey(businessCacheKey))
+		assert.EqualValues(t, 0, exists.Val())
 	})
-
 }

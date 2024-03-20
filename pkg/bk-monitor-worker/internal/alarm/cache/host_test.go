@@ -177,9 +177,9 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			expectedHostIds = append(expectedHostIds, fmt.Sprintf("%d", host.BkHostId))
 		}
 
-		assert.EqualValues(t, expectedHostKeys, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host")).Val())
-		assert.EqualValues(t, expectedHostIds, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_id")).Val())
-		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.agent_id")).Val())
+		assert.EqualValues(t, expectedHostKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
+		assert.EqualValues(t, expectedHostIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
+		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 
 		// 刷新全局缓存
 		err = cacheManager.RefreshGlobal(ctx)
@@ -187,10 +187,10 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		assert.EqualValues(t, expectedHostIpKeys, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_ip")).Val())
+		assert.EqualValues(t, expectedHostIpKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
 
 		// 生成变更事件数据
-		allResult := client.HGetAll(ctx, cacheManager.GetCacheKey("cmdb.host"))
+		allResult := client.HGetAll(ctx, cacheManager.GetCacheKey(hostCacheKey))
 		if allResult.Err() != nil {
 			t.Error(allResult.Err())
 			return
@@ -226,9 +226,9 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_id")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.agent_id")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host")).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 	})
 
 	t.Run("Clean", func(t *testing.T) {
@@ -253,14 +253,14 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断是否存在所有的缓存键
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_id")).Val())
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.agent_id")).Val())
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host")).Val())
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_ip")).Val())
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.topo")).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 
 		// 清理缓存
-		cacheManager.updatedHashKeyFieldSet = map[string]map[string]struct{}{}
+		cacheManager.initUpdatedFieldSet(hostIDCacheKey, hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
 		err = cacheManager.CleanGlobal(ctx)
 		if err != nil {
 			t.Error(err)
@@ -268,10 +268,10 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_id")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.agent_id")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.host_ip")).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey("cmdb.topo")).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 	})
 }

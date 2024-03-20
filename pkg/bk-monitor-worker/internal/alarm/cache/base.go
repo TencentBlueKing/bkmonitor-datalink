@@ -52,7 +52,7 @@ type BaseCacheManager struct {
 	RedisClient redis.UniversalClient
 	Expire      int
 
-	updatedHashKeyFieldSet map[string]map[string]struct{}
+	updatedFieldSet map[string]map[string]struct{}
 }
 
 // NewBaseCacheManager 创建缓存管理器
@@ -62,11 +62,18 @@ func NewBaseCacheManager(prefix string, opt *redis2.RedisOptions) (*BaseCacheMan
 		return nil, err
 	}
 	return &BaseCacheManager{
-		Prefix:                 prefix,
-		RedisClient:            client,
-		Expire:                 86400,
-		updatedHashKeyFieldSet: make(map[string]map[string]struct{}),
+		Prefix:          prefix,
+		RedisClient:     client,
+		Expire:          86400,
+		updatedFieldSet: make(map[string]map[string]struct{}),
 	}, nil
+}
+
+// initUpdatedFieldSet 初始化更新字段集合，确保后续不存在并发问题
+func (c *BaseCacheManager) initUpdatedFieldSet(keys ...string) {
+	for _, key := range keys {
+		c.updatedFieldSet[c.GetCacheKey(key)] = make(map[string]struct{})
+	}
 }
 
 // GetCacheKey 获取缓存key
@@ -79,15 +86,16 @@ func (c *BaseCacheManager) UpdateHashMapCache(ctx context.Context, key string, d
 	client := c.RedisClient
 
 	// 初始化更新字段集合
-	if _, ok := c.updatedHashKeyFieldSet[key]; !ok {
-		c.updatedHashKeyFieldSet[key] = make(map[string]struct{})
+	updatedFieldSet, ok := c.updatedFieldSet[key]
+	if !ok {
+		return errors.Errorf("key %s not found in updatedFieldSet", key)
 	}
 
 	// 执行更新
 	pipeline := client.Pipeline()
 	for field, value := range data {
 		pipeline.HSet(ctx, key, field, value)
-		c.updatedHashKeyFieldSet[key][field] = struct{}{}
+		updatedFieldSet[field] = struct{}{}
 
 		if pipeline.Len() > 500 {
 			if _, err := pipeline.Exec(ctx); err != nil {
@@ -108,9 +116,10 @@ func (c *BaseCacheManager) DeleteMissingHashMapFields(ctx context.Context, key s
 	client := c.RedisClient
 
 	// 获取已更新的字段，如果不存在则删除
-	updatedFieldSet, ok := c.updatedHashKeyFieldSet[key]
-	if !ok {
+	updatedFieldSet, ok := c.updatedFieldSet[key]
+	if !ok || len(updatedFieldSet) == 0 {
 		client.Del(ctx, key)
+		return nil
 	}
 
 	// 获取已存在的字段

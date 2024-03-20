@@ -90,7 +90,7 @@ func CreateTask(c *gin.Context) {
 	}
 	// 根据类型做判断
 	if strings.HasPrefix(kind, AsyncTask) {
-		if err = enqueueAsyncTask(newedTask); err != nil {
+		if err = EnqueueAsyncTask(newedTask); err != nil {
 			metrics.RequestApiCount(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "enqueue async task error, %v", err)
 			return
@@ -144,8 +144,8 @@ func composeOption(opt taskOptions) []task.Option {
 	return opts
 }
 
-// 写入任务队列
-func enqueueAsyncTask(t *task.Task) error {
+// EnqueueAsyncTask 写入任务队列
+func EnqueueAsyncTask(t *task.Task) error {
 	// new client
 	client, err := worker.GetClient()
 	if err != nil {

@@ -221,7 +221,7 @@ func (c *Controller) CreateOrUpdatePromRuleConfigMap() error {
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "prometheus-rulefiles",
+			Name: ConfConfig.ConfigMapName,
 			Labels: map[string]string{
 				"controller": "bkm-operator",
 			},
@@ -229,7 +229,7 @@ func (c *Controller) CreateOrUpdatePromRuleConfigMap() error {
 		Data: content,
 	}
 	logger.Info("create or update prometheus rules configmap")
-	cli := c.client.CoreV1().ConfigMaps(ConfScrapeConfig.Namespace)
+	cli := c.client.CoreV1().ConfigMaps(ConfConfig.Namespace)
 	return k8sutils.CreateOrUpdateConfigMap(c.ctx, cli, cm)
 }
 
@@ -245,11 +245,11 @@ func (c *Controller) GeneratePromScrapeYaml() yaml.MapSlice {
 
 	var cfg yaml.MapSlice
 	var globalCfg yaml.MapSlice
-	for k, v := range ConfScrapeConfig.Global {
+	for k, v := range ConfConfig.Scrape.Global {
 		globalCfg = append(globalCfg, yaml.MapItem{Key: k, Value: v})
 	}
 	cfg = append(cfg, yaml.MapItem{Key: "global", Value: globalCfg})
-	cfg = append(cfg, yaml.MapItem{Key: "rule_files", Value: ConfScrapeConfig.RuleFiles})
+	cfg = append(cfg, yaml.MapItem{Key: "rule_files", Value: ConfConfig.Scrape.RuleFiles})
 	cfg = append(cfg, yaml.MapItem{Key: "scrape_configs", Value: c.generateServiceMonitorScrapeConfigs()})
 	return cfg
 }
@@ -274,7 +274,7 @@ func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "prometheus-config",
+			Name: ConfConfig.SecretName,
 			Labels: map[string]string{
 				"controller": "bkm-operator",
 			},
@@ -285,7 +285,7 @@ func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
 	}
 
 	logger.Infof("create or update prometheus scrape secret, size=%dB", len(compressed))
-	cli := c.client.CoreV1().Secrets(ConfScrapeConfig.Namespace)
+	cli := c.client.CoreV1().Secrets(ConfConfig.Namespace)
 	return k8sutils.CreateOrUpdateSecret(c.ctx, cli, secret)
 }
 

@@ -17,25 +17,48 @@ import (
 )
 
 const (
-	confPromScrapeConfigPath = "operator.prometheus_scrape"
+	confPromSliConfigPath = "operator.prometheus_sli"
 )
 
+type Config struct {
+	Namespace     string       `yaml:"namespace" mapstructure:"namespace"`
+	SecretName    string       `yaml:"secret_name" mapstructure:"secret_name"`
+	ConfigMapName string       `yaml:"configmap_name" mapstructure:"configmap_name"`
+	Scrape        ScrapeConfig `yaml:"scrape" mapstructure:"scrape"`
+}
+
 type ScrapeConfig struct {
-	Namespace string                 `yaml:"namespace" mapstructure:"namespace"`
 	Global    map[string]interface{} `yaml:"global" mapstructure:"global"`
 	RuleFiles []string               `yaml:"rule_files" mapstructure:"rule_files"`
 }
 
-var ConfScrapeConfig = ScrapeConfig{}
+func (c *Config) Validate() {
+	if c.Namespace == "" {
+		c.Namespace = "bkmonitor-operator"
+	}
+	if c.ConfigMapName == "" {
+		c.ConfigMapName = "prometheus-rulefiles"
+	}
+	if c.SecretName == "" {
+		c.SecretName = "prometheus-config"
+	}
+}
+
+var ConfConfig = &Config{}
+
+func init() {
+	ConfConfig.Validate()
+}
 
 func updateConfig() {
-	if viper.IsSet(confPromScrapeConfigPath) {
-		if err := viper.UnmarshalKey(confPromScrapeConfigPath, &ConfScrapeConfig); err != nil {
-			logger.Errorf("failed to unmarshal ConfScrapeConfig, err: %v", err)
+	if viper.IsSet(confPromSliConfigPath) {
+		if err := viper.UnmarshalKey(confPromSliConfigPath, &ConfConfig); err != nil {
+			logger.Errorf("failed to unmarshal ConfConfig, err: %v", err)
 		}
 	} else {
-		ConfScrapeConfig = ScrapeConfig{}
+		ConfConfig = &Config{}
 	}
+	ConfConfig.Validate()
 }
 
 func init() {

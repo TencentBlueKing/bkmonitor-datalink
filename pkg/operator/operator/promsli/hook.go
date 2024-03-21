@@ -42,6 +42,9 @@ func (c *Config) Validate() {
 	if c.SecretName == "" {
 		c.SecretName = "prometheus-config"
 	}
+	if len(c.Scrape.RuleFiles) == 0 {
+		c.Scrape.RuleFiles = []string{"/etc/prometheus/rules/rulefiles"}
+	}
 }
 
 var ConfConfig = &Config{}

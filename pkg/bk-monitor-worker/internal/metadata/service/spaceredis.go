@@ -183,7 +183,7 @@ func (s SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLis
 // PushDataLabelTableIds 推送 data_label 及对应的结果表
 func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, isPublish bool) error {
 	logger.Infof("start to push data_label table_id data, data_label_list [%v], table_id_list [%v]", dataLabelList, tableIdList)
-	
+
 	// 如果标签存在，则按照标签进行过滤
 	dlRtsMap := make(map[string][]string)
 	var err error
@@ -205,7 +205,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		// 这里需要注意，因为是指定标签下所有更新，所以通过结果表查询到标签，再通过标签查询其下的所有结果表
 		dataLabels, err := s.getDataLabelByTableId(tableIds)
 		if err != nil {
-			logger.Infof("PushDataLabelTableIds end, get data label by table id error, %s", err)
+			logger.Errorf("PushDataLabelTableIds end, get data label by table id error, %s", err)
 			return err
 		}
 		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabels)
@@ -214,7 +214,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 			return err
 		}
 	}
-	
+
 	if len(dlRtsMap) != 0 {
 		client := redis.GetStorageRedisInstance()
 		for dl, rts := range dlRtsMap {
@@ -239,12 +239,12 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (map[string][]string, error) {
 	db := mysql.GetDBSession().DB
 	var rts []resulttable.ResultTable
-	if len(dataLabelList) != 0 {
+	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
 	for _, chunkDataLabels := range slicex.ChunkSlice(dataLabelList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkDataLabels...).All(&tempList); err != nil{
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkDataLabels...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -272,7 +272,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkTableIds...).All(&tempList); err != nil{
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkTableIds...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -287,7 +287,6 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	return dataLabelList, nil
 }
-
 
 // 提取写入到influxdb或vm的结果表数据
 func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
@@ -876,7 +875,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 			values[tid] = value
 		}
 	}
-	
+
 	// 推送数据
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -1143,8 +1142,8 @@ func (s SpacePusher) composeBcsSpaceBizTableIds(spaceType, spaceId string) (map[
 	}
 	// 现阶段支持主机和部分插件授权给蓝盾使用
 	var rtList []resulttable.ResultTable
-    likeTableIds := []string{fmt.Sprintf("%s%%", models.SystemTableIdPrefix)}
-	for _, tableId := range models.BkciSpaceAccessPlugins{
+	likeTableIds := []string{fmt.Sprintf("%s%%", models.SystemTableIdPrefix)}
+	for _, tableId := range models.BkciSpaceAccessPlugins {
 		likeTableIds = append(likeTableIds, fmt.Sprintf("%s%%", tableId))
 	}
 
@@ -1480,7 +1479,7 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	for _, rt := range rtList {
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": rt.TableId}}}
 	}
-	
+
 	// 添加P4主机数据相关
 	var rtP4List []resulttable.ResultTable
 	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).TableIdLike(fmt.Sprintf("%s%%", models.P4SystemTableIdPrefixToBkCi)).All(&rtP4List); err != nil {
@@ -1489,7 +1488,7 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	}
 	for _, rt := range rtP4List {
 		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"devops_id": rt.TableId}}}
-	} 
+	}
 
 	return dataValues, nil
 }
@@ -1531,7 +1530,7 @@ func (s SpacePusher) composeBksaasOtherTableIds(spaceType, spaceId string, table
 }
 
 // 组装指定全空间的可以访问的结果表数据
-func (s SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error){
+func (s SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
 	logger.Infof("start to push all type table_id, space_type: %s, space_id: %s", spaceType, spaceId)
 	// 获取数据空间记录的ID
 	// NOTE: ID 需要转换为负值
@@ -1545,6 +1544,6 @@ func (s SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[stri
 	for _, tid := range models.AllSpaceTableIds {
 		dataValues[tid] = map[string]interface{}{"filters": []map[string]interface{}{{"bk_biz_id": strconv.Itoa(-spaceObj.Id)}}}
 	}
-		
+
 	return dataValues, nil
 }

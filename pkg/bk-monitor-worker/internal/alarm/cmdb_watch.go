@@ -54,9 +54,9 @@ const (
 var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeHost:             {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
 	CmdbResourceTypeHostRelation:     {"bk_host_id"},
-	CmdbResourceTypeBiz:              {"bk_biz_id", "bk_biz_name", "bk_biz_maintainer", "bk_biz_tester", "bk_biz_productor", "bk_biz_developer", "operator", "time_zone", "language", "life_cycle"},
-	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "bk_set_name", "bk_set_env", "bk_set_desc", "set_template_id", "bk_service_status", "description"},
-	CmdbResourceTypeModule:           {"bk_module_id", "bk_module_name", "operator", "bk_biz_id", "bk_set_id", "bk_module_status", "service_template_id", "bk_bak_operator", "service_category_id", "set_template_id"},
+	CmdbResourceTypeBiz:              {"bk_biz_id"},
+	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id"},
+	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id"},
 	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
 }
 

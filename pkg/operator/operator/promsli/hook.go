@@ -10,6 +10,8 @@
 package promsli
 
 import (
+	"github.com/spf13/viper"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -24,23 +26,16 @@ type ScrapeConfig struct {
 	RuleFiles []string               `yaml:"rule_files" mapstructure:"rule_files"`
 }
 
-var ConfScrapeConfig = ScrapeConfig{
-	Namespace: "po-test",
-	Global: map[string]interface{}{
-		"evaluation_interval": "1m",
-		"scrape_interval":     "1m",
-	},
-	RuleFiles: []string{"/etc/prometheus/rules/prometheus-po-kube-prometheus-stack-prometheus-rulefiles-0/*.yaml"},
-}
+var ConfScrapeConfig = ScrapeConfig{}
 
 func updateConfig() {
-	//if viper.IsSet(confPromScrapeConfigPath) {
-	//	if err := viper.UnmarshalKey(confPromScrapeConfigPath, &ConfScrapeConfig); err != nil {
-	//		logger.Errorf("failed to unmarshal ConfScrapeConfig, err: %v", err)
-	//	}
-	//} else {
-	//	ConfScrapeConfig = ScrapeConfig{}
-	//}
+	if viper.IsSet(confPromScrapeConfigPath) {
+		if err := viper.UnmarshalKey(confPromScrapeConfigPath, &ConfScrapeConfig); err != nil {
+			logger.Errorf("failed to unmarshal ConfScrapeConfig, err: %v", err)
+		}
+	} else {
+		ConfScrapeConfig = ScrapeConfig{}
+	}
 }
 
 func init() {

@@ -639,7 +639,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 	for _, dis := range c.createServiceMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover % failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
 	c.mm.IncHandledEventCounter(old.Kind, define.ActionUpdate)
@@ -840,7 +840,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover % failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
 	c.mm.IncHandledEventCounter(podMonitor.Kind, define.ActionAdd)

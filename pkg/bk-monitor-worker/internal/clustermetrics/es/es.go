@@ -159,7 +159,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 
 	u, _ := url.Parse(cfg.ESClusterMetricReportUrl)
 
-	u.Path = path.Join(u.Path, "/v2/push")
+	u.Path = path.Join(u.Path, "/v2/push/")
 	customReportUrl := u.String()
 	req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")

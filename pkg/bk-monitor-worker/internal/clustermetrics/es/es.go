@@ -34,6 +34,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -68,8 +69,10 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 		schema = "http"
 	}
 	var esURLs = elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
+	var esUsername = c.Username
+	var esPassword = cipher.GetDBAESCipher().AESDecrypt(c.Password)
 	esURL, _ := url.Parse(esURLs[0])
-	esURL.User = url.UserPassword(c.Username, c.Password)
+	esURL.User = url.UserPassword(esUsername, esPassword)
 	tlsConfig := &tls.Config{}
 
 	var httpTransport http.RoundTripper

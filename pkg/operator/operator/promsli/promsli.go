@@ -76,10 +76,10 @@ func NewController(ctx context.Context, client kubernetes.Interface) *Controller
 func (c *Controller) handle() {
 	createOrUpdateResource := func() {
 		if err := c.CreateOrUpdatePromScrapeSecret(); err != nil {
-			logger.Errorf("failed to update prom secret: %v", err)
+			logger.Errorf("failed to update prometheus scrape secret: %v", err)
 		}
 		if err := c.CreateOrUpdatePromRuleConfigMap(); err != nil {
-			logger.Errorf("failed to update prom configmap: %v", err)
+			logger.Errorf("failed to update prometheus rules configmap: %v", err)
 		}
 	}
 
@@ -90,7 +90,7 @@ func (c *Controller) handle() {
 		case <-c.ctx.Done():
 			return
 
-		case <-c.bus.Subscribe():
+		case <-c.bus.Subscribe(): // 信号收敛
 			createOrUpdateResource()
 
 		case <-ticker.C:
@@ -113,6 +113,13 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 	parts := strings.Split(v, "/")
 	if len(parts) != 3 {
 		logger.Warnf("annotations requeire format(monitorType/namespace/name), but got %s", v)
+		return
+	}
+
+	switch parts[0] {
+	case "ServiceMonitor", "PodMonitor", "Probe":
+	default:
+		logger.Warnf("unsupported monitor type: %s", parts[0])
 		return
 	}
 
@@ -180,13 +187,13 @@ func (c *Controller) GeneratePromRuleContent() map[string]string {
 
 		content, err := promyaml.Marshal(rule.Spec)
 		if err != nil {
-			logger.Errorf("marshal ruleconfig(%s) failed, err: %v", id, err)
+			logger.Errorf("marshal prometheus rule '%s' failed, err: %v", id, err)
 			continue
 		}
 		_, errs := rulefmt.Parse(content)
 		if len(errs) > 0 {
 			for _, err = range errs {
-				logger.Errorf("parse ruleconfig(%s) failed, err: %v", id, err)
+				logger.Errorf("parse prometheus rule '%s' failed, err: %v", id, err)
 			}
 			continue
 		}
@@ -203,13 +210,13 @@ func (c *Controller) CreateOrUpdatePromRuleConfigMap() error {
 	}
 
 	if reflect.DeepEqual(content, c.prevRuleContent) {
-		logger.Info("no promrule content changed, skipped")
+		logger.Info("no prometheus rule content changed, skipped")
 		return nil
 	}
 	c.prevRuleContent = content
 
 	for k := range content {
-		logger.Infof("create or update rulefile: %s", k)
+		logger.Infof("create or update prometheus rule: %s", k)
 	}
 
 	cm := &corev1.ConfigMap{
@@ -221,9 +228,9 @@ func (c *Controller) CreateOrUpdatePromRuleConfigMap() error {
 		},
 		Data: content,
 	}
-	logger.Info("create or update configmap 'prometheus-rulefiles'")
-	cClient := c.client.CoreV1().ConfigMaps(ConfScrapeConfig.Namespace)
-	return k8sutils.CreateOrUpdateConfigMap(c.ctx, cClient, cm)
+	logger.Info("create or update prometheus rules configmap")
+	cli := c.client.CoreV1().ConfigMaps(ConfScrapeConfig.Namespace)
+	return k8sutils.CreateOrUpdateConfigMap(c.ctx, cli, cm)
 }
 
 var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
@@ -277,9 +284,9 @@ func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
 		},
 	}
 
-	logger.Infof("create or update secret(prometheus-config), size=%d", len(compressed))
-	sClient := c.client.CoreV1().Secrets(ConfScrapeConfig.Namespace)
-	return k8sutils.CreateOrUpdateSecret(c.ctx, sClient, secret)
+	logger.Infof("create or update prometheus scrape secret, size=%dB", len(compressed))
+	cli := c.client.CoreV1().Secrets(ConfScrapeConfig.Namespace)
+	return k8sutils.CreateOrUpdateSecret(c.ctx, cli, secret)
 }
 
 func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {

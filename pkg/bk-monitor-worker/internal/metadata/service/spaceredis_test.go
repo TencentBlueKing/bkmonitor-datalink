@@ -10,6 +10,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 )
 
 func TestSpacePusher_getMeasurementType(t *testing.T) {
@@ -62,6 +64,12 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 	err := iTable.Create(db)
 	assert.NoError(t, err)
 
+	itableName1 := "i_table_test1.dbname1"
+	iTable1 := storage.InfluxdbStorage{TableID: itableName1, RealTableName: "i_table_test1", Database: "dbname1"}
+	db.Delete(&iTable1)
+	err = iTable1.Create(db)
+	assert.NoError(t, err)
+
 	vmTableName := "vm_table_name"
 	vmTable := storage.AccessVMRecord{ResultTableId: vmTableName}
 	db.Delete(&vmTable)
@@ -70,8 +78,8 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 
 	notExistTable := "not_exist_rt"
 
-	ids, err := NewSpacePusher().refineTableIds([]string{itableName, notExistTable, vmTableName})
-	assert.ElementsMatch(t, []string{itableName, vmTableName}, ids)
+	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable, vmTableName})
+	assert.ElementsMatch(t, []string{itableName, itableName1, vmTableName}, ids)
 }
 
 func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
@@ -79,6 +87,8 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	db := mysql.GetDBSession().DB
 	_, redisPatch := mocker.RedisMocker()
 	defer redisPatch.Reset()
+	var platformDataId uint = 18003
+	platformRt := "rt_18003"
 	dsRtMap := map[string]uint{
 		"rt_18000": 18000,
 		"rt_18001": 18001,
@@ -103,6 +113,22 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 		err = spds.Create(db)
 		assert.NoError(t, err)
 	}
+	// 添加
+	db.Delete(&resulttable.DataSourceResultTable{}, "bk_data_id = ? and table_id = ?", platformDataId, platformRt)
+	dsrt := resulttable.DataSourceResultTable{
+		BkDataId:   platformDataId,
+		TableId:    platformRt,
+		CreateTime: time.Now(),
+	}
+	err := dsrt.Create(db)
+	assert.NoError(t, err)
+	db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", platformDataId)
+	ds := resulttable.DataSource{
+		BkDataId: platformDataId,
+		IsPlatformDataId: true,
+	}
+	err = ds.Create(db)
+	assert.NoError(t, err)
 
 	pusher := NewSpacePusher()
 	// 指定rtList
@@ -119,6 +145,11 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, []uint{18000, 18002}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]uint{"rt_18001": 18001}, dataMap)
+
+	// 不包含全局数据源
+	opt := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false})
+	dataMap, err = pusher.GetSpaceTableIdDataId("bkcc_t", "2", nil, nil, opt)
+	fmt.Println(dataMap)
 }
 
 func TestSpacePusher_getTableInfoForInfluxdbAndVm(t *testing.T) {

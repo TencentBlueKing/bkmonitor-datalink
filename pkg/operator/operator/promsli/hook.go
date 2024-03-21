@@ -43,7 +43,7 @@ func (c *Config) Validate() {
 		c.SecretName = "prometheus-config"
 	}
 	if len(c.Scrape.RuleFiles) == 0 {
-		c.Scrape.RuleFiles = []string{"/etc/prometheus/rules/rulefiles"}
+		c.Scrape.RuleFiles = []string{"/etc/prometheus/rules/rulefiles/*.yaml"}
 	}
 }
 

@@ -37,8 +37,6 @@ const (
 	confEnablePodMonitorPath        = "operator.enable_pod_monitor"
 	confEnableProbePath             = "operator.enable_probe"
 	confEnablePromRulePath          = "operator.enable_prometheus_rule"
-	confPromRuleNamespacePath       = "operator.prometheus_rule_namespace"
-	confPromRuleDenyNamespacePath   = "operator.prometheus_rule_deny_namespace"
 	confEnableStatefulSetWorkerPath = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath   = "operator.enable_daemonset_worker"
 	confDisableMetricsPusherPath    = "operator.disable_metrics_pusher"
@@ -145,24 +143,12 @@ func IfRejectPodMonitor(monitor *promv1.PodMonitor) bool {
 }
 
 func initConfig() {
-	// viper.SetDefault(configDryRunPath, false)
-	// viper.SetDefault(confKubeConfigPath, "")
-	// viper.SetDefault(confAPIServerHostPath, "")
-	// viper.SetDefault(confTLSInsecurePath, false)
-	// viper.SetDefault(confTLSCertFilePath, "")
-	// viper.SetDefault(confTLSKeyFilePath, "")
-	// viper.SetDefault(confTLSCAFilePath, "")
 	viper.SetDefault(confMonitorNamespacePath, "bkmonitor-operator")
-	// viper.SetDefault(confDenyTargetNamespacesPath, []string{})
-	// viper.SetDefault(confTargetNamespacesPath, []string{})
-	// viper.SetDefault(confTargetLabelSelectorPath, "")
 	viper.SetDefault(confEnableServiceMonitorPath, true)
 	viper.SetDefault(confEnablePodMonitorPath, true)
 	viper.SetDefault(confEnablePromRulePath, true)
 	viper.SetDefault(confEnableStatefulSetWorkerPath, true)
 	viper.SetDefault(confEnableDaemonSetWorkerPath, true)
-	// viper.SetDefault(confEnableProbePath, false)
-	// viper.SetDefault(confDisableMetricsPusherPath, false)
 	viper.SetDefault(confKubeletNamePath, "bkmonitor-operator-kubelet")
 	viper.SetDefault(confKubeletNamespacePath, "bkmonitor-operator")
 	viper.SetDefault(confKubeletEnablePath, true)

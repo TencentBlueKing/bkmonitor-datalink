@@ -10,7 +10,10 @@
 package promsli
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,13 +21,18 @@ import (
 	"time"
 
 	promyaml "github.com/ghodss/yaml"
+	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespace-labeler"
 	"github.com/prometheus/prometheus/model/rulefmt"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -33,33 +41,62 @@ const (
 )
 
 type Controller struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	client kubernetes.Interface
+	bus    *kits.RateBus
+
 	mut             sync.Mutex
 	rules           map[string]*promv1.PrometheusRule
 	rulesRelation   map[string]string
 	serviceMonitors map[string]*promv1.ServiceMonitor
 	podMonitors     map[string]*promv1.PodMonitor
+
+	prevScrapeContent []byte
+	prevRuleContent   map[string]string
 }
 
-func NewController() *Controller {
+func NewController(ctx context.Context, client kubernetes.Interface) *Controller {
+	ctx, cancel := context.WithCancel(ctx)
 	c := &Controller{
+		ctx:             ctx,
+		cancel:          cancel,
+		client:          client,
+		bus:             kits.NewDefaultRateBus(),
 		rules:           make(map[string]*promv1.PrometheusRule),
 		rulesRelation:   make(map[string]string),
 		serviceMonitors: make(map[string]*promv1.ServiceMonitor),
 		podMonitors:     make(map[string]*promv1.PodMonitor),
 	}
 
-	go func() {
-		for range time.Tick(time.Second * 30) {
-			c.createOrUpdateResource()
-		}
-	}()
-
+	go c.handle()
 	return c
 }
 
-func (c *Controller) createOrUpdateResource() {
-	c.GeneratePromScrapeSecret()
-	c.GeneratePromRuleConfigMap()
+func (c *Controller) handle() {
+	createOrUpdateResource := func() {
+		if err := c.CreateOrUpdatePromScrapeSecret(); err != nil {
+			logger.Errorf("failed to update prom secret: %v", err)
+		}
+		if err := c.CreateOrUpdatePromRuleConfigMap(); err != nil {
+			logger.Errorf("failed to update prom configmap: %v", err)
+		}
+	}
+
+	ticker := time.NewTicker(2 * time.Hour) // 兜底检查
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-c.bus.Subscribe():
+			createOrUpdateResource()
+
+		case <-ticker.C:
+			createOrUpdateResource()
+		}
+	}
 }
 
 func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
@@ -68,9 +105,18 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 
 	v, ok := pr.Annotations[sliAnnotation]
 	if !ok {
+		logger.Infof("skip none sli-annotations PrometheusRule: %s/%s", pr.Namespace, pr.Name)
+		return
+	}
+	c.bus.Publish()
+
+	parts := strings.Split(v, "/")
+	if len(parts) != 3 {
+		logger.Warnf("annotations requeire format(monitorType/namespace/name), but got %s", v)
 		return
 	}
 
+	logger.Infof("found new PrometheusRule: %s/%s", pr.Namespace, pr.Name)
 	id := pr.Namespace + "-" + pr.Name
 	c.rules[id] = pr
 	c.rulesRelation[id] = v
@@ -80,6 +126,7 @@ func (c *Controller) DeletePrometheusRule(pr *promv1.PrometheusRule) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	c.bus.Publish()
 	id := pr.Namespace + "-" + pr.Name
 	delete(c.rules, id)
 	delete(c.rulesRelation, id)
@@ -89,6 +136,7 @@ func (c *Controller) UpdateServiceMonitor(sm *promv1.ServiceMonitor) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	c.bus.Publish()
 	id := sm.Namespace + "-" + sm.Name
 	c.serviceMonitors[id] = sm
 }
@@ -97,6 +145,7 @@ func (c *Controller) DeleteServiceMonitor(sm *promv1.ServiceMonitor) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	c.bus.Publish()
 	id := sm.Namespace + "-" + sm.Name
 	delete(c.serviceMonitors, id)
 }
@@ -105,6 +154,7 @@ func (c *Controller) UpdatePodMonitor(pm *promv1.PodMonitor) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	c.bus.Publish()
 	id := pm.Namespace + "-" + pm.Name
 	c.podMonitors[id] = pm
 }
@@ -113,11 +163,12 @@ func (c *Controller) DeletePodMonitor(pm *promv1.PodMonitor) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
+	c.bus.Publish()
 	id := pm.Namespace + "-" + pm.Name
 	delete(c.podMonitors, id)
 }
 
-func (c *Controller) GeneratePromRuleConfigMap() corev1.ConfigMap {
+func (c *Controller) GeneratePromRuleContent() map[string]string {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
@@ -139,19 +190,40 @@ func (c *Controller) GeneratePromRuleConfigMap() corev1.ConfigMap {
 			}
 			continue
 		}
-		data[id] = string(content)
+		data[id+".yaml"] = string(content)
+	}
+	return data
+}
+
+func (c *Controller) CreateOrUpdatePromRuleConfigMap() error {
+	content := c.GeneratePromRuleContent()
+	if len(content) <= 0 {
+		logger.Info("no prometheus rule content found, skipped")
+		return nil
 	}
 
-	logger.Infof("GeneratePromRulConfigMap: %+v", data) //TODO(remove)
-	return corev1.ConfigMap{
+	if reflect.DeepEqual(content, c.prevRuleContent) {
+		logger.Info("no promrule content changed, skipped")
+		return nil
+	}
+	c.prevRuleContent = content
+
+	for k := range content {
+		logger.Infof("create or update rulefile: %s", k)
+	}
+
+	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "prometheus-rulefiles",
 			Labels: map[string]string{
 				"controller": "bkm-operator",
 			},
 		},
-		Data: data,
+		Data: content,
 	}
+	logger.Info("create or update configmap 'prometheus-rulefiles'")
+	cClient := c.client.CoreV1().ConfigMaps(ConfScrapeConfig.Namespace)
+	return k8sutils.CreateOrUpdateConfigMap(c.ctx, cClient, cm)
 }
 
 var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
@@ -160,41 +232,54 @@ func sanitizeLabelName(name string) string {
 	return invalidLabelCharRE.ReplaceAllString(name, "_")
 }
 
-func (c *Controller) GeneratePromScrapeSecret() {
+func (c *Controller) GeneratePromScrapeYaml() yaml.MapSlice {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
 	var cfg yaml.MapSlice
-	globalCfg := yaml.MapItem{
-		Key: "global",
-		Value: yaml.MapSlice{
-			{
-				Key:   "evaluation_interval",
-				Value: "1m",
-			},
-			{
-				Key:   "scrape_interval",
-				Value: "1m",
-			},
-		},
+	var globalCfg yaml.MapSlice
+	for k, v := range ConfScrapeConfig.Global {
+		globalCfg = append(globalCfg, yaml.MapItem{Key: k, Value: v})
 	}
-	cfg = append(cfg, globalCfg)
+	cfg = append(cfg, yaml.MapItem{Key: "global", Value: globalCfg})
+	cfg = append(cfg, yaml.MapItem{Key: "rule_files", Value: ConfScrapeConfig.RuleFiles})
+	cfg = append(cfg, yaml.MapItem{Key: "scrape_configs", Value: c.generateServiceMonitorScrapeConfigs()})
+	return cfg
+}
 
-	cfg = append(cfg, yaml.MapItem{
-		Key:   "rule_files",
-		Value: []string{"/etc/prometheus/rules/prometheus-po-kube-prometheus-stack-prometheus-rulefiles-0/*.yaml"},
-	})
-
-	cfg = append(cfg, yaml.MapItem{
-		Key:   "scrape_configs",
-		Value: c.generateServiceMonitorScrapeConfigs(),
-	})
-
+func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
+	cfg := c.GeneratePromScrapeYaml()
 	b, err := yaml.Marshal(cfg)
 	if err != nil {
-		logger.Errorf("promyaml.Marshal failed: %v", err)
+		return errors.Wrap(err, "yaml unmarshal failed")
 	}
-	logger.Infof("render cfg: %s", string(b)) //TODO(remove)
+
+	compressed, err := compressor.Compress(b)
+	if err != nil {
+		return errors.Wrap(err, "compress data failed")
+	}
+
+	if bytes.Equal(c.prevScrapeContent, compressed) {
+		logger.Info("no scrape content changed, skipped")
+		return nil
+	}
+	c.prevScrapeContent = compressed
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "prometheus-config",
+			Labels: map[string]string{
+				"controller": "bkm-operator",
+			},
+		},
+		Data: map[string][]byte{
+			"prometheus.yaml.gz": compressed,
+		},
+	}
+
+	logger.Infof("create or update secret(prometheus-config), size=%d", len(compressed))
+	sClient := c.client.CoreV1().Secrets(ConfScrapeConfig.Namespace)
+	return k8sutils.CreateOrUpdateSecret(c.ctx, sClient, secret)
 }
 
 func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
@@ -209,6 +294,7 @@ func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 			}
 		}
 
+		// 确保 relation 描述了对应关系才进行数据采集
 		if !matched {
 			logger.Infof("skip no matched %s", s)
 			continue

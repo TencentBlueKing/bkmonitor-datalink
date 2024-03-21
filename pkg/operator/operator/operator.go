@@ -186,7 +186,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
 		}
-		operator.promsliController = promsli.NewController()
+		operator.promsliController = promsli.NewController(operator.ctx, operator.client)
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)

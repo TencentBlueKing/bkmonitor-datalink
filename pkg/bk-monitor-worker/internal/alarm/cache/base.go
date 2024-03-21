@@ -37,13 +37,26 @@ const (
 	CmdbApiPageSize = 500
 )
 
-// ManagerRunner 缓存管理器接口
-type ManagerRunner interface {
+// Manager 缓存管理器接口
+type Manager interface {
+	// Type 缓存类型
+	Type() string
+	// RefreshByBiz 按业务刷新缓存
 	RefreshByBiz(ctx context.Context, bizID int) error
+	// RefreshGlobal 刷新全局缓存
 	RefreshGlobal(ctx context.Context) error
+	// CleanByBiz 按业务清理缓存
 	CleanByBiz(ctx context.Context, bizID int) error
+	// CleanGlobal 清理全局缓存
 	CleanGlobal(ctx context.Context) error
-	BizEnabled() bool
+
+	// UseBiz 是否按业务执行
+	UseBiz() bool
+
+	// CleanByEvents 根据事件清理缓存
+	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
+	// UpdateByEvents 根据事件更新缓存
+	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
 }
 
 // BaseCacheManager 基础缓存管理器
@@ -176,7 +189,7 @@ func (c *BaseCacheManager) CleanGlobal(ctx context.Context) error {
 	return nil
 }
 
-// BizEnabled 业务是否启用
-func (c *BaseCacheManager) BizEnabled() bool {
-	return false
+// UseBiz 是否按业务执行
+func (c *BaseCacheManager) UseBiz() bool {
+	return true
 }

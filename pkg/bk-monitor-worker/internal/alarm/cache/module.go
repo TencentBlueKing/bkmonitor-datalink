@@ -112,8 +112,9 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 	return moduleList, nil
 }
 
-func (m *ModuleCacheManager) BizEnabled() bool {
-	return true
+// Type 缓存类型
+func (m *ModuleCacheManager) Type() string {
+	return "module"
 }
 
 // RefreshByBiz 刷新业务模块缓存

@@ -24,19 +24,22 @@ package alarm
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/signal"
+	"sync"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 )
 
 func TestMain(m *testing.M) {
 	config.FilePath = "../../bmw_test.yaml"
 	config.InitConfig()
 
-	//m.Run()
+	m.Run()
 }
 
 func TestResourceWatch(t *testing.T) {
@@ -45,23 +48,68 @@ func TestResourceWatch(t *testing.T) {
 		Addrs: []string{"127.0.0.1:6379"},
 	}
 
-	// 监听信号
+	// 系统信号
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, os.Kill)
 
 	//调用cancel函数取消
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 监听信号
 	go func() {
 		<-signalChan
 		cancel()
 	}()
 
-	cw, err := NewCmdbResourceWatcher(t.Name(), &WatchCmdbResourceChangeTaskParams{
-		Redis: redisOptions,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	prefix := t.Name()
 
-	cw.Run(ctx)
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+
+	go func() {
+		defer cancel()
+		defer wg.Done()
+
+		params := &WatchCmdbResourceChangeEventTaskParams{
+			Redis:  redisOptions,
+			Prefix: prefix,
+		}
+		payload, _ := json.Marshal(params)
+
+		tt := &task.Task{
+			Kind:    "watch_cmdb_resource_change_event",
+			Payload: payload,
+		}
+
+		if err := WatchCmdbResourceChangeEventTask(ctx, tt); err != nil {
+			t.Errorf("TestWatch failed, err: %v", err)
+			return
+		}
+	}()
+
+	go func() {
+		defer cancel()
+		defer wg.Done()
+
+		params := &CmdbCacheRefreshTaskParams{
+			Redis:                redisOptions,
+			Prefix:               prefix,
+			EventHandleInterval:  60,
+			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
+		}
+		payload, _ := json.Marshal(params)
+
+		tt := &task.Task{
+			Kind:    "handle_cmdb_resource_change_event",
+			Payload: payload,
+		}
+
+		if err := CmdbCacheRefreshTask(ctx, tt); err != nil {
+			t.Errorf("TestHandle failed, err: %v", err)
+			return
+		}
+	}()
+
+	wg.Wait()
 }

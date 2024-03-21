@@ -23,7 +23,7 @@
 package cache
 
 // 正式运行测试
-//func TestAlarmCacheTask(t *testing.T) {
+//func TestRefreshAll(t *testing.T) {
 //	// 业务缓存
 //	rOpts := redis.RedisOptions{
 //		Mode:  "standalone",
@@ -31,22 +31,15 @@ package cache
 //	}
 //
 //	ctx := context.Background()
-//	params, err := json.Marshal(RefreshHostAndTopoCacheByBizParams{
-//		Redis:          rOpts,
-//		CacheKeyPrefix: t.Name(),
-//		Type:           "module",
-//	})
-//	if err != nil {
-//		t.Fatal(err)
-//	}
 //
-//	tt := &task.Task{
-//		Kind:    "alarm_cache",
-//		Payload: params,
-//	}
+//	for _, cacheType := range []string{"host_topo", "business", "module", "set"} {
+//		cm, err := NewCacheManagerByType(&rOpts, t.Name(), cacheType)
+//		if err != nil {
+//			t.Fatalf("NewCacheManagerByType error: %v", err)
+//		}
 //
-//	err = RefreshAlarmCacheTask(ctx, tt)
-//	if err != nil {
-//		t.Fatal(err)
+//		if err = RefreshAll(ctx, cm); err != nil {
+//			t.Fatalf("RefreshAll error: %v", err)
+//		}
 //	}
 //}

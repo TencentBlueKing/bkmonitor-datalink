@@ -37,6 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -151,8 +152,21 @@ func getSpaceList() ([]space.Space, error) {
 	return spaces, nil
 }
 
+// Type 缓存类型
+func (m *BusinessCacheManager) Type() string {
+	return "business"
+}
+
+// UseBiz 是否按业务执行
+func (m *BusinessCacheManager) UseBiz() bool {
+	return true
+}
+
 // RefreshGlobal 刷新全局缓存
 func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
+	logger.Infof("start refresh business cache")
+	defer logger.Infof("end refresh business cache")
+
 	// 获取业务列表
 	bizList, err := getBusinessList(ctx)
 	if err != nil {
@@ -281,6 +295,7 @@ func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType 
 		return nil
 	}
 
+	// 如果有更新就直接刷新全局缓存
 	if err := m.RefreshGlobal(ctx); err != nil {
 		return err
 	}

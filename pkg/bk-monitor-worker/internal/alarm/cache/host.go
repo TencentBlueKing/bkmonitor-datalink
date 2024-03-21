@@ -262,13 +262,16 @@ func NewHostAndTopoCacheManager(prefix string, opt *redis.RedisOptions) (*HostAn
 	}, nil
 }
 
-// BizEnabled 业务是否启用
-func (m *HostAndTopoCacheManager) BizEnabled() bool {
-	return true
+// Type 缓存类型
+func (m *HostAndTopoCacheManager) Type() string {
+	return "host_topo"
 }
 
 // RefreshByBiz 按业务刷新缓存
 func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
+	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
+	defer logger.Infof("end refresh cmdb cache by biz: %d", bkBizId)
+
 	// 获取业务下的主机及拓扑信息
 	hosts, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
 	if err != nil {
@@ -566,6 +569,10 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 
 // CleanByEvents 通过变更事件清理缓存
 func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+	if len(events) == 0 {
+		return nil
+	}
+
 	client := m.RedisClient
 	switch resourceType {
 	case "host":
@@ -619,6 +626,9 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			bkInstId := event["bk_inst_id"].(int)
 			topoIds = append(topoIds, fmt.Sprintf("%s|%d", bkObjId, bkInstId))
 		}
+		if len(topoIds) == 0 {
+			return nil
+		}
 		err := client.HDel(ctx, key, topoIds...).Err()
 		if err != nil {
 			return errors.Wrap(err, "hdel failed")
@@ -629,27 +639,43 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 
 // UpdateByEvents 通过变更事件更新缓存
 func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+	if len(events) == 0 {
+		return nil
+	}
+
 	switch resourceType {
 	case "host":
 		key := m.GetCacheKey(hostCacheKey)
 
+		// 提取需要更新的缓存key
 		hostKeys := make([]string, 0)
 		for _, event := range events {
 			ip, ok := event["bk_host_innerip"].(string)
-			bkCloudId, ok := event["bk_cloud_id"].(int)
+			bkCloudId, ok := event["bk_cloud_id"].(float64)
 
 			if ok && ip != "" {
-				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", ip, bkCloudId))
+				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", ip, int(bkCloudId)))
 			}
 		}
 
+		if len(hostKeys) == 0 {
+			return nil
+		}
+
+		// 查询主机缓存信息
 		result := m.RedisClient.HMGet(ctx, key, hostKeys...)
 		if result.Err() != nil {
 			return errors.Wrap(result.Err(), "hmget failed")
 		}
 
+		// 记录需要更新的业务ID
 		needUpdateBizIds := make(map[int]struct{})
 		for _, value := range result.Val() {
+			// 如果找不到对应的缓存，不需要更新
+			if value == nil {
+				continue
+			}
+
 			var host *AlarmHostInfo
 			err := json.Unmarshal([]byte(value.(string)), &host)
 			if err != nil {
@@ -659,6 +685,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 			needUpdateBizIds[host.BkBizId] = struct{}{}
 		}
 
+		logger.Infof("need update biz ids: %v", needUpdateBizIds)
 		for bizID := range needUpdateBizIds {
 			err := m.RefreshByBiz(ctx, bizID)
 			if err != nil {

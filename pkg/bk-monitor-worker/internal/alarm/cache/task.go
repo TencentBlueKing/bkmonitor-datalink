@@ -24,19 +24,17 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 )
 
 // NewCacheManagerByType 创建缓存管理器
-func NewCacheManagerByType(opt *redis.RedisOptions, prefix string, cacheType string) (ManagerRunner, error) {
-	var cacheManager ManagerRunner
+func NewCacheManagerByType(opt *redis.RedisOptions, prefix string, cacheType string) (Manager, error) {
+	var cacheManager Manager
 	var err error
 	switch cacheType {
 	case "host_topo":
@@ -53,30 +51,10 @@ func NewCacheManagerByType(opt *redis.RedisOptions, prefix string, cacheType str
 	return cacheManager, err
 }
 
-// RefreshHostAndTopoCacheByBizParams 同步业务下的主机及拓扑信息参数
-type RefreshHostAndTopoCacheByBizParams struct {
-	Redis          redis.RedisOptions `json:"redis" mapstructure:"redis"`
-	CacheKeyPrefix string             `json:"cache_key_prefix" mapstructure:"cache_key_prefix"`
-	Type           string             `json:"type" mapstructure:"type"`
-}
-
-// RefreshAlarmCacheTask 刷新缓存任务
-func RefreshAlarmCacheTask(ctx context.Context, t *t.Task) error {
-	// 参数解析
-	var params RefreshHostAndTopoCacheByBizParams
-	err := json.Unmarshal(t.Payload, &params)
-	if err != nil {
-		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(t.Payload))
-	}
-
-	// 创建缓存管理器
-	cacheManager, err := NewCacheManagerByType(&params.Redis, params.CacheKeyPrefix, params.Type)
-	if err != nil {
-		return errors.Wrap(err, "new host and topo cache manager failed")
-	}
-
+// RefreshAll 执行缓存管理器
+func RefreshAll(ctx context.Context, cacheManager Manager) error {
 	// 判断是否启用业务缓存刷新
-	if cacheManager.BizEnabled() {
+	if cacheManager.UseBiz() {
 		// 获取业务列表
 		cmdbApi, err := api.GetCmdbApi()
 		if err != nil {
@@ -106,7 +84,7 @@ func RefreshAlarmCacheTask(ctx context.Context, t *t.Task) error {
 	}
 
 	// 刷新全局缓存
-	err = cacheManager.RefreshGlobal(ctx)
+	err := cacheManager.RefreshGlobal(ctx)
 	if err != nil {
 		return errors.Wrap(err, "refresh global host and topo cache failed")
 	}

@@ -61,10 +61,6 @@ func NewSetCacheManager(prefix string, opt *redis.RedisOptions) (*SetCacheManage
 	}, err
 }
 
-func (m *SetCacheManager) BizEnabled() bool {
-	return true
-}
-
 // getSetListByBizID 通过业务ID获取集群列表
 func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, error) {
 	cmdbApi, err := api.GetCmdbApi()
@@ -111,6 +107,11 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 	}
 
 	return setList, nil
+}
+
+// Type 缓存类型
+func (m *SetCacheManager) Type() string {
+	return "set"
 }
 
 // RefreshByBiz 刷新业务模块缓存

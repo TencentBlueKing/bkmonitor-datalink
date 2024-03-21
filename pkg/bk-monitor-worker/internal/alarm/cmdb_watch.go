@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	redis2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -51,6 +53,7 @@ const (
 	CmdbResourceTypeMainlineInstance CmdbResourceType = "mainline_instance"
 )
 
+// CmdbResourceTypeFields cmdb资源类型对应的监听字段
 var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeHost:             {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
 	CmdbResourceTypeHostRelation:     {"bk_host_id"},
@@ -60,38 +63,31 @@ var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
 }
 
-// CmdbWatchRunner cmdb资源事件执行接口，支持
-type CmdbWatchRunner interface {
-	// CleanByEvents 清理缓存
-	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
-
-	// UpdateByEvents 更新缓存
-	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
-}
-
-// WatchCmdbResourceChangeTaskParams 监听cmdb资源变更任务参数
-type WatchCmdbResourceChangeTaskParams struct {
-	Redis redis2.RedisOptions `json:"redis" mapstructure:"redis"`
-}
-
 // CmdbResourceWatcher cmdb资源监听器
 type CmdbResourceWatcher struct {
-	prefix      string
-	redisClient redis.UniversalClient
-	redisOpt    *redis2.RedisOptions
-	cmdbApi     *cmdb.Client
+	// 缓存key前缀
+	prefix string
+	// cmdb api client
+	cmdbApi *cmdb.Client
 
+	// redis client
+	redisClient redis.UniversalClient
+
+	// cmdb资源变更事件查询游标锁
 	bkCursorLock sync.Mutex
-	bkCursors    map[CmdbResourceType]string
+	// cmdb资源变更事件查询游标
+	bkCursors map[CmdbResourceType]string
 }
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
-func NewCmdbResourceWatcher(prefix string, opt *WatchCmdbResourceChangeTaskParams) (*CmdbResourceWatcher, error) {
-	redisClient, err := redis2.GetRedisClient(&opt.Redis)
+func NewCmdbResourceWatcher(prefix string, rOpt *redis2.RedisOptions) (*CmdbResourceWatcher, error) {
+	// 创建redis client
+	redisClient, err := redis2.GetRedisClient(rOpt)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create redis client")
 	}
 
+	// 创建cmdb api client
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create cmdb api client")
@@ -106,7 +102,7 @@ func NewCmdbResourceWatcher(prefix string, opt *WatchCmdbResourceChangeTaskParam
 
 }
 
-// getBkCursor 获取cmdb资源变更游标
+// getBkCursor 获取cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType CmdbResourceType) string {
 	w.bkCursorLock.Lock()
 	defer w.bkCursorLock.Unlock()
@@ -135,7 +131,7 @@ func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType Cmdb
 	return ""
 }
 
-// setBkCursor 设置cmdb资源变更游标
+// setBkCursor 记录cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType CmdbResourceType, cursor string) error {
 	w.bkCursorLock.Lock()
 	defer w.bkCursorLock.Unlock()
@@ -151,19 +147,7 @@ func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType Cmdb
 	return nil
 }
 
-// setCmdbResourceEvent 记录cmdb资源变更事件
-func (w *CmdbResourceWatcher) setCmdbResourceEvent(ctx context.Context, resourceType CmdbResourceType, resourceId string, eventType string) error {
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, resourceType)
-
-	// 记录事件类型和时间戳
-	value := fmt.Sprintf("%s:%d", eventType, time.Now().Unix())
-	if _, err := w.redisClient.HSet(ctx, bkEventKey, resourceId, value).Result(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Watch 监听cmdb资源变更并记录事件
+// Watch 监听资源变更事件并记录
 func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResourceType) (bool, error) {
 	params := map[string]interface{}{
 		"bk_fields":           CmdbResourceTypeFields[resourceType],
@@ -171,15 +155,13 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		"bk_supplier_account": "0",
 	}
 
-	// 获取cmdb资源变更游标
+	// 获取资源变更事件游标
 	bkCursor := w.getBkCursor(ctx, resourceType)
 	if bkCursor != "" {
 		params["bk_cursor"] = bkCursor
-	} else {
-		params["bk_start_from"] = time.Now().Unix()
 	}
 
-	// 请求cmdb资源变更事件API
+	// 请求监听资源变化事件API
 	var resp cmdb.ResourceWatchResp
 	_, err := w.cmdbApi.ResourceWatch().SetContext(ctx).SetBody(params).SetResult(&resp).Request()
 	err = api.HandleApiResultError(resp.ApiCommonRespMeta, err, "watch cmdb resource api failed")
@@ -187,12 +169,12 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		return false, err
 	}
 
-	// 无变更事件
+	// 无资源变更事件
 	if !resp.Data.BkWatched {
 		if len(resp.Data.BkEvents) == 0 {
 			return false, nil
 		}
-		// 无变更事件，但有游标
+		// 记录资源变更事件游标
 		err := w.setBkCursor(ctx, resourceType, resp.Data.BkEvents[0].BkCursor)
 		if err != nil {
 			logger.Error("set cmdb resource watch cursor error: %v", err)
@@ -201,18 +183,16 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		return false, nil
 	}
 
-	// 处理cmdb资源变更事件
+	// 记录cmdb资源变更事件
 	events := make([]string, 0)
 	for _, event := range resp.Data.BkEvents {
 		val, _ := json.Marshal(event)
 		events = append(events, string(val))
 	}
-
-	// 记录cmdb资源变更事件
 	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, resourceType)
 	w.redisClient.RPush(ctx, bkEventKey, events)
 
-	// 设置cmdb资源变更游标
+	// 记录最后一个cmdb资源变更事件游标
 	if len(resp.Data.BkEvents) > 0 {
 		err = w.setBkCursor(ctx, resourceType, resp.Data.BkEvents[len(resp.Data.BkEvents)-1].BkCursor)
 		if err != nil {
@@ -221,72 +201,6 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 	}
 
 	return true, nil
-}
-
-// Handle cmdb资源变更事件处理
-func (w *CmdbResourceWatcher) Handle(ctx context.Context, resourceType CmdbResourceType) error {
-	rt := string(resourceType)
-	// 获取cmdb资源变更事件
-	// todo: 加锁
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", w.prefix, rt)
-	result := w.redisClient.LRange(ctx, bkEventKey, 0, -1)
-	w.redisClient.Del(ctx, bkEventKey)
-
-	if result.Err() != nil {
-		if !errors.Is(result.Err(), redis.Nil) {
-			return errors.Wrap(result.Err(), "get cmdb resource watch event error")
-		}
-	}
-	// 无cmdb资源变更事件
-	if result.Val() == nil {
-		return nil
-	}
-
-	// 提取需要处理的资源ID
-	needUpdateDetails := make([]map[string]interface{}, 0)
-	needDeleteDetails := make([]map[string]interface{}, 0)
-	var event cmdb.ResourceWatchEvent
-	for _, eventStr := range result.Val() {
-		err := json.Unmarshal([]byte(eventStr), &event)
-		if err != nil {
-			return errors.Wrap(err, "unmarshal cmdb resource watch event error")
-		}
-
-		switch event.BkEventType {
-		case "create", "update":
-			needUpdateDetails = append(needUpdateDetails, event.BkDetail)
-		case "delete":
-			needDeleteDetails = append(needDeleteDetails, event.BkDetail)
-		}
-	}
-
-	// 创建处理器
-	hostCacheManager, _ := cache.NewHostAndTopoCacheManager(w.prefix, w.redisOpt)
-	bizCacheManager, _ := cache.NewBusinessCacheManager(w.prefix, w.redisOpt)
-	setCacheManager, _ := cache.NewSetCacheManager(w.prefix, w.redisOpt)
-	moduleCacheManager, _ := cache.NewModuleCacheManager(w.prefix, w.redisOpt)
-	runners := map[string]CmdbWatchRunner{
-		"host_topo": hostCacheManager,
-		"business":  bizCacheManager,
-		"set":       setCacheManager,
-		"module":    moduleCacheManager,
-	}
-
-	// 处理cmdb资源变更事件
-	for _, runner := range runners {
-		// 清理缓存
-		err := runner.CleanByEvents(ctx, rt, needDeleteDetails)
-		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("clean cmdb resource(%s) watch event error by %v", rt, runner))
-		}
-
-		err = runner.UpdateByEvents(ctx, rt, needUpdateDetails)
-		if err != nil {
-			return errors.Wrap(err, fmt.Sprintf("update cmdb resource(%s) watch event error by %v", rt, runner))
-		}
-	}
-
-	return nil
 }
 
 // Run 启动cmdb资源监听任务
@@ -322,27 +236,315 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 				lastTime = time.Now()
 			}
 		}()
+	}
 
-		// 启动处理任务
-		waitGroup.Add(1)
+	// 等待任务结束
+	waitGroup.Wait()
+}
+
+// WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
+type WatchCmdbResourceChangeEventTaskParams struct {
+	Prefix string              `json:"prefix" mapstructure:"prefix"`
+	Redis  redis2.RedisOptions `json:"redis" mapstructure:"redis"`
+}
+
+// WatchCmdbResourceChangeEventTask 监听cmdb资源变更任务
+func WatchCmdbResourceChangeEventTask(ctx context.Context, t *t.Task) error {
+	// 任务参数解析
+	var params WatchCmdbResourceChangeEventTaskParams
+	err := json.Unmarshal(t.Payload, &params)
+	if err != nil {
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(t.Payload))
+	}
+
+	// 创建cmdb资源变更事件监听器
+	watcher, err := NewCmdbResourceWatcher(params.Prefix, &params.Redis)
+	if err != nil {
+		return errors.Wrap(err, "new cmdb resource watcher failed")
+	}
+
+	watcher.Run(ctx)
+	return nil
+}
+
+// CmdbEventHandler cmdb资源变更事件处理器
+type CmdbEventHandler struct {
+	// 缓存key前缀
+	prefix string
+
+	// redis client
+	redisClient redis.UniversalClient
+
+	// cache manager
+	cacheManager cache.Manager
+
+	// 资源类型
+	resourceTypes []CmdbResourceType
+
+	// full refresh interval
+	fullRefreshInterval time.Duration
+}
+
+// NewCmdbEventHandler 创建cmdb资源变更事件处理器
+func NewCmdbEventHandler(prefix string, rOpt *redis2.RedisOptions, cacheType string, fullRefreshInterval time.Duration) (*CmdbEventHandler, error) {
+	// 创建redis client
+	redisClient, err := redis2.GetRedisClient(rOpt)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create redis client")
+	}
+
+	// 创建缓存管理器
+	cacheManager, err := cache.NewCacheManagerByType(rOpt, prefix, cacheType)
+	if err != nil {
+		return nil, errors.Wrap(err, "new cache manager failed")
+	}
+
+	// 获取关联资源类型
+	resourceTypes, ok := CmdbEventHandlerResourceTypeMap[cacheType]
+	if !ok {
+		return nil, errors.Errorf("unsupported cache type: %s", cacheType)
+	}
+
+	return &CmdbEventHandler{
+		prefix:              prefix,
+		redisClient:         redisClient,
+		cacheManager:        cacheManager,
+		resourceTypes:       resourceTypes,
+		fullRefreshInterval: fullRefreshInterval,
+	}, nil
+}
+
+// getBkEvents 获取全部资源变更事件
+func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbResourceType) ([]cmdb.ResourceWatchEvent, error) {
+	// 获取资源变更事件
+	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", h.prefix, resourceType)
+
+	// 从redis中获取该资源类型的所有事件
+	eventStrings := make([]string, 0)
+	for {
+		// 一次最多获取1000个事件
+		result, err := h.redisClient.LPopCount(ctx, bkEventKey, 1000).Result()
+		if err != nil {
+			if !errors.Is(err, redis.Nil) {
+				logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
+				break
+			}
+		}
+		// 如果没有事件了，退出
+		if len(result) == 0 {
+			break
+		}
+
+		eventStrings = append(eventStrings, result...)
+	}
+
+	// 解析事件
+	events := make([]cmdb.ResourceWatchEvent, 0)
+	for _, eventStr := range eventStrings {
+		var event cmdb.ResourceWatchEvent
+		err := json.Unmarshal([]byte(eventStr), &event)
+		if err != nil {
+			logger.Errorf("unmarshal cmdb resource(%s) watch event error: %v", resourceType, err)
+			continue
+		}
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
+// ifRunRefreshAll 判断是否执行全量刷新
+func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string) bool {
+	// 获取最后一次全量刷新时间
+	lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheType)
+	lastUpdateTime, err := h.redisClient.Get(ctx, lastUpdateTimeKey).Result()
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			logger.Errorf("get last update time error: %v", err)
+			return false
+		}
+	}
+	var lastUpdateTimestamp int64
+	if lastUpdateTime != "" {
+		lastUpdateTimestamp, err = strconv.ParseInt(lastUpdateTime, 10, 64)
+	} else {
+		lastUpdateTimestamp = 0
+	}
+
+	// 如果超过全量刷新间隔时间，执行全量刷新
+	if time.Now().Unix()-lastUpdateTimestamp > int64(h.fullRefreshInterval.Seconds()) {
+		return true
+	}
+
+	return false
+}
+
+// Handle 处理cmdb资源变更事件
+func (h *CmdbEventHandler) Handle(ctx context.Context) {
+	logger.Info("start handle cmdb resource watch event")
+
+	for _, resourceType := range h.resourceTypes {
+		// 获取资源变更事件
+		events, err := h.getBkEvents(ctx, resourceType)
+		if err != nil {
+			logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
+			continue
+		}
+
+		logger.Infof("get cmdb resource(%s) watch event: %d", resourceType, len(events))
+
+		// 如果超过全量刷新间隔时间，执行全量刷新
+		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
+			// 全量刷新
+			err := cache.RefreshAll(ctx, h.cacheManager)
+			if err != nil {
+				logger.Errorf("refresh all cache failed: %v", err)
+			}
+
+			logger.Infof("refresh all cmdb resource(%s) cache", resourceType)
+
+			// 记录全量刷新时间
+			lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
+			_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
+			if err != nil {
+				logger.Errorf("set last update time error: %v", err)
+			}
+
+			return
+		}
+
+		// 无事件
+		if len(events) == 0 {
+			continue
+		}
+
+		updateEvents := make([]map[string]interface{}, 0)
+		cleanEvents := make([]map[string]interface{}, 0)
+
+		for _, event := range events {
+			switch event.BkEventType {
+			case "update", "create":
+				updateEvents = append(updateEvents, event.BkDetail)
+			case "delete":
+				cleanEvents = append(cleanEvents, event.BkDetail)
+			}
+		}
+
+		// 更新缓存
+		if len(updateEvents) > 0 {
+			logger.Infof("update cmdb resource(%s) cache by events: %d", resourceType, len(updateEvents))
+			err := h.cacheManager.UpdateByEvents(ctx, string(resourceType), updateEvents)
+			if err != nil {
+				logger.Errorf("update cache by events failed: %v", err)
+			}
+		}
+
+		// 清理缓存
+		if len(cleanEvents) > 0 {
+			logger.Infof("clean cmdb resource(%s) cache by events: %d", resourceType, len(cleanEvents))
+			err := h.cacheManager.CleanByEvents(ctx, string(resourceType), cleanEvents)
+			if err != nil {
+				logger.Errorf("clean cache by events failed: %v", err)
+			}
+		}
+	}
+}
+
+// CmdbEventHandlerResourceTypeMap cmdb资源事件执行器与资源类型映射
+var CmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
+	"host_topo": {CmdbResourceTypeHost, CmdbResourceTypeHostRelation, CmdbResourceTypeMainlineInstance},
+	"business":  {CmdbResourceTypeBiz},
+	"module":    {CmdbResourceTypeModule},
+	"set":       {CmdbResourceTypeSet},
+}
+
+// CmdbCacheRefreshTaskParams cmdb缓存刷新任务参数
+type CmdbCacheRefreshTaskParams struct {
+	// 缓存key前缀
+	Prefix string `json:"prefix" mapstructure:"prefix"`
+	// redis配置
+	Redis redis2.RedisOptions `json:"redis" mapstructure:"redis"`
+
+	// 事件处理间隔时间(秒)
+	EventHandleInterval int `json:"event_handle_interval" mapstructure:"event_handle_interval"`
+	// 全量刷新间隔时间(秒)
+	FullRefreshIntervals map[string]int `json:"full_refresh_intervals" mapstructure:"full_refresh_intervals"`
+
+	// 业务执行并发数
+	BizConcurrent int `json:"biz_concurrent" mapstructure:"biz_concurrent"`
+}
+
+// CmdbCacheRefreshTask cmdb缓存刷新任务
+func CmdbCacheRefreshTask(ctx context.Context, t *t.Task) error {
+	// 任务参数解析
+	var params CmdbCacheRefreshTaskParams
+	err := json.Unmarshal(t.Payload, &params)
+	if err != nil {
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(t.Payload))
+	}
+
+	// 业务执行并发数
+	bizConcurrent := params.BizConcurrent
+	if bizConcurrent <= 0 {
+		bizConcurrent = 5
+	}
+
+	// 事件处理间隔时间，最低1分钟
+	eventHandleInterval := time.Second * time.Duration(params.EventHandleInterval)
+	if eventHandleInterval <= 60 {
+		eventHandleInterval = time.Hour
+	}
+
+	// 全量刷新间隔时间，最低10分钟
+	fullRefreshIntervals := make(map[string]time.Duration, len(params.FullRefreshIntervals))
+	for cacheType, interval := range params.FullRefreshIntervals {
+		if interval <= 600 {
+			interval = 600
+		}
+		fullRefreshIntervals[cacheType] = time.Second * time.Duration(interval)
+	}
+
+	wg := sync.WaitGroup{}
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for cacheType := range CmdbEventHandlerResourceTypeMap {
+		wg.Add(1)
+		cacheType := cacheType
+		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]
+		if !ok || fullRefreshInterval <= 600 {
+			fullRefreshInterval = 600
+		}
+
 		go func() {
-			defer waitGroup.Done()
-			ticker := time.NewTicker(time.Minute * 3)
+			defer wg.Done()
+
+			// 创建资源变更事件处理器
+			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval)
+			if err != nil {
+				logger.Errorf("new cmdb event handler failed: %v", err)
+				cancel()
+				return
+			}
+
+			logger.Infof("start handle cmdb resource(%s) event", cacheType)
+			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
+
 			for {
+				tn := time.Now()
+				// 事件处理
+				handler.Handle(cancelCtx)
+
+				// 事件处理间隔时间
 				select {
-				case <-ctx.Done():
+				case <-cancelCtx.Done():
 					return
-				case <-ticker.C:
-					err := w.Handle(ctx, resourceType)
-					if err != nil {
-						logger.Errorf("handle cmdb resource(%s) watch event error: %v", resourceType, err)
-					}
+				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
 				}
 			}
 		}()
 	}
 
-	// 等待所有cmdb资源监听任务退出
-	waitGroup.Wait()
-	logger.Info("watch cmdb resource exit")
+	wg.Wait()
+	return nil
 }

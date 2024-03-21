@@ -298,13 +298,17 @@ func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), 
 		return nil, errors.Wrap(err, "failed to send the first request")
 	}
 
-	// get the total count
+	// 获取总数
 	total, err := getTotalFunc(resp)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get the total count")
 	}
+	// 如果总数为0，直接返回
+	if total == 0 {
+		return nil, nil
+	}
 
-	// send the rest requests with goroutine
+	// 限制并发数
 	limitChan := make(chan struct{}, concurrency)
 	waitGroup := sync.WaitGroup{}
 

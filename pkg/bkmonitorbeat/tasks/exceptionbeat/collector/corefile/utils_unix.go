@@ -488,9 +488,18 @@ func (c *CoreFileCollector) parseDimensions(groups []regexGroup) beat.MapStr {
 	return dimensions
 }
 
+func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
+	m, ok := c.fillDimensionV0(filePath)
+	// 宽松匹配模式下，不需要关心是否 dimensions 能否匹配到
+	if c.looseMatch {
+		return m, true
+	}
+	return m, ok
+}
+
 // fillDimension: 填充维度信息到dimensions当中，如果解析失败，那么直接返回dimensions，不对其中的任何内容进行修改
 // 返回内容表示是否可以按照正则正常解析；如果正则解析失败的，很可能是用户自己瞎写的文件，不应该触发告警
-func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
+func (c *CoreFileCollector) fillDimensionV0(filePath string) (beat.MapStr, bool) {
 
 	// 获取core file文件名
 	fileName, errFileName := c.getCoreFileName(filePath)

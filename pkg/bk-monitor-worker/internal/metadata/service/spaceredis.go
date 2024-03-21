@@ -191,6 +191,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabelList)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error, %s", err)
+			return err
 		}
 	} else {
 		tableIds, err := s.refineTableIds(tableIdList)

@@ -30,6 +30,7 @@ type Config struct {
 type ScrapeConfig struct {
 	Global    map[string]interface{} `yaml:"global" mapstructure:"global"`
 	RuleFiles []string               `yaml:"rule_files" mapstructure:"rule_files"`
+	Alerting  map[string]interface{} `yaml:"alerting" mapstructure:"alerting"`
 }
 
 func (c *Config) Validate() {
@@ -41,9 +42,6 @@ func (c *Config) Validate() {
 	}
 	if c.SecretName == "" {
 		c.SecretName = "prometheus-config"
-	}
-	if len(c.Scrape.RuleFiles) == 0 {
-		c.Scrape.RuleFiles = []string{"/etc/prometheus/rules/rulefiles/*.yaml"}
 	}
 }
 

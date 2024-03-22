@@ -226,7 +226,13 @@ func (c *Controller) GeneratePromScrapeYaml() yaml.MapSlice {
 	for k, v := range ConfConfig.Scrape.Global {
 		globalCfg = append(globalCfg, yaml.MapItem{Key: k, Value: v})
 	}
+	var alertingCfg yaml.MapSlice
+	for k, v := range ConfConfig.Scrape.Alerting {
+		alertingCfg = append(alertingCfg, yaml.MapItem{Key: k, Value: v})
+	}
+
 	cfg = append(cfg, yaml.MapItem{Key: "global", Value: globalCfg})
+	cfg = append(cfg, yaml.MapItem{Key: "alerting", Value: alertingCfg})
 	cfg = append(cfg, yaml.MapItem{Key: "rule_files", Value: ConfConfig.Scrape.RuleFiles})
 	cfg = append(cfg, yaml.MapItem{Key: "scrape_configs", Value: c.generateServiceMonitorScrapeConfigs()})
 	return cfg

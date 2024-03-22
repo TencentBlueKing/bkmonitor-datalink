@@ -14,6 +14,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/deckarep/golang-set v1.8.0
 	github.com/deckarep/golang-set/v2 v2.3.1
+	github.com/dgraph-io/ristretto v0.1.1
 	github.com/docker/docker v24.0.6+incompatible
 	github.com/elastic/go-elasticsearch/v5 v5.6.1
 	github.com/elastic/go-elasticsearch/v6 v6.8.10
@@ -66,6 +67,7 @@ require (
 	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/eapache/go-resiliency v1.4.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
@@ -85,6 +87,7 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
+	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.4 // indirect

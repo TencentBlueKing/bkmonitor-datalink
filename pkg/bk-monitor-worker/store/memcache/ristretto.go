@@ -11,6 +11,7 @@ package memcache
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/ristretto"
@@ -29,12 +30,18 @@ type Ristretto struct {
 
 var memCache *Ristretto
 
+var once sync.Once
+
 // GetMmeCache get memory cache
 func GetMmeCache() (*Ristretto, error) {
 	if memCache != nil {
 		return memCache, nil
 	}
-	return NewRistretto()
+	var err error
+	once.Do(func() {
+		memCache, err = NewRistretto()
+	})
+	return memCache, err
 }
 
 // NewRistretto new a memory cache

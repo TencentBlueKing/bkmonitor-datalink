@@ -28,7 +28,9 @@ func NewTimeStamp(t time.Time) TimeStamp {
 
 // String :
 func (t TimeStamp) String() string {
-	return strconv.FormatInt(t.Unix(), 10)
+	//x := float64(t.UnixMilli()) / 1000
+	//return strconv.FormatFloat(x, 'f', -1, 64)
+	return strconv.FormatInt(t.UnixMilli(), 10)
 }
 
 // Int64 :

@@ -84,7 +84,7 @@ func (s *FlatTestLogSuite) TestLogUsage() {
 		func(result map[string]interface{}) {
 			s.EqualRecord(result, map[string]interface{}{
 				"dimensions": map[string]interface{}{
-					"dtEventTimeStamp": float64(1610623364),
+					"dtEventTimeStamp": float64(1610623364922),
 					"serverIp":         "127.0.0.1",
 					"cloudId":          0.0,
 					"gseIndex":         6070089.0,

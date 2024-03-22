@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -188,12 +189,16 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	wg.Wait()
 	// 统一推送数据
 	client := redis.GetStorageRedisInstance()
-	if err := client.Publish(cfg.SpaceToResultTableChannel, spaceUidList); err != nil {
-		logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
+	spaceUidString, err := jsonx.Marshal(spaceUidList)
+	if err == nil {
+		if err := client.Publish(cfg.SpaceToResultTableChannel, spaceUidString); err != nil {
+			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
+		}
 	}
+	
 	// 推送结果表别名路由
 	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
-		return err
+		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)
 	}
 	// 推送结果表详情路由
 	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {

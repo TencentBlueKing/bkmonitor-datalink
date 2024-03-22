@@ -43,6 +43,15 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		return nil, err
 	}
 	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	// 获取 influxdb 集群名称
+	defaultInstanceClusterName := ""
+	if k.InfluxdbProxyStorageId != 0 || &k.InfluxdbProxyStorageId != nil {
+		if influxdbStorage, err := NewInfluxdbProxyStorageSvc(nil).GetInfluxdbStorage(&k.InfluxdbProxyStorageId, nil, nil); err == nil {
+			defaultInstanceClusterName = influxdbStorage.InstanceClusterName
+		}
+		
+	}
+	clusterConsulConfig.ClusterConfig.InstanceClusterName = defaultInstanceClusterName
 	// influxdb的consul配置
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,

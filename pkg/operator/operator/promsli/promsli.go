@@ -50,7 +50,6 @@ type Controller struct {
 	rules           map[string]*promv1.PrometheusRule
 	rulesRelation   map[string]string
 	serviceMonitors map[string]*promv1.ServiceMonitor
-	podMonitors     map[string]*promv1.PodMonitor
 
 	prevScrapeContent []byte
 	prevRuleContent   map[string]string
@@ -66,7 +65,6 @@ func NewController(ctx context.Context, client kubernetes.Interface) *Controller
 		rules:           make(map[string]*promv1.PrometheusRule),
 		rulesRelation:   make(map[string]string),
 		serviceMonitors: make(map[string]*promv1.ServiceMonitor),
-		podMonitors:     make(map[string]*promv1.PodMonitor),
 	}
 
 	go c.handle()
@@ -116,10 +114,8 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 		return
 	}
 
-	switch parts[0] {
-	case "ServiceMonitor", "PodMonitor", "Probe":
-	default:
-		logger.Warnf("unsupported monitor type: %s", parts[0])
+	if parts[0] != "ServiceMonitor" {
+		logger.Warnf("only ServiceMonitor supported, got: %s", parts[0])
 		return
 	}
 
@@ -155,24 +151,6 @@ func (c *Controller) DeleteServiceMonitor(sm *promv1.ServiceMonitor) {
 	c.bus.Publish()
 	id := sm.Namespace + "-" + sm.Name
 	delete(c.serviceMonitors, id)
-}
-
-func (c *Controller) UpdatePodMonitor(pm *promv1.PodMonitor) {
-	c.mut.Lock()
-	defer c.mut.Unlock()
-
-	c.bus.Publish()
-	id := pm.Namespace + "-" + pm.Name
-	c.podMonitors[id] = pm
-}
-
-func (c *Controller) DeletePodMonitor(pm *promv1.PodMonitor) {
-	c.mut.Lock()
-	defer c.mut.Unlock()
-
-	c.bus.Publish()
-	id := pm.Namespace + "-" + pm.Name
-	delete(c.podMonitors, id)
 }
 
 func (c *Controller) GeneratePromRuleContent() map[string]string {

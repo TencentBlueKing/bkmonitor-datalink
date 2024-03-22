@@ -254,7 +254,7 @@ func (p *Precalculate) launch(
 
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
-	runInstance.startRecordSemaphoreAcquired()
+	go runInstance.startRecordSemaphoreAcquired()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
 }

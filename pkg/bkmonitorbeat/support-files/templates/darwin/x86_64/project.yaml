@@ -95,8 +95,8 @@ config_templates:
     format: yaml
     source_path: etc/bkmonitorbeat_prometheus_remote.conf.tpl
 control:
-  start: "./start.sh bkmonitorbeat"
-  stop: "./stop.sh bkmonitorbeat"
-  restart: "./restart.sh bkmonitorbeat"
-  reload: "./reload.sh bkmonitorbeat"
+  start: "./start.zsh bkmonitorbeat"
+  stop: "./stop.zsh bkmonitorbeat"
+  restart: "./restart.zsh bkmonitorbeat"
+  reload: "./reload.zsh bkmonitorbeat"
   version: "./bkmonitorbeat -v"

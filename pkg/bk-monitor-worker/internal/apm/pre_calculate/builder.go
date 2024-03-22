@@ -275,7 +275,7 @@ type RunInstance struct {
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.dataId)
-	groupId := "go-pre-calculate-worker-consumer"
+	groupId := "go-apm-pre-calculate-consumer-group"
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.dataId,

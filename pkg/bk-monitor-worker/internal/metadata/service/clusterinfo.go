@@ -132,5 +132,5 @@ type ClusterConfig struct {
 	CreateTime                   int64   `json:"create_time"`
 	LastModifyUser               string  `json:"last_modify_user"`
 	IsDefaultCluster             bool    `json:"is_default_cluster"`
-	InstanceClusterName			 string  `json:"instance_cluster_name,omitempty"`
+	InstanceClusterName          string  `json:"instance_cluster_name,omitempty"`
 }

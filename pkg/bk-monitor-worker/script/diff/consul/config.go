@@ -34,23 +34,22 @@ type BypassConsulConfig struct {
 }
 
 type ConsulConfig struct {
-	ShowAllData bool          `mapstructure:"showAllData"`
-	Src    SrcConsulConfig    `mapstructure:"srcConsul"`
-	Bypass BypassConsulConfig `mapstructure:"bypassConsul"`
+	ShowAllData bool               `mapstructure:"showAllData"`
+	Src         SrcConsulConfig    `mapstructure:"srcConsul"`
+	Bypass      BypassConsulConfig `mapstructure:"bypassConsul"`
 }
 
 type ConsulDiff struct {
 	ConsulConfig ConsulConfig `mapstructure:"consulDiff"`
 }
- 
 
 // 指定配置文件的路径
 var (
 	// 配置文件路径
 	ConsulDiffConfigPath string
 	// 显示所有对账数据
-	ShowAllData   		 bool
-	Config               = &ConsulDiff{}
+	ShowAllData bool
+	Config      = &ConsulDiff{}
 )
 
 func InitConfig() error {

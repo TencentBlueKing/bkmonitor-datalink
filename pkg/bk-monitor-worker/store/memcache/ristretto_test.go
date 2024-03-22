@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-
 func TestCacheGetKey(t *testing.T) {
 	cache, err := GetMmeCache()
 	assert.NoError(t, err)
@@ -40,7 +39,7 @@ func TestCacheDeleteKey(t *testing.T) {
 	assert.True(t, ok)
 
 	cache.Wait()
-	
+
 	// 查询存在
 	actualVal, ok := cache.Get(key)
 	assert.True(t, ok)

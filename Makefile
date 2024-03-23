@@ -1,5 +1,5 @@
 PWD = $(shell pwd)
-MODULES ?= bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker
+MODULES ?= bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook
 RELEASE_PATH ?= $(PWD)/dist
 BUILD_NO ?= 1
 COMMIT_ID = $(shell git rev-parse HEAD)
@@ -20,7 +20,7 @@ TAG = pkg/$(MODULE)/v$(VERSION)
 PIP_PATH ?= $(shell which pip)
 
 .PHONY: all
-all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebook
+all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebhook
 
 .PHONY: .check_module_vars
 .check_module_vars:
@@ -44,9 +44,9 @@ collector:
 operator:
 	$(MAKE) MODULE=operator build
 
-.PHONY: sliwebook
+.PHONY: sliwebhook
 operator:
-	$(MAKE) MODULE=sliwebook build
+	$(MAKE) MODULE=sliwebhook build
 
 .PHONY: transfer
 transfer:

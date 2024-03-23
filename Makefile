@@ -20,7 +20,7 @@ TAG = pkg/$(MODULE)/v$(VERSION)
 PIP_PATH ?= $(shell which pip)
 
 .PHONY: all
-all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker
+all: bkmonitorbeat collector operator transfer unify-query influxdb-proxy ingester offline-data-archive bk-monitor-worker sliwebook
 
 .PHONY: .check_module_vars
 .check_module_vars:
@@ -43,6 +43,10 @@ collector:
 .PHONY: operator
 operator:
 	$(MAKE) MODULE=operator build
+
+.PHONY: sliwebook
+operator:
+	$(MAKE) MODULE=sliwebook build
 
 .PHONY: transfer
 transfer:

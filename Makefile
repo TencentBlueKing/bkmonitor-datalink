@@ -45,7 +45,7 @@ operator:
 	$(MAKE) MODULE=operator build
 
 .PHONY: sliwebhook
-operator:
+sliwebhook:
 	$(MAKE) MODULE=sliwebhook build
 
 .PHONY: transfer

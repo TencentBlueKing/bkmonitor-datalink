@@ -17,39 +17,23 @@ import (
 )
 
 const (
-	confPromSliConfigPath = "operator.prometheus_sli"
+	confPromSliConfigPath = "operator.sli"
 )
 
 type Config struct {
-	Namespace     string       `yaml:"namespace" mapstructure:"namespace"`
-	SecretName    string       `yaml:"secret_name" mapstructure:"secret_name"`
-	ConfigMapName string       `yaml:"configmap_name" mapstructure:"configmap_name"`
-	Scrape        ScrapeConfig `yaml:"scrape" mapstructure:"scrape"`
+	Namespace     string           `yaml:"namespace" mapstructure:"namespace"`
+	SecretName    string           `yaml:"secret_name" mapstructure:"secret_name"`
+	ConfigMapName string           `yaml:"configmap_name" mapstructure:"configmap_name"`
+	Scrape        PrometheusConfig `yaml:"prometheus" mapstructure:"prometheus"`
 }
 
-type ScrapeConfig struct {
+type PrometheusConfig struct {
 	Global    map[string]interface{} `yaml:"global" mapstructure:"global"`
 	RuleFiles []string               `yaml:"rule_files" mapstructure:"rule_files"`
 	Alerting  map[string]interface{} `yaml:"alerting" mapstructure:"alerting"`
 }
 
-func (c *Config) Validate() {
-	if c.Namespace == "" {
-		c.Namespace = "bkmonitor-operator"
-	}
-	if c.ConfigMapName == "" {
-		c.ConfigMapName = "prometheus-rulefiles"
-	}
-	if c.SecretName == "" {
-		c.SecretName = "prometheus-config"
-	}
-}
-
 var ConfConfig = &Config{}
-
-func init() {
-	ConfConfig.Validate()
-}
 
 func updateConfig() {
 	if viper.IsSet(confPromSliConfigPath) {
@@ -59,7 +43,6 @@ func updateConfig() {
 	} else {
 		ConfConfig = &Config{}
 	}
-	ConfConfig.Validate()
 }
 
 func init() {

@@ -37,7 +37,8 @@ import (
 )
 
 const (
-	sliAnnotation = "sliMonitor"
+	sliAnnotationKey     = "sliMonitor"
+	sliAnnotationBuiltin = "ServiceMonitor/sli"
 )
 
 type Controller struct {
@@ -97,27 +98,39 @@ func (c *Controller) handle() {
 	}
 }
 
-func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
-	c.mut.Lock()
-	defer c.mut.Unlock()
-
-	v, ok := pr.Annotations[sliAnnotation]
+func verifyServiceMonitor(pr *promv1.PrometheusRule) (string, bool) {
+	v, ok := pr.Annotations[sliAnnotationKey]
 	if !ok {
 		logger.Infof("skip none sli-annotations PrometheusRule: %s/%s", pr.Namespace, pr.Name)
-		return
+		return "", false
 	}
-	c.bus.Publish()
+
+	if v == sliAnnotationBuiltin {
+		return v, true
+	}
 
 	parts := strings.Split(v, "/")
 	if len(parts) != 3 {
 		logger.Warnf("annotations requeire format(monitorType/namespace/name), but got %s", v)
-		return
+		return "", false
 	}
 
 	if parts[0] != "ServiceMonitor" {
 		logger.Warnf("only ServiceMonitor supported, got: %s", parts[0])
+		return "", false
+	}
+	return v, true
+}
+
+func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
+	c.mut.Lock()
+	defer c.mut.Unlock()
+
+	v, ok := verifyServiceMonitor(pr)
+	if !ok {
 		return
 	}
+	c.bus.Publish()
 
 	logger.Infof("found new PrometheusRule: %s/%s", pr.Namespace, pr.Name)
 	id := pr.Namespace + "-" + pr.Name
@@ -276,6 +289,15 @@ func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
 func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 	var cfg []yaml.MapSlice
 	for _, sm := range c.serviceMonitors {
+		// 内置白名单
+		if sm.Annotations[sliAnnotationKey] == sliAnnotationBuiltin {
+			for i, ep := range sm.Spec.Endpoints {
+				cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i))
+			}
+			continue
+		}
+
+		// relation 匹配
 		var matched bool
 		s := fmt.Sprintf("ServiceMonitor/%s/%s", sm.Namespace, sm.Name)
 		for _, relation := range c.rulesRelation {

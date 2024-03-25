@@ -11,10 +11,12 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -96,10 +98,11 @@ func RefreshVmRouter(ctx context.Context, objs *[]AccessVMRecord, goroutineLimit
 	}
 	wg.Wait()
 	client := redis.GetStorageRedisInstance()
-	err := client.Publish(models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
+	channel := fmt.Sprintf("%s%s", models.InfluxdbKeyPrefix, cfg.BypassSuffixPath)
+	err := client.Publish(channel, models.QueryVmStorageRouterKey)
 	if err != nil {
-		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey, err)
+		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", channel, models.QueryVmStorageRouterKey, err)
 	} else {
-		logger.Infof("publish redis successfully, channel: %s, msg: %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
+		logger.Infof("publish redis successfully, channel: %s, msg: %v", channel, models.QueryVmStorageRouterKey)
 	}
 }

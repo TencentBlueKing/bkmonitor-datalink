@@ -31,6 +31,8 @@ broker:
 # ================================ 存储配置  ===================================
 # 旁路配置，用于数据对账
 bypassSuffixPath: ""
+# 跳过旁路配置的任务
+skipBypassTasks: []
 store:
   redis:
     mode: standalone
@@ -158,6 +160,22 @@ taskConfig:
       kafkaStorageClusterId: 0
       influxdb_default_proxy_cluster_name_for_k8s: "default"
       custom_event_storage_cluster_id: 0
+    bkdata:
+      defaultBizId: 0
+      projectId: 1
+      realtimeNodeWaitTime: 10
+      dataExpiresDays: 30
+      kafkaBrokerUrl: ""
+      bkBizId: 2
+      rawTableSuffix: "raw"
+      CMDBFullTableSuffix: "full"
+      CMDBSplitTableSuffix: "cmdb"
+      druidStorageClusterName: ""
+      mysqlStorageClusterName: "jungle_alert"
+      mysqlStorageClusterType: "mysql_storage"
+      flowClusterGroup: "default_inland"
+      projectMaintainer: "admin"
+      isAllowAllCmdbLevel: false
   # apmPreCalculate: apm预计算配置
   apmPreCalculate:
     notifier:

@@ -44,10 +44,16 @@ type taskParams struct {
 }
 
 type daemonTaskItem struct {
-	UniId   string         `json:"uni_id"`
-	Kind    string         `json:"kind"`
-	Payload map[string]any `json:"payload"`
-	Options task.Options   `json:"options"`
+	UniId   string                 `json:"uni_id"`
+	Kind    string                 `json:"kind"`
+	Payload map[string]any         `json:"payload"`
+	Options task.Options           `json:"options"`
+	Binding *daemonTaskBindingInfo `json:"binding"`
+}
+
+type daemonTaskBindingInfo struct {
+	WorkerId       string `json:"worker_id"`
+	WorkerIsNormal bool   `json:"worker_is_normal"`
 }
 
 type removeTaskParams struct {
@@ -238,34 +244,25 @@ func RemoveTask(c *gin.Context) {
 
 	switch params.TaskType {
 	case DaemonTask:
-		client := rdb.GetRDB()
-		tasks, err := client.Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
+		daemonTaskBytes, err := getDaemonTask(params.TaskUniId)
 		if err != nil {
-			metrics.RequestApiCount(method, DeleteTaskPath, "failed")
-			ServerErrResponse(c, fmt.Sprintf("failed to list task by key: %s.", common.DaemonTaskKey()), err)
+			metrics.RequestApiCount(method, DeleteTaskPath, "failure")
+			BadReqResponse(c, "get daemonTask failed error: %v", err)
 			return
 		}
-		for _, i := range tasks {
-			var item task.SerializerTask
-			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
-				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
-				metrics.RequestApiCount(method, DeleteTaskPath, "failure")
-				return
-			}
-			taskUniId := daemon.ComputeTaskUniId(item)
-			if taskUniId == params.TaskUniId {
-				client.Client().SRem(context.Background(), common.DaemonTaskKey(), i)
-				Response(c, &gin.H{"data": taskUniId})
+		if daemonTaskBytes != nil {
+			rdb.GetRDB().Client().SRem(context.Background(), common.DaemonTaskKey(), daemonTaskBytes)
+			Response(c, &gin.H{"data": params.TaskUniId})
 
-				metrics.RequestApiCount(method, CreateTaskPath, "success")
-				metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
-				return
-			}
+			metrics.RequestApiCount(method, CreateTaskPath, "success")
+			metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
+			return
 		}
 		ServerErrResponse(c, fmt.Sprintf(
 			"failed to remove TaskUniId: %s, not found in key: %s",
 			params.TaskUniId, common.DaemonTaskKey()),
 		)
+		return
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}
@@ -298,21 +295,42 @@ func ListTask(c *gin.Context) {
 				return
 			}
 
+			taskUinId := daemon.ComputeTaskUniId(item)
 			var payload map[string]any
 			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
 				metrics.RequestApiCount(method, ListTaskPath, "failure")
 				return
 			}
-			res = append(
-				res,
-				daemonTaskItem{
-					UniId:   daemon.ComputeTaskUniId(item),
-					Kind:    item.Kind,
-					Options: item.Options,
-					Payload: payload,
-				},
-			)
+
+			// 查询绑定信息
+			workerId, err := daemon.GetBinding().GetBindingWorkerIdByTask(item)
+			if err != nil {
+				ServerErrResponse(c, fmt.Sprintf("failed to get worker for taskUnid: %s", taskUinId), err)
+				metrics.RequestApiCount(method, ListTaskPath, "failure")
+				return
+			}
+			taskRes := daemonTaskItem{
+				UniId:   taskUinId,
+				Kind:    item.Kind,
+				Options: item.Options,
+				Payload: payload,
+			}
+			var bindingInfo daemonTaskBindingInfo
+			var alive bool
+			if workerId != "" {
+				bindingInfo.WorkerId = workerId
+				// 获取 worker 是否存活
+				alive, err = daemon.GetBinding().IsWorkerAlive(workerId, item.Options.Queue)
+				if err != nil {
+					ServerErrResponse(c, fmt.Sprintf("failed to get worker status for taskUnid: %s", taskUinId), err)
+					metrics.RequestApiCount(method, ListTaskPath, "failure")
+					return
+				}
+				bindingInfo.WorkerIsNormal = alive
+				taskRes.Binding = &bindingInfo
+			}
+			res = append(res, taskRes)
 		}
 
 		metrics.RequestApiCount(method, ListTaskPath, "success")

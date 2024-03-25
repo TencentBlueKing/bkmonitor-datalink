@@ -124,7 +124,7 @@ func WorkerKeyPrefix() string {
 
 // WorkerKeyQueuePrefix prefix of worker listen queue
 func WorkerKeyQueuePrefix(queue string) string {
-	return fmt.Sprintf("%s%s", WorkerKeyPrefix(), queue)
+	return fmt.Sprintf("%squeue:%s", WorkerKeyPrefix(), queue)
 }
 
 // SchedulerEntriesKey returns a redis key for the scheduler entries given scheduler ID.
@@ -159,6 +159,17 @@ func DaemonBindingTask() string {
 // DaemonBindingWorker binding relationship between worker to tasks
 func DaemonBindingWorker(workerId string) string {
 	return fmt.Sprintf("bmw:daemonTasks:binding:workerBinding:%s", workerId)
+}
+
+// DaemonReloadReqChannel [scheduler] used by the scheduler
+// to restart a daemon task based on the task_uni_id of the queue
+func DaemonReloadReqChannel() string {
+	return "bmw:daemonTasks:reload:request"
+}
+
+// DaemonReloadExecQueue actual execution queue of worker, it will consume message from this queue at once in atomic
+func DaemonReloadExecQueue(workerId string) string {
+	return fmt.Sprintf("%sworkerId:%s:reload", WorkerKeyPrefix(), workerId)
 }
 
 // ValidateQueueName validate queue name

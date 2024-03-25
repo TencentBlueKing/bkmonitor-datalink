@@ -62,7 +62,7 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 		},
 		ClusterType: k.ClusterType,
 		AuthInfo: AuthInfo{
-			Password: cipher.DBAESCipher.AESDecrypt(k.Password),
+			Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
 			Username: k.Username,
 		},
 	}
@@ -132,4 +132,5 @@ type ClusterConfig struct {
 	CreateTime                   int64   `json:"create_time"`
 	LastModifyUser               string  `json:"last_modify_user"`
 	IsDefaultCluster             bool    `json:"is_default_cluster"`
+	InstanceClusterName          string  `json:"instance_cluster_name,omitempty"`
 }

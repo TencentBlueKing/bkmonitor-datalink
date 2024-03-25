@@ -254,7 +254,7 @@ func (p *Precalculate) launch(
 
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
-	runInstance.startRecordSemaphoreAcquired()
+	go runInstance.startRecordSemaphoreAcquired()
 
 	apmLogger.Infof("dataId: %s launch successfully", dataId)
 }
@@ -275,7 +275,7 @@ type RunInstance struct {
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.dataId)
-	groupId := "go-pre-calculate-worker-consumer"
+	groupId := "go-apm-pre-calculate-consumer-group"
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.dataId,

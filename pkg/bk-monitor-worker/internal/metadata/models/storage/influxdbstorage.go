@@ -27,8 +27,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -62,9 +64,9 @@ func (InfluxdbStorage) TableName() string {
 	return "metadata_influxdbstorage"
 }
 
-func (e *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
-	if e.ProxyClusterName == "" {
-		e.ProxyClusterName = "default"
+func (i *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
+	if i.ProxyClusterName == "" {
+		i.ProxyClusterName = "default"
 	}
 	return nil
 }
@@ -206,7 +208,7 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 		return err
 	}
 	if isVersionRefresh {
-		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf("%s/metadata/influxdb_info/version/", cfg.StorageConsulPathPrefix)); err != nil {
+		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)); err != nil {
 			return err
 		}
 	}
@@ -258,18 +260,21 @@ func (i InfluxdbStorage) CreateDatabase() error {
 	target.RawQuery = params.Encode()
 	req, err := http.NewRequest(http.MethodPost, target.String(), nil)
 	req.Header.Set("Content-type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		logger.Errorf(
-			"failed to create database [%s] for status [%v]",
-			i.Database, resp.StatusCode,
-		)
-		return errors.New("create database failed")
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+		logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(params.Encode()), ""))
+	} else {
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			logger.Errorf(
+				"failed to create database [%s] for status [%v]",
+				i.Database, resp.StatusCode,
+			)
+			return errors.New("create database failed")
+		}
 	}
 	logger.Infof("database [%s] is create on host [%s:%v]", i.Database, storageCluster.DomainName, storageCluster.Port)
 	return nil
@@ -300,8 +305,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 		err := func() error {
 			// 获取当次集群机器的信息
 			var hostInfo InfluxdbHostInfo
-			err := NewInfluxdbHostInfoQuerySet(dbSession.DB).HostNameEq(clusterInfo.HostName).One(&hostInfo)
-			if err != nil {
+			if err := NewInfluxdbHostInfoQuerySet(dbSession.DB).HostNameEq(clusterInfo.HostName).One(&hostInfo); err != nil {
 				return err
 			}
 			influxdbClient, err := influxdb.GetClient(
@@ -357,22 +361,21 @@ func (i InfluxdbStorage) EnsureRp() error {
 					)
 					break
 				}
-				_, err = influxdb.QueryDB(
-					influxdbClient,
-					fmt.Sprintf(`ALTER RETENTION POLICY "%s" ON %s DURATION %s SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, shardGroupDuration),
-					i.Database,
-					nil,
-				)
-				if err != nil {
-					logger.Errorf(
-						"table [%s] rp [%s | %s | %s] updated on host [%s] failed: [%v]",
-						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
-					)
+				cmd := fmt.Sprintf(`ALTER RETENTION POLICY "%s" ON %s DURATION %s SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, shardGroupDuration)
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+					logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
 				} else {
-					logger.Infof(
-						"table [%s] rp [%s | %s | %s] is updated on host [%s]",
-						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName,
-					)
+					if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {
+						logger.Errorf(
+							"table [%s] rp [%s | %s | %s] updated on host [%s] failed: [%v]",
+							i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
+						)
+					} else {
+						logger.Infof(
+							"table [%s] rp [%s | %s | %s] is updated on host [%s]",
+							i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName,
+						)
+					}
 				}
 				break
 			}
@@ -384,18 +387,17 @@ func (i InfluxdbStorage) EnsureRp() error {
 			if err != nil {
 				return err
 			}
-			_, err = influxdb.QueryDB(
-				influxdbClient,
-				fmt.Sprintf(`CREATE RETENTION POLICY "%s" ON %s DURATION %s REPLICATION %v SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, 1, shardGroupDuration),
-				i.Database,
-				nil,
-			)
-			if err != nil {
-				logger.Errorf(
-					"table [%s] rp [%s | %s | %s] is create on host [%s] failed: [%s]",
-					i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
-				)
-				return err
+			cmd := fmt.Sprintf(`CREATE RETENTION POLICY "%s" ON %s DURATION %s REPLICATION %v SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, 1, shardGroupDuration)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+				logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
+			} else {
+				if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {
+					logger.Errorf(
+						"table [%s] rp [%s | %s | %s] is create on host [%s] failed: [%s]",
+						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
+					)
+					return err
+				}
 			}
 			logger.Infof(
 				"table [%s] rp [%s | %s | %s] is create on host [%s]",
@@ -406,9 +408,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 		if err != nil {
 			return err
 		}
-
 	}
-
 	return nil
 }
 

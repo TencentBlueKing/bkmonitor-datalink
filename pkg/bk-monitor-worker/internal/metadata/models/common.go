@@ -19,6 +19,7 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -118,21 +119,21 @@ func ParseOptionValue(value interface{}) (string, string, error) {
 func PushToRedis(ctx context.Context, key, field, value string, isPublish bool) {
 	client := redis.GetStorageRedisInstance()
 
-	redisKey := fmt.Sprintf("%s:%s", InfluxdbKeyPrefix, key)
+	redisKey := fmt.Sprintf("%s%s:%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath, key)
 	msgSuffix := fmt.Sprintf("key: %s, field: %s, value: %s", redisKey, field, value)
 
-	err := client.HSetWithBypass(redisKey, field, value)
+	err := client.HSetWithCompare(redisKey, field, value)
 	if err != nil {
 		logger.Errorf("push redis failed, %s, err: %v", msgSuffix, err)
 	} else {
 		logger.Infof("push redis successfully, %s", msgSuffix)
 	}
 	if isPublish {
-		err := client.Publish(InfluxdbKeyPrefix, key)
+		err := client.Publish(fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key)
 		if err != nil {
-			logger.Errorf("publish redis failed, channel: %s, msg: %s, %s", InfluxdbKeyPrefix, key, err)
+			logger.Errorf("publish redis failed, channel: %s, msg: %s, %s", fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key, err)
 		} else {
-			logger.Infof("publish redis successfully, channel: %s, msg: %s", InfluxdbKeyPrefix, key)
+			logger.Infof("publish redis successfully, channel: %s, msg: %s", fmt.Sprintf("%s%s", InfluxdbKeyPrefix, cfg.BypassSuffixPath), key)
 		}
 	}
 }

@@ -69,7 +69,7 @@ func (i InfluxdbHostInfo) GetConsulConfig() map[string]interface{} {
 		"domain_name":       i.DomainName,
 		"port":              i.Port,
 		"username":          i.Username,
-		"password":          cipher.DBAESCipher.AESDecrypt(i.Password),
+		"password":          cipher.GetDBAESCipher().AESDecrypt(i.Password),
 		"status":            i.Status,
 		"backup_rate_limit": i.BackupRateLimit,
 		"grpc_port":         i.GrpcPort,
@@ -95,8 +95,8 @@ func (i InfluxdbHostInfo) RefreshConsulClusterConfig(ctx context.Context) error 
 		return err
 	}
 	// 从数据库中生成consul配置信息
-	config := i.GetConsulConfig()
-	configStr, err := jsonx.MarshalString(config)
+	cfg := i.GetConsulConfig()
+	configStr, err := jsonx.MarshalString(cfg)
 	if err != nil {
 		return err
 	}

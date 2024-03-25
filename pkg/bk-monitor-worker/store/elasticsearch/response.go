@@ -40,6 +40,9 @@ func (r *Response) DealStatusCodeError() error {
 	if r.IsError() {
 		switch r.StatusCode {
 		case http.StatusNotFound:
+			if r.Body != nil {
+				r.Body.Close()
+			}
 			return NotFoundErr
 		default:
 			var body []byte

@@ -14,9 +14,12 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -55,9 +58,20 @@ func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 		FlushInterval: flushInterval,
 		ConsumeRate:   consumeRate,
 	}
-	err = info.Create(db)
-	if err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(info.TableName(), map[string]interface{}{
+			storage.KafkaTopicInfoDBSchema.BkDataId.String():      info.BkDataId,
+			storage.KafkaTopicInfoDBSchema.Topic.String():         info.Topic,
+			storage.KafkaTopicInfoDBSchema.Partition.String():     info.Partition,
+			storage.KafkaTopicInfoDBSchema.BatchSize.String():     info.BatchSize,
+			storage.KafkaTopicInfoDBSchema.FlushInterval.String(): info.FlushInterval,
+			storage.KafkaTopicInfoDBSchema.ConsumeRate.String():   info.ConsumeRate,
+		}), ""))
+	} else {
+		err = info.Create(db)
+		if err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("new kafka topic is set for data_id [%v] topic [%s] partition [%v]", info.BkDataId, info.Topic, info.Partition)
 	return &info, nil
@@ -91,8 +105,15 @@ func (s KafkaTopicInfoSvc) RefreshTopicInfo() error {
 	}
 
 	s.Partition = partitionLen
-	if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
-		return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_kafka_topic_info") {
+		logger.Info(diffutil.BuildLogStr("refresh_kafka_topic_info", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
+			storage.KafkaTopicInfoDBSchema.Id.String():        s.Id,
+			storage.KafkaTopicInfoDBSchema.Partition.String(): s.Partition,
+		}), ""))
+	} else {
+		if err := s.Update(db, storage.KafkaTopicInfoDBSchema.Partition); err != nil {
+			return errors.Wrapf(err, "update KafkaTopicInfo [%s] Partition to [%v] failed", s.Topic, partitionLen)
+		}
 	}
 	logger.Infof("kafka topic info for partition of topic [%s] with partition [%v] has been refreshed", s.Topic, s.Partition)
 	return nil

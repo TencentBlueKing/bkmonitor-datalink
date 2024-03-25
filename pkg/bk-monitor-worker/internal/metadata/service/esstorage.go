@@ -18,11 +18,14 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -208,8 +211,25 @@ func (EsStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConfig *op
 		MappingSettings:   mappingSettingsMapStr,
 		StorageClusterID:  clusterId,
 	}
-	if err := ess.Create(db); err != nil {
-		return err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(ess.TableName(), map[string]interface{}{
+			storage.ESStorageDBSchema.TableID.String():           ess.TableID,
+			storage.ESStorageDBSchema.DateFormat.String():        ess.DateFormat,
+			storage.ESStorageDBSchema.SliceSize.String():         ess.SliceSize,
+			storage.ESStorageDBSchema.SliceGap.String():          ess.SliceGap,
+			storage.ESStorageDBSchema.Retention.String():         ess.Retention,
+			storage.ESStorageDBSchema.WarmPhaseDays.String():     ess.WarmPhaseDays,
+			storage.ESStorageDBSchema.WarmPhaseSettings.String(): ess.WarmPhaseSettings,
+			storage.ESStorageDBSchema.TimeZone.String():          ess.TimeZone,
+			storage.ESStorageDBSchema.IndexSettings.String():     ess.IndexSettings,
+			storage.ESStorageDBSchema.MappingSettings.String():   ess.MappingSettings,
+			storage.ESStorageDBSchema.StorageClusterID.String():  ess.StorageClusterID,
+		}), ""))
+		return nil
+	} else {
+		if err := ess.Create(db); err != nil {
+			return err
+		}
 	}
 	logger.Infof("result_table [%s] now has es_storage will try to create index", tableId)
 	if enableCreateIndex {

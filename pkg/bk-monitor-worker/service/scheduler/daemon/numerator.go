@@ -243,7 +243,7 @@ func (d *DefaultNumerator) listBindingMapping(workers []service.WorkerInfo, task
 
 func NewDefaultNumerator(ctx context.Context) Numerator {
 	opts := DefaultNumeratorOptions{
-		checkInterval: time.Duration(config.SchedulerDaemonTaskNumeratorInterval) * time.Second,
+		checkInterval: config.SchedulerDaemonTaskNumeratorInterval,
 	}
 	return &DefaultNumerator{ctx: ctx, config: opts, redisClient: rdb.GetRDB().Client()}
 }

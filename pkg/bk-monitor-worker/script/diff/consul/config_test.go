@@ -7,20 +7,16 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bcs
+package consul
 
-//go:generate goqueryset -in bcspodlabels.go -out qs_bcspodlabels_gen.go
+import (
+	"testing"
 
-// BCSPodLabels BCS Pod and labels relation model
-// gen:qs
-type BCSPodLabels struct {
-	ID        uint   `gorm:"primary_key" json:"id"`
-	Resource  uint   `gorm:"column:resource" json:"resource"` // BCSPod id
-	Label     uint   `gorm:"column:label" json:"label"`       // BCSLabel id
-	ClusterID string `gorm:"size:128;index" json:"cluster_id"`
-}
+	"github.com/stretchr/testify/assert"
+)
 
-// TableName: 用于设置表的别名
-func (BCSPodLabels) TableName() string {
-	return "bkmonitor_bcspodlabels"
+func TestConfigForViper(t *testing.T) {
+	ConsulDiffConfigPath = "../diff_test.yaml"
+	InitConfig()
+	assert.Equal(t, Config.Src.Address, "127.0.0.1:8500")
 }

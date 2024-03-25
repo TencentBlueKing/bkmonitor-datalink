@@ -117,7 +117,7 @@ func ComputeTaskUniId(task task.SerializerTask) string {
 	return fmt.Sprintf("%s-%s", task.Kind, hex.EncodeToString(task.Payload))
 }
 
-func computeWorker(t task.SerializerTask) (service.WorkerInfo, error) {
+func computeWorkerId(t task.SerializerTask) (string, error) {
 	ctx := context.Background()
 
 	redisClient := rdb.GetRDB().Client()
@@ -133,16 +133,16 @@ func computeWorker(t task.SerializerTask) (service.WorkerInfo, error) {
 	queueWorkerPrefix := fmt.Sprintf("%s*", common.WorkerKeyQueuePrefix(queue))
 	keys, err := redisClient.Keys(ctx, queueWorkerPrefix).Result()
 	if err != nil {
-		return res, fmt.Errorf("failed to obtain the workers with the prefix: %s from redis. Task: %s will not be attempted to schedule until the next numerator check", queueWorkerPrefix, t.Kind)
+		return "", fmt.Errorf("failed to obtain the workers with the prefix: %s from redis. Task: %s will not be attempted to schedule until the next numerator check", queueWorkerPrefix, t.Kind)
 	}
 	if len(keys) == 0 {
-		return res, fmt.Errorf("the list of workers with prefix: %s from redis is empty, is no worker listening to this queue: %s?. Task: %s will not be attempted to schedule until the next numerator check", queueWorkerPrefix, queue, t.Kind)
+		return "", fmt.Errorf("the list of workers with prefix: %s from redis is empty, is no worker listening to this queue: %s?. Task: %s will not be attempted to schedule until the next numerator check", queueWorkerPrefix, queue, t.Kind)
 	}
 
 	// TODO 从worker列表中选择worker进行调度 待补充更多的调度规则 目前暂时使用随机选择
 	data, _ := redisClient.Get(ctx, keys[rand.Intn(len(keys))]).Bytes()
 	if err = jsonx.Unmarshal(data, &res); err != nil {
-		return res, fmt.Errorf("parse workerInfo failed. error: %s", err)
+		return "", fmt.Errorf("parse workerInfo failed. error: %s", err)
 	}
-	return res, nil
+	return res.Id, nil
 }

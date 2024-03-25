@@ -1,0 +1,17 @@
+# IDE
+*.DS_Store
+.idea/
+.vscode/
+
+bin/
+logs/
+dist/
+
+# 日志
+*.log
+
+# yaml config
+diff.yaml
+
+local/
+.env

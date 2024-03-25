@@ -76,7 +76,7 @@ func (c *Client) DataBusCleans(opts ...define.OperationOption) define.Operation 
 		result_table_name_alias | string | 清洗配置输出的结果表别名 | required
 		fields | [map{field_name: string | 字段英文标识 | required, field_type: string | 字段类型 | required, field_alias: string | 字段别名 | required, is_dimension: string | 是否为维度字段 | required, field_index: int | 字段顺序索引 | required}] | 输出字段列表 | required
 		description | string | 清洗配置描述信息
-		bk_username | string | 用户名
+		bk_username | string | 用户名 | required
 	*/
 	path := "/v3/databus/cleans/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
@@ -104,6 +104,39 @@ func (c *Client) StartDatabusCleans(opts ...define.OperationOption) define.Opera
 	}, opts...)
 }
 
+// StopDatabusCleans for bkdata resource stop_databus_cleans
+// 停止清洗配置
+func (c *Client) StopDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		result_table_id | string | 清洗结果表名称 | required
+		storages | [string] | 分发任务的存储列表
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/tasks/{result_table_id}/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "stop_databus_cleans",
+		Method: "DELETE",
+		Path:   path,
+	}, opts...)
+}
+
+// GetDatabusCleans for bkdata resource get_databus_cleans
+// 停止清洗配置
+func (c *Client) GetDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		raw_data_id | string | 数据接入源ID | required
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/cleans/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_databus_cleans",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
 // CreateDataStorages for bkdata resource create_data_storages
 // 创建数据入库
 func (c *Client) CreateDataStorages(opts ...define.OperationOption) define.Operation {
@@ -127,6 +160,31 @@ func (c *Client) CreateDataStorages(opts ...define.OperationOption) define.Opera
 	}, opts...)
 }
 
+// UpdateDatabusCleans for bkdata resource update_databus_cleans
+// 更新数据清洗
+func (c *Client) UpdateDatabusCleans(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		processing_id | string | 清洗配置ID | required
+		raw_data_id | string | 数据接入源ID | required
+		json_config | string | 数据清洗配置，json格式 | required
+		pe_config | string |清洗规则的pe配置
+		bk_biz_id | int | 业务ID | required
+		clean_config_name | string | 清洗配置名称 | required
+		result_table_name | string | 清洗配置输出的结果表英文标识 | required
+		result_table_name_alias | string | 清洗配置输出的结果表别名 | required
+		fields | [map{field_name: string | 字段英文标识 | required, field_type: string | 字段类型 | required, field_alias: string | 字段别名 | required, is_dimension: string | 是否为维度字段 | required, field_index: int | 字段顺序索引 | required}] | 输出字段列表 | required
+		description | string | 清洗配置描述信息
+		bk_username | string | 用户名
+	*/
+	path := "/v3/databus/cleans/{processing_id}/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "update_databus_cleans",
+		Method: "PUT",
+		Path:   path,
+	}, opts...)
+}
+
 // AccessDeployPlan for bkdata resource access_deploy_plan
 // 提交接入部署计划(数据源接入)
 func (c *Client) AccessDeployPlan(opts ...define.OperationOption) define.Operation {
@@ -142,6 +200,207 @@ func (c *Client) AccessDeployPlan(opts ...define.OperationOption) define.Operati
 	path := "/v3/access/deploy_plan/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "access_deploy_plan",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// AuthProjectsDataCheck for bkdata resource auth_projects_data_check
+// 检查项目是否有结果表权限
+func (c *Client) AuthProjectsDataCheck(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id | int | 计算平台项目 | required
+		result_table_id | string | 结果表名称 | required
+		action_id | string | 动作方式
+	*/
+	path := "/v3/auth/projects/{project_id}/data/check/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "auth_projects_data_check",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// AuthResultTable for bkdata resource auth_result_table
+// 授权接口(管理员接口): 给项目加表权限
+func (c *Client) AuthResultTable(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id | int | 计算平台项目 | required
+		object_id | string | 结果表名称 | required
+		bk_biz_id | int | 业务ID | required
+	*/
+	path := "/v3/auth/projects/{project_id}/data/add/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "auth_result_table",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// UpdateDataFlowNode for bkdata resource update_data_flow_node
+// 更新DataFlow节点
+func (c *Client) UpdateDataFlowNode(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		node_id	| int | DataFlow的节点ID	| required
+		flow_id	| int | DataFlow的ID	| required
+		from_links	| [map] | 与上游节点的连线信息	| required
+		node_type	| string | 节点类型	| required
+		config	| map | 节点配置	| required
+		frontend_info	| map | DataFlow画布上的位置信息	| required
+
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/nodes/{node_id}"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "update_data_flow_node",
+		Method: "PUT",
+		Path:   path,
+	}, opts...)
+}
+
+// AddDataFlowNode for bkdata resource add_data_flow_node
+// 添加DataFlow节点
+func (c *Client) AddDataFlowNode(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id	| int | DataFlow的ID	| required
+		from_links	| [map] | 与上游节点的连线信息	| required
+		node_type	| string | 节点类型	| required
+		config	| map | 节点配置	| required
+		frontend_info	| map | DataFlow画布上的位置信息	| required
+
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/nodes/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "add_data_flow_node",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// GetLatestDeployDataFlow for bkdata resource get_latest_deploy_data_flow
+// 获取DataFlow的最近部署信息
+func (c *Client) GetLatestDeployDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id	| int 	 | DataFlow的ID	| required
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/latest_deploy_data/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_latest_deploy_data_flow",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// GetDataFlow for bkdata resource get_data_flow
+// 获取DataFlow信息
+func (c *Client) GetDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id	| int 	 | DataFlow的ID	| required
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_data_flow",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// GetDataFlowGraph for bkdata resource get_data_flow_graph
+// 获取DataFlow里的画布信息，即画布中的节点信息
+func (c *Client) GetDataFlowGraph(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id	| int 	 | DataFlow的ID	| required
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/graph"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_data_flow_graph",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// GetDataFlowList for bkdata resource get_data_flow_list
+// 获取DataFlow列表信息
+func (c *Client) GetDataFlowList(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id	| int 	 | 计算平台的项目ID	| required
+	*/
+	path := "/v3/dataflow/flow/flows"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_data_flow_list",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// CreateDataFlow for bkdata resource create_data_flow
+// 创建DataFlow
+func (c *Client) CreateDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		project_id	| int 	 | 计算平台的项目ID	| required
+		flow_name 	| string | DataFlow名称 	  	| required
+		nodes 		| [map]	 | 节点
+	*/
+	path := "/v3/dataflow/flow/flows/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "create_data_flow",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// StopDataFlow for bkdata resource stop_data_flow
+// 停止DataFlow
+func (c *Client) StopDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id | int | DataFlow的ID | required
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/stop/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "stop_data_flow",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// StartDataFlow for bkdata resource start_data_flow
+// 启动DataFlow
+func (c *Client) StartDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id | int | DataFlow的ID | required
+		consuming_mode | string | 数据处理模式
+		cluster_group | string | 计算集群组
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/start/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "start_data_flow",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// RestartDataFlow for bkdata resource restart_data_flow
+// 重启DataFlow
+func (c *Client) RestartDataFlow(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		flow_id | int | DataFlow的ID | required
+		consuming_mode | string | 数据处理模式
+		cluster_group | string | 计算集群组
+	*/
+	path := "/v3/dataflow/flow/flows/{flow_id}/restart/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "restart_data_flow",
 		Method: "POST",
 		Path:   path,
 	}, opts...)

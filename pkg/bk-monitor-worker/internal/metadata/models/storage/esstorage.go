@@ -29,7 +29,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -339,12 +341,16 @@ func (e *ESStorage) CreateIndexV2(ctx context.Context) error {
 	}
 	logger.Infof("table_id [%s] create index body [%s]", e.TableID, string(body))
 	metrics.ESChangeCount(e.TableID, "CreateIndex")
-	resp, err := client.CreateIndex(ctx, indexName, bytes.NewReader(body))
-	if err != nil {
-		logger.Errorf("table_id [%s] create index error, %v", e.TableID, err)
-		return err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+		logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(string(body)), ""))
+	} else {
+		resp, err := client.CreateIndex(ctx, indexName, bytes.NewReader(body))
+		if err != nil {
+			logger.Errorf("table_id [%s] create index error, %v", e.TableID, err)
+			return err
+		}
+		defer resp.Close()
 	}
-	defer resp.Close()
 	logger.Infof("table_id [%s] has created new index [%s]", e.TableID, indexName)
 	return nil
 }
@@ -381,11 +387,15 @@ func (e *ESStorage) UpdateIndexV2(ctx context.Context) error {
 	for indexInfo.TimeObject.After(nowTimeObj) {
 		logger.Warnf("table_id [%s] delete index [%s] because it has ahead time", e.TableID, lastIndexName)
 		err := func() error {
-			resp, err := client.DeleteIndex(ctx, []string{lastIndexName})
-			if err != nil {
-				return err
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(lastIndexName), ""))
+			} else {
+				resp, err := client.DeleteIndex(ctx, []string{lastIndexName})
+				if err != nil {
+					return err
+				}
+				defer resp.Close()
 			}
-			defer resp.Close()
 			return nil
 		}()
 		if err != nil {
@@ -459,11 +469,15 @@ func (e *ESStorage) UpdateIndexV2(ctx context.Context) error {
 		}
 		if count.Count == 0 {
 			newIndex = indexInfo.Index
-			resp, err := client.DeleteIndex(ctx, []string{lastIndexName})
-			if err != nil {
-				return err
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(lastIndexName), ""))
+			} else {
+				resp, err := client.DeleteIndex(ctx, []string{lastIndexName})
+				if err != nil {
+					return err
+				}
+				defer resp.Close()
 			}
-			defer resp.Close()
 			logger.Infof(
 				"table_id [%s] has index [%s] which has not data, will be deleted for new index create.", e.TableID, lastIndexName,
 			)
@@ -481,11 +495,15 @@ func (e *ESStorage) UpdateIndexV2(ctx context.Context) error {
 		return err
 	}
 	metrics.ESChangeCount(e.TableID, "CreateIndex")
-	resp, err := client.CreateIndex(ctx, newIndexName, bytes.NewReader(payload))
-	if err != nil {
-		return err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+		logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(lastIndexName), ""))
+	} else {
+		resp, err := client.CreateIndex(ctx, newIndexName, bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		defer resp.Close()
 	}
-	defer resp.Close()
 	logger.Infof("table_id [%s] new index_name [%s] is created now", e.TableID, newIndexName)
 	return nil
 }
@@ -545,23 +563,31 @@ func (e *ESStorage) CreateOrUpdateAliases(ctx context.Context, aheadTime int) er
 				`{"actions": [{"add": {"index": "%s", "alias": "%s"}},{"add": {"index": "%s", "alias": "%s"}}]}`,
 				lastIndexName, roundAliasName, lastIndexName, roundReadAliasName,
 			)
-			resp, err = client.UpdateAlias(ctx, strings.NewReader(updateJson))
-			if err != nil {
-				logger.Errorf("table_id [%s] update alias [%s] error, %s", e.TableID, updateJson, err)
-				return err
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIPost, diffutil.StringBody{Body: updateJson}, ""))
+			} else {
+				resp, err = client.UpdateAlias(ctx, strings.NewReader(updateJson))
+				if err != nil {
+					logger.Errorf("table_id [%s] update alias [%s] error, %s", e.TableID, updateJson, err)
+					return err
+				}
+				defer resp.Close()
 			}
-			defer resp.Close()
 			logger.Infof("table_id [%s] now has index [%s] and alias [%s | %s]", e.TableID, lastIndexName, roundAliasName, roundReadAliasName)
 			// 只有当index相关列表不为空的时候，进行别名关联清理
 			if len(deleteList) != 0 {
 				logger.Infof(
 					"table_id [%s] found alias_name [%s] is relay with index [%v] all will be deleted.", e.TableID, roundAliasName, deleteList,
 				)
-				resp, err := client.DeleteAlias(ctx, deleteList, []string{roundAliasName})
-				if err != nil {
-					return err
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+					logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(roundAliasName), ""))
+				} else {
+					resp, err := client.DeleteAlias(ctx, deleteList, []string{roundAliasName})
+					if err != nil {
+						return err
+					}
+					defer resp.Close()
 				}
-				defer resp.Close()
 				logger.Infof(
 					"table_id [%s] index [%v] alias [%s] relations now had delete.", e.TableID, deleteList, roundAliasName,
 				)
@@ -976,19 +1002,40 @@ func (e *ESStorage) CreateSnapshot(ctx context.Context) error {
 	}
 	err = dbSession.DB.Transaction(func(tx *gorm.DB) error {
 		snapshot, err := e.SnapshotObj()
+		if err != nil {
+			return errors.Wrapf(err, "get SnapshotObj with table_id [%s] failed", e.TableID)
+		}
 		for _, obj := range esSnapshotIndiceList {
-			result := tx.Create(obj)
-			if result.Error != nil {
-				return result.Error
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(obj.TableName(), map[string]interface{}{
+					EsSnapshotIndiceDBSchema.TableID.String():        obj.TableID,
+					EsSnapshotIndiceDBSchema.SnapshotName.String():   obj.SnapshotName,
+					EsSnapshotIndiceDBSchema.ClusterID.String():      obj.ClusterID,
+					EsSnapshotIndiceDBSchema.RepositoryName.String(): obj.RepositoryName,
+					EsSnapshotIndiceDBSchema.IndexName.String():      obj.IndexName,
+					EsSnapshotIndiceDBSchema.DocCount.String():       obj.DocCount,
+					EsSnapshotIndiceDBSchema.StoreSize.String():      obj.StoreSize,
+					EsSnapshotIndiceDBSchema.StartTime.String():      obj.StartTime,
+					EsSnapshotIndiceDBSchema.EndTime.String():        obj.EndTime,
+				}), ""))
+			} else {
+				result := tx.Create(obj)
+				if result.Error != nil {
+					return result.Error
+				}
 			}
 		}
 		payload := fmt.Sprintf(`{"indices": "%s", "include_global_state": false}`, strings.Join(indices, ","))
 		metrics.ESChangeCount(e.TableID, "CreateSnapshot")
-		resp, err := client.CreateSnapshot(ctx, snapshot.TargetSnapshotRepositoryName, newSnapshotName, strings.NewReader(payload))
-		if err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+			logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(payload), ""))
+		} else {
+			resp, err := client.CreateSnapshot(ctx, snapshot.TargetSnapshotRepositoryName, newSnapshotName, strings.NewReader(payload))
+			if err != nil {
+				return err
+			}
+			defer resp.Close()
 		}
-		defer resp.Close()
 		return nil
 	})
 	if err != nil {
@@ -1406,12 +1453,17 @@ func (e *ESStorage) CleanIndexV2(ctx context.Context) error {
 				logger.Infof(
 					"table_id [%s] index [%s] delete_alias_list [%s] is not empty will delete the alias.", e.TableID, indexName, alias["expired_alias"],
 				)
-				resp, err := client.DeleteAlias(ctx, []string{indexName}, expiredAlias)
-				if err != nil {
-					logger.Errorf("table_id [%s] index [%s] delete_alias_list [%s] error: %s", e.TableID, indexName, alias["expired_alias"], err)
-					continue
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+					bodyStr, _ := jsonx.MarshalString(expiredAlias)
+					logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(bodyStr), ""))
+				} else {
+					resp, err := client.DeleteAlias(ctx, []string{indexName}, expiredAlias)
+					if err != nil {
+						logger.Errorf("table_id [%s] index [%s] delete_alias_list [%s] error: %s", e.TableID, indexName, alias["expired_alias"], err)
+						continue
+					}
+					resp.Close()
 				}
-				resp.Close()
 				logger.Warnf("table_id [%s] index [%s] delete_alias_list [%s] is deleted.", e.TableID, indexName, alias["expired_alias"])
 			}
 			continue
@@ -1420,12 +1472,16 @@ func (e *ESStorage) CleanIndexV2(ctx context.Context) error {
 		// 等待所有别名过期删除索引，防止删除别名快照时，丢失数据
 		logger.Infof("table_id [%s] has not alias need to keep, will delete the index [%s].", e.TableID, indexName)
 		metrics.ESChangeCount(e.TableID, "DeleteIndex")
-		resp, err := client.DeleteIndex(ctx, []string{indexName})
-		if err != nil {
-			logger.Warnf("table_id [%s] index [%s] delete failed, index maybe doing snapshot，%s", e.TableID, indexName, err)
-			continue
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+			logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(indexName), ""))
+		} else {
+			resp, err := client.DeleteIndex(ctx, []string{indexName})
+			if err != nil {
+				logger.Warnf("table_id [%s] index [%s] delete failed, index maybe doing snapshot，%s", e.TableID, indexName, err)
+				continue
+			}
+			resp.Close()
 		}
-		resp.Close()
 		logger.Warnf("table_id [%s] index [%s] is deleted now.", e.TableID, indexName)
 	}
 	logger.Infof("table_id [%s] clean index is process done.", e.TableID)
@@ -1470,22 +1526,31 @@ func (e *ESStorage) CleanSnapshot(ctx context.Context) error {
 	dbSession := mysql.GetDBSession()
 	for _, snapshot := range expiredSnapshots {
 		err := dbSession.DB.Transaction(func(tx *gorm.DB) error {
-			err := tx.Where("table_id = ? and snapshot_name = ?", e.TableID, snapshot.Snapshot).Delete(&EsSnapshotIndice{}).Error
-			if err != nil {
-				return err
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(EsSnapshotIndice{}.TableName(), map[string]interface{}{
+					EsSnapshotIndiceDBSchema.TableID.String():      e.TableID,
+					EsSnapshotIndiceDBSchema.SnapshotName.String(): snapshot.Snapshot,
+				}), ""))
+
+				payloadStr, _ := jsonx.MarshalString(map[string]string{"repository": snapshot.Repository, "snapshot": snapshot.Snapshot})
+				logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(payloadStr), ""))
+			} else {
+				err := tx.Where("table_id = ? and snapshot_name = ?", e.TableID, snapshot.Snapshot).Delete(&EsSnapshotIndice{}).Error
+				if err != nil {
+					return err
+				}
+				metrics.ESChangeCount(e.TableID, "DeleteSnapshot")
+				resp, err := client.DeleteSnapshot(ctx, snapshot.Repository, snapshot.Snapshot)
+				if err != nil {
+					return err
+				}
+				defer resp.Close()
 			}
-			metrics.ESChangeCount(e.TableID, "DeleteSnapshot")
-			resp, err := client.DeleteSnapshot(ctx, snapshot.Repository, snapshot.Snapshot)
-			if err != nil {
-				return err
-			}
-			defer resp.Close()
 			return nil
 		})
 		if err != nil {
 			logger.Errorf("clean snapshot [%s] failed, %s", snapshot.Snapshot, err)
 		}
-
 	}
 	logger.Infof("table_id [%s] has clean snapshot", e.TableID)
 	return nil
@@ -1637,11 +1702,16 @@ func (e *ESStorage) ReallocateIndex(ctx context.Context) error {
 	)
 
 	setting := fmt.Sprintf(`{"index.routing.allocation.%s.%s": "%s"}`, warmPhaseSetting.AllocationType, warmPhaseSetting.AllocationAttrName, warmPhaseSetting.AllocationAttrValue)
-	putResp, err := client.PutSettings(ctx, strings.NewReader(setting), filterIndices)
-	if err != nil {
-		return err
+	payloadStr, _ := jsonx.MarshalString(map[string]interface{}{"index": filterIndices, "body": setting})
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_storage") {
+		logger.Info(diffutil.BuildLogStr("refresh_es_storage", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(payloadStr), ""))
+	} else {
+		putResp, err := client.PutSettings(ctx, strings.NewReader(setting), filterIndices)
+		if err != nil {
+			return err
+		}
+		defer putResp.Close()
 	}
-	defer putResp.Close()
 	return nil
 }
 

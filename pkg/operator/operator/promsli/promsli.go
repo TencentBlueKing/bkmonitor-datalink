@@ -25,6 +25,7 @@ import (
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespace-labeler"
 	"github.com/prometheus/prometheus/model/rulefmt"
+	"github.com/prometheus/prometheus/promql/parser"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,6 +51,7 @@ type Controller struct {
 	mut             sync.Mutex
 	rules           map[string]*promv1.PrometheusRule
 	rulesRelation   map[string]string
+	smMetrics       map[string]map[string]struct{}
 	serviceMonitors map[string]*promv1.ServiceMonitor
 
 	prevScrapeContent []byte
@@ -65,6 +67,7 @@ func NewController(ctx context.Context, client kubernetes.Interface) *Controller
 		bus:             kits.NewDefaultRateBus(),
 		rules:           make(map[string]*promv1.PrometheusRule),
 		rulesRelation:   make(map[string]string),
+		smMetrics:       map[string]map[string]struct{}{},
 		serviceMonitors: make(map[string]*promv1.ServiceMonitor),
 	}
 
@@ -136,6 +139,21 @@ func (c *Controller) UpdatePrometheusRule(pr *promv1.PrometheusRule) {
 	id := pr.Namespace + "-" + pr.Name
 	c.rules[id] = pr
 	c.rulesRelation[id] = v
+
+	// 存储 servicemonitor <-> metrics 对应关系
+	// Note: 单 rule 的告警指标只能来自单 servicemonitor
+	// 暂不做清理
+	if _, ok := c.smMetrics[v]; !ok {
+		c.smMetrics[v] = map[string]struct{}{}
+	}
+	for _, group := range pr.Spec.Groups {
+		for _, rule := range group.Rules {
+			metrics := parsePromQLMetrics(rule.Expr.String())
+			for _, metric := range metrics {
+				c.smMetrics[v][metric] = struct{}{}
+			}
+		}
+	}
 }
 
 func (c *Controller) DeletePrometheusRule(pr *promv1.PrometheusRule) {
@@ -292,7 +310,7 @@ func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 		// 内置白名单
 		if sm.Annotations[sliAnnotationKey] == sliAnnotationBuiltin {
 			for i, ep := range sm.Spec.Endpoints {
-				cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i))
+				cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i, nil))
 			}
 			continue
 		}
@@ -312,14 +330,20 @@ func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 			logger.Infof("skip no matched %s", s)
 			continue
 		}
+
+		var keep []string
+		for k := range c.smMetrics[s] {
+			keep = append(keep, k)
+		}
+
 		for i, ep := range sm.Spec.Endpoints {
-			cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i))
+			cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i, keep))
 		}
 	}
 	return cfg
 }
 
-func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.Endpoint, index int) yaml.MapSlice {
+func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.Endpoint, index int, keepMetrics []string) yaml.MapSlice {
 	cfg := yaml.MapSlice{
 		{
 			Key:   "job_name",
@@ -482,9 +506,22 @@ func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.End
 
 	labeler := namespacelabeler.New("", nil, false)
 	cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
+
+	metricRelabels := make([]yaml.MapSlice, 0)
+	if len(keepMetrics) > 0 {
+		re := strings.Join(keepMetrics, "|")
+		metricRelabels = append(metricRelabels, yaml.MapSlice{
+			{Key: "action", Value: "keep"},
+			{Key: "regex", Value: re},
+			{Key: "separator", Value: ";"},
+			{Key: "source_labels", Value: "__name__"},
+		})
+	}
+
+	metricRelabels = append(metricRelabels, generateRelabelConfig(labeler.GetRelabelingConfigs(sm.TypeMeta, sm.ObjectMeta, ep.MetricRelabelConfigs))...)
 	cfg = append(cfg, yaml.MapItem{
 		Key:   "metric_relabel_configs",
-		Value: generateRelabelConfig(labeler.GetRelabelingConfigs(sm.TypeMeta, sm.ObjectMeta, ep.MetricRelabelConfigs)),
+		Value: metricRelabels,
 	})
 
 	return cfg
@@ -558,4 +595,31 @@ func generateRelabelConfig(rc []*promv1.RelabelConfig) []yaml.MapSlice {
 		cfg = append(cfg, relabeling)
 	}
 	return cfg
+}
+
+func parsePromQLMetrics(s string) []string {
+	filter := make(map[string]struct{})
+	expr, err := parser.ParseExpr(s)
+	if err != nil {
+		return nil
+	}
+	parser.Inspect(expr, func(node parser.Node, nodes []parser.Node) error {
+		switch node.(type) {
+		case *parser.VectorSelector:
+			filter[node.String()] = struct{}{}
+		}
+		return nil
+	})
+
+	var metrics []string
+	for k := range filter {
+		parts := strings.Split(k, "{")
+		if len(parts) <= 0 {
+			continue
+		}
+		metrics = append(metrics, parts[0])
+	}
+
+	sort.Strings(metrics)
+	return metrics
 }

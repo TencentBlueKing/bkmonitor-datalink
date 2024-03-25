@@ -89,7 +89,7 @@ func NewServer(config *Config) *Server {
 	}
 
 	router := mux.NewRouter()
-	router.HandleFunc("/alerts", s.alertsRoute).Methods(http.MethodPost)
+	router.HandleFunc("/api/v1/alerts", s.alertsRoute).Methods(http.MethodPost)
 	router.HandleFunc("/api/v2/alerts", s.alertsRoute).Methods(http.MethodPost)
 	router.HandleFunc("/metrics", s.metricsRoute).Methods(http.MethodGet)
 	router.Handle("/admin/metrics", promhttp.Handler()).Methods(http.MethodGet)

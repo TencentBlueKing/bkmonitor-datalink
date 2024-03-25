@@ -58,13 +58,9 @@ var (
 	)
 )
 
-type WebhookRequest struct {
-	Alerts []Alert `json:"alerts"`
-}
-
 type Alert struct {
-	Status string            `json:"status"`
-	Labels map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations"`
+	Labels      map[string]string `json:"labels"`
 }
 
 type Server struct {
@@ -93,9 +89,10 @@ func NewServer(config *Config) *Server {
 	}
 
 	router := mux.NewRouter()
-	router.HandleFunc("/webhook", s.webhookRoute)
-	router.HandleFunc("/metrics", s.metricsRoute)
-	router.Handle("/admin/metrics", promhttp.Handler())
+	router.HandleFunc("/alerts", s.alertsRoute).Methods(http.MethodPost)
+	router.HandleFunc("/api/v2/alerts", s.alertsRoute).Methods(http.MethodPost)
+	router.HandleFunc("/metrics", s.metricsRoute).Methods(http.MethodGet)
+	router.Handle("/admin/metrics", promhttp.Handler()).Methods(http.MethodGet)
 
 	s.server = &http.Server{
 		Handler:      router,
@@ -177,7 +174,7 @@ func (s *Server) loopHandle() {
 	}
 }
 
-func (s *Server) webhookRoute(w http.ResponseWriter, r *http.Request) {
+func (s *Server) alertsRoute(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	buf := &bytes.Buffer{}
 	_, err := io.Copy(buf, r.Body)
@@ -189,8 +186,8 @@ func (s *Server) webhookRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var wr WebhookRequest
-	if err := json.Unmarshal(buf.Bytes(), &wr); err != nil {
+	var alerts []Alert
+	if err := json.Unmarshal(buf.Bytes(), &alerts); err != nil {
 		requestsTotal.WithLabelValues(strconv.Itoa(http.StatusBadRequest)).Inc()
 		w.WriteHeader(http.StatusBadRequest)
 		logger.Warnf("failed to unmarshal body: %v", err)
@@ -198,10 +195,7 @@ func (s *Server) webhookRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Infof("recevie alert: %s", buf.String())
 
-	for _, alert := range wr.Alerts {
-		if alert.Status != "firing" {
-			continue
-		}
+	for _, alert := range alerts {
 		s.alerts <- toPromFormat(alert.Labels)
 	}
 

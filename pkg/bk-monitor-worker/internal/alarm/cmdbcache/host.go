@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -40,8 +40,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// HostFields 主机字段
-var HostFields = []string{
+// hostFields 主机字段
+var hostFields = []string{
 	"bk_host_innerip",
 	"bk_host_innerip_v6",
 	"bk_cloud_id",
@@ -77,8 +77,8 @@ var HostFields = []string{
 	"bk_cpu",
 }
 
-// AlarmHostInfo 告警主机信息
-type AlarmHostInfo struct {
+// alarmHostInfo 告警主机信息
+type alarmHostInfo struct {
 	// 原生字段
 	BkBizId             int      `json:"bk_biz_id"`
 	BkAgentId           string   `json:"bk_agent_id"`
@@ -134,7 +134,7 @@ const (
 )
 
 // NewAlarmHostInfoByListBizHostsTopoDataInfo 通过ListBizHostsTopoDataInfo构造AlarmHostInfo
-func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataInfo) *AlarmHostInfo {
+func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataInfo) *alarmHostInfo {
 	// 主备负责人处理
 	var operator []string
 	var bkBakOperator []string
@@ -192,7 +192,7 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		bkIspName = *info.Host.BkIspName
 	}
 
-	host := &AlarmHostInfo{
+	host := &alarmHostInfo{
 		BkBizId:             info.Host.BkBizId,
 		BkAgentId:           info.Host.BkAgentId,
 		Operator:            operator,
@@ -242,17 +242,17 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 type HostAndTopoCacheManager struct {
 	*BaseCacheManager
 
-	hosts []*AlarmHostInfo
+	hosts []*alarmHostInfo
 	topo  *cmdb.SearchBizInstTopoData
 
 	hostIpMapping map[string][]string
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *redis.RedisOptions) (*HostAndTopoCacheManager, error) {
+func NewHostAndTopoCacheManager(prefix string, opt *redis.Options) (*HostAndTopoCacheManager, error) {
 	manager, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
-		return nil, errors.Wrap(err, "new cache manager failed")
+		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
 
 	manager.initUpdatedFieldSet(hostCacheKey, hostIDCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
@@ -451,7 +451,7 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) e
 }
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
-func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*alarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "get cmdb api client failed")
@@ -462,7 +462,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 
 	// 批量拉取业务下的主机信息
 	results, err := api.BatchApiRequest(
-		CmdbApiPageSize,
+		cmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var res cmdb.ListBizHostsTopoResp
 			err := mapstructure.Decode(resp, &res)
@@ -472,14 +472,14 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 			return res.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": HostFields})
+			return cmdbApi.ListBizHostsTopo().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID, "fields": hostFields})
 		},
 		10,
 	)
 	if err != nil {
 		return nil, nil, err
 	}
-	hosts := make([]*AlarmHostInfo, 0)
+	hosts := make([]*alarmHostInfo, 0)
 	for _, result := range results {
 		var res cmdb.ListBizHostsTopoResp
 		err := mapstructure.Decode(result, &res)
@@ -676,7 +676,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 				continue
 			}
 
-			var host *AlarmHostInfo
+			var host *alarmHostInfo
 			err := json.Unmarshal([]byte(value.(string)), &host)
 			if err != nil {
 				continue

@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -63,10 +63,10 @@ type BusinessCacheManager struct {
 }
 
 // NewBusinessCacheManager 创建业务缓存管理器
-func NewBusinessCacheManager(prefix string, opt *redis.RedisOptions) (*BusinessCacheManager, error) {
+func NewBusinessCacheManager(prefix string, opt *redis.Options) (*BusinessCacheManager, error) {
 	manager, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create base cache manager")
+		return nil, errors.Wrap(err, "failed to create base cache Manager")
 	}
 
 	manager.initUpdatedFieldSet(businessCacheKey)
@@ -84,7 +84,7 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 
 	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
-		CmdbApiPageSize,
+		cmdbApiPageSize,
 		// 获取总数
 		func(resp interface{}) (int, error) {
 			data, ok := resp.(map[string]interface{})["data"]
@@ -99,7 +99,7 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 		},
 		// 设置分页参数
 		func(page int) define.Operation {
-			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+			return cmdbApi.SearchBusiness().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

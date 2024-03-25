@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -49,7 +49,7 @@ type ModuleCacheManager struct {
 }
 
 // NewModuleCacheManager 创建模块缓存管理器
-func NewModuleCacheManager(prefix string, opt *redis.RedisOptions) (*ModuleCacheManager, error) {
+func NewModuleCacheManager(prefix string, opt *redis.Options) (*ModuleCacheManager, error) {
 	base, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 	}
 
 	result, err := api.BatchApiRequest(
-		CmdbApiPageSize,
+		cmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var result cmdb.SearchModuleResp
 			err := mapstructure.Decode(resp, &result)
@@ -83,7 +83,7 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchModule().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+			return cmdbApi.SearchModule().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

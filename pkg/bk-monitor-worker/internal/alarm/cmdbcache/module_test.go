@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -64,11 +64,11 @@ func TestModuleCacheManager(t *testing.T) {
 	})
 	defer patch.Reset()
 
-	rOpts := &redis.RedisOptions{
+	rOpts := &redis.Options{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
-	client, _ := redis.GetRedisClient(rOpts)
+	client, _ := redis.GetClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("TestModuleCacheManager", func(t *testing.T) {

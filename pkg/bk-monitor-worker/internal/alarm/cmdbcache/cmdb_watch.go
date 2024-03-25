@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package alarm
+package cmdbcache
 
 import (
 	"context"
@@ -30,14 +30,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cache"
-	redis2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -80,9 +77,9 @@ type CmdbResourceWatcher struct {
 }
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
-func NewCmdbResourceWatcher(prefix string, rOpt *redis2.RedisOptions) (*CmdbResourceWatcher, error) {
+func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWatcher, error) {
 	// 创建redis client
-	redisClient, err := redis2.GetRedisClient(rOpt)
+	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create redis client")
 	}
@@ -244,17 +241,17 @@ func (w *CmdbResourceWatcher) Run(ctx context.Context) {
 
 // WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
 type WatchCmdbResourceChangeEventTaskParams struct {
-	Prefix string              `json:"prefix" mapstructure:"prefix"`
-	Redis  redis2.RedisOptions `json:"redis" mapstructure:"redis"`
+	Prefix string        `json:"prefix" mapstructure:"prefix"`
+	Redis  redis.Options `json:"redis" mapstructure:"redis"`
 }
 
 // WatchCmdbResourceChangeEventTask 监听cmdb资源变更任务
-func WatchCmdbResourceChangeEventTask(ctx context.Context, t *t.Task) error {
+func WatchCmdbResourceChangeEventTask(ctx context.Context, payload []byte) error {
 	// 任务参数解析
 	var params WatchCmdbResourceChangeEventTaskParams
-	err := json.Unmarshal(t.Payload, &params)
+	err := json.Unmarshal(payload, &params)
 	if err != nil {
-		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(t.Payload))
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(payload))
 	}
 
 	// 创建cmdb资源变更事件监听器
@@ -275,8 +272,8 @@ type CmdbEventHandler struct {
 	// redis client
 	redisClient redis.UniversalClient
 
-	// cache manager
-	cacheManager cache.Manager
+	// cache cacheManager
+	cacheManager Manager
 
 	// 资源类型
 	resourceTypes []CmdbResourceType
@@ -286,21 +283,21 @@ type CmdbEventHandler struct {
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
-func NewCmdbEventHandler(prefix string, rOpt *redis2.RedisOptions, cacheType string, fullRefreshInterval time.Duration) (*CmdbEventHandler, error) {
+func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration) (*CmdbEventHandler, error) {
 	// 创建redis client
-	redisClient, err := redis2.GetRedisClient(rOpt)
+	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create redis client")
 	}
 
 	// 创建缓存管理器
-	cacheManager, err := cache.NewCacheManagerByType(rOpt, prefix, cacheType)
+	cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType)
 	if err != nil {
-		return nil, errors.Wrap(err, "new cache manager failed")
+		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
 
 	// 获取关联资源类型
-	resourceTypes, ok := CmdbEventHandlerResourceTypeMap[cacheType]
+	resourceTypes, ok := cmdbEventHandlerResourceTypeMap[cacheType]
 	if !ok {
 		return nil, errors.Errorf("unsupported cache type: %s", cacheType)
 	}
@@ -396,7 +393,7 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		// 如果超过全量刷新间隔时间，执行全量刷新
 		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 			// 全量刷新
-			err := cache.RefreshAll(ctx, h.cacheManager)
+			err := RefreshAll(ctx, h.cacheManager)
 			if err != nil {
 				logger.Errorf("refresh all cache failed: %v", err)
 			}
@@ -450,20 +447,20 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 	}
 }
 
-// CmdbEventHandlerResourceTypeMap cmdb资源事件执行器与资源类型映射
-var CmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
+// cmdbEventHandlerResourceTypeMap cmdb资源事件执行器与资源类型映射
+var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
 	"host_topo": {CmdbResourceTypeHost, CmdbResourceTypeHostRelation, CmdbResourceTypeMainlineInstance},
 	"business":  {CmdbResourceTypeBiz},
 	"module":    {CmdbResourceTypeModule},
 	"set":       {CmdbResourceTypeSet},
 }
 
-// CmdbCacheRefreshTaskParams cmdb缓存刷新任务参数
-type CmdbCacheRefreshTaskParams struct {
+// RefreshTaskParams cmdb缓存刷新任务参数
+type RefreshTaskParams struct {
 	// 缓存key前缀
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// redis配置
-	Redis redis2.RedisOptions `json:"redis" mapstructure:"redis"`
+	Redis redis.Options `json:"redis" mapstructure:"redis"`
 
 	// 事件处理间隔时间(秒)
 	EventHandleInterval int `json:"event_handle_interval" mapstructure:"event_handle_interval"`
@@ -474,13 +471,13 @@ type CmdbCacheRefreshTaskParams struct {
 	BizConcurrent int `json:"biz_concurrent" mapstructure:"biz_concurrent"`
 }
 
-// CmdbCacheRefreshTask cmdb缓存刷新任务
-func CmdbCacheRefreshTask(ctx context.Context, t *t.Task) error {
+// CacheRefreshTask cmdb缓存刷新任务
+func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 任务参数解析
-	var params CmdbCacheRefreshTaskParams
-	err := json.Unmarshal(t.Payload, &params)
+	var params RefreshTaskParams
+	err := json.Unmarshal(payload, &params)
 	if err != nil {
-		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(t.Payload))
+		return errors.Wrapf(err, "unmarshal payload failed, payload: %s", string(payload))
 	}
 
 	// 业务执行并发数
@@ -508,7 +505,7 @@ func CmdbCacheRefreshTask(ctx context.Context, t *t.Task) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	for cacheType := range CmdbEventHandlerResourceTypeMap {
+	for cacheType := range cmdbEventHandlerResourceTypeMap {
 		wg.Add(1)
 		cacheType := cacheType
 		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]

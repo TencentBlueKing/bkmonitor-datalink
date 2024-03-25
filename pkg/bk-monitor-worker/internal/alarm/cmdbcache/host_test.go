@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -35,7 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
-var DemoHosts = []*AlarmHostInfo{
+var DemoHosts = []*alarmHostInfo{
 	{
 		BkBizId:       2,
 		BkHostId:      1,
@@ -134,17 +134,17 @@ var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 
 func TestHostAndTopoCacheManager(t *testing.T) {
 	// mock 主机和拓扑查询
-	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*alarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer patches.Reset()
 
-	rOpts := &redis.RedisOptions{
+	rOpts := &redis.Options{
 		Mode:  "standalone",
 		Addrs: []string{testRedisAddr},
 	}
 
-	client, _ := redis.GetRedisClient(rOpts)
+	client, _ := redis.GetClient(rOpts)
 	ctx := context.Background()
 
 	t.Run("RefreshAndEventHandler", func(t *testing.T) {
@@ -199,7 +199,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 		events := make([]map[string]interface{}, 0, len(allResult.Val()))
 		for _, v := range allResult.Val() {
-			var host *AlarmHostInfo
+			var host *alarmHostInfo
 			err := json.Unmarshal([]byte(v), &host)
 			if err != nil {
 				t.Error(err)

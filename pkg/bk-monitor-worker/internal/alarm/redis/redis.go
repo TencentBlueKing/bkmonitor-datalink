@@ -30,8 +30,12 @@ import (
 	"github.com/pkg/errors"
 )
 
-// RedisOptions Redis参数
-type RedisOptions struct {
+type UniversalClient = redis.UniversalClient
+
+const Nil = redis.Nil
+
+// Options Redis参数
+type Options struct {
 	Mode string `json:"mode" mapstructure:"mode"`
 
 	Addrs    []string `json:"addrs" mapstructure:"addrs"`
@@ -45,7 +49,8 @@ type RedisOptions struct {
 	DB int `json:"db" mapstructure:"db"`
 }
 
-func GetRedisClient(opt *RedisOptions) (redis.UniversalClient, error) {
+// GetClient 获取redis客户端
+func GetClient(opt *Options) (redis.UniversalClient, error) {
 	var client redis.UniversalClient
 	if opt.Mode == "standalone" {
 		client = redis.NewUniversalClient(&redis.UniversalOptions{

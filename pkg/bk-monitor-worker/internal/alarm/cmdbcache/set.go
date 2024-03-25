@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
 import (
 	"context"
@@ -49,7 +49,7 @@ type SetCacheManager struct {
 }
 
 // NewSetCacheManager 创建模块缓存管理器
-func NewSetCacheManager(prefix string, opt *redis.RedisOptions) (*SetCacheManager, error) {
+func NewSetCacheManager(prefix string, opt *redis.Options) (*SetCacheManager, error) {
 	base, err := NewBaseCacheManager(prefix, opt)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
-		CmdbApiPageSize,
+		cmdbApiPageSize,
 		func(resp interface{}) (int, error) {
 			var result cmdb.SearchSetResp
 			err := mapstructure.Decode(resp, &result)
@@ -85,7 +85,7 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 		},
 		// 生成分页请求
 		func(page int) define.Operation {
-			return cmdbApi.SearchSet().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * CmdbApiPageSize, "limit": CmdbApiPageSize}})
+			return cmdbApi.SearchSet().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
 		},
 		10,
 	)

@@ -20,26 +20,37 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package cache
+package cmdbcache
 
-// 正式运行测试
-//func TestRefreshAll(t *testing.T) {
-//	// 业务缓存
-//	rOpts := redis.RedisOptions{
-//		Mode:  "standalone",
-//		Addrs: []string{"127.0.0.1:6379"},
-//	}
-//
-//	ctx := context.Background()
-//
-//	for _, cacheType := range []string{"host_topo", "business", "module", "set"} {
-//		cm, err := NewCacheManagerByType(&rOpts, t.Name(), cacheType)
-//		if err != nil {
-//			t.Fatalf("NewCacheManagerByType error: %v", err)
-//		}
-//
-//		if err = RefreshAll(ctx, cm); err != nil {
-//			t.Fatalf("RefreshAll error: %v", err)
-//		}
-//	}
-//}
+import "context"
+
+type ResourceWatchDaemon struct {
+}
+
+// Start 启动CMDB资源监控
+func (c *ResourceWatchDaemon) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
+	err := WatchCmdbResourceChangeEventTask(runInstanceCtx, payload)
+	if err != nil {
+		errorReceiveChan <- err
+	}
+}
+
+// GetTaskDimension 获取任务维度
+func (c *ResourceWatchDaemon) GetTaskDimension(payload []byte) string {
+	return ""
+}
+
+type CacheRefreshDaemon struct{}
+
+// Start 启动缓存刷新
+func (c *CacheRefreshDaemon) Start(runInstanceCtx context.Context, errorReceiveChan chan<- error, payload []byte) {
+	err := CacheRefreshTask(runInstanceCtx, payload)
+	if err != nil {
+		errorReceiveChan <- err
+	}
+}
+
+// GetTaskDimension 获取任务维度
+func (c *CacheRefreshDaemon) GetTaskDimension(payload []byte) string {
+	return ""
+}

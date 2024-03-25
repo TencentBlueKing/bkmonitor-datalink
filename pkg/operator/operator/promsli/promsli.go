@@ -514,7 +514,7 @@ func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.End
 			{Key: "action", Value: "keep"},
 			{Key: "regex", Value: re},
 			{Key: "separator", Value: ";"},
-			{Key: "source_labels", Value: "__name__"},
+			{Key: "source_labels", Value: []string{"__name__"}},
 		})
 	}
 

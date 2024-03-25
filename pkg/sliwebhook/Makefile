@@ -44,7 +44,7 @@ build:
 
 .PHONY: dev
 dev:
-	$(GO) run . ./sliwebhook.yaml
+	$(GO) run . -config ./sliwebhook.yaml
 
 .PHONY: install
 install:

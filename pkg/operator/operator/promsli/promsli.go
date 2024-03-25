@@ -350,7 +350,26 @@ func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.End
 			Value: fmt.Sprintf("serviceMonitor/%s/%s/%d", sm.Namespace, sm.Name, index),
 		},
 	}
+
 	cfg = append(cfg, generateServiceMonitorK8sSDConfig(sm))
+	if ep.Interval != "" {
+		cfg = append(cfg, yaml.MapItem{Key: "scrape_interval", Value: ep.Interval})
+	}
+	if ep.ScrapeTimeout != "" {
+		cfg = append(cfg, yaml.MapItem{Key: "scrape_timeout", Value: ep.ScrapeTimeout})
+	}
+	if ep.Path != "" {
+		cfg = append(cfg, yaml.MapItem{Key: "metrics_path", Value: ep.Path})
+	}
+	if ep.ProxyURL != nil {
+		cfg = append(cfg, yaml.MapItem{Key: "proxy_url", Value: ep.ProxyURL})
+	}
+	if ep.Params != nil {
+		cfg = append(cfg, yaml.MapItem{Key: "params", Value: ep.Params})
+	}
+	if ep.Scheme != "" {
+		cfg = append(cfg, yaml.MapItem{Key: "scheme", Value: ep.Scheme})
+	}
 
 	var labelKeys []string
 	for k := range sm.Spec.Selector.MatchLabels {

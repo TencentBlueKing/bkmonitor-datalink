@@ -105,6 +105,7 @@ var httpSvc HttpService
 const (
 	statusError = "error"
 	tokenKey    = "X-BK-TOKEN"
+	tenantIDKey = "X-Tps-TenantID"
 )
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePushGateway)
@@ -135,9 +136,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	vars := s.extractVars(req)
 	job := vars[fieldJob]
 
-	token := req.URL.Query().Get(tokenKey)
 	var err error
-
 	if jobBase64Encoded {
 		if job, err = decodeBase64(job); err != nil {
 			err = errors.Wrapf(err, "invalid base64 encoding in job name, job: %s", job)
@@ -205,10 +204,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		return
 	}
 
-	if token == "" {
-		token = req.Header.Get(tokenKey)
-	}
-
+	token := tokenFromRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordPushGateway,
 		RequestType:   define.RequestHttp,
@@ -250,6 +246,23 @@ func (s HttpService) ExportBase64Metrics(w http.ResponseWriter, req *http.Reques
 
 func (s HttpService) ExportMetrics(w http.ResponseWriter, req *http.Request) {
 	s.exportMetrics(w, req, false)
+}
+
+func tokenFromRequest(req *http.Request) string {
+	// 1) 从 tokenKey 中读取
+	token := req.URL.Query().Get(tokenKey)
+	if token == "" {
+		token = req.Header.Get(tokenKey)
+	}
+
+	// 2) 从 tenantidKey 中读取
+	if token == "" {
+		token = req.Header.Get(tenantIDKey)
+	}
+	if token == "" {
+		token = req.URL.Query().Get(tenantIDKey)
+	}
+	return token
 }
 
 func decodeBase64(in string) (string, error) {

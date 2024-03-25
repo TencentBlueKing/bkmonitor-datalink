@@ -205,6 +205,8 @@ func (tc *timeSeriesValidator) Validate(pd *define.ProxyData) error {
 		}
 		mapObj["timestamp"] = int64(timestamp)
 	}
+
+	pd.Type = define.ProxyMetricType
 	return nil
 }
 
@@ -286,5 +288,7 @@ func (tc *eventValidator) Validate(pd *define.ProxyData) error {
 		}
 		mapObj["timestamp"] = int64(timestamp)
 	}
+
+	pd.Type = define.ProxyEventType
 	return nil
 }

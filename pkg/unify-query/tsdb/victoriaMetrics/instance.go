@@ -357,7 +357,7 @@ func (i *Instance) vmQuery(
 
 	queryCost := time.Since(startAnaylize)
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.VictoriaMetricsStorageType,
+		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
 	)
 
 	err = json.NewDecoder(resp.Body).Decode(data)

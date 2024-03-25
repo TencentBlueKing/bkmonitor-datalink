@@ -13,22 +13,19 @@ import (
 	"runtime"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var panicTotal = prometheus.NewCounter(
+var panicTotal = promauto.NewCounter(
 	prometheus.CounterOpts{
 		Namespace: define.MonitoringNamespace,
 		Name:      "panic_total",
 		Help:      "program causes panic total",
 	},
 )
-
-func init() {
-	prometheus.MustRegister(panicTotal)
-}
 
 var PanicHandlers = []func(interface{}){
 	incPanicCounter,

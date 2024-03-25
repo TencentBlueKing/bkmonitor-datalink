@@ -22,6 +22,7 @@ const (
 	defaultMetricsBatchSize = 2000
 	defaultTracesBatchSize  = 200
 	defaultLogsBatchSize    = 100
+	defaultProxyBatchSize   = 2000
 	defaultFlushInterval    = 3 * time.Second
 )
 
@@ -38,6 +39,9 @@ func (c *Config) Validate() {
 	}
 	if c.Queue.TracesBatchSize <= 0 {
 		c.Queue.TracesBatchSize = defaultTracesBatchSize
+	}
+	if c.Queue.ProxyBatchSize <= 0 {
+		c.Queue.ProxyBatchSize = defaultProxyBatchSize
 	}
 	if c.Queue.FlushInterval <= 0 {
 		c.Queue.FlushInterval = defaultFlushInterval

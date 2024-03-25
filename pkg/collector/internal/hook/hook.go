@@ -16,22 +16,19 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var hookTriggerTotal = prometheus.NewCounter(
+var hookTriggerTotal = promauto.NewCounter(
 	prometheus.CounterOpts{
 		Namespace: define.MonitoringNamespace,
 		Name:      "hook_trigger_total",
 		Help:      "Hook trigger total",
 	},
 )
-
-func init() {
-	prometheus.MustRegister(hookTriggerTotal)
-}
 
 var mgr Manager
 

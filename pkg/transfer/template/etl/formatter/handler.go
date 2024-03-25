@@ -10,6 +10,11 @@
 package formatter
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"io"
+	"strings"
 	"time"
 
 	"github.com/cstockton/go-conv"
@@ -384,6 +389,10 @@ func tryDecodeExtraMeta(s string) ([]map[string]string, error) {
 		Custom []map[string]string `json:"custom"`
 	}
 
+	type V2Meta struct {
+		Content string `json:"content"`
+	}
+
 	parseV0Meta := func(b []byte) ([]map[string]string, error) {
 		ret := make([]map[string]string, 0)
 		err := json.Unmarshal(b, &ret)
@@ -412,20 +421,47 @@ func tryDecodeExtraMeta(s string) ([]map[string]string, error) {
 		return ret, nil
 	}
 
-	type tryV1 struct {
+	parseV2Meta := func(b []byte) ([]map[string]string, error) {
+		var v2Meta V2Meta
+		if err := json.Unmarshal(b, &v2Meta); err != nil {
+			return nil, err
+		}
+
+		b, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(v2Meta.Content, "="))
+		if err != nil {
+			return nil, err
+		}
+
+		r, err := gzip.NewReader(bytes.NewBuffer(b))
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+
+		content, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		return parseV1Meta(content)
+	}
+
+	type tryVer struct {
 		Version string `json:"version"`
 	}
 
-	var tryv1 tryV1
+	var tryV tryVer
 	var ret []map[string]string
 
-	// 尝试用最小代价解析 version 字段，判断其是否为 v1 格式
+	// 尝试用最小代价解析 version 字段，判断数据版本号
 	// 不同版本格式
 	// v0: []map[string]string
 	// v1: V1Meta
-	err := json.Unmarshal([]byte(s), &tryv1)
-	if err == nil && tryv1.Version == "v1" {
+	// v2: V2Meta -> content: V1Meta
+	err := json.Unmarshal([]byte(s), &tryV)
+	if err == nil && tryV.Version == "v1" {
 		ret, err = parseV1Meta([]byte(s))
+	} else if err == nil && tryV.Version == "v2" {
+		ret, err = parseV2Meta([]byte(s))
 	} else {
 		ret, err = parseV0Meta([]byte(s))
 	}

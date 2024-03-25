@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/dominikbraun/graph"
-	"github.com/prometheus/prometheus/model/labels"
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -286,9 +285,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}, lookBackDelta)
 	}
 
-	referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
-	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
-	promQL, err := queryTs.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+	promQL, err := queryTs.ToPromExpr(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
 	}

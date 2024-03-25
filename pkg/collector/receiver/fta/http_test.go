@@ -25,6 +25,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+func TestReady(t *testing.T) {
+	assert.NotPanics(t, Ready)
+}
+
 func TestExportEventCommon(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -87,7 +91,7 @@ func TestExportEventCommon(t *testing.T) {
 			}
 
 			buf := bytes.NewBufferString(tt.body)
-			req, _ := http.NewRequest(http.MethodPost, tt.url, buf)
+			req := httptest.NewRequest(http.MethodPost, tt.url, buf)
 			for key, value := range tt.headers {
 				req.Header.Set(key, value)
 			}
@@ -116,7 +120,7 @@ func TestExportEventCommon(t *testing.T) {
 			}},
 		}
 		buf := testkits.NewBrokenReader()
-		req, _ := http.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
+		req := httptest.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
 		rw := httptest.NewRecorder()
 		svc.ExportEvent(rw, req)
 		assert.Equal(t, http.StatusBadRequest, rw.Code)
@@ -130,7 +134,7 @@ func TestExportEventCommon(t *testing.T) {
 			}},
 		}
 		buf := bytes.NewBufferString(`{"test": "1"}`)
-		req, _ := http.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
+		req := httptest.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
 		rw := httptest.NewRecorder()
 		svc.ExportEvent(rw, req)
 		assert.Equal(t, http.StatusUnauthorized, rw.Code)

@@ -33,26 +33,44 @@ type Logger struct {
 }
 
 func (l *Logger) Warnf(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Warn(withTraceID(ctx, format, v...))
 }
 
 func (l *Logger) Infof(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Info(withTraceID(ctx, format, v...))
 }
 
 func (l *Logger) Errorf(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Error(withTraceID(ctx, format, v...))
 }
 
 func (l *Logger) Debugf(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Debug(withTraceID(ctx, format, v...))
 }
 
 func (l *Logger) Panicf(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Panic(withTraceID(ctx, format, v...))
 }
 
 func (l *Logger) Fatalf(ctx context.Context, format string, v ...any) {
+	if l == nil || l.logger == nil {
+		return
+	}
 	l.logger.Fatal(withTraceID(ctx, format, v...))
 }
 

@@ -10,11 +10,10 @@
 package converter
 
 import (
-	"time"
-
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 )
 
 type proxyEvent struct {
@@ -23,23 +22,6 @@ type proxyEvent struct {
 
 func (e proxyEvent) RecordType() define.RecordType {
 	return define.RecordProxy
-}
-
-type proxyMapper struct {
-	pd *define.ProxyData
-}
-
-// AsMapStr 转换为 beat 框架要求的 MapStr 对象
-func (p proxyMapper) AsMapStr() common.MapStr {
-	now := time.Now().Unix()
-	return common.MapStr{
-		"dataid":    p.pd.DataId,
-		"version":   p.pd.Version,
-		"data":      p.pd.Data,
-		"bk_info":   p.pd.Extra,
-		"time":      now,
-		"timestamp": now,
-	}
 }
 
 var ProxyConverter EventConverter = proxyConverter{}
@@ -55,11 +37,73 @@ func (c proxyConverter) ToDataID(_ *define.Record) int32 {
 }
 
 func (c proxyConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pd, ok := record.Data.(*define.ProxyData)
-	if !ok {
-		return
+	pd := record.Data.(*define.ProxyData)
+	var events []define.Event
+
+	if pd.Type == define.ProxyMetricType {
+		events = c.toMetrics(record.Token, pd)
+	} else {
+		events = c.toEvents(record.Token, pd)
 	}
 
-	pm := proxyMapper{pd: pd}
-	f(c.ToEvent(record.Token, int32(pd.DataId), pm.AsMapStr()))
+	if len(events) > 0 {
+		f(events...)
+	}
+}
+
+func (c proxyConverter) toMetrics(token define.Token, pd *define.ProxyData) []define.Event {
+	var events []define.Event
+	var items []define.ProxyMetric
+
+	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
+	b, err := json.Marshal(pd.Data)
+	if err != nil {
+		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
+		return nil
+	}
+	err = json.Unmarshal(b, &items)
+	if err != nil {
+		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
+		return nil
+	}
+
+	for _, item := range items {
+		event := c.ToEvent(token, int32(pd.DataId), common.MapStr{
+			"metrics":   item.Metrics,
+			"target":    item.Target,
+			"timestamp": item.Timestamp,
+			"dimension": item.Dimension,
+		})
+		events = append(events, event)
+	}
+	return events
+}
+
+func (c proxyConverter) toEvents(token define.Token, pd *define.ProxyData) []define.Event {
+	var events []define.Event
+	var items []define.ProxyEvent
+
+	// 使用 json 序列化再反序列化目前是最快的方式 参见 benchmark
+	b, err := json.Marshal(pd.Data)
+	if err != nil {
+		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
+		return nil
+	}
+	err = json.Unmarshal(b, &items)
+	if err != nil {
+		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordProxy, int32(pd.DataId))
+		return nil
+	}
+
+	for _, item := range items {
+		event := c.ToEvent(token, int32(pd.DataId), common.MapStr{
+			"event_name": item.EventName,
+			"event":      item.Event,
+			"target":     item.Target,
+			"dimension":  item.Dimension,
+			"timestamp":  item.Timestamp,
+		})
+		events = append(events, event)
+	}
+	return events
 }

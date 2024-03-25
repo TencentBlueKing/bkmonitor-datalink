@@ -190,6 +190,8 @@ bk-collector:
         enabled: false
       skywalking:
         enabled: false
+      pyroscope:
+        enabled: true
       fta:
         enabled: true
 
@@ -251,13 +253,13 @@ bk-collector:
         type: "random"
         sampling_percentage: 100
 
-    # Sampler: profiles采样处理器（做直接丢弃处理）
+    # Sampler: profiles 采样处理器（做直接丢弃处理）
     - name: "sampler/drop_profiles"
       config:
         type: "drop"
         enabled: false
 
-    # Sampler: traces采样处理器（做直接丢弃处理）
+    # Sampler: traces 采样处理器（做直接丢弃处理）
     - name: "sampler/drop_traces"
       config:
         type: "drop"
@@ -1722,8 +1724,8 @@ bk-collector:
       type: "traces"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop_traces"
         - "rate_limiter/token_bucket"
+        - "sampler/drop_traces"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
         - "service_discover/common"
@@ -1788,8 +1790,8 @@ bk-collector:
       type: "profiles"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop_profiles"
         - "pprof_translator/common"
+        - "sampler/drop_profiles"
 
   # =============================== Exporter =================================
   exporter:
@@ -1797,4 +1799,5 @@ bk-collector:
       metrics_batch_size: 5000
       traces_batch_size: 600
       logs_batch_size: 100
+      proxy_batch_size: 3000
       flush_interval: 3s

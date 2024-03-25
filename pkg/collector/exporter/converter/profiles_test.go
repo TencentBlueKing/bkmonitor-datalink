@@ -19,125 +19,131 @@ import (
 )
 
 func TestConvertProfilesData(t *testing.T) {
-	var events []define.Event
-	NewCommonConverter().Convert(&define.Record{
-		RecordType: define.RecordProfiles,
-		Data: &define.ProfilesData{Profiles: []*profile.Profile{{
-			TimeNanos:     time.Now().UnixNano(),
-			DurationNanos: int64(time.Second),
-			SampleType:    []*profile.ValueType{{Type: "samples", Unit: "count"}},
-			Sample:        []*profile.Sample{{Value: []int64{1000}, Location: make([]*profile.Location, 0)}},
-			PeriodType:    &profile.ValueType{Type: "goroutine", Unit: "seconds"},
-		}}},
-		Token: define.Token{
-			AppName: "testa",
-			BizId:   1,
-		},
-	}, func(evts ...define.Event) {
-		events = append(events, evts...)
+	t.Run("Success", func(t *testing.T) {
+		var events []define.Event
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProfiles,
+			Data: &define.ProfilesData{Profiles: []*profile.Profile{{
+				TimeNanos:     time.Now().UnixNano(),
+				DurationNanos: int64(time.Second),
+				SampleType:    []*profile.ValueType{{Type: "samples", Unit: "count"}},
+				Sample:        []*profile.Sample{{Value: []int64{1000}, Location: make([]*profile.Location, 0)}},
+				PeriodType:    &profile.ValueType{Type: "goroutine", Unit: "seconds"},
+			}}},
+			Token: define.Token{
+				AppName: "testa",
+				BizId:   1,
+			},
+		}, func(evts ...define.Event) {
+			events = append(events, evts...)
+		})
+
+		assert.Len(t, events, 1)
+
+		event := events[0]
+		data := event.Data()
+		assert.Equal(t, int32(1), data["biz_id"])
+		assert.Equal(t, define.RecordProfiles, event.RecordType())
+		assert.Equal(t, int32(0), event.DataId())
+		assert.Equal(t, "testa", data["app"])
+		assert.Equal(t, "goroutine", data["type"])
+		assert.Equal(t, "default", data["service_name"])
 	})
 
-	assert.Len(t, events, 1)
+	t.Run("Empty Profiles", func(t *testing.T) {
+		var hit bool
+		NewCommonConverter().Convert(&define.Record{
+			RecordType: define.RecordProfiles,
+			Data:       &define.ProfilesData{Profiles: nil},
+			Token: define.Token{
+				AppName: "testa",
+				BizId:   1,
+			},
+		}, func(evts ...define.Event) {
+			hit = true
+		})
 
-	event := events[0]
-	data := event.Data()
-	assert.Equal(t, data["biz_id"], int32(1))
-	assert.Equal(t, data["app"], "testa")
-	assert.Equal(t, data["type"], "goroutine")
-	assert.Equal(t, data["service_name"], "default")
+		assert.False(t, hit)
+	})
 }
 
 func TestGetSvrNameAndTags(t *testing.T) {
 	p := profilesConverter{}
-	tags := map[string]string{
-		"serviceName": "testService",
-		"env":         "production",
-		"version":     "v1.0",
-	}
+	t.Run("Success", func(t *testing.T) {
+		metadata := define.ProfileMetadata{
+			StartTime: time.Now(),
+			EndTime:   time.Now(),
+			AppName:   "testApp",
+			BkBizID:   1,
+			SpyName:   "testSpy",
+			Format:    "testFormat",
+			Units:     "",
+			Tags: map[string]string{
+				"serviceName": "testService",
+				"env":         "production",
+				"version":     "v1.0",
+			},
+		}
+		profilesData := define.ProfilesData{
+			Metadata: metadata,
+		}
 
-	metadata := define.ProfileMetadata{
-		StartTime: time.Now(),
-		EndTime:   time.Now(),
-		AppName:   "testApp",
-		BkBizID:   1,
-		SpyName:   "testSpy",
-		Format:    "testFormat",
-		Units:     "",
-		Tags:      tags,
-	}
+		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		assert.Equal(t, "testService", svrName)
+		assert.Len(t, tags, 2)
+		assert.Equal(t, []string{"production"}, tags["env"])
+		assert.Equal(t, []string{"v1.0"}, tags["version"])
+	})
 
-	profilesData := define.ProfilesData{
-		Metadata: metadata,
-	}
+	t.Run("NoServiceName", func(t *testing.T) {
+		metadata := define.ProfileMetadata{
+			StartTime: time.Now(),
+			EndTime:   time.Now(),
+			AppName:   "testApp",
+			BkBizID:   1,
+			SpyName:   "testSpy",
+			Format:    "testFormat",
+			Units:     "",
+			Tags: map[string]string{
+				"env":     "production",
+				"version": "v1.0",
+			},
+		}
+		profilesData := define.ProfilesData{
+			Metadata: metadata,
+		}
 
-	svrName, tagsLabels := p.getSvrNameAndTags(&profilesData)
+		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		assert.Equal(t, "testApp", svrName)
+		assert.Len(t, tags, 2)
+		assert.Equal(t, []string{"production"}, tags["env"])
+		assert.Equal(t, []string{"v1.0"}, tags["version"])
+	})
 
-	assert.Equal(t, "testService", svrName)
-	assert.Equal(t, 2, len(tagsLabels))
-	assert.Equal(t, []string{"production"}, tagsLabels["env"])
-	assert.Equal(t, []string{"v1.0"}, tagsLabels["version"])
-}
+	t.Run("NoAppName", func(t *testing.T) {
+		metadata := define.ProfileMetadata{
+			StartTime: time.Now(),
+			EndTime:   time.Now(),
+			AppName:   "",
+			BkBizID:   1,
+			SpyName:   "testSpy",
+			Format:    "testFormat",
+			Units:     "",
+			Tags: map[string]string{
+				"env":     "production",
+				"version": "v1.0",
+			},
+		}
+		profilesData := define.ProfilesData{
+			Metadata: metadata,
+		}
 
-func TestGetSvrNameAndTags_NoServiceName(t *testing.T) {
-	p := profilesConverter{}
-
-	tags := map[string]string{
-		"env":     "production",
-		"version": "v1.0",
-	}
-
-	metadata := define.ProfileMetadata{
-		StartTime: time.Now(),
-		EndTime:   time.Now(),
-		AppName:   "testApp",
-		BkBizID:   1,
-		SpyName:   "testSpy",
-		Format:    "testFormat",
-		Units:     "",
-		Tags:      tags,
-	}
-
-	profilesData := define.ProfilesData{
-		Metadata: metadata,
-	}
-
-	svrName, tagsLabels := p.getSvrNameAndTags(&profilesData)
-
-	assert.Equal(t, "testApp", svrName)
-	assert.Equal(t, 2, len(tagsLabels))
-	assert.Equal(t, []string{"production"}, tagsLabels["env"])
-	assert.Equal(t, []string{"v1.0"}, tagsLabels["version"])
-}
-
-func TestGetSvrNameAndTags_NoAppName(t *testing.T) {
-	p := profilesConverter{}
-
-	tags := map[string]string{
-		"env":     "production",
-		"version": "v1.0",
-	}
-
-	metadata := define.ProfileMetadata{
-		StartTime: time.Now(),
-		EndTime:   time.Now(),
-		AppName:   "",
-		BkBizID:   1,
-		SpyName:   "testSpy",
-		Format:    "testFormat",
-		Units:     "",
-		Tags:      tags,
-	}
-
-	profilesData := define.ProfilesData{
-		Metadata: metadata,
-	}
-
-	svrName, tagsLabels := p.getSvrNameAndTags(&profilesData)
-
-	assert.Equal(t, "default", svrName)
-	assert.Equal(t, 2, len(tagsLabels))
-	assert.Equal(t, []string{"production"}, tagsLabels["env"])
-	assert.Equal(t, []string{"v1.0"}, tagsLabels["version"])
+		svrName, tags := p.getSvrNameAndTags(&profilesData)
+		assert.Equal(t, "default", svrName)
+		assert.Len(t, tags, 2)
+		assert.Equal(t, []string{"production"}, tags["env"])
+		assert.Equal(t, []string{"v1.0"}, tags["version"])
+	})
 }
 
 func TestProfilesConverterMergeTagsToLabels(t *testing.T) {
@@ -155,13 +161,11 @@ func TestProfilesConverterMergeTagsToLabels(t *testing.T) {
 			},
 		},
 	}
-
 	tags := map[string][]string{
 		"key2": {"value2"},
 	}
 
 	converter.mergeTagsToLabels(profileData, tags)
-
 	expected := []*profile.Sample{
 		{
 			Label: map[string][]string{

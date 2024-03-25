@@ -11,6 +11,7 @@ package tokenchecker
 
 import (
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -34,12 +35,13 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	decoders := confengine.NewTierConfig()
 	configs := confengine.NewTierConfig()
 
-	var c Config
-	if err := mapstructure.Decode(conf, &c); err != nil {
+	c := &Config{}
+	if err := mapstructure.Decode(conf, c); err != nil {
 		return nil, err
 	}
-	decoders.SetGlobal(NewTokenDecoder(c))
-	configs.SetGlobal(c)
+	c.Clean()
+	decoders.SetGlobal(NewTokenDecoder(*c))
+	configs.SetGlobal(*c)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -47,6 +49,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
+		cfg.Clean()
 		decoders.Set(custom.Token, custom.Type, custom.ID, NewTokenDecoder(*cfg))
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
@@ -121,7 +124,6 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 		return err
 	}
 
-	// token 解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode token")
@@ -140,6 +142,29 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 	return nil
 }
 
+// 对于 OT 的 token 解析优先级
+// # HTTP Protocol
+// 1) HTTP Headers -> X-BK-TOKEN
+// 2) Span ResourceKey -> bk.data.token/...
+//
+// # GRPC Protocol
+// 1) Span ResourceKey -> bk.data.token/...
+//
+// Note: 理论上来讲，单次请求包只能有一个 token，不支持多 token 场景。
+// 支持从多个 attribute.keys 中读取 token
+
+func tokenFromAttrs(attrs pcommon.Map, keys []string) (string, bool) {
+	var s string
+	for _, key := range keys {
+		v, ok := attrs.Get(key)
+		if ok {
+			s = v.AsString()
+			break
+		}
+	}
+	return s, len(s) > 0
+}
+
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
@@ -148,17 +173,23 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	}
 
 	var errs []error
+	origin := record.Token.Original
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdTraces token key '%s'", config.ResourceKey)
-			return true
+		s := origin
+		if len(s) <= 0 {
+			v, ok := tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys)
+			if !ok {
+				logger.Debugf("failed to get pdTraces token key '%v'", config.ResourceKey)
+				return true
+			}
+			s = v
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdTraces token=%v, err: %v", s, err)
 			return true
 		}
 		return false
@@ -182,17 +213,23 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	}
 
 	var errs []error
+	origin := record.Token.Original
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdMetrics token key '%s'", config.ResourceKey)
-			return true
+		s := origin
+		if len(s) <= 0 {
+			v, ok := tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys)
+			if !ok {
+				logger.Debugf("failed to get pdMetrics token key '%v'", config.ResourceKey)
+				return true
+			}
+			s = v
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", s, err)
 			return true
 		}
 		return false
@@ -215,18 +252,24 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 		return err
 	}
 
-	pdLogs := record.Data.(plog.Logs)
 	var errs []error
+	origin := record.Token.Original
+	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdLogs token key '%s'", config.ResourceKey)
-			return true
+		s := origin
+		if len(s) <= 0 {
+			v, ok := tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys)
+			if !ok {
+				logger.Debugf("failed to get pdLogs token key '%v'", config.ResourceKey)
+				return true
+			}
+			s = v
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decoder.Decode(s)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdLogs token=%v, err: %v", s, err)
 			return true
 		}
 		return false
@@ -256,7 +299,6 @@ func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, reco
 	}
 
 	record.Token, err = decoder.Decode(record.Token.Original)
-
 	if config.ProfilesDataId > 0 {
 		record.Token.ProfilesDataId = config.ProfilesDataId
 	}

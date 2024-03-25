@@ -148,7 +148,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("RefreshAndEventHandler", func(t *testing.T) {
-		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -257,7 +257,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 	})
 
 	t.Run("Clean", func(t *testing.T) {
-		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewHostAndTopoCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

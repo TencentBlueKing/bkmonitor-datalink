@@ -63,8 +63,8 @@ type BusinessCacheManager struct {
 }
 
 // NewBusinessCacheManager 创建业务缓存管理器
-func NewBusinessCacheManager(prefix string, opt *redis.Options) (*BusinessCacheManager, error) {
-	manager, err := NewBaseCacheManager(prefix, opt)
+func NewBusinessCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*BusinessCacheManager, error) {
+	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create base cache Manager")
 	}
@@ -158,7 +158,7 @@ func (m *BusinessCacheManager) Type() string {
 }
 
 // UseBiz 是否按业务执行
-func (m *BusinessCacheManager) UseBiz() bool {
+func (m *BusinessCacheManager) useBiz() bool {
 	return true
 }
 

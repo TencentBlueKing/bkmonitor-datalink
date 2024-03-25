@@ -283,7 +283,7 @@ type CmdbEventHandler struct {
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
-func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration) (*CmdbEventHandler, error) {
+func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, fullRefreshInterval time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
@@ -291,7 +291,7 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 	}
 
 	// 创建缓存管理器
-	cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType)
+	cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
@@ -378,8 +378,6 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 
 // Handle 处理cmdb资源变更事件
 func (h *CmdbEventHandler) Handle(ctx context.Context) {
-	logger.Info("start handle cmdb resource watch event")
-
 	for _, resourceType := range h.resourceTypes {
 		// 获取资源变更事件
 		events, err := h.getBkEvents(ctx, resourceType)
@@ -393,7 +391,7 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 		// 如果超过全量刷新间隔时间，执行全量刷新
 		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 			// 全量刷新
-			err := RefreshAll(ctx, h.cacheManager)
+			err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
 			if err != nil {
 				logger.Errorf("refresh all cache failed: %v", err)
 			}
@@ -517,7 +515,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			defer wg.Done()
 
 			// 创建资源变更事件处理器
-			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval)
+			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
 				logger.Errorf("new cmdb event handler failed: %v", err)
 				cancel()

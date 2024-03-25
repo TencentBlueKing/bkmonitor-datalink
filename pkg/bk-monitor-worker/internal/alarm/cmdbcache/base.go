@@ -25,6 +25,7 @@ package cmdbcache
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -52,7 +53,9 @@ type Manager interface {
 	CleanGlobal(ctx context.Context) error
 
 	// UseBiz 是否按业务执行
-	UseBiz() bool
+	useBiz() bool
+	// GetConcurrentLimit 并发限制
+	GetConcurrentLimit() int
 
 	// CleanByEvents 根据事件清理缓存
 	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
@@ -62,24 +65,28 @@ type Manager interface {
 
 // BaseCacheManager 基础缓存管理器
 type BaseCacheManager struct {
-	Prefix      string
-	RedisClient redis.UniversalClient
-	Expire      int
+	Prefix          string
+	RedisClient     redis.UniversalClient
+	Expire          int
+	ConcurrentLimit int
 
-	updatedFieldSet map[string]map[string]struct{}
+	updatedFieldSet  map[string]map[string]struct{}
+	updateFieldLocks map[string]*sync.Mutex
 }
 
 // NewBaseCacheManager 创建缓存管理器
-func NewBaseCacheManager(prefix string, opt *redis.Options) (*BaseCacheManager, error) {
+func NewBaseCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*BaseCacheManager, error) {
 	client, err := redis.GetClient(opt)
 	if err != nil {
 		return nil, err
 	}
 	return &BaseCacheManager{
-		Prefix:          prefix,
-		RedisClient:     client,
-		Expire:          86400,
-		updatedFieldSet: make(map[string]map[string]struct{}),
+		Prefix:           prefix,
+		RedisClient:      client,
+		Expire:           86400,
+		updatedFieldSet:  make(map[string]map[string]struct{}),
+		updateFieldLocks: make(map[string]*sync.Mutex),
+		ConcurrentLimit:  concurrentLimit,
 	}, nil
 }
 
@@ -87,7 +94,13 @@ func NewBaseCacheManager(prefix string, opt *redis.Options) (*BaseCacheManager, 
 func (c *BaseCacheManager) initUpdatedFieldSet(keys ...string) {
 	for _, key := range keys {
 		c.updatedFieldSet[c.GetCacheKey(key)] = make(map[string]struct{})
+		c.updateFieldLocks[c.GetCacheKey(key)] = &sync.Mutex{}
 	}
+}
+
+// GetConcurrentLimit 并发限制
+func (c *BaseCacheManager) GetConcurrentLimit() int {
+	return c.ConcurrentLimit
 }
 
 // GetCacheKey 获取缓存key
@@ -104,19 +117,25 @@ func (c *BaseCacheManager) UpdateHashMapCache(ctx context.Context, key string, d
 	if !ok {
 		return errors.Errorf("key %s not found in updatedFieldSet", key)
 	}
+	lock, _ := c.updateFieldLocks[key]
 
 	// 执行更新
 	pipeline := client.Pipeline()
+	lock.Lock()
 	for field, value := range data {
 		pipeline.HSet(ctx, key, field, value)
 		updatedFieldSet[field] = struct{}{}
 
 		if pipeline.Len() > 500 {
+			lock.Unlock()
 			if _, err := pipeline.Exec(ctx); err != nil {
 				return errors.Wrap(err, "update hashmap failed")
 			}
+			lock.Lock()
 		}
 	}
+	lock.Unlock()
+
 	if pipeline.Len() > 0 {
 		if _, err := pipeline.Exec(ctx); err != nil {
 			return errors.Wrap(err, "update hashmap failed")
@@ -191,23 +210,23 @@ func (c *BaseCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // UseBiz 是否按业务执行
-func (c *BaseCacheManager) UseBiz() bool {
+func (c *BaseCacheManager) useBiz() bool {
 	return true
 }
 
 // NewCacheManagerByType 创建缓存管理器
-func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string) (Manager, error) {
+func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, concurrentLimit int) (Manager, error) {
 	var cacheManager Manager
 	var err error
 	switch cacheType {
 	case "host_topo":
-		cacheManager, err = NewHostAndTopoCacheManager(prefix, opt)
+		cacheManager, err = NewHostAndTopoCacheManager(prefix, opt, concurrentLimit)
 	case "business":
-		cacheManager, err = NewBusinessCacheManager(prefix, opt)
+		cacheManager, err = NewBusinessCacheManager(prefix, opt, concurrentLimit)
 	case "module":
-		cacheManager, err = NewModuleCacheManager(prefix, opt)
+		cacheManager, err = NewModuleCacheManager(prefix, opt, concurrentLimit)
 	case "set":
-		cacheManager, err = NewSetCacheManager(prefix, opt)
+		cacheManager, err = NewSetCacheManager(prefix, opt, concurrentLimit)
 	default:
 		err = errors.Errorf("unsupported cache type: %s", cacheType)
 	}
@@ -215,9 +234,9 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string) 
 }
 
 // RefreshAll 执行缓存管理器
-func RefreshAll(ctx context.Context, cacheManager Manager) error {
+func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) error {
 	// 判断是否启用业务缓存刷新
-	if cacheManager.UseBiz() {
+	if cacheManager.useBiz() {
 		// 获取业务列表
 		cmdbApi, err := api.GetCmdbApi()
 		if err != nil {
@@ -229,20 +248,56 @@ func RefreshAll(ctx context.Context, cacheManager Manager) error {
 			return err
 		}
 
+		// 并发控制
+		wg := sync.WaitGroup{}
+		limitChan := make(chan struct{}, concurrentLimit)
+
 		// 按业务刷新缓存
+		errChan := make(chan error, len(result.Data.Info))
 		for _, biz := range result.Data.Info {
-			err := cacheManager.RefreshByBiz(ctx, biz.BkBizId)
-			if err != nil {
-				return errors.Wrapf(err, "refresh host and topo cache by biz failed, biz: %d", biz.BkBizId)
-			}
+			limitChan <- struct{}{}
+			wg.Add(1)
+			go func(bizId int) {
+				defer func() {
+					wg.Done()
+					<-limitChan
+				}()
+				err := cacheManager.RefreshByBiz(ctx, bizId)
+				if err != nil {
+					errChan <- errors.Wrapf(err, "refresh host and topo cache by biz failed, biz: %d", bizId)
+				}
+			}(biz.BkBizId)
+		}
+
+		// 等待所有任务完成
+		wg.Wait()
+		close(errChan)
+		for err := range errChan {
+			return err
 		}
 
 		// 按业务清理缓存
+		errChan = make(chan error, len(result.Data.Info))
 		for _, biz := range result.Data.Info {
-			err := cacheManager.CleanByBiz(ctx, biz.BkBizId)
-			if err != nil {
-				return errors.Wrapf(err, "clean host and topo cache by biz failed, biz: %d", biz.BkBizId)
-			}
+			limitChan <- struct{}{}
+			wg.Add(1)
+			go func(bizId int) {
+				defer func() {
+					wg.Done()
+					<-limitChan
+				}()
+				err := cacheManager.CleanByBiz(ctx, bizId)
+				if err != nil {
+					errChan <- errors.Wrapf(err, "clean host and topo cache by biz failed, biz: %d", bizId)
+				}
+			}(biz.BkBizId)
+		}
+
+		// 等待所有任务完成
+		wg.Wait()
+		close(errChan)
+		for err := range errChan {
+			return err
 		}
 	}
 

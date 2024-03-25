@@ -72,7 +72,7 @@ func TestModuleCacheManager(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("TestModuleCacheManager", func(t *testing.T) {
-		cacheManager, err := NewModuleCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewModuleCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

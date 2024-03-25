@@ -71,7 +71,7 @@ func TestSetCacheManager(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("TestSetCacheManager", func(t *testing.T) {
-		cacheManager, err := NewSetCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewSetCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

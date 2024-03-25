@@ -166,7 +166,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("TestBusinessCacheManager", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return
@@ -226,7 +226,7 @@ func TestBusinessCacheManager(t *testing.T) {
 
 	t.Run("Event", func(t *testing.T) {
 		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts)
+		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
 		if err != nil {
 			t.Error(err)
 			return

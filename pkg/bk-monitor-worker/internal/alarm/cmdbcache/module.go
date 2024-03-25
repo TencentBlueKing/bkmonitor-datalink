@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -49,8 +50,8 @@ type ModuleCacheManager struct {
 }
 
 // NewModuleCacheManager 创建模块缓存管理器
-func NewModuleCacheManager(prefix string, opt *redis.Options) (*ModuleCacheManager, error) {
-	base, err := NewBaseCacheManager(prefix, opt)
+func NewModuleCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*ModuleCacheManager, error) {
+	base, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -228,11 +229,21 @@ func (m *ModuleCacheManager) UpdateByEvents(ctx context.Context, resourceType st
 	}
 
 	// 按业务更新缓存
+	wg := sync.WaitGroup{}
+	limitChan := make(chan struct{}, m.ConcurrentLimit)
 	for bizID := range needUpdateBizIds {
-		err := m.RefreshByBiz(ctx, bizID)
-		if err != nil {
-			logger.Errorf("failed to refresh module cache by biz: %d, err: %v", bizID, err)
-		}
+		wg.Add(1)
+		limitChan <- struct{}{}
+		go func(bizID int) {
+			defer func() {
+				<-limitChan
+				wg.Done()
+			}()
+			err := m.RefreshByBiz(ctx, bizID)
+			if err != nil {
+				logger.Errorf("failed to refresh module cache by biz: %d, err: %v", bizID, err)
+			}
+		}(bizID)
 	}
 
 	return nil

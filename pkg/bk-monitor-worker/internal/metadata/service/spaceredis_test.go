@@ -124,7 +124,7 @@ func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
 	assert.NoError(t, err)
 	db.Delete(&resulttable.DataSource{}, "bk_data_id = ?", platformDataId)
 	ds := resulttable.DataSource{
-		BkDataId: platformDataId,
+		BkDataId:         platformDataId,
 		IsPlatformDataId: true,
 	}
 	err = ds.Create(db)
@@ -223,7 +223,6 @@ func TestSpaceRedisSvc_PushAndPublishSpaceRouter(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-
 func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -245,7 +244,6 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 	}
 }
 
-
 func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -265,11 +263,11 @@ func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 		err := obj.Create(db)
 		assert.NoError(t, err)
 	}
-	
+
 	data, err := NewSpacePusher().composeBcsSpaceBizTableIds(spaceType, spaceId)
 	assert.NoError(t, err)
 	assert.NotContains(t, data, tableIdTwo)
-	for _, tid := range []string{tableIdOne, tableIdThree}{
+	for _, tid := range []string{tableIdOne, tableIdThree} {
 		assert.Contains(t, data, tid)
 		val := data[tid]["filters"]
 		d := val.([]map[string]interface{})

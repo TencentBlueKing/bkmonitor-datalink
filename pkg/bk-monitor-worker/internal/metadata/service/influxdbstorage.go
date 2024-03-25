@@ -49,7 +49,7 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		if influxdbStorage, err := NewInfluxdbProxyStorageSvc(nil).GetInfluxdbStorage(&k.InfluxdbProxyStorageId, nil, nil); err == nil {
 			defaultInstanceClusterName = influxdbStorage.InstanceClusterName
 		}
-		
+
 	}
 	clusterConsulConfig.ClusterConfig.InstanceClusterName = defaultInstanceClusterName
 	// influxdb的consul配置

@@ -28,12 +28,12 @@ type PeriodicTask struct {
 }
 
 var (
-	refreshTsMetric       = "periodic:metadata:refresh_ts_metric"
-	refreshEventDimension = "periodic:metadata:refresh_event_dimension"
-	refreshEsStorage      = "periodic:metadata:refresh_es_storage"
-	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
-	refreshDatasource     = "periodic:metadata:refresh_datasource"
-	DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
+	refreshTsMetric             = "periodic:metadata:refresh_ts_metric"
+	refreshEventDimension       = "periodic:metadata:refresh_event_dimension"
+	refreshEsStorage            = "periodic:metadata:refresh_es_storage"
+	refreshInfluxdbRoute        = "periodic:metadata:refresh_influxdb_route"
+	refreshDatasource           = "periodic:metadata:refresh_datasource"
+	DiscoverBcsClusters         = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
 	RefreshBcsMonitorInfo       = "periodic:metadata:refresh_bcs_monitor_info"
 	RefreshDefaultRp            = "periodic:metadata:refresh_default_rp"
 	RefreshBkccSpaceName        = "periodic:metadata:refresh_bkcc_space_name"
@@ -51,7 +51,7 @@ var (
 	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
 	RefreshPingServer2Nodeman   = "periodic:metadata:refresh_ping_server_2_node_man"
 
-	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
+	ReportInfluxdbClusterMetrics  = "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo = "periodic:cluster_metrics:push_and_publish_space_router_info"
 
 	periodicTasksDefine = map[string]PeriodicTask{

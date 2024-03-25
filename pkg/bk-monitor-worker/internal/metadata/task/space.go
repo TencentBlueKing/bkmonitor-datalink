@@ -195,7 +195,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
 		}
 	}
-	
+
 	// 推送结果表别名路由
 	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)

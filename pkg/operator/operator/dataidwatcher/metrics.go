@@ -28,14 +28,6 @@ var (
 		[]string{"id", "name", "usage", "system", "common", "bk_env"},
 	)
 
-	watcherHandledTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_handled_total",
-			Help:      "dataid watcher handled total",
-		},
-	)
-
 	watcherHandledEventTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -60,10 +52,6 @@ func (m *metricMonitor) SetDataIDInfo(id int, name, usage string, system, common
 		return "false"
 	}
 	dataIDInfo.WithLabelValues(fmt.Sprintf("%d", id), name, usage, conv(system), conv(common), ConfBkEnv).Set(1)
-}
-
-func (m *metricMonitor) IncHandledCounter() {
-	watcherHandledTotal.Inc()
 }
 
 func (m *metricMonitor) IncHandledEventCounter(action string) {

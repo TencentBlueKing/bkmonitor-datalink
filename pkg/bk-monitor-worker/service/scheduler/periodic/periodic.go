@@ -147,10 +147,10 @@ var (
 			Cron:    "*/1 * * * *",
 			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
 		},
-		PushAndPublishSpaceRouterInfo: {
-			Cron:    "*/30 * * * *",
-			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
-		},
+		// PushAndPublishSpaceRouterInfo: {
+		// 	Cron:    "*/30 * * * *",
+		// 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+		// },
 	}
 )
 

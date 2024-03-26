@@ -50,17 +50,21 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 }
 
 // collectAndReportMetrics 采集&上报ES集群指标
-func collectAndReportMetrics(c storage.ClusterInfo) error {
+func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) error {
 	logger.Infof("start to collect es cluster metrics.")
+	// 从custom option中获取集群业务id
 	var bkBizID float64
 	var customOption map[string]interface{}
-	_ = json.Unmarshal([]byte(c.CustomOption), &customOption)
+	err := json.Unmarshal([]byte(c.CustomOption), &customOption)
+	if err != nil {
+		logger.Errorf("failed to unmarshal custom option: %s", err)
+		return err
+	}
 	if bkBizIDVal, ok := customOption["bk_biz_id"].(float64); ok {
 		bkBizID = bkBizIDVal
-	} else {
-		bkBizID = 0
 	}
 
+	// 解析ES集群URL、用户名、密码信息
 	var schema string
 	if c.Schema != nil {
 		schema = *c.Schema
@@ -70,24 +74,16 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 	var esURLs = elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
 	var esUsername = c.Username
 	var esPassword = cipher.GetDBAESCipher().AESDecrypt(c.Password)
-	esURL, _ := url.Parse(esURLs[0])
+	esURL, err := url.Parse(esURLs[0])
+	if err != nil {
+		logger.Errorf("failed to parse es cluster url: %s", err)
+		return err
+	}
 	esURL.User = url.UserPassword(esUsername, esPassword)
-	tlsConfig := &tls.Config{}
 
-	var httpTransport http.RoundTripper
-
-	httpTransport = &http.Transport{
-		TLSClientConfig: tlsConfig,
-		Proxy:           http.ProxyFromEnvironment,
-	}
-	httpClient := &http.Client{
-		Timeout:   300 * time.Second,
-		Transport: httpTransport,
-	}
-
+	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
 	registry := prometheus.NewRegistry()
-	// 注册收集器
 	exporter, err := collector.NewElasticsearchCollector(
 		collectorLogger,
 		[]string{},
@@ -95,7 +91,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 		collector.WithHTTPClient(httpClient),
 	)
 	if err != nil {
-		logger.Errorf("failed to create Elasticsearch collector: %s", err)
+		logger.Errorf("failed to create elasticsearch collector: %s", err)
 		return err
 	}
 	registry.MustRegister(exporter)
@@ -137,7 +133,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 
 			esm := &clustermetrics.EsMetric{
 				Metrics:   m,
-				Target:    "log-search-4",
+				Target:    cfg.ESClusterMetricTarget,
 				Timestamp: timestamp,
 				Dimension: d,
 			}
@@ -147,21 +143,24 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 
 	logger.Infof("process es cluster metrics success, all metric count: %v, current timestamp: %v ",
 		len(esMetrics), timestamp)
+
 	customReportData := clustermetrics.CustomReportData{
 		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
 	jsonData, err := json.Marshal(customReportData)
 	if err != nil {
-		logger.Errorf("custom report data JSON Failed: %s ", err)
+		logger.Errorf("custom report data json marshal failed: %s ", err)
 		return err
 	}
-	//logger.Infof("all es cluster metrics json: %s ", jsonData)
 
-	u, _ := url.Parse(cfg.ESClusterMetricReportUrl)
+	u, err := url.Parse(cfg.ESClusterMetricReportUrl)
+	if err != nil {
+		logger.Errorf("parse es cluster metric report url failed: %s ", err)
+		return err
+	}
 
 	customReportUrl := u.String()
 	req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		logger.Errorf("report es metrics failed: %s ", err)
@@ -183,8 +182,20 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 		return err
 	}
 	if len(esClusterInfoList) == 0 {
-		logger.Infof("no es cluster need to report metrics")
+		logger.Infof("no es cluster need to report metrics.")
 		return nil
+	}
+
+	// 构建全局http client
+	tlsConfig := &tls.Config{}
+	var httpTransport http.RoundTripper
+	httpTransport = &http.Transport{
+		TLSClientConfig: tlsConfig,
+		Proxy:           http.ProxyFromEnvironment,
+	}
+	httpClient := &http.Client{
+		Timeout:   300 * time.Second,
+		Transport: httpTransport,
 	}
 
 	// 2. 遍历存储获取集群信息
@@ -199,7 +210,7 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 3. 采集并上报集群指标
-			if err := collectAndReportMetrics(c); err != nil {
+			if err := collectAndReportMetrics(c, httpClient); err != nil {
 				logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
 			} else {
 				logger.Infof("es_cluster_info: [%v] name [%s] collect and report metrics success", c.ClusterID, c.ClusterName)

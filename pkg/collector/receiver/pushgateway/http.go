@@ -104,8 +104,6 @@ var httpSvc HttpService
 
 const (
 	statusError = "error"
-	tokenKey    = "X-BK-TOKEN"
-	tenantIDKey = "X-Tps-TenantID"
 )
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePushGateway)
@@ -250,17 +248,17 @@ func (s HttpService) ExportMetrics(w http.ResponseWriter, req *http.Request) {
 
 func tokenFromRequest(req *http.Request) string {
 	// 1) 从 tokenKey 中读取
-	token := req.URL.Query().Get(tokenKey)
+	token := req.URL.Query().Get(define.KeyToken)
 	if token == "" {
-		token = req.Header.Get(tokenKey)
+		token = req.Header.Get(define.KeyToken)
 	}
 
 	// 2) 从 tenantidKey 中读取
 	if token == "" {
-		token = req.Header.Get(tenantIDKey)
+		token = req.Header.Get(define.KeyTenantID)
 	}
 	if token == "" {
-		token = req.URL.Query().Get(tenantIDKey)
+		token = req.URL.Query().Get(define.KeyTenantID)
 	}
 	return token
 }

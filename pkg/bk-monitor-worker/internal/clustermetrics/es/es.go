@@ -174,6 +174,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 }
 
 func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
+	logger.Infof("start report es cluster metrics task.")
 	// 1. 从metadata db中获取所有ES类型集群信息
 	dbSession := mysql.GetDBSession()
 	var esClusterInfoList []storage.ClusterInfo
@@ -207,5 +208,6 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 	}
 	wg.Wait()
 
+	logger.Infof("report es cluster metrics task is done.")
 	return nil
 }

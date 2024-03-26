@@ -34,7 +34,9 @@ import (
 )
 
 const (
-	tokenKey       = "X-BK-TOKEN"
+	tokenKey    = "X-BK-TOKEN"
+	tenantIDKey = "X-Tps-TenantID"
+
 	routeV1Traces  = "/v1/traces"
 	routeV1Trace   = "/v1/trace"
 	routeV1Metrics = "/v1/metrics"
@@ -102,6 +104,16 @@ func writeError(w http.ResponseWriter, rh receiver.ResponseHandler, err error, s
 	receiver.WriteResponse(w, rh.ContentType(), statusCode, msg)
 }
 
+// 允许从 HTTP Header 中读取 token
+// 优先读取 TokenKey 再尝试读取 TenantKey
+func extractTokenFromHeader(header http.Header) string {
+	token := header.Get(tokenKey)
+	if len(token) > 0 {
+		return token
+	}
+	return header.Get(tenantIDKey)
+}
+
 func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
@@ -135,8 +147,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 		Data:          data,
 	}
 
-	// 允许从 HTTP Header 中读取 token
-	tk := req.Header.Get(tokenKey)
+	tk := extractTokenFromHeader(req.Header)
 	if len(tk) > 0 {
 		r.Token = define.Token{Original: tk}
 	}

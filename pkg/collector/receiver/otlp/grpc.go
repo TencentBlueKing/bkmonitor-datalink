@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog/plogotlp"
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
@@ -45,6 +46,20 @@ type tracesService struct {
 	pipeline.Validator
 }
 
+// 允许从 Grpc Header 中读取 token
+func extractTokenFromGrpcHeader(md metadata.MD) string {
+	token := md.Get(define.KeyToken)
+	if len(token) > 0 {
+		return token[0]
+	}
+
+	token = md.Get(define.KeyTenantID)
+	if len(token) > 0 {
+		return token[0]
+	}
+	return ""
+}
+
 func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptraceotlp.Response, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
@@ -58,6 +73,15 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 		RecordType:    define.RecordTraces,
 		Data:          traces,
 	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		tk := extractTokenFromGrpcHeader(md)
+		if len(tk) > 0 {
+			r.Token = define.Token{Original: tk}
+		}
+	}
+
 	prettyprint.Traces(traces)
 
 	code, processorName, err := s.Validate(r)

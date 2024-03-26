@@ -232,7 +232,6 @@ func (d *BaseDiscover) String() string {
 
 func (d *BaseDiscover) Stop() {
 	d.cancel()
-	d.mm.IncWaitedCounter()
 	logger.Infof("waiting discover %s", d.Name())
 
 	d.wg.Wait()
@@ -327,17 +326,13 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		secretClient := d.Client.CoreV1().Secrets(d.monitorMeta.Namespace)
 		username, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, d.BasicAuth.Username)
 		if err != nil {
-			d.mm.IncAccessedSecretFailedCounter()
 			return nil, errors.Wrap(err, "get username from secret failed")
 		}
-		d.mm.IncAccessedSecretSuccessCounter()
 
 		password, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, d.BasicAuth.Password)
 		if err != nil {
-			d.mm.IncAccessedSecretFailedCounter()
 			return nil, errors.Wrap(err, "get password from secret failed")
 		}
-		d.mm.IncAccessedSecretSuccessCounter()
 
 		metricTarget.Username = username
 		metricTarget.Password = password
@@ -348,10 +343,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		secretClient := d.Client.CoreV1().Secrets(d.monitorMeta.Namespace)
 		bearerToken, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.BearerTokenSecret)
 		if err != nil {
-			d.mm.IncAccessedSecretFailedCounter()
 			return nil, errors.Wrapf(err, "get bearer token from secret failed, monitor=%s", d.monitorMeta.ID())
 		}
-		d.mm.IncAccessedSecretSuccessCounter()
 		metricTarget.BearerToken = bearerToken
 	}
 
@@ -364,10 +357,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.CA.Secret != nil {
 			ca, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.CA.Secret)
 			if err != nil {
-				d.mm.IncAccessedSecretFailedCounter()
 				return nil, errors.Wrapf(err, "get TLS CA from secret failed, monitor=%s", d.monitorMeta.ID())
 			}
-			d.mm.IncAccessedSecretSuccessCounter()
 			metricTarget.TLSConfig.CAs = []string{EncodeBase64(ca)}
 		}
 
@@ -377,10 +368,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.Cert.Secret != nil {
 			cert, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.Cert.Secret)
 			if err != nil {
-				d.mm.IncAccessedSecretFailedCounter()
 				return nil, errors.Wrapf(err, "get TLS Cert from secret failed, monitor=%s", d.monitorMeta.ID())
 			}
-			d.mm.IncAccessedSecretSuccessCounter()
 			metricTarget.TLSConfig.Certificate.Certificate = EncodeBase64(cert)
 		}
 
@@ -390,10 +379,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.KeySecret != nil {
 			key, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.KeySecret)
 			if err != nil {
-				d.mm.IncAccessedSecretFailedCounter()
 				return nil, errors.Wrapf(err, "get TLS Key from secret failed, monitor=%s", d.monitorMeta.ID())
 			}
-			d.mm.IncAccessedSecretSuccessCounter()
 			metricTarget.TLSConfig.Certificate.Key = EncodeBase64(key)
 		}
 	}
@@ -495,11 +482,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 				if tg == nil {
 					continue
 				}
-				now := time.Now()
-				d.mm.IncReceivedTargetGroupCounter()
 				logger.Debugf("discover %s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
-				d.mm.ObserveTargetGroupDuration(now)
 			}
 			logger.Debugf("discover %s handle targets done", d.Name())
 		}
@@ -653,7 +637,6 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	}
 
 	for _, key := range removed {
-		d.mm.IncRemovedChildConfigCounter()
 		cfg := d.childConfigGroups[source][key]
 		logger.Infof("discover %s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 		delete(d.childConfigGroups[source], key)

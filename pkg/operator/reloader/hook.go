@@ -40,8 +40,6 @@ func initConfig() {
 	viper.SetDefault(confChildConfigPathPath, "/data/bkmonitorbeat/config/child_configs")
 	viper.SetDefault(confWatchPathPath, []string{"/data/bkmonitorbeat/config/bkmonitorbeat.conf"})
 	viper.SetDefault(confPIDPathPath, "/data/pid/bkmonitorbeat.pid")
-	viper.SetDefault(confKubeConfigPath, "")
-	viper.SetDefault(confTaskTypePath, "")
 }
 
 func updateConfig() {

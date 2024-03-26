@@ -7,27 +7,42 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package main
 
 import (
-	"github.com/spf13/viper"
+	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	confBkEnvPath = "operator.bk_env"
-)
-
-var ConfBkEnv string
-
-func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
+type HttpConfig struct {
+	Listen string `yaml:"listen"`
 }
 
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
+type Config struct {
+	Http            HttpConfig     `yaml:"http"`
+	Logger          logger.Options `yaml:"logger"`
+	RefreshInterval time.Duration  `yaml:"refresh_interval"`
+}
+
+func (c *Config) Validate() {
+	cfg := DefaultConfig()
+	if c.Http.Listen == "" {
+		c.Http.Listen = cfg.Http.Listen
+	}
+	if c.RefreshInterval <= 0 {
+		c.RefreshInterval = cfg.RefreshInterval
+	}
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		Http: HttpConfig{
+			Listen: "localhost:8081",
+		},
+		Logger: logger.Options{
+			Stdout: true,
+		},
+		RefreshInterval: time.Minute,
 	}
 }

@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package promsli
 
 import (
 	"github.com/spf13/viper"
@@ -17,13 +17,32 @@ import (
 )
 
 const (
-	confBkEnvPath = "operator.bk_env"
+	confPromSliConfigPath = "operator.sli"
 )
 
-var ConfBkEnv string
+type Config struct {
+	Namespace     string           `yaml:"namespace" mapstructure:"namespace"`
+	SecretName    string           `yaml:"secret_name" mapstructure:"secret_name"`
+	ConfigMapName string           `yaml:"configmap_name" mapstructure:"configmap_name"`
+	Scrape        PrometheusConfig `yaml:"prometheus" mapstructure:"prometheus"`
+}
+
+type PrometheusConfig struct {
+	Global    map[string]interface{} `yaml:"global" mapstructure:"global"`
+	RuleFiles []string               `yaml:"rule_files" mapstructure:"rule_files"`
+	Alerting  map[string]interface{} `yaml:"alerting" mapstructure:"alerting"`
+}
+
+var ConfConfig = &Config{}
 
 func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
+	if viper.IsSet(confPromSliConfigPath) {
+		if err := viper.UnmarshalKey(confPromSliConfigPath, &ConfConfig); err != nil {
+			logger.Errorf("failed to unmarshal ConfConfig, err: %v", err)
+		}
+	} else {
+		ConfConfig = &Config{}
+	}
 }
 
 func init() {

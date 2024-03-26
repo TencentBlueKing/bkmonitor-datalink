@@ -14,45 +14,19 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
-var (
-	workloadLookupRequestTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "workload_lookup_request_total",
-			Help:      "workload lookup request total",
-		},
-	)
-
-	workloadLookupDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "workload_lookup_duration_seconds",
-			Help:      "workload lookup duration seconds",
-			Buckets:   define.DefObserveDuration,
-		},
-	)
-
-	clusterVersion = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "cluster_version",
-			Help:      "kubernetes server version",
-		},
-		[]string{"version"},
-	)
+var clusterVersion = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: define.MonitorNamespace,
+		Name:      "cluster_version",
+		Help:      "kubernetes server version",
+	},
+	[]string{"version"},
 )
-
-func init() {
-	prometheus.MustRegister(
-		workloadLookupRequestTotal,
-		workloadLookupDuration,
-		clusterVersion,
-	)
-}
 
 type namespaceKind struct {
 	namespace string
@@ -86,14 +60,6 @@ func (mm *metricMonitor) SetWorkloadCount(v int, namespace, kind string) {
 	nsUpdated = time.Now()
 	nkWorkload[namespaceKind{namespace: namespace, kind: kind}] = v
 	nkWorkloadMut.Unlock()
-}
-
-func (mm *metricMonitor) ObserveWorkloadLookupDuration(t time.Time) {
-	workloadLookupDuration.Observe(time.Since(t).Seconds())
-}
-
-func (mm *metricMonitor) IncWorkloadRequestCounter() {
-	workloadLookupRequestTotal.Inc()
 }
 
 var (

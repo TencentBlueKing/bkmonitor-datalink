@@ -9,10 +9,6 @@
 
 package objectsref
 
-import (
-	"time"
-)
-
 // RelabelConfig relabel 配置 遵循 prometheus 规则
 type RelabelConfig struct {
 	SourceLabels []string `json:"sourceLabels"`
@@ -26,14 +22,12 @@ type RelabelConfig struct {
 
 // WorkloadsRelabelConfigs 返回所有 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
-	oc.mm.IncWorkloadRequestCounter()
 	pods := oc.podObjs.GetAll()
 	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
 }
 
 // WorkloadsRelabelConfigsByNodeName 根据节点名称获取 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigsByNodeName(nodeName string) []RelabelConfig {
-	oc.mm.IncWorkloadRequestCounter()
 	pods := oc.podObjs.GetByNodeName(nodeName)
 	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
 }
@@ -47,8 +41,6 @@ type WorkloadRef struct {
 
 func (oc *ObjectsController) getWorkloadRefs(pods []Object) []WorkloadRef {
 	refs := make([]WorkloadRef, 0, len(pods))
-	start := time.Now()
-
 	for _, pod := range pods {
 		ownerRef := Lookup(pod.ID, oc.podObjs, oc.objsMap())
 		if ownerRef == nil {
@@ -61,7 +53,6 @@ func (oc *ObjectsController) getWorkloadRefs(pods []Object) []WorkloadRef {
 			NodeName:  pod.NodeName,
 		})
 	}
-	oc.mm.ObserveWorkloadLookupDuration(start)
 	return refs
 }
 

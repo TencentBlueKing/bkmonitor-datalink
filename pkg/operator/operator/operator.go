@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -64,6 +65,9 @@ type Operator struct {
 
 	serviceMonitorInformer *prominformers.ForResource
 	podMonitorInformer     *prominformers.ForResource
+
+	promRuleInformer  *prominformers.ForResource
+	promsliController *promsli.Controller
 
 	statefulSetWorkerScaled time.Time
 	statefulSetWorker       int
@@ -166,6 +170,23 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PodMonitor informer failed")
 		}
+	}
+
+	if ConfEnablePromRule {
+		operator.promRuleInformer, err = prominformers.NewInformersForResource(
+			prominformers.NewMonitoringInformerFactories(
+				map[string]struct{}{corev1.NamespaceAll: {}},
+				map[string]struct{}{},
+				operator.promclient,
+				resyncPeriod,
+				nil,
+			),
+			promv1.SchemeGroupVersion.WithResource(promv1.PrometheusRuleName),
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
+		}
+		operator.promsliController = promsli.NewController(operator.ctx, operator.client)
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
@@ -293,7 +314,6 @@ func (c *Operator) Run() error {
 
 	// 等待 dataid watcher 初始化结束，否则后续触发 discover 更新可能会得到错误的 dataid
 	<-dataidwatcher.Notify()
-	c.mm.IncHandledDataIDWatcherNotifyCounter()
 
 	go c.handleDiscoverNotify()
 	go c.handleDataIDNotify()
@@ -314,6 +334,15 @@ func (c *Operator) Run() error {
 			DeleteFunc: c.handlePodMonitorDelete,
 		})
 		c.podMonitorInformer.Start(c.ctx.Done())
+	}
+
+	if ConfEnablePromRule {
+		c.promRuleInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    c.handlePrometheusRuleAdd,
+			UpdateFunc: c.handlePrometheusRuleUpdate,
+			DeleteFunc: c.handlePrometheusRuleDelete,
+		})
+		c.promRuleInformer.Start(c.ctx.Done())
 	}
 
 	if err := c.waitForCacheSync(c.ctx); err != nil {
@@ -386,6 +415,7 @@ func (c *Operator) waitForCacheSync(ctx context.Context) error {
 	}{
 		{"ServiceMonitor", c.serviceMonitorInformer},
 		{"PodMonitor", c.podMonitorInformer},
+		{"PrometheusRule", c.promRuleInformer},
 	} {
 		// 跳过没有初始化的 informers
 		if infs.informersForResource == nil {
@@ -555,20 +585,22 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
 	}
+
+	if ConfEnablePromRule {
+		c.promsliController.UpdateServiceMonitor(serviceMonitor)
+	}
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(serviceMonitor.Kind, define.ActionAdd)
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(serviceMonitor.Kind, define.ActionAdd)
 	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionAdd)
 }
 
@@ -578,14 +610,17 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 		logger.Errorf("expected ServiceMonitor type, got %T", oldObj)
 		return
 	}
-	if IfRejectServiceMonitor(old) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
-		return
-	}
-
 	cur, ok := newObj.(*promv1.ServiceMonitor)
 	if !ok {
 		logger.Errorf("expected ServiceMonitor type, got %T", newObj)
+		return
+	}
+
+	if ConfEnablePromRule {
+		c.promsliController.UpdateServiceMonitor(cur)
+	}
+	if IfRejectServiceMonitor(old) {
+		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
 		return
 	}
 	if IfRejectServiceMonitor(cur) {
@@ -599,16 +634,14 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(old.Kind, define.ActionUpdate)
 	for _, name := range c.getServiceMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
 	for _, dis := range c.createServiceMonitorDiscovers(cur) {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update serviceMonitor discover % failed, err: %s", dis, err)
+			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(old.Kind, define.ActionUpdate)
 	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
@@ -618,17 +651,19 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 		logger.Errorf("expected ServiceMonitor type, got %T", obj)
 		return
 	}
+
+	if ConfEnablePromRule {
+		c.promsliController.DeleteServiceMonitor(serviceMonitor)
+	}
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("delete action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(serviceMonitor.Kind, define.ActionDelete)
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.IncHandledEventCounter(serviceMonitor.Kind, define.ActionDelete)
 	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionDelete)
 }
 
@@ -746,6 +781,42 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 	return discovers
 }
 
+func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.promsliController.UpdatePrometheusRule(promRule)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
+}
+
+func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.promsliController.UpdatePrometheusRule(promRule)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
+}
+
+func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
+	promRule, ok := obj.(*promv1.PrometheusRule)
+	if !ok {
+		logger.Errorf("expected PrometheusRule type, got %T", obj)
+		return
+	}
+
+	now := time.Now()
+	c.promsliController.DeletePrometheusRule(promRule)
+	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
+}
+
 func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
@@ -758,14 +829,12 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(podMonitor.Kind, define.ActionAdd)
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
-			logger.Errorf("add or update podMonitor discover % failed, err: %s", dis, err)
+			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(podMonitor.Kind, define.ActionAdd)
 	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionAdd)
 }
 
@@ -796,7 +865,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(old.Kind, define.ActionUpdate)
 	for _, name := range c.getPodMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -805,7 +873,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(old.Kind, define.ActionUpdate)
 	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
@@ -821,11 +888,9 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(podMonitor.Kind, define.ActionDelete)
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.IncHandledEventCounter(podMonitor.Kind, define.ActionDelete)
 	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionDelete)
 }
 
@@ -860,15 +925,15 @@ func (c *Operator) handleDataIDNotify() {
 		c.pusher.StartOrUpdate(*info, ConfPodName)
 	}
 
+	var count int
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 
 		case <-dataidwatcher.Notify():
-			logger.Info("dataid watcher got notification")
-			now := time.Now()
-			c.mm.IncHandledDataIDWatcherNotifyCounter()
+			start := time.Now()
+			count++
 			c.reloadAllDiscovers()
 
 			info, err := c.dw.GetClusterInfo()
@@ -878,7 +943,7 @@ func (c *Operator) handleDataIDNotify() {
 				c.pusher.StartOrUpdate(*info, ConfPodName)
 			}
 
-			c.mm.ObserveReloadedDiscoverDuration(now)
+			logger.Infof("reload discovers(dataid), count=%d, take: %v", count, time.Since(start))
 		}
 	}
 }

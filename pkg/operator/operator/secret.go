@@ -140,7 +140,6 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	secretName := tasks.GetEventTaskSecretName()
 	if string(b) == c.eventTaskCache {
 		logger.Debug("event task nothing changed, skipped")
-		c.mm.IncSkippedSecretCounter(tasks.TaskTypeEvent, secretName)
 		return
 	}
 	c.eventTaskCache = string(b)
@@ -149,13 +148,11 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	compressed, err := compressor.Compress(b)
 	if err != nil {
 		logger.Errorf("failed to compress config content, err: %v", err)
-		c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeEvent, secretName)
 		return
 	}
 
 	secret.Data[eventTarget.FileName()] = compressed
 	c.mm.SetActiveSecretFileCount(tasks.TaskTypeEvent, secret.Name, 1)
-	c.mm.SetActiveSecretBytes(tasks.TaskTypeEvent, secret.Name, len(compressed))
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
@@ -200,7 +197,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
-			c.mm.IncSkippedSecretCounter(tasks.TaskTypeDaemonSet, secretName)
 			logger.Infof("node (%s) secrets nothing changed, skipped", node)
 			continue
 		}
@@ -219,7 +215,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			compressed, err := compressor.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
-				c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeDaemonSet, secretName)
 				continue
 			}
 
@@ -230,7 +225,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 
 		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
 		c.mm.SetActiveSecretFileCount(tasks.TaskTypeDaemonSet, secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretBytes(tasks.TaskTypeDaemonSet, secret.Name, bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -372,7 +366,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
-			c.mm.IncSkippedSecretCounter(tasks.TaskTypeStatefulSet, secretName)
 			logger.Infof("secrets %s nothing changed, skipped", secretName)
 			continue
 		}
@@ -390,7 +383,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			compressed, err := compressor.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
-				c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeStatefulSet, secretName)
 				continue
 			}
 
@@ -401,7 +393,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
 		c.mm.SetActiveSecretFileCount(tasks.TaskTypeStatefulSet, secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretBytes(tasks.TaskTypeStatefulSet, secret.Name, bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)

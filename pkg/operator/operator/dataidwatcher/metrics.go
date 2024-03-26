@@ -11,7 +11,6 @@ package dataidwatcher
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -34,15 +33,6 @@ var (
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_watcher_handled_total",
 			Help:      "dataid watcher handled total",
-		},
-	)
-
-	watcherHandledDuration = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_handled_duration_seconds",
-			Help:      "dataid watcher handled duration seconds",
-			Buckets:   define.DefObserveDuration,
 		},
 	)
 
@@ -74,10 +64,6 @@ func (m *metricMonitor) SetDataIDInfo(id int, name, usage string, system, common
 
 func (m *metricMonitor) IncHandledCounter() {
 	watcherHandledTotal.Inc()
-}
-
-func (m *metricMonitor) ObserveHandledDuration(t time.Time) {
-	watcherHandledDuration.Observe(time.Since(t).Seconds())
 }
 
 func (m *metricMonitor) IncHandledEventCounter(action string) {

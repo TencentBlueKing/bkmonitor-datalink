@@ -70,24 +70,6 @@ var (
 		},
 		[]string{"name"},
 	)
-
-	discoverAccessedSecretSuccessTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_accessed_secret_success_total",
-			Help:      "discover accessed secret success total",
-		},
-		[]string{"name"},
-	)
-
-	discoverAccessedSecretFailedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_accessed_secret_failed_total",
-			Help:      "discover accessed secret failed total",
-		},
-		[]string{"name"},
-	)
 )
 
 func newMetricMonitor(name string) *metricMonitor {
@@ -120,12 +102,4 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 
 func (m *metricMonitor) IncRemovedChildConfigCounter() {
 	discoverRemovedChildConfigTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) IncAccessedSecretSuccessCounter() {
-	discoverAccessedSecretSuccessTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) IncAccessedSecretFailedCounter() {
-	discoverAccessedSecretFailedTotal.WithLabelValues(m.name).Inc()
 }

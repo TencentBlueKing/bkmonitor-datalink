@@ -32,8 +32,8 @@ var memCache *Ristretto
 
 var once sync.Once
 
-// GetMmeCache get memory cache
-func GetMmeCache() (*Ristretto, error) {
+// GetMemCache get memory cache
+func GetMemCache() (*Ristretto, error) {
 	if memCache != nil {
 		return memCache, nil
 	}

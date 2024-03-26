@@ -637,7 +637,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 	}
 	config := &rest.Config{
 		Host:        fmt.Sprintf("%s://%s:%v/%s/%s", scm, b.DomainName, b.Port, b.ServerAddressPath, b.ClusterID),
-		BearerToken: fmt.Sprintf("%s %s", b.ApiKeyPrefix, b.ApiKeyContent),
+		BearerToken: b.ApiKeyContent,
 		TLSClientConfig: rest.TLSClientConfig{
 			Insecure: b.IsSkipSslVerify,
 		},

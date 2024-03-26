@@ -16,6 +16,7 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -154,7 +155,6 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	gorotineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
-	var tableIdList []string
 	var spaceUidList []string
 	wg := &sync.WaitGroup{}
 	ch := make(chan bool, gorotineCount)
@@ -169,15 +169,6 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 				<-ch
 				wg.Done()
 			}()
-			tableDataIdMap, err := pusher.GetSpaceTableIdDataId(sp.SpaceTypeId, sp.SpaceId, nil, nil, nil)
-			if err != nil {
-				logger.Errorf("PushAndPublishSpaceRouterInfo task error, get space table id and data id error: %s", err)
-				return
-			}
-			// 获取结果表
-			for tableId := range tableDataIdMap {
-				tableIdList = append(tableIdList, tableId)
-			}
 			// 推送空间到结果表的路由
 			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, false); err != nil {
 				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
@@ -194,6 +185,19 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		if err := client.Publish(cfg.SpaceToResultTableChannel, spaceUidString); err != nil {
 			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
 		}
+	}
+	
+	db := mysql.GetDBSession().DB
+	// 获取所有可用的结果表
+	var tableIdList []string
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo get table id error, %s", err)
+		return err
+	}
+	// 获取结果表
+	for _, rt := range rtList {
+		tableIdList = append(tableIdList, rt.TableId)
 	}
 
 	// 推送结果表别名路由

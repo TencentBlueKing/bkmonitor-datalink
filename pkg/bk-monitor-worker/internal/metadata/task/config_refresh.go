@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -181,6 +182,8 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
+	logger.Info("start to refresh data source, start_time: %v", time.Now().Truncate(time.Second))
+
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
@@ -200,9 +203,15 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 过滤状态为启用的结果表
 	var enabledResultTableList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(rtList...).Select("table_id").All(&enabledResultTableList); err != nil {
-		logger.Errorf("query enabled result table error, %v", err)
-		return err
+	// 拆分查询
+	for _, chunkRts := range slicex.ChunkSlice(rtList, 0) {
+		var tempList []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(chunkRts...).Select("table_id").All(&tempList); err != nil {
+			logger.Errorf("query enabled result table error, %v", err)
+			continue
+		}
+		// 组装数据
+		enabledResultTableList = append(enabledResultTableList, tempList...)
 	}
 	// 组装可用的结果表
 	var enabledRtList []string
@@ -211,7 +220,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 如果可用的结果表为空，则忽略
 	if len(enabledRtList) == 0 {
-		logger.Infof("not found enabled result by result_table, skip")
+		logger.Warn("not found enabled result by result_table, skip")
 		return nil
 	}
 	// 过滤到可用的数据源
@@ -223,13 +232,15 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 如果为空，则认为所有数据源不可用
 	if len(dataIdList) == 0 {
-		logger.Infof("not found data source by enabled result table")
+		logger.Warn("not found data source by enabled result table")
 		return nil
 	}
 
+	// 移除重复的数据源
 	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
+	// data id 数量可控，先不拆分
 	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
 		logger.Errorf("query datasource record error, %v", err)

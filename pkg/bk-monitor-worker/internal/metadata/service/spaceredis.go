@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -36,6 +37,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+const cachedClusterDataIdKey = "bmw_cached_cluster_data_id_list"
 
 // SpaceRedisSvc 空间Redis service
 type SpaceRedisSvc struct {
@@ -1433,14 +1436,11 @@ func (s SpacePusher) composeBkciLevelTableIds(spaceType, spaceId string) (map[st
 
 func (s SpacePusher) composeBkciOtherTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
 	logger.Infof("start to push bkci other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	var excludeDataIdList []uint
-	var clusters []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).All(&clusters); err != nil {
+	// 针对集群缓存对应的数据源，避免频繁的访问db
+	excludeDataIdList, err := s.getCachedClusterDataIdList()
+	if err != nil {
+		logger.Errorf("composeBkciOtherTableIds get cached cluster data id list error, %s", err)
 		return nil, err
-	}
-	for _, c := range clusters {
-		excludeDataIdList = append(excludeDataIdList, c.K8sMetricDataID)
-		excludeDataIdList = append(excludeDataIdList, c.CustomMetricDataID)
 	}
 	options := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false, "fromAuthorization": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(spaceType, spaceId, nil, excludeDataIdList, options)
@@ -1494,18 +1494,44 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	return dataValues, nil
 }
 
-// 组装蓝鲸应用非集群数据
-func (s SpacePusher) composeBksaasOtherTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {
-	logger.Infof("start to push bksaas other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	var excludeDataIdList []uint
+// 获取缓存的集群对应的数据源 ID
+func (s SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
+	cache, cacheErr := memcache.GetMemCache()
+	// 存放
+	ok := false
+	var data interface{}
+	if cacheErr == nil {
+		data, ok = cache.Get(cachedClusterDataIdKey)
+		if ok {
+			return data.([]uint), nil
+		}
+	}
+	// 从 db 中获取数据
+	var clusterDataIdList []uint
 	var clusters []bcs.BCSClusterInfo
-	// TODO: 针对集群缓存对应的数据源，避免频繁的访问db
 	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).All(&clusters); err != nil {
 		return nil, err
 	}
 	for _, c := range clusters {
-		excludeDataIdList = append(excludeDataIdList, c.K8sMetricDataID)
-		excludeDataIdList = append(excludeDataIdList, c.CustomMetricDataID)
+		clusterDataIdList = append(clusterDataIdList, c.K8sMetricDataID)
+		clusterDataIdList = append(clusterDataIdList, c.CustomMetricDataID)
+	}
+
+	// 把数据添加到缓存中, 设置超时时间为60min
+	if cacheErr == nil {
+		cache.PutWithTTL(cachedClusterDataIdKey, clusterDataIdList, 0, 60*time.Minute)
+	}
+	return clusterDataIdList, nil
+}
+
+// 组装蓝鲸应用非集群数据
+func (s SpacePusher) composeBksaasOtherTableIds(spaceType, spaceId string, tableIdList []string) (map[string]map[string]interface{}, error) {
+	logger.Infof("start to push bksaas other table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
+	// 针对集群缓存对应的数据源，避免频繁的访问db
+	excludeDataIdList, err := s.getCachedClusterDataIdList()
+	if err != nil {
+		logger.Errorf("composeBksaasOtherTableIds get cached cluster data id list error, %s", err)
+		return nil, err
 	}
 	options := optionx.NewOptions(map[string]interface{}{"includePlatformDataId": false})
 	tableIdDataIdMap, err := s.GetSpaceTableIdDataId(spaceType, spaceId, tableIdList, excludeDataIdList, options)

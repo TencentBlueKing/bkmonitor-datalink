@@ -81,7 +81,6 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 			r.Token = define.Token{Original: tk}
 		}
 	}
-
 	prettyprint.Traces(traces)
 
 	code, processorName, err := s.Validate(r)
@@ -122,6 +121,14 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 		RecordType:    define.RecordMetrics,
 		Data:          metrics,
 	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		tk := extractTokenFromGrpcHeader(md)
+		if len(tk) > 0 {
+			r.Token = define.Token{Original: tk}
+		}
+	}
 	prettyprint.Metrics(metrics)
 
 	code, processorName, err := s.Validate(r)
@@ -161,6 +168,14 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordLogs,
 		Data:          logs,
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		tk := extractTokenFromGrpcHeader(md)
+		if len(tk) > 0 {
+			r.Token = define.Token{Original: tk}
+		}
 	}
 	prettyprint.Logs(logs)
 

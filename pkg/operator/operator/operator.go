@@ -587,7 +587,9 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		return
 	}
 
-	c.promsliController.UpdateServiceMonitor(serviceMonitor)
+	if ConfEnablePromRule {
+		c.promsliController.UpdateServiceMonitor(serviceMonitor)
+	}
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
@@ -615,7 +617,9 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 		return
 	}
 
-	c.promsliController.UpdateServiceMonitor(cur)
+	if ConfEnablePromRule {
+		c.promsliController.UpdateServiceMonitor(cur)
+	}
 	if IfRejectServiceMonitor(old) {
 		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
 		return
@@ -649,7 +653,9 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 		return
 	}
 
-	c.promsliController.DeleteServiceMonitor(serviceMonitor)
+	if ConfEnablePromRule {
+		c.promsliController.DeleteServiceMonitor(serviceMonitor)
+	}
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("delete action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return

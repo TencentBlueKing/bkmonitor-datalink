@@ -637,7 +637,6 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	}
 
 	for _, key := range removed {
-		d.mm.IncRemovedChildConfigCounter()
 		cfg := d.childConfigGroups[source][key]
 		logger.Infof("discover %s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 		delete(d.childConfigGroups[source], key)

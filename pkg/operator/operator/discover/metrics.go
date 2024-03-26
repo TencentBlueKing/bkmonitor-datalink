@@ -52,15 +52,6 @@ var (
 		},
 		[]string{"name"},
 	)
-
-	discoverRemovedChildConfigTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_removed_config_total",
-			Help:      "discover removed child config total",
-		},
-		[]string{"name"},
-	)
 )
 
 func newMetricMonitor(name string) *metricMonitor {
@@ -85,8 +76,4 @@ func (m *metricMonitor) IncCreatedChildConfigSuccessCounter() {
 
 func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) IncRemovedChildConfigCounter() {
-	discoverRemovedChildConfigTotal.WithLabelValues(m.name).Inc()
 }

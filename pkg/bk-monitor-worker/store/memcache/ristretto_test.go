@@ -16,7 +16,7 @@ import (
 )
 
 func TestCacheGetKey(t *testing.T) {
-	cache, err := GetMmeCache()
+	cache, err := GetMemCache()
 	assert.NoError(t, err)
 
 	key, val := "key", "val"
@@ -31,7 +31,7 @@ func TestCacheGetKey(t *testing.T) {
 }
 
 func TestCacheDeleteKey(t *testing.T) {
-	cache, err := GetMmeCache()
+	cache, err := GetMemCache()
 	assert.NoError(t, err)
 
 	key, val := "key1", "val1"

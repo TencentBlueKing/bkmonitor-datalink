@@ -232,7 +232,6 @@ func (d *BaseDiscover) String() string {
 
 func (d *BaseDiscover) Stop() {
 	d.cancel()
-	d.mm.IncWaitedCounter()
 	logger.Infof("waiting discover %s", d.Name())
 
 	d.wg.Wait()

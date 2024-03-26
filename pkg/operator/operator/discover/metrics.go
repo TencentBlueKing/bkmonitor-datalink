@@ -35,15 +35,6 @@ var (
 		[]string{"name"},
 	)
 
-	discoverWaitedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_waited_total",
-			Help:      "discover waited total",
-		},
-		[]string{"name"},
-	)
-
 	discoverCreatedChildConfigSuccessTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -86,10 +77,6 @@ func (m *metricMonitor) IncStartedCounter() {
 
 func (m *metricMonitor) IncStoppedCounter() {
 	discoverStoppedTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) IncWaitedCounter() {
-	discoverWaitedTotal.WithLabelValues(m.name).Inc()
 }
 
 func (m *metricMonitor) IncCreatedChildConfigSuccessCounter() {

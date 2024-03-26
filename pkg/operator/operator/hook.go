@@ -35,7 +35,7 @@ const (
 	confTargetLabelSelectorPath     = "operator.target_label_selector"
 	confEnableServiceMonitorPath    = "operator.enable_service_monitor"
 	confEnablePodMonitorPath        = "operator.enable_pod_monitor"
-	confEnableProbePath             = "operator.enable_probe"
+	confEnableProbePath             = "operator.enable_probe" // TODO(mando): 待支持
 	confEnablePromRulePath          = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath   = "operator.enable_daemonset_worker"
@@ -146,7 +146,7 @@ func initConfig() {
 	viper.SetDefault(confMonitorNamespacePath, "bkmonitor-operator")
 	viper.SetDefault(confEnableServiceMonitorPath, true)
 	viper.SetDefault(confEnablePodMonitorPath, true)
-	viper.SetDefault(confEnablePromRulePath, true)
+	viper.SetDefault(confEnablePromRulePath, false)
 	viper.SetDefault(confEnableStatefulSetWorkerPath, true)
 	viper.SetDefault(confEnableDaemonSetWorkerPath, true)
 	viper.SetDefault(confKubeletNamePath, "bkmonitor-operator-kubelet")

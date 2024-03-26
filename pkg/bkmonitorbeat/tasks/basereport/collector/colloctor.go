@@ -136,6 +136,7 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 	var data ReportData
 	var wg sync.WaitGroup
 
+	data.Datetime, data.UTCTime, data.Zone = GetDateTime(config.TimeTolerate)
 	wg.Add(1)
 	go func() {
 		t0 := time.Now()
@@ -247,7 +248,6 @@ func Collect(config configs.BasereportConfig, firstRun bool) (ReportData, error)
 		logger.Errorf("collector some env info failed: %v", err)
 	}
 
-	data.Datetime, data.UTCTime, data.Zone = GetDateTime(config.TimeTolerate)
 	logger.Info("collect done")
 	return data, nil
 }

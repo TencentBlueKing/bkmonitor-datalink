@@ -14,7 +14,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,6 +51,7 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 
 // collectAndReportMetrics 采集&上报ES集群指标
 func collectAndReportMetrics(c storage.ClusterInfo) error {
+	logger.Infof("start to collect es cluster metrics.")
 	var bkBizID float64
 	var customOption map[string]interface{}
 	_ = json.Unmarshal([]byte(c.CustomOption), &customOption)
@@ -105,10 +105,10 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))
 	metricFamilies, err := registry.Gather()
 	if err != nil {
-		logger.Errorf("collect gather es metrics failed: %s", err)
+		logger.Errorf("collect es cluster metrics failed: %s", err)
 		return err
 	}
-	logger.Infof("collect gather es metrics success, metric family count: %v ", len(metricFamilies))
+	logger.Infof("collect es cluster metrics success, metric family count: %v ", len(metricFamilies))
 
 	esMetrics := make([]*clustermetrics.EsMetric, 0)
 	currentTime := time.Now()
@@ -145,7 +145,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 		}
 	}
 
-	logger.Infof("process es metrics success, all metric count: %v, current timestamp: %v ",
+	logger.Infof("process es cluster metrics success, all metric count: %v, current timestamp: %v ",
 		len(esMetrics), timestamp)
 	customReportData := clustermetrics.CustomReportData{
 		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
@@ -154,7 +154,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 		logger.Errorf("custom report data JSON Failed: %s ", err)
 		return err
 	}
-	logger.Infof("all es metrics json: %s ", jsonData)
+	//logger.Infof("all es cluster metrics json: %s ", jsonData)
 
 	u, _ := url.Parse(cfg.ESClusterMetricReportUrl)
 
@@ -168,8 +168,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-	logger.Infof("report es metrics success, request url: %s, response body: %s", customReportUrl, body)
+	logger.Infof("report es metrics success, request url: %s", customReportUrl)
 
 	return nil
 }

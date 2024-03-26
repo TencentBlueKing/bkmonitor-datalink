@@ -140,7 +140,6 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	secretName := tasks.GetEventTaskSecretName()
 	if string(b) == c.eventTaskCache {
 		logger.Debug("event task nothing changed, skipped")
-		c.mm.IncSkippedSecretCounter(tasks.TaskTypeEvent, secretName)
 		return
 	}
 	c.eventTaskCache = string(b)
@@ -198,7 +197,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
-			c.mm.IncSkippedSecretCounter(tasks.TaskTypeDaemonSet, secretName)
 			logger.Infof("node (%s) secrets nothing changed, skipped", node)
 			continue
 		}
@@ -368,7 +366,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
-			c.mm.IncSkippedSecretCounter(tasks.TaskTypeStatefulSet, secretName)
 			logger.Infof("secrets %s nothing changed, skipped", secretName)
 			continue
 		}

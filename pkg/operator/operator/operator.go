@@ -594,7 +594,6 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(serviceMonitor.Kind, define.ActionAdd)
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
@@ -632,7 +631,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(old.Kind, define.ActionUpdate)
 	for _, name := range c.getServiceMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -658,7 +656,6 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(serviceMonitor.Kind, define.ActionDelete)
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
 		c.deleteDiscoverByName(name)
 	}
@@ -787,7 +784,6 @@ func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionAdd)
 	c.promsliController.UpdatePrometheusRule(promRule)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
 }
@@ -800,7 +796,6 @@ func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionUpdate)
 	c.promsliController.UpdatePrometheusRule(promRule)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
 }
@@ -813,7 +808,6 @@ func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionDelete)
 	c.promsliController.DeletePrometheusRule(promRule)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
 }
@@ -830,7 +824,6 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(podMonitor.Kind, define.ActionAdd)
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
@@ -867,7 +860,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(old.Kind, define.ActionUpdate)
 	for _, name := range c.getPodMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -891,7 +883,6 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 	}
 
 	now := time.Now()
-	c.mm.IncReceivedEventCounter(podMonitor.Kind, define.ActionDelete)
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
 	}

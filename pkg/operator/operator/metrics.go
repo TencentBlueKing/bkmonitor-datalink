@@ -62,15 +62,6 @@ var (
 		[]string{"kind"},
 	)
 
-	receivedEventTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "received_event_total",
-			Help:      "received kubernetes event total",
-		},
-		[]string{"monitor_kind", "action"},
-	)
-
 	handledEventDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitorNamespace,
@@ -97,14 +88,6 @@ var (
 			Help:      "handled secret failed total",
 		},
 		[]string{"secret_name", "action"},
-	)
-	skippedSecretTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "skipped_secret_total",
-			Help:      "skipped_secret_total",
-		},
-		[]string{"task_type", "secret_name"},
 	)
 
 	dispatchedTaskTotal = promauto.NewCounter(
@@ -228,12 +211,6 @@ func (m *metricMonitor) SetActiveMonitorResourceCount(kind string, n int) {
 	activeMonitorResourceCount.WithLabelValues(kind).Set(float64(n))
 }
 
-// IncReceivedEventCounter 增加接收 k8s 事件计数器
-func (m *metricMonitor) IncReceivedEventCounter(monitorKing, action string) {
-	m.receivedK8sEvent++
-	receivedEventTotal.WithLabelValues(monitorKing, action).Inc()
-}
-
 // ObserveHandledEventDuration 观测 k8s 事件处理耗时
 func (m *metricMonitor) ObserveHandledEventDuration(t time.Time, monitorKing, action string) {
 	handledEventDuration.WithLabelValues(monitorKing, action).Observe(time.Since(t).Seconds())
@@ -270,10 +247,6 @@ func (m *metricMonitor) SetActiveSecretFileCount(taskType, secretName string, co
 
 func (m *metricMonitor) IncSecretsExceededCounter() {
 	secretsExceeded.Inc()
-}
-
-func (m *metricMonitor) IncSkippedSecretCounter(taskType, secretName string) {
-	skippedSecretTotal.WithLabelValues(taskType, secretName).Inc()
 }
 
 func (m *metricMonitor) IncDispatchedTaskCounter() {

@@ -64,14 +64,6 @@ func (mm *metricMonitor) SetWorkloadCount(v int, namespace, kind string) {
 	nkWorkloadMut.Unlock()
 }
 
-func (mm *metricMonitor) ObserveWorkloadLookupDuration(t time.Time) {
-	workloadLookupDuration.Observe(time.Since(t).Seconds())
-}
-
-func (mm *metricMonitor) IncWorkloadRequestCounter() {
-	workloadLookupRequestTotal.Inc()
-}
-
 var (
 	clusterNode          int
 	clusterNodeUpdatedAt time.Time

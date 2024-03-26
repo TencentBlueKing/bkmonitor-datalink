@@ -9,9 +9,14 @@
 
 package tokenchecker
 
+import (
+	"strings"
+)
+
 type Config struct {
-	Type        string `config:"type" mapstructure:"type"`
-	ResourceKey string `config:"resource_key" mapstructure:"resource_key"`
+	Type         string   `config:"type" mapstructure:"type"`
+	ResourceKey  string   `config:"resource_key" mapstructure:"resource_key"`
+	resourceKeys []string // 避免多次转换开销
 
 	// type: aes256
 	Salt       string `config:"salt" mapstructure:"salt"`
@@ -30,4 +35,12 @@ type Config struct {
 	// type: proxy
 	ProxyDataId int32  `config:"dataid" mapstructure:"proxy_dataid"`
 	ProxyToken  string `config:"token" mapstructure:"proxy_token"`
+}
+
+func (c *Config) Clean() {
+	var keys []string
+	for _, key := range strings.Split(c.ResourceKey, ",") {
+		keys = append(keys, strings.TrimSpace(key))
+	}
+	c.resourceKeys = keys
 }

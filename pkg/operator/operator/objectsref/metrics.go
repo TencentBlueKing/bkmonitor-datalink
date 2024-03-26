@@ -14,29 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 var (
-	workloadLookupRequestTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "workload_lookup_request_total",
-			Help:      "workload lookup request total",
-		},
-	)
-
-	workloadLookupDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "workload_lookup_duration_seconds",
-			Help:      "workload lookup duration seconds",
-			Buckets:   define.DefObserveDuration,
-		},
-	)
-
-	clusterVersion = prometheus.NewGaugeVec(
+	clusterVersion = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "cluster_version",
@@ -45,14 +29,6 @@ var (
 		[]string{"version"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		workloadLookupRequestTotal,
-		workloadLookupDuration,
-		clusterVersion,
-	)
-}
 
 type namespaceKind struct {
 	namespace string

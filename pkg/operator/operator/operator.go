@@ -601,7 +601,6 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(serviceMonitor.Kind, define.ActionAdd)
 	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionAdd)
 }
 
@@ -642,7 +641,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(old.Kind, define.ActionUpdate)
 	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
@@ -664,7 +662,6 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.IncHandledEventCounter(serviceMonitor.Kind, define.ActionDelete)
 	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionDelete)
 }
 
@@ -792,7 +789,6 @@ func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
 	now := time.Now()
 	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionAdd)
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionAdd)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
 }
 
@@ -806,7 +802,6 @@ func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
 	now := time.Now()
 	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionUpdate)
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionUpdate)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
 }
 
@@ -820,7 +815,6 @@ func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
 	now := time.Now()
 	c.mm.IncReceivedEventCounter(promRule.Kind, define.ActionDelete)
 	c.promsliController.DeletePrometheusRule(promRule)
-	c.mm.IncHandledEventCounter(promRule.Kind, define.ActionDelete)
 	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
 }
 
@@ -843,7 +837,6 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(podMonitor.Kind, define.ActionAdd)
 	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionAdd)
 }
 
@@ -883,7 +876,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.IncHandledEventCounter(old.Kind, define.ActionUpdate)
 	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
@@ -903,7 +895,6 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.IncHandledEventCounter(podMonitor.Kind, define.ActionDelete)
 	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionDelete)
 }
 

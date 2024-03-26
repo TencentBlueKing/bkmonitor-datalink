@@ -10,15 +10,14 @@
 package discover
 
 import (
-	"time"
-
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 var (
-	discoverStartedTotal = prometheus.NewCounterVec(
+	discoverStartedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_started_total",
@@ -27,7 +26,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverStoppedTotal = prometheus.NewCounterVec(
+	discoverStoppedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_stopped_total",
@@ -36,7 +35,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverWaitedTotal = prometheus.NewCounterVec(
+	discoverWaitedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_waited_total",
@@ -45,7 +44,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverCreatedChildConfigSuccessTotal = prometheus.NewCounterVec(
+	discoverCreatedChildConfigSuccessTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_created_config_success_total",
@@ -54,7 +53,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverCreatedChildConfigFailedTotal = prometheus.NewCounterVec(
+	discoverCreatedChildConfigFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_created_config_failed_total",
@@ -63,7 +62,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverRemovedChildConfigTotal = prometheus.NewCounterVec(
+	discoverRemovedChildConfigTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_removed_config_total",
@@ -72,26 +71,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverReceivedTargetGroupTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_received_tg_total",
-			Help:      "discover received target group total",
-		},
-		[]string{"name"},
-	)
-
-	discoverHandledTargetGroupDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_handled_tg_duration_seconds",
-			Help:      "discover handled target group duration seconds",
-			Buckets:   define.DefObserveDuration,
-		},
-		[]string{"name"},
-	)
-
-	discoverAccessedSecretSuccessTotal = prometheus.NewCounterVec(
+	discoverAccessedSecretSuccessTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_accessed_secret_success_total",
@@ -100,7 +80,7 @@ var (
 		[]string{"name"},
 	)
 
-	discoverAccessedSecretFailedTotal = prometheus.NewCounterVec(
+	discoverAccessedSecretFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_accessed_secret_failed_total",
@@ -109,21 +89,6 @@ var (
 		[]string{"name"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		discoverStartedTotal,
-		discoverStoppedTotal,
-		discoverWaitedTotal,
-		discoverCreatedChildConfigSuccessTotal,
-		discoverCreatedChildConfigFailedTotal,
-		discoverRemovedChildConfigTotal,
-		discoverReceivedTargetGroupTotal,
-		discoverHandledTargetGroupDuration,
-		discoverAccessedSecretSuccessTotal,
-		discoverAccessedSecretFailedTotal,
-	)
-}
 
 func newMetricMonitor(name string) *metricMonitor {
 	return &metricMonitor{name: name}
@@ -155,14 +120,6 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 
 func (m *metricMonitor) IncRemovedChildConfigCounter() {
 	discoverRemovedChildConfigTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) IncReceivedTargetGroupCounter() {
-	discoverReceivedTargetGroupTotal.WithLabelValues(m.name).Inc()
-}
-
-func (m *metricMonitor) ObserveTargetGroupDuration(t time.Time) {
-	discoverHandledTargetGroupDuration.WithLabelValues(m.name).Observe(time.Since(t).Seconds())
 }
 
 func (m *metricMonitor) IncAccessedSecretSuccessCounter() {

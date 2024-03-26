@@ -495,11 +495,8 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 				if tg == nil {
 					continue
 				}
-				now := time.Now()
-				d.mm.IncReceivedTargetGroupCounter()
 				logger.Debugf("discover %s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
-				d.mm.ObserveTargetGroupDuration(now)
 			}
 			logger.Debugf("discover %s handle targets done", d.Name())
 		}

@@ -149,13 +149,11 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	compressed, err := compressor.Compress(b)
 	if err != nil {
 		logger.Errorf("failed to compress config content, err: %v", err)
-		c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeEvent, secretName)
 		return
 	}
 
 	secret.Data[eventTarget.FileName()] = compressed
 	c.mm.SetActiveSecretFileCount(tasks.TaskTypeEvent, secret.Name, 1)
-	c.mm.SetActiveSecretBytes(tasks.TaskTypeEvent, secret.Name, len(compressed))
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
@@ -219,7 +217,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			compressed, err := compressor.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
-				c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeDaemonSet, secretName)
 				continue
 			}
 
@@ -230,7 +227,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 
 		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
 		c.mm.SetActiveSecretFileCount(tasks.TaskTypeDaemonSet, secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretBytes(tasks.TaskTypeDaemonSet, secret.Name, bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -390,7 +386,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			compressed, err := compressor.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
-				c.mm.IncCompressedConfigFailedCounter(tasks.TaskTypeStatefulSet, secretName)
 				continue
 			}
 
@@ -401,7 +396,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
 		c.mm.SetActiveSecretFileCount(tasks.TaskTypeStatefulSet, secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretBytes(tasks.TaskTypeStatefulSet, secret.Name, bytesTotal)
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)

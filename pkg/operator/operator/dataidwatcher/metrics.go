@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 var (
-	dataIDInfo = prometheus.NewGaugeVec(
+	dataIDInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_info",
@@ -28,7 +29,7 @@ var (
 		[]string{"id", "name", "usage", "system", "common", "bk_env"},
 	)
 
-	watcherHandledTotal = prometheus.NewCounter(
+	watcherHandledTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_watcher_handled_total",
@@ -36,7 +37,7 @@ var (
 		},
 	)
 
-	watcherHandledDuration = prometheus.NewHistogram(
+	watcherHandledDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_watcher_handled_duration_seconds",
@@ -45,16 +46,7 @@ var (
 		},
 	)
 
-	watcherReceivedEventTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_received_event_total",
-			Help:      "dataid watcher received kubernetes event total",
-		},
-		[]string{"action"},
-	)
-
-	watcherHandledEventTotal = prometheus.NewCounterVec(
+	watcherHandledEventTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_watcher_handled_event_total",
@@ -63,16 +55,6 @@ var (
 		[]string{"action"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		dataIDInfo,
-		watcherHandledTotal,
-		watcherHandledDuration,
-		watcherReceivedEventTotal,
-		watcherHandledEventTotal,
-	)
-}
 
 func newMetricMonitor() *metricMonitor {
 	return &metricMonitor{}
@@ -96,10 +78,6 @@ func (m *metricMonitor) IncHandledCounter() {
 
 func (m *metricMonitor) ObserveHandledDuration(t time.Time) {
 	watcherHandledDuration.Observe(time.Since(t).Seconds())
-}
-
-func (m *metricMonitor) IncReceivedEventCounter(action string) {
-	watcherReceivedEventTotal.WithLabelValues(action).Inc()
 }
 
 func (m *metricMonitor) IncHandledEventCounter(action string) {

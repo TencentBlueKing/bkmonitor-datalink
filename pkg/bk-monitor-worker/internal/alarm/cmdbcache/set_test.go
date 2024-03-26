@@ -159,6 +159,5 @@ func TestSetCacheManager(t *testing.T) {
 		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
 		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
 		assert.EqualValues(t, `[2]`, client.HGet(ctx, cacheManager.GetCacheKey(setTemplateCacheKey), "1").Val())
-
 	})
 }

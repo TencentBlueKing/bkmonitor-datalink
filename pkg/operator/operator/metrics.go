@@ -115,23 +115,6 @@ var (
 		},
 	)
 
-	handledDataIDWatcherNotifyTotal = promauto.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "handled_dataid_watcher_notify_total",
-			Help:      "handled dataid watcher notify total",
-		},
-	)
-
-	reloadedDiscoverDuration = promauto.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "reloaded_discover_duration_seconds",
-			Help:      "reloaded discover duration seconds",
-			Buckets:   define.DefObserveDuration,
-		},
-	)
-
 	activeSecretFileCount = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
@@ -231,14 +214,6 @@ func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string) {
 
 func (m *metricMonitor) IncHandledDiscoverNotifyCounter() {
 	handledDiscoverNotifyTotal.Inc()
-}
-
-func (m *metricMonitor) IncHandledDataIDWatcherNotifyCounter() {
-	handledDataIDWatcherNotifyTotal.Inc()
-}
-
-func (m *metricMonitor) ObserveReloadedDiscoverDuration(t time.Time) {
-	reloadedDiscoverDuration.Observe(time.Since(t).Seconds())
 }
 
 func (m *metricMonitor) SetActiveSecretFileCount(taskType, secretName string, count int) {

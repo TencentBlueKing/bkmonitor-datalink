@@ -19,15 +19,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
-var (
-	clusterVersion = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "cluster_version",
-			Help:      "kubernetes server version",
-		},
-		[]string{"version"},
-	)
+var clusterVersion = promauto.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Namespace: define.MonitorNamespace,
+		Name:      "cluster_version",
+		Help:      "kubernetes server version",
+	},
+	[]string{"version"},
 )
 
 type namespaceKind struct {

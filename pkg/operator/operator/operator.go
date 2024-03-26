@@ -314,7 +314,6 @@ func (c *Operator) Run() error {
 
 	// 等待 dataid watcher 初始化结束，否则后续触发 discover 更新可能会得到错误的 dataid
 	<-dataidwatcher.Notify()
-	c.mm.IncHandledDataIDWatcherNotifyCounter()
 
 	go c.handleDiscoverNotify()
 	go c.handleDataIDNotify()
@@ -926,15 +925,15 @@ func (c *Operator) handleDataIDNotify() {
 		c.pusher.StartOrUpdate(*info, ConfPodName)
 	}
 
+	var count int
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 
 		case <-dataidwatcher.Notify():
-			logger.Info("dataid watcher got notification")
-			now := time.Now()
-			c.mm.IncHandledDataIDWatcherNotifyCounter()
+			start := time.Now()
+			count++
 			c.reloadAllDiscovers()
 
 			info, err := c.dw.GetClusterInfo()
@@ -944,7 +943,7 @@ func (c *Operator) handleDataIDNotify() {
 				c.pusher.StartOrUpdate(*info, ConfPodName)
 			}
 
-			c.mm.ObserveReloadedDiscoverDuration(now)
+			logger.Infof("reload discovers(dataid), count=%d, take: %v", count, time.Since(start))
 		}
 	}
 }

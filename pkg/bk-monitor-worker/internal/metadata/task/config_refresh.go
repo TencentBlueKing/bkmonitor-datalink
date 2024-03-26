@@ -182,7 +182,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
-	logger.Info("start to refresh data source, start_time: %v", time.Now().Truncate(time.Second))
+	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
 
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
@@ -273,6 +273,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	wg.Wait()
 
+	logger.Infof("refresh data source end, end_time: %s", time.Now().Truncate(time.Second))
 	return nil
 }
 

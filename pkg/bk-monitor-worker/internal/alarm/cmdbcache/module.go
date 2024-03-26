@@ -63,7 +63,7 @@ func NewModuleCacheManager(prefix string, opt *redis.Options, concurrentLimit in
 }
 
 // getModuleListByBizID 通过业务ID获取模块列表
-func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleData, error) {
+func getModuleListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func getModuleListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchModuleDa
 		return nil, errors.Wrap(err, "failed to request cmdb api")
 	}
 
-	var moduleList []cmdb.SearchModuleData
+	var moduleList []map[string]interface{}
 	for _, item := range result {
 		if item == nil {
 			logger.Warnf("cmdb api response is nil")
@@ -127,14 +127,39 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	templateToModules := make(map[string][]string)
 
 	for _, module := range moduleList {
+		// 主备负责人字段处理
+		for _, field := range []string{"bk_bak_operator", "operator"} {
+			var operators []string
+			operator, _ := module[field].(string)
+			if operator != "" {
+				operators = strings.Split(operator, ",")
+			} else {
+				operators = []string{}
+			}
+			module[field] = operators
+		}
+
+		// 转换为json字符串
 		moduleStr, err := json.Marshal(module)
 		if err != nil {
 			return errors.Wrap(err, "failed to marshal module")
 		}
 
-		moduleCacheData[strconv.Itoa(module.BkModuleId)] = string(moduleStr)
-		serviceTemplateId := strconv.Itoa(module.ServiceTemplateId)
-		templateToModules[serviceTemplateId] = append(templateToModules[serviceTemplateId], strconv.Itoa(module.BkModuleId))
+		// 记录模块缓存
+		moduleId, ok := module["bk_module_id"].(float64)
+		if !ok {
+			continue
+		}
+		moduleIdStr := strconv.Itoa(int(moduleId))
+		moduleCacheData[moduleIdStr] = string(moduleStr)
+
+		// 记录服务模板关联的模块
+		serviceTemplateId, ok := module["service_template_id"].(float64)
+		if !ok || serviceTemplateId <= 0 {
+			continue
+		}
+		serviceTemplateIdStr := strconv.Itoa(int(serviceTemplateId))
+		templateToModules[serviceTemplateIdStr] = append(templateToModules[serviceTemplateIdStr], moduleIdStr)
 	}
 
 	// 更新模块缓存
@@ -182,32 +207,79 @@ func (m *ModuleCacheManager) CleanGlobal(ctx context.Context) error {
 
 // CleanByEvents 根据事件清理缓存
 func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+	// 只处理模块事件
 	if resourceType != "module" || len(events) == 0 {
 		return nil
 	}
 
 	// 提取模块ID及服务模板ID
-	moduleIds := make([]string, 0, len(events))
-	serviceTemplateIds := make([]string, 0, len(events))
+	needDeleteModuleIds := make(map[int]struct{})
+	needUpdateServiceTemplateIds := make(map[string]struct{})
 	for _, event := range events {
-		moduleID, ok := event["bk_module_id"].(int)
-		if ok {
+		moduleID, ok := event["bk_module_id"].(float64)
+		if !ok {
+			continue
+		}
+		// 记录需要删除的模块ID
+		needDeleteModuleIds[int(moduleID)] = struct{}{}
+
+		// 记录各个服务模板下需要删除的模块ID
+		if serviceTemplateID, ok := event["service_template_id"].(float64); ok && serviceTemplateID > 0 {
+			needUpdateServiceTemplateIds[strconv.Itoa(int(serviceTemplateID))] = struct{}{}
+		}
+	}
+
+	// 删除服务模板关联的模块缓存
+	serviceTemplateCacheData := make(map[string]string)
+	needDeleteServiceTemplateIds := make([]string, 0)
+	for serviceTemplateID := range needUpdateServiceTemplateIds {
+		// 查询存量缓存
+		result := m.RedisClient.HGet(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateID)
+		if result.Err() != nil {
+			continue
+		}
+		var oldModuleIDs []int
+		err := json.Unmarshal([]byte(result.Val()), &oldModuleIDs)
+		if err != nil {
+			continue
+		}
+
+		// 清理需要删除的模块ID
+		var newModuleIDs []string
+		for _, moduleID := range oldModuleIDs {
+			if _, ok := needDeleteModuleIds[moduleID]; !ok {
+				newModuleIDs = append(newModuleIDs, strconv.Itoa(moduleID))
+			}
+		}
+
+		// 如果删除后，服务模板下没有模块，则需要清理服务模板缓存，否则更新缓存
+		if len(newModuleIDs) > 0 {
+			serviceTemplateCacheData[serviceTemplateID] = fmt.Sprintf("[%s]", strings.Join(newModuleIDs, ","))
+		} else {
+			needDeleteServiceTemplateIds = append(needDeleteServiceTemplateIds, serviceTemplateID)
+		}
+	}
+
+	// 删除模块缓存
+	if len(needDeleteModuleIds) > 0 {
+		moduleIds := make([]string, 0, len(needDeleteModuleIds))
+		for moduleID := range needDeleteModuleIds {
 			moduleIds = append(moduleIds, strconv.Itoa(moduleID))
 		}
+		m.RedisClient.HDel(ctx, m.GetCacheKey(moduleCacheKey), moduleIds...)
+	}
 
-		serviceTemplateID, ok := event["service_template_id"].(int)
-		if ok && serviceTemplateID > 0 {
-			serviceTemplateIds = append(serviceTemplateIds, strconv.Itoa(serviceTemplateID))
+	// 更新服务模板关联的模块缓存
+	if len(serviceTemplateCacheData) > 0 {
+		err := m.UpdateHashMapCache(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateCacheData)
+		if err != nil {
+			return errors.Wrap(err, "failed to update service_template hashmap cache")
 		}
 	}
 
-	// 删除缓存
-	if len(moduleIds) > 0 {
-		m.RedisClient.HDel(ctx, m.GetCacheKey("cmd.module"), moduleIds...)
-	}
-
-	if len(serviceTemplateIds) > 0 {
-		m.RedisClient.HDel(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateIds...)
+	// 清理服务模板关联的模块缓存
+	if len(needDeleteServiceTemplateIds) > 0 {
+		m.RedisClient.HDel(ctx, m.GetCacheKey(serviceTemplateCacheKey), needDeleteServiceTemplateIds...)
 	}
 
 	return nil
@@ -222,9 +294,8 @@ func (m *ModuleCacheManager) UpdateByEvents(ctx context.Context, resourceType st
 	// 提取业务ID
 	needUpdateBizIds := make(map[int]struct{})
 	for _, event := range events {
-		bizID, ok := event["bk_biz_id"].(int)
-		if ok {
-			needUpdateBizIds[bizID] = struct{}{}
+		if bizID, ok := event["bk_biz_id"].(float64); ok {
+			needUpdateBizIds[int(bizID)] = struct{}{}
 		}
 	}
 
@@ -245,6 +316,6 @@ func (m *ModuleCacheManager) UpdateByEvents(ctx context.Context, resourceType st
 			}
 		}(bizID)
 	}
-
+	wg.Wait()
 	return nil
 }

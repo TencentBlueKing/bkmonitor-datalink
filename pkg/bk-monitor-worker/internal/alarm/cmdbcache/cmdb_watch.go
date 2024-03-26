@@ -53,10 +53,10 @@ const (
 // CmdbResourceTypeFields cmdb资源类型对应的监听字段
 var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeHost:             {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
-	CmdbResourceTypeHostRelation:     {"bk_host_id"},
+	CmdbResourceTypeHostRelation:     {"bk_host_id", "bk_biz_id"},
 	CmdbResourceTypeBiz:              {"bk_biz_id"},
-	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id"},
-	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id"},
+	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "set_template_id"},
+	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id", "service_template_id"},
 	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
 }
 
@@ -69,11 +69,6 @@ type CmdbResourceWatcher struct {
 
 	// redis client
 	redisClient redis.UniversalClient
-
-	// cmdb资源变更事件查询游标锁
-	bkCursorLock sync.Mutex
-	// cmdb资源变更事件查询游标
-	bkCursors map[CmdbResourceType]string
 }
 
 // NewCmdbResourceWatcher 创建cmdb资源监听器
@@ -94,53 +89,31 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 		prefix:      prefix,
 		redisClient: redisClient,
 		cmdbApi:     cmdbApi,
-		bkCursors:   make(map[CmdbResourceType]string),
 	}, nil
 
 }
 
 // getBkCursor 获取cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) getBkCursor(ctx context.Context, resourceType CmdbResourceType) string {
-	w.bkCursorLock.Lock()
-	defer w.bkCursorLock.Unlock()
-
-	// 从内存中获取cmdb资源变更游标
-	bkCursor, ok := w.bkCursors[resourceType]
-	if ok {
-		return bkCursor
-	}
-
 	// 从redis中获取cmdb资源变更游标
 	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
 	bkCursorResult := w.redisClient.Get(ctx, bkCursorKey)
 	if bkCursorResult.Err() != nil {
 		if !errors.Is(bkCursorResult.Err(), redis.Nil) {
+			logger.Errorf("get cmdb resource watch cursor error: %v", bkCursorResult.Err())
 			return ""
 		}
 	}
-
-	// 更新内存中cmdb资源变更游标
-	if bkCursorResult.Val() != "" {
-		w.bkCursors[resourceType] = bkCursorResult.Val()
-		return w.bkCursors[resourceType]
-	}
-
-	return ""
+	return bkCursorResult.Val()
 }
 
 // setBkCursor 记录cmdb资源变更事件游标
 func (w *CmdbResourceWatcher) setBkCursor(ctx context.Context, resourceType CmdbResourceType, cursor string) error {
-	w.bkCursorLock.Lock()
-	defer w.bkCursorLock.Unlock()
-
 	// 设置cmdb资源变更游标
 	bkCursorKey := fmt.Sprintf("%s.cmdb_resource_watch_cursor.%s", w.prefix, resourceType)
 	if _, err := w.redisClient.Set(ctx, bkCursorKey, cursor, time.Hour).Result(); err != nil {
 		return errors.Wrap(err, "set cmdb resource watch cursor error")
 	}
-
-	// 更新内存中cmdb资源变更游标
-	w.bkCursors[resourceType] = cursor
 	return nil
 }
 
@@ -171,10 +144,13 @@ func (w *CmdbResourceWatcher) Watch(ctx context.Context, resourceType CmdbResour
 		if len(resp.Data.BkEvents) == 0 {
 			return false, nil
 		}
+
 		// 记录资源变更事件游标
-		err := w.setBkCursor(ctx, resourceType, resp.Data.BkEvents[0].BkCursor)
-		if err != nil {
-			logger.Error("set cmdb resource watch cursor error: %v", err)
+		newCursor := resp.Data.BkEvents[len(resp.Data.BkEvents)-1].BkCursor
+		if newCursor != "" && newCursor != bkCursor {
+			if err := w.setBkCursor(ctx, resourceType, newCursor); err != nil {
+				logger.Error("set cmdb resource watch cursor error: %v", err)
+			}
 		}
 
 		return false, nil

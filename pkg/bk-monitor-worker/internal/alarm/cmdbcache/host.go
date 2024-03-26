@@ -591,15 +591,15 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 				agentIds = append(agentIds, agentId)
 			}
 
-			hostId, ok := event["bk_host_id"].(int)
+			hostId, ok := event["bk_host_id"].(float64)
 			if ok && hostId != 0 {
-				hostIds = append(hostIds, strconv.Itoa(hostId))
+				hostIds = append(hostIds, strconv.Itoa(int(hostId)))
 			}
 
 			bkHostInnerip, ok := event["bk_host_innerip"].(string)
-			bkCloudId, ok := event["bk_cloud_id"].(int)
+			bkCloudId, ok := event["bk_cloud_id"].(float64)
 			if ok && bkHostInnerip != "" {
-				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", bkHostInnerip, bkCloudId))
+				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", bkHostInnerip, int(bkCloudId)))
 			}
 		}
 
@@ -627,8 +627,11 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 		topoIds := make([]string, 0)
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)
-			bkInstId := event["bk_inst_id"].(int)
-			topoIds = append(topoIds, fmt.Sprintf("%s|%d", bkObjId, bkInstId))
+			bkInstId, ok := event["bk_inst_id"].(float64)
+			if !ok {
+				continue
+			}
+			topoIds = append(topoIds, fmt.Sprintf("%s|%d", bkObjId, int(bkInstId)))
 		}
 		if len(topoIds) == 0 {
 			return nil
@@ -693,15 +696,15 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		topoNodes := make(map[string]string)
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)
-			bkInstId := event["bk_inst_id"].(int)
+			bkInstId := event["bk_inst_id"].(float64)
 			topo := map[string]interface{}{
-				"bk_inst_id":   event["bk_inst_id"],
+				"bk_inst_id":   int(bkInstId),
 				"bk_inst_name": event["bk_inst_name"],
-				"bk_obj_id":    event["bk_obj_id"],
+				"bk_obj_id":    bkObjId,
 				"bk_obj_name":  event["bk_obj_name"],
 			}
 			value, _ := json.Marshal(topo)
-			topoNodes[fmt.Sprintf("%s|%d", bkObjId, bkInstId)] = string(value)
+			topoNodes[fmt.Sprintf("%s|%d", bkObjId, int(bkInstId))] = string(value)
 		}
 		err := m.UpdateHashMapCache(ctx, key, topoNodes)
 		if err != nil {
@@ -710,9 +713,11 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		return nil
 	case "host_relation":
 		for _, event := range events {
-			logger.Infof("event: %v", event)
-			bkBizID := event["bk_biz_id"].(int)
-			needUpdateBizIds[bkBizID] = struct{}{}
+			bkBizID, ok := event["bk_biz_id"].(float64)
+			if !ok {
+				continue
+			}
+			needUpdateBizIds[int(bkBizID)] = struct{}{}
 		}
 	}
 

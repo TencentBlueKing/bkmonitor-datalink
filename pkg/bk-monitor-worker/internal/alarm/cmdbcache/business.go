@@ -276,8 +276,8 @@ func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType s
 	// 获取业务ID
 	bizIds := make([]string, 0, len(events))
 	for _, event := range events {
-		if bizID, ok := event["bk_biz_id"].(int); ok {
-			bizIds = append(bizIds, strconv.Itoa(bizID))
+		if bizID, ok := event["bk_biz_id"].(float64); ok {
+			bizIds = append(bizIds, strconv.Itoa(int(bizID)))
 		}
 	}
 

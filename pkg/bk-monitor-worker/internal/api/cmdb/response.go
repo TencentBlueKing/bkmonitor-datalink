@@ -300,41 +300,16 @@ type ResourceWatchEvent struct {
 type SearchModuleResp struct {
 	define.ApiCommonRespMeta `mapstructure:",squash"`
 	Data                     struct {
-		Count int                `json:"count" mapstructure:"count"`
-		Info  []SearchModuleData `json:"info" mapstructure:"info"`
+		Count int                      `json:"count" mapstructure:"count"`
+		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
-}
-
-// SearchModuleData 查询模块数据
-type SearchModuleData struct {
-	BkBizId           int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
-	BkModuleId        int    `json:"bk_module_id" mapstructure:"bk_module_id"`
-	BkModuleName      string `json:"bk_module_name" mapstructure:"bk_module_name"`
-	BkSetId           int    `json:"bk_set_id" mapstructure:"bk_set_id"`
-	Operator          string `json:"operator" mapstructure:"operator"`
-	BkBakOperator     string `json:"bk_bak_operator" mapstructure:"bk_bak_operator"`
-	ServiceCategoryId int    `json:"service_category_id" mapstructure:"service_category_id"`
-	ServiceTemplateId int    `json:"service_template_id" mapstructure:"service_template_id"`
-	SetTemplateId     int    `json:"set_template_id" mapstructure:"set_template_id"`
 }
 
 // SearchSetResp 查询集群返回
 type SearchSetResp struct {
 	define.ApiCommonRespMeta `mapstructure:",squash"`
 	Data                     struct {
-		Count int             `json:"count" mapstructure:"count"`
-		Info  []SearchSetData `json:"info" mapstructure:"info"`
+		Count int                      `json:"count" mapstructure:"count"`
+		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
-}
-
-// SearchSetData 查询集群数据
-type SearchSetData struct {
-	BkBizId         int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
-	BkSetId         int    `json:"bk_set_id" mapstructure:"bk_set_id"`
-	BkSetName       string `json:"bk_set_name" mapstructure:"bk_set_name"`
-	BkSetEnv        string `json:"bk_set_env" mapstructure:"bk_set_env"`
-	BkSetDesc       string `json:"bk_set_desc" mapstructure:"bk_set_desc"`
-	SetTemplateId   int    `json:"set_template_id" mapstructure:"set_template_id"`
-	BkServiceStatus string `json:"bk_service_status" mapstructure:"bk_service_status"`
-	Description     string `json:"description" mapstructure:"description"`
 }

@@ -22,74 +22,66 @@
 
 package cmdbcache
 
-//func TestResourceWatch(t *testing.T) {
-//	redisOptions := redis.RedisOptions{
-//		Mode:  "standalone",
-//		Addrs: []string{"127.0.0.1:6379"},
-//	}
-//
-//	// 系统信号
-//	signalChan := make(chan os.Signal, 1)
-//	signal.Notify(signalChan, os.Interrupt, os.Kill)
-//
-//	//调用cancel函数取消
-//	ctx, cancel := context.WithCancel(context.Background())
-//	defer cancel()
-//
-//	// 监听信号
-//	go func() {
-//		<-signalChan
-//		cancel()
-//	}()
-//
-//	prefix := t.Name()
-//
-//	wg := &sync.WaitGroup{}
-//	wg.Add(2)
-//
-//	go func() {
-//		defer cancel()
-//		defer wg.Done()
-//
-//		params := &WatchCmdbResourceChangeEventTaskParams{
-//			Redis:  redisOptions,
-//			Prefix: prefix,
-//		}
-//		payload, _ := json.Marshal(params)
-//
-//		tt := &task.Task{
-//			Kind:    "watch_cmdb_resource_change_event",
-//			Payload: payload,
-//		}
-//
-//		if err := WatchCmdbResourceChangeEventTask(ctx, tt); err != nil {
-//			t.Errorf("TestWatch failed, err: %v", err)
-//			return
-//		}
-//	}()
-//
-//	go func() {
-//		defer cancel()
-//		defer wg.Done()
-//
-//		params := &RefreshTaskParams{
-//			Redis:                redisOptions,
-//			Prefix:               prefix,
-//			EventHandleInterval:  60,
-//			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
-//		}
-//		payload, _ := json.Marshal(params)
-//
-//		tt := &task.Task{
-//			Kind:    "handle_cmdb_resource_change_event",
-//			Payload: payload,
-//		}
-//
-//		if err := CacheRefreshTask(ctx, tt); err != nil {
-//			t.Errorf("TestHandle failed, err: %v", err)
-//			return
-//		}
-//	}()
-//
-//	wg.Wait()
-//}
+import (
+	"testing"
+)
+
+func TestResourceWatch(t *testing.T) {
+	//redisOptions := redis.Options{
+	//	Mode:  "standalone",
+	//	Addrs: []string{"127.0.0.1:6379"},
+	//}
+	//
+	//// 系统信号
+	//signalChan := make(chan os.Signal, 1)
+	//signal.Notify(signalChan, os.Interrupt, os.Kill)
+	//
+	////调用cancel函数取消
+	//ctx, cancel := context.WithCancel(context.Background())
+	//defer cancel()
+	//
+	//// 监听信号
+	//go func() {
+	//	<-signalChan
+	//	cancel()
+	//}()
+	//
+	//prefix := t.Name()
+	//
+	//wg := &sync.WaitGroup{}
+	//wg.Add(2)
+	//
+	//go func() {
+	//	defer cancel()
+	//	defer wg.Done()
+	//
+	//	params := &WatchCmdbResourceChangeEventTaskParams{
+	//		Redis:  redisOptions,
+	//		Prefix: prefix,
+	//	}
+	//	payload, _ := json.Marshal(params)
+	//	if err := WatchCmdbResourceChangeEventTask(ctx, payload); err != nil {
+	//		t.Errorf("TestWatch failed, err: %v", err)
+	//		return
+	//	}
+	//}()
+	//
+	//go func() {
+	//	defer cancel()
+	//	defer wg.Done()
+	//
+	//	params := &RefreshTaskParams{
+	//		Redis:                redisOptions,
+	//		Prefix:               prefix,
+	//		EventHandleInterval:  60,
+	//		FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
+	//	}
+	//	payload, _ := json.Marshal(params)
+	//	if err := CacheRefreshTask(ctx, payload); err != nil {
+	//		t.Errorf("TestHandle failed, err: %v", err)
+	//		return
+	//	}
+	//}()
+	//
+	//wg.Wait()
+}

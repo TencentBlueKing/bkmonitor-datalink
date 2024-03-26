@@ -233,7 +233,7 @@ func TestBusinessCacheManager(t *testing.T) {
 		}
 
 		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": 2},
+			{"bk_biz_id": float64(2)},
 		})
 		if err != nil {
 			t.Error(err)
@@ -243,40 +243,15 @@ func TestBusinessCacheManager(t *testing.T) {
 		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 3)
 
 		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": 2},
+			{"bk_biz_id": float64(2)},
 		})
 		err = cacheManager.CleanByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": 3},
+			{"bk_biz_id": float64(3)},
 		})
 		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": 3},
+			{"bk_biz_id": float64(3)},
 		})
 
 		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 2)
 	})
 }
-
-// 真实运行测试
-//func TestRunBusinessCache(t *testing.T) {
-//	rOpts := &redis.RedisOptions{
-//		Mode:  "standalone",
-//		Addrs: []string{"127.0.0.1:6379"},
-//	}
-//
-//	ctx := context.Background()
-//
-//	cm, err := NewCacheManagerByType(rOpts, t.Name(), "business")
-//	if err != nil {
-//		t.Fatal(err)
-//	}
-//
-//	err = cm.RefreshGlobal(ctx)
-//	if err != nil {
-//		t.Fatal(err)
-//	}
-//
-//	err = cm.CleanGlobal(ctx)
-//	if err != nil {
-//		t.Fatal(err)
-//	}
-//}

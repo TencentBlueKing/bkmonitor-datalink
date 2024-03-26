@@ -24,42 +24,58 @@ package cmdbcache
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
-var demoModules = []cmdb.SearchModuleData{
-	{
-		BkBizId:           2,
-		BkModuleId:        1,
-		BkModuleName:      "module1",
-		BkSetId:           2,
-		BkBakOperator:     "admin",
-		Operator:          "admin",
-		ServiceCategoryId: 1,
-		ServiceTemplateId: 1,
-		SetTemplateId:     1,
+var demoModuleStr = `
+	[{
+		"bk_biz_id":           2,
+		"bk_module_id":        1,
+		"bk_module_name":      "module1",
+		"bk_set_id":           2,
+		"bk_bak_operator":     "admin",
+		"operator":            "admin",
+		"service_category_id": 1,
+		"service_template_id": 1,
+		"set_template_id":     1
 	},
 	{
-		BkBizId:           2,
-		BkModuleId:        2,
-		BkModuleName:      "module2",
-		BkSetId:           2,
-		BkBakOperator:     "admin",
-		Operator:          "admin,user1",
-		ServiceCategoryId: 1,
-		ServiceTemplateId: 2,
-		SetTemplateId:     1,
+		"bk_biz_id":           2,
+		"bk_module_id":        2,
+		"bk_module_name":      "module2",
+		"bk_set_id":           2,
+		"bk_bak_operator":     "admin",
+		"operator":            "admin,user1",
+		"service_category_id": 1,
+		"service_template_id": 2,
+		"set_template_id":     1
 	},
-}
+	{
+		"bk_biz_id":           2,
+		"bk_module_id":        3,
+		"bk_module_name":      "module3",
+		"bk_set_id":           3,
+		"bk_bak_operator":     "admin",
+		"operator":            "admin,user1",
+		"service_category_id": 1,
+		"service_template_id": 2,
+		"set_template_id":     1
+	}]
+`
 
 func TestModuleCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bizID int) ([]cmdb.SearchModuleData, error) {
+	patch := gomonkey.ApplyFunc(getModuleListByBizID, func(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
+		var demoModules []map[string]interface{}
+		err := json.Unmarshal([]byte(demoModuleStr), &demoModules)
+		if err != nil {
+			return nil, err
+		}
 		return demoModules, nil
 	})
 	defer patch.Reset()
@@ -84,7 +100,7 @@ func TestModuleCacheManager(t *testing.T) {
 			return
 		}
 
-		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
+		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
 		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
 
 		cacheManager.initUpdatedFieldSet(moduleCacheKey, serviceTemplateCacheKey)
@@ -96,5 +112,52 @@ func TestModuleCacheManager(t *testing.T) {
 
 		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
 		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
+	})
+
+	t.Run("TestModuleCacheManager_Events", func(t *testing.T) {
+		cacheManager, err := NewModuleCacheManager(t.Name(), rOpts, 1)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		events := []map[string]interface{}{
+			{
+				"bk_biz_id":    float64(2),
+				"bk_module_id": float64(1),
+			},
+		}
+
+		err = cacheManager.UpdateByEvents(ctx, "module", events)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
+
+		events = []map[string]interface{}{
+			{
+				"bk_biz_id":           float64(2),
+				"bk_module_id":        float64(1),
+				"service_template_id": float64(1),
+			},
+			{
+				"bk_biz_id":           float64(2),
+				"bk_module_id":        float64(2),
+				"service_template_id": float64(2),
+			},
+		}
+
+		err = cacheManager.CleanByEvents(ctx, "module", events)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(moduleCacheKey)).Val())
+		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey)).Val())
+		assert.EqualValues(t, "[3]", client.HGet(ctx, cacheManager.GetCacheKey(serviceTemplateCacheKey), "2").Val())
 	})
 }

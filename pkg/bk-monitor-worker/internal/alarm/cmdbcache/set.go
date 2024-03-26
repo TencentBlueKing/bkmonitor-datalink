@@ -63,7 +63,7 @@ func NewSetCacheManager(prefix string, opt *redis.Options, concurrentLimit int) 
 }
 
 // getSetListByBizID 通过业务ID获取集群列表
-func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, error) {
+func getSetListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func getSetListByBizID(ctx context.Context, bizID int) ([]cmdb.SearchSetData, er
 	}
 
 	// 准备缓存数据
-	setList := make([]cmdb.SearchSetData, 0)
+	setList := make([]map[string]interface{}, 0)
 	for _, item := range result {
 		var res cmdb.SearchSetResp
 		err = mapstructure.Decode(item, &res)
@@ -132,8 +132,19 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 			return errors.Wrap(err, "failed to marshal set")
 		}
 
-		setCacheData[strconv.Itoa(set.BkSetId)] = string(setStr)
-		templateToSets[strconv.Itoa(set.SetTemplateId)] = append(templateToSets[strconv.Itoa(set.SetTemplateId)], strconv.Itoa(set.BkSetId))
+		setId, ok := set["bk_set_id"].(float64)
+		if !ok {
+			continue
+		}
+		setIdStr := strconv.Itoa(int(setId))
+		setCacheData[setIdStr] = string(setStr)
+
+		setTemplateId, ok := set["set_template_id"].(float64)
+		if !ok || setTemplateId <= 0 {
+			continue
+		}
+		setTemplateIdStr := strconv.Itoa(int(setTemplateId))
+		templateToSets[setTemplateIdStr] = append(templateToSets[setTemplateIdStr], setIdStr)
 	}
 
 	// 更新集群缓存
@@ -178,27 +189,73 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 	}
 
 	// 提取集群ID及集群模板ID
-	setIds := make([]string, 0, len(events))
-	setTemplateIds := make([]string, 0, len(events))
+	needDeleteSetIds := make(map[int]struct{})
+	needUpdateSetTemplateIds := make(map[string]struct{})
 	for _, event := range events {
-		setID, ok := event["bk_set_id"].(int)
-		if ok {
-			setIds = append(setIds, strconv.Itoa(setID))
+		setID, ok := event["bk_set_id"].(float64)
+		if !ok {
+			continue
+		}
+		// 记录需要删除的集群ID
+		needDeleteSetIds[int(setID)] = struct{}{}
+
+		// 记录需要删除的集群模板关联的集群ID
+		if setTemplateID, ok := event["set_template_id"].(float64); ok && setTemplateID > 0 {
+			needUpdateSetTemplateIds[strconv.Itoa(int(setTemplateID))] = struct{}{}
+		}
+	}
+
+	setTemplateCacheData := make(map[string]string)
+	needDeleteSetTemplateIds := make([]string, 0)
+	for setTemplateID := range needUpdateSetTemplateIds {
+		// 获取原有的集群ID
+		result := m.RedisClient.HGet(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateID)
+		if result.Err() != nil {
+			continue
 		}
 
-		setTemplateID, ok := event["set_template_id"].(int)
-		if ok && setTemplateID > 0 {
-			setTemplateIds = append(setTemplateIds, strconv.Itoa(setTemplateID))
+		var oldSetIds []int
+		err := json.Unmarshal([]byte(result.Val()), &oldSetIds)
+		if err != nil {
+			continue
+		}
+
+		// 计算新的集群ID
+		var newSetIds []string
+		for _, oldSetID := range oldSetIds {
+			if _, ok := needDeleteSetIds[oldSetID]; !ok {
+				newSetIds = append(newSetIds, strconv.Itoa(oldSetID))
+			}
+		}
+
+		// 更新集群模板关联的集群缓存
+		if len(newSetIds) > 0 {
+			setTemplateCacheData[setTemplateID] = fmt.Sprintf("[%s]", strings.Join(newSetIds, ","))
+		} else {
+			needDeleteSetTemplateIds = append(needDeleteSetTemplateIds, setTemplateID)
 		}
 	}
 
 	// 删除缓存
-	if len(setIds) > 0 {
+	if len(needDeleteSetIds) > 0 {
+		setIds := make([]string, 0, len(needDeleteSetIds))
+		for setID := range needDeleteSetIds {
+			setIds = append(setIds, strconv.Itoa(setID))
+		}
 		m.RedisClient.HDel(ctx, m.GetCacheKey(setCacheKey), setIds...)
 	}
 
-	if len(setTemplateIds) > 0 {
-		m.RedisClient.HDel(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateIds...)
+	// 删除集群模板关联的集群缓存
+	if len(needDeleteSetTemplateIds) > 0 {
+		m.RedisClient.HDel(ctx, m.GetCacheKey(setTemplateCacheKey), needDeleteSetTemplateIds...)
+	}
+
+	// 更新集群模板关联的集群缓存
+	if len(setTemplateCacheData) > 0 {
+		err := m.UpdateHashMapCache(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateCacheData)
+		if err != nil {
+			return errors.Wrap(err, "failed to update set template hashmap cache")
+		}
 	}
 
 	return nil
@@ -213,9 +270,9 @@ func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType strin
 	// 提取业务ID
 	needUpdateBizIds := make(map[int]struct{})
 	for _, event := range events {
-		bizID, ok := event["bk_biz_id"].(int)
+		bizID, ok := event["bk_biz_id"].(float64)
 		if ok {
-			needUpdateBizIds[bizID] = struct{}{}
+			needUpdateBizIds[int(bizID)] = struct{}{}
 		}
 	}
 
@@ -236,6 +293,7 @@ func (m *SetCacheManager) UpdateByEvents(ctx context.Context, resourceType strin
 			}
 		}(bizID)
 	}
+	wg.Wait()
 
 	return nil
 }

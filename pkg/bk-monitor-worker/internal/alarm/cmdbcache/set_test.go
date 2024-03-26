@@ -24,40 +24,57 @@ package cmdbcache
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
-var demoSets = []cmdb.SearchSetData{
+var demoSetStr = `
+[
 	{
-		BkBizId:         2,
-		BkSetId:         1,
-		BkSetName:       "set1",
-		SetTemplateId:   1,
-		BkSetEnv:        "test",
-		BkSetDesc:       "desc1",
-		BkServiceStatus: "1",
-		Description:     "desc",
+		"bk_biz_id":         2,
+		"bk_set_id":         1,
+		"bk_set_name":       "set1",
+		"set_template_id":   1,
+		"bk_set_env":        "test",
+		"bk_set_desc":       "desc1",
+		"bk_service_status": "1",
+		"description":       "desc"
 	},
 	{
-		BkBizId:         2,
-		BkSetId:         2,
-		BkSetName:       "set2",
-		SetTemplateId:   1,
-		BkSetEnv:        "test",
-		BkSetDesc:       "desc2",
-		BkServiceStatus: "1",
-		Description:     "desc",
+		"bk_biz_id":         2,
+		"bk_set_id":         2,
+		"bk_set_name":       "set2",
+		"set_template_id":   1,
+		"bk_set_env":        "test",
+		"bk_set_desc":       "desc2",
+		"bk_service_status": "1",
+		"description":       "desc"
 	},
-}
+	{
+		"bk_biz_id":         2,
+		"bk_set_id":         3,
+		"bk_set_name":       "set3",
+		"set_template_id":   2,
+		"bk_set_env":        "test",
+		"bk_set_desc":       "desc3",
+		"bk_service_status": "1",
+		"description":       "desc"
+	}
+]
+`
 
 func TestSetCacheManager(t *testing.T) {
-	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bizID int) ([]cmdb.SearchSetData, error) {
+	patch := gomonkey.ApplyFunc(getSetListByBizID, func(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
+		demoSets := make([]map[string]interface{}, 0)
+		err := json.Unmarshal([]byte(demoSetStr), &demoSets)
+		if err != nil {
+			return nil, err
+		}
 		return demoSets, nil
 	})
 	defer patch.Reset()
@@ -83,8 +100,8 @@ func TestSetCacheManager(t *testing.T) {
 			return
 		}
 
-		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
-		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
+		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
 
 		cacheManager.initUpdatedFieldSet(setCacheKey, setTemplateCacheKey)
 		err = cacheManager.CleanGlobal(ctx)
@@ -97,4 +114,51 @@ func TestSetCacheManager(t *testing.T) {
 		assert.EqualValues(t, 0, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
 	})
 
+	t.Run("TestSetCacheManager_Events", func(t *testing.T) {
+		cacheManager, err := NewSetCacheManager(t.Name(), rOpts, 1)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		events := []map[string]interface{}{
+			{
+				"bk_biz_id": float64(2),
+				"bk_set_id": float64(1),
+			},
+		}
+
+		err = cacheManager.UpdateByEvents(ctx, "set", events)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 3, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
+		assert.EqualValues(t, 2, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
+
+		events = []map[string]interface{}{
+			{
+				"bk_biz_id":       float64(2),
+				"bk_set_id":       float64(1),
+				"set_template_id": float64(1),
+			},
+			{
+				"bk_biz_id":       float64(2),
+				"bk_set_id":       float64(3),
+				"set_template_id": float64(2),
+			},
+		}
+
+		err = cacheManager.CleanByEvents(ctx, "set", events)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setCacheKey)).Val())
+		assert.EqualValues(t, 1, client.HLen(ctx, cacheManager.GetCacheKey(setTemplateCacheKey)).Val())
+		assert.EqualValues(t, `[2]`, client.HGet(ctx, cacheManager.GetCacheKey(setTemplateCacheKey), "1").Val())
+
+	})
 }

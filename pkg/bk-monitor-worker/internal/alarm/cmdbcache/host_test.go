@@ -206,9 +206,9 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 				return
 			}
 			events = append(events, map[string]interface{}{
-				"bk_host_id":      host.BkHostId,
+				"bk_host_id":      float64(host.BkHostId),
 				"bk_host_innerip": host.BkHostInnerip,
-				"bk_cloud_id":     host.BkCloudId,
+				"bk_cloud_id":     float64(host.BkCloudId),
 				"bk_agent_id":     host.BkAgentId,
 			})
 		}
@@ -229,7 +229,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 
 		topoEvent := map[string]interface{}{
 			"bk_obj_id":    "module",
-			"bk_inst_id":   6,
+			"bk_inst_id":   float64(6),
 			"bk_inst_name": "测试模块",
 			"bk_obj_name":  "模块",
 		}

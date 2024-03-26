@@ -45,6 +45,9 @@ var (
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
 	// If this is enabled, the query frequency of elasticsearch is reduced.
 	EnabledTraceInfoCache int
+	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
+	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
+	TraceEsQueryRate int
 	// StorageSaveRequestBufferSize Number of storage chan
 	StorageSaveRequestBufferSize int
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
@@ -106,6 +109,7 @@ func initApmVariables() {
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
 
+	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 100000)
 	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 1000)

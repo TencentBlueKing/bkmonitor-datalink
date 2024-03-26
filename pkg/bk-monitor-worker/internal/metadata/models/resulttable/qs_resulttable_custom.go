@@ -16,10 +16,10 @@ import "strings"
 func (qs ResultTableQuerySet) TableIdsLike(tableIds []string) ResultTableQuerySet {
 	var sqlList []string
 	interfaceSlice := make([]interface{}, len(tableIds))
-    for i, v := range tableIds {
+	for i, v := range tableIds {
 		sqlList = append(sqlList, "table_id LIKE ?")
-        interfaceSlice[i] = v
-    }
+		interfaceSlice[i] = v
+	}
 	// 以 `OR` 拼接 sql
 	sql := strings.Join(sqlList, " OR ")
 	return qs.w(qs.db.Where(sql, interfaceSlice...))

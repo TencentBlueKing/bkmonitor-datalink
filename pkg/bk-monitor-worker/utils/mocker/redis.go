@@ -20,7 +20,7 @@ import (
 type RedisClientMocker struct {
 	ZcountValue                  int64
 	ZRangeByScoreWithScoresValue []goRedis.Z
-	HMGetValue                   []interface{}					 
+	HMGetValue                   []interface{}
 	SetMap                       map[string]mapset.Set[string]
 	goRedis.UniversalClient
 }

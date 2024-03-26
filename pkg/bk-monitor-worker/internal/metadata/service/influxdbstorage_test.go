@@ -26,7 +26,7 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 
 	clusterInfo := storage.ClusterInfo{
-		ClusterID:        99,
+		ClusterID:        2,
 		ClusterType:      models.StorageTypeInfluxdb,
 		CreateTime:       time.Now(),
 		LastModifyTime:   time.Now(),
@@ -35,13 +35,14 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 		GseStreamToId:    -1,
 	}
 	db := mysql.GetDBSession().DB
-	db.Delete(&clusterInfo, "cluster_id = ?", 99)
+	db.Delete(&clusterInfo, "cluster_id = ?", 2)
 	err := clusterInfo.Create(db)
 	assert.NoError(t, err)
 
+	instanceClusterName := "name"
 	p := storage.InfluxdbProxyStorage{
 		ProxyClusterId:      2,
-		InstanceClusterName: "name",
+		InstanceClusterName: instanceClusterName,
 		ServiceName:         "svc_name",
 		IsDefault:           true,
 	}
@@ -50,7 +51,7 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 	assert.NoError(t, err)
 	is := &storage.InfluxdbStorage{
 		TableID:                "influxdb_table_id",
-		StorageClusterID:       99,
+		StorageClusterID:       2,
 		RealTableName:          "real_table_nm",
 		Database:               "db",
 		SourceDurationTime:     "1",
@@ -67,6 +68,10 @@ func TestInfluxdbStorageSvc_ConsulConfig(t *testing.T) {
 	svc := NewInfluxdbStorageSvc(is)
 	config, err := svc.ConsulConfig()
 	assert.NoError(t, err)
+
+	// 判断 instance_cluster_name 存在
+	assert.Equal(t, instanceClusterName, config.ClusterInfoConsulConfig.ClusterConfig.InstanceClusterName)
+
 	storageConfigStr, err := jsonx.MarshalString(config.StorageConfig)
 	assert.NoError(t, err)
 	assert.JSONEq(t, storageConfigStr, `{"database":"db","real_table_name":"real_table_nm","retention_policy_name":"bkmonitor_rp_influxdb_table_id"}`)

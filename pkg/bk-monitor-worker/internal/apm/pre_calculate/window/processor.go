@@ -19,6 +19,7 @@ import (
 	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
@@ -67,14 +68,16 @@ type Processor struct {
 	dataId string
 	config ProcessorOptions
 
-	dataIdBaseInfo core.BaseInfo
-	proxy          *storage.Proxy
+	dataIdBaseInfo      core.BaseInfo
+	proxy               *storage.Proxy
+	traceEsQueryLimiter *rate.Limiter
 
 	logger monitorLogger.Logger
 }
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
 	exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
+
 	if err != nil {
 		p.logger.Warnf(
 			"Attempt to retrieve traceMeta from Bloom-filter failed, "+
@@ -115,6 +118,15 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 				return spans
 			}
 		}
+	}
+
+	if !p.traceEsQueryLimiter.Allow() {
+		logger.Warnf(
+			"[NOTE] dataId: %s This es query exceeds the threshold %d. This request will be discarded.",
+			p.dataId,
+			p.config.traceEsQueryRate,
+		)
+		return spans
 	}
 
 	spanBytes, err := p.proxy.Query(storage.QueryRequest{
@@ -430,6 +442,7 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 
 type ProcessorOptions struct {
 	enabledInfoCache bool
+	traceEsQueryRate int
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -442,17 +455,29 @@ func EnabledTraceInfoCache(b bool) ProcessorOption {
 	}
 }
 
+// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
+// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
+func TraceEsQueryRate(r int) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.traceEsQueryRate = r
+	}
+}
+
 func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
 		setter(&opts)
 	}
 
+	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.traceEsQueryRate)), opts.traceEsQueryRate)
+	logger.Infof("create es query limiter, dataId: %s rate: %d", dataId, opts.traceEsQueryRate)
+
 	return Processor{
-		dataId:         dataId,
-		config:         opts,
-		dataIdBaseInfo: core.GetMetadataCenter().GetBaseInfo(dataId),
-		proxy:          storageProxy,
+		dataId:              dataId,
+		config:              opts,
+		dataIdBaseInfo:      core.GetMetadataCenter().GetBaseInfo(dataId),
+		proxy:               storageProxy,
+		traceEsQueryLimiter: limiter,
 		logger: monitorLogger.With(
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),

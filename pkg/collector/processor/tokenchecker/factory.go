@@ -10,8 +10,6 @@
 package tokenchecker
 
 import (
-	"strings"
-
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -210,7 +208,7 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=(%s), err: %v", strings.Join(src, ","), err)
+			logger.Errorf("failed to parse pdTraces token=(%v), err: %v", src, err)
 			return true
 		}
 		return false
@@ -244,7 +242,7 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=(%s), err: %v", strings.Join(src, ","), err)
+			logger.Errorf("failed to parse pdMetrics token=(%v), err: %v", src, err)
 			return true
 		}
 		return false
@@ -278,7 +276,7 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=(%s), err: %v", strings.Join(src, ","), err)
+			logger.Errorf("failed to parse pdLogs token=(%v), err: %v", src, err)
 			return true
 		}
 		return false

@@ -9,6 +9,7 @@ require (
 	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/ahmetb/go-linq/v3 v3.2.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
+	github.com/alicebob/miniredis/v2 v2.31.1
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/bytedance/sonic v1.9.1
 	github.com/cespare/xxhash/v2 v2.2.0
@@ -33,6 +34,7 @@ require (
 	github.com/jinzhu/gorm v1.9.16
 	github.com/josephburnett/jd v1.7.1
 	github.com/minio/highwayhash v1.0.2
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.13.0
@@ -119,7 +121,6 @@ require (
 	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nbio/st v0.0.0-20140626010706-e9e8d9816f32 // indirect

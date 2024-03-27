@@ -307,8 +307,7 @@ type Host struct {
 
 // IgnoreMonitorByStatus 根据状态判断是否忽略监控
 func (h Host) IgnoreMonitorByStatus() bool {
-	status, _ := h.BkState.(string)
-	return slicex.IsExistItem(cfg.GlobalHostDisableMonitorStates, status)
+	return slicex.IsExistItem(cfg.GlobalHostDisableMonitorStates, *h.BkState)
 }
 
 // IsIPV6Biz 所属业务是否是ipv6业务

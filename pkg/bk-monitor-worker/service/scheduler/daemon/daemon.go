@@ -18,6 +18,7 @@ import (
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cmdbcache"
 	apmTasks "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -69,6 +70,14 @@ var taskDefine = map[string]OperatorDefine{
 			return nil, errors.New(fmt.Sprintf("apm.pre_calculate failed to initial, error: %s", runErr))
 		}
 		return op, err
+	}},
+	"daemon:alarm:cmdb_resource_watch": {initialFunc: func(ctx context.Context) (Operator, error) {
+		logger.Info("cmdb_resource_watch daemon task is initialized")
+		return &cmdbcache.ResourceWatchDaemon{}, nil
+	}},
+	"daemon:alarm:cmdb_cache_refresh": {initialFunc: func(ctx context.Context) (Operator, error) {
+		logger.Info("cmdb_cache_refresh daemon task is initialized")
+		return &cmdbcache.CacheRefreshDaemon{}, nil
 	}},
 }
 

@@ -9,7 +9,9 @@
 
 package apiservice
 
-import "net"
+import (
+	"net"
+)
 
 // IsIPv6 判断ip是否为ipv6
 func IsIPv6(ip string) bool {

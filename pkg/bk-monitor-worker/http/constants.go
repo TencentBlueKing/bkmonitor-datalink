@@ -26,4 +26,6 @@ const (
 	DeleteAllTaskPath = "/bmw/task/all"
 	// DaemonTaskReload 常驻任务重载(重新启动)
 	DaemonTaskReload = "/bmw/task/daemon/reload"
+	// SetLogLevelPath 动态设置日志级别
+	SetLogLevelPath = "/bmw/log/level"
 )

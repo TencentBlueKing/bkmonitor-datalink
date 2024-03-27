@@ -49,7 +49,7 @@ func (c *Client) Close() error {
 
 // Enqueue 入队列
 func (c *Client) Enqueue(task *t.Task, opts ...t.Option) (*t.TaskInfo, error) {
-	metrics.EnqueueTaskCount(task.Kind)
+	metrics.EnqueueTaskTotal(task.Kind)
 	return c.EnqueueWithContext(context.Background(), task, opts...)
 }
 

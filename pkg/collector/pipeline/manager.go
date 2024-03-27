@@ -298,8 +298,9 @@ var defaultGetter Getter
 func GetDefaultGetter() Getter { return defaultGetter }
 
 const (
-	mainType     = "main"
-	PlatformType = "platform"
+	mainType             = "main"
+	PlatformType         = "platform"
+	PlatformOverrideType = "platform_override"
 )
 
 func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
@@ -331,7 +332,7 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 	}
 
 	// 解析合并：配置 = 主配置+子配置+平台配置（如果有的话）
-	platformConfig := confengine.LoadPlatformConfigs(apmConf.Patterns)
+	platformConfig := confengine.LoadPlatformConfigs(apmConf.Patterns, define.ConfigTypePlatform)
 	if platformConfig != nil {
 		if platformConfig.Has(define.ConfigFieldProcessor) {
 			platformProcessors, err := parseProcessors(PlatformType, platformConfig, processorSubConfigs)
@@ -347,6 +348,17 @@ func parseManagerConfig(conf *confengine.Config) (*Manager, error) {
 				return nil, err
 			}
 			finalPipelines = mergePipelines(finalPipelines, platformPipelines)
+		}
+	}
+	// 解析合并：配置 = 主配置+子配置+平台配置+平台覆盖配置（如果有的话）
+	platformOverrideConfig := confengine.LoadPlatformConfigs(apmConf.Patterns, define.ConfigTypePlatformOverride)
+	if platformOverrideConfig != nil {
+		if platformOverrideConfig.Has(define.ConfigFieldProcessor) {
+			platformOverrideProcessors, err := parseProcessors(PlatformOverrideType, platformOverrideConfig, processorSubConfigs)
+			if err != nil {
+				return nil, err
+			}
+			finalProcessors = mergeProcessors(finalProcessors, platformOverrideProcessors)
 		}
 	}
 

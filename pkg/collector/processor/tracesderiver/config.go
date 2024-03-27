@@ -24,13 +24,14 @@ type Config struct {
 }
 
 type OperationConfig struct {
-	Type            string       `config:"type" mapstructure:"type"`
-	MetricName      string       `config:"metric_name" mapstructure:"metric_name"`
-	Rules           []RuleConfig `config:"rules" mapstructure:"rules"`
-	MaxSeries       int          `config:"max_series" mapstructure:"max_series"`
-	GcInterval      string       `config:"gc_interval" mapstructure:"gc_interval"`
-	Buckets         []float64    `config:"buckets" mapstructure:"buckets"`
-	PublishInterval string       `config:"publish_interval" mapstructure:"publish_interval"`
+	Type                string       `config:"type" mapstructure:"type"`
+	MetricName          string       `config:"metric_name" mapstructure:"metric_name"`
+	Rules               []RuleConfig `config:"rules" mapstructure:"rules"`
+	MaxSeries           int          `config:"max_series" mapstructure:"max_series"`
+	GcInterval          string       `config:"gc_interval" mapstructure:"gc_interval"`
+	Buckets             []float64    `config:"buckets" mapstructure:"buckets"`
+	PublishInterval     string       `config:"publish_interval" mapstructure:"publish_interval"`
+	MaxSeriesGrowthRate int          `config:"max_series_growth_rate" mapstructure:"max_series_growth_rate"`
 }
 
 type RuleConfig struct {
@@ -84,12 +85,13 @@ func NewConfigHandler(config Config) *ConfigHandler {
 				gcInterval, _ := time.ParseDuration(conf.GcInterval)
 				publishInterval, _ := time.ParseDuration(conf.PublishInterval)
 				accumulatorConfig = &accumulator.Config{
-					MetricName:      conf.MetricName,
-					MaxSeries:       conf.MaxSeries,
-					GcInterval:      gcInterval,
-					PublishInterval: publishInterval,
-					Buckets:         conf.Buckets,
-					Type:            conf.Type,
+					MetricName:          conf.MetricName,
+					MaxSeries:           conf.MaxSeries,
+					GcInterval:          gcInterval,
+					PublishInterval:     publishInterval,
+					Buckets:             conf.Buckets,
+					Type:                conf.Type,
+					MaxSeriesGrowthRate: conf.MaxSeriesGrowthRate,
 				}
 				accumulatorConfig.Validate()
 			}

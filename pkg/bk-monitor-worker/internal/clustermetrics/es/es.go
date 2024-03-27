@@ -51,7 +51,7 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 }
 
 // collectAndReportMetrics 采集&上报ES集群指标
-func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) error {
+func collectAndReportMetrics(c storage.ClusterInfo) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
@@ -104,9 +104,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 	logger.Infof("collect es cluster metrics success, metric family count: %v ", len(metricFamilies))
 
 	esMetrics := make([]*clustermetrics.EsMetric, 0)
-	currentTime := time.Now()
-	truncatedTime := currentTime.Truncate(time.Minute)
-	timestamp := truncatedTime.Unix() * 1000
+	timestamp := time.Now().Truncate(time.Minute).Unix() * 1000
 
 	for _, mf := range metricFamilies {
 		// 处理指标数据
@@ -166,6 +164,15 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 	return nil
 }
 
+// 构建全局http client
+var httpClient = &http.Client{
+	Timeout: 300 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{},
+		Proxy:           http.ProxyFromEnvironment,
+	},
+}
+
 func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")
 	// 1. 从metadata db中获取所有ES类型集群信息
@@ -180,31 +187,19 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 		return nil
 	}
 
-	// 构建全局http client
-	tlsConfig := &tls.Config{}
-	var httpTransport http.RoundTripper
-	httpTransport = &http.Transport{
-		TLSClientConfig: tlsConfig,
-		Proxy:           http.ProxyFromEnvironment,
-	}
-	httpClient := &http.Client{
-		Timeout:   300 * time.Second,
-		Transport: httpTransport,
-	}
-
 	// 2. 遍历存储获取集群信息
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, 10)
+	ch := make(chan struct{}, 10)
 	wg.Add(len(esClusterInfoList))
 	for _, clusterInfo := range esClusterInfoList {
-		ch <- true
-		go func(c storage.ClusterInfo, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(c storage.ClusterInfo, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
 			}()
 			// 3. 采集并上报集群指标
-			if err := collectAndReportMetrics(c, httpClient); err != nil {
+			if err := collectAndReportMetrics(c); err != nil {
 				logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
 			} else {
 				logger.Infof("es_cluster_info: [%v] name [%s] collect and report metrics success", c.ClusterID, c.ClusterName)

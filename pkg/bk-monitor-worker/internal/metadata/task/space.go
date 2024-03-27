@@ -11,11 +11,18 @@ package task
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -128,5 +135,80 @@ func RefreshBkciSpaceName(ctx context.Context, t *t.Task) error {
 		return errors.Wrap(err, "refresh bkci space name failed")
 	}
 	logger.Info("refresh bkci space name successfully")
+	return nil
+}
+
+// PushAndPublishSpaceRouterTask 推送并发布空间路由信息
+func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
+		}
+	}()
+	// 获取到所有的空间信息
+	var spaceList []space.Space
+	if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).All(&spaceList); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo get all space error, %s", err)
+		return err
+	}
+
+	gorotineCount := GetGoroutineLimit("push_and_publish_space_router_info")
+	pusher := service.NewSpacePusher()
+	// 存放结果表数据
+	var spaceUidList []string
+	wg := &sync.WaitGroup{}
+	ch := make(chan bool, gorotineCount)
+	wg.Add(len(spaceList))
+	// 处理空间路由数据
+	for _, sp := range spaceList {
+		// 组装空间 uid
+		spaceUidList = append(spaceUidList, sp.SpaceUid())
+		ch <- true
+		go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			// 推送空间到结果表的路由
+			if err := pusher.PushSpaceTableIds(sp.SpaceTypeId, sp.SpaceId, false); err != nil {
+				logger.Errorf("PushAndPublishSpaceRouterInfo task error, push space [%s__%s] to redis error, %s", sp.SpaceTypeId, sp.SpaceId, err)
+			} else {
+				logger.Infof("PushAndPublishSpaceRouterInfo task success, push space [%s__%s] to redis success", sp.SpaceTypeId, sp.SpaceId)
+			}
+		}(sp, wg, ch)
+	}
+	wg.Wait()
+	// 统一推送数据
+	client := redis.GetStorageRedisInstance()
+	spaceUidString, err := jsonx.Marshal(spaceUidList)
+	if err == nil {
+		if err := client.Publish(cfg.SpaceToResultTableChannel, spaceUidString); err != nil {
+			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
+		}
+	}
+	
+	db := mysql.GetDBSession().DB
+	// 获取所有可用的结果表
+	var tableIdList []string
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).DefaultStorageEq("influxdb").IsEnableEq(true).IsDeletedEq(false).All(&rtList); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo get table id error, %s", err)
+		return err
+	}
+	// 获取结果表
+	for _, rt := range rtList {
+		tableIdList = append(tableIdList, rt.TableId)
+	}
+
+	// 推送结果表别名路由
+	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)
+	}
+	// 推送结果表详情路由
+	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+		return err
+	}
+
+	logger.Infof("push and publish space router successfully")
 	return nil
 }

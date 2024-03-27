@@ -13,6 +13,7 @@ import (
 	"context"
 	"sync"
 
+	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
@@ -28,12 +29,12 @@ type PeriodicTask struct {
 }
 
 var (
-	refreshTsMetric       = "periodic:metadata:refresh_ts_metric"
-	refreshEventDimension = "periodic:metadata:refresh_event_dimension"
-	refreshEsStorage      = "periodic:metadata:refresh_es_storage"
-	refreshInfluxdbRoute  = "periodic:metadata:refresh_influxdb_route"
-	refreshDatasource     = "periodic:metadata:refresh_datasource"
-	//DiscoverBcsClusters   = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
+	refreshTsMetric             = "periodic:metadata:refresh_ts_metric"
+	refreshEventDimension       = "periodic:metadata:refresh_event_dimension"
+	refreshEsStorage            = "periodic:metadata:refresh_es_storage"
+	refreshInfluxdbRoute        = "periodic:metadata:refresh_influxdb_route"
+	refreshDatasource           = "periodic:metadata:refresh_datasource"
+	DiscoverBcsClusters         = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
 	RefreshBcsMonitorInfo       = "periodic:metadata:refresh_bcs_monitor_info"
 	RefreshDefaultRp            = "periodic:metadata:refresh_default_rp"
 	RefreshBkccSpaceName        = "periodic:metadata:refresh_bkcc_space_name"
@@ -51,13 +52,15 @@ var (
 	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
 	RefreshPingServer2Nodeman   = "periodic:metadata:refresh_ping_server_2_node_man"
 
-	ReportInfluxdbClusterMetrics = "periodic:cluster_metrics:report_influxdb"
+	ReportInfluxdbClusterMetrics  = "periodic:cluster_metrics:report_influxdb"
+	PushAndPublishSpaceRouterInfo = "periodic:cluster_metrics:push_and_publish_space_router_info"
+	ReportESClusterMetrics        = "periodic:cluster_metrics:report_es"
 
 	periodicTasksDefine = map[string]PeriodicTask{
-		// refreshTsMetric: {
-		// 	Cron:    "*/2 * * * *",
-		// 	Handler: metadataTask.RefreshTimeSeriesMetric,
-		// },
+		refreshTsMetric: {
+			Cron:    "*/3 * * * *",
+			Handler: metadataTask.RefreshTimeSeriesMetric,
+		},
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
 			Handler: metadataTask.RefreshEventDimension,
@@ -74,10 +77,10 @@ var (
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshDatasource,
 		},
-		//DiscoverBcsClusters: {
-		//	Cron:    "*/10 * * * *",
-		//	Handler: metadataTask.DiscoverBcsClusters,
-		//},
+		DiscoverBcsClusters: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.DiscoverBcsClusters,
+		},
 		RefreshBcsMonitorInfo: {
 			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshBcsMonitorInfo,
@@ -145,6 +148,14 @@ var (
 		ReportInfluxdbClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
+		},
+		// PushAndPublishSpaceRouterInfo: {
+		// 	Cron:    "*/30 * * * *",
+		// 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+		// },
+		ReportESClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmESTask.ReportESClusterMetrics,
 		},
 	}
 )

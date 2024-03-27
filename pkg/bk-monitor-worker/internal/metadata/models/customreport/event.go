@@ -15,8 +15,10 @@ import (
 
 	"github.com/jinzhu/gorm"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -126,10 +128,18 @@ func (e Event) ModifyEventList(eventInfoList map[string][]string) error {
 				logger.Errorf("update dimension list [%s] for [%s] [%s] error: %s", dimensionList, e.EventID, eventObj.EventName, err)
 				return
 			}
-			err = eventObj.Update(dbSession.DB, EventDBSchema.EventName, EventDBSchema.DimensionList, EventDBSchema.LastModifyTime)
-			if err != nil {
-				logger.Errorf("create event [%s] for [%s] error: %s", eventObj.EventName, e.EventID, err)
-				return
+			if config.BypassSuffixPath != "" && !slicex.IsExistItem(config.SkipBypassTasks, "refresh_custom_report_2_node_man") {
+				logger.Info(diffutil.BuildLogStr("refresh_custom_report_2_node_man", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(eventObj.TableName(), map[string]interface{}{
+					EventDBSchema.EventID.String():       eventObj.EventID,
+					EventDBSchema.EventName.String():     eventObj.EventName,
+					EventDBSchema.DimensionList.String(): eventObj.DimensionList,
+				}), ""))
+			} else {
+				err = eventObj.Update(dbSession.DB, EventDBSchema.EventName, EventDBSchema.DimensionList, EventDBSchema.LastModifyTime)
+				if err != nil {
+					logger.Errorf("create event [%s] for [%s] error: %s", eventObj.EventName, e.EventID, err)
+					return
+				}
 			}
 		}(eventName, dimensionList, eventNameEventMap, &wg)
 

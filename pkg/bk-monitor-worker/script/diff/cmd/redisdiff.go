@@ -20,7 +20,7 @@ import (
 )
 
 var redisCmd = &cobra.Command{
-	Use:   "redis_diff",
+	Use:   "redis",
 	Short: "diff redis data",
 	Long:  "diff redis data",
 	Run:   startRedisDiff,

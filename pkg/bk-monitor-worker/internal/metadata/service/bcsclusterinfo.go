@@ -41,6 +41,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
@@ -253,7 +254,15 @@ func (b BcsClusterInfoSvc) UpdateBcsClusterCloudIdConfig() error {
 		}
 	}
 	b.BkCloudId = &maxCountCloudId
-	return b.Update(mysql.GetDBSession().DB, bcs.BCSClusterInfoDBSchema.BkCloudId)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(b.TableName(), map[string]interface{}{
+			bcs.BCSClusterInfoDBSchema.ID.String():        b.ID,
+			bcs.BCSClusterInfoDBSchema.BkCloudId.String(): b.BkCloudId,
+		}), ""))
+		return nil
+	} else {
+		return b.Update(mysql.GetDBSession().DB, bcs.BCSClusterInfoDBSchema.BkCloudId)
+	}
 }
 
 // FetchK8sNodeListByCluster 从BCS获取集群的节点信息
@@ -419,8 +428,25 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		Creator:           creator,
 		LastModifyUser:    creator,
 	}
-	if err := cluster.Create(db); err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(cluster.TableName(), map[string]interface{}{
+			bcs.BCSClusterInfoDBSchema.ClusterID.String():         b.ClusterID,
+			bcs.BCSClusterInfoDBSchema.BCSApiClusterId.String():   b.BCSApiClusterId,
+			bcs.BCSClusterInfoDBSchema.BkBizId.String():           b.BkBizId,
+			bcs.BCSClusterInfoDBSchema.ProjectId.String():         b.ProjectId,
+			bcs.BCSClusterInfoDBSchema.DomainName.String():        b.DomainName,
+			bcs.BCSClusterInfoDBSchema.Port.String():              b.Port,
+			bcs.BCSClusterInfoDBSchema.ServerAddressPath.String(): b.ServerAddressPath,
+			bcs.BCSClusterInfoDBSchema.ApiKeyType.String():        b.ApiKeyType,
+			bcs.BCSClusterInfoDBSchema.ApiKeyContent.String():     b.ApiKeyContent,
+			bcs.BCSClusterInfoDBSchema.ApiKeyPrefix.String():      b.ApiKeyPrefix,
+			bcs.BCSClusterInfoDBSchema.IsSkipSslVerify.String():   b.IsSkipSslVerify,
+			bcs.BCSClusterInfoDBSchema.BkEnv.String():             b.BkEnv,
+		}), ""))
+	} else {
+		if err := cluster.Create(db); err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("cluster [%s] create database record success", cluster.ClusterID)
 	// 注册6个必要的data_id和自定义事件及自定义时序上报内容
@@ -489,9 +515,18 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 			cluster.K8sEventDataID = bkDataId
 		}
 	}
-	if err := cluster.Update(db, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
-		bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
-		return nil, err
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(cluster.TableName(), map[string]interface{}{
+			bcs.BCSClusterInfoDBSchema.ID.String():                 cluster.ID,
+			bcs.BCSClusterInfoDBSchema.K8sMetricDataID.String():    cluster.K8sMetricDataID,
+			bcs.BCSClusterInfoDBSchema.CustomMetricDataID.String(): cluster.CustomMetricDataID,
+			bcs.BCSClusterInfoDBSchema.K8sEventDataID.String():     cluster.K8sEventDataID,
+		}), ""))
+	} else {
+		if err := cluster.Update(db, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
+			bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
+			return nil, err
+		}
 	}
 	logger.Infof("cluster [%s] all datasource info save to database success.", cluster.ClusterID)
 	return &cluster, nil
@@ -563,14 +598,23 @@ func (b BcsClusterInfoSvc) ensureDataIdResource(name string, config *unstructure
 	if action == "update" {
 		// 存在则更新
 		config.SetResourceVersion(resp.GetResourceVersion())
-		_, err = b.UpdateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
-		if err != nil {
-			return errors.Wrapf(err, "update resource %s failed", name)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
+			body, _ := jsonx.MarshalString(config.Object)
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(body), ""))
+		} else {
+			if _, err = b.UpdateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config); err != nil {
+				return errors.Wrapf(err, "update resource %s failed", name)
+			}
 		}
+
 	} else {
-		_, err = b.CreateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config)
-		if err != nil {
-			return errors.Wrapf(err, "create resource %s failed", name)
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_monitor_info") {
+			body, _ := jsonx.MarshalString(config.Object)
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_monitor_info", diffutil.OperatorTypeAPIPut, diffutil.NewStringBody(body), ""))
+		} else {
+			if _, err = b.CreateK8sResource(models.BcsResourceGroupName, models.BcsResourceVersion, models.BcsResourceDataIdResourcePlural, config); err != nil {
+				return errors.Wrapf(err, "create resource %s failed", name)
+			}
 		}
 	}
 	logger.Infof("%s datasource %s succeed", action, name)
@@ -593,7 +637,7 @@ func (b BcsClusterInfoSvc) GetK8sClientConfig() (*rest.Config, error) {
 	}
 	config := &rest.Config{
 		Host:        fmt.Sprintf("%s://%s:%v/%s/%s", scm, b.DomainName, b.Port, b.ServerAddressPath, b.ClusterID),
-		BearerToken: fmt.Sprintf("%s %s", b.ApiKeyPrefix, b.ApiKeyContent),
+		BearerToken: b.ApiKeyContent,
 		TLSClientConfig: rest.TLSClientConfig{
 			Insecure: b.IsSkipSslVerify,
 		},
@@ -891,11 +935,18 @@ func (b BcsClusterInfoSvc) RefreshMetricLabel() error {
 	}
 	// 每个label批量更新一下
 	for label, ids := range labelFieldIdMap {
-		for _, chunkIds := range slicex.ChunkSlice(ids, 0) {
-			err := customreport.NewTimeSeriesMetricQuerySet(db).FieldIDIn(chunkIds...).GetUpdater().SetLastModifyTime(time.Now()).SetLabel(label).Update()
-			if err != nil {
-				logger.Errorf("update tsMetrics label [%s] for [%v] failed, %v", label, chunkIds, err)
-				continue
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bcs_metrics_label") {
+			logger.Info(diffutil.BuildLogStr("refresh_bcs_metrics_label", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(customreport.TimeSeriesMetric{}.TableName(), map[string]interface{}{
+				customreport.TimeSeriesMetricDBSchema.FieldID.String(): ids,
+				customreport.TimeSeriesMetricDBSchema.Label.String():   label,
+			}), ""))
+		} else {
+			for _, chunkIds := range slicex.ChunkSlice(ids, 0) {
+				err := customreport.NewTimeSeriesMetricQuerySet(db).FieldIDIn(chunkIds...).GetUpdater().SetLastModifyTime(time.Now()).SetLabel(label).Update()
+				if err != nil {
+					logger.Errorf("update tsMetrics label [%s] for [%v] failed, %v", label, chunkIds, err)
+					continue
+				}
 			}
 		}
 	}
@@ -1286,8 +1337,14 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_create_SpaceResource", 1)
-			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] create SpaceResource [%#v]", sr)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_cluster_resource") {
+				logger.Info(diffutil.BuildLogStr("refresh_cluster_resource", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sr.TableName(), map[string]interface{}{
+					space.SpaceResourceDBSchema.SpaceTypeId.String():     sr.SpaceTypeId,
+					space.SpaceResourceDBSchema.SpaceId.String():         sr.SpaceId,
+					space.SpaceResourceDBSchema.ResourceType.String():    sr.ResourceType,
+					space.SpaceResourceDBSchema.ResourceId.String():      sr.ResourceId,
+					space.SpaceResourceDBSchema.DimensionValues.String(): sr.DimensionValues,
+				}), ""))
 			} else {
 				if err := sr.Create(db); err != nil {
 					logger.Errorf("create SpaceResource [%#v] failed", sr)
@@ -1327,8 +1384,15 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 				continue
 			}
 			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshClusterResource_update_SpaceResource", 1)
-			if cfg.BypassSuffixPath != "" {
-				logger.Infof("[db_diff] update SpaceResource space_id [%s], dimension_values is different old [%v] new [%v]", sp.SpaceId, dms, dimensionValues)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_cluster_resource") {
+				logger.Info(diffutil.BuildLogStr("refresh_cluster_resource", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
+					space.SpaceResourceDBSchema.Id.String():              sp.Id,
+					space.SpaceResourceDBSchema.SpaceTypeId.String():     models.SpaceTypeBKCI,
+					space.SpaceResourceDBSchema.SpaceId.String():         sp.SpaceId,
+					space.SpaceResourceDBSchema.ResourceType.String():    models.SpaceTypeBCS,
+					space.SpaceResourceDBSchema.ResourceId.String():      sp.SpaceId,
+					space.SpaceResourceDBSchema.DimensionValues.String(): dmStr,
+				}), ""))
 			} else {
 				if err := space.NewSpaceResourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdEq(sp.SpaceId).ResourceTypeEq(models.SpaceTypeBCS).ResourceIdEq(sp.SpaceId).GetUpdater().SetDimensionValues(dmStr).SetUpdateTime(time.Now()).Update(); err != nil {
 					logger.Errorf("update dimensionValues [%s] for SpaceResource with space_id [%s] failed,  %v", dmStr, sp.SpaceId, err)

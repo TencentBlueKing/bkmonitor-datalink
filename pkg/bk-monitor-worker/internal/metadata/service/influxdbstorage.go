@@ -15,9 +15,12 @@ import (
 
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -40,6 +43,15 @@ func (k InfluxdbStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 		return nil, err
 	}
 	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	// 获取 influxdb 集群名称
+	defaultInstanceClusterName := ""
+	if k.InfluxdbProxyStorageId != 0 || &k.InfluxdbProxyStorageId != nil {
+		if influxdbStorage, err := NewInfluxdbProxyStorageSvc(nil).GetInfluxdbStorage(&k.InfluxdbProxyStorageId, nil, nil); err == nil {
+			defaultInstanceClusterName = influxdbStorage.InstanceClusterName
+		}
+
+	}
+	clusterConsulConfig.ClusterConfig.InstanceClusterName = defaultInstanceClusterName
 	// influxdb的consul配置
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,
@@ -121,6 +133,25 @@ func (InfluxdbStorageSvc) CreateTable(tableId string, isSyncDb bool, storageConf
 		DownSampleDurationTime: DownSampleDurationTime,
 		PartitionTag:           PartitionTag,
 		VmTableId:              VmTableId,
+	}
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(influxdb.TableName(), map[string]interface{}{
+			storage.InfluxdbStorageDBSchema.TableID.String():                influxdb.TableID,
+			storage.InfluxdbStorageDBSchema.StorageClusterID.String():       influxdb.StorageClusterID,
+			storage.InfluxdbStorageDBSchema.RealTableName.String():          influxdb.RealTableName,
+			storage.InfluxdbStorageDBSchema.Database.String():               influxdb.Database,
+			storage.InfluxdbStorageDBSchema.ProxyClusterName.String():       influxdb.ProxyClusterName,
+			storage.InfluxdbStorageDBSchema.InfluxdbProxyStorageId.String(): influxdb.InfluxdbProxyStorageId,
+			storage.InfluxdbStorageDBSchema.UseDefaultRp.String():           influxdb.UseDefaultRp,
+			storage.InfluxdbStorageDBSchema.EnableRefreshRp.String():        influxdb.EnableRefreshRp,
+			storage.InfluxdbStorageDBSchema.SourceDurationTime.String():     influxdb.SourceDurationTime,
+			storage.InfluxdbStorageDBSchema.DownSampleTable.String():        influxdb.DownSampleTable,
+			storage.InfluxdbStorageDBSchema.DownSampleGap.String():          influxdb.DownSampleGap,
+			storage.InfluxdbStorageDBSchema.DownSampleDurationTime.String(): influxdb.DownSampleDurationTime,
+			storage.InfluxdbStorageDBSchema.PartitionTag.String():           influxdb.PartitionTag,
+			storage.InfluxdbStorageDBSchema.VmTableId.String():              influxdb.VmTableId,
+		}), ""))
+		return nil
 	}
 	if err := influxdb.Create(db); err != nil {
 		return err

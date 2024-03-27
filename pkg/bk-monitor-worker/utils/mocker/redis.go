@@ -45,6 +45,12 @@ func (r *RedisClientMocker) ZRangeByScoreWithScores(ctx context.Context, key str
 	return c
 }
 
+func (r *RedisClientMocker) HGet(ctx context.Context, key string, fields string) *goRedis.StringCmd {
+	c := goRedis.NewStringCmd(ctx)
+	c.SetVal("")
+	return c
+}
+
 func (r *RedisClientMocker) HMGet(ctx context.Context, key string, fields ...string) *goRedis.SliceCmd {
 	c := goRedis.NewSliceCmd(ctx)
 	c.SetVal(r.HMGetValue)

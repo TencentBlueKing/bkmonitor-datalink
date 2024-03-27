@@ -189,9 +189,10 @@ const (
 	SpaceTypeBKSAAS = "bksaas"
 	SpaceTypeAll    = "all"
 
-	Bkci1001TableIdPrefix = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
-	Dbm1001TableIdPrefix  = "dbm_system."  // 1001 仅允许访问 dbm 相关结果表的前缀
-	SystemTableIdPrefix   = "system."
+	Bkci1001TableIdPrefix       = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
+	P4SystemTableIdPrefixToBkCi = "perforce_system."
+	Dbm1001TableIdPrefix        = "dbm_system." // 1001 仅允许访问 dbm 相关结果表的前缀
+	SystemTableIdPrefix         = "system."
 
 	QueryVmSpaceUidListKey    = "bkmonitorv3:vm-query:space_uid"
 	QueryVmSpaceUidChannelKey = "bkmonitorv3:vm-query"
@@ -258,3 +259,9 @@ var SpaceDataSourceETLList = []string{
 
 // SkipDataIdListForBkcc 枚举 0 业务，但不是 bkcc 类型的数据源ID
 var SkipDataIdListForBkcc = []uint{1110000}
+
+// 全空间可以访问的结果表，对应的授权数据
+var AllSpaceTableIds = []string{"custom_report_aggate.base", "bkm_statistics.base"}
+
+// 插件授权给 bkci 访问的插件列表
+var BkciSpaceAccessPlugins = []string{"script_p4d_process_monitor.__default__"}

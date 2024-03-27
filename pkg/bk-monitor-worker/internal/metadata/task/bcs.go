@@ -23,6 +23,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -53,22 +55,21 @@ func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			var bcsClusterInfo bcs.BCSClusterInfo
-			if err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo); err != nil {
+			err := bcs.NewBCSClusterInfoQuerySet(db).ClusterIDEq(cluster.ClusterId).One(&bcsClusterInfo)
+			if err != nil {
+				// 如果仅是查询异常，则结束
 				if !gorm.IsRecordNotFoundError(err) {
 					logger.Errorf("query bcs cluster info record from db failed, %v", err)
-					return
+				} else {
+					// 注册不存在的集群
+					err := createBcsCluster(cluster)
+					if err != nil {
+						logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
+					}
 				}
-			}
-			if err != nil {
+			} else {
 				// err为nil表示数据库中存在该集群，检查更新
 				err := updateBcsCluster(cluster, &bcsClusterInfo)
-				if err != nil {
-					logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
-				}
-				return
-			} else {
-				// 注册不存在的集群
-				err := createBcsCluster(cluster)
 				if err != nil {
 					logger.Errorf("update bcs cluster %v failed, %v", cluster.BcsClusterId, err)
 				}
@@ -136,8 +137,16 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 		bcsClusterInfo.LastModifyTime = time.Now()
 		bcsClusterInfo.LastModifyUser = "system"
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.LastModifyTime, bcs.BCSClusterInfoDBSchema.LastModifyUser)
-		if err := bcsClusterInfo.Update(mysql.GetDBSession().DB, updateFields...); err != nil {
-			return err
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+			logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(bcsClusterInfo.TableName(), map[string]interface{}{
+				bcs.BCSClusterInfoDBSchema.ID.String():            bcsClusterInfo.ID,
+				bcs.BCSClusterInfoDBSchema.ApiKeyContent.String(): bcsClusterInfo.ApiKeyContent,
+				bcs.BCSClusterInfoDBSchema.Status.String():        bcsClusterInfo.Status,
+			}), ""))
+		} else {
+			if err := bcsClusterInfo.Update(mysql.GetDBSession().DB, updateFields...); err != nil {
+				return err
+			}
 		}
 	}
 	if bcsClusterInfo.BkCloudId == nil {

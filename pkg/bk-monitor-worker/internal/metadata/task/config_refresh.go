@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -108,7 +109,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
-	dbSession := mysql.GetDBSession()
+	db := mysql.GetDBSession().DB
 	var influxdbHostInfoList []storage.InfluxdbHostInfo
 	var influxdbClusterInfoList []storage.InfluxdbClusterInfo
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -117,32 +118,28 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新influxdb路由信息至consul当中
 	// 更新主机信息
-	err := storage.NewInfluxdbHostInfoQuerySet(dbSession.DB).All(&influxdbHostInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbHostInfoQuerySet(db).All(&influxdbHostInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb host info error, %v", err)
 	} else {
 		storage.RefreshInfluxdbHostInfoConsulClusterConfig(ctx, &influxdbHostInfoList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新集群信息
-	err = storage.NewInfluxdbClusterInfoQuerySet(dbSession.DB).All(&influxdbClusterInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbClusterInfoQuerySet(db).All(&influxdbClusterInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb cluster info error, %v", err)
 	} else {
 		storage.RefreshInfluxdbClusterInfoConsulClusterConfig(ctx, &influxdbClusterInfoList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新结果表信息
-	err = storage.NewInfluxdbStorageQuerySet(dbSession.DB).All(&influxdbStorageList)
-	if err != nil {
+	if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
 	} else {
 		storage.RefreshInfluxdbStorageConsulClusterConfig(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
 	}
 
 	// 更新vm router信息
-	err = storage.NewAccessVMRecordQuerySet(dbSession.DB).All(&accessVMRecordList)
-	if err != nil {
+	if err := storage.NewAccessVMRecordQuerySet(db).All(&accessVMRecordList); err != nil {
 		logger.Errorf("refresh_influxdb_route query access vm record error, %v", err)
 	} else {
 		storage.RefreshVmRouter(ctx, &accessVMRecordList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -150,8 +147,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新version
 	consulInfluxdbVersionPath := fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, config.StorageConsulPathPrefix, config.BypassSuffixPath)
-	err = models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath)
-	if err != nil {
+	if err := models.RefreshRouterVersion(ctx, consulInfluxdbVersionPath); err != nil {
 		logger.Errorf("refresh_influxdb_route refresh router version error, %v", err)
 	} else {
 		logger.Infof("influxdb router config refresh success")
@@ -159,8 +155,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 
 	// 更新TS结果表外部的依赖信息
 	if influxdbStorageList == nil {
-		err := storage.NewInfluxdbStorageQuerySet(dbSession.DB).All(&influxdbStorageList)
-		if err != nil {
+		if err := storage.NewInfluxdbStorageQuerySet(db).All(&influxdbStorageList); err != nil {
 			logger.Errorf("refresh_influxdb_route query influxdb storage error, %v", err)
 		} else {
 			storage.RefreshInfluxDBStorageOuterDependence(ctx, &influxdbStorageList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -170,8 +165,7 @@ func RefreshInfluxdbRoute(ctx context.Context, t *t.Task) error {
 	}
 
 	// 更新tag路由信息
-	err = storage.NewInfluxdbTagInfoQuerySet(dbSession.DB).All(&influxdbTagInfoList)
-	if err != nil {
+	if err := storage.NewInfluxdbTagInfoQuerySet(db).All(&influxdbTagInfoList); err != nil {
 		logger.Errorf("refresh_influxdb_route query influxdb tag info error, %v", err)
 	} else {
 		storage.RefreshConsulTagConfig(ctx, &influxdbTagInfoList, GetGoroutineLimit("refresh_influxdb_route"))
@@ -188,6 +182,8 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
+	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
+
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
@@ -201,15 +197,21 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		rtList = append(rtList, dsrt.TableId)
 	}
 	// 如果全部不可用，则直接返回
-	if len(rtList) == 0{
+	if len(rtList) == 0 {
 		logger.Infof("not enabled result table by data_source_result_table, skip")
 		return nil
 	}
 	// 过滤状态为启用的结果表
 	var enabledResultTableList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(rtList...).Select("table_id").All(&enabledResultTableList); err != nil {
-		logger.Errorf("query enabled result table error, %v", err)
-		return err
+	// 拆分查询
+	for _, chunkRts := range slicex.ChunkSlice(rtList, 0) {
+		var tempList []resulttable.ResultTable
+		if err := resulttable.NewResultTableQuerySet(db).IsDeletedEq(false).IsEnableEq(true).TableIdIn(chunkRts...).Select("table_id").All(&tempList); err != nil {
+			logger.Errorf("query enabled result table error, %v", err)
+			continue
+		}
+		// 组装数据
+		enabledResultTableList = append(enabledResultTableList, tempList...)
 	}
 	// 组装可用的结果表
 	var enabledRtList []string
@@ -218,25 +220,27 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 如果可用的结果表为空，则忽略
 	if len(enabledRtList) == 0 {
-		logger.Infof("not found enabled result by result_table, skip")
+		logger.Warn("not found enabled result by result_table, skip")
 		return nil
 	}
 	// 过滤到可用的数据源
 	var dataIdList []uint
 	for _, dsrt := range dataSourceRtList {
-		if stringx.StringInSlice(dsrt.TableId, enabledRtList){
+		if stringx.StringInSlice(dsrt.TableId, enabledRtList) {
 			dataIdList = append(dataIdList, dsrt.BkDataId)
 		}
 	}
 	// 如果为空，则认为所有数据源不可用
 	if len(dataIdList) == 0 {
-		logger.Infof("not found data source by enabled result table")
+		logger.Warn("not found data source by enabled result table")
 		return nil
 	}
 
+	// 移除重复的数据源
 	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
+	// data id 数量可控，先不拆分
 	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
 		logger.Errorf("query datasource record error, %v", err)
@@ -269,6 +273,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	wg.Wait()
 
+	logger.Infof("refresh data source end, end_time: %s", time.Now().Truncate(time.Second))
 	return nil
 }
 

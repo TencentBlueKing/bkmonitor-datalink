@@ -86,7 +86,6 @@ type Config struct {
 	BypassConfig *redisUtils.Option
 }
 
-
 func InitConfig() {
 	viper.SetConfigFile(ConfigPath)
 	if err := viper.ReadInConfig(); err != nil {
@@ -94,7 +93,6 @@ func InitConfig() {
 		os.Exit(1)
 	}
 }
-
 
 func GetRDSClient(cfg *redisUtils.Option) (goRedis.UniversalClient, error) {
 	client, err := redisUtils.NewRedisClient(context.TODO(), cfg)

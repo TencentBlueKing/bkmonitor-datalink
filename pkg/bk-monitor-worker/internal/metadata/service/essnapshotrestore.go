@@ -23,6 +23,7 @@ import (
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -64,10 +65,18 @@ func (*EsSnapshotRestoreSvc) CleanAllExpiredRestore(ctx context.Context, goRouti
 				return
 			}
 			restore.ExpiredDelete = true
-			if err := restore.Update(db, storage.EsSnapshotRestoreDBSchema.ExpiredDelete); err != nil {
-				logger.Errorf("update es snapshot restore [%v] expired_delete field to true failed, %v", restore.RestoreID, err)
-				return
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "clean_expired_restore") {
+				logger.Info(diffutil.BuildLogStr("clean_expired_restore", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(restore.TableName(), map[string]interface{}{
+					storage.EsSnapshotRestoreDBSchema.RestoreID.String():     restore.RestoreID,
+					storage.EsSnapshotRestoreDBSchema.ExpiredDelete.String(): restore.ExpiredDelete,
+				}), ""))
+			} else {
+				if err := restore.Update(db, storage.EsSnapshotRestoreDBSchema.ExpiredDelete); err != nil {
+					logger.Errorf("update es snapshot restore [%v] expired_delete field to true failed, %v", restore.RestoreID, err)
+					return
+				}
 			}
+
 			logger.Infof("restore [%v] has expired, has be clean", restore.RestoreID)
 		}(&restore, wg, ch)
 	}
@@ -105,13 +114,18 @@ func (s *EsSnapshotRestoreSvc) DeleteRestoreIndices(ctx context.Context) error {
 	logger.Infof("restore [%v] need delete indices [%s]", s.RestoreID, strings.Join(restoreIndexList, ","))
 	indexChunk := slicex.ChunkStringsBySize(&restoreIndexList, cfg.DefaultStringFilterSize, ",")
 	for _, idxStr := range indexChunk {
-		if resp, err := client.DeleteIndex(ctx, strings.Split(idxStr, ",")); err != nil {
-			logger.Errorf("restore [%v] delete indices [%s] failed, %v", s.RestoreID, idxStr, err)
-			continue
+		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "clean_expired_restore") {
+			body, _ := jsonx.MarshalString(strings.Split(idxStr, ","))
+			logger.Info(diffutil.BuildLogStr("clean_expired_restore", diffutil.OperatorTypeAPIDelete, diffutil.NewStringBody(body), ""))
 		} else {
-			logger.Infof("restore [%v] has delete indices [%s]", s.RestoreID, idxStr)
+			resp, err := client.DeleteIndex(ctx, strings.Split(idxStr, ","))
+			if err != nil {
+				logger.Errorf("restore [%v] delete indices [%s] failed, %v", s.RestoreID, idxStr, err)
+				continue
+			}
 			resp.Close()
 		}
+		logger.Infof("restore [%v] has delete indices [%s]", s.RestoreID, idxStr)
 	}
 	logger.Infof("restore [%v] has clean complete maybe expired or delete", s.RestoreID)
 	return nil
@@ -205,8 +219,15 @@ func (s *EsSnapshotRestoreSvc) GetCompleteDocCount(ctx context.Context) (int, er
 	s.CompleteDocCount = completeDocCount
 	s.LastModifyTime = time.Now()
 	updateFields = append(updateFields, storage.EsSnapshotRestoreDBSchema.CompleteDocCount, storage.EsSnapshotRestoreDBSchema.LastModifyTime)
-	if err := s.Update(db, updateFields...); err != nil {
-		return 0, errors.Wrapf(err, "update restore [%v] failed", s.RestoreID)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_es_restore") {
+		logger.Info(diffutil.BuildLogStr("refresh_es_restore", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(s.TableName(), map[string]interface{}{
+			storage.EsSnapshotRestoreDBSchema.RestoreID.String():        s.RestoreID,
+			storage.EsSnapshotRestoreDBSchema.CompleteDocCount.String(): s.CompleteDocCount,
+		}), ""))
+	} else {
+		if err := s.Update(db, updateFields...); err != nil {
+			return 0, errors.Wrapf(err, "update restore [%v] failed", s.RestoreID)
+		}
 	}
 	return s.CompleteDocCount, nil
 

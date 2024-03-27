@@ -288,7 +288,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	m.hostIpMapLock.Lock()
 	for _, host := range hosts {
 		if host.BkHostInnerip != "" {
-			m.hostIpMap[host.BkHostInnerip] = append(m.hostIpMap[host.BkHostInnerip], strconv.Itoa(host.BkHostId))
+			m.hostIpMap[host.BkHostInnerip] = append(m.hostIpMap[host.BkHostInnerip], fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId))
 		}
 	}
 	m.hostIpMapLock.Unlock()

@@ -193,6 +193,12 @@ func (m *ModuleCacheManager) RefreshGlobal(ctx context.Context) error {
 	if err := result.Err(); err != nil {
 		return errors.Wrap(err, "set module cache expire time failed")
 	}
+
+	result = m.RedisClient.Expire(ctx, m.GetCacheKey(serviceTemplateCacheKey), m.Expire)
+	if err := result.Err(); err != nil {
+		return errors.Wrap(err, "set service_template cache expire time failed")
+	}
+
 	return nil
 }
 

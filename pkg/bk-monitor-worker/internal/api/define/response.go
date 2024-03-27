@@ -9,12 +9,14 @@
 
 package define
 
-import "github.com/pkg/errors"
+import (
+	"github.com/pkg/errors"
+)
 
 type ApiCommonRespMeta struct {
-	Message string `json:"message"`
-	Result  bool   `json:"result"`
-	Code    int    `json:"code"`
+	Message string `json:"message" mapstructure:"message"`
+	Result  bool   `json:"result" mapstructure:"result"`
+	Code    int    `json:"code" mapstructure:"code"`
 }
 
 func (m ApiCommonRespMeta) Err() error {

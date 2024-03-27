@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
+	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcs"
@@ -25,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	apiDefine "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -291,4 +293,83 @@ func (p *HeaderProvider) ApplyToClient(cli define.BkApiClient) error {
 func (p *HeaderProvider) ApplyToOperation(op define.Operation) error {
 	op.SetHeaders(p.Header)
 	return nil
+}
+
+// HandleApiResultError handle api response error
+func HandleApiResultError(result apiDefine.ApiCommonRespMeta, err error, message string) error {
+	// handle api request error
+	if err != nil {
+		return errors.Wrap(err, message)
+	}
+
+	// handle api result error
+	if err := result.Err(); err != nil {
+		return errors.Wrap(err, message)
+	}
+
+	return nil
+}
+
+// BatchApiRequest send one request first and get the total count, then send the rest requests by pageSize
+func BatchApiRequest(pageSize int, getTotalFunc func(interface{}) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]interface{}, error) {
+	// send the first request to get the total count
+	var resp interface{}
+	req := getReqFunc(0)
+	_, err := req.SetResult(&resp).Request()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to send the first request")
+	}
+
+	// 获取总数
+	total, err := getTotalFunc(resp)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get the total count")
+	}
+	// 如果总数为0，直接返回
+	if total == 0 {
+		return nil, nil
+	}
+
+	// 限制并发数
+	limitChan := make(chan struct{}, concurrency)
+	waitGroup := sync.WaitGroup{}
+
+	// 页数计算，向上取整
+	pageCount := (total + pageSize - 1) / pageSize
+
+	// 初始化结果和错误数组
+	results := make([]interface{}, pageCount)
+	errs := make([]error, pageCount)
+	results[0] = resp
+
+	for p := 1; p < pageCount; p++ {
+		limitChan <- struct{}{}
+		waitGroup.Add(1)
+		go func(page int) {
+			defer func() {
+				<-limitChan
+				waitGroup.Done()
+			}()
+			var r interface{}
+			req := getReqFunc(page)
+			_, err := req.SetResult(&r).Request()
+			if err != nil {
+				errs[page] = errors.Wrap(err, fmt.Sprintf("failed to send the request for page %d", page))
+				errs = append(errs, errors.Wrap(err, fmt.Sprintf("failed to send the request for page %d", page)))
+				return
+			}
+			results[page] = r
+		}(p)
+	}
+
+	waitGroup.Wait()
+
+	// 检查是否有错误
+	for _, err := range errs {
+		if err != nil {
+			return nil, errors.New("failed to send the rest requests")
+		}
+	}
+
+	return results, nil
 }

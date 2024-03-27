@@ -10,6 +10,8 @@
 package tokenchecker
 
 import (
+	"strings"
+
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -153,16 +155,41 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 // Note: 理论上来讲，单次请求包只能有一个 token，不支持多 token 场景。
 // 支持从多个 attribute.keys 中读取 token
 
-func tokenFromAttrs(attrs pcommon.Map, keys []string) (string, bool) {
-	var s string
+func tokenFromAttrs(attrs pcommon.Map, keys []string) string {
 	for _, key := range keys {
 		v, ok := attrs.Get(key)
 		if ok {
-			s = v.AsString()
-			break
+			return v.AsString()
 		}
 	}
-	return s, len(s) > 0
+	return ""
+}
+
+// token 的解析也应该遵循一定的优先级
+// 1) 从 headers 中提取
+// 2) 从 attributes 中提取
+
+func decodeToken(decoder TokenDecoder, src ...string) (define.Token, error) {
+	var errs []error
+	for _, s := range src {
+		if len(s) <= 0 {
+			continue
+		}
+
+		token, err := decoder.Decode(s)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		return token, nil
+	}
+
+	// 进入到这里一定是解析失败
+	var token define.Token
+	if len(errs) > 0 {
+		return token, errs[0]
+	}
+	return token, errors.New("no token source")
 }
 
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
@@ -173,33 +200,27 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	}
 
 	var errs []error
-	origin := record.Token.Original
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		s := origin
-		if len(s) <= 0 {
-			v, ok := tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys)
-			if !ok {
-				logger.Debugf("failed to get pdTraces token key '%v'", config.ResourceKey)
-				return true
-			}
-			s = v
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys),
 		}
 
-		record.Token, err = decoder.Decode(s)
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=%v, err: %v", s, err)
+			logger.Errorf("failed to parse pdTraces token=(%s), err: %v", strings.Join(src, ","), err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
+	// 当且仅当没有任何 spans 的情况下才算鉴权失败
 	if pdTraces.ResourceSpans().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop spans cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil
@@ -213,33 +234,27 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	}
 
 	var errs []error
-	origin := record.Token.Original
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		s := origin
-		if len(s) <= 0 {
-			v, ok := tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys)
-			if !ok {
-				logger.Debugf("failed to get pdMetrics token key '%v'", config.ResourceKey)
-				return true
-			}
-			s = v
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys),
 		}
 
-		record.Token, err = decoder.Decode(s)
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", s, err)
+			logger.Errorf("failed to parse pdMetrics token=(%s), err: %v", strings.Join(src, ","), err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
+	// 当且仅当没有任何 metrics 的情况下才算鉴权失败
 	if pdMetrics.ResourceMetrics().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop metrics cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil
@@ -253,33 +268,26 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 	}
 
 	var errs []error
-	origin := record.Token.Original
 	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		s := origin
-		if len(s) <= 0 {
-			v, ok := tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys)
-			if !ok {
-				logger.Debugf("failed to get pdLogs token key '%v'", config.ResourceKey)
-				return true
-			}
-			s = v
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys),
 		}
 
-		record.Token, err = decoder.Decode(s)
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=%v, err: %v", s, err)
+			logger.Errorf("failed to parse pdLogs token=(%s), err: %v", strings.Join(src, ","), err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
 	if pdLogs.ResourceLogs().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop logs cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil

@@ -61,7 +61,7 @@ func TestExportEventCommon(t *testing.T) {
 		{
 			name:          "header token",
 			url:           "http://localhost/fta/v1/event",
-			headers:       map[string]string{tokenKey: "2", "source": "tencent"},
+			headers:       map[string]string{define.KeyToken: "2", "source": "tencent"},
 			body:          `{"test": "1"}`,
 			wantCode:      http.StatusOK,
 			wantPublished: true,

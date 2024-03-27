@@ -99,3 +99,69 @@ func (c *Client) SearchBusiness(opts ...define.OperationOption) define.Operation
 		Path:   path,
 	}, opts...)
 }
+
+// SearchBizInstTopo for cmdb resource search_biz_inst_topo
+// 查询业务拓扑
+func (c *Client) SearchBizInstTopo(opts ...define.OperationOption) define.Operation {
+	path := "search_biz_inst_topo"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_biz_inst_topo",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// GetBizInternalModule for cmdb resource get_biz_internal_module
+// 查询业务内部模块
+func (c *Client) GetBizInternalModule(opts ...define.OperationOption) define.Operation {
+	path := "get_biz_internal_module"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_biz_internal_module",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// SearchObjectAttribute for cmdb resource search_object_attribute
+// 查询对象属性
+func (c *Client) SearchObjectAttribute(opts ...define.OperationOption) define.Operation {
+	path := "search_object_attribute"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_object_attribute",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// ResourceWatch for cmdb resource resource_watch
+// 资源变更订阅
+func (c *Client) ResourceWatch(opts ...define.OperationOption) define.Operation {
+	path := "resource_watch"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "resource_watch",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// SearchModule for cmdb resource search_module
+// 查询模块信息
+func (c *Client) SearchModule(opts ...define.OperationOption) define.Operation {
+	path := "search_module"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_module",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// SearchSet for cmdb resource search_set
+// 查询集群信息
+func (c *Client) SearchSet(opts ...define.OperationOption) define.Operation {
+	path := "search_set"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_set",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

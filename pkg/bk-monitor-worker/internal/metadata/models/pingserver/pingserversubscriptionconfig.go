@@ -9,7 +9,9 @@
 
 package pingserver
 
-import "github.com/jinzhu/gorm"
+import (
+	"github.com/jinzhu/gorm"
+)
 
 //go:generate goqueryset -in pingserversubscriptionconfig.go -out qs_pingserversubscriptionconfig_gen.go
 

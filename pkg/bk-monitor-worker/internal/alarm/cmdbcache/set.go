@@ -148,21 +148,27 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	}
 
 	// 更新集群缓存
-	key := m.GetCacheKey(setCacheKey)
-	err = m.UpdateHashMapCache(ctx, key, setCacheData)
-	if err != nil {
-		return errors.Wrap(err, "failed to update set hashmap cache")
+	if len(setCacheData) > 0 {
+		key := m.GetCacheKey(setCacheKey)
+		err = m.UpdateHashMapCache(ctx, key, setCacheData)
+		if err != nil {
+			return errors.Wrapf(err, "refresh set cache by biz: %d failed", bizID)
+		}
+		logger.Infof("refresh set cache by biz: %d, set count: %d", bizID, len(result))
 	}
 
 	// 更新服务模板关联的模块缓存
-	key = m.GetCacheKey(setTemplateCacheKey)
-	setTemplateCacheData := make(map[string]string)
-	for templateID, setIDs := range templateToSets {
-		setTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(setIDs, ","))
-	}
-	err = m.UpdateHashMapCache(ctx, key, setTemplateCacheData)
-	if err != nil {
-		return errors.Wrap(err, "failed to update set template hashmap cache")
+	if len(templateToSets) > 0 {
+		key := m.GetCacheKey(setTemplateCacheKey)
+		setTemplateCacheData := make(map[string]string)
+		for templateID, setIDs := range templateToSets {
+			setTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(setIDs, ","))
+		}
+		err = m.UpdateHashMapCache(ctx, key, setTemplateCacheData)
+		if err != nil {
+			return errors.Wrapf(err, "refresh set template cache by biz: %d failed", bizID)
+		}
+		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(setTemplateCacheData))
 	}
 
 	return nil

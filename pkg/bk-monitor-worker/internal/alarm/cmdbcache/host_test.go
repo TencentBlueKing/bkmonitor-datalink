@@ -26,6 +26,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
@@ -35,7 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
-var DemoHosts = []*alarmHostInfo{
+var DemoHosts = []*AlarmHostInfo{
 	{
 		BkBizId:       2,
 		BkHostId:      1,
@@ -134,7 +136,7 @@ var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 
 func TestHostAndTopoCacheManager(t *testing.T) {
 	// mock 主机和拓扑查询
-	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*alarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer patches.Reset()
@@ -163,24 +165,25 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 
 		// 判断是否存在所有的缓存键
 		expectedHostKeys := make([]string, 0, len(DemoHosts))
-		expectedHostIds := make([]string, 0, len(DemoHosts))
 		expectedAgentIds := make([]string, 0, len(DemoHosts))
 		expectedHostIpKeys := make([]string, 0, len(DemoHosts))
 		for _, host := range DemoHosts {
 			if host.BkHostInnerip != "" {
 				expectedHostIpKeys = append(expectedHostIpKeys, host.BkHostInnerip)
 				expectedHostKeys = append(expectedHostKeys, fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId))
+				expectedHostKeys = append(expectedHostKeys, strconv.Itoa(host.BkHostId))
 			}
 			if host.BkAgentId != "" {
 				expectedAgentIds = append(expectedAgentIds, host.BkAgentId)
 			}
-			expectedHostIds = append(expectedHostIds, fmt.Sprintf("%d", host.BkHostId))
 		}
 
-		assert.EqualValues(t, expectedHostKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
-		assert.EqualValues(t, expectedHostIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
-		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
+		sort.Strings(expectedHostKeys)
+		actualHostKeys := client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val()
+		sort.Strings(actualHostKeys)
 
+		assert.EqualValues(t, expectedHostKeys, actualHostKeys)
+		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.EqualValues(t, 8, int(client.HLen(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val()))
 
 		// 刷新全局缓存
@@ -199,7 +202,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 		events := make([]map[string]interface{}, 0, len(allResult.Val()))
 		for _, v := range allResult.Val() {
-			var host *alarmHostInfo
+			var host *AlarmHostInfo
 			err := json.Unmarshal([]byte(v), &host)
 			if err != nil {
 				t.Error(err)
@@ -251,7 +254,6 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.True(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 	})
@@ -278,14 +280,13 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断是否存在所有的缓存键
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 
 		// 清理缓存
-		cacheManager.initUpdatedFieldSet(hostIDCacheKey, hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
+		cacheManager.initUpdatedFieldSet(hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
 		err = cacheManager.CleanGlobal(ctx)
 		if err != nil {
 			t.Error(err)
@@ -293,7 +294,6 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())

@@ -39,9 +39,9 @@ import (
 // GetMetricValue 根据指标类型获取值
 func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prometheus_client.Metric) float64 {
 	switch metricType {
-	case io_prometheus_client.MetricType_COUNTER:
-		return metric.GetGauge().GetValue()
 	case io_prometheus_client.MetricType_GAUGE:
+		return metric.GetGauge().GetValue()
+	case io_prometheus_client.MetricType_COUNTER:
 		return metric.GetCounter().GetValue()
 	case io_prometheus_client.MetricType_UNTYPED:
 		return metric.GetUntyped().GetValue()

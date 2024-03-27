@@ -295,8 +295,7 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 	// 从redis中获取该资源类型的所有事件
 	eventStrings := make([]string, 0)
 	for {
-		// 一次最多获取1000个事件
-		result, err := h.redisClient.LPopCount(ctx, bkEventKey, 1000).Result()
+		result, err := h.redisClient.LPop(ctx, bkEventKey).Result()
 		if err != nil {
 			if !errors.Is(err, redis.Nil) {
 				logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
@@ -304,11 +303,11 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 			}
 		}
 		// 如果没有事件了，退出
-		if len(result) == 0 {
+		if result == "" {
 			break
 		}
 
-		eventStrings = append(eventStrings, result...)
+		eventStrings = append(eventStrings, result)
 	}
 
 	// 解析事件

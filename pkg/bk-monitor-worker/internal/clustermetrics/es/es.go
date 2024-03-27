@@ -95,6 +95,7 @@ func collectAndReportMetrics(c storage.ClusterInfo) error {
 	registry.MustRegister(exporter)
 	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, false, false))
 	registry.MustRegister(collector.NewShards(collectorLogger, httpClient, esURL))
+	// todo: 补充状态维度
 	registry.MustRegister(collector.NewClusterHealth(collectorLogger, httpClient, esURL))
 	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))
 	metricFamilies, err := registry.Gather()

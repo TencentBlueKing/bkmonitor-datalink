@@ -237,7 +237,7 @@ func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]map[string]interfa
 	if s.BkObjId == "module" {
 		reverseParents := make([]map[string]interface{}, len(parents))
 		for i, p := range parents {
-			reverseParents[i] = p
+			reverseParents[len(parents)-i-1] = p
 		}
 		(*result)[s.BkInstId] = reverseParents
 		return

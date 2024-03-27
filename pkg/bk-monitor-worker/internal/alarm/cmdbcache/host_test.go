@@ -46,9 +46,18 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789012",
 		BkSetIds:      []int{2, 3},
 		BkModuleIds:   []int{3, 6},
-		TopoLinks: [][]string{
-			{"module|3", "set|2", "biz|2"},
-			{"module|6", "set|3", "test|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|3": {
+				{"bk_inst_id": 3, "bk_inst_name": "空闲机", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
+			"module|6": {
+				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "测试节点", "bk_obj_id": "test", "bk_obj_name": "测试"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 	{
@@ -59,8 +68,12 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "",
 		BkSetIds:      []int{2},
 		BkModuleIds:   []int{4},
-		TopoLinks: [][]string{
-			{"module|4", "set|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|4": {
+				{"bk_inst_id": 4, "bk_inst_name": "故障机", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 	{
@@ -71,8 +84,13 @@ var DemoHosts = []*AlarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789014",
 		BkSetIds:      []int{3},
 		BkModuleIds:   []int{6},
-		TopoLinks: [][]string{
-			{"module|6", "set|3", "test|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|6": {
+				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "测试节点", "bk_obj_id": "test", "bk_obj_name": "测试"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 }
@@ -215,6 +233,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 				"bk_agent_id":     host.BkAgentId,
 			})
 		}
+
+		fmt.Printf(client.HGet(ctx, cacheManager.GetCacheKey(hostCacheKey), "1").Val())
 
 		// 基于事件更新缓存
 		err = cacheManager.UpdateByEvents(ctx, "host", events)

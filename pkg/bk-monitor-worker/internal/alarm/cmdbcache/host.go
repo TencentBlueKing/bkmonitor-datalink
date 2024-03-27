@@ -123,7 +123,7 @@ type AlarmHostInfo struct {
 	BkCloudName string `json:"bk_cloud_name"`
 	DisplayName string `json:"display_name"`
 
-	TopoLinks [][]string `json:"topo_links"`
+	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
 }
 
 const (
@@ -232,7 +232,7 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 		BkModuleIds: bkModuleIds,
 		BkCloudName: "",
 		DisplayName: displayName,
-		TopoLinks:   [][]string{},
+		TopoLinks:   make(map[string][]map[string]interface{}),
 	}
 
 	return host
@@ -530,17 +530,17 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	bizInstTopoResp.Data[0].Child = append(bizInstTopoResp.Data[0].Child, *setNode)
 
 	// 构建模块ID到拓扑链路的映射
-	moduleIdToTopoLinks := make(map[int][]string)
-	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []string{})
+	moduleIdToTopoLinks := make(map[int][]map[string]interface{})
+	bizInstTopoResp.Data[0].ToTopoLinks(&moduleIdToTopoLinks, []map[string]interface{}{})
 
 	// 补充拓扑信息到主机
 	for _, host := range hosts {
 		for _, bkModuleId := range host.BkModuleIds {
-			topoLinks, ok := moduleIdToTopoLinks[bkModuleId]
+			topoLink, ok := moduleIdToTopoLinks[bkModuleId]
 			if !ok {
 				continue
 			}
-			host.TopoLinks = append(host.TopoLinks, topoLinks)
+			host.TopoLinks[fmt.Sprintf("module|%d", bkModuleId)] = topoLink
 		}
 	}
 
@@ -592,7 +592,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			}
 		}
 	case "mainline_instance":
-		key := m.GetCacheKey("cmdb.topo")
+		key := m.GetCacheKey(topoCacheKey)
 		topoIds := make([]string, 0)
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)

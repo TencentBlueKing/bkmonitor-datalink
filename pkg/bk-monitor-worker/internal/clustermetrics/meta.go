@@ -34,6 +34,19 @@ type MetaClusterMetrics struct {
 	Metrics []ClusterMetric `yaml:"metrics"`
 }
 
+type EsMetric struct {
+	Metrics   map[string]float64     `json:"metrics"`
+	Target    string                 `json:"target"`
+	Dimension map[string]interface{} `json:"dimension"`
+	Timestamp int64                  `json:"timestamp"`
+}
+
+type CustomReportData struct {
+	DataId      int         `json:"data_id"`
+	AccessToken string      `json:"access_token"`
+	Data        []*EsMetric `json:"data"`
+}
+
 func (cm *ClusterMetric) GetBkmTags() []string {
 	var arr []string
 	for _, t := range cm.Tags {

@@ -13,6 +13,7 @@ import (
 	"context"
 	"sync"
 
+	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
@@ -53,6 +54,7 @@ var (
 
 	ReportInfluxdbClusterMetrics  = "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo = "periodic:cluster_metrics:push_and_publish_space_router_info"
+	ReportESClusterMetrics        = "periodic:cluster_metrics:report_es"
 
 	periodicTasksDefine = map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -151,6 +153,10 @@ var (
 		// 	Cron:    "*/30 * * * *",
 		// 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
 		// },
+		ReportESClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmESTask.ReportESClusterMetrics,
+		},
 	}
 )
 

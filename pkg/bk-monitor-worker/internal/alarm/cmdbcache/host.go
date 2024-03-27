@@ -348,8 +348,16 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 	err := m.UpdateHashMapCache(ctx, key, data)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update host ip cache failed")
 	}
+
+	// 刷新缓存过期时间
+	for _, key := range []string{hostIDCacheKey, hostCacheKey, topoCacheKey, hostAgentIDCacheKey, hostIPCacheKey} {
+		if err := m.RedisClient.Expire(ctx, m.GetCacheKey(key), m.Expire).Err(); err != nil {
+			logger.Error("set cache expire time failed, key: %s, err: %v", key, err)
+		}
+	}
+
 	return nil
 }
 

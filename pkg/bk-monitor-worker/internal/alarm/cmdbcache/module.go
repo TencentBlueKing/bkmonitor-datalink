@@ -189,6 +189,15 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 	return nil
 }
 
+// RefreshGlobal 刷新全局模块缓存
+func (m *ModuleCacheManager) RefreshGlobal(ctx context.Context) error {
+	result := m.RedisClient.Expire(ctx, m.GetCacheKey(moduleCacheKey), m.Expire)
+	if err := result.Err(); err != nil {
+		return errors.Wrap(err, "set module cache expire time failed")
+	}
+	return nil
+}
+
 // CleanGlobal 清理全局模块缓存
 func (m *ModuleCacheManager) CleanGlobal(ctx context.Context) error {
 	key := m.GetCacheKey(moduleCacheKey)

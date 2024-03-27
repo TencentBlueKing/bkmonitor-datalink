@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/go-kit/log"
+	"github.com/pkg/errors"
 	"github.com/prometheus-community/elasticsearch_exporter/collector"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_model/go"
@@ -51,14 +52,13 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 
 // collectAndReportMetrics 采集&上报ES集群指标
 func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) error {
-	logger.Infof("start to collect es cluster metrics.")
+	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
 	var customOption map[string]interface{}
 	err := json.Unmarshal([]byte(c.CustomOption), &customOption)
 	if err != nil {
-		logger.Errorf("failed to unmarshal custom option: %s", err)
-		return err
+		return errors.WithMessage(err, "failed to unmarshal custom option")
 	}
 	if bkBizIDVal, ok := customOption["bk_biz_id"].(float64); ok {
 		bkBizID = bkBizIDVal
@@ -76,8 +76,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 	var esPassword = cipher.GetDBAESCipher().AESDecrypt(c.Password)
 	esURL, err := url.Parse(esURLs[0])
 	if err != nil {
-		logger.Errorf("failed to parse es cluster url: %s", err)
-		return err
+		return errors.WithMessage(err, "failed to parse es cluster url")
 	}
 	esURL.User = url.UserPassword(esUsername, esPassword)
 
@@ -91,8 +90,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 		collector.WithHTTPClient(httpClient),
 	)
 	if err != nil {
-		logger.Errorf("failed to create elasticsearch collector: %s", err)
-		return err
+		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
 	registry.MustRegister(exporter)
 	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, false, false))
@@ -101,8 +99,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))
 	metricFamilies, err := registry.Gather()
 	if err != nil {
-		logger.Errorf("collect es cluster metrics failed: %s", err)
-		return err
+		return errors.WithMessage(err, "collect es cluster metrics failed")
 	}
 	logger.Infof("collect es cluster metrics success, metric family count: %v ", len(metricFamilies))
 
@@ -148,14 +145,12 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
 	jsonData, err := json.Marshal(customReportData)
 	if err != nil {
-		logger.Errorf("custom report data json marshal failed: %s ", err)
-		return err
+		return errors.WithMessage(err, "custom report data json marshal failed")
 	}
 
 	u, err := url.Parse(cfg.ESClusterMetricReportUrl)
 	if err != nil {
-		logger.Errorf("parse es cluster metric report url failed: %s ", err)
-		return err
+		return errors.WithMessage(err, "parse es cluster metric report url failed")
 	}
 
 	customReportUrl := u.String()
@@ -163,8 +158,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, httpClient *http.Client) err
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		logger.Errorf("report es metrics failed: %s ", err)
-		return err
+		return errors.WithMessage(err, "report es metrics failed")
 	}
 	defer resp.Body.Close()
 	logger.Infof("report es metrics success, request url: %s", customReportUrl)

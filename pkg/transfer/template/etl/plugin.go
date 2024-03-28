@@ -45,8 +45,12 @@ func SchemaByResultTablePlugin(table *config.MetaResultTableConfig) etl.Containe
 			}
 			recordName = name
 			fields = append(fields, etl.NewNewSimpleFieldWith(
-				config.Name(), config.DefaultValue, config.HasDefaultValue(),
-				etl.ExtractByJMESPath(config.Path()), etl.NewTransformByField(config, table),
+				config.Name(),
+				config.DefaultValue,
+				config.HasDefaultValue(),
+				etl.ExtractByJMESPath(config.Path()),
+				etl.NewTransformByField(config, table),
+				config,
 			))
 			return nil
 		})

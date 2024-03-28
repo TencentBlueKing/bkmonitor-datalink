@@ -11,11 +11,14 @@ package etl
 
 import (
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 )
 
 // FieldDefaultValueCreator
@@ -135,14 +138,29 @@ type SimpleField struct {
 	check     CheckFn
 	extract   ExtractFn
 	transform TransformFn
+
+	tag     define.MetaFieldTagType
+	options map[string]interface{}
 }
 
 // NewNewSimpleFieldWith
-func NewNewSimpleFieldWith(name string, defaultValue interface{}, hasDefaultValue bool, extract ExtractFn, transform TransformFn) *SimpleField {
+func NewNewSimpleFieldWith(name string, defaultValue interface{}, hasDefaultValue bool, extract ExtractFn, transform TransformFn, conf ...*config.MetaFieldConfig) *SimpleField {
+	var opts map[string]interface{}
+	var tag define.MetaFieldTagType
+	if len(conf) > 0 && conf[0] != nil {
+		c := conf[0]
+		if len(c.Option) > 0 {
+			opts = c.Option
+		}
+		tag = c.Tag
+	}
+
 	return &SimpleField{
 		BaseField: NewBaseField(name, defaultValue, hasDefaultValue),
 		extract:   extract,
 		transform: transform,
+		options:   opts,
+		tag:       tag,
 	}
 }
 
@@ -198,20 +216,78 @@ func (f *SimpleField) GetValue(from Container) (interface{}, error) {
 	if f.transform != nil {
 		result, err = f.transform(value)
 		if err != nil {
-			logging.Warnf("%v transform error: %v, will use default instead.", f, err)
-			defaults, ok := f.DefaultValue()
-			if ok {
-				logging.Warnf("%s transform value `%v` error: %v", f.name, value, err)
-				result = defaults
+			defVal := f.execDefaultsFunc(from)
+			if defVal != nil {
+				result = defVal
 			} else {
-				return nil, errors.WithMessagef(err, "%v transformer", f)
+				logging.Warnf("%v transform error: %v, will use default instead.", f, err)
+				defaults, ok := f.DefaultValue() // Note: 技术债务 DefaultVal 实现有问题 但不建议修改
+				if ok {
+					logging.Warnf("%s transform value `%v` error: %v", f.name, value, err)
+					result = defaults
+				} else {
+					return nil, errors.WithMessagef(err, "%v transformer", f)
+				}
 			}
 		}
 	} else {
 		result = value
 	}
 
+	if len(f.options) > 0 {
+		result = f.convTimestampUnit(result)
+	}
+
 	return result, nil
+}
+
+func (f *SimpleField) convTimestampUnit(result interface{}) interface{} {
+	v, ok := f.options[config.MetaFieldOptTimestampUnit]
+	if !ok {
+		return result
+	}
+	u, ok := v.(string)
+	if !ok {
+		return result
+	}
+
+	ts, ok := result.(types.TimeStamp)
+	if !ok {
+		return result
+	}
+
+	(&ts).SetUnit(u)
+	return ts
+}
+
+func (f *SimpleField) execDefaultsFunc(from Container) interface{} {
+	v, ok := f.options[config.MetaFieldOptDefaultFunc]
+	if !ok {
+		return nil
+	}
+	defaultFunc, ok := v.(string)
+	if !ok {
+		return nil
+	}
+
+	utctime, err := from.Get("utctime")
+	if err != nil {
+		return nil
+	}
+	input, ok := utctime.(string)
+	if !ok {
+		return nil
+	}
+
+	switch defaultFunc {
+	case "fn:timestamp_from_utctime":
+		t, err := time.Parse("2006-01-02 15:04:05", input)
+		if err != nil {
+			return nil
+		}
+		return types.NewTimeStamp(t)
+	}
+	return nil
 }
 
 // Transform :

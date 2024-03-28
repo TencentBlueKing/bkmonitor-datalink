@@ -50,7 +50,7 @@ func SchemaByResultTablePlugin(table *config.MetaResultTableConfig) etl.Containe
 				config.HasDefaultValue(),
 				etl.ExtractByJMESPath(config.Path()),
 				etl.NewTransformByField(config, table),
-				config,
+				config.Option,
 			))
 			return nil
 		})

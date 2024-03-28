@@ -421,7 +421,7 @@ func NewTransformByField(field *config.MetaFieldConfig, rt *config.MetaResultTab
 				)
 				result, err := fn(from)
 				if err != nil {
-					return nil, err
+					return result, err
 				}
 				if result == nil {
 					return nil, nil

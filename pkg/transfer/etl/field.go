@@ -138,21 +138,14 @@ type SimpleField struct {
 	check     CheckFn
 	extract   ExtractFn
 	transform TransformFn
-
-	tag     define.MetaFieldTagType
-	options map[string]interface{}
+	options   map[string]interface{}
 }
 
 // NewNewSimpleFieldWith
-func NewNewSimpleFieldWith(name string, defaultValue interface{}, hasDefaultValue bool, extract ExtractFn, transform TransformFn, conf ...*config.MetaFieldConfig) *SimpleField {
+func NewNewSimpleFieldWith(name string, defaultValue interface{}, hasDefaultValue bool, extract ExtractFn, transform TransformFn, options ...map[string]interface{}) *SimpleField {
 	var opts map[string]interface{}
-	var tag define.MetaFieldTagType
-	if len(conf) > 0 && conf[0] != nil {
-		c := conf[0]
-		if len(c.Option) > 0 {
-			opts = c.Option
-		}
-		tag = c.Tag
+	if len(options) > 0 {
+		opts = options[0]
 	}
 
 	return &SimpleField{
@@ -160,7 +153,6 @@ func NewNewSimpleFieldWith(name string, defaultValue interface{}, hasDefaultValu
 		extract:   extract,
 		transform: transform,
 		options:   opts,
-		tag:       tag,
 	}
 }
 

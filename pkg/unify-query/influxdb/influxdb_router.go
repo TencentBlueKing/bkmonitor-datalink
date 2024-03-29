@@ -14,8 +14,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/influxdata/influxdb/prometheus/remote"
@@ -54,8 +57,15 @@ type Router struct {
 	proxyInfo       influxdb.ProxyInfo
 	queryRouterInfo influxdb.QueryRouterInfo
 	endpointSet     *endpointSet
+	pingInfo        *PingInfo
 
 	hostStatusInfo influxdb.HostStatusInfo
+}
+
+type PingInfo struct {
+	MaxPingTimeout string
+	MaxPingCount   string
+	PingPeriod     string
 }
 
 func MockRouter(proxyInfo influxdb.ProxyInfo) {
@@ -83,7 +93,8 @@ func GetInfluxDBRouter() *Router {
 	return influxDBRouter
 }
 
-func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grpc.DialOption) error {
+// ReloadRouter InfluxDBRouter 初始化入口
+func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grpc.DialOption, timeout, count, period string) error {
 	var err error
 	err = r.Stop()
 	if err != nil {
@@ -110,9 +121,98 @@ func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grp
 		}
 		return bs
 	}, dialOpts)
+	r.pingInfo = &PingInfo{
+		MaxPingTimeout: timeout,
+		MaxPingCount:   count,
+		PingPeriod:     period,
+	}
 
 	err = r.ReloadAllKey(r.ctx)
-	return err
+	// 错误的时候直接返回错误内容, 否则开启 goroutine 对 hostList 中 influxdb 的状态进行维护
+	if err != nil {
+		return err
+	}
+	go r.MaintainHostStatusInfo()
+
+	return nil
+}
+
+// MaintainHostStatusInfo influxdb 探活功能，用于维护 router 自身 hostStatusInfo 属性
+func (r *Router) MaintainHostStatusInfo() {
+	tick := time.Second * 10
+	if t, err := time.ParseDuration(r.pingInfo.PingPeriod); err == nil {
+		tick = t
+	}
+	ticker := time.Tick(tick)
+	select {
+	case <-ticker:
+		r.Ping()
+	case <-r.ctx.Done():
+		log.Infof(r.ctx, "stop maintain host status")
+	}
+}
+
+func (r *Router) Ping() {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	// 不存在 host 信息则直接返回
+	if r.hostInfo == nil || len(r.hostInfo) == 0 {
+		return
+	}
+
+	if r.hostStatusInfo == nil {
+		r.lock.Lock()
+		r.hostStatusInfo = map[string]*influxdb.HostStatus{}
+		r.lock.Unlock()
+	}
+
+	clint := &http.Client{}
+	for _, v := range r.hostInfo {
+		addr := fmt.Sprintf("%s:%d", v.DomainName, v.Port)
+		req, err := http.NewRequest("GET", addr+"/ping", nil)
+		if err != nil {
+			log.Warnf(r.ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)
+			continue
+		}
+		//  MaxPingTimeout string; Example 10s
+		if r.pingInfo.MaxPingTimeout != "" {
+			params := req.URL.Query()
+			params.Set("wait_for_leader", r.pingInfo.MaxPingTimeout)
+			req.URL.RawQuery = params.Encode()
+		}
+		resp, err := clint.Do(req)
+		if err != nil {
+			log.Warnf(r.ctx, "do ping failed, error: %s", err)
+			continue
+		}
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				log.Warnf(r.ctx, "close body error: %s", err)
+			}
+		}()
+		// 对于读取内容错误，不设置当前 influxdb 为不可用
+		_, err = io.ReadAll(resp.Body)
+		if err != nil {
+			log.Warnf(r.ctx, "read resp body error: %s", err)
+			continue
+		}
+		// 设置为不可读状态
+		r.lock.Lock()
+		modifyTime := time.Now().Unix()
+		if resp.StatusCode != http.StatusNoContent {
+			r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+				Read:           false,
+				LastModifyTime: modifyTime,
+			}
+		} else {
+			r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+				Read:           true,
+				LastModifyTime: modifyTime,
+			}
+		}
+		r.lock.Unlock()
+	}
 }
 
 func (r *Router) ReloadAllKey(ctx context.Context) error {
@@ -336,12 +436,12 @@ func (r *Router) Print(ctx context.Context, reload bool) string {
 
 func (r *Router) loadRouter(ctx context.Context, key string) error {
 	var (
-		clusterInfo    influxdb.ClusterInfo
-		hostInfo       influxdb.HostInfo
-		tagInfo        influxdb.TagInfo
-		proxyInfo      influxdb.ProxyInfo
-		hostStatusInfo influxdb.HostStatusInfo
-		err            error
+		clusterInfo influxdb.ClusterInfo
+		hostInfo    influxdb.HostInfo
+		tagInfo     influxdb.TagInfo
+		proxyInfo   influxdb.ProxyInfo
+		//hostStatusInfo influxdb.HostStatusInfo
+		err error
 	)
 
 	if r.router == nil {
@@ -370,11 +470,11 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		if err == nil {
 			r.proxyInfo = proxyInfo
 		}
-	case influxdb.HostStatusInfoKey:
-		hostStatusInfo, err = r.router.GetHostStatusInfo(ctx)
-		if err == nil {
-			r.hostStatusInfo = hostStatusInfo
-		}
+		//case influxdb.HostStatusInfoKey:
+		//	hostStatusInfo, err = r.router.GetHostStatusInfo(ctx)
+		//	if err == nil {
+		//		r.hostStatusInfo = hostStatusInfo
+		//	}
 	}
 	return err
 }

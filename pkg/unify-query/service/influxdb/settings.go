@@ -19,6 +19,10 @@ const (
 	ContentTypeConfigPath          = "influxdb.content_type"
 	ChunkSizeConfigPath            = "influxdb.chunk_size"
 
+	MaxPingTimeOut = "influxdb.ping.timeout" // ping 超时配置
+	MaxPingCount   = "influxdb.ping.count"   // ping 次数设置
+	MaxPingPeriod  = "influxdb.ping.period"  // ping 探活周期
+
 	MaxLimitConfigPath  = "influxdb.max_limit"
 	MaxSLimitConfigPath = "influxdb.max_slimit"
 	ToleranceConfigPath = "influxdb.tolerance"
@@ -40,6 +44,10 @@ var (
 	PerQueryMaxGoroutine int
 	ContentType          string
 	ChunkSize            int
+
+	PingTimeout string
+	PingCount   string
+	PingPeriod  string
 
 	MaxLimit  int
 	MaxSLimit int

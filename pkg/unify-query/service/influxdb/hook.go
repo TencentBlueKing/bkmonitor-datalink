@@ -25,6 +25,11 @@ func setDefaultConfig() {
 	// influxdb 先根据series分流之后，再每个series下的数量分流
 	viper.SetDefault(ChunkSizeConfigPath, 20000)
 
+	// influxdb 探活配置
+	viper.SetDefault(MaxPingTimeOut, "5s")
+	viper.SetDefault(MaxPingCount, "3s")
+	viper.SetDefault(MaxPingPeriod, "10s")
+
 	viper.SetDefault(ToleranceConfigPath, 5)
 	viper.SetDefault(MaxLimitConfigPath, 5e6)
 	viper.SetDefault(MaxSLimitConfigPath, 2e5)
@@ -46,6 +51,11 @@ func LoadConfig() {
 	Tolerance = viper.GetInt(ToleranceConfigPath)
 	MaxLimit = viper.GetInt(MaxLimitConfigPath)
 	MaxSLimit = viper.GetInt(MaxSLimitConfigPath)
+
+	// influxdb 探活配置
+	PingTimeout = viper.GetString(MaxPingTimeOut)
+	PingCount = viper.GetString(MaxPingCount)
+	PingPeriod = viper.GetString(MaxPingPeriod)
 
 	Timeout = viper.GetString(TimeoutConfigPath)
 	PerQueryMaxGoroutine = viper.GetInt(PerQueryMaxGoroutineConfigPath)

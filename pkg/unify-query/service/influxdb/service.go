@@ -261,7 +261,7 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 	)
 
 	ir := inner.GetInfluxDBRouter()
-	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts)
+	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts, PingCount, PingTimeout, PingPeriod)
 	if err != nil {
 		return err
 	}

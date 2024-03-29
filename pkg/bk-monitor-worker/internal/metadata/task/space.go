@@ -186,7 +186,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo task error, publish space to table_id error: %s", err)
 		}
 	}
-	
+
 	db := mysql.GetDBSession().DB
 	// 获取所有可用的结果表
 	var tableIdList []string

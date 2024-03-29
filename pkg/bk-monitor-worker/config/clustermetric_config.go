@@ -36,5 +36,5 @@ func initClusterMetricVariables() {
 	ClusterMetricFieldName = "bkm_metric_name"
 	ClusterMetricHostFieldName = "bkm_hostname"
 
-	ESClusterMetricTarget = "log-search-4"
+	ESClusterMetricTarget = "bk_log_search"
 }

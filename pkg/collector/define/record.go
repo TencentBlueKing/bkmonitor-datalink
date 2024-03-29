@@ -36,6 +36,9 @@ const (
 	SourceZipkin      = "zipkin"
 	SourceProxy       = "proxy"
 	SourceSkywalking  = "skywalking"
+
+	KeyToken    = "X-BK-TOKEN"
+	KeyTenantID = "X-Tps-TenantID"
 )
 
 type RecordType string

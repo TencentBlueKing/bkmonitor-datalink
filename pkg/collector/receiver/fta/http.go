@@ -29,7 +29,6 @@ const (
 	routeFtaEvent      = "/fta/v1/event"
 	routeFtaEventSlash = "/fta/v1/event/"
 
-	tokenKey       = "X-BK-TOKEN"
 	tokenParamsKey = "token"
 	statusError    = "error"
 )
@@ -79,7 +78,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	// 优先尝试从请求头中获取 token，取不到则中参数中获取
-	token := req.Header.Get(tokenKey)
+	token := req.Header.Get(define.KeyToken)
 	if token == "" {
 		token = req.URL.Query().Get(tokenParamsKey)
 	}
@@ -113,7 +112,7 @@ func (s HttpService) ExportEvent(w http.ResponseWriter, req *http.Request) {
 	// 将 headers 放入 data 中
 	httpHeaders := make(map[string]string)
 	for k, v := range req.Header {
-		if len(v) != 0 && strings.ToUpper(k) != tokenKey {
+		if len(v) != 0 && strings.ToUpper(k) != define.KeyToken {
 			httpHeaders[k] = v[0]
 		}
 	}

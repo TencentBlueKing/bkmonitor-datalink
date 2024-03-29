@@ -68,6 +68,8 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	var (
 		data *QuerySyncResultData
 
+		startAnaylize time.Time
+
 		ok  bool
 		err error
 	)
@@ -75,14 +77,22 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
 	span.Set("query-sql", sql)
 
+	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
+
+	user := metadata.GetUser(ctx)
+	startAnaylize = time.Now()
+
 	// 发起异步查询
 	res := i.Client.QuerySync(ctx, sql)
 	if err = i.checkResult(res); err != nil {
 		return data, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
+	queryCost := time.Since(startAnaylize)
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	)
 
 	span.Set("query-timeout", i.Timeout.String())
 	span.Set("query-interval-time", i.IntervalTime.String())
@@ -507,6 +517,11 @@ func (i Instance) GetInstanceType() string {
 func getValue(k string, d map[string]interface{}) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
+		// 增加 nil 判断，避免回传的数值为空
+		if v == nil {
+			return value, nil
+		}
+
 		switch v.(type) {
 		case string:
 			value = fmt.Sprintf("%s", v)
@@ -515,7 +530,7 @@ func getValue(k string, d map[string]interface{}) (string, error) {
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
 		default:
-			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)
+			return value, fmt.Errorf("get_value_error: type %T, %v in %s with %+v", v, v, k, d)
 		}
 	}
 	return value, nil

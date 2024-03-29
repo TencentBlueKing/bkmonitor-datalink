@@ -14,6 +14,7 @@ package corefile
 
 import (
 	"context"
+	"regexp"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -41,7 +42,7 @@ type CoreFileCollector struct {
 	done                    chan bool
 	state                   int
 	coreFilePattern         string
-	looseMatch              bool
+	matchRegx               *regexp.Regexp
 	corePath                string
 	pattern                 string
 	patternArr              [][]string
@@ -79,7 +80,15 @@ func (c *CoreFileCollector) Start(ctx context.Context, e chan<- define.Event, co
 	}
 	c.reportTimeInfo = make(map[string]*ReportInfo)
 	c.coreFilePattern = conf.CoreFilePattern
-	c.looseMatch = conf.CoreFileLooseMatch
+	if conf.CoreFileMatchRegex != "" {
+		r, err := regexp.Compile(conf.CoreFileMatchRegex)
+		if err != nil {
+			logger.Errorf("faield to compile regex pattern(%s), err: %v", conf.CoreFileMatchRegex, err)
+		} else {
+			c.matchRegx = r
+		}
+	}
+
 	logger.Infof("CoreFileColletor start success with config data_id->[%d] report_gap->[%s]", c.dataid, c.reportTimeGap)
 	go c.statistic(ctx, e)
 }

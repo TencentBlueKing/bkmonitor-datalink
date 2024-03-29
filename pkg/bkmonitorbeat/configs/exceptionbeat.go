@@ -38,7 +38,7 @@ type ExceptionBeatConfig struct {
 	DiskRoBlackList        []string      `config:"disk_ro_black_list"`
 	CoreFileReportGap      time.Duration `config:"corefile_report_gap"`
 	CoreFilePattern        string        `config:"corefile_pattern"`
-	CoreFileLooseMatch     bool          `config:"corefile_loose_match"`
+	CoreFileMatchRegex     string        `config:"corefile_match_regex"`
 }
 
 var DefaultExceptionBeatConfig = ExceptionBeatConfig{

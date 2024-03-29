@@ -490,10 +490,12 @@ func (c *CoreFileCollector) parseDimensions(groups []regexGroup) beat.MapStr {
 
 func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
 	m, ok := c.fillDimensionV0(filePath)
-	// 宽松匹配模式下，不需要关心是否 dimensions 能否匹配到
-	if c.looseMatch {
-		return m, true
+	// 正则匹配模式下，不需要关心是否 dimensions 能否匹配到
+	if c.matchRegx != nil {
+		matched := c.matchRegx.MatchString(filePath)
+		return m, matched
 	}
+
 	return m, ok
 }
 

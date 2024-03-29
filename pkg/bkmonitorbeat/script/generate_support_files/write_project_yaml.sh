@@ -62,8 +62,8 @@ config_templates:
             corefile_pattern:
               title: corefile_pattern
               type: string
-            corefile_loose_match:
-              title: corefile_loose_match
+            corefile_match_regex:
+              title: corefile_match_regex
               type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf

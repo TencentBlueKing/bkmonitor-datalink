@@ -295,8 +295,7 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 	// 从redis中获取该资源类型的所有事件
 	eventStrings := make([]string, 0)
 	for {
-		// 一次最多获取1000个事件
-		result, err := h.redisClient.LPopCount(ctx, bkEventKey, 1000).Result()
+		result, err := h.redisClient.LPop(ctx, bkEventKey).Result()
 		if err != nil {
 			if !errors.Is(err, redis.Nil) {
 				logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
@@ -304,11 +303,11 @@ func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbRes
 			}
 		}
 		// 如果没有事件了，退出
-		if len(result) == 0 {
+		if result == "" {
 			break
 		}
 
-		eventStrings = append(eventStrings, result...)
+		eventStrings = append(eventStrings, result)
 	}
 
 	// 解析事件
@@ -443,6 +442,8 @@ type RefreshTaskParams struct {
 
 	// 业务执行并发数
 	BizConcurrent int `json:"biz_concurrent" mapstructure:"biz_concurrent"`
+
+	CacheTypes []string `json:"cache_types" mapstructure:"cache_types"`
 }
 
 // CacheRefreshTask cmdb缓存刷新任务
@@ -475,11 +476,25 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		fullRefreshIntervals[cacheType] = time.Second * time.Duration(interval)
 	}
 
+	// 需要刷新的缓存类型
+	cacheTypes := params.CacheTypes
+	if len(cacheTypes) == 0 {
+		for cacheType := range cmdbEventHandlerResourceTypeMap {
+			cacheTypes = append(cacheTypes, cacheType)
+		}
+	} else {
+		for _, cacheType := range cacheTypes {
+			if _, ok := cmdbEventHandlerResourceTypeMap[cacheType]; !ok {
+				return errors.Errorf("unsupported cache type: %s", cacheType)
+			}
+		}
+	}
+
 	wg := sync.WaitGroup{}
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	for cacheType := range cmdbEventHandlerResourceTypeMap {
+	for _, cacheType := range cacheTypes {
 		wg.Add(1)
 		cacheType := cacheType
 		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]

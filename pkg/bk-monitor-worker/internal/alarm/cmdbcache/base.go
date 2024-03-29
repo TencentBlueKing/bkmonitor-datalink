@@ -67,7 +67,7 @@ type Manager interface {
 type BaseCacheManager struct {
 	Prefix          string
 	RedisClient     redis.UniversalClient
-	Expire          int
+	Expire          time.Duration
 	ConcurrentLimit int
 
 	updatedFieldSet  map[string]map[string]struct{}
@@ -83,7 +83,7 @@ func NewBaseCacheManager(prefix string, opt *redis.Options, concurrentLimit int)
 	return &BaseCacheManager{
 		Prefix:           prefix,
 		RedisClient:      client,
-		Expire:           86400,
+		Expire:           time.Hour * 24 * 7,
 		updatedFieldSet:  make(map[string]map[string]struct{}),
 		updateFieldLocks: make(map[string]*sync.Mutex),
 		ConcurrentLimit:  concurrentLimit,

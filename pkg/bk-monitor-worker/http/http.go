@@ -48,6 +48,8 @@ func NewHTTPService() *gin.Engine {
 	svr.DELETE(DeleteAllTaskPath, RemoveAllTask)
 	// 重新启动常驻任务
 	svr.POST(DaemonTaskReload, ReloadDaemonTask)
+	// 动态设置日志级别
+	svr.POST(SetLogLevelPath, SetLogLevel)
 	return svr
 }
 

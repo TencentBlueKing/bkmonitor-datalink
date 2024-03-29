@@ -26,6 +26,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
@@ -35,7 +37,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
 
-var DemoHosts = []*alarmHostInfo{
+var DemoHosts = []*AlarmHostInfo{
 	{
 		BkBizId:       2,
 		BkHostId:      1,
@@ -44,9 +46,18 @@ var DemoHosts = []*alarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789012",
 		BkSetIds:      []int{2, 3},
 		BkModuleIds:   []int{3, 6},
-		TopoLinks: [][]string{
-			{"module|3", "set|2", "biz|2"},
-			{"module|6", "set|3", "test|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|3": {
+				{"bk_inst_id": 3, "bk_inst_name": "空闲机", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
+			"module|6": {
+				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "测试节点", "bk_obj_id": "test", "bk_obj_name": "测试"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 	{
@@ -57,8 +68,12 @@ var DemoHosts = []*alarmHostInfo{
 		BkAgentId:     "",
 		BkSetIds:      []int{2},
 		BkModuleIds:   []int{4},
-		TopoLinks: [][]string{
-			{"module|4", "set|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|4": {
+				{"bk_inst_id": 4, "bk_inst_name": "故障机", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 2, "bk_inst_name": "空闲机池", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 	{
@@ -69,8 +84,13 @@ var DemoHosts = []*alarmHostInfo{
 		BkAgentId:     "12345678901234567890123456789014",
 		BkSetIds:      []int{3},
 		BkModuleIds:   []int{6},
-		TopoLinks: [][]string{
-			{"module|6", "set|3", "test|2", "biz|2"},
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|6": {
+				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "测试节点", "bk_obj_id": "test", "bk_obj_name": "测试"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
 		},
 	},
 }
@@ -134,7 +154,7 @@ var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 
 func TestHostAndTopoCacheManager(t *testing.T) {
 	// mock 主机和拓扑查询
-	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*alarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 		return DemoHosts, DemoTopoTree, nil
 	})
 	defer patches.Reset()
@@ -163,24 +183,25 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 
 		// 判断是否存在所有的缓存键
 		expectedHostKeys := make([]string, 0, len(DemoHosts))
-		expectedHostIds := make([]string, 0, len(DemoHosts))
 		expectedAgentIds := make([]string, 0, len(DemoHosts))
 		expectedHostIpKeys := make([]string, 0, len(DemoHosts))
 		for _, host := range DemoHosts {
 			if host.BkHostInnerip != "" {
 				expectedHostIpKeys = append(expectedHostIpKeys, host.BkHostInnerip)
 				expectedHostKeys = append(expectedHostKeys, fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId))
+				expectedHostKeys = append(expectedHostKeys, strconv.Itoa(host.BkHostId))
 			}
 			if host.BkAgentId != "" {
 				expectedAgentIds = append(expectedAgentIds, host.BkAgentId)
 			}
-			expectedHostIds = append(expectedHostIds, fmt.Sprintf("%d", host.BkHostId))
 		}
 
-		assert.EqualValues(t, expectedHostKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
-		assert.EqualValues(t, expectedHostIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
-		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
+		sort.Strings(expectedHostKeys)
+		actualHostKeys := client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val()
+		sort.Strings(actualHostKeys)
 
+		assert.EqualValues(t, expectedHostKeys, actualHostKeys)
+		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.EqualValues(t, 8, int(client.HLen(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val()))
 
 		// 刷新全局缓存
@@ -199,7 +220,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 		events := make([]map[string]interface{}, 0, len(allResult.Val()))
 		for _, v := range allResult.Val() {
-			var host *alarmHostInfo
+			var host *AlarmHostInfo
 			err := json.Unmarshal([]byte(v), &host)
 			if err != nil {
 				t.Error(err)
@@ -212,6 +233,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 				"bk_agent_id":     host.BkAgentId,
 			})
 		}
+
+		fmt.Printf(client.HGet(ctx, cacheManager.GetCacheKey(hostCacheKey), "1").Val())
 
 		// 基于事件更新缓存
 		err = cacheManager.UpdateByEvents(ctx, "host", events)
@@ -251,7 +274,6 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.True(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 	})
@@ -278,14 +300,13 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断是否存在所有的缓存键
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 
 		// 清理缓存
-		cacheManager.initUpdatedFieldSet(hostIDCacheKey, hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
+		cacheManager.initUpdatedFieldSet(hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
 		err = cacheManager.CleanGlobal(ctx)
 		if err != nil {
 			t.Error(err)
@@ -293,7 +314,6 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		}
 
 		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())

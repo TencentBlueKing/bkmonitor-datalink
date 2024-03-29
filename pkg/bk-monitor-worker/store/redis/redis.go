@@ -12,6 +12,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -36,7 +37,9 @@ type Instance struct {
 
 var (
 	storageRedisInstance *Instance
+	storageRedisOnce sync.Once
 	cacheRedisInstance   *Instance
+	cacheRedisOnce sync.Once
 )
 
 // 两个类型的redis使用场景不一样，
@@ -45,19 +48,22 @@ func GetStorageRedisInstance() *Instance {
 	if storageRedisInstance != nil {
 		return storageRedisInstance
 	}
-	opt := redisUtils.Option{
-		Mode:             config.StorageRedisMode,
-		Host:             config.StorageRedisStandaloneHost,
-		Port:             config.StorageRedisStandalonePort,
-		SentinelAddress:  config.StorageRedisSentinelAddress,
-		MasterName:       config.StorageRedisSentinelMasterName,
-		SentinelPassword: config.StorageRedisSentinelPassword,
-		Password:         config.StorageRedisStandalonePassword,
-		Db:               config.StorageRedisDatabase,
-		DialTimeout:      config.StorageRedisDialTimeout,
-		ReadTimeout:      config.StorageRedisReadTimeout,
-	}
-	return GetInstance(&opt)
+	storageRedisOnce.Do(func() {
+		opt := redisUtils.Option{
+			Mode:             config.StorageRedisMode,
+			Host:             config.StorageRedisStandaloneHost,
+			Port:             config.StorageRedisStandalonePort,
+			SentinelAddress:  config.StorageRedisSentinelAddress,
+			MasterName:       config.StorageRedisSentinelMasterName,
+			SentinelPassword: config.StorageRedisSentinelPassword,
+			Password:         config.StorageRedisStandalonePassword,
+			Db:               config.StorageRedisDatabase,
+			DialTimeout:      config.StorageRedisDialTimeout,
+			ReadTimeout:      config.StorageRedisReadTimeout,
+		}
+		storageRedisInstance = GetInstance(&opt)
+	})
+	return storageRedisInstance
 }
 
 // GetCacheRedisInstance 获取缓存类型的 redis
@@ -66,19 +72,22 @@ func GetCacheRedisInstance() *Instance {
 	if cacheRedisInstance != nil {
 		return cacheRedisInstance
 	}
-	opt := redisUtils.Option{
-		Mode:             config.StorageDependentRedisMode,
-		Host:             config.StorageDependentRedisStandaloneHost,
-		Port:             config.StorageDependentRedisStandalonePort,
-		SentinelAddress:  config.StorageDependentRedisSentinelAddress,
-		MasterName:       config.StorageDependentRedisSentinelMasterName,
-		SentinelPassword: config.StorageDependentRedisSentinelPassword,
-		Password:         config.StorageDependentRedisStandalonePassword,
-		Db:               config.StorageDependentRedisDatabase,
-		DialTimeout:      config.StorageDependentRedisDialTimeout,
-		ReadTimeout:      config.StorageDependentRedisReadTimeout,
-	}
-	return GetInstance(&opt)
+	cacheRedisOnce.Do(func() {
+		opt := redisUtils.Option{
+			Mode:             config.StorageDependentRedisMode,
+			Host:             config.StorageDependentRedisStandaloneHost,
+			Port:             config.StorageDependentRedisStandalonePort,
+			SentinelAddress:  config.StorageDependentRedisSentinelAddress,
+			MasterName:       config.StorageDependentRedisSentinelMasterName,
+			SentinelPassword: config.StorageDependentRedisSentinelPassword,
+			Password:         config.StorageDependentRedisStandalonePassword,
+			Db:               config.StorageDependentRedisDatabase,
+			DialTimeout:      config.StorageDependentRedisDialTimeout,
+			ReadTimeout:      config.StorageDependentRedisReadTimeout,
+		}
+		cacheRedisInstance = GetInstance(&opt)
+	})
+	return cacheRedisInstance
 }
 
 // GetInstance get a redis instance
@@ -117,7 +126,7 @@ func (r *Instance) Open() error {
 // Put put a key-val
 func (r *Instance) Put(key, val string, expiration time.Duration) error {
 	if err := r.Client.Set(r.ctx, key, val, expiration).Err(); err != nil {
-		logger.Errorf("put redis error, key: %s, val: %s, err: %v", key, val, err)
+		logger.Debugf("put redis error, key: %s, val: %s, err: %v", key, val, err)
 		return err
 	}
 	return nil
@@ -127,7 +136,7 @@ func (r *Instance) Put(key, val string, expiration time.Duration) error {
 func (r *Instance) Get(key string) ([]byte, error) {
 	data, err := r.Client.Get(r.ctx, key).Bytes()
 	if err != nil {
-		logger.Errorf("get redis key: %s error, %v", key, err)
+		logger.Debugf("get redis key: %s error, %v", key, err)
 		return nil, err
 	}
 	return data, nil
@@ -137,15 +146,15 @@ func (r *Instance) Get(key string) ([]byte, error) {
 func (r *Instance) Delete(key string) error {
 	exist, err := r.Client.Exists(r.ctx, key).Result()
 	if err != nil {
-		logger.Errorf("check redis key: %s exist error, %v", key, err)
+		logger.Debugf("check redis key: %s exist error, %v", key, err)
 		return err
 	}
 	if exist == 0 {
-		logger.Warnf("key: %s not exist from redis", key)
+		logger.Debugf("key: %s not exist from redis", key)
 		return nil
 	}
 	if err := r.Client.Del(r.ctx, key).Err(); err != nil {
-		logger.Errorf("delete key: %s error, %v", key, err)
+		logger.Debugf("delete key: %s error, %v", key, err)
 		return err
 	}
 	return nil
@@ -168,11 +177,11 @@ func (r *Instance) HSetWithCompare(key, field, value string) error {
 	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
 		return nil
 	}
-	logger.Infof("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
+	logger.Debugf("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
 	metrics.RedisCount(key, "HSet")
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
 		return err
 	}
 	return nil
@@ -182,7 +191,7 @@ func (r *Instance) HSetWithCompare(key, field, value string) error {
 func (r *Instance) HSet(key, field, value string) error {
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
 		return err
 	}
 	return nil
@@ -191,7 +200,7 @@ func (r *Instance) HSet(key, field, value string) error {
 func (r *Instance) HGet(key, field string) string {
 	val := r.Client.HGet(r.ctx, key, field).Val()
 	if val == "" {
-		logger.Warnf("hset field error, key: %s, field: %s, value: %s", key, field, val)
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, val)
 	}
 	return val
 }
@@ -199,7 +208,7 @@ func (r *Instance) HGet(key, field string) string {
 func (r *Instance) HGetAll(key string) map[string]string {
 	val := r.Client.HGetAll(r.ctx, key).Val()
 	if len(val) == 0 {
-		logger.Warnf("hset field error, key: %s, value is empty", key)
+		logger.Debugf("hset field error, key: %s, value is empty", key)
 	}
 	return val
 }
@@ -235,7 +244,7 @@ func (r *Instance) HMGet(key string, fields ...string) ([]interface{}, error) {
 func (r *Instance) SAdd(key string, field ...interface{}) error {
 	err := r.Client.SAdd(r.ctx, key, field...).Err()
 	if err != nil {
-		logger.Errorf("sadd fields error, key: %s, fields: %v", key, field)
+		logger.Debugf("sadd fields error, key: %s, fields: %v", key, field)
 		return err
 	}
 	return nil

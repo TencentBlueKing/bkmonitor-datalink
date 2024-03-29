@@ -255,6 +255,11 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 		return errors.Wrap(err, "update business cache failed")
 	}
 
+	// 更新缓存过期时间
+	if err := m.RedisClient.Expire(ctx, key, m.Expire).Err(); err != nil {
+		return errors.Wrap(err, "set business cache expire time failed")
+	}
+
 	return nil
 }
 

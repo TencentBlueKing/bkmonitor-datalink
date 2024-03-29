@@ -164,27 +164,40 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 
 	// 更新模块缓存
 	if moduleCacheData != nil {
-		key := m.GetCacheKey(moduleCacheKey)
-		err = m.UpdateHashMapCache(ctx, key, moduleCacheData)
+		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(moduleCacheKey), moduleCacheData)
 		if err != nil {
-			return errors.Wrap(err, "failed to update module hashmap cache")
+			return errors.Wrapf(err, "refresh module cache by biz: %d failed", bizID)
 		}
+		logger.Infof("refresh module cache by biz: %d, module count: %d", bizID, len(moduleCacheData))
 	}
-	logger.Infof("refresh module cache by biz: %d, module count: %d", bizID, len(moduleList))
 
 	// 更新服务模板关联的模块缓存
 	if templateToModules != nil {
-		key := m.GetCacheKey(serviceTemplateCacheKey)
 		serviceTemplateCacheData := make(map[string]string)
 		for templateID, moduleIDs := range templateToModules {
 			serviceTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(moduleIDs, ","))
 		}
-		err = m.UpdateHashMapCache(ctx, key, serviceTemplateCacheData)
+		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateCacheData)
 		if err != nil {
-			return errors.Wrap(err, "failed to update service_template hashmap cache")
+			return errors.Wrapf(err, "refresh service_template cache by biz: %d failed", bizID)
 		}
+		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
 	}
-	logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(templateToModules))
+
+	return nil
+}
+
+// RefreshGlobal 刷新全局模块缓存
+func (m *ModuleCacheManager) RefreshGlobal(ctx context.Context) error {
+	result := m.RedisClient.Expire(ctx, m.GetCacheKey(moduleCacheKey), m.Expire)
+	if err := result.Err(); err != nil {
+		return errors.Wrap(err, "set module cache expire time failed")
+	}
+
+	result = m.RedisClient.Expire(ctx, m.GetCacheKey(serviceTemplateCacheKey), m.Expire)
+	if err := result.Err(); err != nil {
+		return errors.Wrap(err, "set service_template cache expire time failed")
+	}
 
 	return nil
 }

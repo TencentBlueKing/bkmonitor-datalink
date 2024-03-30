@@ -149,6 +149,7 @@ func (r *Router) MaintainHostStatusInfo() {
 		r.Ping()
 	case <-r.ctx.Done():
 		log.Infof(r.ctx, "stop maintain host status")
+		return
 	}
 }
 

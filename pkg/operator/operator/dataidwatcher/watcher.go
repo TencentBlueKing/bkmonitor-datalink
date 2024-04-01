@@ -145,7 +145,7 @@ func (w *dataIDWatcher) matchDataID(meta define.MonitorMeta, systemResource bool
 	for _, dataID := range dataIDs {
 		resource := dataID.Spec.MonitorResource
 		if resource.Name == "" && resource.NameSpace != "" {
-			if resource.Kind == strings.ToLower(meta.Kind) && resource.NameSpace == meta.Namespace {
+			if resource.Kind == strings.ToLower(meta.Kind) && resource.MatchSplitNamespace(meta.Namespace) {
 				return dataID, nil
 			}
 		}

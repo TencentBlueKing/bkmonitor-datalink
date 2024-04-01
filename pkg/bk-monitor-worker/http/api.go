@@ -137,7 +137,7 @@ func composeOption(opt taskOptions) []task.Option {
 		opts = append(opts, task.Queue(opt.Queue))
 	}
 	if opt.Timeout != 0 {
-		timeoutOpt := IntToSecond(opt.Timeout)
+		timeoutOpt := timex.IntToSecond(opt.Timeout)
 		opts = append(opts, task.Timeout(timeoutOpt))
 	}
 	if opt.Deadline != "" {
@@ -145,7 +145,7 @@ func composeOption(opt taskOptions) []task.Option {
 		opts = append(opts, task.Deadline(deadlineOpt))
 	}
 	if opt.UniqueTTL != 0 {
-		uniqueTTLOpt := IntToSecond(opt.UniqueTTL)
+		uniqueTTLOpt := timex.IntToSecond(opt.UniqueTTL)
 		opts = append(opts, task.Timeout(uniqueTTLOpt))
 	}
 	return opts

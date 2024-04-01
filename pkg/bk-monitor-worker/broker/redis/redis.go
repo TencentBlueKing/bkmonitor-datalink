@@ -34,7 +34,7 @@ import (
 // set ttl
 const statsTTL = 90 * 24 * time.Hour
 
-const LeaseDuration = 30 * time.Second
+const LeaseDuration = 30 * time.Minute
 
 // RDB is a client interface to query and mutate task queues.
 type RDB struct {
@@ -44,7 +44,7 @@ type RDB struct {
 
 var (
 	brokerInstance *RDB
-	brokerOnce sync.Once
+	brokerOnce     sync.Once
 )
 
 // GetRDB Get the redis broker client
@@ -90,7 +90,7 @@ func GetRDB() *RDB {
 
 		brokerInstance = &RDB{client: client, clock: timex.NewTimeClock()}
 	})
-	
+
 	return brokerInstance
 }
 

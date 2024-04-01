@@ -20,7 +20,7 @@ import (
 
 func TestMetricDataIDMatcher(t *testing.T) {
 	watcher := &dataIDWatcher{}
-	ids := map[string]*bkv1beta1.DataID{
+	watcher.metricDataIDs = map[string]*bkv1beta1.DataID{
 		watcher.uniqueKey("servicemonitor", "ns1", "name1"): {
 			Spec: bkv1beta1.DataIDSpec{
 				DataID: 1001,
@@ -31,6 +31,15 @@ func TestMetricDataIDMatcher(t *testing.T) {
 				DataID: 1002,
 				MonitorResource: bkv1beta1.MonitorResource{
 					NameSpace: "ns2",
+					Kind:      "servicemonitor",
+				},
+			},
+		},
+		watcher.uniqueKey("servicemonitor", "ns5|ns6|ns7", ""): {
+			Spec: bkv1beta1.DataIDSpec{
+				DataID: 1101,
+				MonitorResource: bkv1beta1.MonitorResource{
+					NameSpace: "ns5|ns6|ns7",
 					Kind:      "servicemonitor",
 				},
 			},
@@ -46,41 +55,55 @@ func TestMetricDataIDMatcher(t *testing.T) {
 			},
 		},
 	}
-	watcher.metricDataIDs = ids
 
-	// 精准匹配
-	dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
-		Name:      "name1",
-		Kind:      "servicemonitor",
-		Namespace: "ns1",
-	}, false)
-	assert.NoError(t, err)
-	assert.Equal(t, 1001, dataID.Spec.DataID)
+	t.Run("精准匹配", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "name1",
+			Kind:      "servicemonitor",
+			Namespace: "ns1",
+		}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, 1001, dataID.Spec.DataID)
+	})
 
-	// 系统内置
-	dataID, err = watcher.MatchMetricDataID(define.MonitorMeta{
-		Name:      "name2",
-		Kind:      "servicemonitor",
-		Namespace: "ns1",
-	}, true)
-	assert.NoError(t, err)
-	assert.Equal(t, 1003, dataID.Spec.DataID)
+	t.Run("系统内置", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "name2",
+			Kind:      "servicemonitor",
+			Namespace: "ns1",
+		}, true)
+		assert.NoError(t, err)
+		assert.Equal(t, 1003, dataID.Spec.DataID)
 
-	// namespace 匹配
-	dataID, err = watcher.MatchMetricDataID(define.MonitorMeta{
-		Name:      "name3",
-		Kind:      "servicemonitor",
-		Namespace: "ns2",
-	}, false)
-	assert.NoError(t, err)
-	assert.Equal(t, 1002, dataID.Spec.DataID)
+	})
 
-	// 通用匹配
-	dataID, err = watcher.MatchMetricDataID(define.MonitorMeta{
-		Name:      "name4",
-		Kind:      "servicemonitor",
-		Namespace: "ns3",
-	}, false)
-	assert.NoError(t, err)
-	assert.Equal(t, 1004, dataID.Spec.DataID)
+	t.Run("namespace 精确匹配", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "name3",
+			Kind:      "servicemonitor",
+			Namespace: "ns2",
+		}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, 1002, dataID.Spec.DataID)
+	})
+
+	t.Run("namespace 分割匹配", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "",
+			Kind:      "servicemonitor",
+			Namespace: "ns5",
+		}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, 1101, dataID.Spec.DataID)
+	})
+
+	t.Run("兜底匹配", func(t *testing.T) {
+		dataID, err := watcher.MatchMetricDataID(define.MonitorMeta{
+			Name:      "name4",
+			Kind:      "servicemonitor",
+			Namespace: "ns3",
+		}, false)
+		assert.NoError(t, err)
+		assert.Equal(t, 1004, dataID.Spec.DataID)
+	})
 }

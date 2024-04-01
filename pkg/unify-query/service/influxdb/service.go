@@ -261,10 +261,27 @@ func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 	)
 
 	ir := inner.GetInfluxDBRouter()
-	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts, PingCount, PingTimeout, PingPeriod)
+	err := ir.ReloadRouter(ctx, RouterPrefix, dialOpts)
 	if err != nil {
 		return err
 	}
+
+	s.wg.Add(1)
+	go func() {
+		ticker := time.NewTicker(PingPeriod)
+		defer ticker.Stop()
+		defer s.wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Warnf(ctx, "maintain influxdb host status info loop exit")
+				return
+			case <-ticker.C:
+				ir.Ping(ctx, PingTimeout, PingCount)
+				log.Debugf(ctx, "finish to Ping goroutine.")
+			}
+		}
+	}()
 
 	ch := ir.RouterSubscribe(ctx)
 	s.wg.Add(1)

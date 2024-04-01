@@ -396,8 +396,7 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		hostInfo    influxdb.HostInfo
 		tagInfo     influxdb.TagInfo
 		proxyInfo   influxdb.ProxyInfo
-		//hostStatusInfo influxdb.HostStatusInfo
-		err error
+		err         error
 	)
 
 	if r.router == nil {

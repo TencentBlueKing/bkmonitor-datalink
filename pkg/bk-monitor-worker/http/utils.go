@@ -7,11 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+// NOTE: 优先使用 `http` 状态码
+
 package http
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
@@ -72,25 +73,24 @@ func ResponseWithMessage(c *gin.Context, h interface{}, message string, v ...int
 
 // BadReqResponse return a bad request response
 func BadReqResponse(c *gin.Context, message string, v ...interface{}) {
+	status := 400
 	response := &gin.H{
 		"result":  false,
 		"code":    common.ParamsError,
 		"message": GetMessage("bad request", message, v),
+		"data":    nil,
 	}
-	Response(c, response)
+	c.JSON(status, response)
 }
 
 // ServerErrResponse return a error response
 func ServerErrResponse(c *gin.Context, message string, v ...interface{}) {
+	status := 500
 	response := &gin.H{
 		"result":  false,
 		"code":    common.ParamsError,
 		"message": GetMessage("bad request", message, v),
+		"data":    nil,
 	}
-	Response(c, response)
-}
-
-// IntToSecond transform int to time duration
-func IntToSecond(t int) time.Duration {
-	return time.Duration(t) * time.Second
+	c.JSON(status, response)
 }

@@ -107,3 +107,9 @@ func ParseDuration(s string) (time.Duration, error) {
 	}
 	return valueSum, nil
 }
+
+
+// IntToSecond transform int to time duration
+func IntToSecond(t int) time.Duration {
+	return time.Duration(t) * time.Second
+}

@@ -225,12 +225,21 @@ func (s *SearchBizInstTopoData) Traverse(fn func(*SearchBizInstTopoData)) {
 }
 
 // ToTopoLinks 递归获取模块ID到拓扑链路的映射
-func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]string, parents []string) {
-	parents = append([]string{(*s).GetId()}, parents...)
+func (s *SearchBizInstTopoData) ToTopoLinks(result *map[int][]map[string]interface{}, parents []map[string]interface{}) {
+	parents = append(parents, map[string]interface{}{
+		"bk_inst_id":   s.BkInstId,
+		"bk_inst_name": s.BkInstName,
+		"bk_obj_id":    s.BkObjId,
+		"bk_obj_name":  s.BkObjName,
+	})
 
 	// 如果是模块，记录链路
 	if s.BkObjId == "module" {
-		(*result)[s.BkInstId] = parents
+		reverseParents := make([]map[string]interface{}, len(parents))
+		for i, p := range parents {
+			reverseParents[len(parents)-i-1] = p
+		}
+		(*result)[s.BkInstId] = reverseParents
 		return
 	}
 

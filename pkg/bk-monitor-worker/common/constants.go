@@ -59,3 +59,12 @@ const (
 	// ParamsError 参数异常错误
 	ParamsError = 400
 )
+
+const (
+	// 对外 API 模块
+	TaskModuleName = "task"
+	// 调度器模块
+	ScheduleModuleName = "scheduler"
+	// 承载任务模块
+	WorkerModuleName = "worker"
+)

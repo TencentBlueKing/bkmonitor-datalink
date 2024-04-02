@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -38,6 +39,7 @@ func HandleExampleTask(ctx context.Context, t *task.Task) error {
 func PeriodicHandleExampleTask(ctx context.Context, t *task.Task) error {
 	logger.Info("periodic example func trigger")
 
+	time.Sleep(10 * time.Second)
 	logger.Printf("periodic end")
 	return nil
 }

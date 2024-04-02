@@ -90,7 +90,9 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 		return nil, err
 	}
 	timeoutCtx, _ := context.WithTimeout(ctx, 5*time.Second)
-	_, err = client.Ping(timeoutCtx)
+	resp, err := client.Ping(timeoutCtx)
+	// ref: https://andrii-kushch.medium.com/is-it-necessary-to-close-the-body-in-the-http-response-object-in-golang-171c44c9394d
+	defer resp.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -99,14 +101,14 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间
-func (s *ClusterInfo) BeforeCreate(tx *gorm.DB) error {
-	s.CreateTime = time.Now()
-	s.LastModifyTime = time.Now()
+func (c *ClusterInfo) BeforeCreate(tx *gorm.DB) error {
+	c.CreateTime = time.Now()
+	c.LastModifyTime = time.Now()
 	return nil
 }
 
 // BeforeUpdate 保存前最后修改时间字段设置为当前时间
-func (d *ClusterInfo) BeforeUpdate(tx *gorm.DB) error {
-	d.LastModifyTime = time.Now()
+func (c *ClusterInfo) BeforeUpdate(tx *gorm.DB) error {
+	c.LastModifyTime = time.Now()
 	return nil
 }

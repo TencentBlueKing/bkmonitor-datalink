@@ -15,14 +15,15 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var bmwMetricNamespace = "bmw"
+const bmwMetricNamespace = "bmw"
 
 var (
 	// API request metrics
-	apiRequestCount = prometheus.NewCounterVec(
+	apiRequestTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: bmwMetricNamespace,
 			Name:      "api_request_count",
@@ -40,20 +41,21 @@ var (
 	)
 
 	// task metrics
-	taskCount = prometheus.NewCounterVec(
+	taskTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: bmwMetricNamespace,
 			Name:      "task_count",
 			Help:      "task run count",
 		},
-		[]string{"name", "status"}, // name 包含类型
+		[]string{"name", "module", "status"}, // name 包含类型
 	)
 
-	taskCostTime = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	taskDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
 			Namespace: bmwMetricNamespace,
-			Name:      "task_cost",
+			Name:      "task_duration_seconds",
 			Help:      "task run cost time",
+			Buckets:   []float64{0.1, 0.2, 0.5, 1, 3, 10, 15, 20, 30},
 		},
 		[]string{"name"},
 	)
@@ -77,9 +79,9 @@ var (
 	)
 )
 
-// RequestApiCount request api count metric
-func RequestApiCount(method, apiPath, status string) {
-	metric, err := apiRequestCount.GetMetricWithLabelValues(method, apiPath, status)
+// RequestApiTotal request api count metric
+func RequestApiTotal(method, apiPath, status string) {
+	metric, err := apiRequestTotal.GetMetricWithLabelValues(method, apiPath, status)
 	if err != nil {
 		logger.Errorf("prom get request api count metric failed: %v", err)
 		return
@@ -98,9 +100,9 @@ func RequestApiCostTime(method, apiPath string, startTime time.Time) {
 	metric.Set(duringTime)
 }
 
-// RegisterTaskCount registered task count
-func RegisterTaskCount(taskName string) {
-	metric, err := taskCount.GetMetricWithLabelValues(taskName, "registered")
+// RegisterTaskTotal registered task count
+func RegisterTaskTotal(taskName string, moduleName string) {
+	metric, err := taskTotal.GetMetricWithLabelValues(taskName, moduleName, "registered")
 	if err != nil {
 		logger.Errorf("prom get register task count metric failed: %s", err)
 		return
@@ -108,9 +110,9 @@ func RegisterTaskCount(taskName string) {
 	metric.Inc()
 }
 
-// EnqueueTaskCount enqueued task count
-func EnqueueTaskCount(taskName string) {
-	metric, err := taskCount.GetMetricWithLabelValues(taskName, "enqueue")
+// EnqueueTaskTotal enqueued task count
+func EnqueueTaskTotal(taskName string) {
+	metric, err := taskTotal.GetMetricWithLabelValues(taskName, common.ScheduleModuleName, "enqueue")
 	if err != nil {
 		logger.Errorf("prom get enqueue task count metric failed: %s", err)
 		return
@@ -118,9 +120,9 @@ func EnqueueTaskCount(taskName string) {
 	metric.Inc()
 }
 
-// RunTaskCount run task count
-func RunTaskCount(taskName string) {
-	metric, err := taskCount.GetMetricWithLabelValues(taskName, "received")
+// RunTaskTotal run task count
+func RunTaskTotal(taskName string) {
+	metric, err := taskTotal.GetMetricWithLabelValues(taskName, common.WorkerModuleName, "received")
 	if err != nil {
 		logger.Errorf("prom get run task count metric failed: %s", err)
 		return
@@ -128,9 +130,9 @@ func RunTaskCount(taskName string) {
 	metric.Inc()
 }
 
-// RunTaskSuccessCount task success count
-func RunTaskSuccessCount(taskName string) {
-	metric, err := taskCount.GetMetricWithLabelValues(taskName, "success")
+// RunTaskSuccessTotal task success count
+func RunTaskSuccessTotal(taskName string) {
+	metric, err := taskTotal.GetMetricWithLabelValues(taskName, common.WorkerModuleName, "success")
 	if err != nil {
 		logger.Errorf("prom get run task success count metric failed: %s", err)
 		return
@@ -138,9 +140,9 @@ func RunTaskSuccessCount(taskName string) {
 	metric.Inc()
 }
 
-// RunTaskFailureCount task failure count
-func RunTaskFailureCount(taskName string) {
-	metric, err := taskCount.GetMetricWithLabelValues(taskName, "failure")
+// RunTaskFailureTotal task failure count
+func RunTaskFailureTotal(taskName string) {
+	metric, err := taskTotal.GetMetricWithLabelValues(taskName, common.WorkerModuleName, "failure")
 	if err != nil {
 		logger.Errorf("prom get run task failure count metric failed: %s", err)
 		return
@@ -148,15 +150,14 @@ func RunTaskFailureCount(taskName string) {
 	metric.Inc()
 }
 
-// RunTaskCostTime cost time of task, duration(ms)
-func RunTaskCostTime(taskName string, startTime time.Time) {
-	duringTime := time.Now().Sub(startTime).Seconds()
-	metric, err := taskCostTime.GetMetricWithLabelValues(taskName)
+// RunTaskDurationSeconds task cost duration
+func RunTaskDurationSeconds(taskName string, startTime time.Time) {
+	metric, err := taskDurationSeconds.GetMetricWithLabelValues(taskName)
 	if err != nil {
 		logger.Errorf("prom get run task count time metric failed: %s", err)
 		return
 	}
-	metric.Set(duringTime)
+	metric.Observe(time.Since(startTime).Seconds())
 }
 
 // 设置 api 请求的耗时
@@ -164,14 +165,6 @@ func SetApiRequestCostTime(method, apiPath string) func() {
 	start := time.Now()
 	return func() {
 		RequestApiCostTime(method, apiPath, start)
-	}
-}
-
-// 设置任务的耗时
-func SetTaskCostTime(taskName string) func() {
-	start := time.Now()
-	return func() {
-		RunTaskCostTime(taskName, start)
 	}
 }
 
@@ -198,10 +191,10 @@ var Registry = prometheus.NewRegistry()
 func init() {
 	// register the metrics
 	Registry.MustRegister(
-		apiRequestCount,
+		apiRequestTotal,
 		apiRequestCost,
-		taskCount,
-		taskCostTime,
+		taskTotal,
+		taskDurationSeconds,
 		daemonRunningTaskCount,
 		daemonTaskRetryCount,
 	)

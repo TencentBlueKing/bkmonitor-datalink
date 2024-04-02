@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -33,7 +34,7 @@ import (
 // set ttl
 const statsTTL = 90 * 24 * time.Hour
 
-const LeaseDuration = 30 * time.Second
+const LeaseDuration = 30 * time.Minute
 
 // RDB is a client interface to query and mutate task queues.
 type RDB struct {
@@ -43,6 +44,7 @@ type RDB struct {
 
 var (
 	brokerInstance *RDB
+	brokerOnce     sync.Once
 )
 
 // GetRDB Get the redis broker client
@@ -51,40 +53,44 @@ func GetRDB() *RDB {
 		return brokerInstance
 	}
 
-	var client redis.UniversalClient
-	var err error
+	brokerOnce.Do(func() {
+		var client redis.UniversalClient
+		var err error
 
-	err = retry.Do(
-		func() error {
-			client, err = redisUtils.NewRedisClient(
-				context.Background(),
-				&redisUtils.Option{
-					Mode:             config.BrokerRedisMode,
-					Host:             config.BrokerRedisStandaloneHost,
-					Port:             config.BrokerRedisStandalonePort,
-					Password:         config.BrokerRedisStandalonePassword,
-					SentinelAddress:  config.BrokerRedisSentinelAddress,
-					MasterName:       config.BrokerRedisSentinelMasterName,
-					SentinelPassword: config.BrokerRedisSentinelPassword,
-					Db:               config.BrokerRedisDatabase,
-					DialTimeout:      config.BrokerRedisDialTimeout,
-					ReadTimeout:      config.BrokerRedisReadTimeout,
-				},
-			)
-			if err != nil {
-				return err
-			}
-			return nil
-		},
-		retry.Attempts(3),
-		retry.Delay(5*time.Second),
-	)
+		err = retry.Do(
+			func() error {
+				client, err = redisUtils.NewRedisClient(
+					context.Background(),
+					&redisUtils.Option{
+						Mode:             config.BrokerRedisMode,
+						Host:             config.BrokerRedisStandaloneHost,
+						Port:             config.BrokerRedisStandalonePort,
+						Password:         config.BrokerRedisStandalonePassword,
+						SentinelAddress:  config.BrokerRedisSentinelAddress,
+						MasterName:       config.BrokerRedisSentinelMasterName,
+						SentinelPassword: config.BrokerRedisSentinelPassword,
+						Db:               config.BrokerRedisDatabase,
+						DialTimeout:      config.BrokerRedisDialTimeout,
+						ReadTimeout:      config.BrokerRedisReadTimeout,
+					},
+				)
+				if err != nil {
+					return err
+				}
+				return nil
+			},
+			retry.Attempts(3),
+			retry.Delay(5*time.Second),
+		)
 
-	if err != nil {
-		logger.Fatalf("failed to create redis broker client, error: %s", err)
-	}
+		// 因为是必要依赖，如果有错误，直接异常
+		if err != nil {
+			logger.Fatalf("failed to create redis broker client, error: %s", err)
+		}
 
-	brokerInstance = &RDB{client: client, clock: timex.NewTimeClock()}
+		brokerInstance = &RDB{client: client, clock: timex.NewTimeClock()}
+	})
+
 	return brokerInstance
 }
 

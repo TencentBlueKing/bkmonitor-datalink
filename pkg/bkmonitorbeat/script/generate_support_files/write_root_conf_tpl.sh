@@ -204,8 +204,11 @@ EOF
     check_oom_interval: 10
     used_max_disk_space_percent: 95
     free_min_disk_space: 10
-{%- if extra_vars is defined and extra_vars.corefile_pattern_path is defined %}
-    corefile_pattern: {{ extra_vars.corefile_pattern_path or '' }}
+{%- if extra_vars is defined and extra_vars.corefile_pattern is defined %}
+    corefile_pattern: {{ extra_vars.corefile_pattern or '' }}
+{%- endif %}
+{%- if extra_vars is defined and extra_vars.corefile_match_regex is defined %}
+    corefile_match_regex: {{ extra_vars.corefile_match_regex or '' }}
 {%- endif %}
 EOF
   cat <<EOF >> "$path"

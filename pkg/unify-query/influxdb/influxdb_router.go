@@ -31,8 +31,8 @@ import (
 )
 
 var (
-	influxDBRouter     *Router
-	influxDBRouterLock = new(sync.Mutex)
+	once           sync.Once
+	influxDBRouter *Router
 
 	hostMapInc  = make(map[string]int)
 	hostMapLock = new(sync.Mutex)
@@ -74,14 +74,12 @@ func MockRouter(proxyInfo influxdb.ProxyInfo) {
 }
 
 func GetInfluxDBRouter() *Router {
-	if influxDBRouter == nil {
-		influxDBRouterLock.Lock()
+	once.Do(func() {
 		influxDBRouter = &Router{
 			wg:   new(sync.WaitGroup),
 			lock: new(sync.RWMutex),
 		}
-		influxDBRouterLock.Unlock()
-	}
+	})
 	return influxDBRouter
 }
 

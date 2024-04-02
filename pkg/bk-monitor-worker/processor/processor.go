@@ -203,16 +203,19 @@ func (p *Processor) Exec() {
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
+				logger.Warnf("Lease expired for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
+				logger.Warnf("task context canceled for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
 				if resErr != nil {
+					logger.Warnf("task error for task id=%s, error: %v", msg.ID, resErr)
 					metrics.RunTaskFailureTotal(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
@@ -270,6 +273,7 @@ func (p *Processor) MarkAsDone(l *common.Lease, msg *t.TaskMessage) {
 		// If lease is not valid, do not write to redis; Let recoverer take care of it.
 		return
 	}
+	logger.Infof("Marking task id=%s as done", msg.ID)
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Done(ctx, msg)
 	if err != nil {

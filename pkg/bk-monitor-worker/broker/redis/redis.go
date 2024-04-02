@@ -416,8 +416,10 @@ func (r *RDB) Done(ctx context.Context, msg *task.TaskMessage) error {
 	// Note: We cannot pass empty unique key when running this script in redis-cluster.
 	if len(msg.UniqueKey) > 0 {
 		keys = append(keys, msg.UniqueKey)
+		logger.Infof("Removing uniq lock for task %s", msg.ID)
 		return r.runScript(ctx, op, doneUniqueCmd, keys, argv...)
 	}
+	logger.Infof("Removing lock for task %s", msg.ID)
 	return r.runScript(ctx, op, doneCmd, keys, argv...)
 }
 

@@ -172,6 +172,7 @@ func (b BcsClusterInfoSvc) FetchK8sClusterList() ([]BcsClusterInfo, error) {
 // IsClusterIdInGray 判断cluster id是否在灰度配置中
 func (BcsClusterInfoSvc) IsClusterIdInGray(clusterId string) bool {
 	// 未启用灰度配置，全返回true
+	// NOTE: 待稳定后，去除灰度校验对应逻辑
 	if !cfg.BcsEnableBcsGray {
 		return true
 	}

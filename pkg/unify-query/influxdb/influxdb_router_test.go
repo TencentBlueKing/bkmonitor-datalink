@@ -11,9 +11,15 @@ package influxdb
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 func TestGetTagRouter(t *testing.T) {
@@ -51,5 +57,60 @@ func TestGetTagRouter(t *testing.T) {
 				assert.Equal(t, c.expected, actual)
 			}
 		})
+	}
+}
+
+func MockRouterWithHostInfo(hostInfo influxdb.HostInfo) *Router {
+	ir := GetInfluxDBRouter()
+	// 初始化 hostStatusInfo
+	ir.hostStatusInfo = make(influxdb.HostStatusInfo)
+	ir.hostInfo = hostInfo
+	return ir
+}
+
+func TestRouterPingInfluxdb(t *testing.T) {
+
+	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "127.0.0.1:6371" && strings.Contains(req.URL.Path, "/ping") {
+			return &http.Response{
+				StatusCode: http.StatusNoContent,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+		}, nil
+	})
+
+	testCases := []struct {
+		HostInfo influxdb.HostInfo
+		Expected bool
+	}{
+		{
+			HostInfo: map[string]*influxdb.Host{
+				"127.0.0.1": {
+					DomainName: "127.0.0.1",
+					Port:       6371,
+					Protocol:   "http",
+				},
+			},
+			Expected: true,
+		}, {
+			HostInfo: map[string]*influxdb.Host{
+				"127.0.0.2": {
+					DomainName: "127.0.0.2",
+					Port:       6371,
+					Protocol:   "http",
+				},
+			},
+			Expected: false,
+		},
+	}
+
+	for _, v := range testCases {
+		ir := MockRouterWithHostInfo(v.HostInfo)
+		ir.Ping(context.Background(), time.Second*1, 3)
+		for _, j := range ir.hostStatusInfo {
+			assert.Equal(t, v.Expected, j.Read)
+		}
 	}
 }

@@ -72,4 +72,5 @@ func init() {
 	RegisterTimeLayout("date", "2006-01-02")
 	RegisterTimeLayout("datetime", "2006-01-02 15:04:05")
 	RegisterTimeLayout("ISO8601", "2006-01-02T15:04:05.000-0700")
+	RegisterTimeLayout("strict_date_optional_time_nanos", "2006-01-02T15:04:05.999999999Z")
 }

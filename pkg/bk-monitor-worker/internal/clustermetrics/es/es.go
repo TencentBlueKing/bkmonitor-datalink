@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,13 +58,13 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	start := time.Now()
 	// 从custom option中获取集群业务id
-	var bkBizID int
+	var bkBizID float64
 	var customOption map[string]interface{}
 	err := jsonx.Unmarshal([]byte(c.CustomOption), &customOption)
 	if err != nil {
 		return errors.WithMessage(err, "failed to unmarshal custom option")
 	}
-	if bkBizIDVal, ok := customOption["bk_biz_id"].(int); ok {
+	if bkBizIDVal, ok := customOption["bk_biz_id"].(float64); ok {
 		bkBizID = bkBizIDVal
 	}
 
@@ -105,7 +106,6 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "collect es cluster metrics failed")
 	}
-	logger.Infof("collect es cluster metrics success, metric family count: %v ", len(metricFamilies))
 
 	esMetrics := make([]*clustermetrics.EsMetric, 0)
 
@@ -133,6 +133,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 				if len(match) > 0 {
 					d["target_biz_id"] = match[2]
 				}
+				logger.Infof("index: %s, match: %s", index, strings.Join(match, " "))
 			}
 
 			esm := &clustermetrics.EsMetric{
@@ -145,8 +146,8 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		}
 	}
 
-	logger.Infof("process es cluster metrics success, all metric count: %v, current timestamp: %v ",
-		len(esMetrics), timestamp)
+	logger.Infof("process es cluster metrics success [%s], all metric count: %v, current timestamp: %v ",
+		c.ClusterName, len(esMetrics), timestamp)
 
 	customReportData := clustermetrics.CustomReportData{
 		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
@@ -169,7 +170,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	}
 	defer resp.Body.Close()
 	elapsed := time.Since(start)
-	logger.Infof("report es metrics success, request url: %s, task execution time：%s", customReportUrl, elapsed)
+	logger.Infof("report es metrics success [%s], task execution time：%s", c.ClusterName, elapsed)
 
 	return nil
 }

@@ -22,6 +22,7 @@ var (
 	ClusterMetricClusterFieldName string
 	ClusterMetricFieldName        string
 	ClusterMetricHostFieldName    string
+	ESClusterMetricTarget         string
 )
 
 func initClusterMetricVariables() {
@@ -34,4 +35,6 @@ func initClusterMetricVariables() {
 	ClusterMetricClusterFieldName = "bkm_cluster"
 	ClusterMetricFieldName = "bkm_metric_name"
 	ClusterMetricHostFieldName = "bkm_hostname"
+
+	ESClusterMetricTarget = "bk_log_search"
 }

@@ -21,6 +21,7 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Client struct {
@@ -108,10 +109,13 @@ func (c *Client) EnqueueWithContext(ctx context.Context, task *t.Task, opts ...t
 	}
 	switch {
 	case errors.Is(err, errors.ErrDuplicateTask):
+		logger.Warnf("task: %s already exists, not schedule a task again", task.Kind)
 		return nil, fmt.Errorf("task already exists")
 	case errors.Is(err, errors.ErrTaskIdConflict):
+		logger.Warnf("task: %s conflict with exist task, not schedule a task again", task.Kind)
 		return nil, fmt.Errorf("")
 	case err != nil:
+		logger.Errorf("task: %s is error, not schedule a task again", task.Kind)
 		return nil, err
 	}
 	return t.NewTaskInfo(msg, state, opt.ProcessAt, nil), nil

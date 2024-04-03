@@ -501,11 +501,10 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	if c.promsliController == nil {
-		return
+	if ConfEnablePromRule {
+		lines := c.promsliController.RuleMetrics()
+		w.Write(lines)
 	}
-	lines := c.promsliController.RuleMetrics()
-	w.Write(lines)
 }
 
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {

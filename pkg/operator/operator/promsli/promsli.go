@@ -40,6 +40,8 @@ import (
 const (
 	sliAnnotationKey     = "sliMonitor"
 	sliAnnotationBuiltin = "ServiceMonitor/sli"
+
+	rulesMetric = "alert_rules"
 )
 
 type Controller struct {
@@ -672,7 +674,8 @@ func toToPromFormat(labels map[string]string) string {
 	sort.Strings(keys)
 
 	var buf bytes.Buffer
-	buf.WriteString("alert_rules{")
+	buf.WriteString(rulesMetric)
+	buf.WriteString("{")
 	var n int
 	for _, name := range keys {
 		value := labels[name]

@@ -154,7 +154,7 @@ func (c *DiskROCollector) getRODisk() []beat.MapStr {
 
 		// 如果命中黑名单规则 则不再继续判断
 		if mp.IsMatchRule(c.blackList) {
-			logger.Infof("mount_point->[%s] should report but match black list, nothing will report.", mp.MountPoint)
+			logger.Infof("mount_point->[%s] match black list, nothing will report.", mp.MountPoint)
 			continue
 		}
 

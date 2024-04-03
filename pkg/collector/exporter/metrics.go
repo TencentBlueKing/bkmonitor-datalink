@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	sentDuration = prometheus.NewHistogram(
+	sentDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_sent_duration_seconds",
@@ -28,7 +29,7 @@ var (
 		},
 	)
 
-	sentTotal = prometheus.NewCounter(
+	sentTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_sent_total",
@@ -36,7 +37,7 @@ var (
 		},
 	)
 
-	handleEventTotal = prometheus.NewCounterVec(
+	handleEventTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "exporter_handled_event_total",
@@ -45,14 +46,6 @@ var (
 		[]string{"record_type", "id"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		sentTotal,
-		sentDuration,
-		handleEventTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

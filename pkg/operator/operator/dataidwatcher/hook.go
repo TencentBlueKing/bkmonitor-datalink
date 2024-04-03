@@ -22,19 +22,11 @@ const (
 
 var ConfBkEnv string
 
-func initConfig() {
-	viper.SetDefault(ConfBkEnv, "")
-}
-
 func updateConfig() {
 	ConfBkEnv = viper.GetString(confBkEnvPath)
 }
 
 func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPreParse, initConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPreParse, err)
-	}
-
 	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
 		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
 	}

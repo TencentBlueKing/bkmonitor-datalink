@@ -54,11 +54,7 @@ func (c pingserverConverter) ToDataID(_ *define.Record) int32 {
 }
 
 func (c pingserverConverter) Convert(record *define.Record, f define.GatherFunc) {
-	pd, ok := record.Data.(*define.PingserverData)
-	if !ok {
-		return
-	}
-
+	pd := record.Data.(*define.PingserverData)
 	pm := pingserverMapper{pd: pd}
 	f(c.ToEvent(record.Token, int32(pd.DataId), pm.AsMapStr()))
 }

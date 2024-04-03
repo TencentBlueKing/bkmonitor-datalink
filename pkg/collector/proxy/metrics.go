@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	handledTotal = prometheus.NewCounterVec(
+	handledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_handled_total",
@@ -28,7 +29,7 @@ var (
 		[]string{"id"},
 	)
 
-	droppedTotal = prometheus.NewCounterVec(
+	droppedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_dropped_total",
@@ -37,7 +38,7 @@ var (
 		[]string{"id", "code"},
 	)
 
-	internalErrorTotal = prometheus.NewCounter(
+	internalErrorTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_internal_error_total",
@@ -45,7 +46,7 @@ var (
 		},
 	)
 
-	handledDuration = prometheus.NewHistogramVec(
+	handledDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_handled_duration_seconds",
@@ -55,7 +56,7 @@ var (
 		[]string{"id"},
 	)
 
-	receivedBytesTotal = prometheus.NewCounterVec(
+	receivedBytesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_received_bytes_total",
@@ -64,7 +65,7 @@ var (
 		[]string{"id"},
 	)
 
-	receivedBytesSize = prometheus.NewHistogramVec(
+	receivedBytesSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_received_bytes_size",
@@ -74,7 +75,7 @@ var (
 		[]string{"id"},
 	)
 
-	preCheckFailedTotal = prometheus.NewCounterVec(
+	preCheckFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "proxy_precheck_failed_total",
@@ -83,18 +84,6 @@ var (
 		[]string{"processor", "token", "code"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		handledTotal,
-		droppedTotal,
-		receivedBytesTotal,
-		internalErrorTotal,
-		handledDuration,
-		receivedBytesSize,
-		preCheckFailedTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

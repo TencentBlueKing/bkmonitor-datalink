@@ -5,4 +5,4 @@ logger:
   stdout: true
   level: debug
 http:
-  listen: localhost:8082
+  listen: localhost:9095

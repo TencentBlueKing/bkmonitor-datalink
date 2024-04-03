@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -49,7 +50,7 @@ func buildTimeSeriesData() []byte {
 	items = append(items, map[string]interface{}{
 		"metrics":   map[string]float64{"cpu_load1": 1.0},
 		"dimension": map[string]string{"vm": "node1"},
-		"timestamp": time.Now().UnixMilli(),
+		"timestamp": time.Now().UnixMilli() + int64(rand.Int31n(200)),
 		"target":    "localhost",
 	})
 
@@ -67,7 +68,7 @@ func buildEventData() []byte {
 		"event_name": "alarm",
 		"event":      map[string]string{"content": time.Now().Format(time.RFC3339)},
 		"dimension":  map[string]string{"vm": "node1"},
-		"timestamp":  time.Now().UnixMilli(),
+		"timestamp":  time.Now().UnixMilli() + int64(rand.Int31n(200)),
 		"target":     "localhost",
 	})
 

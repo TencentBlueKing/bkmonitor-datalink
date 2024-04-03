@@ -33,7 +33,7 @@ mod:
 	$(GO) mod tidy
 
 .PHONY: build
-bin:
+build:
 	GOOS=linux GOARCH=amd64 \
 	$(GO) build -ldflags " \
 	-s -w \
@@ -44,7 +44,7 @@ bin:
 
 .PHONY: dev
 dev:
-	$(GO) run . ./sliwebhook.yaml
+	$(GO) run . -config ./sliwebhook.yaml
 
 .PHONY: install
 install:

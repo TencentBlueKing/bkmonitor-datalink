@@ -292,6 +292,42 @@ func (s *HandlerSuite) TestCutterByDbmMetaV1() {
 	})
 }
 
+func (s *HandlerSuite) TestCutterByDbmMetaV2() {
+	hostInfo := models.CCHostInfo{
+		IP:      "127.0.0.1",
+		CloudID: 1,
+		CCTopoBaseModelInfo: &models.CCTopoBaseModelInfo{
+			BizID: []int{2},
+			Topo:  []map[string]string{},
+		},
+		DbmMeta: `{"version": "v2", "content": "H4sIAB6N7mUC/8WXT2vDMAzFv0rxeQz5z9pu5112bm9jhCwxIyyOQ5LRltDvPgtGx047/g4hIAs9ydZ7tlbT5JTyYJ42q6nHsfzN535e4ryYu41aulZtVmQnWzU1/VdZnqrlMkZdOZ5iGqd8vhzj0Hbz4fD8MsxLPTRRvdv3m+MUy7K5aogSIadie11v4dqc6k7TMH0ePv777kvWGr77gaqm3P+CVKnWmH8cxjwt6uBF3E6zYKC3GLR4rmrBoEPgoLmqHVe158hlOejA8dpZ7qwfuLPmOtxyvLbg9fHIdbjjeA1Cc+QKnJAKeGlyHR44DXfcs9BzahbAqjlJ8VzVds9JCiekAp41t+EefCBxHS7chlvu5hLwRQoOPtz04cCZi1Mzy1XtQXKBbQaqGchrDlrKzPV2/QaY+kKyjxcAAA"}`,
+	}
+	s.StoreHost(&hostInfo).AnyTimes()
+	s.Store.EXPECT().Get(gomock.Any()).Return(nil, define.ErrItemNotFound).AnyTimes()
+
+	s.runHandler(TransferRecordCutterByDbmMetaCreator(s.Store, true), func(record *define.ETLRecord) {
+		dims := record.Dimensions
+		s.NotNil(dims["app"])
+		s.NotNil(dims["appid"])
+		s.NotNil(dims["db_type"])
+		s.NotNil(dims["cluster_type"])
+		s.NotNil(dims["cluster_domain"])
+		s.NotNil(dims["instance_port"])
+		s.NotNil(dims["instance_role"])
+		s.T().Logf("dbm-meta/v2 record: %+v", record)
+	}, []handlerCase{
+		{
+			48, nil, define.ETLRecord{
+				Dimensions: map[string]interface{}{
+					define.RecordBizIDFieldName:   3,
+					define.RecordIPFieldName:      "127.0.0.1",
+					define.RecordCloudIDFieldName: "1",
+				},
+			},
+		},
+	})
+}
+
 // TestFillBizIDHandlerCreator :
 func (s *HandlerSuite) TestFillBizIDHandlerCreatorWithInstanceId() {
 	instanceInfo := &models.CCInstanceInfo{

@@ -188,7 +188,7 @@ func TestLabelCacheGetPutRemove(t *testing.T) {
 	labelsHash := labels.Hash()
 
 	cacheEntry, found := cache.Get(sampleType, labelsHash)
-	assert.Equal(t, found, false)
+	assert.False(t, found)
 
 	cacheEntry = &LabelsCacheEntry[int]{
 		Labels: labels,
@@ -197,12 +197,12 @@ func TestLabelCacheGetPutRemove(t *testing.T) {
 	cache.Put(sampleType, cacheEntry)
 
 	cacheEntry2, found := cache.Get(sampleType, labelsHash)
-	assert.Equal(t, found, true)
+	assert.True(t, found)
 	assert.Equal(t, cacheEntry, cacheEntry2)
 
 	cache.Remove(sampleType, labelsHash)
 	cacheEntry, found = cache.Get(sampleType, labelsHash)
-	assert.Equal(t, found, false)
+	assert.False(t, found)
 }
 
 func TestCopyLabels(t *testing.T) {

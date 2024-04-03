@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -21,7 +22,7 @@ import (
 )
 
 var (
-	uptime = prometheus.NewCounter(
+	uptime = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "uptime",
@@ -29,7 +30,7 @@ var (
 		},
 	)
 
-	beatSentBytesSize = prometheus.NewHistogramVec(
+	beatSentBytesSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "beat_sent_bytes_size",
@@ -39,7 +40,7 @@ var (
 		[]string{"id"},
 	)
 
-	beatSentBytesTotal = prometheus.NewCounterVec(
+	beatSentBytesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "beat_sent_bytes_total",
@@ -48,7 +49,7 @@ var (
 		[]string{"id"},
 	)
 
-	appBuildInfo = prometheus.NewGaugeVec(
+	appBuildInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "app_build_info",
@@ -57,7 +58,7 @@ var (
 		[]string{"version", "git_hash", "build_time"},
 	)
 
-	reloadSuccessTotal = prometheus.NewCounter(
+	reloadSuccessTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "controller_reload_success_total",
@@ -65,7 +66,7 @@ var (
 		},
 	)
 
-	reloadFailedTotal = prometheus.NewCounter(
+	reloadFailedTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "controller_reload_failed_total",
@@ -73,7 +74,7 @@ var (
 		},
 	)
 
-	reloadDuration = prometheus.NewHistogram(
+	reloadDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "controller_reload_duration_seconds",
@@ -82,7 +83,7 @@ var (
 		},
 	)
 
-	droppedTotal = prometheus.NewCounterVec(
+	droppedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_dropped_total",
@@ -91,7 +92,7 @@ var (
 		[]string{"pipeline", "record_type", "id", "processor"},
 	)
 
-	skippedTotal = prometheus.NewCounterVec(
+	skippedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_skipped_total",
@@ -100,7 +101,7 @@ var (
 		[]string{"pipeline", "record_type", "id", "processor", "token"},
 	)
 
-	handledTotal = prometheus.NewCounterVec(
+	handledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_handled_total",
@@ -109,7 +110,7 @@ var (
 		[]string{"pipeline", "record_type", "id", "token"},
 	)
 
-	handledDuration = prometheus.NewHistogramVec(
+	handledDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_handled_duration_seconds",
@@ -119,7 +120,7 @@ var (
 		[]string{"pipeline", "record_type", "id"},
 	)
 
-	exportedDuration = prometheus.NewHistogramVec(
+	exportedDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_exported_duration_seconds",
@@ -131,21 +132,6 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(
-		uptime,
-		appBuildInfo,
-		reloadSuccessTotal,
-		reloadFailedTotal,
-		reloadDuration,
-		beatSentBytesSize,
-		beatSentBytesTotal,
-		droppedTotal,
-		skippedTotal,
-		handledTotal,
-		handledDuration,
-		exportedDuration,
-	)
-
 	maxprocs.Logger(func(s string, i ...interface{}) {
 		logger.Infof(s, i...)
 	})

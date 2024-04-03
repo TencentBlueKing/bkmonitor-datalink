@@ -35,10 +35,6 @@ default:
         number_nodes: 200
         tolerable_num_ratio: 1.5
 
-    - name: "token_checker/aes256"
-      config:
-        profiles_data_id: 1122334
-
     - name: "db_filter/common"
       config:
         slow_query:

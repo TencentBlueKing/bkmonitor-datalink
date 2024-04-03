@@ -126,17 +126,18 @@ func TestQueryPromQLExpr(t *testing.T) {
 			ts, err := sp.QueryTs()
 			assert.Nil(t, err)
 			if ts != nil {
-				referenceNameMetric := make(map[string]string, len(ts.QueryList))
-				referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(ts.QueryList))
+				promExprOpt := &PromExprOption{}
 
+				promExprOpt.ReferenceNameMetric = make(map[string]string, len(ts.QueryList))
+				promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(ts.QueryList))
 				for _, q := range ts.QueryList {
 					router, _ := q.ToRouter()
-					referenceNameMetric[q.ReferenceName] = router.RealMetricName()
+					promExprOpt.ReferenceNameMetric[q.ReferenceName] = router.RealMetricName()
 					labelsMatcher, _, _ := q.Conditions.ToProm()
-					referenceNameLabelMatcher[q.ReferenceName] = labelsMatcher
+					promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] = labelsMatcher
 				}
 
-				result, err := ts.ToPromExpr(context.TODO(), referenceNameMetric, referenceNameLabelMatcher)
+				result, err := ts.ToPromExpr(context.TODO(), promExprOpt)
 				assert.Nil(t, err)
 				assert.Equal(t, c.r, result.String())
 			}

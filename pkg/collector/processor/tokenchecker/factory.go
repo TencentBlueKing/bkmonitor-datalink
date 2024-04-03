@@ -11,6 +11,7 @@ package tokenchecker
 
 import (
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -34,12 +35,13 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 	decoders := confengine.NewTierConfig()
 	configs := confengine.NewTierConfig()
 
-	var c Config
-	if err := mapstructure.Decode(conf, &c); err != nil {
+	c := &Config{}
+	if err := mapstructure.Decode(conf, c); err != nil {
 		return nil, err
 	}
-	decoders.SetGlobal(NewTokenDecoder(c))
-	configs.SetGlobal(c)
+	c.Clean()
+	decoders.SetGlobal(NewTokenDecoder(*c))
+	configs.SetGlobal(*c)
 
 	for _, custom := range customized {
 		cfg := &Config{}
@@ -47,6 +49,7 @@ func newFactory(conf map[string]interface{}, customized []processor.SubConfigPro
 			logger.Errorf("failed to decode config: %v", err)
 			continue
 		}
+		cfg.Clean()
 		decoders.Set(custom.Token, custom.Type, custom.ID, NewTokenDecoder(*cfg))
 		configs.Set(custom.Token, custom.Type, custom.ID, *cfg)
 	}
@@ -121,7 +124,6 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 		return err
 	}
 
-	// token 解密
 	record.Token, err = decoder.Decode(record.Token.Original)
 	if err != nil {
 		return errors.Wrap(err, "failed to decode token")
@@ -140,6 +142,54 @@ func (p *tokenChecker) processFta(decoder TokenDecoder, record *define.Record) e
 	return nil
 }
 
+// 对于 OT 的 token 解析优先级
+// # HTTP Protocol
+// 1) HTTP Headers -> X-BK-TOKEN
+// 2) Span ResourceKey -> bk.data.token/...
+//
+// # GRPC Protocol
+// 1) Span ResourceKey -> bk.data.token/...
+//
+// Note: 理论上来讲，单次请求包只能有一个 token，不支持多 token 场景。
+// 支持从多个 attribute.keys 中读取 token
+
+func tokenFromAttrs(attrs pcommon.Map, keys []string) string {
+	for _, key := range keys {
+		v, ok := attrs.Get(key)
+		if ok {
+			return v.AsString()
+		}
+	}
+	return ""
+}
+
+// token 的解析也应该遵循一定的优先级
+// 1) 从 headers 中提取
+// 2) 从 attributes 中提取
+
+func decodeToken(decoder TokenDecoder, src ...string) (define.Token, error) {
+	var errs []error
+	for _, s := range src {
+		if len(s) <= 0 {
+			continue
+		}
+
+		token, err := decoder.Decode(s)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		return token, nil
+	}
+
+	// 进入到这里一定是解析失败
+	var token define.Token
+	if len(errs) > 0 {
+		return token, errs[0]
+	}
+	return token, errors.New("no token source")
+}
+
 func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record *define.Record) error {
 	var err error
 	if decoder.Skip() {
@@ -150,25 +200,25 @@ func (p *tokenChecker) processTraces(decoder TokenDecoder, config Config, record
 	var errs []error
 	pdTraces := record.Data.(ptrace.Traces)
 	pdTraces.ResourceSpans().RemoveIf(func(resourceSpans ptrace.ResourceSpans) bool {
-		v, ok := resourceSpans.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdTraces token key '%s'", config.ResourceKey)
-			return true
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceSpans.Resource().Attributes(), config.resourceKeys),
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdTraces token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdTraces token=(%v), err: %v", src, err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
+	// 当且仅当没有任何 spans 的情况下才算鉴权失败
 	if pdTraces.ResourceSpans().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop spans cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil
@@ -184,25 +234,25 @@ func (p *tokenChecker) processMetrics(decoder TokenDecoder, config Config, recor
 	var errs []error
 	pdMetrics := record.Data.(pmetric.Metrics)
 	pdMetrics.ResourceMetrics().RemoveIf(func(resourceMetrics pmetric.ResourceMetrics) bool {
-		v, ok := resourceMetrics.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdMetrics token key '%s'", config.ResourceKey)
-			return true
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceMetrics.Resource().Attributes(), config.resourceKeys),
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdMetrics token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdMetrics token=(%v), err: %v", src, err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
+	// 当且仅当没有任何 metrics 的情况下才算鉴权失败
 	if pdMetrics.ResourceMetrics().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop metrics cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil
@@ -215,28 +265,27 @@ func (p *tokenChecker) processLogs(decoder TokenDecoder, config Config, record *
 		return err
 	}
 
-	pdLogs := record.Data.(plog.Logs)
 	var errs []error
+	pdLogs := record.Data.(plog.Logs)
 	pdLogs.ResourceLogs().RemoveIf(func(resourceLogs plog.ResourceLogs) bool {
-		v, ok := resourceLogs.Resource().Attributes().Get(config.ResourceKey)
-		if !ok {
-			logger.Debugf("failed to get pdLogs token key '%s'", config.ResourceKey)
-			return true
+		src := []string{
+			record.Token.Original,
+			tokenFromAttrs(resourceLogs.Resource().Attributes(), config.resourceKeys),
 		}
-		record.Token, err = decoder.Decode(v.AsString())
+
+		record.Token, err = decodeToken(decoder, src...)
 		if err != nil {
 			errs = append(errs, err)
-			logger.Errorf("failed to parse pdLogs token=%v, err: %v", v.AsString(), err)
+			logger.Errorf("failed to parse pdLogs token=(%v), err: %v", src, err)
 			return true
 		}
 		return false
 	})
 
-	if len(errs) > 0 {
-		return errs[0]
-	}
-
 	if pdLogs.ResourceLogs().Len() == 0 {
+		if len(errs) > 0 {
+			return errors.Wrapf(define.ErrSkipEmptyRecord, "drop logs cause %s", errs[0])
+		}
 		return define.ErrSkipEmptyRecord
 	}
 	return nil
@@ -256,7 +305,6 @@ func (p *tokenChecker) processProfiles(decoder TokenDecoder, config Config, reco
 	}
 
 	record.Token, err = decoder.Decode(record.Token.Original)
-
 	if config.ProfilesDataId > 0 {
 		record.Token.ProfilesDataId = config.ProfilesDataId
 	}

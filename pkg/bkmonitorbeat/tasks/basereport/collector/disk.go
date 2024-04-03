@@ -229,7 +229,7 @@ func deltaCount(last, current map[string]DiskStats) {
 
 		// %util：delta(time spent doing I/Os) / t / 1000 * 100%
 		// 如果是发现这个节点的IO时间超过了现实时间（部分系统有时间倒流的情况），这个是肯定有问题的，那么此时的使用率将会被设置为0
-		if (deltaIOTime / 1000) > uint64(interval) {
+		if (float64(deltaIOTime) / 1000) > interval {
 			logger.Errorf("deltaIOTime->[%d] should not larger than interval->[%d], set to 0", deltaIOTime, interval)
 			newstat.Util = 0
 		} else {

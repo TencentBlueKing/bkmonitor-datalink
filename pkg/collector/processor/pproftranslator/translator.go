@@ -36,17 +36,13 @@ func NewPprofTranslator(c Config) PprofTranslator {
 type DefaultTranslator struct{}
 
 func (d *DefaultTranslator) Translate(pd define.ProfilesRawData) (*define.ProfilesData, error) {
+	meta := pd.Metadata
 	rawData, ok := pd.Data.(define.ProfilePprofFormatOrigin)
 	if !ok {
-		return nil, errors.Errorf(
-			"invalid profile data, skip. rawDataType: %T app: %d-%s",
-			pd.Data, pd.Metadata.BkBizID, pd.Metadata.AppName,
-		)
+		return nil, errors.Errorf("skip invalid profile dataType(%T), app: %d-%s", pd.Data, meta.BkBizID, meta.AppName)
 	}
 	if len(rawData) == 0 {
-		return nil, errors.Errorf(
-			"empty profile data, skip. app: %d-%s", pd.Metadata.BkBizID, pd.Metadata.AppName,
-		)
+		return nil, errors.Errorf("skip empty profile data, app: %d-%s", meta.BkBizID, meta.AppName)
 	}
 
 	var buf bytes.Buffer
@@ -56,7 +52,7 @@ func (d *DefaultTranslator) Translate(pd define.ProfilesRawData) (*define.Profil
 		return nil, errors.Wrap(err, "failed to parse profile")
 	}
 
-	return &define.ProfilesData{Metadata: pd.Metadata, Profiles: []*profile.Profile{pp}}, nil
+	return &define.ProfilesData{Metadata: meta, Profiles: []*profile.Profile{pp}}, nil
 }
 
 type spyNameTranslator struct{}

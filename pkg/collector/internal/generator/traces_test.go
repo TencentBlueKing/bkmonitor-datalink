@@ -10,6 +10,7 @@
 package generator
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -33,4 +34,12 @@ func TestTraces(t *testing.T) {
 
 	data := g.Generate()
 	assert.NotNil(t, data)
+}
+
+func TestSplitEachSpansWithJson(t *testing.T) {
+	b, err := os.ReadFile("../../example/fixtures/traces1.json")
+	assert.NoError(t, err)
+	traces, err := FromJsonToTraces(b)
+	assert.NoError(t, err)
+	assert.Equal(t, 15, traces.SpanCount())
 }

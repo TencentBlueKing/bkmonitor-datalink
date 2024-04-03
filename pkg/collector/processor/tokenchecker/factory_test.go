@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/confengine"
@@ -43,7 +44,7 @@ processor:
     config:
       type: "fixed"
       fixed_token: "token1"
-      resource_key: "bk.data.token"
+      resource_key: " bk.data.token, bk.data.another.token "
       traces_dataid: 1009
 `
 	customConf := processor.MustLoadConfigs(customContent)[0].Config
@@ -63,11 +64,17 @@ processor:
 
 	var c1 Config
 	assert.NoError(t, mapstructure.Decode(mainConf, &c1))
-	assert.Equal(t, c1, factory.configs.GetGlobal().(Config))
+	(&c1).Clean()
+	actualC1 := factory.configs.GetGlobal().(Config)
+	assert.Equal(t, c1, actualC1)
+	assert.Equal(t, []string{"bk.data.token"}, actualC1.resourceKeys)
 
 	var c2 Config
 	assert.NoError(t, mapstructure.Decode(customConf, &c2))
-	assert.Equal(t, c2, factory.configs.GetByToken("token1").(Config))
+	(&c2).Clean()
+	actualC2 := factory.configs.GetByToken("token1").(Config)
+	assert.Equal(t, c2, actualC2)
+	assert.Equal(t, []string{"bk.data.token", "bk.data.another.token"}, actualC2.resourceKeys)
 
 	assert.Equal(t, define.ProcessorTokenChecker, factory.Name())
 	assert.False(t, factory.IsDerived())
@@ -102,7 +109,7 @@ func makeLogsGenerator(n int, resources map[string]string) *generator.LogsGenera
 func aes256TokenChecker() tokenChecker {
 	config := Config{
 		Type:        "aes256",
-		ResourceKey: "bk.data.token",
+		ResourceKey: " bk.data.token, bk.data.another.token  ",
 		Salt:        "bk",
 		DecodedIv:   "bkbkbkbkbkbkbkbk",
 		DecodedKey:  "81be7fc6-5476-4934-9417-6d4d593728db",
@@ -112,6 +119,7 @@ func aes256TokenChecker() tokenChecker {
 	decoders.SetGlobal(NewTokenDecoder(config))
 
 	configs := confengine.NewTierConfig()
+	(&config).Clean()
 	configs.SetGlobal(config)
 	return tokenChecker{
 		decoders: decoders,
@@ -164,7 +172,7 @@ func TestTracesAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.Equal(t, define.ErrSkipEmptyRecord, err)
+		assert.Equal(t, define.ErrSkipEmptyRecord, errors.Cause(err))
 	})
 
 	t.Run("Skip", func(t *testing.T) {
@@ -180,10 +188,10 @@ func TestTracesAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success", func(t *testing.T) {
+	t.Run("Success(Attributes)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
-			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
 		g := makeTracesGenerator(1, resources)
 		data := g.Generate()
@@ -202,6 +210,67 @@ func TestTracesAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Success(Headers)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "not-empty-but-invalid",
+		}
+		g := makeTracesGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (OK)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeTracesGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeTracesGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordTraces,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -234,7 +303,7 @@ func TestMetricsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.Equal(t, define.ErrSkipEmptyRecord, err)
+		assert.Equal(t, define.ErrSkipEmptyRecord, errors.Cause(err))
 	})
 
 	t.Run("Skip", func(t *testing.T) {
@@ -250,10 +319,10 @@ func TestMetricsAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success", func(t *testing.T) {
+	t.Run("Success(Attributes)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
-			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
 		g := makeMetricsGenerator(1, resources)
 		data := g.Generate()
@@ -272,6 +341,67 @@ func TestMetricsAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Success(Headers)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "not-empty-but-invalid",
+		}
+		g := makeMetricsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (OK)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeMetricsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeMetricsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordMetrics,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -304,7 +434,7 @@ func TestLogsAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Error(t, err)
-		assert.Equal(t, define.ErrSkipEmptyRecord, err)
+		assert.Equal(t, define.ErrSkipEmptyRecord, errors.Cause(err))
 	})
 
 	t.Run("Skip", func(t *testing.T) {
@@ -320,10 +450,10 @@ func TestLogsAes256Token(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("Success", func(t *testing.T) {
+	t.Run("Success(Attributes)", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		resources := map[string]string{
-			"bk.data.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			"bk.data.another.token": "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
 		}
 		g := makeLogsGenerator(1, resources)
 		data := g.Generate()
@@ -342,6 +472,67 @@ func TestLogsAes256Token(t *testing.T) {
 			BizId:         2,
 			AppName:       "oneapm-appname",
 		}, record.Token)
+	})
+
+	t.Run("Success(Headers)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		resources := map[string]string{
+			"bk.data.token": "not-empty-but-invalid",
+		}
+		g := makeLogsGenerator(1, resources)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (OK)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeLogsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
+	})
+
+	t.Run("Header Token (Failed)", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		g := makeLogsGenerator(1, nil)
+		data := g.Generate()
+		record := define.Record{
+			RecordType: define.RecordLogs,
+			Data:       data,
+			Token:      define.Token{Original: "tKm3H4Ran78rWl85HwzfRgw"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
 	})
 }
 
@@ -446,7 +637,7 @@ func TestFtaAes256Token(t *testing.T) {
 		assert.True(t, strings.Contains(err.Error(), "failed to decode token"))
 	})
 
-	t.Run("Incorrect Token - Empty PluginID", func(t *testing.T) {
+	t.Run("Empty PluginID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -466,7 +657,7 @@ func TestFtaAes256Token(t *testing.T) {
 		assert.Equal(t, "reject invalid pluginId", err.Error())
 	})
 
-	t.Run("Incorrect Token - Empty DataID", func(t *testing.T) {
+	t.Run("Empty DataID", func(t *testing.T) {
 		checker := aes256TokenChecker()
 		record := define.Record{
 			RecordType: define.RecordFta,
@@ -484,5 +675,58 @@ func TestFtaAes256Token(t *testing.T) {
 
 		_, err := checker.Process(&record)
 		assert.Equal(t, "reject invalid dataId", err.Error())
+	})
+}
+
+func TestProfilesAes256Token(t *testing.T) {
+	t.Run("Incorrect Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxaNWo5XpK+8v5tQShWS+uJ1J7pzneLcmhLMc+A/9yKHx"},
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+		assert.True(t, strings.Contains(err.Error(), "illegal base64 data at input byte 64"))
+	})
+
+	t.Run("No Token", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+		}
+
+		_, err := checker.Process(&record)
+		assert.Error(t, err)
+	})
+
+	t.Run("Skip", func(t *testing.T) {
+		checker := skipTokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+	})
+
+	t.Run("Success", func(t *testing.T) {
+		checker := aes256TokenChecker()
+		record := define.Record{
+			RecordType: define.RecordProfiles,
+			Token:      define.Token{Original: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw=="},
+		}
+
+		_, err := checker.Process(&record)
+		assert.NoError(t, err)
+		assert.Equal(t, define.Token{
+			Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			MetricsDataId: 1002,
+			TracesDataId:  1001,
+			LogsDataId:    1003,
+			BizId:         2,
+			AppName:       "oneapm-appname",
+		}, record.Token)
 	})
 }

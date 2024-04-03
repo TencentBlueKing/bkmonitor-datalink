@@ -10,6 +10,8 @@
 package v1beta1
 
 import (
+	"strings"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -43,6 +45,15 @@ type MonitorResource struct {
 	Kind string `json:"kind,omitempty"`
 	// 资源定义的name
 	Name string `json:"name,omitempty"`
+}
+
+func (mr *MonitorResource) MatchSplitNamespace(namespace string) bool {
+	for _, ns := range strings.Split(mr.NameSpace, "|") {
+		if strings.TrimSpace(ns) == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 type Report struct {

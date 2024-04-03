@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -26,7 +27,6 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 		MaxDuration: time.Second,
 		StatusCode:  []string{"ERROR"},
 	})
-	evaluator.gcInterval = time.Millisecond * 200
 	defer evaluator.Stop()
 
 	t1 := random.TraceID()
@@ -77,7 +77,7 @@ func TestStatusCodeEvaluatorPost(t *testing.T) {
 	assert.True(t, ok)
 
 	// round3
-	time.Sleep(time.Second * 3) // 已经 gc
+	evaluator.traces = make(map[pcommon.TraceID]int64) // gc
 	traces = ptrace.NewTraces()
 	rs = traces.ResourceSpans().AppendEmpty()
 

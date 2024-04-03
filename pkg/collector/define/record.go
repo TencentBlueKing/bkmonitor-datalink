@@ -36,6 +36,9 @@ const (
 	SourceZipkin      = "zipkin"
 	SourceProxy       = "proxy"
 	SourceSkywalking  = "skywalking"
+
+	KeyToken    = "X-BK-TOKEN"
+	KeyTenantID = "X-Tps-TenantID"
 )
 
 type RecordType string
@@ -140,11 +143,31 @@ type RemoteWriteData struct {
 }
 
 type ProxyData struct {
-	DataId      int64                  `json:"data_id"`
-	AccessToken string                 `json:"access_token"`
-	Version     string                 `json:"version"`
-	Data        interface{}            `json:"data"`
-	Extra       map[string]interface{} `json:"bk_info"`
+	DataId      int64       `json:"data_id"`
+	AccessToken string      `json:"access_token"`
+	Version     string      `json:"version"`
+	Data        interface{} `json:"data"`
+	Type        string      // 标识为 ProxyMetric 或者 ProxyEvent
+}
+
+const (
+	ProxyMetricType = "metric"
+	ProxyEventType  = "event"
+)
+
+type ProxyMetric struct {
+	Metrics   map[string]float64 `json:"metrics"`
+	Target    string             `json:"target"`
+	Dimension map[string]string  `json:"dimension"`
+	Timestamp int64              `json:"timestamp"`
+}
+
+type ProxyEvent struct {
+	EventName string                 `json:"event_name"`
+	Event     map[string]interface{} `json:"event"`
+	Target    string                 `json:"target"`
+	Dimension map[string]string      `json:"dimension"`
+	Timestamp int64                  `json:"timestamp"`
 }
 
 type PingserverData struct {
@@ -206,6 +229,10 @@ type Token struct {
 	ProxyDataId    int32
 	BizId          int32
 	AppName        string
+}
+
+func (t Token) BizApp() string {
+	return fmt.Sprintf("%d-%s", t.BizId, t.AppName)
 }
 
 func (t Token) GetDataID(rtype RecordType) int32 {

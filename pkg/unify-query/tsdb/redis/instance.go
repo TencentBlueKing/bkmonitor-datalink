@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -66,8 +67,7 @@ func (instance *Instance) Series(ctx context.Context, query *metadata.Query, sta
 }
 
 func (instance *Instance) GetInstanceType() string {
-	//TODO implement me
-	panic("implement me")
+	return consul.RedisStorageType
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
@@ -89,6 +89,12 @@ func (instance *Instance) QueryRange(ctx context.Context, promql string, start, 
 }
 
 func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
+	var (
+		startAnaylize time.Time
+	)
+
+	user := metadata.GetUser(ctx)
+
 	// 根据现有支持情况检查 QueryTs 请求体
 	query := metadata.GetQueryClusterMetric(ctx)
 
@@ -106,6 +112,8 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
 	stoCtx, _ := context.WithTimeout(ctx, instance.Timeout)
+	startAnaylize = time.Now()
+
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: instance.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
@@ -128,6 +136,11 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 	if df.Error() != nil {
 		return nil, df.Error()
 	}
+	queryCost := time.Since(startAnaylize)
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, instance.GetInstanceType(),
+	)
+
 	return &df, nil
 }
 

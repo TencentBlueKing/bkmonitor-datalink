@@ -153,7 +153,7 @@ func (p *Processor) Exec() {
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
-		logger.Errorf("Dequeue result: %v, %v, %v", msg.ID, leaseExpirationTime, err)
+		logger.Errorf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
 			//logger.Info("All queues are empty")

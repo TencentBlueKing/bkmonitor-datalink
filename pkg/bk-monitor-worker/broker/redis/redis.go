@@ -278,9 +278,6 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 var dequeueCmd = redis.NewScript(`
 if redis.call("EXISTS", KEYS[2]) == 0 then
 	local id = redis.call("RPOPLPUSH", KEYS[1], KEYS[3])
-	if id == false then
-		id = redis.call("RPOP", KEYS[3])
-	end
 	if id then
 		local key = ARGV[2] .. id
 		redis.call("HSET", key, "state", "active")
@@ -345,12 +342,8 @@ func (r *RDB) Dequeue(qnames ...string) (msg *task.TaskMessage, leaseExpirationT
 // ARGV[2] -> stats expiration timestamp
 // ARGV[3] -> max int64 value
 var doneCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[1], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[1], 0, ARGV[1])
+redis.call("ZREM", KEYS[2], ARGV[1])
 if redis.call("DEL", KEYS[3]) == 0 then
   return redis.error_reply("NOT FOUND")
 end

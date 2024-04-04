@@ -278,7 +278,7 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 var dequeueCmd = redis.NewScript(`
 if redis.call("EXISTS", KEYS[2]) == 0 then
 	local id = redis.call("RPOPLPUSH", KEYS[1], KEYS[3])
-	if id == nil then
+	if id == false then
 		id = redis.call("RPOP", KEYS[3])
 	end
 	if id then

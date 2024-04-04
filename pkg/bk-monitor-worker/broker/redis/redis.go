@@ -278,6 +278,9 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 var dequeueCmd = redis.NewScript(`
 if redis.call("EXISTS", KEYS[2]) == 0 then
 	local id = redis.call("RPOPLPUSH", KEYS[1], KEYS[3])
+	if id == nil then
+		id = redis.call("RPOP", KEYS[3])
+	end
 	if id then
 		local key = ARGV[2] .. id
 		redis.call("HSET", key, "state", "active")
@@ -375,12 +378,8 @@ return redis.status_reply("OK")
 // ARGV[2] -> stats expiration timestamp
 // ARGV[3] -> max int64 value
 var doneUniqueCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[1], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[1], 0, ARGV[1])
+redis.call("ZREM", KEYS[2], ARGV[1])
 if redis.call("DEL", KEYS[3]) == 0 then
   return redis.error_reply("NOT FOUND")
 end
@@ -786,12 +785,8 @@ const (
 // ARGV[6] -> stats expiration timestamp
 // ARGV[7] -> max int64 value
 var archiveCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[2], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[3], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[2], 0, ARGV[1])
+redis.call("ZREM", KEYS[3], ARGV[1])
 redis.call("ZADD", KEYS[4], ARGV[3], ARGV[1])
 redis.call("ZREMRANGEBYSCORE", KEYS[4], "-inf", ARGV[4])
 redis.call("ZREMRANGEBYRANK", KEYS[4], 0, -ARGV[5])

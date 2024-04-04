@@ -308,7 +308,7 @@ func (r *RDB) Dequeue(qnames ...string) (msg *task.TaskMessage, leaseExpirationT
 		}
 		res, err := dequeueCmd.Run(context.Background(), r.client, keys, argv...).Result()
 		if err == redis.Nil {
-			logger.Errorf("No processable task found in queue %s", qname)
+			logger.Errorf("No processable task found in queue %s, keys: %v, args: %v", qname, keys, argv)
 			continue
 		} else if err != nil {
 			logger.Errorf("Failed to dequeue task from queue %s: %v", qname, err)

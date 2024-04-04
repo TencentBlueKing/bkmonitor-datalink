@@ -151,7 +151,6 @@ func (p *Processor) Exec() {
 		return
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
-		logger.Errorf("Processing queues: ", qnames)
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
@@ -166,7 +165,6 @@ func (p *Processor) Exec() {
 
 		lease := common.NewLease(leaseExpirationTime)
 		deadline := p.ComputeDeadline(msg)
-		logger.Errorf("record task id=%s, kind=%s, queue=%s, deadline=%s", msg.ID, msg.Kind, msg.Queue, deadline)
 		go func() {
 			defer func() {
 				<-p.Sema // release token
@@ -174,7 +172,6 @@ func (p *Processor) Exec() {
 
 			ctx, cancel := t.AddTaskMetadata2Context(p.BaseCtxFn(), msg, deadline)
 			defer func() {
-				logger.Errorf("cancel task id=%s, kind=%s, queue=%s, deadline=%s", msg.ID, msg.Kind, msg.Queue, deadline)
 				cancel()
 			}()
 

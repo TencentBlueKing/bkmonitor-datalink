@@ -148,10 +148,12 @@ func (p *Processor) Start(wg *sync.WaitGroup) {
 func (p *Processor) Exec() {
 	select {
 	case <-p.Quit:
+		logger.Errorf("Processor quit")
 		return
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
+		logger.Errorf("Dequeue result: %s, %v, %v", msg.ID, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
 			//logger.Info("All queues are empty")
@@ -159,6 +161,7 @@ func (p *Processor) Exec() {
 			<-p.Sema // release token
 			return
 		case err != nil:
+			logger.Errorf("Could not dequeue task: %v", err)
 			<-p.Sema // release token
 			return
 		}
@@ -178,6 +181,7 @@ func (p *Processor) Exec() {
 			// check context before starting a worker goroutine.
 			select {
 			case <-ctx.Done():
+				logger.Warnf("task context canceled for task id=%s, deadline=%s", msg.ID, deadline)
 				// already canceled (e.g. deadline exceeded).
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
@@ -274,9 +278,9 @@ func (p *Processor) MarkAsDone(l *common.Lease, msg *t.TaskMessage) {
 		// If lease is not valid, do not write to redis; Let recoverer take care of it.
 		return
 	}
-	logger.Infof("Marking task id=%s as done", msg.ID)
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Done(ctx, msg)
+	logger.Infof("Marking task id=%s as done, err: %v", msg.ID, err)
 	if err != nil {
 		errMsg := fmt.Sprintf(
 			"Could not remove task id=%s type=%q from %q err: %+v",

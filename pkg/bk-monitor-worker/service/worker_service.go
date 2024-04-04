@@ -56,9 +56,17 @@ func (w *WorkerService) GetWorkerId() string {
 func NewWorkerService(ctx context.Context, queues []string) (*WorkerService, error) {
 	// todo support more configurations
 
+	qs := make(map[string]int)
+	if len(queues) > 0 {
+		for i, q := range queues {
+			qs[q] = i+1
+		}
+	}
+
 	w, err := worker.NewWorker(worker.WorkerConfig{
 		Concurrency: config.WorkerConcurrency,
 		BaseContext: func() context.Context { return ctx },
+		Queues: qs,
 	})
 
 	if err != nil {

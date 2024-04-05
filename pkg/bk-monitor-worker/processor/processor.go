@@ -60,7 +60,7 @@ type Processor struct {
 	// quit operate
 	Quit chan struct{}
 
-	// abort operatr
+	// abort operate
 	Abort chan struct{}
 }
 
@@ -148,12 +148,12 @@ func (p *Processor) Start(wg *sync.WaitGroup) {
 func (p *Processor) Exec() {
 	select {
 	case <-p.Quit:
-		logger.Errorf("Processor quit")
+		logger.Debugf("Processor quit")
 		return
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
-		logger.Errorf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
+		logger.Debugf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
 			//logger.Info("All queues are empty")
@@ -203,24 +203,23 @@ func (p *Processor) Exec() {
 			select {
 			case <-p.Abort:
 				// time is up, push the message back to queue and quit this worker goroutine.
-				logger.Warnf("Quitting worker. task id=%s", msg.ID)
+				logger.Debugf("Quitting worker. task id=%s", msg.ID)
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
-				logger.Warnf("Lease expired for task id=%s", msg.ID)
+				logger.Debugf("Lease expired for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
-				logger.Warnf("task context canceled for task id=%s", msg.ID)
+				logger.Debugf("task context canceled for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
-				logger.Warnf("task result for task id=%s, error: %v", msg.ID, resErr)
 				if resErr != nil {
-					logger.Warnf("task error for task id=%s, error: %v", msg.ID, resErr)
+					logger.Debugf("task error for task id=%s, error: %v", msg.ID, resErr)
 					metrics.RunTaskFailureTotal(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
@@ -280,7 +279,6 @@ func (p *Processor) MarkAsDone(l *common.Lease, msg *t.TaskMessage) {
 	}
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Done(ctx, msg)
-	logger.Infof("Marking task id=%s as done, err: %v", msg.ID, err)
 	if err != nil {
 		errMsg := fmt.Sprintf(
 			"Could not remove task id=%s type=%q from %q err: %+v",
@@ -301,12 +299,13 @@ func (p *Processor) HandleFailedMessage(ctx context.Context, l *common.Lease, ms
 		return
 	}
 	skipRetryErr := errors.New("skip retry for the task")
-	logger.Errorf("Failed task id=%s, error: %v", msg.ID, err)
 	if msg.Retried >= msg.Retry || errors.Is(err, skipRetryErr) {
 		logger.Warnf("Retry exhausted for task id=%s", msg.ID)
 		p.Archive(l, msg, err)
 	} else {
+		logger.Warnf("Task failed and retry for task id=%s, error: %v", msg.ID, err)
 		p.Retry(l, msg, err, true)
+		logger.Errorf("yyyyy")
 	}
 }
 

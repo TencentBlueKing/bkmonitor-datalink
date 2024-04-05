@@ -184,6 +184,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 
 	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
 
+	time.Sleep(1 * time.Minute)
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable

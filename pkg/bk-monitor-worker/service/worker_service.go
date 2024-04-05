@@ -49,6 +49,10 @@ func (w *WorkerService) Run() {
 	go w.maintainer.Start()
 }
 
+func (w *WorkerService) Stop() {
+	w.worker.Shutdown()
+}
+
 func (w *WorkerService) GetWorkerId() string {
 	return w.maintainer.id
 }

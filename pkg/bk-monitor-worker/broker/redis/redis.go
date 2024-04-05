@@ -308,25 +308,21 @@ func (r *RDB) Dequeue(qnames ...string) (msg *task.TaskMessage, leaseExpirationT
 		}
 		res, err := dequeueCmd.Run(context.Background(), r.client, keys, argv...).Result()
 		if err == redis.Nil {
-			logger.Errorf("No processable task found in queue %s, keys: %v, args: %v", qname, keys, argv)
+			logger.Debugf("No processable task found in queue %s, keys: %v, args: %v", qname, keys, argv)
 			continue
 		} else if err != nil {
-			logger.Errorf("Failed to dequeue task from queue %s: %v", qname, err)
 			return nil, time.Time{}, errors.E(op, errors.Unknown, fmt.Sprintf("redis eval error: %v", err))
 		}
 		encoded, err := cast.ToStringE(res)
 		if err != nil {
-			logger.Errorf("Failed to cast task message from queue %s: %v", qname, err)
 			return nil, time.Time{}, errors.E(
 				op, errors.Internal,
 				fmt.Sprintf("cast error: unexpected return value from Lua script: %v", res),
 			)
 		}
 		if msg, err = task.DecodeMessage([]byte(encoded)); err != nil {
-			logger.Errorf("Failed to decode task message from queue %s: %v", qname, err)
 			return nil, time.Time{}, errors.E(op, errors.Internal, fmt.Sprintf("cannot decode message: %v", err))
 		}
-		logger.Errorf("Dequeued task %+v from queue %s", msg, qname)
 		return msg, leaseExpirationTime, nil
 	}
 	return nil, time.Time{}, errors.E(op, errors.NotFound, errors.ErrNoProcessableTask)
@@ -413,10 +409,8 @@ func (r *RDB) Done(ctx context.Context, msg *task.TaskMessage) error {
 	// Note: We cannot pass empty unique key when running this script in redis-cluster.
 	if len(msg.UniqueKey) > 0 {
 		keys = append(keys, msg.UniqueKey)
-		logger.Infof("Removing uniq lock for task %s", msg.ID)
 		return r.runScript(ctx, op, doneUniqueCmd, keys, argv...)
 	}
-	logger.Infof("Removing lock for task %s", msg.ID)
 	return r.runScript(ctx, op, doneCmd, keys, argv...)
 }
 

@@ -13,6 +13,8 @@ import (
 	"context"
 	"sync"
 
+	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
+	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/processor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -55,106 +57,106 @@ var (
 	ReportESClusterMetrics        = "periodic:cluster_metrics:report_es"
 
 	periodicTasksDefine = map[string]PeriodicTask{
-		// refreshTsMetric: {
-		// 	Cron:    "*/3 * * * *",
-		// 	Handler: metadataTask.RefreshTimeSeriesMetric,
-		// },
-		// refreshEventDimension: {
-		// 	Cron:    "*/3 * * * *",
-		// 	Handler: metadataTask.RefreshEventDimension,
-		// },
-		// refreshEsStorage: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshESStorage,
-		// },
-		// refreshInfluxdbRoute: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshInfluxdbRoute,
-		// },
+		refreshTsMetric: {
+			Cron:    "*/3 * * * *",
+			Handler: metadataTask.RefreshTimeSeriesMetric,
+		},
+		refreshEventDimension: {
+			Cron:    "*/3 * * * *",
+			Handler: metadataTask.RefreshEventDimension,
+		},
+		refreshEsStorage: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshESStorage,
+		},
+		refreshInfluxdbRoute: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshInfluxdbRoute,
+		},
 		refreshDatasource: {
-			Cron:    "*/1 * * * *",
+			Cron:    "*/10 * * * *",
 			Handler: metadataTask.RefreshDatasource,
 		},
-		// DiscoverBcsClusters: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.DiscoverBcsClusters,
-		// },
-		// RefreshBcsMonitorInfo: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshBcsMonitorInfo,
-		// },
-		// RefreshDefaultRp: {
-		// 	Cron:    "0 22 * * *",
-		// 	Handler: metadataTask.RefreshDefaultRp,
-		// },
-		// RefreshBkccSpaceName: {
-		// 	Cron:    "30 3 * * *",
-		// 	Handler: metadataTask.RefreshBkccSpaceName,
-		// },
-		// RefreshKafkaTopicInfo: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshKafkaTopicInfo,
-		// },
-		// RefreshESRestore: {
-		// 	Cron:    "* * * * *",
-		// 	Handler: metadataTask.RefreshESRestore,
-		// },
-		// CleanExpiredRestore: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.CleanExpiredRestore,
-		// },
-		// RefreshBcsMetricsLabel: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshBcsMetricsLabel,
-		// },
-		// RefreshBkccSpace: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshBkccSpace,
-		// },
-		// SyncBkccSpaceDataSource: {
-		// 	Cron:    "*/1 * * * *",
-		// 	Handler: metadataTask.SyncBkccSpaceDataSource,
-		// },
-		// RefreshClusterResource: {
+		DiscoverBcsClusters: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.DiscoverBcsClusters,
+		},
+		RefreshBcsMonitorInfo: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBcsMonitorInfo,
+		},
+		RefreshDefaultRp: {
+			Cron:    "0 22 * * *",
+			Handler: metadataTask.RefreshDefaultRp,
+		},
+		RefreshBkccSpaceName: {
+			Cron:    "30 3 * * *",
+			Handler: metadataTask.RefreshBkccSpaceName,
+		},
+		RefreshKafkaTopicInfo: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshKafkaTopicInfo,
+		},
+		RefreshESRestore: {
+			Cron:    "* * * * *",
+			Handler: metadataTask.RefreshESRestore,
+		},
+		CleanExpiredRestore: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.CleanExpiredRestore,
+		},
+		RefreshBcsMetricsLabel: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBcsMetricsLabel,
+		},
+		RefreshBkccSpace: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBkccSpace,
+		},
+		SyncBkccSpaceDataSource: {
+			Cron:    "*/1 * * * *",
+			Handler: metadataTask.SyncBkccSpaceDataSource,
+		},
+		RefreshClusterResource: {
+			Cron:    "*/30 * * * *",
+			Handler: metadataTask.RefreshClusterResource,
+		},
+		RefreshBcsProjectBiz: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshBcsProjectBiz,
+		},
+		SyncBcsSpace: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.SyncBcsSpace,
+		},
+		AutoDeployProxy: {
+			Cron:    "30 */2 * * *",
+			Handler: metadataTask.AutoDeployProxy,
+		},
+		RefreshBkciSpaceName: {
+			Cron:    "0 3 * * *",
+			Handler: metadataTask.RefreshBkciSpaceName,
+		},
+		RefreshCustomReport2Nodeman: {
+			Cron:    "*/5 * * * *",
+			Handler: metadataTask.RefreshCustomReport2Nodeman,
+		},
+		RefreshPingServer2Nodeman: {
+			Cron:    "*/10 * * * *",
+			Handler: metadataTask.RefreshPingServer2Nodeman,
+		},
+		ReportInfluxdbClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
+		},
+		// PushAndPublishSpaceRouterInfo: {
 		// 	Cron:    "*/30 * * * *",
-		// 	Handler: metadataTask.RefreshClusterResource,
+		// 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
 		// },
-		// RefreshBcsProjectBiz: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshBcsProjectBiz,
-		// },
-		// SyncBcsSpace: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.SyncBcsSpace,
-		// },
-		// AutoDeployProxy: {
-		// 	Cron:    "30 */2 * * *",
-		// 	Handler: metadataTask.AutoDeployProxy,
-		// },
-		// RefreshBkciSpaceName: {
-		// 	Cron:    "0 3 * * *",
-		// 	Handler: metadataTask.RefreshBkciSpaceName,
-		// },
-		// RefreshCustomReport2Nodeman: {
-		// 	Cron:    "*/5 * * * *",
-		// 	Handler: metadataTask.RefreshCustomReport2Nodeman,
-		// },
-		// RefreshPingServer2Nodeman: {
-		// 	Cron:    "*/10 * * * *",
-		// 	Handler: metadataTask.RefreshPingServer2Nodeman,
-		// },
-		// ReportInfluxdbClusterMetrics: {
-		// 	Cron:    "*/1 * * * *",
-		// 	Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
-		// },
-		// // PushAndPublishSpaceRouterInfo: {
-		// // 	Cron:    "*/30 * * * *",
-		// // 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
-		// // },
-		// ReportESClusterMetrics: {
-		// 	Cron:    "*/1 * * * *",
-		// 	Handler: cmESTask.ReportESClusterMetrics,
-		// },
+		ReportESClusterMetrics: {
+			Cron:    "*/1 * * * *",
+			Handler: cmESTask.ReportESClusterMetrics,
+		},
 	}
 )
 

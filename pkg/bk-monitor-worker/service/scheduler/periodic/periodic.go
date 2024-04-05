@@ -114,7 +114,7 @@ var (
 			Handler: metadataTask.RefreshBkccSpace,
 		},
 		SyncBkccSpaceDataSource: {
-			Cron:    "*/1 * * * *",
+			Cron:    "*/10 * * * *",
 			Handler: metadataTask.SyncBkccSpaceDataSource,
 		},
 		RefreshClusterResource: {

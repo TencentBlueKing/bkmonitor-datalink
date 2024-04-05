@@ -60,7 +60,7 @@ type Processor struct {
 	// quit operate
 	Quit chan struct{}
 
-	// abort operatr
+	// abort operate
 	Abort chan struct{}
 }
 
@@ -148,10 +148,12 @@ func (p *Processor) Start(wg *sync.WaitGroup) {
 func (p *Processor) Exec() {
 	select {
 	case <-p.Quit:
+		logger.Debugf("Processor quit")
 		return
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
+		logger.Debugf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
 			//logger.Info("All queues are empty")
@@ -159,6 +161,7 @@ func (p *Processor) Exec() {
 			<-p.Sema // release token
 			return
 		case err != nil:
+			logger.Errorf("Could not dequeue task: %v", err)
 			<-p.Sema // release token
 			return
 		}
@@ -178,6 +181,7 @@ func (p *Processor) Exec() {
 			// check context before starting a worker goroutine.
 			select {
 			case <-ctx.Done():
+				logger.Warnf("task context canceled for task id=%s, deadline=%s", msg.ID, deadline)
 				// already canceled (e.g. deadline exceeded).
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
@@ -199,20 +203,23 @@ func (p *Processor) Exec() {
 			select {
 			case <-p.Abort:
 				// time is up, push the message back to queue and quit this worker goroutine.
-				logger.Warnf("Quitting worker. task id=%s", msg.ID)
+				logger.Debugf("Quitting worker. task id=%s", msg.ID)
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
+				logger.Debugf("Lease expired for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
+				logger.Debugf("task context canceled for task id=%s", msg.ID)
 				metrics.RunTaskFailureTotal(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
 				if resErr != nil {
+					logger.Debugf("task error for task id=%s, error: %v", msg.ID, resErr)
 					metrics.RunTaskFailureTotal(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
@@ -296,7 +303,9 @@ func (p *Processor) HandleFailedMessage(ctx context.Context, l *common.Lease, ms
 		logger.Warnf("Retry exhausted for task id=%s", msg.ID)
 		p.Archive(l, msg, err)
 	} else {
+		logger.Warnf("Task failed and retry for task id=%s, error: %v", msg.ID, err)
 		p.Retry(l, msg, err, true)
+		logger.Errorf("yyyyy")
 	}
 }
 

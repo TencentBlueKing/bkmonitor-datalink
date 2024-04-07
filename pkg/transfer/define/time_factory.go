@@ -11,32 +11,30 @@ package define
 
 import (
 	"errors"
+	"sync"
 	"time"
 )
 
 // timeLayouts : Payload factory mappings
 var timeLayouts = make(map[string]string)
+var timeLayoutsMut sync.RWMutex
 
-// RegisterTimeLayout : register Payload to factory
+// RegisterTimeLayout 注册时间处理模板
 var RegisterTimeLayout = func(name, layout string) {
+	timeLayoutsMut.Lock() // write-lock
+	defer timeLayoutsMut.Unlock()
+
 	if name == "" {
 		panic(errors.New("name can not be empty"))
 	}
 	timeLayouts[name] = layout
 }
 
-// UnregisterTimeLayout
-var UnregisterTimeLayout = func(name string) (string, bool) {
-	layout, ok := timeLayouts[name]
-	if !ok {
-		return "", false
-	}
-	delete(timeLayouts, name)
-	return layout, true
-}
-
-// GetTimeLayout
+// GetTimeLayout 获取时间处理模板
 var GetTimeLayout = func(name string) (string, bool) {
+	timeLayoutsMut.RLock() // read-lock
+	defer timeLayoutsMut.RUnlock()
+
 	layout, ok := timeLayouts[name]
 	if !ok {
 		return "", false

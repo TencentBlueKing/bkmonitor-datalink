@@ -127,7 +127,6 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 	clint := &http.Client{Timeout: timeout}
 	for _, v := range r.hostInfo {
 		// 重试 pingCount 次数
-		var pingOK bool
 		for i := 0; i < pingCount; i++ {
 			addr := fmt.Sprintf("%s://%s:%d", v.Protocol, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr+"/ping", nil)
@@ -140,29 +139,32 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 				log.Warnf(ctx, "do ping failed, error: %s", err)
 				continue
 			}
-			// 依据返回的状态码是否为 204 来更新 hostStatusInfo 里面的信息
-			// 如果状态码不为 204 继续 pCount 次数重试
-			// 状态码为 204 更新 hostStatusInfo 信息后 break 退出
+			// 状态码为 204
+			// 上次一的 Read 状态为 false 的情况下进行更新操作
+			// 否则直接结束 PingCount 循环
 			if resp.StatusCode == http.StatusNoContent {
-				r.lock.Lock()
-				r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
-					Read:           true,
-					LastModifyTime: time.Now().Unix(),
+				if !r.hostStatusInfo[v.DomainName].Read {
+					r.lock.Lock()
+					r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+						Read:           true,
+						LastModifyTime: time.Now().Unix(),
+					}
+					r.lock.Unlock()
 				}
-				r.lock.Unlock()
-				pingOK = true
 				break
+			} else {
+				// 状态码不为 204
+				// 上一次的 Read 状态为 true 的情况变更 influxdb 状态为不可读
+				// 如果 Read 状态为 false 则继续走完后续 PingCount 循环
+				if r.hostStatusInfo[v.DomainName].Read {
+					r.lock.Lock()
+					r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+						Read:           false,
+						LastModifyTime: time.Now().Unix(),
+					}
+					r.lock.Unlock()
+				}
 			}
-		}
-
-		// 在经过重试次数后还是未能ping通的情况
-		if !pingOK {
-			r.lock.Lock()
-			r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
-				Read:           false,
-				LastModifyTime: time.Now().Unix(),
-			}
-			r.lock.Unlock()
 		}
 	}
 }
@@ -414,10 +416,7 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 			// 更新 hostInfo 信息后重新初始化 hostStatusInfo
 			r.hostStatusInfo = make(influxdb.HostStatusInfo, len(r.hostInfo))
 			for _, h := range r.hostInfo {
-				r.hostStatusInfo[h.DomainName] = &influxdb.HostStatus{
-					Read:           false,
-					LastModifyTime: time.Now().Unix(),
-				}
+				r.hostStatusInfo[h.DomainName] = &influxdb.HostStatus{Read: true}
 			}
 		}
 	case influxdb.TagInfoKey:

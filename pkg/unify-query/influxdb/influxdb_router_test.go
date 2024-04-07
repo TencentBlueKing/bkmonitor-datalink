@@ -62,9 +62,12 @@ func TestGetTagRouter(t *testing.T) {
 
 func MockRouterWithHostInfo(hostInfo influxdb.HostInfo) *Router {
 	ir := GetInfluxDBRouter()
-	// 初始化 hostStatusInfo
-	ir.hostStatusInfo = make(influxdb.HostStatusInfo)
 	ir.hostInfo = hostInfo
+	ir.hostStatusInfo = make(influxdb.HostStatusInfo, len(hostInfo))
+	// 将hostInfo 里面的信息初始化到 hostStatusInfo 并且初始化 Read 状态为 true
+	for _, v := range hostInfo {
+		ir.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{Read: true}
+	}
 	return ir
 }
 

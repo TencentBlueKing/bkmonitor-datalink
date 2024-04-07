@@ -127,6 +127,7 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 	clint := &http.Client{Timeout: timeout}
 	for _, v := range r.hostInfo {
 		// 重试 pingCount 次数
+		var read bool
 		for i := 0; i < pingCount; i++ {
 			addr := fmt.Sprintf("%s://%s:%d", v.Protocol, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr+"/ping", nil)
@@ -139,32 +140,20 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 				log.Warnf(ctx, "do ping failed, error: %s", err)
 				continue
 			}
-			// 状态码为 204
-			// 上次一的 Read 状态为 false 的情况下进行更新操作
-			// 否则直接结束 PingCount 循环
+			// 状态码 204 变更 read 跳出循环
+			// 否则持续走完 PingCount 结束
 			if resp.StatusCode == http.StatusNoContent {
-				if !r.hostStatusInfo[v.DomainName].Read {
-					r.lock.Lock()
-					r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
-						Read:           true,
-						LastModifyTime: time.Now().Unix(),
-					}
-					r.lock.Unlock()
-				}
+				read = true
 				break
-			} else {
-				// 状态码不为 204
-				// 上一次的 Read 状态为 true 的情况变更 influxdb 状态为不可读
-				// 如果 Read 状态为 false 则继续走完后续 PingCount 循环
-				if r.hostStatusInfo[v.DomainName].Read {
-					r.lock.Lock()
-					r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
-						Read:           false,
-						LastModifyTime: time.Now().Unix(),
-					}
-					r.lock.Unlock()
-				}
 			}
+		}
+		if read != r.hostStatusInfo[v.DomainName].Read {
+			r.lock.Lock()
+			r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+				Read:           read,
+				LastModifyTime: time.Now().Unix(),
+			}
+			r.lock.Unlock()
 		}
 	}
 }

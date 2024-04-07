@@ -210,6 +210,7 @@ EOF
 {%- if extra_vars is defined and extra_vars.corefile_match_regex is defined %}
     corefile_match_regex: {{ extra_vars.corefile_match_regex or '' }}
 {%- endif %}
+    disk_ro_black_list: ["docker","container","k8s","kubelet","blueking"]
 EOF
   cat <<EOF >> "$path"
   # 进程采集：同步 CMDB 进程配置文件到 bkmonitorbeat 子任务文件夹下

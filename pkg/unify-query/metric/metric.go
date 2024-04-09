@@ -43,7 +43,7 @@ var (
 			Name:      "api_request_total",
 			Help:      "unify-query api request",
 		},
-		[]string{"api", "status", "space_uid"},
+		[]string{"api", "status", "space_uid", "source_type"},
 	)
 
 	apiRequestSecondHistogram = prometheus.NewHistogramVec(

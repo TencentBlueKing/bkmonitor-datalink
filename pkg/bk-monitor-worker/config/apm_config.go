@@ -92,6 +92,13 @@ var (
 	ProfileAppIdx string
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
 	SemaphoreReportInterval time.Duration
+
+	// PromRemoteWriteEnabled Whether to enabled prometheus remote write
+	PromRemoteWriteEnabled bool
+	// PromRemoteWriteUrl remote write target url
+	PromRemoteWriteUrl string
+	// PromRemoteWriteHeaders remote write headers of http request
+	PromRemoteWriteHeaders map[string]string
 )
 
 func initApmVariables() {
@@ -130,4 +137,9 @@ func initApmVariables() {
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
 	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
+
+	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
+	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
+	// todo 获取不到 headers
+	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
 }

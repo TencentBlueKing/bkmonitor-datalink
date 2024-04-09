@@ -409,7 +409,7 @@ var (
 
 // GetValue get value from config file
 func GetValue[T any](key string, def T, getter ...func(string) T) T {
-	if !slices.Contains(keys, strings.ToLower(key)) {
+	if !slices.Contains(keys, strings.ToLower(key)) && reflect.TypeOf(def).Kind() != reflect.Map {
 		return def
 	}
 

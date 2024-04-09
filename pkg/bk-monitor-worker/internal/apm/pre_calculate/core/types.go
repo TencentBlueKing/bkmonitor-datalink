@@ -126,6 +126,12 @@ func (c *CommonField) DisplayKey() string {
 	}
 }
 
+// Contain whether the field is in mapping
+func (c *CommonField) Contain(collections map[string]string) bool {
+	_, exist := collections[c.FullKey]
+	return exist
+}
+
 // FiledSource source of filed
 type FiledSource string
 
@@ -151,6 +157,9 @@ var (
 	HttpUrlField     = CommonField{SourceAttributes, "http.url", toAttributes("http.url")}
 	NetPeerNameField = CommonField{
 		SourceAttributes, "net.peer.name", toAttributes("net.peer.name"),
+	}
+	ServerAddressField = CommonField{
+		SourceAttributes, "server.address", toAttributes("server.address"),
 	}
 	PeerServiceField = CommonField{
 		SourceAttributes, "peer.service", toAttributes("peer.service"),
@@ -266,6 +275,9 @@ var (
 	NetHostIpField = CommonField{
 		SourceResource, "net.host.ip", toResource("net.host.ip"),
 	}
+	HostIpField = CommonField{
+		SourceResource, "host.ip", toResource("host.ip"),
+	}
 	NetHostPortField = CommonField{
 		SourceResource, "net.host.port", toResource("net.host.port"),
 	}
@@ -281,6 +293,11 @@ var (
 )
 
 var StandardFields = []CommonField{
+	HttpHostField,
+	HttpUrlField,
+	NetPeerNameField,
+	ServerAddressField,
+	PeerServiceField,
 	HttpSchemeField,
 	HttpFlavorField,
 	HttpMethodField,
@@ -294,6 +311,8 @@ var StandardFields = []CommonField{
 	DbNameField,
 	DbOperationField,
 	DbSystemField,
+	DbStatementField,
+	DbInstanceField,
 
 	MessagingSystemField,
 	MessagingDestinationField,
@@ -309,6 +328,7 @@ var StandardFields = []CommonField{
 	ServiceNamespaceField,
 	ServiceInstanceIdField,
 	NetHostIpField,
+	HostIpField,
 	NetHostPortField,
 	NetHostnameField,
 	BkInstanceIdField,

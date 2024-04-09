@@ -44,7 +44,6 @@ func PeriodicHandleExampleTask(ctx context.Context, t *task.Task) error {
 	return nil
 }
 
-
 func PeriodicHandleExampleTask1(ctx context.Context, t *task.Task) error {
 	logger.Info("periodic1 example func trigger")
 

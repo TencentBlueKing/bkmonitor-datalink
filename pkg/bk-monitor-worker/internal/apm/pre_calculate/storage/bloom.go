@@ -526,7 +526,7 @@ func newLayersCapDecreaseBloomClient(ctx context.Context, options BloomOptions) 
 
 	curCap := options.layersCapDecreaseBloomOptions.cap
 	for i := 0; i < options.layersCapDecreaseBloomOptions.layers; i++ {
-		sbf := boom.NewBloomFilter(uint(curCap), options.fpRate)
+		sbf := boom.NewDefaultStableBloomFilter(uint(curCap), options.fpRate)
 		// select overlapBloom as super stratum
 		bloom := newOverlapBloomClient(
 			ctx, sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,

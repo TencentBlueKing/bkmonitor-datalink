@@ -149,19 +149,18 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 		}
 
 		r.lock.RLock()
-		if read != r.hostStatusInfo[v.DomainName].Read {
+		if read == r.hostStatusInfo[v.DomainName].Read {
 			r.lock.RUnlock()
-			r.lock.Lock()
-			if read != r.hostStatusInfo[v.DomainName].Read { // 再次检查条件
-				r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
-					Read:           read,
-					LastModifyTime: time.Now().Unix(),
-				}
-			}
-			r.lock.Unlock()
-		} else {
-			r.lock.RUnlock()
+			continue
 		}
+		r.lock.RUnlock()
+
+		r.lock.Lock()
+		r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+			Read:           read,
+			LastModifyTime: time.Now().Unix(),
+		}
+		r.lock.Unlock()
 	}
 }
 

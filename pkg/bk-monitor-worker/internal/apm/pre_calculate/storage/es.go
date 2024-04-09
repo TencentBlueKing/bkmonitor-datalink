@@ -23,10 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-const (
-	SavePrecalculateResult Action = "savePrecalculateResult"
-)
-
 type Converter func(io.ReadCloser) (any, error)
 
 var (

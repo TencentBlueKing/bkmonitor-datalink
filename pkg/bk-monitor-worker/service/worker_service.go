@@ -63,14 +63,14 @@ func NewWorkerService(ctx context.Context, queues []string) (*WorkerService, err
 	qs := make(map[string]int)
 	if len(queues) > 0 {
 		for i, q := range queues {
-			qs[q] = i+1
+			qs[q] = i + 1
 		}
 	}
 
 	w, err := worker.NewWorker(worker.WorkerConfig{
 		Concurrency: config.WorkerConcurrency,
 		BaseContext: func() context.Context { return ctx },
-		Queues: qs,
+		Queues:      qs,
 	})
 
 	if err != nil {

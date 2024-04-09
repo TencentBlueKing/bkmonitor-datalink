@@ -257,7 +257,7 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 			}
 
 			// 有读状态才判断，如果没有读状态，则默认可读，防止影响原数据
-			if s, statusOk := r.hostStatusInfo[h]; statusOk {
+			if s, statusOk := r.hostStatusInfo[v.DomainName]; statusOk {
 				// 不可读的状态直接跳过
 				if !s.Read {
 					continue

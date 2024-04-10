@@ -62,44 +62,114 @@ func ToStandardSpan(originSpan *fastjson.Value) *StandardSpan {
 }
 
 func exactStandardFields(standardSpan StandardSpan, originSpan *fastjson.Value) map[string]string {
-	// Most spans do not have half of standard fields, capacity is converted to half
-	res := make(map[string]string, len(core.StandardFields)/2)
+	res := make(map[string]string)
+
+	attrVal := originSpan.Get("attributes")
+	resourceVal := originSpan.Get("resource")
 
 	for _, f := range core.StandardFields {
+		var valueStr string
+		found := false
+
 		switch f.Source {
-		case core.SourceAttributes:
-			v := originSpan.Get("attributes").Get(f.Key)
-			if v != nil {
-				switch v.Type() {
-				case fastjson.TypeNumber:
-					originV, _ := v.Float64()
-					res[f.FullKey] = strconv.FormatFloat(originV, 'f', -1, 64)
-				default:
-					res[f.FullKey] = strings.Trim(v.String(), `"`)
-				}
+		case core.SourceAttributes, core.SourceResource:
+			targetVal := attrVal
+			if f.Source == core.SourceResource {
+				targetVal = resourceVal
 			}
-		case core.SourceResource:
-			v := originSpan.Get("resource").Get(f.Key)
-			if v != nil {
+
+			if v := targetVal.Get(f.Key); v != nil {
+				found = true
 				switch v.Type() {
 				case fastjson.TypeNumber:
-					originV, _ := v.Float64()
-					res[f.FullKey] = strconv.FormatFloat(originV, 'f', -1, 64)
+					if originV, err := v.Float64(); err == nil {
+						valueStr = strconv.FormatFloat(originV, 'f', -1, 64)
+					}
 				default:
-					res[f.FullKey] = strings.Trim(v.String(), `"`)
+					valueStr = strings.Trim(string(v.GetStringBytes()), `"`)
 				}
 			}
 		case core.SourceOuter:
+			found = true
 			switch f.FullKey {
 			case "kind":
-				res[f.FullKey] = strconv.Itoa(standardSpan.Kind)
+				valueStr = strconv.Itoa(standardSpan.Kind)
 			case "span_name":
-				res[f.FullKey] = standardSpan.SpanName
+				valueStr = standardSpan.SpanName
 			default:
 				logger.Warnf("Try to get a standard field: %s that does not exist. Is the standard field been updated?", f.Key)
+				found = false
 			}
 		}
+
+		if found {
+			res[f.FullKey] = valueStr
+		}
 	}
+
+	return res
+}
+
+func ToStandardSpanFromMapping(originSpan map[string]any) *StandardSpan {
+	standardSpan := StandardSpan{
+		TraceId:      originSpan["trace_id"].(string),
+		SpanId:       originSpan["span_id"].(string),
+		SpanName:     originSpan["span_name"].(string),
+		ParentSpanId: originSpan["parent_span_id"].(string),
+		StartTime:    int(originSpan["start_time"].(float64)),
+		EndTime:      int(originSpan["end_time"].(float64)),
+		ElapsedTime:  int(originSpan["elapsed_time"].(float64)),
+		StatusCode:   core.SpanStatusCode(int(originSpan["status"].(map[string]any)["code"].(float64))),
+		Kind:         int(originSpan["kind"].(float64)),
+	}
+
+	standardSpan.Collections = exactStandardFieldsFromMapping(standardSpan, originSpan)
+	return &standardSpan
+}
+
+func exactStandardFieldsFromMapping(standardSpan StandardSpan, originSpan map[string]any) map[string]string {
+	res := make(map[string]string)
+	attrVal := originSpan["attributes"].(map[string]any)
+	resourceVal := originSpan["resource"].(map[string]any)
+
+	for _, f := range core.StandardFields {
+		var valueStr string
+		var found bool
+		var targetVal map[string]any
+
+		if f.Source == core.SourceAttributes || f.Source == core.SourceResource {
+			targetVal = attrVal
+			if f.Source == core.SourceResource {
+				targetVal = resourceVal
+			}
+
+			if v, ok := targetVal[f.Key]; ok {
+				found = true
+				switch v := v.(type) {
+				case float64:
+					valueStr = strconv.FormatFloat(v, 'f', -1, 64)
+				case string:
+					valueStr = v
+				}
+			}
+		} else if f.Source == core.SourceOuter {
+			found = true
+			switch f.FullKey {
+			case "kind":
+				valueStr = strconv.Itoa(standardSpan.Kind)
+			case "span_name":
+				valueStr = standardSpan.SpanName
+			default:
+				logger.Warnf("Try to get a standard field: %s that does not exist. Is the standard field been updated?", f.Key)
+				found = false
+			}
+		}
+
+		if found {
+			res[f.FullKey] = valueStr
+		}
+	}
+
 	return res
 }
 

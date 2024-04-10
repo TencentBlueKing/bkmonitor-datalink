@@ -16,7 +16,6 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"
@@ -80,7 +79,6 @@ type Processor struct {
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
 	exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
-
 	if err != nil {
 		p.logger.Warnf(
 			"Attempt to retrieve traceMeta from Bloom-filter failed, "+
@@ -170,7 +168,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsReturnEmpty)
 		return spans
 	}
-	originSpans, err := p.recoverSpans(spanBytes.([]byte))
+	originSpans, err := p.recoverSpans(spanBytes.([]map[string]any))
 	if err != nil {
 		p.logger.Errorf(
 			"The data structure in ES is inconsistent, this data will be ignored. traceId: %s. error: %s ",
@@ -184,16 +182,11 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	return spans
 }
 
-func (p *Processor) recoverSpans(originSpans []byte) ([]*StandardSpan, error) {
+func (p *Processor) recoverSpans(originSpans []map[string]any) ([]*StandardSpan, error) {
 	var res []*StandardSpan
-	v, _ := fastjson.ParseBytes(originSpans)
-	spans, err := v.Array()
-	if err != nil {
-		return nil, err
-	}
 
-	for _, s := range spans {
-		res = append(res, ToStandardSpan(s))
+	for _, s := range originSpans {
+		res = append(res, ToStandardSpanFromMapping(s))
 	}
 
 	return res, nil

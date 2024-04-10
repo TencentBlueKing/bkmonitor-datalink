@@ -37,9 +37,9 @@ type Instance struct {
 
 var (
 	storageRedisInstance *Instance
-	storageRedisOnce sync.Once
+	storageRedisOnce     sync.Once
 	cacheRedisInstance   *Instance
-	cacheRedisOnce sync.Once
+	cacheRedisOnce       sync.Once
 )
 
 // 两个类型的redis使用场景不一样，

@@ -72,6 +72,9 @@ type Processor struct {
 	proxy               *storage.Proxy
 	traceEsQueryLimiter *rate.Limiter
 
+	// Metric discover
+	metricProcessor MetricProcessor
+
 	logger monitorLogger.Logger
 }
 
@@ -114,6 +117,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 						"but failed to be parsed to span list. error: %s",
 					event.TraceId, infoKey, parseErr,
 				)
+				metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryCacheResponseInvalid)
 			} else {
 				return spans
 			}
@@ -126,6 +130,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 			p.dataId,
 			p.config.traceEsQueryRate,
 		)
+		metrics.AddApmPreCalcRateLimitedCount(p.dataId, metrics.LimiterEs)
 		return spans
 	}
 
@@ -161,7 +166,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 
 	if spanBytes == nil {
 		// The trace does not exist in es. if it occurs frequently, the Bloom-Filter parameter may be set improperly.
-		p.logger.Debug("The data with traceId: %s is empty from ES.", event.TraceId)
+		p.logger.Infof("The data with traceId: %s is empty from ES.", event.TraceId)
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsReturnEmpty)
 		return spans
 	}
@@ -198,6 +203,10 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 
 	graph := event.Graph
 	graph.RefreshEdges()
+
+	// discover metrics of relation and remote-write to Prometheus
+	p.metricProcessor.process(receiver, event, graph)
+
 	nodeDegrees := graph.NodeDepths()
 
 	services := mapset.NewSet[string]()
@@ -313,7 +322,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 		spanBytes, _ := jsonx.Marshal(event.Spans)
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
-			Action: storage.SaveTraceCache,
 			Data: storage.CacheStorageData{
 				DataId: p.dataId,
 				Key:    storage.CacheTraceInfoKey.Format(p.dataIdBaseInfo.BkBizId, p.dataIdBaseInfo.AppName, event.TraceId),
@@ -334,7 +342,6 @@ func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, res
 	resultBytes, _ := jsonx.Marshal(result)
 	receiver <- storage.SaveRequest{
 		Target: storage.SaveEs,
-		Action: storage.SavePrecalculateResult,
 		Data: storage.EsStorageData{
 			DataId:     p.dataId,
 			DocumentId: result.TraceId,
@@ -482,5 +489,6 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
+		metricProcessor: newMetricProcessor(dataId),
 	}
 }

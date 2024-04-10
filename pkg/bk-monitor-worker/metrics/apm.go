@@ -63,14 +63,16 @@ var (
 		[]string{"data_id", "sub_window_id"},
 	)
 
-	QueryBloomFilterFailed = "query_bloom_filter_failed"
-	QueryEsFailed          = "query_es_failed"
-	QueryEsReturnEmpty     = "query_es_return_empty"
-	QueryESResponseInvalid = "query_es_response_invalid"
-	SaveEsFailed           = "save_es_failed"
-	SaveCacheFailed        = "save_cache_failed"
-	SaveBloomFilterFailed  = "save_bloom_filter_failed"
-	// apmPreCalcOperateStorageFailedTotal apm预计算对 trace 进行预计算时发生存储层失败计数指标
+	QueryBloomFilterFailed    = "query_bloom_filter_failed"
+	QueryCacheResponseInvalid = "query_cache_response_invalid"
+	QueryEsFailed             = "query_es_failed"
+	QueryEsReturnEmpty        = "query_es_return_empty"
+	QueryESResponseInvalid    = "query_es_response_invalid"
+	SaveEsFailed              = "save_es_failed"
+	SaveCacheFailed           = "save_cache_failed"
+	SaveBloomFilterFailed     = "save_bloom_filter_failed"
+	SavePrometheusFailed      = "save_prometheus_failed"
+	// apmPreCalcOperateStorageFailedTotal apm预计算对 trace 进行预计算时发生存储层查询/保存失败的计数指标
 	apmPreCalcOperateStorageFailedTotal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: ApmNamespace,
@@ -84,6 +86,7 @@ var (
 	StorageTraceEs     = "trace_es"
 	StorageCache       = "cache"
 	StorageBloomFilter = "bloom_filter"
+	StoragePrometheus  = "prometheus"
 	OperateSave        = "save"
 	OperateQuery       = "query"
 	// apmPreCalcOperateStorageCount APM 预计算查询存储层的保存次数
@@ -126,6 +129,17 @@ var (
 		[]string{"data_id"},
 	)
 
+	LimiterEs = "limiter_es"
+	// apmPreCalcRateLimitedCount apm 预计算 ES/KAFKA 触发限流而拒绝的计数
+	apmPreCalcRateLimitedCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "rate_limited",
+			Help:      "rate limited",
+		},
+		[]string{"data_id", "limiter_type"},
+	)
+
 	// **** APM 父子窗口实现指标
 	// apmPreCalcWindowTraceTotal trace count of distributive windows
 	apmPreCalcWindowTraceTotal = prometheus.NewGaugeVec(
@@ -145,7 +159,22 @@ var (
 		},
 		[]string{"data_id", "sub_window_id"},
 	)
+
+	// RelationMetricSystem 主机关联指标
+	RelationMetricSystem       = "system_flow"
+	apmRelationMetricFindCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{},
+		[]string{"data_id", "metric"},
+	)
 )
+
+func RecordApmRelationMetricFindCount(dataId, metric string, n int) {
+	apmRelationMetricFindCount.WithLabelValues(dataId, metric).Add(float64(n))
+}
+
+func AddApmPreCalcRateLimitedCount(dataId, limiter string) {
+	apmPreCalcRateLimitedCount.WithLabelValues(dataId, limiter).Add(1)
+}
 
 func RecordApmPreCalcLocateSpanDuration(dataId string, t time.Time) {
 	apmPreCalcLocateSpanDuration.WithLabelValues(dataId).Observe(time.Since(t).Seconds())

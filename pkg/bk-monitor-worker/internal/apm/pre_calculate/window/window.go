@@ -125,8 +125,15 @@ type StandardSpan struct {
 	Collections map[string]string
 }
 
-func (s *StandardSpan) GetFieldValue(f core.CommonField) string {
-	return s.Collections[f.DisplayKey()]
+func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
+	var res string
+	for _, item := range f {
+		res, exist := s.Collections[item.DisplayKey()]
+		if exist {
+			return res
+		}
+	}
+	return res
 }
 
 // Handler window handle logic

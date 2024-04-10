@@ -544,9 +544,7 @@ func New(conf *Config, publishFunc func(r *define.Record)) *Accumulator {
 		gcInterval:      conf.GcInterval / 2, // 以 0.5*gcInterval 频率进行清理
 	}
 	go accumulator.gc()
-	if accumulator.enableLimitGrowRate() {
-		go accumulator.resetGrowthRateLoop()
-	}
+	go accumulator.resetGrowthRateLoop()
 
 	if publishFunc != nil {
 		go accumulator.publish()
@@ -668,6 +666,10 @@ func (a *Accumulator) gc() {
 }
 
 func (a *Accumulator) resetGrowthRateLoop() {
+	if !a.enableLimitGrowRate() {
+		return
+	}
+
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
@@ -678,7 +680,6 @@ func (a *Accumulator) resetGrowthRateLoop() {
 			a.resetGrowthRate()
 		}
 	}
-
 }
 
 func (a *Accumulator) Stop() {

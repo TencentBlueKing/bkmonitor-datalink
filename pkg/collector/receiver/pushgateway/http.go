@@ -202,7 +202,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		return
 	}
 
-	token := define.TokenFromRequest(req)
+	token := define.TokenFromHttpRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordPushGateway,
 		RequestType:   define.RequestHttp,

@@ -11,59 +11,23 @@ package redis
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
+	"github.com/avast/retry-go"
 	goRedis "github.com/go-redis/redis/v8"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
-const (
-	redisModePath             = "store.redis.mode"
-	redisMasterNamePath       = "store.redis.master_name"
-	redisAddressPath          = "store.redis.address"
-	redisHostPath             = "store.redis.host"
-	redisPortPath             = "store.redis.port"
-	redisUsernamePath         = "store.redis.username"
-	redisSentinelPasswordPath = "store.redis.sentinel_password"
-	redisPasswordPath         = "store.redis.password"
-	redisDatabasePath         = "store.redis.database"
-	redisDialTimeoutPath      = "store.redis.dial_timeout"
-	redisReadTimeoutPath      = "store.redis.read_timeout"
-	redisPeriodicTaskKeyPath  = "store.redis.periodic_task_key"
-	redisChannelNamePath      = "store.redis.channel_name"
-)
-
-func init() {
-	viper.SetDefault(redisMasterNamePath, "")
-	viper.SetDefault(redisAddressPath, []string{"127.0.0.1:6379"})
-	viper.SetDefault(redisHostPath, "127.0.0.1")
-	viper.SetDefault(redisPortPath, 6379)
-	viper.SetDefault(redisUsernamePath, "root")
-	viper.SetDefault(redisPasswordPath, "")
-	viper.SetDefault(redisSentinelPasswordPath, "")
-	viper.SetDefault(redisDatabasePath, 0)
-	viper.SetDefault(redisDialTimeoutPath, time.Second*10)
-	viper.SetDefault(redisReadTimeoutPath, time.Second*10)
-	viper.SetDefault(redisPeriodicTaskKeyPath, "bmw:periodic_task")
-	viper.SetDefault(redisChannelNamePath, "bmw:channel:periodic_task")
-}
-
-// GetPeriodicTaskKey return periodic task key
-func GetPeriodicTaskKey() string {
-	return viper.GetString(redisPeriodicTaskKeyPath)
-}
-
-// GetChannelName return channel name
-func GetChannelName() string {
-	return viper.GetString(redisChannelNamePath)
-}
-
 var (
-	PeriodicTaskKey = viper.GetString(redisPeriodicTaskKeyPath)
-	ChannelName     = viper.GetString(redisChannelNamePath)
+	StoragePeriodicTaskKey        = fmt.Sprintf("%s:periodicTask", config.StorageRedisKeyPrefix)
+	StoragePeriodicTaskChannelKey = fmt.Sprintf("%s:channel:periodicTask", config.StorageRedisKeyPrefix)
 )
 
 type Instance struct {
@@ -71,36 +35,87 @@ type Instance struct {
 	Client goRedis.UniversalClient
 }
 
-var instance *Instance
+var (
+	storageRedisInstance *Instance
+	storageRedisOnce     sync.Once
+	cacheRedisInstance   *Instance
+	cacheRedisOnce       sync.Once
+)
 
-func NewInstance(ctx context.Context) (*Instance, error) {
-	client, err := redisUtils.NewRedisClient(
-		ctx,
-		&redisUtils.Option{
-			Mode:             viper.GetString(redisModePath),
-			Host:             viper.GetString(redisHostPath),
-			Port:             viper.GetInt(redisPortPath),
-			SentinelAddress:  viper.GetStringSlice(redisAddressPath),
-			MasterName:       viper.GetString(redisMasterNamePath),
-			Password:         viper.GetString(redisPasswordPath),
-			SentinelPassword: viper.GetString(redisSentinelPasswordPath),
-			Db:               viper.GetInt(redisDatabasePath),
-			DialTimeout:      viper.GetDuration(redisDialTimeoutPath),
-			ReadTimeout:      viper.GetDuration(redisReadTimeoutPath),
-		},
-	)
-	if err != nil {
-		return nil, err
+// 两个类型的redis使用场景不一样，
+// GetStorageRedisInstance 获取存储类型的 redis
+func GetStorageRedisInstance() *Instance {
+	if storageRedisInstance != nil {
+		return storageRedisInstance
 	}
-	return &Instance{ctx: ctx, Client: client}, nil
+	storageRedisOnce.Do(func() {
+		opt := redisUtils.Option{
+			Mode:             config.StorageRedisMode,
+			Host:             config.StorageRedisStandaloneHost,
+			Port:             config.StorageRedisStandalonePort,
+			SentinelAddress:  config.StorageRedisSentinelAddress,
+			MasterName:       config.StorageRedisSentinelMasterName,
+			SentinelPassword: config.StorageRedisSentinelPassword,
+			Password:         config.StorageRedisStandalonePassword,
+			Db:               config.StorageRedisDatabase,
+			DialTimeout:      config.StorageRedisDialTimeout,
+			ReadTimeout:      config.StorageRedisReadTimeout,
+		}
+		storageRedisInstance = GetInstance(&opt)
+	})
+	return storageRedisInstance
+}
+
+// GetCacheRedisInstance 获取缓存类型的 redis
+// 如获取transfer推送的指标等
+func GetCacheRedisInstance() *Instance {
+	if cacheRedisInstance != nil {
+		return cacheRedisInstance
+	}
+	cacheRedisOnce.Do(func() {
+		opt := redisUtils.Option{
+			Mode:             config.StorageDependentRedisMode,
+			Host:             config.StorageDependentRedisStandaloneHost,
+			Port:             config.StorageDependentRedisStandalonePort,
+			SentinelAddress:  config.StorageDependentRedisSentinelAddress,
+			MasterName:       config.StorageDependentRedisSentinelMasterName,
+			SentinelPassword: config.StorageDependentRedisSentinelPassword,
+			Password:         config.StorageDependentRedisStandalonePassword,
+			Db:               config.StorageDependentRedisDatabase,
+			DialTimeout:      config.StorageDependentRedisDialTimeout,
+			ReadTimeout:      config.StorageDependentRedisReadTimeout,
+		}
+		cacheRedisInstance = GetInstance(&opt)
+	})
+	return cacheRedisInstance
 }
 
 // GetInstance get a redis instance
-func GetInstance(ctx context.Context) (*Instance, error) {
-	if instance != nil {
-		return instance, nil
+func GetInstance(opt *redisUtils.Option) *Instance {
+	ctx := context.TODO()
+	var client goRedis.UniversalClient
+	var err error
+
+	err = retry.Do(
+		func() error {
+			client, err = redisUtils.NewRedisClient(ctx, opt)
+			if err != nil {
+				logger.Errorf(
+					"Failed to create storageRedis, "+
+						"tasks stored in this redis may not be executed. error: %s", err,
+				)
+				return err
+			}
+			return nil
+		},
+		retry.Attempts(3),
+		retry.Delay(1*time.Second),
+	)
+	if err != nil {
+		logger.Fatalf("failed to create redis storage client, error: %s", err)
 	}
-	return NewInstance(ctx)
+
+	return &Instance{ctx: ctx, Client: client}
 }
 
 // Open new a instance
@@ -111,7 +126,7 @@ func (r *Instance) Open() error {
 // Put put a key-val
 func (r *Instance) Put(key, val string, expiration time.Duration) error {
 	if err := r.Client.Set(r.ctx, key, val, expiration).Err(); err != nil {
-		logger.Errorf("put redis error, key: %s, val: %s, err: %v", key, val, err)
+		logger.Debugf("put redis error, key: %s, val: %s, err: %v", key, val, err)
 		return err
 	}
 	return nil
@@ -121,7 +136,7 @@ func (r *Instance) Put(key, val string, expiration time.Duration) error {
 func (r *Instance) Get(key string) ([]byte, error) {
 	data, err := r.Client.Get(r.ctx, key).Bytes()
 	if err != nil {
-		logger.Errorf("get redis key: %s error, %v", key, err)
+		logger.Debugf("get redis key: %s error, %v", key, err)
 		return nil, err
 	}
 	return data, nil
@@ -131,15 +146,15 @@ func (r *Instance) Get(key string) ([]byte, error) {
 func (r *Instance) Delete(key string) error {
 	exist, err := r.Client.Exists(r.ctx, key).Result()
 	if err != nil {
-		logger.Errorf("check redis key: %s exist error, %v", key, err)
+		logger.Debugf("check redis key: %s exist error, %v", key, err)
 		return err
 	}
 	if exist == 0 {
-		logger.Warnf("key: %s not exist from redis", key)
+		logger.Debugf("key: %s not exist from redis", key)
 		return nil
 	}
 	if err := r.Client.Del(r.ctx, key).Err(); err != nil {
-		logger.Errorf("delete key: %s error, %v", key, err)
+		logger.Debugf("delete key: %s error, %v", key, err)
 		return err
 	}
 	return nil
@@ -153,10 +168,30 @@ func (r *Instance) Close() error {
 	return nil
 }
 
+// HSetWithCompare 与redis中数据不同才更新
+func (r *Instance) HSetWithCompare(key, field, value string) error {
+	oldValue := r.HGet(key, field)
+	if oldValue == value {
+		return nil
+	}
+	if equal, _ := jsonx.CompareJson(oldValue, value); equal {
+		return nil
+	}
+	logger.Debugf("[redis_diff] HashSet key [%s] field [%s] need update, new [%s]  old [%s]", key, field, value, oldValue)
+	metrics.RedisCount(key, "HSet")
+	err := r.Client.HSet(r.ctx, key, field, value).Err()
+	if err != nil {
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		return err
+	}
+	return nil
+}
+
+// HSet 原生 hset 方法
 func (r *Instance) HSet(key, field, value string) error {
 	err := r.Client.HSet(r.ctx, key, field, value).Err()
 	if err != nil {
-		logger.Errorf("hset field error, key: %s, field: %s, value: %s", key, field, value)
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, value)
 		return err
 	}
 	return nil
@@ -165,7 +200,7 @@ func (r *Instance) HSet(key, field, value string) error {
 func (r *Instance) HGet(key, field string) string {
 	val := r.Client.HGet(r.ctx, key, field).Val()
 	if val == "" {
-		logger.Warnf("hset field error, key: %s, field: %s, value: %s", key, field, val)
+		logger.Debugf("hset field error, key: %s, field: %s, value: %s", key, field, val)
 	}
 	return val
 }
@@ -173,12 +208,12 @@ func (r *Instance) HGet(key, field string) string {
 func (r *Instance) HGetAll(key string) map[string]string {
 	val := r.Client.HGetAll(r.ctx, key).Val()
 	if len(val) == 0 {
-		logger.Warnf("hset field error, key: %s, value is empty", key)
+		logger.Debugf("hset field error, key: %s, value is empty", key)
 	}
 	return val
 }
 
-// Publish
+// Publish message
 func (r *Instance) Publish(channelName string, msg interface{}) error {
 	if err := r.Client.Publish(r.ctx, channelName, msg).Err(); err != nil {
 		return err
@@ -203,4 +238,14 @@ func (r *Instance) ZRangeByScoreWithScores(key string, opt *goRedis.ZRangeBy) ([
 
 func (r *Instance) HMGet(key string, fields ...string) ([]interface{}, error) {
 	return r.Client.HMGet(r.ctx, key, fields...).Result()
+}
+
+// SAdd set add
+func (r *Instance) SAdd(key string, field ...interface{}) error {
+	err := r.Client.SAdd(r.ctx, key, field...).Err()
+	if err != nil {
+		logger.Debugf("sadd fields error, key: %s, fields: %v", key, field)
+		return err
+	}
+	return nil
 }

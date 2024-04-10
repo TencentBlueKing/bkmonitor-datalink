@@ -11,41 +11,21 @@ package consul
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
 
-const (
-	consulAddressPath    = "store.consul.address"
-	consulPortPath       = "store.consul.port"
-	consulSrvNamePath    = "store.consul.srv_name"
-	consulConsulAddrPath = "store.consul.consul_addr"
-	consulTagPath        = "store.consul.tag"
-	consulTTLPath        = "store.consul.ttl"
-	consulTaskPath       = "store.consul.task"
-	ConsulBasePath       = "store.consul.basic_path"
-)
-
-func init() {
-	viper.SetDefault(consulAddressPath, "")
-	viper.SetDefault(consulPortPath, 8500)
-	viper.SetDefault(consulSrvNamePath, "bmw")
-	viper.SetDefault(consulConsulAddrPath, "127.0.0.1:8500")
-	viper.SetDefault(consulTagPath, []string{"bmw"})
-	viper.SetDefault(consulTTLPath, "")
-	viper.SetDefault(consulTaskPath, "")
-	viper.SetDefault(ConsulBasePath, "")
-}
-
 type Instance struct {
-	ctx       context.Context
+	Ctx       context.Context
 	Client    *consulUtils.Instance
 	APIClient *api.Client
 }
@@ -53,45 +33,46 @@ type Instance struct {
 // consul instance
 var instance *Instance
 
-func NewInstance(ctx context.Context) (*Instance, error) {
-	client, err := consulUtils.NewConsulInstance(
-		ctx,
-		consulUtils.InstanceOptions{
-			SrvName:    viper.GetString(consulSrvNamePath),
-			Addr:       viper.GetString(consulAddressPath),
-			Port:       viper.GetInt(consulPortPath),
-			ConsulAddr: viper.GetString(consulConsulAddrPath),
-			Tags:       viper.GetStringSlice(consulTagPath),
-			TTL:        viper.GetString(consulTTLPath),
-		},
-	)
-	if err != nil {
-		logger.Errorf("new consul instance error, %v", err)
-		return nil, err
-	}
-	// new a kv client
-	conf := api.DefaultConfig()
-	conf.Address = viper.GetString(consulAddressPath)
-	apiClient, err := api.NewClient(conf)
-	if err != nil {
-		logger.Errorf("new consul api client error, %v", err)
-		return nil, err
-	}
+func NewInstance(ctx context.Context, opt consulUtils.InstanceOptions) (*Instance, error) {
+	var e error
+	consulOnce.Do(func() {
+		client, err := consulUtils.NewConsulInstance(ctx, opt)
+		if err != nil {
+			logger.Errorf("new consul instance error, %v", err)
+			e = err
+			return
+		}
+		// new a kv client
+		conf := api.DefaultConfig()
+		conf.Address = opt.Addr
+		apiClient, err := api.NewClient(conf)
+		if err != nil {
+			logger.Errorf("new consul api client error, %v", err)
+			e = err
+			return
+		}
+		instance = &Instance{Ctx: ctx, Client: client, APIClient: apiClient}
+	})
 
-	return &Instance{ctx: ctx, Client: client, APIClient: apiClient}, nil
+	return instance, e
 }
 
+var consulOnce sync.Once
+
 // GetInstance get a consul instance
-func GetInstance(ctx context.Context) (*Instance, error) {
+func GetInstance() (*Instance, error) {
 	if instance != nil {
 		return instance, nil
 	}
-	newInstance, err := NewInstance(ctx)
-	if err != nil {
-		return nil, err
+	opt := consulUtils.InstanceOptions{
+		SrvName:    config.StorageConsulSrvName,
+		Addr:       config.StorageConsulAddress,
+		Port:       config.StorageConsulPort,
+		ConsulAddr: config.StorageConsulAddr,
+		Tags:       config.StorageConsulTag,
+		TTL:        config.StorageConsulTll,
 	}
-	instance = newInstance
-	return instance, nil
+	return NewInstance(context.TODO(), opt)
 }
 
 // Open new a instance
@@ -102,6 +83,7 @@ func (c *Instance) Open() error {
 // Put put a key-val
 func (c *Instance) Put(key, val string, expiration time.Duration) error {
 	kvPair := &api.KVPair{Key: key, Value: store.String2byte(val)}
+	metrics.ConsulPutCount(key)
 	_, err := c.APIClient.KV().Put(kvPair, nil)
 	if err != nil {
 		logger.Errorf("put to consul error, %v", err)
@@ -119,13 +101,16 @@ func (c *Instance) Get(key string) ([]byte, error) {
 		return nil, err
 	}
 	if kvPair == nil {
-		return nil, NotFoundErr
+		// Key not exist
+		return nil, nil
 	}
+
 	return kvPair.Value, nil
 }
 
 // Delete delete a key
 func (c *Instance) Delete(key string) error {
+	metrics.ConsulDeleteCount(key)
 	_, err := c.APIClient.KV().Delete(key, nil)
 	if err != nil {
 		logger.Errorf("delete consul key: %s error, %v", key, err)

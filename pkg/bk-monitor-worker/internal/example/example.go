@@ -11,25 +11,43 @@ package example
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type UserInfo struct {
 	UserID int
 }
 
-// HandleExampleTask
 func HandleExampleTask(ctx context.Context, t *task.Task) error {
+	logger.Info("example func trigger")
 	var p UserInfo
-	if err := json.Unmarshal(t.Payload, &p); err != nil {
+	if err := jsonx.Unmarshal(t.Payload, &p); err != nil {
 		return fmt.Errorf("json.Unmarshal failed: %v", err)
 	}
+
 	//逻辑处理start...
-	log.Printf("print user info: user_id=%d", p.UserID)
+	logger.Printf("print user info: user_id=%d", p.UserID)
 	return errors.New("this is a test")
+}
+
+func PeriodicHandleExampleTask(ctx context.Context, t *task.Task) error {
+	logger.Info("periodic example func trigger")
+
+	time.Sleep(2 * time.Minute)
+	logger.Printf("periodic end")
+	return nil
+}
+
+func PeriodicHandleExampleTask1(ctx context.Context, t *task.Task) error {
+	logger.Info("periodic1 example func trigger")
+
+	time.Sleep(2 * time.Minute)
+	logger.Printf("periodic1 end")
+	return nil
 }

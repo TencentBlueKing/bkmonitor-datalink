@@ -11,53 +11,37 @@ package mysql
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
-	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	dbTypePath       = "store.database.type"
-	mysqlHostPath    = "store.database.host"
-	mysqlPortPath    = "store.database.port"
-	mysqlUserPath    = "store.database.user"
-	mysqlPWDPath     = "store.database.password"
-	mysqlDBNamePath  = "store.database.db_name"
-	mysqlCharset     = "store.database.charset"
-	maxIdleConnsPath = "store.database.max_idle_conns"
-	maxOpenConnsPath = "store.database.max_open_conns"
-	debugModePath    = "store.database.debug_mode"
-)
-
-func init() {
-	viper.SetDefault(dbTypePath, "mysql")
-	viper.SetDefault(mysqlPortPath, 3306)
-	viper.SetDefault(mysqlUserPath, "root")
-	viper.SetDefault(maxIdleConnsPath, 10)
-	viper.SetDefault(maxOpenConnsPath, 100)
-	viper.SetDefault(debugModePath, false)
-}
-
-// DBSession
+// DBSession session of databases
 type DBSession struct {
 	DB *gorm.DB
 }
 
 var dbSession *DBSession
 
+var once sync.Once
+
 func GetDBSession() *DBSession {
 	if dbSession != nil {
 		return dbSession
 	}
-	dbSession = &DBSession{}
-	err := dbSession.Open()
-	if err != nil {
-		logger.Errorf("connection mysql error, %v", err)
-		panic(err)
-	}
+	once.Do(func() {
+		session := &DBSession{}
+		err := session.Open()
+		if err != nil {
+			logger.Errorf("connection mysql error, %v", err)
+			panic(err)
+		}
+		dbSession = session
+	})
 	return dbSession
 }
 
@@ -65,22 +49,22 @@ func GetDBSession() *DBSession {
 func (db *DBSession) Open() error {
 	var err error
 
-	dbhost := fmt.Sprintf("tcp(%s:%d)", viper.GetString(mysqlHostPath), viper.GetInt(mysqlPortPath))
-	db.DB, err = gorm.Open(viper.GetString(dbTypePath), fmt.Sprintf(
+	dbhost := fmt.Sprintf("tcp(%s:%d)", config.StorageMysqlHost, config.StorageMysqlPort)
+	db.DB, err = gorm.Open("mysql", fmt.Sprintf(
 		"%s:%s@%s/%s?charset=%s&parseTime=True&loc=Local",
-		viper.GetString(mysqlUserPath),
-		viper.GetString(mysqlPWDPath),
+		config.StorageMysqlUser,
+		config.StorageMysqlPassword,
 		dbhost,
-		viper.GetString(mysqlDBNamePath),
-		viper.GetString(mysqlCharset),
+		config.StorageMysqlDbName,
+		config.StorageMysqlCharset,
 	))
 	if err != nil {
 		logger.Errorf("new a mysql connection error, %v", err)
 		return err
 	}
 	sqldb := db.DB.DB()
-	sqldb.SetMaxIdleConns(viper.GetInt(maxIdleConnsPath))
-	sqldb.SetMaxOpenConns(viper.GetInt(maxOpenConnsPath))
+	sqldb.SetMaxIdleConns(config.StorageMysqlMaxIdleConnections)
+	sqldb.SetMaxOpenConns(config.StorageMysqlMaxOpenConnections)
 
 	// 判断连通性
 	if err := sqldb.Ping(); err != nil {
@@ -88,14 +72,15 @@ func (db *DBSession) Open() error {
 	}
 
 	// 是否开启 debug 模式
-	if viper.GetBool(debugModePath) {
+	if config.StorageMysqlDebug {
+		logger.Info("Debug mode of mysql is enabled. Check if it is in the test environment!")
 		db.DB.LogMode(true)
 	}
 
 	return nil
 }
 
-// Close close connection
+// Close closes connection
 func (db *DBSession) Close() error {
 	if db.DB != nil {
 		return db.DB.Close()

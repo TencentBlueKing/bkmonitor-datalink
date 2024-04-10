@@ -10,6 +10,8 @@
 package jsonx
 
 import (
+	"io"
+
 	"github.com/bytedance/sonic"
 )
 
@@ -33,4 +35,16 @@ func MarshalString(v interface{}) (string, error) {
 
 func UnmarshalString(data string, v interface{}) error {
 	return sonicAPI.UnmarshalFromString(data, v)
+}
+
+func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+	return sonicAPI.MarshalIndent(v, prefix, indent)
+}
+
+func Decode(body io.Reader, v interface{}) error {
+	return sonicAPI.NewDecoder(body).Decode(v)
+}
+
+func Encode(buf io.Writer, v interface{}) error {
+	return sonicAPI.NewEncoder(buf).Encode(v)
 }

@@ -60,6 +60,9 @@ func ParsePyDateFormat(dataFormat string) string {
 	dataFormat = strings.ReplaceAll(dataFormat, "%y", "06")
 	dataFormat = strings.ReplaceAll(dataFormat, "%m", "01")
 	dataFormat = strings.ReplaceAll(dataFormat, "%d", "02")
+	dataFormat = strings.ReplaceAll(dataFormat, "%H", "15")
+	dataFormat = strings.ReplaceAll(dataFormat, "%M", "04")
+	dataFormat = strings.ReplaceAll(dataFormat, "%s", "05")
 	return dataFormat
 }
 
@@ -103,4 +106,9 @@ func ParseDuration(s string) (time.Duration, error) {
 		}
 	}
 	return valueSum, nil
+}
+
+// IntToSecond transform int to time duration
+func IntToSecond(t int) time.Duration {
+	return time.Duration(t) * time.Second
 }

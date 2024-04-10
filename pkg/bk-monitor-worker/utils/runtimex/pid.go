@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-// GetPid get the pid by service name
+// GetPidByServiceName GetPid get the pid by service name
 func GetPidByServiceName(serviceName string) ([]string, error) {
 	c := `ps ux | awk '/` + serviceName + `/ && !/awk/ {print $2}'`
 	o, err := exec.Command("/bin/sh", "-c", c).Output()

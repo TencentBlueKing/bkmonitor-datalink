@@ -52,7 +52,7 @@ func (m *metricMonitor) IncLoadConfigFailedCounter() {
 	loadConfigFailedTotal.Inc()
 }
 
-func LoadConfigFromType(patterns []string, plattype string) *Config {
+func LoadConfigFromType(patterns []string, typ string) *Config {
 	type T struct {
 		Type string `config:"type"`
 	}
@@ -69,7 +69,7 @@ func LoadConfigFromType(patterns []string, plattype string) *Config {
 				logger.Errorf("failed to unpack config, err: %v", err)
 				continue
 			}
-			if subConf.Type == plattype {
+			if subConf.Type == typ {
 				return c
 			}
 		}

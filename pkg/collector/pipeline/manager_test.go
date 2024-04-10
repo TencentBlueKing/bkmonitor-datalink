@@ -315,73 +315,72 @@ func TestNewManager(t *testing.T) {
 		"sampler/random",
 	})
 
-	// assert processors
-	assert.Equal(t, len(manager.processors), 7)
+	t.Run("Processors", func(t *testing.T) {
+		assert.Equal(t, len(manager.processors), 7)
 
-	tokenChecker, ok := manager.processors["token_checker/fixed"]
-	assert.True(t, ok)
+		tokenChecker, ok := manager.processors["token_checker/fixed"]
+		assert.True(t, ok)
 
-	type T1 struct {
-		TracesDataId  int32 `mapstructure:"traces_dataid"`
-		MetricsDataId int32 `mapstructure:"metrics_dataid"`
-		LogsDataId    int32 `mapstructure:"logs_dataid"`
-	}
+		type TokenCheckerConfig struct {
+			TracesDataId  int32 `mapstructure:"traces_dataid"`
+			MetricsDataId int32 `mapstructure:"metrics_dataid"`
+			LogsDataId    int32 `mapstructure:"logs_dataid"`
+		}
 
-	var tokenCheckerConfig T1
-	err = mapstructure.Decode(tokenChecker.MainConfig(), &tokenCheckerConfig)
-	assert.NoError(t, err)
+		var tokenCheckerConfig TokenCheckerConfig
+		err = mapstructure.Decode(tokenChecker.MainConfig(), &tokenCheckerConfig)
+		assert.NoError(t, err)
+		assert.Equal(t, TokenCheckerConfig{
+			TracesDataId:  11000,
+			MetricsDataId: 11001,
+			LogsDataId:    11002,
+		}, tokenCheckerConfig)
 
-	t1 := T1{
-		TracesDataId:  11000,
-		MetricsDataId: 11001,
-		LogsDataId:    11002,
-	}
-	assert.Equal(t, t1, tokenCheckerConfig)
+		sampler, ok := manager.processors["sampler/random"]
+		assert.True(t, ok)
 
-	sampler, ok := manager.processors["sampler/random"]
-	assert.True(t, ok)
+		type SamplerConfig struct {
+			SamplingPercentage float64 `mapstructure:"sampling_percentage"`
+		}
 
-	type T2 struct {
-		SamplingPercentage float64 `mapstructure:"sampling_percentage"`
-	}
+		var samplerConfig SamplerConfig
+		err = mapstructure.Decode(sampler.MainConfig(), &samplerConfig)
+		assert.NoError(t, err)
+		assert.Equal(t, SamplerConfig{
+			SamplingPercentage: 100,
+		}, samplerConfig)
+	})
 
-	var samplerConfig T2
-	err = mapstructure.Decode(sampler.MainConfig(), &samplerConfig)
-	assert.NoError(t, err)
+	t.Run("Privileged", func(t *testing.T) {
+		traceDeriver, ok := manager.processors["traces_deriver/max"]
+		assert.True(t, ok)
 
-	t2 := T2{
-		SamplingPercentage: 100,
-	}
-	assert.Equal(t, t2, samplerConfig)
+		type OperationsConfig struct {
+			Operations []struct {
+				MaxSeriesGrowthRate int `config:"max_series_growth_rate" mapstructure:"max_series_growth_rate"`
+			} `config:"operations" mapstructure:"operations"`
+		}
 
-	// assert privileged processes
-	traceDeriver, ok := manager.processors["traces_deriver/max"]
-	assert.True(t, ok)
+		var operationsConfig OperationsConfig
+		err = mapstructure.Decode(traceDeriver.MainConfig(), &operationsConfig)
+		assert.NoError(t, err)
+		assert.Equal(t, 100, operationsConfig.Operations[0].MaxSeriesGrowthRate)
+	})
 
-	type OperationsConfig struct {
-		Operations []struct {
-			MaxSeriesGrowthRate int `config:"max_series_growth_rate" mapstructure:"max_series_growth_rate"`
-		} `config:"operations" mapstructure:"operations"`
-	}
+	t.Run("Pipelines", func(t *testing.T) {
+		assert.Len(t, manager.pipelines, 5)
+		assert.NotNil(t, manager.GetProcessor("token_checker/fixed"))
+		assert.Nil(t, manager.GetProcessor("token_checker/not_exist"))
 
-	var operationsConfig OperationsConfig
-	err = mapstructure.Decode(traceDeriver.MainConfig(), &operationsConfig)
-	assert.NoError(t, err)
-	assert.Equal(t, 100, operationsConfig.Operations[0].MaxSeriesGrowthRate)
+		tracesPipeline := manager.GetPipeline(define.RecordTraces)
+		assert.Len(t, tracesPipeline.AllProcessors(), 5)
+		assert.Len(t, tracesPipeline.PreCheckProcessors(), 1)
+		assert.Len(t, tracesPipeline.SchedProcessors(), 4)
 
-	// assert pipelines
-	assert.Len(t, manager.pipelines, 5)
-	assert.NotNil(t, manager.GetProcessor("token_checker/fixed"))
-	assert.Nil(t, manager.GetProcessor("token_checker/not_exist"))
+		metricsDerived := manager.GetPipeline(define.RecordMetricsDerived)
+		assert.Len(t, metricsDerived.AllProcessors(), 3)
 
-	tracesPipeline := manager.GetPipeline(define.RecordTraces)
-	assert.Len(t, tracesPipeline.AllProcessors(), 5)
-	assert.Len(t, tracesPipeline.PreCheckProcessors(), 1)
-	assert.Len(t, tracesPipeline.SchedProcessors(), 4)
-
-	metricsDerived := manager.GetPipeline(define.RecordMetricsDerived)
-	assert.Len(t, metricsDerived.AllProcessors(), 3)
-
-	pushGatewayPipeline := manager.GetPipeline(define.RecordPushGateway)
-	assert.Equal(t, []string{"token_checker/fixed"}, pushGatewayPipeline.AllProcessors())
+		pushGatewayPipeline := manager.GetPipeline(define.RecordPushGateway)
+		assert.Equal(t, []string{"token_checker/fixed"}, pushGatewayPipeline.AllProcessors())
+	})
 }

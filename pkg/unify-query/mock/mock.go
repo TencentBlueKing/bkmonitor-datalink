@@ -17,7 +17,6 @@ import (
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/spf13/viper"
-	"go.opentelemetry.io/otel/trace"
 
 	offlineDataArchiveMetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"

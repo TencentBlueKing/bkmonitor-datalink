@@ -400,6 +400,7 @@ func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, 
 					includeMatcher[index] = v
 				}
 			}
+
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
 				FieldName:     metric,
 				ReferenceName: ref,

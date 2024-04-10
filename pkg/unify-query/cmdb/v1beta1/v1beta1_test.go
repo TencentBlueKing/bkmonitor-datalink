@@ -99,6 +99,7 @@ func TestModel_GetPaths(t *testing.T) {
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
+				"container":      "container-1",
 			},
 			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
 		},

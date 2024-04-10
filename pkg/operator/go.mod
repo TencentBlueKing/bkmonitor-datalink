@@ -19,7 +19,7 @@ require (
 	github.com/prometheus/prometheus v1.99.0
 	github.com/spf13/cobra v1.4.0
 	github.com/spf13/viper v1.8.1
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.8.3
 	go.uber.org/automaxprocs v1.5.1
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.25.0
@@ -67,7 +67,7 @@ require (
 	github.com/garyburd/redigo v1.6.2 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
-	github.com/go-logr/logr v1.2.4 // indirect
+	github.com/go-logr/logr v1.2.3 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
 	github.com/go-openapi/jsonreference v0.20.0 // indirect
 	github.com/go-openapi/swag v0.22.3 // indirect

@@ -202,7 +202,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 		return
 	}
 
-	token := tokenFromRequest(req)
+	token := define.TokenFromRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordPushGateway,
 		RequestType:   define.RequestHttp,
@@ -244,23 +244,6 @@ func (s HttpService) ExportBase64Metrics(w http.ResponseWriter, req *http.Reques
 
 func (s HttpService) ExportMetrics(w http.ResponseWriter, req *http.Request) {
 	s.exportMetrics(w, req, false)
-}
-
-func tokenFromRequest(req *http.Request) string {
-	// 1) 从 tokenKey 中读取
-	token := req.URL.Query().Get(define.KeyToken)
-	if token == "" {
-		token = req.Header.Get(define.KeyToken)
-	}
-
-	// 2) 从 tenantidKey 中读取
-	if token == "" {
-		token = req.Header.Get(define.KeyTenantID)
-	}
-	if token == "" {
-		token = req.URL.Query().Get(define.KeyTenantID)
-	}
-	return token
 }
 
 func decodeBase64(in string) (string, error) {

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 func TestLoadConfigPath(t *testing.T) {
@@ -73,8 +75,8 @@ func TestLoadConfigPatterns(t *testing.T) {
 	}
 }
 
-func TestLoadPlatformConfigs(t *testing.T) {
-	config := LoadPlatformConfigs([]string{"../example/fixtures/platform.yml"})
+func TestLoadConfigFromType(t *testing.T) {
+	config := LoadConfigFromType([]string{"../example/fixtures/platform.yml"}, define.ConfigTypePlatform)
 	assert.NotNil(t, config)
 
 	conf := make(map[string]interface{})

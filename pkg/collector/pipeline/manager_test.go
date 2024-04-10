@@ -354,6 +354,21 @@ func TestNewManager(t *testing.T) {
 	}
 	assert.Equal(t, t2, samplerConfig)
 
+	// assert privileged processes
+	traceDeriver, ok := manager.processors["traces_deriver/max"]
+	assert.True(t, ok)
+
+	type OperationsConfig struct {
+		Operations []struct {
+			MaxSeriesGrowthRate int `config:"max_series_growth_rate" mapstructure:"max_series_growth_rate"`
+		} `config:"operations" mapstructure:"operations"`
+	}
+
+	var operationsConfig OperationsConfig
+	err = mapstructure.Decode(traceDeriver.MainConfig(), &operationsConfig)
+	assert.NoError(t, err)
+	assert.Equal(t, 100, operationsConfig.Operations[0].MaxSeriesGrowthRate)
+
 	// assert pipelines
 	assert.Len(t, manager.pipelines, 5)
 	assert.NotNil(t, manager.GetProcessor("token_checker/fixed"))

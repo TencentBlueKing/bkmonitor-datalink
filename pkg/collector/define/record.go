@@ -11,6 +11,7 @@ package define
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -140,6 +141,23 @@ type PushGatewayData struct {
 
 type RemoteWriteData struct {
 	Timeseries []prompb.TimeSeries
+}
+
+func TokenFromRequest(req *http.Request) string {
+	// 1) 从 tokenKey 中读取
+	token := req.URL.Query().Get(KeyToken)
+	if token == "" {
+		token = req.Header.Get(KeyToken)
+	}
+
+	// 2) 从 tenantidKey 中读取
+	if token == "" {
+		token = req.Header.Get(KeyTenantID)
+	}
+	if token == "" {
+		token = req.URL.Query().Get(KeyTenantID)
+	}
+	return token
 }
 
 type ProxyData struct {

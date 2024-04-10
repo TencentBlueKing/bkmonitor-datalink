@@ -38,16 +38,16 @@ func (c remoteWriteConverter) ToDataID(record *define.Record) int32 {
 }
 
 func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc) {
-	rwData, ok := record.Data.(*define.RemoteWriteData)
-	if !ok {
-		return
-	}
-
+	rwData := record.Data.(*define.RemoteWriteData)
 	dataId := c.ToDataID(record)
 	events := make([]define.Event, 0)
 	for i := 0; i < len(rwData.Timeseries); i++ {
 		ts := rwData.Timeseries[i]
 		name, dims := c.extractNameDimensions(ts.GetLabels())
+		target, ok := dims["target"]
+		if !ok {
+			target = define.Identity()
+		}
 		samples := ts.GetSamples()
 		for j := 0; j < len(samples); j++ {
 			sample := samples[j]
@@ -58,7 +58,7 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 
 			pm := promMapper{
 				Metrics:    common.MapStr{name: sample.GetValue()},
-				Target:     define.Identity(),
+				Target:     target,
 				Timestamp:  sample.GetTimestamp(),
 				Dimensions: utils.CloneMap(dims),
 			}

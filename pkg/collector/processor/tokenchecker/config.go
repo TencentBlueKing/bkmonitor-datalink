@@ -9,9 +9,14 @@
 
 package tokenchecker
 
+import (
+	"strings"
+)
+
 type Config struct {
-	Type        string `config:"type" mapstructure:"type"`
-	ResourceKey string `config:"resource_key" mapstructure:"resource_key"`
+	Type         string   `config:"type" mapstructure:"type"`
+	ResourceKey  string   `config:"resource_key" mapstructure:"resource_key"`
+	resourceKeys []string // 避免多次转换开销
 
 	// type: aes256
 	Salt       string `config:"salt" mapstructure:"salt"`
@@ -19,14 +24,23 @@ type Config struct {
 	DecodedIv  string `config:"decoded_iv" mapstructure:"decoded_iv"`
 
 	// type: fixed
-	FixedToken    string `config:"fixed_token" mapstructure:"fixed_token"`
-	TracesDataId  int32  `config:"traces_dataid" mapstructure:"traces_dataid"`
-	MetricsDataId int32  `config:"metrics_dataid" mapstructure:"metrics_dataid"`
-	LogsDataId    int32  `config:"logs_dataid" mapstructure:"logs_dataid"`
-	BizId         int32  `config:"biz_id" mapstructure:"biz_id"`
-	AppName       string `config:"app_name" mapstructure:"app_name"`
+	FixedToken     string `config:"fixed_token" mapstructure:"fixed_token"`
+	TracesDataId   int32  `config:"traces_dataid" mapstructure:"traces_dataid"`
+	MetricsDataId  int32  `config:"metrics_dataid" mapstructure:"metrics_dataid"`
+	LogsDataId     int32  `config:"logs_dataid" mapstructure:"logs_dataid"`
+	ProfilesDataId int32  `config:"profiles_dataid" mapstructure:"profiles_dataid"`
+	BizId          int32  `config:"biz_id" mapstructure:"biz_id"`
+	AppName        string `config:"app_name" mapstructure:"app_name"`
 
 	// type: proxy
 	ProxyDataId int32  `config:"dataid" mapstructure:"proxy_dataid"`
 	ProxyToken  string `config:"token" mapstructure:"proxy_token"`
+}
+
+func (c *Config) Clean() {
+	var keys []string
+	for _, key := range strings.Split(c.ResourceKey, ",") {
+		keys = append(keys, strings.TrimSpace(key))
+	}
+	c.resourceKeys = keys
 }

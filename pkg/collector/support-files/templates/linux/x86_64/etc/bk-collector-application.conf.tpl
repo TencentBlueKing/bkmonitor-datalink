@@ -47,6 +47,13 @@ default:
             {%- endfor %}
 {%- endif %}
 
+{% if token_checker is defined %}
+      # token_checker 配置
+      - name: "{{ token_checker.name }}"
+        config:
+          profiles_data_id: {{ token_checker.profiles_data_id }}
+{%- endif %}
+
 {% if license_config is defined %}
       # license_config: license 配置
       - name: "{{ license_config.name }}"
@@ -57,6 +64,26 @@ default:
           number_nodes: {{ license_config.number_nodes }}
           tolerable_num_ratio: {{ license_config.tolerable_num_ratio }}
 {%- endif %}
+
+{% if traces_drop_sampler_config is defined %}
+      # traces_drop_sampler_config: drop sampler 配置
+      # Sampler: traces采样处理器（做直接丢弃处理）
+      - name: "{{ traces_drop_sampler_config.name }}"
+        config:
+          type: "{{ traces_drop_sampler_config.type }}"
+          enabled: {{ traces_drop_sampler_config.enabled }}
+{%- endif %}
+
+
+{% if profiles_drop_sampler_config is defined %}
+      # profiles_drop_sampler_config: drop sampler 配置
+      # Sampler: profiles采样处理器（做直接丢弃处理）
+      - name: "{{ profiles_drop_sampler_config.name }}"
+        config:
+          type: "{{ profiles_drop_sampler_config.type }}"
+          enabled: {{ profiles_drop_sampler_config.enabled }}
+{%- endif %}
+
 
 {% if db_slow_command_config is defined %}
       # db slow command config

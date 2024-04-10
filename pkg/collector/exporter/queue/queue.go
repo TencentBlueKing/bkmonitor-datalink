@@ -60,3 +60,15 @@ func NewProfilesMapStr(dataId int32, data []common.MapStr) common.MapStr {
 		"data":   data,
 	}
 }
+
+// NewProxyMapStr 代表 proxy 类型数据
+func NewProxyMapStr(dataId int32, data []common.MapStr) common.MapStr {
+	now := time.Now().Unix()
+	return common.MapStr{
+		"dataid":    dataId,
+		"version":   "",
+		"data":      data,
+		"time":      now,
+		"timestamp": now,
+	}
+}

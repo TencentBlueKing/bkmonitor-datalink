@@ -16,7 +16,6 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -86,10 +85,9 @@ func (i *InfluxdbQuerier) Select(_ bool, hints *storage.SelectHints, matchers ..
 // selectFn
 func (i *InfluxdbQuerier) selectFn(hints *storage.SelectHints, matchers ...*labels.Matcher) (storage.SeriesSet, error) {
 	var (
-		ctx  context.Context
-		span oleltrace.Span
-		err  error
-		key  string
+		ctx context.Context
+		err error
+		key string
 
 		errs     []error
 		sqlInfos []influxdb.SQLInfo
@@ -98,10 +96,9 @@ func (i *InfluxdbQuerier) selectFn(hints *storage.SelectHints, matchers ...*labe
 		ret    singleflight.Result
 	)
 
-	ctx, span = trace.IntoContext(i.ctx, trace.TracerName, "promql-query-select-fn")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(i.ctx, "promql-query-select-fn")
+	defer span.End(&err)
+
 	sqlInfos, err = MakeInfluxdbQuerys(ctx, hints, matchers...)
 	if err != nil {
 		log.Errorf(ctx, "failed to make query for error->[%s]", err)

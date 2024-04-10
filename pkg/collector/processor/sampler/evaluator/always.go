@@ -26,4 +26,6 @@ func (alwaysEvaluator) Type() string {
 
 func (alwaysEvaluator) Stop() {}
 
-func (alwaysEvaluator) Evaluate(_ *define.Record) {}
+func (alwaysEvaluator) Evaluate(_ *define.Record) error {
+	return nil
+}

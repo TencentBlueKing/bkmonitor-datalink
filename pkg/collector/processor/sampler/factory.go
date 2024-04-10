@@ -109,6 +109,6 @@ func (p *sampler) Reload(config map[string]interface{}, customized []processor.S
 
 func (p *sampler) Process(record *define.Record) (*define.Record, error) {
 	eval := p.evaluators.GetByToken(record.Token.Original).(evaluator.Evaluator)
-	eval.Evaluate(record)
-	return nil, nil
+	err := eval.Evaluate(record)
+	return nil, err
 }

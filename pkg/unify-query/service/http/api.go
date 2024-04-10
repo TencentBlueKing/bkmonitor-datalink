@@ -20,7 +20,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -32,32 +31,81 @@ import (
 )
 
 // HandlerFieldKeys
-// @Summary  query monitor by promql
-// @ID       ts-query-request-promql
+// @Summary  info field keys
+// @ID       info_field_keys
 // @Produce  json
-// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
-// @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
-// @Success  200                   	{object}  PromData
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}  []string
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/ts/promql [post]
+// @Router   /query/ts/info/field_keys [post]
 func HandlerFieldKeys(c *gin.Context) {
 	handlerInfo(c, infos.FieldKeys)
 }
 
+// HandlerTagKeys
+// @Summary  info tag keys
+// @ID       info_tag_keys
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}   []string
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/tag_keys [post]
 func HandlerTagKeys(c *gin.Context) {
 	handlerInfo(c, infos.TagKeys)
 }
 
+// HandlerTagValues
+// @Summary  info tag values
+// @ID       info_tag_values
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  TagValuesData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/tag_values [post]
 func HandlerTagValues(c *gin.Context) {
 	handlerInfo(c, infos.TagValues)
 }
 
+// HandlerSeries
+// @Summary  info series
+// @ID       info_series
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{object}  SeriesDataList
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/info/series [post]
 func HandlerSeries(c *gin.Context) {
 	handlerInfo(c, infos.Series)
 }
 
+// HandlerLabelValues
+// @Summary  info label values
+// @ID       info_label_values
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      infos.Params 		  			true   "json data"
+// @Success  200                   	{array}   []string
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/label/{label_name}/values [get]
 func HandlerLabelValues(c *gin.Context) {
 	var (
 		key  = infos.TagValues
@@ -65,16 +113,13 @@ func HandlerLabelValues(c *gin.Context) {
 		resp = &response{
 			c: c,
 		}
-		span oleltrace.Span
 
 		err  error
 		data interface{}
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "label-values-handler")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "label-values-handler")
+	defer span.End(&err)
 
 	labelName := c.Param("label_name")
 
@@ -86,11 +131,11 @@ func HandlerLabelValues(c *gin.Context) {
 
 	matches := c.QueryArray("match[]")
 
-	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
-	trace.InsertStringIntoSpan("request-info-type", string(key), span)
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("request-label-name", labelName, span)
-	trace.InsertStringIntoSpan("request-match[]", fmt.Sprintf("%+v", matches), span)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-info-type", string(key))
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-label-name", labelName)
+	span.Set("request-match[]", fmt.Sprintf("%+v", matches))
 
 	for _, m := range matches {
 		match, err := parser.ParseMetricSelector(m)
@@ -120,7 +165,7 @@ func HandlerLabelValues(c *gin.Context) {
 		params.Conditions.ConditionList = append(params.Conditions.ConditionList, structured.ConditionAnd)
 	}
 
-	trace.InsertStringIntoSpan("params", fmt.Sprintf("%+v", params), span)
+	span.Set("params", fmt.Sprintf("%+v", params))
 
 	data, err = queryInfo(ctx, key, params)
 	if err != nil {
@@ -138,21 +183,20 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 		resp = &response{
 			c: c,
 		}
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "info-handler")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "info-handler")
+	defer span.End(&err)
+
 	params := &infos.Params{}
 	json.NewDecoder(c.Request.Body).Decode(params)
 
 	paramsStr, _ := json.Marshal(params)
-	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
-	trace.InsertStringIntoSpan("request-info-type", string(key), span)
-	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("request-data", string(paramsStr), span)
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-info-type", string(key))
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("request-data", string(paramsStr))
 
 	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, paramsStr))
 
@@ -167,18 +211,15 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 
 func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (interface{}, error) {
 	var (
-		span oleltrace.Span
-
 		warns []error
 		data  interface{}
+		err   error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-info")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-info")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("request-info-type", string(key), span)
+	span.Set("request-info-type", string(key))
 
 	q, err := newInfoQuerier(ctx, params)
 	if err != nil {
@@ -278,7 +319,7 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 			}
 		}
 
-		data = []*SeriesData{
+		data = SeriesDataList{
 			{
 				Keys:   keys,
 				Series: series,
@@ -296,7 +337,6 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 
 func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier, error) {
 	var (
-		span oleltrace.Span
 		user = metadata.GetUser(ctx)
 
 		err error
@@ -305,13 +345,11 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 		end   int64
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "new-info-querier")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "new-info-querier")
+	defer span.End(&err)
 
 	paramsStr, _ := json.Marshal(params)
-	trace.InsertStringIntoSpan("query-body", string(paramsStr), span)
+	span.Set("query-body", string(paramsStr))
 
 	query := &structured.Query{
 		DataSource:    params.DataSource,
@@ -352,6 +390,13 @@ func newInfoQuerier(ctx context.Context, params *infos.Params) (storage.Querier,
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+
+	// 写入查询缓存
+	metadata.SetQueryParams(ctx, &metadata.QueryParams{
+		Start: start,
+		End:   end,
+	})
+
 	metadata.SetQueryReference(ctx, map[string]*metadata.QueryMetric{
 		prometheus.ReferenceName: queryMetric,
 	})

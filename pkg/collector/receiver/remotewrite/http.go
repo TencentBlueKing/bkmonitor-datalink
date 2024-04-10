@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	tokenKey         = "X-BK-TOKEN"
 	routeRemoteWrite = "/prometheus/write"
 )
 
@@ -55,9 +54,9 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	start := time.Now()
-	token := req.URL.Query().Get(tokenKey)
+	token := req.URL.Query().Get(define.KeyToken)
 	if token == "" {
-		token = req.Header.Get(tokenKey)
+		token = req.Header.Get(define.KeyToken)
 	}
 
 	r := &define.Record{

@@ -594,7 +594,7 @@ func TestCheckVmQuery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx = InitHashID(ctx)
 
-			SetUser(ctx, tc.source, tc.spaceUid)
+			SetUser(ctx, tc.source, tc.spaceUid, "")
 
 			ok, vmExpand, err := tc.ref.CheckVmQuery(ctx)
 			assert.Nil(t, err)

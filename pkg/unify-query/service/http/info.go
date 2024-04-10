@@ -18,7 +18,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	headerutil "github.com/golang/gddo/httputil/header"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -35,6 +34,8 @@ import (
 type TagValuesData struct {
 	Values map[string][]string `json:"values"`
 }
+
+type SeriesDataList []*SeriesData
 
 // SeriesData
 type SeriesData struct {
@@ -333,9 +334,6 @@ func HandleFeatureFlag(c *gin.Context) {
 		res += fmt.Sprintln("-------------------------------")
 	}
 
-	res += metadata.GetQueryRouter().Print() + "\n"
-	res += fmt.Sprintln("-------------------------------")
-
 	res += featureFlag.Print() + "\n"
 	res += fmt.Sprintln("-----------------------------------")
 
@@ -508,15 +506,13 @@ func HandleTsDBPrint(c *gin.Context) {
 // HandleTsQueryInfosRequest 查询info数据接口
 func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-info")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-info")
+	defer span.End(&err)
 
 	// 获取body中的具体参数
 	queryStmt, err := io.ReadAll(c.Request.Body)
@@ -526,15 +522,15 @@ func handleTsQueryInfosRequest(infoType infos.InfoType, c *gin.Context) {
 		return
 	}
 
-	trace.InsertStringIntoSpan("info-request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("info-request-data", string(queryStmt), span)
+	span.Set("info-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("info-request-data", string(queryStmt))
 
 	// 如果header中有bkbizid，则以header中的值为最优先
 	bizIDs := headerutil.ParseList(c.Request.Header, BizHeader)
 	spaceUid := c.Request.Header.Get(SpaceUIDHeader)
 
-	trace.InsertStringIntoSpan("request-space-uid", spaceUid, span)
-	trace.InsertStringSliceIntoSpan("request-biz-ids", bizIDs, span)
+	span.Set("request-space-uid", spaceUid)
+	span.Set("request-biz-ids", bizIDs)
 
 	log.Debugf(context.TODO(), "recevice query info: %s, X-Bk-Scope-Biz-Id:%v ", string(queryStmt), bizIDs)
 	params, err := infos.AnalysisQuery(string(queryStmt))

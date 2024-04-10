@@ -37,7 +37,7 @@ func TestRandomEvaluator_0_Percent(t *testing.T) {
 	}
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-	evaluator.Evaluate(record)
+	assert.NoError(t, evaluator.Evaluate(record))
 	assert.Equal(t, 0, record.Data.(ptrace.Traces).SpanCount())
 }
 
@@ -58,7 +58,7 @@ func TestRandomEvaluator_10_Percent(t *testing.T) {
 	}
 	assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-	evaluator.Evaluate(record)
+	assert.NoError(t, evaluator.Evaluate(record))
 	assert.True(t, record.Data.(ptrace.Traces).SpanCount() <= 2)
 }
 
@@ -83,7 +83,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		evaluator.Evaluate(record)
+		assert.NoError(t, evaluator.Evaluate(record))
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 
@@ -98,7 +98,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		evaluator.Evaluate(record)
+		assert.NoError(t, evaluator.Evaluate(record))
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 
@@ -113,7 +113,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 		}
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 
-		evaluator.Evaluate(record)
+		assert.NoError(t, evaluator.Evaluate(record))
 		assert.Equal(t, 10, record.Data.(ptrace.Traces).SpanCount())
 	})
 }
@@ -137,7 +137,7 @@ func benchmarkEvaluatorPercent(b *testing.B, percent float64) {
 
 	traces := g.Generate()
 	for i := 0; i < b.N; i++ {
-		evaluator.Evaluate(&define.Record{
+		_ = evaluator.Evaluate(&define.Record{
 			RecordType: define.RecordTraces,
 			Data:       traces,
 		})

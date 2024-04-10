@@ -18,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang/gddo/httputil/header"
 	"github.com/prometheus/prometheus/promql/parser"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -44,15 +43,13 @@ type promqlReq struct {
 // HandleTsQueryPromQLToStructRequest PromQL 转结构化查询接口
 func HandleTsQueryPromQLToStructRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-promql-to-struct")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-promql-to-struct")
+	defer span.End(&err)
 
 	req := &promqlReq{}
 	if err := json.NewDecoder(c.Request.Body).Decode(req); err != nil {
@@ -77,15 +74,13 @@ func HandleTsQueryPromQLToStructRequest(c *gin.Context) {
 // 执行逻辑是先把 promql 转成结构体，再使用标准的结构体查询方案去查询
 func HandleTsQueryPromQLDataRequest(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		span oleltrace.Span
+		ctx = c.Request.Context()
+		err error
 	)
 
 	// 这里开始context就使用trace生成的了
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "handle-ts-query-promQL-data-request")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-ts-query-promQL-data-request")
+	defer span.End(&err)
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -97,10 +92,10 @@ func HandleTsQueryPromQLDataRequest(c *gin.Context) {
 	bizIDs := header.ParseList(c.Request.Header, BizHeader)
 	spaceUid := c.Request.Header.Get(SpaceUIDHeader)
 
-	trace.InsertStringIntoSpan("request-space-uid", spaceUid, span)
-	trace.InsertStringSliceIntoSpan("request-biz-ids", bizIDs, span)
-	trace.InsertStringIntoSpan("promql-request-header", fmt.Sprintf("%+v", c.Request.Header), span)
-	trace.InsertStringIntoSpan("promql-request-data", string(body), span)
+	span.Set("request-space-uid", spaceUid)
+	span.Set("request-biz-ids", bizIDs)
+	span.Set("promql-request-header", fmt.Sprintf("%+v", c.Request.Header))
+	span.Set("promql-request-data", string(body))
 
 	respData, err := handlePromqlQuery(ctx, string(body), bizIDs, spaceUid)
 	if err != nil {
@@ -121,10 +116,8 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		return nil, err
 	}
 
-	ctx, span := trace.IntoContext(ctx, trace.TracerName, "handle-promql-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "handle-promql-query")
+	defer span.End(&err)
 
 	// 1. 仍然去解析ast，将metric_name 和conditions解析出来，并填充时间和分辨率，用来判断是否访问argus
 	sp := structured.NewStructParser(req.PromQL)
@@ -139,8 +132,8 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 	qstruct.MaxSourceResolution = req.MaxSourceResolution
 
 	oldStmt := sp.String()
-	trace.InsertStringIntoSpan("promQL", req.PromQL, span)
-	trace.InsertStringIntoSpan("old-stmt", oldStmt, span)
+	span.Set("promQL", req.PromQL)
+	span.Set("old-stmt", oldStmt)
 
 	var reqPromql string
 
@@ -161,8 +154,8 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		if len(q.AggregateMethodList) > 0 {
 			// 传递将采样方法
 			for ai, aggr := range q.AggregateMethodList {
-				trace.InsertStringIntoSpan(fmt.Sprintf("aggregate-method-list-method-%d", ai), aggr.Method, span)
-				trace.InsertStringSliceIntoSpan(fmt.Sprintf("aggregate-method-list-dimensions-%d", ai), aggr.Dimensions, span)
+				span.Set(fmt.Sprintf("aggregate-method-list-method-%d", ai), aggr.Method)
+				span.Set(fmt.Sprintf("aggregate-method-list-dimensions-%d", ai), aggr.Dimensions)
 
 				queryInfo.AggregateMethodList = append(queryInfo.AggregateMethodList, promql.AggrMethod{
 					Name:       aggr.Method,
@@ -198,10 +191,10 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 				return nil, err1
 			}
 
-			trace.InsertStringIntoSpan("query-info-spaceUid", spaceUid, span)
-			trace.InsertStringSliceIntoSpan("query-nfo-tsdb", tsDBs.StringSlice(), span)
-			trace.InsertStringIntoSpan("query-info-measurement", queryInfo.Measurement, span)
-			trace.InsertStringIntoSpan("query-info-clusterID", queryInfo.ClusterID, span)
+			span.Set("query-info-spaceUid", spaceUid)
+			span.Set("query-nfo-tsdb", tsDBs.StringSlice())
+			span.Set("query-info-measurement", queryInfo.Measurement)
+			span.Set("query-info-clusterID", queryInfo.ClusterID)
 			continue
 		}
 
@@ -236,10 +229,10 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 			}
 		}
 
-		trace.InsertStringIntoSpan("query-info-is-count", fmt.Sprintf("%v", queryInfo.IsCount), span)
-		trace.InsertStringIntoSpan("query-info-db", queryInfo.DB, span)
-		trace.InsertStringIntoSpan("query-info-measurement", queryInfo.Measurement, span)
-		trace.InsertStringIntoSpan("query-info-clusterID", queryInfo.ClusterID, span)
+		span.Set("query-info-is-count", fmt.Sprintf("%v", queryInfo.IsCount))
+		span.Set("query-info-db", queryInfo.DB)
+		span.Set("query-info-measurement", queryInfo.Measurement)
+		span.Set("query-info-clusterID", queryInfo.ClusterID)
 
 		ctx, err1 = promql.QueryInfoIntoContext(ctx, string(q.ReferenceName), string(q.FieldName), queryInfo)
 		if err1 != nil {
@@ -275,6 +268,6 @@ func handlePromqlQuery(ctx context.Context, promqlData string, bizIDs []string, 
 		return nil, err
 	}
 	reqPromql = promExpr.GetExpr().String()
-	trace.InsertStringIntoSpan("new-stmt", reqPromql, span)
+	span.Set("new-stmt", reqPromql)
 	return HandleRawPromQuery(ctx, reqPromql, &qstruct)
 }

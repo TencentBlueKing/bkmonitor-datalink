@@ -19,7 +19,6 @@ import (
 	"github.com/panjf2000/ants/v2"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -72,13 +71,11 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 	var (
 		ctx       = q.ctx
 		queryList []*Query
-		span      oleltrace.Span
+		err       error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "querier-get-query-list")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "querier-get-query-list")
+	defer span.End(&err)
 
 	queries := metadata.GetQueryReference(ctx)
 	if queryMetric, ok := queries[referenceName]; ok {
@@ -101,8 +98,7 @@ func (q *Querier) getQueryList(referenceName string) []*Query {
 // selectFn 获取原始数据
 func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	var (
-		ctx  context.Context
-		span oleltrace.Span
+		ctx context.Context
 
 		referenceName string
 
@@ -111,13 +107,12 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		setCh    = make(chan storage.SeriesSet, 1)
 		recvDone = make(chan struct{})
 
-		wg sync.WaitGroup
+		wg  sync.WaitGroup
+		err error
 	)
 
-	ctx, span = trace.IntoContext(q.ctx, trace.TracerName, "prometheus-querier-select-fn")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-select-fn")
+	defer span.End(&err)
 
 	go func() {
 		defer func() {
@@ -139,8 +134,8 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		}
 	}
 
-	trace.InsertIntIntoSpan("max-routing", q.maxRouting, span)
-	trace.InsertStringIntoSpan("reference_name", referenceName, span)
+	span.Set("max-routing", q.maxRouting)
+	span.Set("reference_name", referenceName)
 
 	queryList := q.getQueryList(referenceName)
 
@@ -151,10 +146,10 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			if index < len(queryList) {
 				query := queryList[index]
 
-				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_instance_type", i), query.instance.GetInstanceType(), span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB, span)
-				trace.InsertStringIntoSpan(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt, span)
+				span.Set(fmt.Sprintf("query_%d_instance_type", i), query.instance.GetInstanceType())
+				span.Set(fmt.Sprintf("query_%d_qry_source", i), query.qry.SourceType)
+				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
+				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
 
 				setCh <- query.instance.QueryRaw(ctx, query.qry, hints, matchers...)
 				return
@@ -212,16 +207,14 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 // 在查询器的生命周期以外使用这些字符串是不安全的
 func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]string, storage.Warnings, error) {
 	var (
-		ctx  context.Context
-		span oleltrace.Span
+		ctx context.Context
+		err error
 
 		labelMap = make(map[string]struct{}, 0)
 	)
 
-	ctx, span = trace.IntoContext(q.ctx, trace.TracerName, "prometheus-querier-label-values")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-values")
+	defer span.End(&err)
 
 	referenceName := ""
 	for _, m := range matchers {
@@ -281,16 +274,14 @@ func (q *Querier) LabelValues(name string, matchers ...*labels.Matcher) ([]strin
 // LabelNames 以块中的排序顺序返回所有的唯一的标签
 func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.Warnings, error) {
 	var (
-		ctx  context.Context
-		span oleltrace.Span
+		ctx context.Context
+		err error
 
 		labelMap = make(map[string]struct{}, 0)
 	)
 
-	ctx, span = trace.IntoContext(q.ctx, trace.TracerName, "prometheus-querier-label-names")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(q.ctx, "prometheus-querier-label-names")
+	defer span.End(&err)
 
 	referenceName := ""
 	for _, m := range matchers {
@@ -354,13 +345,11 @@ func (q *Querier) Close() error {
 // GetInstance 通过 qry 获取实例
 func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	var (
-		span     oleltrace.Span
 		instance tsdb.Instance
+		err      error
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "storage-get-instance")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "storage-get-instance")
+	defer span.End(&err)
 	storage, err := tsdb.GetStorage(qry.StorageID)
 	if err != nil {
 		log.Errorf(
@@ -372,13 +361,12 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		return storage.Instance
 	}
 
-	trace.InsertStringIntoSpan("stroage-type", storage.Type, span)
-	trace.InsertStringIntoSpan("storage-id", qry.StorageID, span)
-	trace.InsertStringIntoSpan("storage-address", storage.Address, span)
-	trace.InsertStringIntoSpan("storage-uri-path", storage.UriPath, span)
-	trace.InsertStringIntoSpan("storage-password", storage.Password, span)
+	span.Set("stroage-type", storage.Type)
+	span.Set("storage-id", qry.StorageID)
+	span.Set("storage-address", storage.Address)
+	span.Set("storage-uri-path", storage.UriPath)
 
-	curl := &curl.HttpCurl{Log: log.OtLogger}
+	curl := &curl.HttpCurl{Log: log.DefaultLogger}
 	switch storage.Type {
 	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
 	case consul.VictoriaMetricsStorageType:
@@ -418,9 +406,9 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 		instance = tsDBInfluxdb.NewInstance(ctx, insOption)
 
-		trace.InsertStringIntoSpan("cluster-name", qry.ClusterName, span)
-		trace.InsertStringIntoSpan("tag-keys", fmt.Sprintf("%+v", qry.TagsKey), span)
-		trace.InsertStringIntoSpan("ins-option", fmt.Sprintf("%+v", insOption), span)
+		span.Set("cluster-name", qry.ClusterName)
+		span.Set("tag-keys", fmt.Sprintf("%+v", qry.TagsKey))
+		span.Set("ins-option", fmt.Sprintf("%+v", insOption))
 	default:
 		return nil
 	}

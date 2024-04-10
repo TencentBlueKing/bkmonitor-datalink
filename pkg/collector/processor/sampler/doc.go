@@ -22,6 +22,12 @@ processor:
     config:
       type: "always"
 
+  # 拒绝采样
+  - name: "sampler/drop_xxx"
+    config:
+      type: "drop"
+      enabled: false
+
   - name: "sampler/status_code"
     config:
       type: "status_code"

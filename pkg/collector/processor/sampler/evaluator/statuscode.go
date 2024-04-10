@@ -65,11 +65,12 @@ func newStatusCodeEvaluator(config Config) *statusCodeEvaluator {
 	return eval
 }
 
-func (e *statusCodeEvaluator) Evaluate(record *define.Record) {
+func (e *statusCodeEvaluator) Evaluate(record *define.Record) error {
 	switch record.RecordType {
 	case define.RecordTraces:
 		e.processTraces(record)
 	}
+	return nil
 }
 
 func (e *statusCodeEvaluator) Type() string {

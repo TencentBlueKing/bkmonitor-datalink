@@ -339,6 +339,10 @@ bk-collector:
         decoded_iv: "bkbkbkbkbkbkbkbk"
         decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
 
+    # Pprof converter: pprof 协议转换器
+    - name: "pprof_translator/common"
+      config:
+        type: "spy"
 
     # TracesDeriver: Traces 派生处理器
     # Duration
@@ -575,6 +579,13 @@ bk-collector:
       type: "metrics.derived"
       processors:
         - "apdex_calculator/standard"
+
+    - name: "profiles_pipeline/common"
+      type: "profiles"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
+        - "pprof_translator/common"
 
     - name: "fta_pipeline/common"
       type: "fta"

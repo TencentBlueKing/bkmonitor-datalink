@@ -18,9 +18,7 @@ import (
 	"time"
 
 	"github.com/dominikbraun/graph"
-	"github.com/prometheus/prometheus/model/labels"
 	pl "github.com/prometheus/prometheus/promql"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -169,27 +167,25 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, matc
 
 func (r *model) queryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target cmdb.Resource, matcher cmdb.Matcher, instant bool) (cmdb.Resource, cmdb.Matcher, []cmdb.MatchersWithTimestamp, error) {
 	var (
-		span oleltrace.Span
+		err  error
 		user = metadata.GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-resource-matcher")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "get-resource-matcher")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("source", user.Source, span)
-	trace.InsertStringIntoSpan("username", user.Name, span)
-	trace.InsertStringIntoSpan("space-uid", spaceUid, span)
-	trace.InsertIntIntoSpan("startTs", int(startTs), span)
-	trace.InsertIntIntoSpan("endTs", int(endTs), span)
-	trace.InsertStringIntoSpan("step", step.String(), span)
-	trace.InsertStringIntoSpan("target", string(target), span)
-	trace.InsertStringIntoSpan("matcher", fmt.Sprintf("%v", matcher), span)
+	span.Set("source", user.Source)
+	span.Set("username", user.Name)
+	span.Set("space-uid", spaceUid)
+	span.Set("startTs", int(startTs))
+	span.Set("endTs", int(endTs))
+	span.Set("step", step.String())
+	span.Set("target", string(target))
+	span.Set("matcher", fmt.Sprintf("%v", matcher))
 
 	queryMatcher := matcher.Rename()
 
-	trace.InsertStringIntoSpan("query-matcher", fmt.Sprintf("%v", queryMatcher), span)
+	span.Set("query-matcher", fmt.Sprintf("%v", queryMatcher))
 
 	source, indexMatcher, err := r.getResourceFromMatch(ctx, queryMatcher)
 	if err != nil {
@@ -204,15 +200,15 @@ func (r *model) queryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		return source, indexMatcher, nil, fmt.Errorf("timestamp is empty")
 	}
 
-	trace.InsertStringIntoSpan("source", string(source), span)
-	trace.InsertStringIntoSpan("index-matcher", fmt.Sprintf("%v", indexMatcher), span)
+	span.Set("source", string(source))
+	span.Set("index-matcher", fmt.Sprintf("%v", indexMatcher))
 
 	paths, err := r.getPaths(ctx, source, target, queryMatcher)
 	if err != nil {
 		return source, indexMatcher, nil, fmt.Errorf("get paths error: %s", err)
 	}
 
-	trace.InsertStringIntoSpan("paths", fmt.Sprintf("%v", paths), span)
+	span.Set("paths", fmt.Sprintf("%v", paths))
 
 	var resultMatchers []cmdb.MatchersWithTimestamp
 	for _, path := range paths {
@@ -222,7 +218,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		}
 
 		if len(resultMatchers) > 0 {
-			trace.InsertStringIntoSpan("path", fmt.Sprintf("%v", path), span)
+			span.Set("path", fmt.Sprintf("%v", path))
 			break
 		}
 	}
@@ -289,9 +285,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}, lookBackDelta)
 	}
 
-	referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
-	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
-	promQL, err := queryTs.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+	promQL, err := queryTs.ToPromExpr(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("query ts to prom expr error: %s", err)
 	}

@@ -10,7 +10,7 @@
 package elasticsearch
 
 import (
-	"io"
+	"bytes"
 	"net/http"
 )
 
@@ -19,7 +19,7 @@ type ESWriter struct {
 	transport Transport
 }
 
-func (w *ESWriter) getBodyByRecords(records Records) (io.Reader, error) {
+func (w *ESWriter) getBodyByRecords(records Records) (*bytes.Buffer, error) {
 	return records.AsBody()
 }
 

@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	semaphoreAcquired = prometheus.NewGaugeVec(
+	semaphoreAcquired = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "semaphore_acquired_num",
@@ -28,7 +29,7 @@ var (
 		[]string{"name"},
 	)
 
-	semaphoreAcquiredSuccess = prometheus.NewCounterVec(
+	semaphoreAcquiredSuccess = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "semaphore_acquired_success",
@@ -37,7 +38,7 @@ var (
 		[]string{"name"},
 	)
 
-	semaphoreAcquiredFailed = prometheus.NewCounterVec(
+	semaphoreAcquiredFailed = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "semaphore_acquired_failed",
@@ -46,7 +47,7 @@ var (
 		[]string{"name"},
 	)
 
-	semaphoreAcquiredDuration = prometheus.NewHistogramVec(
+	semaphoreAcquiredDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "semaphore_acquired_duration_seconds",
@@ -56,15 +57,6 @@ var (
 		[]string{"name"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		semaphoreAcquired,
-		semaphoreAcquiredSuccess,
-		semaphoreAcquiredFailed,
-		semaphoreAcquiredDuration,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

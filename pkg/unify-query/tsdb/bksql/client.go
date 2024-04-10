@@ -16,9 +16,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/uptrace/opentelemetry-go-extra/otelzap"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 type Client struct {
@@ -27,13 +26,16 @@ type Client struct {
 	BkdataAuthenticationMethod string
 	BkUsername                 string
 	BkAppCode                  string
-	PreferStorage              string
-	BkdataDataToken            string
-	BkAppSecret                string
+
+	// 不传这个值，bk-sql 会自动筛选
+	PreferStorage string
+
+	BkdataDataToken string
+	BkAppSecret     string
 
 	ContentType string
 
-	Log *otelzap.Logger
+	Log *log.Logger
 
 	Timeout time.Duration
 	Curl    curl.Curl
@@ -141,7 +143,7 @@ func (c *Client) response(data interface{}) *Result {
 }
 
 func (c *Client) failed(ctx context.Context, err error) *Result {
-	c.Log.Ctx(ctx).Error(err.Error())
+	c.Log.Errorf(ctx, err.Error())
 	return &Result{
 		Result:  false,
 		Message: err.Error(),

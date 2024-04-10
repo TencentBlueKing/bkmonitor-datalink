@@ -33,7 +33,7 @@ test:
 
 .PHONY: swag
 swag:
-	swag init --parseDependency --parseInternal
+	swag init --parseDependency true --parseInternal true
 
 .PHONY: fmt
 fmt:

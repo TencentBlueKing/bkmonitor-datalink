@@ -13,8 +13,6 @@ import (
 	"context"
 	"fmt"
 
-	oleltrace "go.opentelemetry.io/otel/trace"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -22,19 +20,17 @@ import (
 // GetMustVmQueryFeatureFlag 判断该 TableID 是否强行指定为单指标单表
 func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	var (
-		span oleltrace.Span
+		err  error
 		user = GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-must-vm-query-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "check-must-vm-query-feature-flag")
+	defer span.End(&err)
 
-	trace.InsertStringIntoSpan("table-id", tableID, span)
+	span.Set("table-id", tableID)
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
@@ -42,69 +38,67 @@ func GetMustVmQueryFeatureFlag(ctx context.Context, tableID string) bool {
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "must-vm-query", false)
-	trace.InsertStringIntoSpan("must-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+	span.Set("must-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
+
+	// 根据查询时间范围判断是否满足当前时间配置
+	vmDataTime := featureFlag.IntVariation(ctx, ffUser, "range-vm-query", 0)
+
+	if vmDataTime > 0 {
+		queryParams := GetQueryParams(ctx)
+		status = int64(vmDataTime) < queryParams.Start
+		span.Set("vm-data-time", vmDataTime)
+		span.Set("range-vm-query-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
+	}
 
 	return status
 }
 
-func GetDruidQueryFeatureFlag(ctx context.Context) bool {
-	return true
-}
-
-func GetVMQueryOrFeatureFlag(ctx context.Context) bool {
-	return true
-}
-
 func GetVMQueryFeatureFlag(ctx context.Context) bool {
 	var (
-		span oleltrace.Span
+		err  error
 		user = GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "check-vm-query-feature-flag")
+	defer span.End(&err)
 
 	// 增加配置的特性开关
 	if GetQueryRouter().CheckVmQuery(ctx, user.SpaceUid) {
-		trace.InsertStringIntoSpan("vm-query-space-uid", "true", span)
+		span.Set("vm-query-space-uid", "true")
 		return true
 	}
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query", false)
-	trace.InsertStringIntoSpan("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+	span.Set("vm-query-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
 
 	return status
 }
 
 func GetIsK8sFeatureFlag(ctx context.Context) bool {
 	var (
-		span oleltrace.Span
+		err  error
 		user = GetUser(ctx)
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-is-k8s-feature-flag")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "check-is-k8s-feature-flag")
+	defer span.End(&err)
 
 	// 特性开关只有指定空间才启用 vm 查询
-	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+	ffUser := featureFlag.FFUser(span.TraceID(), map[string]interface{}{
 		"name":     user.Name,
 		"source":   user.Source,
 		"spaceUid": user.SpaceUid,
 	})
 
 	status := featureFlag.BoolVariation(ctx, ffUser, "is-k8s", false)
-	trace.InsertStringIntoSpan("is-k8s", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+	span.Set("is-k8s", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status))
 
 	return status
 }

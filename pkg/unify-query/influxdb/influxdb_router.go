@@ -19,7 +19,6 @@ import (
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/influxdata/influxdb/prometheus/remote"
-	oleltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -175,17 +174,13 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 		hosts []*influxdb.Host
 
 		readHost []string
-
-		span oleltrace.Span
 	)
 
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-influxdb-host")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "get-influxdb-host")
+	defer span.End(&err)
 
 	if clusterHostList, ok := r.clusterInfo[clusterName]; ok {
 		hostList = clusterHostList.HostList
@@ -390,13 +385,11 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 	}
 
 	var (
-		span oleltrace.Span
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-tag-values")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "get-tag-values")
+	defer span.End(&err)
 
 	// 解析 where 中的条件
 	tags, err := metadata.ParseCondition(condition)
@@ -404,8 +397,8 @@ func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (stri
 		return "", err
 	}
 
-	trace.InsertStringIntoSpan("condition", condition, span)
-	trace.InsertStringIntoSpan("condition-tags", fmt.Sprintf("%+v", tags), span)
+	span.Set("condition", condition)
+	span.Set("condition-tags", fmt.Sprintf("%+v", tags))
 
 	// 判断是否有 tagKey
 	var buf bytes.Buffer
@@ -440,14 +433,10 @@ func (r *Router) getReadHostByTagsKey(ctx context.Context, tagsKey []string, clu
 		return nil, nil
 	}
 
-	var (
-		span oleltrace.Span
-	)
+	var err error
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "get-read-host-by-tags-key")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "get-read-host-by-tags-key")
+	defer span.End(&err)
 
 	allHostList := make(map[string]struct{})
 	if cls, ok := r.clusterInfo[clusterName]; ok {

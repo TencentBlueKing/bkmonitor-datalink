@@ -101,6 +101,15 @@ func writeError(w http.ResponseWriter, rh receiver.ResponseHandler, err error, s
 	receiver.WriteResponse(w, rh.ContentType(), statusCode, msg)
 }
 
+// 允许从 Http Header 中读取 token
+func extractTokenFromHttpHeader(header http.Header) string {
+	token := header.Get(define.KeyToken)
+	if len(token) > 0 {
+		return token
+	}
+	return header.Get(define.KeyTenantID)
+}
+
 func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype define.RecordType) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
@@ -133,6 +142,12 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 		RecordType:    rtype,
 		Data:          data,
 	}
+
+	tk := extractTokenFromHttpHeader(req.Header)
+	if len(tk) > 0 {
+		r.Token = define.Token{Original: tk}
+	}
+
 	prettyprint.Pretty(rtype, data)
 
 	code, processorName, err := s.Validate(r)

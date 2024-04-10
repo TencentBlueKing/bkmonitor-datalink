@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/panjf2000/ants/v2"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/client"
@@ -140,18 +139,16 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 		totalTables = NewTables()
 		recvDone    = make(chan struct{})
 		errs        []error // 由于查询模块无法知道指标在某个具体表上，所以当任意表查询失败，都返回失败
-		span        oleltrace.Span
 		wg          sync.WaitGroup
 		start       = time.Now()
+		err         error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-infos-async")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-infos-async")
+	defer span.End(&err)
 
-	trace.InsertIntIntoSpan("sql-nums", len(sqlInfos), span)
-	trace.InsertIntIntoSpan("query-max-goroutine", perQueryMaxGoroutine, span)
+	span.Set("sql-nums", len(sqlInfos))
+	span.Set("query-max-goroutine", perQueryMaxGoroutine)
 
 	log.Debugf(ctx, "query sql async length:%d", length)
 
@@ -197,7 +194,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 
 				if tables != nil && tables.Length() > 0 {
 
-					trace.InsertIntIntoSpan(fmt.Sprintf("table_num_%d", i), len(tables.Tables), span)
+					span.Set(fmt.Sprintf("table_num_%d", i), len(tables.Tables))
 					log.Debugf(ctx,
 						"influxdb query info async:db:[%s], sql:[%s], table:[%d]", db, sql, len(tables.Tables),
 					)
@@ -224,7 +221,7 @@ func QueryInfosAsync(ctx context.Context, sqlInfos []SQLInfo, precision string, 
 	close(tablesCh)
 	<-recvDone
 
-	trace.InsertIntIntoSpan("total_table_num", totalTables.Length(), span)
+	span.Set("total_table_num", totalTables.Length())
 
 	log.Debugf(ctx, "influxdb query info async:%v, query total cost:%s", sqlInfos, time.Since(start))
 
@@ -247,17 +244,15 @@ func QueryAsync(ctx context.Context, sqlInfos []SQLInfo, precision string) (*Tab
 		totalTables = NewTables()
 		recvDone    = make(chan struct{})
 		errs        []error // 由于查询模块无法知道指标在某个具体表上，所以当任意表查询失败，都返回失败
-		span        oleltrace.Span
 
-		wg sync.WaitGroup
+		err error
+		wg  sync.WaitGroup
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-async")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "query-async")
+	defer span.End(&err)
 
-	trace.InsertIntIntoSpan("sql-nums", len(sqlInfos), span)
-	trace.InsertIntIntoSpan("query-max-goroutine", perQueryMaxGoroutine, span)
+	span.Set("sql-nums", len(sqlInfos))
+	span.Set("query-max-goroutine", perQueryMaxGoroutine)
 
 	log.Debugf(ctx, "query sql async length:%d", length)
 

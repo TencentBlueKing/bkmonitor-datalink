@@ -170,10 +170,6 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
 			testResult, err := testCase.condition.AnalysisConditions()
 
-			a, b := testResult.Compare("bcs_cluster_id", "BCS-K8S-408300")
-			fmt.Println(a, b)
-			return
-
 			if testCase.err != nil {
 				assert.NotNil(t, err)
 				return

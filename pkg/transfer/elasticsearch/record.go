@@ -11,17 +11,16 @@ package elasticsearch
 
 import (
 	"bytes"
-	"io"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/bufferpool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 )
 
-// Records
 type Records []*Record
 
 // ASBody
-func (r Records) AsBody() (io.Reader, error) {
-	buffer := bytes.NewBuffer(nil)
+func (r Records) AsBody() (*bytes.Buffer, error) {
+	buffer := bufferpool.Get()
 	encoder := json.NewEncoder(buffer)
 	for _, record := range r {
 		err := encoder.Encode(map[string]interface{}{

@@ -28,6 +28,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+const (
+	localV1TracesURL  = "http://localhost/v1/traces"
+	localV1MetricsURL = "http://localhost/v1/metrics"
+	localV1LogsURL    = "http://localhost/v1/logs"
+)
+
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
@@ -43,8 +49,7 @@ func TestHttpTracesPbContent(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.Write(b)
 
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1TracesURL, buf)
 	req.Header.Set("Content-Type", define.ContentTypeProtobuf)
 
 	var n int
@@ -63,9 +68,7 @@ func TestHttpTracesPbContent(t *testing.T) {
 func TestHttpInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -82,8 +85,7 @@ func TestHttpInvalidBody(t *testing.T) {
 
 func TestHttpReadFailed(t *testing.T) {
 	buf := testkits.NewBrokenReader()
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -108,9 +110,7 @@ func TestHttpTracesPreCheckFailed(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	buf.Write(b)
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -135,9 +135,7 @@ func TestHttpTracesTokenAfterPreCheck(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	buf.Write(b)
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/traces", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1TracesURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -161,9 +159,7 @@ func TestHttpMetricsTokenAfterPreCheck(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	buf.Write(b)
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/metrics", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1MetricsURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -188,9 +184,7 @@ func TestHttpLogsTokenAfterPreCheck(t *testing.T) {
 
 	buf := &bytes.Buffer{}
 	buf.Write(b)
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/v1/logs", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localV1LogsURL, buf)
 
 	var n int
 	svc := HttpService{

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -71,19 +70,19 @@ func getIPs() []string {
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			span      oleltrace.Span
 			start     = time.Now()
 			ips       = getIPs()
 			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
 			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
 			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
 			ctx       = c.Request.Context()
+			err       error
 		)
 
 		ctx = metadata.InitHashID(ctx)
 		c.Request = c.Request.WithContext(ctx)
 
-		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
+		ctx, span := trace.NewSpan(ctx, "http-api")
 
 		// 把用户名注入到 metadata 中
 		metadata.SetUser(ctx, source, spaceUid, skipSpace)
@@ -93,7 +92,7 @@ func Timer(p *Params) gin.HandlerFunc {
 		if span != nil {
 			defer func() {
 
-				trace.InsertStringSliceIntoSpan("local-ips", ips, span)
+				span.Set("local-ips", ips)
 
 				sub := time.Since(start)
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
@@ -107,15 +106,15 @@ func Timer(p *Params) gin.HandlerFunc {
 						),
 					)
 				}
-				trace.InsertIntIntoSpan("http-api-query-cost", int(sub.Milliseconds()), span)
+				span.Set("http-api-query-cost", int(sub.Milliseconds()))
 
 				status := metadata.GetStatus(ctx)
 				if status != nil {
-					trace.InsertStringIntoSpan("http-api-status-code", status.Code, span)
-					trace.InsertStringIntoSpan("http-api-status-message", status.Message, span)
+					span.Set("http-api-status-code", status.Code)
+					span.Set("http-api-status-message", status.Message)
 				}
 
-				span.End()
+				span.End(&err)
 			}()
 		}
 

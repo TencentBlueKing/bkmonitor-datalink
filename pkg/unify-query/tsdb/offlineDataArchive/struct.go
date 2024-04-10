@@ -13,10 +13,10 @@ import (
 	"context"
 	"time"
 
-	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 
 	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
@@ -36,7 +36,7 @@ type Instance struct {
 }
 
 type StreamSeriesSetOption struct {
-	Span    trace.Span
+	Span    *trace.Span
 	Stream  remoteRead.QueryTimeSeriesService_RawClient
 	Limiter *rate.Limiter
 	Timeout time.Duration

@@ -14,9 +14,15 @@ import (
 	_ "go.uber.org/automaxprocs"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmd"
-	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/swagger"
 )
 
+// @title           bk-unify-query
+// @version         1.0
+// @description     bk unify-query swagger api
+
+// @BasePath  /
+
+// @securityDefinitions.basic  BasicAuth
 func main() {
 	cmd.Execute()
 }

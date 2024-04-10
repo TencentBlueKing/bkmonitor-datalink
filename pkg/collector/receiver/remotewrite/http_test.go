@@ -24,6 +24,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
+const (
+	localPromWriteURL = "http://localhost/prometheus/write"
+)
+
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
@@ -31,9 +35,7 @@ func TestReady(t *testing.T) {
 func TestHttpInvalidBody(t *testing.T) {
 	buf := &bytes.Buffer{}
 	buf.WriteString("{-}")
-
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/prometheus/write", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -54,8 +56,7 @@ func TestHttpPreCheckFailed(t *testing.T) {
 	assert.NoError(t, err)
 	buf.Write(content)
 
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/prometheus/write", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
 
 	var n int
 	svc := HttpService{
@@ -76,8 +77,7 @@ func TestHttpTokenAfterPreCheck(t *testing.T) {
 	assert.NoError(t, err)
 	buf.Write(content)
 
-	req, err := http.NewRequest(http.MethodPut, "http://localhost/prometheus/write", buf)
-	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
 
 	var n int
 	svc := HttpService{

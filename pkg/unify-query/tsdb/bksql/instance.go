@@ -20,11 +20,12 @@ import (
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -63,16 +64,24 @@ func (i Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*QuerySyncResultData, error) {
+func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
+
+		startAnaylize time.Time
 
 		ok  bool
 		err error
 	)
 
 	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
-	trace.InsertStringIntoSpan("query-sql", sql, span)
+	span.Set("query-sql", sql)
+
+	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
+
+	user := metadata.GetUser(ctx)
+	startAnaylize = time.Now()
 
 	// 发起异步查询
 	res := i.Client.QuerySync(ctx, sql)
@@ -80,11 +89,13 @@ func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*
 		return data, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
+	queryCost := time.Since(startAnaylize)
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	)
 
-	trace.InsertStringIntoSpan("query-timeout", i.Timeout.String(), span)
-	trace.InsertStringIntoSpan("query-interval-time", i.IntervalTime.String(), span)
+	span.Set("query-timeout", i.Timeout.String())
+	span.Set("query-interval-time", i.IntervalTime.String())
 
 	if data, ok = res.Data.(*QuerySyncResultData); !ok {
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
@@ -93,18 +104,26 @@ func (i Instance) query(ctx context.Context, sql string, span oleltrace.Span) (*
 	return data, nil
 }
 
-func (i Instance) queryAsync(ctx context.Context, sql string, span oleltrace.Span) (*QueryAsyncResultData, error) {
+func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
 	var (
 		data       *QueryAsyncData
 		stateData  *QueryAsyncStateData
 		resultData *QueryAsyncResultData
+
+		startAnaylize time.Time
 
 		ok  bool
 		err error
 	)
 
 	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
-	trace.InsertStringIntoSpan("query-sql", sql, span)
+	span.Set("query-sql", sql)
+
+	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
+
+	user := metadata.GetUser(ctx)
+	startAnaylize = time.Now()
 
 	// 发起异步查询
 	res := i.Client.QueryAsync(ctx, sql)
@@ -112,8 +131,10 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span oleltrace.Spa
 		return resultData, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
+	queryCost := time.Since(startAnaylize)
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	)
 
 	if data, ok = res.Data.(*QueryAsyncData); !ok {
 		return resultData, fmt.Errorf("queryAsyncData type is error: %T", res.Data)
@@ -123,9 +144,9 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span oleltrace.Spa
 		return resultData, fmt.Errorf("queryAsyncData queryID is emtpy: %+v", data)
 	}
 
-	trace.InsertStringIntoSpan("query-timeout", i.Timeout.String(), span)
-	trace.InsertStringIntoSpan("query-interval-time", i.IntervalTime.String(), span)
-	trace.InsertStringIntoSpan("data-query-id", data.QueryId, span)
+	span.Set("query-timeout", i.Timeout.String())
+	span.Set("query-interval-time", i.IntervalTime.String())
+	span.Set("data-query-id", data.QueryId)
 
 	err = func() error {
 		for {
@@ -353,7 +374,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 	if len(groupList) > 0 {
 		sql = fmt.Sprintf(`%s GROUP BY %s`, sql, strings.Join(groupList, ", "))
 	}
-	sql = fmt.Sprintf(`%s ORDER BY %s ASC`, sql, dtEventTimeStamp)
+	sql = fmt.Sprintf("%s ORDER BY `%s` ASC", sql, timeStamp)
 	if limit > 0 {
 		sql = fmt.Sprintf(`%s LIMIT %d`, sql, limit)
 	}
@@ -363,12 +384,10 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 
 func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	var (
-		span oleltrace.Span
+		err error
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "bk-sql-raw")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
+	defer span.End(&err)
 
 	if hints.Start > hints.End || hints.Start == 0 {
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %d, end: %d ", hints.Start, hints.End))
@@ -389,7 +408,7 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 		return storage.EmptySeriesSet()
 	}
 
-	trace.InsertIntIntoSpan("data-total-records", data.TotalRecords, span)
+	span.Set("data-total-records", data.TotalRecords)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
 	if data.TotalRecords > i.Limit {
@@ -421,14 +440,11 @@ func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *met
 
 func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span oleltrace.Span
-		err  error
+		err error
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "bk-sql-label-name")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "bk-sql-label-name")
+	defer span.End(&err)
 
 	where := fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli())
 	// 拼接过滤条件
@@ -447,16 +463,13 @@ func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, 
 
 func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
-		span oleltrace.Span
-		err  error
+		err error
 
 		lbMap = make(map[string]struct{})
 	)
 
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "bk-sql-label-values")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "bk-sql-label-values")
+	defer span.End(&err)
 
 	if name == labels.MetricName {
 		return nil, fmt.Errorf("not support metric query with %s", name)
@@ -498,12 +511,17 @@ func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end 
 }
 
 func (i Instance) GetInstanceType() string {
-	return i.Client.PreferStorage
+	return consul.BkSqlStorageType
 }
 
 func getValue(k string, d map[string]interface{}) (string, error) {
 	var value string
 	if v, ok := d[k]; ok {
+		// 增加 nil 判断，避免回传的数值为空
+		if v == nil {
+			return value, nil
+		}
+
 		switch v.(type) {
 		case string:
 			value = fmt.Sprintf("%s", v)
@@ -512,7 +530,7 @@ func getValue(k string, d map[string]interface{}) (string, error) {
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", v)
 		default:
-			return value, fmt.Errorf("error type %T, %v in %s with %+v", v, v, k, d)
+			return value, fmt.Errorf("get_value_error: type %T, %v in %s with %+v", v, v, k, d)
 		}
 	}
 	return value, nil

@@ -189,7 +189,7 @@ func (s *Service) reloadStorage() error {
 			MaxConditionNum:  VmMaxConditionNum,
 			InfluxCompatible: VmInfluxCompatible,
 			UseNativeOr:      VmUseNativeOr,
-			Curl:             &curl.HttpCurl{Log: log.OtLogger},
+			Curl:             &curl.HttpCurl{Log: log.DefaultLogger},
 		},
 	})
 
@@ -207,14 +207,13 @@ func (s *Service) reloadStorage() error {
 				BkdataAuthenticationMethod: BkSqlAuthenticationMethod,
 				BkUsername:                 bksql.BkUserName,
 				BkAppCode:                  BkSqlCode,
-				PreferStorage:              bksql.TSpider,
 				BkdataDataToken:            BkSqlToken,
 				BkAppSecret:                BkSqlSecret,
 				ContentType:                BkSqlContentType,
-				Log:                        log.OtLogger,
+				Log:                        log.DefaultLogger,
 				Timeout:                    BkSqlTimeout,
 				Curl: &curl.HttpCurl{
-					Log: log.OtLogger,
+					Log: log.DefaultLogger,
 				},
 			},
 		},

@@ -15,6 +15,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,23 +32,19 @@ import (
 const (
 	routePyroscopeIngest      = "/pyroscope/ingest"
 	formFieldProfile          = "profile"
-	formFileProfile           = "profile.pprof"
+	formFieldJFR              = "jfr"
 	formFieldPreviousProfile  = "prev_profile"
-	formFilePreviousProfile   = "profile.pprof"
 	formFieldSampleTypeConfig = "sample_type_config"
-	formFileSampleTypeConfig  = "sample_type_config.json"
-)
-
-const (
-	FormatPprof = "pprof"
-	FormatJFR   = "jfr"
-	// TODO: determine the format of c/c++ profiler or start a new receiver instead of pyroscope
 )
 
 const (
 	GoSpy   = "gospy"
-	JavaSpy = "jfr"
+	JavaSpy = "javaspy"
+	PerfSpy = "perf_script"
 )
+
+// TagServiceName 需要忽略的服务 Tag 名称
+var ignoredTagNames = []string{"__session_id__"}
 
 // HttpService 接收 pyroscope 上报的 profile 数据
 type HttpService struct {
@@ -73,103 +71,102 @@ func Ready() {
 	})
 }
 
-func getBearerToken(req *http.Request) string {
-	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
-	if len(token) < 2 {
-		return ""
-	}
-	return token[1]
-}
-
-func parseForm(req *http.Request) (*multipart.Form, error) {
-	raw, err := io.ReadAll(req.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := multipart.NewReader(bytes.NewReader(raw), boundary).ReadForm(32 << 20)
-	if err != nil {
-		return nil, err
-	}
-
-	return f, nil
-}
-
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据
 func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 	start := time.Now()
 
-	spyName := req.URL.Query().Get("spyName")
-	format := getFormatBySpy(spyName)
-	if format == "" {
+	buf := &bytes.Buffer{}
+	if _, err := io.Copy(buf, req.Body); err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("spyName is unknown, spyName: %s", spyName)
+		logger.Errorf("failed to read request body, err: %s", err)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		return
+	}
+	defer req.Body.Close()
+
+	query := req.URL.Query()
+	startTime, endTime, err := getTimeFromQuery(query)
+	if err != nil {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		errMsg := fmt.Sprintf("failed to parse start or end time, err: %s", err)
 		logger.Error(errMsg)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 
-	// TODO: if format is not goSpy, we should convert it to pprof format
+	aggregationType := query.Get("aggregationType")
+	units := query.Get("units")
+	spyName := query.Get("spyName")
+
+	format := query.Get("format")
+	if format == "" {
+		format = getFormatBySpy(spyName)
+	}
+	if format == "" {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		errMsg := fmt.Sprintf("spy: %s data is not supported, may be supported in the future :)", spyName)
+		logger.Error(errMsg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		return
+	}
+
 	token := getBearerToken(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to get valid token in profiles ingestion from %s", ip)
+		errMsg := fmt.Sprintf("failed to get token in profiles ingestion from %s", ip)
 		logger.Error(errMsg)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
 		return
 	}
 
-	f, err := parseForm(req)
+	f, err := parseForm(req, buf.Bytes())
 	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to parse form from %s, err: %s", ip, err)
-		logger.Error(errMsg)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
+		logger.Errorf("failed to parse boundary, err: %s, token: %s", err, token)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
 	defer func() {
 		_ = f.RemoveAll()
 	}()
 
-	thisProfile, err := ReadField(f, formFieldProfile)
+	// TODO 处理 prev_profile 字段
+	origin, err := convertToOrigin(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("read profile failed from %s, err: %s", ip, err)
+		logger.Errorf("read profile failed from %s, err: %s, token: %s", ip, err, token)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
 		return
 	}
-	// TODO: support previous profile
 
-	logger.Debugf("profiles got, previous len: %d, this len: %d \n", len(thisProfile))
-
-	// SampleTypeConfig is used to determine custom sample type in profile
-	c, err := ReadField(f, formFieldSampleTypeConfig)
-	if err != nil {
-		logger.Warnf("failed to get sample type config from %s, err: %s", ip, err)
-		// go on, because sample type config is optional now
-	}
-	if c == nil {
-		// lacking sample type config is not a fatal error
-		logger.Warnf("sample type config is empty")
+	// TODO: handle SampleTypeConfig
+	appName, tags := getAppNameAndTags(req)
+	rawProfile := define.ProfilesRawData{
+		Data: origin,
+		Metadata: define.ProfileMetadata{
+			StartTime:       startTime,
+			EndTime:         endTime,
+			SpyName:         spyName,
+			Format:          format,
+			AggregationType: aggregationType,
+			Units:           units,
+			Tags:            tags,
+			AppName:         appName,
+		},
 	}
 
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordProfiles,
-		Data:          thisProfile,
+		Data:          rawProfile,
 		Token:         define.Token{Original: token},
 	}
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
+		err = errors.Wrapf(err, "run pre-check %s failed, code=%d, ip=%s", processorName, code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordProfiles, processorName, r.Token.Original, code)
@@ -179,16 +176,120 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	logger.Debugf("record published, ip=%s, token=%s", ip, r.Token.Original)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(thisProfile), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(buf.Bytes()), start)
+}
+
+func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
+	boundary, err := ParseBoundary(req.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, err
+	}
+
+	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
+}
+
+func getBearerToken(req *http.Request) string {
+	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
+	if len(token) < 2 {
+		return ""
+	}
+	return token[1]
+}
+
+func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
+	startTs, err := strconv.ParseInt(query.Get("from"), 10, 64)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	endTs, err := strconv.ParseInt(query.Get("until"), 10, 64)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+
+	return time.Unix(startTs, 0), time.Unix(endTs, 0), nil
 }
 
 func getFormatBySpy(spyName string) string {
 	switch spyName {
 	case GoSpy:
-		return FormatPprof
+		return define.FormatPprof
 	case JavaSpy:
-		return FormatJFR
+		return define.FormatJFR
+	// TODO 暂不支持 PerfScript
+	// case PerfSpy:
+	//	return define.FormatPerfScript
 	default:
 		return ""
 	}
+}
+
+// convertToOrigin 将 Http.Body 转换为 translator 所需的数据格式
+func convertToOrigin(spyName string, form *multipart.Form) (any, error) {
+	switch spyName {
+	case JavaSpy:
+		jfrBytes, err := ReadField(form, "jfr")
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read jfr field, spyName=%s", spyName)
+		}
+
+		labelsBytes, err := ReadField(form, "labels")
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read labels field, spyName=%s", spyName)
+		}
+		logger.Debugf("receive jfr profile, data len: %d, labels len: %d", len(jfrBytes), len(labelsBytes))
+		return define.ProfileJfrFormatOrigin{Jfr: jfrBytes, Labels: labelsBytes}, nil
+
+	default:
+		profileBytes, err := ReadField(form, "profile")
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to read profile field, spyName=%s", spyName)
+		}
+		logger.Debugf("receive spyName: %s profile data len: %d", spyName, len(profileBytes))
+		return define.ProfilePprofFormatOrigin(profileBytes), nil
+	}
+}
+
+// getAppNameAndTags 获取 url 中的 tags 信息
+// example: name = appName{key1=value1,key2=value2}
+func getAppNameAndTags(req *http.Request) (string, map[string]string) {
+	reportTags := make(map[string]string)
+
+	valueDecoded, err := url.QueryUnescape(req.URL.Query().Get("name"))
+	if err != nil {
+		logger.Warnf("failed to parse query of params: name, error: %s", err)
+		return "", reportTags
+	}
+
+	if valueDecoded == "" {
+		return "", reportTags
+	}
+
+	parts := strings.SplitN(valueDecoded, "{", 2)
+	if len(parts) < 2 {
+		return "", reportTags
+	}
+
+	pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")
+	for _, pair := range pairs {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) == 2 {
+			if !contains(ignoredTagNames, kv[0]) {
+				reportTags[kv[0]] = kv[1]
+			}
+		}
+	}
+	return parts[0], reportTags
+}
+
+func contains[S ~[]E, E comparable](s S, v E) bool {
+	return index(s, v) >= 0
+}
+
+func index[S ~[]E, E comparable](s S, v E) int {
+	for i := range s {
+		if v == s[i] {
+			return i
+		}
+	}
+	return -1
 }

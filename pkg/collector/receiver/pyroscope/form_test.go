@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseNReadField(t *testing.T) {
+func TestReadField(t *testing.T) {
 	anyFieldName := "foo_field_name"
 	fileName := "anything.pprof"
 	fileContent := []byte("something here")
@@ -26,27 +26,28 @@ func TestParseNReadField(t *testing.T) {
 	writer := multipart.NewWriter(body)
 
 	fw, err := writer.CreateFormFile(anyFieldName, fileName)
-	fw.Write(fileContent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer.Close()
+	assert.NoError(t, err)
+
+	_, err = fw.Write(fileContent)
+	assert.NoError(t, err)
+	assert.NoError(t, writer.Close())
 
 	contentType := writer.FormDataContentType()
 	boundary, err := ParseBoundary(contentType)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	form, err := multipart.NewReader(body, boundary).ReadForm(32 << 20)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assert.NoError(t, err)
 
 	readContent, err := ReadField(form, anyFieldName)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	assert.NoError(t, err)
 	assert.Equal(t, fileContent, readContent)
+}
+
+func TestParseBoundary(t *testing.T) {
+	t.Run("Invalid", func(t *testing.T) {
+		boundary, err := ParseBoundary("")
+		assert.Error(t, err)
+		assert.Empty(t, boundary)
+	})
 }

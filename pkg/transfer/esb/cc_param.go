@@ -53,6 +53,7 @@ type CCSearchHostResponseHostInfo struct {
 	BkAgentID     string `json:"bk_agent_id"`
 	DbmMeta       string `json:"dbm_meta"`
 	DevxMeta      string `json:"devx_meta"`
+	PerforceMeta  string `json:"perforce_meta"`
 }
 
 // CCSearchHostResponseBizInfo :

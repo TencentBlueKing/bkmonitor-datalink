@@ -18,7 +18,6 @@ import (
 
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
-	oleltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -222,11 +221,6 @@ func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
 
 // CheckDruidCheck 判断是否是查询 druid 数据
 func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
-	// 判断是否打开 druid-query 特性开关
-	if !GetDruidQueryFeatureFlag(ctx) {
-		return false
-	}
-
 	druidCheckStatus := false
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
@@ -292,18 +286,15 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 // CheckVmQuery 判断是否是查询 vm 数据
 func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, error) {
 	var (
-		span oleltrace.Span
-		err  error
-		ok   bool
+		err error
+		ok  bool
 
 		vmExpand = &VmExpand{
 			MetricFilterCondition: make(map[string]string),
 		}
 	)
-	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
-	if span != nil {
-		defer span.End()
-	}
+	ctx, span := trace.NewSpan(ctx, "check-vm-query")
+	defer span.End(&err)
 
 	// 特性开关 vm or 语法查询
 	vmQueryFeatureFlag := GetVMQueryFeatureFlag(ctx)
@@ -322,7 +313,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
-			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
+			span.Set(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList))
 
 			vmConditions := make(map[string]struct{})
 
@@ -363,7 +354,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		}
 	}
 
-	trace.InsertStringIntoSpan("vm_expand_cluster_name", fmt.Sprintf("%+v", vmClusterNames), span)
+	span.Set("vm_expand_cluster_name", fmt.Sprintf("%+v", vmClusterNames))
 
 	// 当所有的 vm 集群都一样的时候，才进行传递
 	if len(vmClusterNames) == 1 {

@@ -11,12 +11,13 @@ package pipeline
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
 var (
-	builtFailedTotal = prometheus.NewCounterVec(
+	builtFailedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_built_failed_total",
@@ -25,7 +26,7 @@ var (
 		[]string{"pipeline", "record_type"},
 	)
 
-	builtSuccessTotal = prometheus.NewCounterVec(
+	builtSuccessTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitoringNamespace,
 			Name:      "pipeline_built_success_total",
@@ -34,13 +35,6 @@ var (
 		[]string{"pipeline", "record_type"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		builtFailedTotal,
-		builtSuccessTotal,
-	)
-}
 
 var DefaultMetricMonitor = &metricMonitor{}
 

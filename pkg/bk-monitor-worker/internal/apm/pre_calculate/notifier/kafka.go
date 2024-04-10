@@ -141,8 +141,10 @@ loop:
 			}
 
 			metrics.AddApmNotifierReceiveMessageCount(c.dataId, c.topic)
-			session.MarkMessage(msg, "")
-			c.sendSpans(msg.Value)
+			if session != nil {
+				session.MarkMessage(msg, "")
+				c.sendSpans(msg.Value)
+			}
 		case <-session.Context().Done():
 			logger.Infof("kafka consume handler session done. topic: %s groupId: %s", c.topic, c.groupId)
 			break loop

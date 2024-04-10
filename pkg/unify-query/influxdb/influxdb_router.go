@@ -15,8 +15,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/influxdata/influxdb/prometheus/remote"
@@ -32,8 +34,8 @@ import (
 )
 
 var (
-	influxDBRouter     *Router
-	influxDBRouterLock = new(sync.RWMutex)
+	once           sync.Once
+	influxDBRouter *Router
 
 	hostMapInc  = make(map[string]int)
 	hostMapLock = new(sync.Mutex)
@@ -75,14 +77,12 @@ func MockRouter(proxyInfo influxdb.ProxyInfo) {
 }
 
 func GetInfluxDBRouter() *Router {
-	influxDBRouterLock.RLock()
-	defer influxDBRouterLock.RUnlock()
-	if influxDBRouter == nil {
+	once.Do(func() {
 		influxDBRouter = &Router{
 			wg:   new(sync.WaitGroup),
 			lock: new(sync.RWMutex),
 		}
-	}
+	})
 	return influxDBRouter
 }
 
@@ -116,6 +116,53 @@ func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grp
 
 	err = r.ReloadAllKey(r.ctx)
 	return err
+}
+
+func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int) {
+	// 不存在 host 信息则直接返回
+	if r.hostInfo == nil || len(r.hostInfo) == 0 {
+		return
+	}
+
+	// 开始进行 Ping influxdb
+	clint := &http.Client{Timeout: timeout}
+	for _, v := range r.hostInfo {
+		// 重试 pingCount 次数
+		var read bool
+		for i := 0; i < pingCount; i++ {
+			addr := fmt.Sprintf("%s://%s:%d", v.Protocol, v.DomainName, v.Port)
+			req, err := http.NewRequest("GET", addr+"/ping", nil)
+			if err != nil {
+				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)
+				continue
+			}
+			resp, err := clint.Do(req)
+			if err != nil {
+				log.Warnf(ctx, "do ping failed, error: %s", err)
+				continue
+			}
+			// 状态码 204 变更 read 跳出循环
+			// 否则持续走完 PingCount 结束
+			if resp.StatusCode == http.StatusNoContent {
+				read = true
+				break
+			}
+		}
+
+		r.lock.RLock()
+		if read == r.hostStatusInfo[v.DomainName].Read {
+			r.lock.RUnlock()
+			continue
+		}
+		r.lock.RUnlock()
+
+		r.lock.Lock()
+		r.hostStatusInfo[v.DomainName] = &influxdb.HostStatus{
+			Read:           read,
+			LastModifyTime: time.Now().Unix(),
+		}
+		r.lock.Unlock()
+	}
 }
 
 func (r *Router) ReloadAllKey(ctx context.Context) error {
@@ -223,7 +270,7 @@ func (r *Router) GetInfluxDBHost(ctx context.Context, tagsKey []string, clusterN
 			}
 
 			// 有读状态才判断，如果没有读状态，则默认可读，防止影响原数据
-			if s, statusOk := r.hostStatusInfo[h]; statusOk {
+			if s, statusOk := r.hostStatusInfo[v.DomainName]; statusOk {
 				// 不可读的状态直接跳过
 				if !s.Read {
 					continue
@@ -367,7 +414,6 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		hostInfo        influxdb.HostInfo
 		tagInfo         influxdb.TagInfo
 		proxyInfo       influxdb.ProxyInfo
-		hostStatusInfo  influxdb.HostStatusInfo
 		queryRouterInfo influxdb.QueryRouterInfo
 		err             error
 	)
@@ -387,6 +433,12 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 		if err == nil {
 			r.hostInfo = hostInfo
 			r.endpointSet.Update(ctx)
+
+			// 更新 hostInfo 信息后重新初始化 hostStatusInfo
+			r.hostStatusInfo = make(influxdb.HostStatusInfo, len(r.hostInfo))
+			for _, h := range r.hostInfo {
+				r.hostStatusInfo[h.DomainName] = &influxdb.HostStatus{Read: true}
+			}
 		}
 	case influxdb.TagInfoKey:
 		tagInfo, err = r.router.GetTagInfo(ctx)
@@ -413,11 +465,6 @@ func (r *Router) loadRouter(ctx context.Context, key string) error {
 				)
 			}
 			r.queryRouterInfo = queryRouterInfo
-		}
-	case influxdb.HostStatusInfoKey:
-		hostStatusInfo, err = r.router.GetHostStatusInfo(ctx)
-		if err == nil {
-			r.hostStatusInfo = hostStatusInfo
 		}
 	}
 	return err

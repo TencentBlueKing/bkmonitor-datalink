@@ -29,7 +29,7 @@ const (
 )
 
 var AllKey = []string{
-	ClusterInfoKey, HostInfoKey, TagInfoKey, HostStatusInfoKey, ProxyKey, QueryRouterInfoKey,
+	ClusterInfoKey, HostInfoKey, TagInfoKey, ProxyKey, QueryRouterInfoKey,
 }
 
 type Router interface {

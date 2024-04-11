@@ -71,14 +71,17 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 	if baseCtxFn == nil {
 		baseCtxFn = context.Background
 	}
+
 	n := cfg.Concurrency
 	if n < 1 {
 		n = runtime.NumCPU()
 	}
+
 	delayFunc := cfg.RetryDelayFunc
 	if delayFunc == nil {
 		delayFunc = DefaultRetryDelayFunc
 	}
+
 	isFailureFunc := cfg.IsFailure
 	if isFailureFunc == nil {
 		isFailureFunc = func(err error) bool { return err != nil }
@@ -111,10 +114,7 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 		healthcheckInterval = common.DefaultHealthCheckInterval
 	}
 
-	rdb, err := rdb.NewRDB()
-	if err != nil {
-		return nil, err
-	}
+	rdb := rdb.GetRDB()
 
 	delayedTaskCheckInterval := cfg.DelayedTaskCheckInterval
 	if delayedTaskCheckInterval == 0 {
@@ -146,14 +146,13 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 
 // wait signal to shutdown
 func (w *Worker) waitForSignals() {
-	logger.Info("Send signal to stop processing new tasks")
-
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGTSTP)
 	for {
 		sig := <-sigs
 		// 走停止流程
-		if sig == syscall.SIGTSTP {
+		if sig == syscall.SIGTSTP || sig == syscall.SIGTERM || sig == syscall.SIGINT {
+			logger.Infof("Received signal %s, stopping worker", sig.String())
 			w.Stop()
 			continue
 		}
@@ -161,25 +160,17 @@ func (w *Worker) waitForSignals() {
 	}
 }
 
-// Run run task
+// Run enable execution forwarding and processing logic
 func (w *Worker) Run(handler processor.Handler) error {
-	if err := w.Start(handler); err != nil {
-		return err
-	}
-	return nil
-}
-
-// Start
-func (w *Worker) Start(handler processor.Handler) error {
 	if handler == nil {
 		return fmt.Errorf("server cannot run with nil handler")
 	}
 	w.processor.Handler = handler
 
 	logger.Info("Starting processing")
-
 	w.forwarder.Start(&w.wg)
 	w.processor.Start(&w.wg)
+
 	return nil
 }
 
@@ -194,7 +185,7 @@ func (w *Worker) Shutdown() {
 	logger.Info("Exiting")
 }
 
-// Stop
+// Stop worker stop handler.
 func (w *Worker) Stop() {
 	logger.Info("Stopping processor")
 	w.processor.Stop()
@@ -218,7 +209,7 @@ func NewServeMux() *WorkerMux {
 	return new(WorkerMux)
 }
 
-// ProcessTask
+// ProcessTask This method is the real execution logic of the task
 func (mux *WorkerMux) ProcessTask(ctx context.Context, task *t.Task) error {
 	h, _ := mux.Handler(task)
 	return h.ProcessTask(ctx, task)

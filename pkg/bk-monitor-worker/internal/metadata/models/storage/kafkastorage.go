@@ -9,14 +9,14 @@
 
 package storage
 
-//go:generate goqueryset -in kafkastorage.go -out qs_kafkastorage.go
+//go:generate goqueryset -in kafkastorage.go -out qs_kafkastorage_gen.go
 
 // KafkaStorage kafka storage model
 // gen:qs
 type KafkaStorage struct {
 	TableID          string `json:"table_id" gorm:"primary_key;size:128"`
 	Topic            string `json:"topic" gorm:"size:256"`
-	Partition        uint   `json:"partition" gorm:"default:1"`
+	Partition        uint   `json:"partition" gorm:"column:partition"`
 	StorageClusterID uint   `json:"storage_cluster_id" gorm:"storage_cluster_id"`
 	Retention        int64  `json:"retention" gorm:"default=1800000"`
 }

@@ -36,9 +36,8 @@ type Processor struct {
 	Broker broker.Broker
 	Clock  timex.Clock
 
-	Handler   Handler
-	BaseCtxFn func() context.Context
-
+	Handler     Handler
+	BaseCtxFn   func() context.Context
 	QueueConfig map[string]int
 
 	// orderedQueues is set only in strict-priority mode.
@@ -61,7 +60,7 @@ type Processor struct {
 	// quit operate
 	Quit chan struct{}
 
-	// abort operatr
+	// abort operate
 	Abort chan struct{}
 }
 
@@ -102,7 +101,7 @@ func NewProcessor(params ProcessorParams) *Processor {
 	}
 }
 
-// Note: stops only the "processor" goroutine, does not stop workers.
+// Stop Note: stops only the "processor" goroutine, does not stop workers.
 // It's safe to call this method multiple times.
 func (p *Processor) Stop() {
 	p.Once.Do(func() {
@@ -149,17 +148,20 @@ func (p *Processor) Start(wg *sync.WaitGroup) {
 func (p *Processor) Exec() {
 	select {
 	case <-p.Quit:
+		logger.Debugf("Processor quit")
 		return
 	case p.Sema <- struct{}{}: // acquire token
 		qnames := p.Queues()
 		msg, leaseExpirationTime, err := p.Broker.Dequeue(qnames...)
+		logger.Debugf("Dequeue result: %v, %v, %v", msg, leaseExpirationTime, err)
 		switch {
 		case errors.Is(err, errors.ErrNoProcessableTask):
-			logger.Info("All queues are empty")
+			//logger.Info("All queues are empty")
 			time.Sleep(time.Second)
 			<-p.Sema // release token
 			return
 		case err != nil:
+			logger.Errorf("Could not dequeue task: %v", err)
 			<-p.Sema // release token
 			return
 		}
@@ -179,6 +181,7 @@ func (p *Processor) Exec() {
 			// check context before starting a worker goroutine.
 			select {
 			case <-ctx.Done():
+				logger.Warnf("task context canceled for task id=%s, deadline=%s", msg.ID, deadline)
 				// already canceled (e.g. deadline exceeded).
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
@@ -186,9 +189,10 @@ func (p *Processor) Exec() {
 			}
 
 			resCh := make(chan error, 1)
+			beginTime := time.Now()
 			go func() {
 				// task run count
-				metrics.RunTaskCount(msg.Kind)
+				metrics.RunTaskTotal(msg.Kind)
 				task := t.NewTask(
 					msg.Kind,
 					msg.Payload,
@@ -199,23 +203,29 @@ func (p *Processor) Exec() {
 			select {
 			case <-p.Abort:
 				// time is up, push the message back to queue and quit this worker goroutine.
-				logger.Warnf("Quitting worker. task id=%s", msg.ID)
+				logger.Debugf("Quitting worker. task id=%s", msg.ID)
 				p.Requeue(lease, msg)
 				return
 			case <-lease.Done():
+				logger.Debugf("Lease expired for task id=%s", msg.ID)
+				metrics.RunTaskFailureTotal(msg.Kind)
 				cancel()
 				p.HandleFailedMessage(ctx, lease, msg, errors.New("task lease expired"))
 				return
 			case <-ctx.Done():
+				logger.Debugf("task context canceled for task id=%s", msg.ID)
+				metrics.RunTaskFailureTotal(msg.Kind)
 				p.HandleFailedMessage(ctx, lease, msg, ctx.Err())
 				return
 			case resErr := <-resCh:
 				if resErr != nil {
+					logger.Debugf("task error for task id=%s, error: %v", msg.ID, resErr)
+					metrics.RunTaskFailureTotal(msg.Kind)
 					p.HandleFailedMessage(ctx, lease, msg, resErr)
 					return
 				}
-
-				metrics.RunTaskSuccessCount(msg.Kind)
+				metrics.RunTaskDurationSeconds(msg.Kind, beginTime)
+				metrics.RunTaskSuccessTotal(msg.Kind)
 				p.HandleSucceededMessage(lease, msg)
 			}
 		}()
@@ -270,7 +280,10 @@ func (p *Processor) MarkAsDone(l *common.Lease, msg *t.TaskMessage) {
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Done(ctx, msg)
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not remove task id=%s type=%q from %q err: %+v", msg.ID, msg.Kind, common.ActiveKey(msg.Queue), err)
+		errMsg := fmt.Sprintf(
+			"Could not remove task id=%s type=%q from %q err: %+v",
+			msg.ID, msg.Kind, common.ActiveKey(msg.Queue), err,
+		)
 		logger.Warnf("mark task done error, %s", errMsg)
 	}
 }
@@ -290,7 +303,9 @@ func (p *Processor) HandleFailedMessage(ctx context.Context, l *common.Lease, ms
 		logger.Warnf("Retry exhausted for task id=%s", msg.ID)
 		p.Archive(l, msg, err)
 	} else {
+		logger.Warnf("Task failed and retry for task id=%s, error: %v", msg.ID, err)
 		p.Retry(l, msg, err, true)
+		logger.Errorf("yyyyy")
 	}
 }
 
@@ -301,7 +316,10 @@ func (p *Processor) Retry(l *common.Lease, msg *t.TaskMessage, e error, isFailur
 	retryAt := time.Now().Add(d)
 	err := p.Broker.Retry(ctx, msg, retryAt, e.Error(), isFailure)
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not move task id=%s from %q to %q", msg.ID, common.ActiveKey(msg.Queue), common.RetryKey(msg.Queue))
+		errMsg := fmt.Sprintf(
+			"Could not move task id=%s from %q to %q",
+			msg.ID, common.ActiveKey(msg.Queue), common.RetryKey(msg.Queue),
+		)
 		logger.Warnf("retry task error, %s", errMsg)
 	}
 }
@@ -311,7 +329,10 @@ func (p *Processor) Archive(l *common.Lease, msg *t.TaskMessage, e error) {
 	ctx, _ := context.WithDeadline(context.Background(), l.Deadline())
 	err := p.Broker.Archive(ctx, msg, e.Error())
 	if err != nil {
-		errMsg := fmt.Sprintf("Could not move task id=%s from %q to %q", msg.ID, common.ActiveKey(msg.Queue), common.ArchivedKey(msg.Queue))
+		errMsg := fmt.Sprintf(
+			"Could not move task id=%s from %q to %q",
+			msg.ID, common.ActiveKey(msg.Queue), common.ArchivedKey(msg.Queue),
+		)
 		logger.Warnf("archive task error, %s", errMsg)
 	}
 }

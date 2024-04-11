@@ -11,12 +11,14 @@ package define
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/pprof/profile"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -253,6 +255,38 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 
 func WrapProxyToken(token Token) string {
 	return fmt.Sprintf("%d/%s", token.ProxyDataId, token.Original)
+}
+
+func TokenFromHttpRequest(req *http.Request) string {
+	// 1) 从 tokenKey 中读取
+	token := req.URL.Query().Get(KeyToken)
+	if token == "" {
+		token = req.Header.Get(KeyToken)
+	}
+
+	// 2) 从 tenantidKey 中读取
+	if token == "" {
+		token = req.Header.Get(KeyTenantID)
+	}
+	if token == "" {
+		token = req.URL.Query().Get(KeyTenantID)
+	}
+	return token
+}
+
+func TokenFromGrpcMetadata(md metadata.MD) string {
+	// 1) 从 tokenKey 中读取
+	token := md.Get(KeyToken)
+	if len(token) > 0 {
+		return token[0]
+	}
+
+	// 2) 从 tenantidKey 中读取
+	token = md.Get(KeyTenantID)
+	if len(token) > 0 {
+		return token[0]
+	}
+	return ""
 }
 
 const (

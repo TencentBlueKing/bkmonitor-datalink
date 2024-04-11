@@ -21,19 +21,22 @@ import (
 
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/timex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage.go
+//go:generate goqueryset -in influxdbstorage.go -out qs_influxdbstorage_gen.go
 
 // InfluxdbStorage influxdb storage model
 // gen:qs
@@ -46,9 +49,9 @@ type InfluxdbStorage struct {
 	DownSampleTable           string `gorm:"size:128" json:"down_sample_table"`
 	DownSampleGap             string `gorm:"size:32" json:"down_sample_gap"`
 	DownSampleDurationTime    string `gorm:"size:32" json:"down_sample_duration_time"`
-	ProxyClusterName          string `gorm:"size:128;default:default" json:"proxy_cluster_name"`
-	UseDefaultRp              bool   `gorm:"default:true" json:"use_default_rp"`
-	EnableRefreshRp           bool   `gorm:"default:true" json:"enable_refresh_rp"`
+	ProxyClusterName          string `gorm:"size:128" json:"proxy_cluster_name"`
+	UseDefaultRp              bool   `gorm:"column:use_default_rp" json:"use_default_rp"`
+	EnableRefreshRp           bool   `gorm:"column:enable_refresh_rp" json:"enable_refresh_rp"`
 	PartitionTag              string `gorm:"size:128" json:"partition_tag"`
 	VmTableId                 string `gorm:"vm_table_id;size:128" json:"vm_table_id"`
 	InfluxdbProxyStorageId    uint   `gorm:"influxdb_proxy_storage_id" json:"influxdb_proxy_storage_id"`
@@ -61,9 +64,16 @@ func (InfluxdbStorage) TableName() string {
 	return "metadata_influxdbstorage"
 }
 
+func (i *InfluxdbStorage) BeforeCreate(tx *gorm.DB) error {
+	if i.ProxyClusterName == "" {
+		i.ProxyClusterName = "default"
+	}
+	return nil
+}
+
 // ConsulPath 获取router的consul根路径
 func (InfluxdbStorage) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.InfluxdbStorageConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体结果表router的consul配置路径
@@ -88,7 +98,7 @@ func (i InfluxdbStorage) InfluxdbProxyStorage() (*InfluxdbProxyStorage, error) {
 	var influxdbProxyStorage InfluxdbProxyStorage
 	err := NewInfluxdbProxyStorageQuerySet(dbSession.DB).IDEq(i.InfluxdbProxyStorageId).One(&influxdbProxyStorage)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query InfluxdbProxyStorage with id [%v] failed", i.InfluxdbProxyStorageId)
 	}
 	i.influxdbProxyStorageCache = &influxdbProxyStorage
 	return &influxdbProxyStorage, nil
@@ -175,8 +185,8 @@ func (i InfluxdbStorage) PushRedisData(ctx context.Context, isPublish bool) erro
 }
 
 // RefreshConsulClusterConfig 更新influxDB结果表信息到consul中
-func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool) error {
-	consulClient, err := consul.GetInstance(ctx)
+func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPublish bool, isVersionRefresh bool) error {
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
@@ -188,7 +198,7 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 	if err != nil {
 		logger.Errorf("put consul path [%s] value [%s] err, %v", i.ConsulConfigPath(), val, err)
 		return err
@@ -196,6 +206,11 @@ func (i InfluxdbStorage) RefreshConsulClusterConfig(ctx context.Context, isPubli
 	err = i.PushRedisData(ctx, isPublish)
 	if err != nil {
 		return err
+	}
+	if isVersionRefresh {
+		if err := models.RefreshRouterVersion(ctx, fmt.Sprintf(models.InfluxdbInfoVersionConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -245,18 +260,21 @@ func (i InfluxdbStorage) CreateDatabase() error {
 	target.RawQuery = params.Encode()
 	req, err := http.NewRequest(http.MethodPost, target.String(), nil)
 	req.Header.Set("Content-type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		logger.Errorf(
-			"failed to create database [%s] for status [%v]",
-			i.Database, resp.StatusCode,
-		)
-		return errors.New("create database failed")
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+		logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(params.Encode()), ""))
+	} else {
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			logger.Errorf(
+				"failed to create database [%s] for status [%v]",
+				i.Database, resp.StatusCode,
+			)
+			return errors.New("create database failed")
+		}
 	}
 	logger.Infof("database [%s] is create on host [%s:%v]", i.Database, storageCluster.DomainName, storageCluster.Port)
 	return nil
@@ -287,12 +305,11 @@ func (i InfluxdbStorage) EnsureRp() error {
 		err := func() error {
 			// 获取当次集群机器的信息
 			var hostInfo InfluxdbHostInfo
-			err := NewInfluxdbHostInfoQuerySet(dbSession.DB).HostNameEq(clusterInfo.HostName).One(&hostInfo)
-			if err != nil {
+			if err := NewInfluxdbHostInfoQuerySet(dbSession.DB).HostNameEq(clusterInfo.HostName).One(&hostInfo); err != nil {
 				return err
 			}
 			influxdbClient, err := influxdb.GetClient(
-				fmt.Sprintf("http://%s:%v", hostInfo.DomainName, hostInfo.Port), hostInfo.Username, hostInfo.Password,
+				fmt.Sprintf("http://%s:%v", hostInfo.DomainName, hostInfo.Port), hostInfo.Username, hostInfo.Password, 5,
 			)
 			if err != nil {
 				return err
@@ -344,22 +361,21 @@ func (i InfluxdbStorage) EnsureRp() error {
 					)
 					break
 				}
-				_, err = influxdb.QueryDB(
-					influxdbClient,
-					fmt.Sprintf(`ALTER RETENTION POLICY "%s" ON %s DURATION %s SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, shardGroupDuration),
-					i.Database,
-					nil,
-				)
-				if err != nil {
-					logger.Errorf(
-						"table [%s] rp [%s | %s | %s] updated on host [%s] failed: [%v]",
-						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
-					)
+				cmd := fmt.Sprintf(`ALTER RETENTION POLICY "%s" ON %s DURATION %s SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, shardGroupDuration)
+				if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+					logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
 				} else {
-					logger.Infof(
-						"table [%s] rp [%s | %s | %s] is updated on host [%s]",
-						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName,
-					)
+					if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {
+						logger.Errorf(
+							"table [%s] rp [%s | %s | %s] updated on host [%s] failed: [%v]",
+							i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
+						)
+					} else {
+						logger.Infof(
+							"table [%s] rp [%s | %s | %s] is updated on host [%s]",
+							i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName,
+						)
+					}
 				}
 				break
 			}
@@ -371,18 +387,17 @@ func (i InfluxdbStorage) EnsureRp() error {
 			if err != nil {
 				return err
 			}
-			_, err = influxdb.QueryDB(
-				influxdbClient,
-				fmt.Sprintf(`CREATE RETENTION POLICY "%s" ON %s DURATION %s REPLICATION %v SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, 1, shardGroupDuration),
-				i.Database,
-				nil,
-			)
-			if err != nil {
-				logger.Errorf(
-					"table [%s] rp [%s | %s | %s] is create on host [%s] failed: [%s]",
-					i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
-				)
-				return err
+			cmd := fmt.Sprintf(`CREATE RETENTION POLICY "%s" ON %s DURATION %s REPLICATION %v SHARD DURATION %s`, i.RpName(), i.Database, i.SourceDurationTime, 1, shardGroupDuration)
+			if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_influxdb_route") {
+				logger.Info(diffutil.BuildLogStr("refresh_influxdb_route", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(cmd), ""))
+			} else {
+				if _, err = influxdb.QueryDB(influxdbClient, cmd, i.Database, nil); err != nil {
+					logger.Errorf(
+						"table [%s] rp [%s | %s | %s] is create on host [%s] failed: [%s]",
+						i.TableID, i.RpName(), i.SourceDurationTime, shardGroupDuration, hostInfo.DomainName, err,
+					)
+					return err
+				}
 			}
 			logger.Infof(
 				"table [%s] rp [%s | %s | %s] is create on host [%s]",
@@ -393,9 +408,7 @@ func (i InfluxdbStorage) EnsureRp() error {
 		if err != nil {
 			return err
 		}
-
 	}
-
 	return nil
 }
 
@@ -415,7 +428,7 @@ func RefreshInfluxdbStorageConsulClusterConfig(ctx context.Context, objs *[]Infl
 				<-ch
 				wg.Done()
 			}()
-			err := s.RefreshConsulClusterConfig(ctx, false)
+			err := s.RefreshConsulClusterConfig(ctx, false, false)
 			if err != nil {
 				logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", s.TableID, err)
 			} else {
@@ -426,7 +439,7 @@ func RefreshInfluxdbStorageConsulClusterConfig(ctx context.Context, objs *[]Infl
 	wg.Wait()
 	// 最后一个进行publish
 	last := (*objs)[len(*objs)-1]
-	err := last.RefreshConsulClusterConfig(ctx, true)
+	err := last.RefreshConsulClusterConfig(ctx, true, false)
 	if err != nil {
 		logger.Errorf("result_table: [%s] try to refresh consul config failed, %v", last.TableID, err)
 	} else {

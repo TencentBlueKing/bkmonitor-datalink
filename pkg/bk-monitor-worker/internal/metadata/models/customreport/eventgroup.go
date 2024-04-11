@@ -24,7 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in eventgroup.go -out qs_eventgroup.go
+//go:generate goqueryset -in eventgroup.go -out qs_eventgroup_gen.go
 
 // EventGroup event group model
 // gen:qs
@@ -77,6 +77,9 @@ func (eg EventGroup) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 
 func (eg EventGroup) GetESData(ctx context.Context) (map[string][]string, error) {
 	client, err := eg.GetESClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 	// 获取当前index下，所有的event_name集合
 	resp, err := client.SearchWithBody(
 		ctx,

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
@@ -21,14 +22,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 )
 
-//go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo.go
+//go:generate goqueryset -in clusterinfo.go -out qs_clusterinfo_gen.go
 
 var IgnoredStorageClusterTypes = []string{"victoria_metrics"} // 忽略的结果表类型,vm类型结果表不写入consul
 
 // Event: cluster info model
 // gen:qs
 type ClusterInfo struct {
-	ClusterID                 uint      `gorm:"index" json:"cluster_id"`
+	ClusterID                 uint      `gorm:"primary_key" json:"cluster_id"`
 	ClusterName               string    `gorm:"size:128;unique" json:"cluster_name"`
 	ClusterType               string    `gorm:"size:32;index" json:"cluster_type"`
 	DomainName                string    `gorm:"size:128" json:"domain_name"`
@@ -38,25 +39,25 @@ type ClusterInfo struct {
 	Password                  string    `gorm:"size:128" json:"password"`
 	Username                  string    `gorm:"size:64" json:"username"`
 	IsSslVerify               bool      `json:"is_ssl_verify"`
-	Schema                    string    `gorm:"size:32" json:"schema"`
-	Version                   string    `gorm:"size:64" json:"version"`
-	RegisteredSystem          string    `gorm:"size:128;default:_default" json:"registered_system"`
+	Schema                    *string   `gorm:"size:32" json:"schema"`
+	Version                   *string   `gorm:"size:64" json:"version"`
+	RegisteredSystem          string    `gorm:"size:128" json:"registered_system"`
 	CustomOption              string    `json:"custom_option"`
-	CreateTime                time.Time ` json:"create_time"`
-	Creator                   string    `gorm:"size:255;default:system" json:"creator"`
+	CreateTime                time.Time `json:"create_time"`
+	Creator                   string    `gorm:"size:255" json:"creator"`
 	LastModifyTime            time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser            string    `gorm:"size:32" json:"last_modify_user"`
-	GseStreamToId             int       `gorm:"default:-1" json:"gse_stream_to_id"`
-	IsRegisterToGse           bool      `gorm:"default:false" json:"is_register_to_gse"`
+	GseStreamToId             int       `gorm:"column:gse_stream_to_id" json:"gse_stream_to_id"`
+	IsRegisterToGse           bool      `gorm:"column:is_register_to_gse" json:"is_register_to_gse"`
 	DefaultSettings           string    `gorm:"default_settings" json:"default_settings"`
 	Label                     string    `gorm:"size:32" json:"label"`
 	SslCertificate            string    `json:"ssl_certificate"`
 	SslCertificateAuthorities string    `json:"ssl_certificate_authorities"`
 	SslCertificateKey         string    `json:"ssl_certificate_key"`
-	SslInsecureSkipVerify     bool      `gorm:"default:false" json:"ssl_insecure_skip_verify"`
+	SslInsecureSkipVerify     bool      `gorm:"column:ssl_insecure_skip_verify" json:"ssl_insecure_skip_verify"`
 	SslVerificationMode       string    `gorm:"size:16" json:"ssl_verification_mode"`
 	ExtranetDomainName        string    `gorm:"size:128" json:"extranet_domain_name"`
-	ExtranetPort              uint      `gorm:"default:0" json:"extranet_port"`
+	ExtranetPort              uint      `gorm:"column:extranet_port" json:"extranet_port"`
 }
 
 // TableName: 用于设置表的别名
@@ -69,19 +70,45 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 		return nil, errors.Errorf("record type error")
 	}
 	// 获取ES版本，创建ES客户端
-	esVersion := strings.Split(c.Version, ".")[0]
-	address := elasticsearch.ComposeESHosts(c.Schema, c.DomainName, c.Port)
+	var version, schema string
+	if c.Version != nil {
+		version = *c.Version
+	} else {
+		version = "7"
+	}
+	if c.Schema != nil {
+		schema = *c.Schema
+	} else {
+		schema = "http"
+	}
+	esVersion := strings.Split(version, ".")[0]
+	address := elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
 	// 密码解密
-	password := cipher.AESDecrypt(c.Password)
+	password := cipher.GetDBAESCipher().AESDecrypt(c.Password)
 	client, err := elasticsearch.NewElasticsearch(esVersion, address, c.Username, password)
 	if err != nil {
 		return nil, err
 	}
 	timeoutCtx, _ := context.WithTimeout(ctx, 5*time.Second)
-	_, err = client.Ping(timeoutCtx)
+	resp, err := client.Ping(timeoutCtx)
+	// ref: https://andrii-kushch.medium.com/is-it-necessary-to-close-the-body-in-the-http-response-object-in-golang-171c44c9394d
+	defer resp.Close()
 	if err != nil {
 		return nil, err
 	}
 
 	return client, nil
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (c *ClusterInfo) BeforeCreate(tx *gorm.DB) error {
+	c.CreateTime = time.Now()
+	c.LastModifyTime = time.Now()
+	return nil
+}
+
+// BeforeUpdate 保存前最后修改时间字段设置为当前时间
+func (c *ClusterInfo) BeforeUpdate(tx *gorm.DB) error {
+	c.LastModifyTime = time.Now()
+	return nil
 }

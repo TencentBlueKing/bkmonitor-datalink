@@ -27,7 +27,7 @@ func (fn HandlerFunc) ProcessTask(ctx context.Context, task *t.Task) error {
 	return fn(ctx, task)
 }
 
-// ErrorHandler
+// ErrorHandler error task handler
 type ErrorHandler interface {
 	HandleError(ctx context.Context, task *t.Task, err error)
 }

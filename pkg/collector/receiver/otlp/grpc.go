@@ -46,20 +46,6 @@ type tracesService struct {
 	pipeline.Validator
 }
 
-// 允许从 Grpc Header 中读取 token
-func extractTokenFromGrpcHeader(md metadata.MD) string {
-	token := md.Get(define.KeyToken)
-	if len(token) > 0 {
-		return token[0]
-	}
-
-	token = md.Get(define.KeyTenantID)
-	if len(token) > 0 {
-		return token[0]
-	}
-	return ""
-}
-
 func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptraceotlp.Response, error) {
 	defer utils.HandleCrash()
 	ip := utils.GetGrpcIpFromContext(ctx)
@@ -76,7 +62,7 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := extractTokenFromGrpcHeader(md)
+		tk := define.TokenFromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}
@@ -124,7 +110,7 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := extractTokenFromGrpcHeader(md)
+		tk := define.TokenFromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}
@@ -172,7 +158,7 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := extractTokenFromGrpcHeader(md)
+		tk := define.TokenFromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}

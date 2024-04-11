@@ -45,3 +45,25 @@ func TestNewElasticsearch(t *testing.T) {
 	client8 := es.client.(*es7.Client)
 	assert.NotNil(t, client8)
 }
+
+func TestComposeESHosts(t *testing.T) {
+	type args struct {
+		schema string
+		host   string
+		port   uint
+	}
+	tests := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{name: "ipv4", args: args{schema: "http", host: "127.0.0.1", port: 1234}, want: []string{"http://[127.0.0.1]:1234"}},
+		{name: "ipv6", args: args{schema: "http", host: "[127.0.0.1]", port: 1234}, want: []string{"http://[127.0.0.1]:1234"}},
+		{name: "noSchema", args: args{schema: "", host: "[127.0.0.1]", port: 1234}, want: []string{"http://[127.0.0.1]:1234"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, ComposeESHosts(tt.args.schema, tt.args.host, tt.args.port), "ComposeESHosts(%v, %v, %v)", tt.args.schema, tt.args.host, tt.args.port)
+		})
+	}
+}

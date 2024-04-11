@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-//go:generate goqueryset -in resulttablefieldoption.go -out qs_rtfieldoption.go
+//go:generate goqueryset -in resulttablefieldoption.go -out qs_rtfieldoption_gen.go
 
 // ResultTableFieldOption: result table field option model
 // gen:qs

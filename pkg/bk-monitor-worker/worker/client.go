@@ -21,38 +21,40 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Client struct {
 	broker broker.Broker
 }
 
-var client *Client
+var (
+	clientInstance *Client
+)
 
-// NewClient new a client
-func NewClient() (*Client, error) {
-	if client != nil {
-		return client, nil
+// GetClient new a client
+func GetClient() (*Client, error) {
+	if clientInstance != nil {
+		return clientInstance, nil
 	}
-	rdb, err := rdb.NewRDB()
-	if err != nil {
-		return nil, err
-	}
-	return &Client{broker: rdb}, nil
+
+	brokerInstance := rdb.GetRDB()
+	clientInstance = &Client{broker: brokerInstance}
+	return clientInstance, nil
 }
 
-// Close
+// Close close the broker
 func (c *Client) Close() error {
 	return c.broker.Close()
 }
 
 // Enqueue 入队列
 func (c *Client) Enqueue(task *t.Task, opts ...t.Option) (*t.TaskInfo, error) {
-	metrics.EnqueueTaskCount(task.Kind)
+	metrics.EnqueueTaskTotal(task.Kind)
 	return c.EnqueueWithContext(context.Background(), task, opts...)
 }
 
-// EnqueueWithContext
+// EnqueueWithContext this method is the processing logic for messages entering the queue.
 func (c *Client) EnqueueWithContext(ctx context.Context, task *t.Task, opts ...t.Option) (*t.TaskInfo, error) {
 	if task == nil {
 		return nil, fmt.Errorf("task cannot be nil")
@@ -107,10 +109,13 @@ func (c *Client) EnqueueWithContext(ctx context.Context, task *t.Task, opts ...t
 	}
 	switch {
 	case errors.Is(err, errors.ErrDuplicateTask):
+		logger.Warnf("task: %s already exists, not schedule a task again", task.Kind)
 		return nil, fmt.Errorf("task already exists")
 	case errors.Is(err, errors.ErrTaskIdConflict):
-		return nil, fmt.Errorf("")
+		logger.Warnf("task: %s conflict with exist task, not schedule a task again", task.Kind)
+		return nil, fmt.Errorf("task conflict with exist task")
 	case err != nil:
+		logger.Errorf("task: %s is error, not schedule a task again", task.Kind)
 		return nil, err
 	}
 	return t.NewTaskInfo(msg, state, opt.ProcessAt, nil), nil

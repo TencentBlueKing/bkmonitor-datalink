@@ -9,12 +9,15 @@
 
 package service
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+
 type Storage interface {
 	ConsulConfig() (*StorageConsulConfig, error)
+	CreateTable(tableId string, isSyncDb bool, storageConfig *optionx.Options) error
 }
 
 // StorageConsulConfig storage的consul配置信息
 type StorageConsulConfig struct {
-	ClusterInfoConsulConfig `json:"cluster_config"`
-	StorageConfig           map[string]interface{} `json:"storage_config"`
+	ClusterInfoConsulConfig
+	StorageConfig map[string]interface{} `json:"storage_config"`
 }

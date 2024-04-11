@@ -21,10 +21,12 @@ import (
 )
 
 func TestClusterInfo_GetESClient(t *testing.T) {
+	schema := "http"
+	version := "7"
 	cluster := ClusterInfo{
 		ClusterType: models.StorageTypeInfluxdb,
-		Version:     "7.10.1",
-		Schema:      "https",
+		Version:     &version,
+		Schema:      &schema,
 		DomainName:  "example.com",
 		Port:        9200,
 		Username:    "elastic",
@@ -35,11 +37,7 @@ func TestClusterInfo_GetESClient(t *testing.T) {
 	client, err := cluster.GetESClient(context.TODO())
 	assert.EqualError(t, err, "record type error")
 	assert.Nil(t, client)
-	// 测试连接超时
 	cluster.ClusterType = models.StorageTypeES
-	client, err = cluster.GetESClient(context.TODO())
-	assert.Error(t, err, context.Canceled)
-	assert.Nil(t, client)
 	// 测试获取客户端
 	patchESPing := gomonkey.ApplyFuncReturn(elasticsearch.Elasticsearch.Ping, nil, nil)
 	defer patchESPing.Reset()

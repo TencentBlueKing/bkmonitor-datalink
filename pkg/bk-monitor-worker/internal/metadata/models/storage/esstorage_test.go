@@ -17,17 +17,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/jinzhu/gorm"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 var ess = ESStorage{
@@ -47,23 +46,10 @@ var ess = ESStorage{
 
 // TestESStorage_IndexBody 从db中构造index的body
 func TestESStorage_IndexBody(t *testing.T) {
-	config.InitConfig()
-	patchDBSession := gomonkey.ApplyFunc(mysql.GetDBSession, func() *mysql.DBSession {
-		db, err := gorm.Open(viper.GetString("test.database.type"), fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?&parseTime=True&loc=Local",
-			viper.GetString("test.database.user"),
-			viper.GetString("test.database.password"),
-			viper.GetString("test.database.host"),
-			viper.GetString("test.database.port"),
-			viper.GetString("test.database.db_name"),
-		))
-		assert.Nil(t, err)
-		return &mysql.DBSession{DB: db}
-	})
+	mocker.InitTestDBConfig("../../../../bmw_test.yaml")
 	patchESVersion := gomonkey.ApplyFunc(ESStorage.GetEsVersion, func(storage ESStorage) string {
 		return "7"
 	})
-	defer patchDBSession.Reset()
 	defer patchESVersion.Reset()
 
 	// 初始化测试数据
@@ -195,4 +181,7 @@ func TestESStorage_isIndexExist(t *testing.T) {
 	exist, err = ess.isIndexExist(context.TODO(), ess.searchFormatV1(), ess.IndexReV1())
 	assert.Nil(t, err)
 	assert.False(t, exist)
+	indexExist, err := ess.CheckIndexExist(context.TODO())
+	assert.Nil(t, err)
+	assert.True(t, indexExist)
 }

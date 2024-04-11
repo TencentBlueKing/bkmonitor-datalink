@@ -11,17 +11,19 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/dependentredis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in accessvmrecord.go -out qs_accessvmrecord.go
+//go:generate goqueryset -in accessvmrecord.go -out qs_accessvmrecord_gen.go
 
 // AccessVMRecord access vm record model
 // gen:qs
@@ -44,12 +46,13 @@ func (AccessVMRecord) TableName() string {
 // RefreshVmRouter 更新 vm router
 func (a AccessVMRecord) RefreshVmRouter(ctx context.Context) error {
 	var db, measurement string
-	splits := strings.SplitN(a.ResultTableId, ".", 1)
+	splits := strings.SplitN(a.ResultTableId, ".", 2)
 	if len(splits) != 2 {
 		logger.Errorf("table_id: %s not split by '.'", a.ResultTableId)
+	} else {
+		db = splits[0]
+		measurement = splits[1]
 	}
-	db = splits[0]
-	measurement = splits[1]
 	varMap := map[string]interface{}{
 		"storageID":   strconv.Itoa(int(a.StorageClusterID)),
 		"table_id":    a.ResultTableId,
@@ -94,15 +97,12 @@ func RefreshVmRouter(ctx context.Context, objs *[]AccessVMRecord, goroutineLimit
 		}(record, wg, ch)
 	}
 	wg.Wait()
-	client, err := dependentredis.GetInstance(ctx)
+	client := redis.GetStorageRedisInstance()
+	channel := fmt.Sprintf("%s%s", models.InfluxdbKeyPrefix, cfg.BypassSuffixPath)
+	err := client.Publish(channel, models.QueryVmStorageRouterKey)
 	if err != nil {
-		logger.Errorf("get redis client error, %v", err)
-		return
-	}
-	err = client.Publish(models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
-	if err != nil {
-		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey, err)
+		logger.Errorf("publish redis failed, channel: %s, msg: %v, %v", channel, models.QueryVmStorageRouterKey, err)
 	} else {
-		logger.Infof("publish redis successfully, channel: %s, msg: %v", models.InfluxdbKeyPrefix, models.QueryVmStorageRouterKey)
+		logger.Infof("publish redis successfully, channel: %s, msg: %v", channel, models.QueryVmStorageRouterKey)
 	}
 }

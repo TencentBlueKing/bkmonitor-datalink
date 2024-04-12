@@ -12,12 +12,12 @@ package notifier
 import (
 	"context"
 	"crypto/sha512"
-	"k8s.io/client-go/util/flowcontrol"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/valyala/fastjson"
 	"github.com/xdg-go/scram"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"

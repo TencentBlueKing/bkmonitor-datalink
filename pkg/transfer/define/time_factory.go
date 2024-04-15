@@ -17,6 +17,7 @@ import (
 
 // timeLayouts : Payload factory mappings
 var timeLayouts = make(map[string]string)
+
 var timeLayoutsMut sync.RWMutex
 
 // RegisterTimeLayout 注册时间处理模板
@@ -26,6 +27,12 @@ var RegisterTimeLayout = func(name, layout string) {
 
 	if name == "" {
 		panic(errors.New("name can not be empty"))
+	}
+
+	// 不重复注册
+	_, ok := timeLayouts[name]
+	if ok {
+		return
 	}
 	timeLayouts[name] = layout
 }

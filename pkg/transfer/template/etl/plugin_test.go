@@ -212,15 +212,17 @@ func (s *PrepareByResultTablePluginSuite) TestPrepareByResultTablePlugin() {
 			config.ResultTableOptLogSeparatorRegexp: `{"(?P<k>\w+)":(?P<v>\w+)}`,
 		},
 	})
-	cases = append(cases, &config.MetaResultTableConfig{Option: map[string]interface{}{
-		config.ResultTableOptSeparatorAction: "json",
-	},
+	cases = append(cases, &config.MetaResultTableConfig{
+		Option: map[string]interface{}{
+			config.ResultTableOptSeparatorAction: "json",
+		},
 	})
-	cases = append(cases, &config.MetaResultTableConfig{Option: map[string]interface{}{
-		config.ResultTableOptSeparatorAction:       "delimiter",
-		config.PipelineConfigOptLogSeparatedFields: []interface{}{"data"},
-		config.PipelineConfigOptLogSeparator:       ",",
-	},
+	cases = append(cases, &config.MetaResultTableConfig{
+		Option: map[string]interface{}{
+			config.ResultTableOptSeparatorAction:       "delimiter",
+			config.PipelineConfigOptLogSeparatedFields: []interface{}{"data"},
+			config.PipelineConfigOptLogSeparator:       ",",
+		},
 	})
 
 	for i, c := range cases {

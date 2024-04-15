@@ -258,7 +258,9 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 		lbl := make([]string, 0, len(cond)+len(defaultLabels))
 		for _, f := range cond {
 			nf := f.ContainsToPromReg()
-			val := strings.ReplaceAll(nf.Value[0], `\`, `\\`)
+			val := nf.Value[0]
+			val = strings.ReplaceAll(val, `\`, `\\`)
+			val = strings.ReplaceAll(val, `"`, `\"`)
 			lbl = append(lbl, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
 		}
 		for _, dl := range defaultLabels {

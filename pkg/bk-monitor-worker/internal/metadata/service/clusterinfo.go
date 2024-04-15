@@ -13,6 +13,10 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/IBM/sarama"
+	"github.com/pkg/errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 )
@@ -58,10 +62,25 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 		},
 		ClusterType: k.ClusterType,
 		AuthInfo: AuthInfo{
-			Password: cipher.AESDecrypt(k.Password),
+			Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
 			Username: k.Username,
 		},
 	}
+}
+
+func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
+	if k.ClusterInfo == nil {
+		return nil, errors.New("ClusterInfo can not be nil")
+	}
+	if k.ClusterType != models.StorageTypeKafka {
+		return nil, errors.Errorf("cluster type is not kafka")
+	}
+	hosts := fmt.Sprintf("%s:%v", k.DomainName, k.Port)
+	client, err := sarama.NewClient([]string{hosts}, sarama.NewConfig())
+	if err != nil {
+		return nil, errors.Wrapf(err, "new kafka client [%s] failed", hosts)
+	}
+	return client, nil
 }
 
 // base64WithPrefix 编码，并添加上前缀
@@ -90,27 +109,28 @@ type AuthInfo struct {
 
 // ClusterConfig 集群配置信息
 type ClusterConfig struct {
-	DomainName                   string `json:"domain_name"`
-	Port                         uint   `json:"port"`
-	ExtranetDomainName           string `json:"extranet_domain_name"`
-	ExtranetPort                 uint   `json:"extranet_port"`
-	Schema                       string `json:"schema"`
-	IsSslVerify                  bool   `json:"is_ssl_verify"`
-	SslVerificationMode          string `json:"ssl_verification_mode"`
-	SslInsecureSkipVerify        bool   `json:"ssl_insecure_skip_verify"`
-	SslCertificateAuthorities    string `json:"ssl_certificate_authorities"`
-	SslCertificate               string `json:"ssl_certificate"`
-	SslCertificateKey            string `json:"ssl_certificate_key"`
-	RawSslCertificateAuthorities string `json:"raw_ssl_certificate_authorities"`
-	RawSslCertificate            string `json:"raw_ssl_certificate"`
-	RawSslCertificateKey         string `json:"raw_ssl_certificate_key"`
-	ClusterId                    uint   `json:"cluster_id"`
-	ClusterName                  string `json:"cluster_name"`
-	Version                      string `json:"version"`
-	CustomOption                 string `json:"custom_option"`
-	RegisteredSystem             string `json:"registered_system"`
-	Creator                      string `json:"creator"`
-	CreateTime                   int64  `json:"create_time"`
-	LastModifyUser               string `json:"last_modify_user"`
-	IsDefaultCluster             bool   `json:"is_default_cluster"`
+	DomainName                   string  `json:"domain_name"`
+	Port                         uint    `json:"port"`
+	ExtranetDomainName           string  `json:"extranet_domain_name"`
+	ExtranetPort                 uint    `json:"extranet_port"`
+	Schema                       *string `json:"schema"`
+	IsSslVerify                  bool    `json:"is_ssl_verify"`
+	SslVerificationMode          string  `json:"ssl_verification_mode"`
+	SslInsecureSkipVerify        bool    `json:"ssl_insecure_skip_verify"`
+	SslCertificateAuthorities    string  `json:"ssl_certificate_authorities"`
+	SslCertificate               string  `json:"ssl_certificate"`
+	SslCertificateKey            string  `json:"ssl_certificate_key"`
+	RawSslCertificateAuthorities string  `json:"raw_ssl_certificate_authorities"`
+	RawSslCertificate            string  `json:"raw_ssl_certificate"`
+	RawSslCertificateKey         string  `json:"raw_ssl_certificate_key"`
+	ClusterId                    uint    `json:"cluster_id"`
+	ClusterName                  string  `json:"cluster_name"`
+	Version                      *string `json:"version"`
+	CustomOption                 string  `json:"custom_option"`
+	RegisteredSystem             string  `json:"registered_system"`
+	Creator                      string  `json:"creator"`
+	CreateTime                   int64   `json:"create_time"`
+	LastModifyUser               string  `json:"last_modify_user"`
+	IsDefaultCluster             bool    `json:"is_default_cluster"`
+	InstanceClusterName          string  `json:"instance_cluster_name,omitempty"`
 }

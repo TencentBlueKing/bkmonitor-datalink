@@ -141,13 +141,15 @@ func (s *HandlerSuite) TestFillCmdbHandlerCreatorWithDetail() {
 	}{
 		{
 			"有bizId上报,无其他",
-			true, "2", nil, define.ETLRecord{
+			true, "2", nil,
+			define.ETLRecord{
 				Dimensions: map[string]interface{}{define.RecordBizIDFieldName: "2"},
 			},
 		},
 		{
 			"啥都有 transfer 不管上传数据是否合理 均不补充 考虑新老采集器",
-			true, "2", []byte(`[{"bk_biz_id":2,"bk_biz_name":"蓝鲸","bk_module_id":31,"bk_module_name":"","bk_service_status":"1","bk_set_env":"3","bk_set_id":8,"bk_set_name":"配置平台"}]`), define.ETLRecord{
+			true, "2", []byte(`[{"bk_biz_id":2,"bk_biz_name":"蓝鲸","bk_module_id":31,"bk_module_name":"","bk_service_status":"1","bk_set_env":"3","bk_set_id":8,"bk_set_name":"配置平台"}]`),
+			define.ETLRecord{
 				Dimensions: map[string]interface{}{define.RecordBizIDFieldName: "2", define.RecordCMDBLevelFieldName: []byte(`[{"bk_biz_id":2,"bk_biz_name":"蓝鲸","bk_module_id":31,"bk_module_name":"","bk_service_status":"1","bk_set_env":"3","bk_set_id":8,"bk_set_name":"配置平台"}]`)},
 			},
 		},
@@ -182,7 +184,6 @@ func (s *HandlerSuite) TestFillCmdbHandlerCreatorWithDetail() {
 			})
 			s.Equalf(value.cmdbLevel, record.Dimensions[define.RecordCMDBLevelFieldName], "%s", value.name)
 		})
-
 	}
 }
 

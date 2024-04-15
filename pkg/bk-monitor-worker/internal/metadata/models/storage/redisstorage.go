@@ -9,21 +9,33 @@
 
 package storage
 
-//go:generate goqueryset -in redisstorage.go -out qs_redisstorage.go
+import (
+	"github.com/jinzhu/gorm"
+)
+
+//go:generate goqueryset -in redisstorage.go -out qs_redisstorage_gen.go
 
 // RedisStorage redis storage model
 // gen:qs
 type RedisStorage struct {
 	TableID          string `json:"table_id" gorm:"primary_key;size:128"`
-	Command          string `json:"command" gorm:"size:32;default:PUBLISH"`
+	Command          string `json:"command" gorm:"size:32"`
 	Key              string `json:"key" gorm:"size:256"`
 	DB               uint   `json:"db" gorm:"column:db"`
 	StorageClusterID uint   `json:"storage_cluster_id" gorm:"storage_cluster_id"`
-	IsSentinel       bool   `json:"is_sentinel" gorm:"default:false"`
+	IsSentinel       bool   `json:"is_sentinel" gorm:"column:is_sentinel"`
 	MasterName       string `json:"master_name" gorm:"size:128"`
 }
 
 // TableName 用于设置表的别名
 func (RedisStorage) TableName() string {
 	return "metadata_redisstorage"
+}
+
+// BeforeCreate 配置默认字段
+func (r *RedisStorage) BeforeCreate(tx *gorm.DB) error {
+	if r.Command == "" {
+		r.Command = "PUBLISH"
+	}
+	return nil
 }

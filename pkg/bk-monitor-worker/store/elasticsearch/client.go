@@ -221,6 +221,55 @@ func (e Elasticsearch) GetIndices(indices []string) (*Response, error) {
 	}
 }
 
+// CatIndices 获取索引统计数据
+func (e Elasticsearch) CatIndices(ctx context.Context, indices []string, format string) (*Response, error) {
+	switch e.Version {
+	case "5":
+		client, ok := e.client.(*es5.Client)
+		if !ok {
+			return nil, ClientVersionErr
+		}
+		response, err := client.Cat.Indices(client.Cat.Indices.WithIndex(indices...), client.Cat.Indices.WithFormat(format), client.Cat.Indices.WithContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+		resp, err := e.ParseResponse(response)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	case "6":
+		client, ok := e.client.(*es6.Client)
+		if !ok {
+			return nil, ClientVersionErr
+		}
+		response, err := client.Cat.Indices(client.Cat.Indices.WithIndex(indices...), client.Cat.Indices.WithFormat(format), client.Cat.Indices.WithContext(ctx))
+
+		if err != nil {
+			return nil, err
+		}
+		resp, err := e.ParseResponse(response)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	default:
+		client, ok := e.client.(*es7.Client)
+		if !ok {
+			return nil, ClientVersionErr
+		}
+		response, err := client.Cat.Indices(client.Cat.Indices.WithIndex(indices...), client.Cat.Indices.WithFormat(format), client.Cat.Indices.WithContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+		resp, err := e.ParseResponse(response)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+}
+
 // SearchWithBody 通过body进行数据查询
 func (e Elasticsearch) SearchWithBody(ctx context.Context, index string, body io.Reader) (*Response, error) {
 	switch e.Version {
@@ -576,7 +625,7 @@ func (e Elasticsearch) DeleteIndex(ctx context.Context, indices []string) (*Resp
 		if !ok {
 			return nil, ClientVersionErr
 		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
+		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx), client.Indices.Delete.WithIgnoreUnavailable(true))
 		if err != nil {
 			return nil, err
 		}
@@ -590,7 +639,7 @@ func (e Elasticsearch) DeleteIndex(ctx context.Context, indices []string) (*Resp
 		if !ok {
 			return nil, ClientVersionErr
 		}
-		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx))
+		response, err := client.Indices.Delete(indices, client.Indices.Delete.WithContext(ctx), client.Indices.Delete.WithIgnoreUnavailable(true))
 		if err != nil {
 			return nil, err
 		}

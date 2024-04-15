@@ -16,10 +16,11 @@ const (
 )
 
 const (
-	ConfigTypePlatform  = "platform"
-	ConfigTypeSubConfig = "subconfig"
-	ConfigTypeReportV2  = "report_v2"
-	ConfigTypeReportV1  = "report"
+	ConfigTypePrivileged = "privileged"
+	ConfigTypePlatform   = "platform"
+	ConfigTypeSubConfig  = "subconfig"
+	ConfigTypeReportV2   = "report_v2"
+	ConfigTypeReportV1   = "report"
 
 	ConfigFieldApmConfig  = "apm"
 	ConfigFieldProcessor  = "processor"

@@ -1,0 +1,191 @@
+metrics:
+  - metric_name: influxdb_httpd_write_req
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("writeReq") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_points_written_dropped
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("pointsWrittenDropped") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_points_written_ok
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("pointsWrittenOK") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_req
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("req") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_req_1h_increase
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select DIFFERENCE(LAST("req")) as value from "httpd" where time > now() - 1h group by time(1h), "hostname", "bind"
+  - metric_name: influxdb_httpd_query_req
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("queryReq") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_points_written_fail
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("pointsWrittenFail") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_client_error
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("clientError") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_server_error
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("serverError") as value from "httpd" where time > now() - 300s group by "hostname", "bind"
+  - metric_name: influxdb_httpd_server_error_1h_increase
+    tags:
+      - bkm_hostname
+      - hostname
+      - bind
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select DIFFERENCE(LAST("serverError")) as value from "httpd" where time > now() - 1h group by time(1h), "hostname", "bind"
+  - metric_name: influxdb_database_num_series
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - hostname
+    cluster_type: influxdb
+    config:
+      sql: select LAST("numSeries") as value from "database" where time > now() - 300s group by "hostname", "database"
+  - metric_name: influxdb_shard_write_points_ok
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - engine
+      - hostname
+      - id
+      - index_type
+      - path
+      - retention_policy
+      - wal_path
+    cluster_type: influxdb
+    config:
+      sql: select LAST("writePointsOk") as value from "shard" where time > now() - 300s group by "database", "engine", "hostname", "id", "indexType", "path", "retentionPolicy", "walPath"
+  - metric_name: influxdb_shard_write_points_ok_1h_increase
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - engine
+      - hostname
+      - id
+      - index_type
+      - path
+      - retention_policy
+      - wal_path
+    cluster_type: influxdb
+    config:
+      sql: select DIFFERENCE(LAST("writePointsOk")) as value from "shard" where time > now() - 2h group by time(1h), "database", "engine", "hostname", "id", "indexType", "path", "retentionPolicy", "walPath"
+  - metric_name: influxdb_shard_write_points_err
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - engine
+      - hostname
+      - id
+      - index_type
+      - path
+      - retention_policy
+      - wal_path
+    cluster_type: influxdb
+    config:
+      sql: select LAST("writePointsErr") as value from "shard" where time > now() - 300s group by "database", "engine", "hostname", "id", "indexType", "path", "retentionPolicy", "walPath"
+  - metric_name: influxdb_shard_write_points_err_1h_increase
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - engine
+      - hostname
+      - id
+      - index_type
+      - path
+      - retention_policy
+      - wal_path
+    cluster_type: influxdb
+    config:
+      sql: select DIFFERENCE(LAST("writePointsErr")) as value from "shard" where time > now() - 2h group by time(1h), "database", "engine", "hostname", "id", "indexType", "path", "retentionPolicy", "walPath"
+  - metric_name: influxdb_shard_disk_bytes
+    tags:
+      - bkm_hostname
+      - bkm_cluster
+      - database
+      - engine
+      - hostname
+      - id
+      - index_type
+      - path
+      - retention_policy
+      - wal_path
+    cluster_type: influxdb
+    config:
+      sql: select LAST("diskBytes") as value from "shard" where time > now() - 300s group by "database", "engine", "hostname", "id", "indexType", "path", "retentionPolicy", "walPath"
+  - metric_name: influxdb_runtime_sys
+    tags:
+      - bkm_hostname
+      - hostname
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("Sys") as value from runtime where time > now() - 300s group by "hostname"
+  - metric_name: influxdb_runtime_alloc
+    tags:
+      - bkm_hostname
+      - hostname
+      - bkm_cluster
+    cluster_type: influxdb
+    config:
+      sql: select LAST("Alloc") as value from runtime where time > now() - 300s group by "hostname"

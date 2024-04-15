@@ -11,25 +11,36 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"reflect"
+	"strings"
+	"time"
 
-	"github.com/spf13/viper"
+	"github.com/google/uuid"
+	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // IgnoreConsulSyncDataIdList 忽略同步consul的data_id
 var IgnoreConsulSyncDataIdList = []uint{1002, 1003, 1004, 1005, 1006}
+
+// NsTimestampEtlConfigList 需要指定是纳秒级别的清洗配置内容
+var NsTimestampEtlConfigList = []string{"bk_standard_v2_event", "bk_standard_v2_time_series"}
 
 type DataSourceSvc struct {
 	*resulttable.DataSource
@@ -41,9 +52,148 @@ func NewDataSourceSvc(obj *resulttable.DataSource) DataSourceSvc {
 	}
 }
 
+func (d DataSourceSvc) CreateDataSource(dataName, etcConfig, operator, sourceLabel string, mqCluster uint, typeLabel, transferClusterId, sourceSystem string) (*resulttable.DataSource, error) {
+	db := mysql.GetDBSession().DB
+	// 判断两个使用到的标签是否存在
+	count, err := resulttable.NewLabelQuerySet(db).LabelIdEq(sourceLabel).LabelTypeEq(models.LabelTypeSource).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, errors.Errorf("user [%s] try to create datasource but use source_type [%s], which is not exists", operator, sourceLabel)
+	}
+	count, err = resulttable.NewLabelQuerySet(db).LabelIdEq(typeLabel).LabelTypeEq(models.LabelTypeType).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, errors.Errorf("user [%s] try to create datasource but use type_label [%s], which is not exists", operator, typeLabel)
+	}
+	// 判断参数是否符合预期
+	// 数据源名称是否重复
+	count, err = resulttable.NewDataSourceQuerySet(db).DataNameEq(dataName).Count()
+	if err != nil {
+		return nil, err
+	}
+	if count != 0 {
+		return nil, errors.Errorf("data_name [%s] is already exists, maybe something go wrong", dataName)
+	}
+	// 如果集群信息无提供，则使用默认的MQ集群信息
+	var mqClusterObj storage.ClusterInfo
+	if mqCluster == 0 {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterTypeEq(models.StorageTypeKafka).
+			IsDefaultClusterEq(true).One(&mqClusterObj); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(mqCluster).One(&mqClusterObj); err != nil {
+			return nil, err
+		}
+	}
+	bkDataId, err := d.ApplyForDataIdFromGse(operator)
+	if err != nil {
+		return nil, errors.Wrap(err, "apply for data_id error")
+	}
+	if transferClusterId == "" {
+		transferClusterId = "default"
+	}
+	// 此处启动DB事务，创建默认的信息
+	ds := resulttable.DataSource{
+		BkDataId:          bkDataId,
+		Token:             d.makeToken(),
+		DataName:          dataName,
+		MqClusterId:       mqClusterObj.ClusterID,
+		EtlConfig:         etcConfig,
+		Creator:           operator,
+		CreateTime:        time.Now(),
+		LastModifyUser:    operator,
+		LastModifyTime:    time.Now(),
+		TypeLabel:         typeLabel,
+		SourceLabel:       sourceLabel,
+		SourceSystem:      sourceSystem,
+		IsEnable:          true,
+		TransferClusterId: transferClusterId,
+		IsPlatformDataId:  false,
+		IsCustomSource:    true,
+		SpaceTypeId:       "all",
+		SpaceUid:          "",
+	}
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
+			resulttable.DataSourceDBSchema.BkDataId.String():          ds.BkDataId,
+			resulttable.DataSourceDBSchema.Token.String():             ds.Token,
+			resulttable.DataSourceDBSchema.DataName.String():          ds.DataName,
+			resulttable.DataSourceDBSchema.MqClusterId.String():       ds.MqClusterId,
+			resulttable.DataSourceDBSchema.EtlConfig.String():         ds.EtlConfig,
+			resulttable.DataSourceDBSchema.TypeLabel.String():         ds.TypeLabel,
+			resulttable.DataSourceDBSchema.SourceLabel.String():       ds.SourceLabel,
+			resulttable.DataSourceDBSchema.SourceSystem.String():      ds.SourceSystem,
+			resulttable.DataSourceDBSchema.IsEnable.String():          ds.IsEnable,
+			resulttable.DataSourceDBSchema.TransferClusterId.String(): ds.TransferClusterId,
+			resulttable.DataSourceDBSchema.IsPlatformDataId.String():  ds.IsPlatformDataId,
+			resulttable.DataSourceDBSchema.IsCustomSource.String():    ds.IsCustomSource,
+			resulttable.DataSourceDBSchema.SpaceTypeId.String():       ds.SpaceTypeId,
+			resulttable.DataSourceDBSchema.SpaceUid.String():          ds.SpaceUid,
+		}), ""))
+	} else {
+		if err := ds.Create(db); err != nil {
+			return nil, err
+		}
+	}
+	logger.Infof("data_id [%v] data_name [%s] by operator [%s] now is pre-create.", ds.BkDataId, ds.DataName, ds.Creator)
+	// 获取这个数据源对应的配置记录model，并创建一个新的配置记录
+	mqConfig, err := NewKafkaTopicInfoSvc(nil).CreateInfo(bkDataId, "", 0, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	ds.MqConfigId = mqConfig.Id
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(ds.TableName(), map[string]interface{}{
+			resulttable.DataSourceDBSchema.BkDataId.String():   ds.BkDataId,
+			resulttable.DataSourceDBSchema.MqConfigId.String(): ds.MqConfigId,
+		}), ""))
+	} else {
+		err = ds.Update(db, resulttable.DataSourceDBSchema.MqConfigId)
+		if err != nil {
+			return nil, err
+		}
+	}
+	logger.Infof("data_id [%v] now is relate to its mq config id [%v]", ds.BkDataId, ds.MqConfigId)
+
+	// 判断是否NS支持的etl配置，如果是，则需要追加option内容
+	tx := db.Begin()
+	for _, etl := range NsTimestampEtlConfigList {
+		if etcConfig != etl {
+			continue
+		}
+		err := NewDataSourceOptionSvc(nil).CreateOption(ds.BkDataId, models.OptionTimestampUnit, "ms", operator, tx)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		logger.Infof("bk_data_id [%v] etl_config [%s] so is has now has option [%s] with value->[ms]", ds.BkDataId, etcConfig, models.OptionTimestampUnit)
+	}
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		tx.Rollback()
+	} else {
+		tx.Commit()
+	}
+	// 触发consul刷新
+	err = NewDataSourceSvc(&ds).RefreshOuterConfig(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &ds, nil
+}
+
+// makeToken
+func (d DataSourceSvc) makeToken() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
 // ConsulPath 获取datasource的consul根路径
 func (DataSourceSvc) ConsulPath() string {
-	return fmt.Sprintf(models.DataSourceConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 // ConsulConfigPath 获取具体data_id的consul配置路径
@@ -55,7 +205,7 @@ func (d DataSourceSvc) ConsulConfigPath() string {
 func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
 	var kafkaTopicInfo storage.KafkaTopicInfo
 	if err := storage.NewKafkaTopicInfoQuerySet(mysql.GetDBSession().DB).BkDataIdEq(d.BkDataId).One(&kafkaTopicInfo); err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "query KafkaTopicInfo failed")
 	}
 	return &kafkaTopicInfo, nil
 }
@@ -64,7 +214,7 @@ func (d DataSourceSvc) MqConfigObj() (*storage.KafkaTopicInfo, error) {
 func (d DataSourceSvc) MqCluster() (*storage.ClusterInfo, error) {
 	var clusterInfo storage.ClusterInfo
 	if err := storage.NewClusterInfoQuerySet(mysql.GetDBSession().DB).ClusterIDEq(d.MqClusterId).One(&clusterInfo); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "query mq cluster failed")
 	}
 	return &clusterInfo, nil
 }
@@ -115,13 +265,14 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 		"space_type_id":       d.SpaceTypeId,
 		"space_uid":           d.SpaceUid,
 	}
-
+	db := mysql.GetDBSession().DB
 	// 获取ResultTable的配置
 	if withRtInfo {
-		var resultTableInfoList []interface{}
+		resultTableInfoList := make([]interface{}, 0)
+		resultConfig["result_table_list"] = resultTableInfoList
 		var resultTableIdList []string
 		var dataSourceRtList []resulttable.DataSourceResultTable
-		if err := resulttable.NewDataSourceResultTableQuerySet(mysql.GetDBSession().DB).
+		if err := resulttable.NewDataSourceResultTableQuerySet(db).
 			BkDataIdEq(d.BkDataId).All(&dataSourceRtList); err != nil {
 			return nil, err
 		}
@@ -132,7 +283,7 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 			resultTableIdList = append(resultTableIdList, t.TableId)
 		}
 		var resultTableList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).TableIdIn(resultTableIdList...).
+		if err := resulttable.NewResultTableQuerySet(db).TableIdIn(resultTableIdList...).
 			IsDeletedEq(false).IsEnableEq(true).All(&resultTableList); err != nil {
 			return nil, err
 		}
@@ -179,18 +330,24 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				shipperList = append(shipperList, consulConfig)
 			}
 			var fieldList = make([]interface{}, 0)
-			if fields, ok := tableFields[rt.TableId]; ok {
-				fieldList = fields
+			// 如果是自定义上报的情况，不需要将字段信息写入到consul上
+			if !d.isCustomTimeSeriesReport() {
+				if fields, ok := tableFields[rt.TableId]; ok {
+					fieldList = fields
+				}
 			}
 			var options = make(map[string]interface{})
 			if ops, ok := rtOptions[rt.TableId]; ok {
 				options = ops
 			}
+			if len(shipperList) == 0 {
+				shipperList = make([]*StorageConsulConfig, 0)
+			}
 			resultTableInfoList = append(resultTableInfoList, map[string]interface{}{
 				"bk_biz_id":    rt.BkBizId,
 				"result_table": rt.TableId,
 				"shipper_list": shipperList,
-				"field_list":   fieldList, // 如果是自定义上报的情况，不需要将字段信息写入到consul上
+				"field_list":   fieldList,
 				"schema_type":  rt.SchemaType,
 				"option":       options,
 			})
@@ -200,6 +357,11 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 	return resultConfig, nil
 }
 
+// 是否自定义上报的数据源
+func (d DataSourceSvc) isCustomTimeSeriesReport() bool {
+	return slicex.IsExistItem([]string{models.ETLConfigTypeBkStandardV2TimeSeries}, d.EtlConfig)
+}
+
 // RefreshGseConfig 刷新GSE配置，同步路由配置到gse
 func (d DataSourceSvc) RefreshGseConfig() error {
 	mqCluster, err := d.MqCluster()
@@ -207,31 +369,20 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return err
 	}
 	if mqCluster.GseStreamToId == -1 {
-		return errors.New(fmt.Sprintf("dataid [%v] mq is not inited", d.BkDataId))
+		return errors.Errorf("dataid [%v] mq is not inited", d.BkDataId)
 	}
-	gseApi, err := api.GetGseApi()
+	params := bkgse.QueryRouteParams{}
+	params.Condition.ChannelId = d.BkDataId
+	params.Condition.PlatName = "bkmonitor"
+	params.Operation.OperatorName = "admin"
+	data, err := apiservice.Gse.QueryRoute(params)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "data_id [%v] query gse route failed", d.BkDataId)
 	}
-	var resp bkgse.APICommonResp
-	_, err = gseApi.QueryRoute().SetBody(map[string]interface{}{
-		"condition": map[string]interface{}{
-			"plat_name": "bkmonitor", "channel_id": d.BkDataId,
-		},
-		"operation": map[string]interface{}{
-			"operator_name": "admin",
-		},
-	}).SetResult(&resp).Request()
-	if err != nil {
-		logger.Errorf("data_id [%v] query gse route failed, error: %v", err)
-		return err
-	}
-	if resp.Data == nil {
-		logger.Errorf("data_id [%v] can not find route info from gse, %s, please check your datasource config", d.BkDataId, resp.Message)
-		err := d.AddBuiltInChannelIdToGse()
-		if err != nil {
-			logger.Errorf("add builtin channel id [%v] to gse failed, %v", d.BkDataId, err)
-			return err
+	if data == nil {
+		logger.Errorf("data_id [%v] can not find route info from gse, please check your datasource config", d.BkDataId)
+		if err := d.AddBuiltInChannelIdToGse(); err != nil {
+			return errors.Wrapf(err, "add builtin channel id [%v] to gse failed", d.BkDataId)
 		}
 		return nil
 	}
@@ -250,7 +401,7 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return err
 	}
 
-	dataJSON, err := jsonx.MarshalString(resp.Data)
+	dataJSON, err := jsonx.MarshalString(data)
 	if err != nil {
 		return err
 	}
@@ -281,29 +432,38 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 			break
 		}
 	}
-
-	equal := reflect.DeepEqual(*oldRoute, *config)
+	var equal bool
+	if oldRoute == nil {
+		equal = false
+	} else {
+		equal, err = jsonx.CompareObjects(*oldRoute, *config)
+		if err != nil {
+			return errors.Wrapf(err, "CompareObjects [%#v] and [%#v] failed", *oldRoute, *config)
+		}
+	}
 	if equal {
 		logger.Infof("data_id [%v] gse route config has no difference from gse, skip", d.BkDataId)
 		return nil
 	}
-	logger.Infof("data_id [%v] gse route config is different from gse, will refresh it", d.BkDataId)
-	var updateResult bkgse.APICommonResp
-	_, err = gseApi.UpdateRoute().SetBody(map[string]interface{}{
-		"condition": map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
-		"operation": map[string]interface{}{"operator_name": "admin"},
-		"specification": map[string]interface{}{
-			"route": []interface{}{config},
+	logger.Infof("data_id [%v] gse route config [%v] is different from gse [%v], will refresh it", d.BkDataId, config, oldRoute)
+	metrics.GSEUpdateCount(d.BkDataId)
+	updateParam := bkgse.UpdateRouteParams{
+		Condition: bkgse.RouteMetadata{
+			ChannelId: d.BkDataId,
+			PlatName:  "bkmonitor",
 		},
-	}).SetResult(&updateResult).Request()
-	if err != nil {
-		return err
+		Specification: map[string]interface{}{"route": []interface{}{config}},
+		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
-	if updateResult.Code != 0 {
-		logger.Errorf("try to update gse route for channel id [%v] failed, %s", d.BkDataId, updateResult.Message)
-		return errors.New(updateResult.Message)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
+		paramStr, _ := jsonx.MarshalString(updateParam)
+		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+	} else {
+		if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
+			return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
+		}
+		logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
 	}
-	logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
 	return nil
 }
 
@@ -318,24 +478,24 @@ func (d DataSourceSvc) AddBuiltInChannelIdToGse() error {
 		logger.Errorf("make gse route config error, %v", err)
 		return err
 	}
-	params := map[string]interface{}{
-		"metadata":  map[string]interface{}{"channel_id": d.BkDataId, "plat_name": "bkmonitor"},
-		"operation": map[string]interface{}{"operator_name": "admin"},
-		"route":     []interface{}{route},
+	metrics.GSEUpdateCount(d.BkDataId)
+	params := bkgse.AddRouteParams{
+		Metadata: bkgse.RouteMetadata{
+			ChannelId: d.BkDataId,
+			PlatName:  "bkmonitor",
+		},
+		Route:     []interface{}{route},
+		Operation: bkgse.Operation{OperatorName: "admin"},
 	}
-	gseApi, err := api.GetGseApi()
-	if err != nil {
-		return err
-	}
-	var resp bkgse.APICommonResp
-	_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
-	if err != nil {
-		return err
-	}
-	if resp.Code != 0 {
-		logger.Warnf("try to add builtin channel id [%v] to gse, %s", d.BkDataId, resp.Message)
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
 	} else {
-		logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
+		data, err := apiservice.Gse.AddRoute(params)
+		if err != nil {
+			return err
+		}
+		logger.Infof("data_id [%v] success to push route info to gse, [%v]", d.BkDataId, data)
 	}
 	return nil
 }
@@ -381,43 +541,83 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 			return nil
 		}
 	}
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
 	val, err := d.ToJson(true, true)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "datasource to_json failed")
 	}
 	valStr, err := jsonx.MarshalString(val)
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(d.ConsulConfigPath(), valStr, 0)
+	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr)
 	if err != nil {
-		logger.Errorf("data_id [%v] put [%s] failed, %v", d.BkDataId, d.ConsulConfigPath(), err)
+		logger.Errorf("data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err
 	}
-	logger.Infof("data_id [%v] has update config to [%v] success", d.BkDataId, d.ConsulConfigPath())
+	logger.Infof("data_id [%v] has update config [%s] to [%v] success", d.BkDataId, valStr, d.ConsulConfigPath())
 	return nil
 }
 
 func (d DataSourceSvc) RefreshOuterConfig(ctx context.Context) error {
 	if !d.IsEnable {
-		logger.Infof("data_id [%s] is not enable, nothing will refresh to outer systems.", d.BkDataId)
+		logger.Infof("data_id [%d] is not enable, nothing will refresh to outer systems.", d.BkDataId)
 		return nil
 	}
+
+	// NOTE: 当刷新 gse 异常时，仅记录日志
 	err := d.RefreshGseConfig()
 	if err != nil {
-		logger.Errorf("data_id [%v] refresh gse config failed, %v", d.BkDataId, err)
-		return err
+		logger.Errorf("data_id [%d] refresh gse config failed, %v", d.BkDataId, err)
 	}
 
 	err = d.RefreshConsulConfig(ctx)
 	if err != nil {
-		logger.Errorf("data_id [%v] refresh consul config failed, %v", d.BkDataId, err)
-		return err
+		logger.Errorf("data_id [%d] refresh consul config failed, %v", d.BkDataId, err)
 	}
 
-	return nil
+	return err
+}
+
+// ApplyForDataIdFromGse 从gse请求生成data id
+func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
+	gseApi, err := api.GetGseApi()
+	if err != nil {
+		return 0, nil
+	}
+	params := map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"plat_name": "bkmonitor",
+		},
+		"operation": map[string]interface{}{
+			"operator_name": operator,
+		},
+	}
+	var resp define.APICommonResp
+	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
+		paramStr, _ := jsonx.MarshalString(params)
+		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
+		return 0, nil
+	} else {
+		_, err = gseApi.AddRoute().SetBody(params).SetResult(&resp).Request()
+		if err != nil {
+			return 0, err
+		}
+		if resp.Code != 0 {
+			return 0, errors.New(resp.Message)
+		}
+		data, ok := resp.Data.(map[string]interface{})
+		if !ok {
+			return 0, errors.New("ApplyForDataIdFromGse parse response data failed")
+		}
+		channelIdInterface := data["channel_id"]
+		channelId, ok := channelIdInterface.(float64)
+		if !ok {
+			return 0, errors.New("ApplyForDataIdFromGse parse channel_id failed")
+		}
+		return uint(channelId), nil
+	}
 }

@@ -10,25 +10,39 @@
 package cipher
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/rand"
 )
 
 func TestAESDecrypt(t *testing.T) {
 	var encryptedAndPlainMap = map[string]string{
-		"abcde": "abcde",
+		"":              "",
+		"abcde":         "abcde",
+		"aes_str:::abc": "",
 		"aes_str:::AMfpKHYB8nEMAbS/4x4MPzg5watAX8JpPDSQMkltziE=":                     "",
 		"aes_str:::QdT4DdT038nMxHdJ4T3vho2IMhAQhwVDf3f970qXc4o=":                     "",
 		"aes_str:::srCvsNoBIUsCtBfqASIAcTlQThp3GVHqu726bvhpVjo=":                     "5gYTZqvd7Z7s",
 		"aes_str:::dDFXjpGztB6DGLl6XzbKFStZF4WT4BXQMX8Edm/RAysSfG4OmtpI8OgyDH+EJG6L": "zRD6AqbG5XSBKzz0Flxf",
 		"aes_str:::X91jZcJtY5Yq3Y9oVZlHMqKwDakt950rV3IFY26YOXk=":                     "5gYTZqvd7Z7s",
 	}
-	viper.Set(AESKeyPath, "81be7fc6-5476-4934-9417-6d4d593728db")
-	assert.Equal(t, "", AESDecrypt(""))
+	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
 	for encrypetd, plain := range encryptedAndPlainMap {
-		assert.Equal(t, plain, AESDecrypt(encrypetd))
+		assert.Equal(t, plain, c.AESDecrypt(encrypetd))
 	}
 
+}
+
+func TestAESEncrypt(t *testing.T) {
+	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
+	for i := 0; i < 100; i++ {
+		pwdSize := rand.IntnRange(0, 20)
+		pwd := rand.String(pwdSize)
+		encrypted := c.AESEncrypt(pwd)
+		decrypted := c.AESDecrypt(encrypted)
+		fmt.Println(pwd, decrypted, encrypted)
+		assert.Equal(t, pwd, decrypted)
+	}
 }

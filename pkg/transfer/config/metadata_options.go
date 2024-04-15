@@ -195,6 +195,10 @@ const (
 	// MetaFieldOptDbmRetry dbm 解析 URL 重试次数
 	MetaFieldOptDbmRetry = "dbm_retry"
 
+	// 允许通过函数决定缺省值
+	MetaFieldOptDefaultFunc   = "default_function"
+	MetaFieldOptTimestampUnit = "timestamp_unit"
+
 	// 时序类
 	// MetaFieldOptInfluxDisabled : 禁止写入 influxdb
 	MetaFieldOptInfluxDisabled = "influxdb_disabled"

@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
@@ -413,14 +414,39 @@ func NewTransformByField(field *config.MetaFieldConfig, rt *config.MetaResultTab
 	switch field.Type {
 	case define.MetaFieldTypeTimestamp:
 		if options.Exists(config.MetaFieldOptTimeFormat) {
-			format := options.MustGetString(config.MetaFieldOptTimeFormat)
+			return func(from interface{}) (to interface{}, err error) {
+				format := options.MustGetString(config.MetaFieldOptTimeFormat)
 
-			layout, ok := options.GetString(config.MetaFieldOptTimeLayout)
-			if ok && len(layout) > 0 && len(format) > 0 {
-				define.RegisterTimeLayout(format, layout)
+				layout, ok := options.GetString(config.MetaFieldOptTimeLayout)
+				if ok && len(layout) > 0 && len(format) > 0 {
+					define.RegisterTimeLayout(format, layout)
+				}
+
+				fn := TransformTimeStampByName(format, conv.Int(options.GetOrDefault(config.MetaFieldOptTimeZone, 0)))
+				result, err := fn(from)
+				if err != nil {
+					return result, err
+				}
+				if result == nil {
+					return nil, nil
+				}
+
+				v, ok := field.Option[config.MetaFieldOptTimestampUnit]
+				if !ok {
+					return result, nil
+				}
+				u, ok := v.(string)
+				if !ok {
+					return result, nil
+				}
+
+				ts, ok := result.(types.TimeStamp)
+				if !ok {
+					return result, nil
+				}
+				(&ts).SetUnit(u)
+				return ts, err
 			}
-
-			return TransformTimeStampByName(format, conv.Int(options.GetOrDefault(config.MetaFieldOptTimeZone, 0)))
 		}
 		fallthrough
 	default:

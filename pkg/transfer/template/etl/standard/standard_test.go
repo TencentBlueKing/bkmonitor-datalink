@@ -130,7 +130,6 @@ func (s *ProcessSuite) TestUsage() {
 	}
 	for _, c := range cases {
 		s.T().Run(c.name, func(t *testing.T) {
-
 			payload := define.NewJSONPayloadFrom([]byte(c.input), 0)
 
 			var wg sync.WaitGroup

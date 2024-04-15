@@ -10,6 +10,7 @@ require (
 	github.com/bytedance/sonic v1.8.8
 	github.com/cenkalti/backoff v2.0.0+incompatible
 	github.com/cespare/xxhash v1.1.0
+	github.com/cespare/xxhash/v2 v2.1.1
 	github.com/cstockton/go-conv v0.0.0-20161128013909-4f5d7d0741da
 	github.com/dghubble/sling v1.2.0
 	github.com/elastic/go-elasticsearch/v5 v5.6.1
@@ -55,7 +56,6 @@ require (
 	github.com/armon/circbuf v0.0.0-20190214190532-5111143e8da2 // indirect
 	github.com/armon/go-metrics v0.0.0-20180917152333-f0300d1749da // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
-	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/coredns/coredns v1.5.0 // indirect
 	github.com/cstockton/go-iter v0.0.0-20161124213939-353ca660c5db // indirect

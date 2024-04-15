@@ -343,6 +343,7 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 		}
 		data[ip] = fmt.Sprintf("[%s]", strings.Join(hostIds, ","))
 	}
+
 	err := m.UpdateHashMapCache(ctx, key, data)
 	if err != nil {
 		return errors.Wrap(err, "update host ip cache failed")
@@ -356,6 +357,12 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Reset 重置
+func (m *HostAndTopoCacheManager) Reset() {
+	m.BaseCacheManager.Reset()
+	m.hostIpMap = make(map[string]map[string]struct{})
 }
 
 // CleanGlobal 清理全局缓存

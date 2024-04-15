@@ -415,10 +415,14 @@ func NewTransformByField(field *config.MetaFieldConfig, rt *config.MetaResultTab
 	case define.MetaFieldTypeTimestamp:
 		if options.Exists(config.MetaFieldOptTimeFormat) {
 			return func(from interface{}) (to interface{}, err error) {
-				fn := TransformTimeStampByName(
-					options.MustGetString(config.MetaFieldOptTimeFormat),
-					conv.Int(options.GetOrDefault(config.MetaFieldOptTimeZone, 0)),
-				)
+				format := options.MustGetString(config.MetaFieldOptTimeFormat)
+
+				layout, ok := options.GetString(config.MetaFieldOptTimeLayout)
+				if ok && len(layout) > 0 && len(format) > 0 {
+					define.RegisterTimeLayout(format, layout)
+				}
+
+				fn := TransformTimeStampByName(format, conv.Int(options.GetOrDefault(config.MetaFieldOptTimeZone, 0)))
 				result, err := fn(from)
 				if err != nil {
 					return result, err

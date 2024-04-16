@@ -13,7 +13,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,7 +152,11 @@ func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- 
 	var (
 		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
 		qb  = qo.query
+		err error
 	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-agg-query")
+	defer span.End(&err)
 
 	// 只做聚合计算
 	if len(qb.AggregateMethodList) == 0 {
@@ -183,12 +189,21 @@ func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- 
 		ss = ss.FetchSourceContext(fetchSource)
 	}
 
+	dsl, _ := dslQuery.Source()
+	span.Set("query-dsl", dsl)
+	ran, _ := queryRange.Source()
+	span.Set("query-range", ran)
+
 	aggs, err := fact.Aggs(qo.query)
 	if err != nil {
 		return err
 	}
 
 	ss.Aggregation(aggs.Agg().Name, aggs.Agg().Agg)
+
+	span.Set("query-agg-name", aggs.Agg().Name)
+	aggStr, _ := aggs.Agg().Agg.Source()
+	span.Set("query-agg-name", aggStr)
 
 	fetchSource := elastic.NewFetchSourceContext(true)
 	fetchSource.Include("")
@@ -209,6 +224,9 @@ func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- 
 	ret = &TimeSeriesResult{
 		TimeSeriesMap: res.TimeSeriesMap,
 	}
+
+	span.Set("resp-series-num", len(res.TimeSeriesMap))
+
 	return nil
 }
 
@@ -347,12 +365,19 @@ func (i *Instance) QueryRaw(
 	hints *storage.SelectHints,
 	matchers ...*labels.Matcher,
 ) storage.SeriesSet {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
+	defer span.End(&err)
+
 	start := hints.Start
 	end := hints.End
 
 	// 获取 window 对齐开始时间
 	if query.TimeAggregation == nil {
-		err := fmt.Errorf("empty time aggregation with %+v", query)
+		err = fmt.Errorf("empty time aggregation with %+v", query)
 		return storage.ErrSeriesSet(err)
 	}
 	window := query.TimeAggregation.WindowDuration
@@ -384,6 +409,20 @@ func (i *Instance) QueryRaw(
 			})
 		}
 	}()
+
+	user := metadata.GetUser(ctx)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-index-options", indexQueryOpts)
+
+	span.Set("query-storage-id", query.StorageID)
+	span.Set("query-max-size", i.maxSize)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-measurements", strings.Join(query.Measurements, ","))
+	span.Set("query-field", query.Field)
+	span.Set("query-fields", strings.Join(query.Fields, ","))
 
 	if err != nil {
 		return storage.ErrSeriesSet(err)

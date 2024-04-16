@@ -101,6 +101,16 @@ func (f *Factory) Query(query *metadata.Query) (elastic.Query, error) {
 				q.Must(elastic.NewRegexpQuery(key, value))
 			case structured.ConditionNotRegEqual:
 				q.MustNot(elastic.NewRegexpQuery(key, value))
+			case structured.ConditionGt:
+				q.Must(elastic.NewRangeQuery(key).Gt(value))
+			case structured.ConditionGte:
+				q.Must(elastic.NewRangeQuery(key).Gte(value))
+			case structured.ConditionLt:
+				q.Must(elastic.NewRangeQuery(key).Lt(value))
+			case structured.ConditionLte:
+				q.Must(elastic.NewRangeQuery(key).Lte(value))
+			default:
+				return nil, fmt.Errorf("operator is not support, %+v", con)
 			}
 			andQuery.Must(q)
 		}

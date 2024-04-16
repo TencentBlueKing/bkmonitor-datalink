@@ -26,6 +26,7 @@ type Storage struct {
 	MaxSLimit     int
 	Toleration    int
 	ReadRateLimit float64
+	MaxRouting    int
 
 	ContentType string
 	ChunkSize   int
@@ -39,6 +40,12 @@ type Storage struct {
 type VMOption struct {
 	UriPath string
 	Timeout time.Duration
+}
+
+type ESOption struct {
+	Timeout    time.Duration
+	MaxRouting int
+	MaxSize    int
 }
 
 type InfluxDBOption struct {
@@ -63,6 +70,7 @@ type InfluxDBOption struct {
 type Options struct {
 	VM       *VMOption
 	InfluxDB *InfluxDBOption
+	Es       *ESOption
 }
 
 type Host struct {

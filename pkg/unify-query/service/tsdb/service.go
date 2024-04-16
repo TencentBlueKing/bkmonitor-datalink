@@ -150,6 +150,11 @@ func (s *Service) reloadStorage() error {
 			RouterPrefix:   InfluxDBRouterPrefix,
 			ReadRateLimit:  InfluxDBQueryReadRateLimit,
 		},
+		Es: &inner.ESOption{
+			Timeout:    EsTimeout,
+			MaxRouting: EsMaxRouting,
+			MaxSize:    EsMaxSize,
+		},
 	}
 	err = inner.ReloadTsDBStorage(s.ctx, consulData, options)
 	if err != nil {

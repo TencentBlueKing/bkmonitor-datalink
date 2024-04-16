@@ -92,6 +92,13 @@ type Query struct {
 	OffsetInfo OffSetInfo // limit等偏移量配置
 
 	SegmentedEnable bool // 是否开启分段查询
+
+	// Es 查询扩展
+	DataSource      string
+	AllConditions   [][]ConditionField
+	Source          []string
+	QueryString     string
+	TimeAggregation *TimeAggregation
 }
 
 type QueryList []*Query

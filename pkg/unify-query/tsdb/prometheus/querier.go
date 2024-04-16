@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	tsDBInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 )
 
@@ -369,8 +370,16 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	curl := &curl.HttpCurl{Log: log.DefaultLogger}
 	switch storage.Type {
 	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
-	case consul.VictoriaMetricsStorageType:
-		return nil
+	case consul.ElasticsearchStorageType:
+		instOption := &elasticsearch.InstanceOption{
+			Url:        storage.Address,
+			Username:   storage.Username,
+			Password:   storage.Password,
+			MaxSize:    storage.MaxLimit,
+			Timeout:    storage.Timeout,
+			MaxRouting: storage.MaxRouting,
+		}
+		instance, err = elasticsearch.NewInstance(ctx, instOption)
 	case consul.InfluxDBStorageType:
 		insOption := tsDBInfluxdb.Options{
 			ReadRateLimit:  storage.ReadRateLimit,

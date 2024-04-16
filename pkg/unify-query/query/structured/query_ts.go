@@ -299,6 +299,9 @@ type Query struct {
 	Step string `json:"step,omitempty" swaggerignore:"true"`
 	// Timezone 时区，会被外面的 Timezone 覆盖
 	Timezone string `json:"-" swaggerignore:"true"`
+
+	// QueryString es 专用关键字查询
+	QueryString string `json:"query_string"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -355,6 +358,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		}
 	}
 
+	isSkipField := false
+	if metricName == "" || q.DataSource == BkLog || q.DataSource == BkApm {
+		isSkipField = true
+	}
+
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
 		SpaceUid:    spaceUid,
 		TableID:     tableID,
@@ -362,6 +370,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		IsRegexp:    q.IsRegexp,
 		Conditions:  q.Conditions,
 		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
+		IsSkipField: isSkipField,
 	})
 	if err != nil {
 		return nil, err
@@ -500,9 +509,7 @@ func (q *Query) BuildMetadataQuery(
 		measurement, measurements = metricName, expandMetricNames
 		field, fields = promql.StaticField, []string{promql.StaticField}
 	default:
-		err := fmt.Errorf("%s: %s 类型异常", tsDB.TableID, tsDB.MeasurementType)
-		log.Errorf(ctx, err.Error())
-		return nil, err
+		field, fields = metricName, expandMetricNames
 	}
 
 	span.Set("tsdb-fields", fmt.Sprintf("%+v", fields))
@@ -626,6 +633,32 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
+
+	// 写入 ES 所需内容
+	query.DataSource = q.DataSource
+	query.AllConditions = make([][]metadata.ConditionField, len(allCondition))
+	for i, conditions := range allCondition {
+		conds := make([]metadata.ConditionField, len(conditions))
+		for j, c := range conditions {
+			conds[j] = metadata.ConditionField{
+				DimensionName: c.DimensionName,
+				Value:         c.Value,
+				Operator:      c.Operator,
+			}
+		}
+		query.AllConditions[i] = conds
+	}
+	query.QueryString = q.QueryString
+	if q.TimeAggregation.Window != "" {
+		windowDuration, err := q.TimeAggregation.Window.ToTime()
+		if err != nil {
+			return nil, err
+		}
+		query.TimeAggregation = &metadata.TimeAggregation{
+			Function:       q.TimeAggregation.Function,
+			WindowDuration: windowDuration,
+		}
+	}
 
 	span.Set("query-source-type", query.SourceType)
 	span.Set("query-table-id", query.TableID)

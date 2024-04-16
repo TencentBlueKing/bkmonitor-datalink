@@ -61,6 +61,10 @@ func setDefaultConfig() {
 	viper.SetDefault(BkSqlToleranceConfigPath, 5)
 	viper.SetDefault(BkSqlContentTypeConfigPath, "application/json")
 	viper.SetDefault(BkSqlAuthenticationMethodConfigPath, "token")
+
+	viper.SetDefault(EsTimeoutConfigPath, "30s")
+	viper.SetDefault(EsMaxSizeConfigPath, 1e4)
+	viper.SetDefault(EsMaxRoutingConfigPath, 10)
 }
 
 // initConfig 加载配置
@@ -109,6 +113,10 @@ func initConfig() {
 	OfflineDataArchiveTimeout = viper.GetDuration(OfflineDataArchiveTimeoutConfigPath)
 	OfflineDataArchiveGrpcMaxCallRecvMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallRecvMsgSizeConfigPath)
 	OfflineDataArchiveGrpcMaxCallSendMsgSize = viper.GetInt(OfflineDataArchiveGrpcMaxCallSendMsgSizeConfigPath)
+
+	EsTimeout = viper.GetDuration(EsTimeoutConfigPath)
+	EsMaxRouting = viper.GetInt(EsMaxRoutingConfigPath)
+	EsMaxSize = viper.GetInt(EsMaxSizeConfigPath)
 }
 
 // init 初始化，通过 eventBus 加载配置读取前和读取后操作

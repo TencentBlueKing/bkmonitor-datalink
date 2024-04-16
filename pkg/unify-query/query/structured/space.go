@@ -70,7 +70,7 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 }
 
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, conditions Conditions,
-	fieldName, tableID string, isK8s, isK8sFeatureFlag bool) []*query.TsDBV2 {
+	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField bool) []*query.TsDBV2 {
 	rtDetail := s.router.GetResultTable(s.ctx, tableID, false)
 	if rtDetail == nil {
 		log.Debugf(s.ctx, "skip rt(%s), rt detail is empty", tableID)
@@ -149,7 +149,8 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		MetricName:      fieldName,
 	}
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
-	if fieldName == "" {
+	// bklog 或者 bkapm 则不判断 field 是否存在
+	if isSkipField {
 		tsDBs = append(tsDBs, &defaultTsDB)
 		return tsDBs
 	}
@@ -272,7 +273,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 			continue
 		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
-		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag)
+		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {
 			tsDBs = append(tsDBs, newTsDB)
 		}
@@ -295,6 +296,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 type TsDBOption struct {
 	SpaceUid    string
 	IsSkipSpace bool
+	IsSkipField bool
 
 	TableID   TableID
 	FieldName string

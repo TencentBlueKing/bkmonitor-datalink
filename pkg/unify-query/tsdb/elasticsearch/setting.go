@@ -7,22 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package resulttable
+package elasticsearch
 
 import (
-	"strings"
+	"github.com/spf13/viper"
 )
 
-// TableIdsLike filter many table id by `like`
-// table_id LIKE ? OR table_id LIKE ?", "L12%", "A12%
-func (qs ResultTableQuerySet) TableIdsLike(tableIds []string) ResultTableQuerySet {
-	var sqlList []string
-	interfaceSlice := make([]interface{}, len(tableIds))
-	for i, v := range tableIds {
-		sqlList = append(sqlList, "table_id LIKE ?")
-		interfaceSlice[i] = v
-	}
-	// 以 `OR` 拼接 sql
-	sql := strings.Join(sqlList, " OR ")
-	return qs.w(qs.db.Where(sql, interfaceSlice...))
+const (
+	UrlPath      = "elasticsearch.url"
+	UsernamePath = "elasticsearch.username"
+	PasswordPath = "elasticsearch.password"
+	TimeoutPath  = "elasticsearch.timeout"
+
+	SegmentDocCountPath  = "elasticsearch.segment.doc_count"
+	SegmentStoreSizePath = "elasticsearch.segment.store_size"
+	MaxRoutingPath       = "elasticsearch.max_routing"
+
+	MaxSizePath   = "elasticsearch.max_size"
+	KeepAlivePath = "elasticsearch.keep_alive"
+)
+
+func init() {
+	viper.SetDefault(SegmentDocCountPath, 1e4)
+	viper.SetDefault(SegmentStoreSizePath, "10MB")
+	viper.SetDefault(MaxRoutingPath, 10)
+	viper.SetDefault(MaxSizePath, 1e4)
+	viper.SetDefault(KeepAlivePath, "5s")
 }

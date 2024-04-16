@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -53,6 +55,11 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 	return 0
 }
 
+//type collectTaskInfo struct {
+//	ClusterInfo storage.ClusterInfo
+//	Timestamp   int64
+//}
+
 // collectAndReportMetrics 采集&上报ES集群指标
 func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
@@ -83,6 +90,12 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		return errors.WithMessage(err, "failed to parse es cluster url")
 	}
 	esURL.User = url.UserPassword(esUsername, esPassword)
+	var esURI = fmt.Sprintf("%s:%v", c.DomainName, c.Port)
+
+	_, err = net.DialTimeout("tcp", esURI, 5*time.Second)
+	if err != nil {
+		return errors.WithMessage(err, "esURL unreachable")
+	}
 
 	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
@@ -97,7 +110,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
 	registry.MustRegister(exporter)
-	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, false, false))
+	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, true, true))
 	registry.MustRegister(collector.NewShards(collectorLogger, httpClient, esURL))
 	// todo: 补充状态维度
 	registry.MustRegister(collector.NewClusterHealth(collectorLogger, httpClient, esURL))
@@ -129,11 +142,16 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
 			d["cluster_name"] = c.ClusterName
 			if index, ok := d["index"].(string); ok {
-				match := targetBizRe.FindStringSubmatch(index)
-				if len(match) > 0 {
-					d["target_biz_id"] = match[2]
+				bizMatch := targetBizRe.FindStringSubmatch(index)
+				if len(bizMatch) > 0 {
+					d["target_biz_id"] = bizMatch[2]
 				}
-				logger.Infof("index: %s, match: %s", index, strings.Join(match, " "))
+				rtMatch := rtRe.FindStringSubmatch(index)
+				if len(rtMatch) > 1 {
+					d["result_table_id"] = rtMatch[1]
+				}
+				logger.Infof("index: %s, bizMatch: %s, rtMatch: %s", index, strings.Join(bizMatch, " "),
+					strings.Join(rtMatch, " "))
 			}
 
 			esm := &clustermetrics.EsMetric{
@@ -185,6 +203,8 @@ var httpClient = &http.Client{
 }
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
+
+var rtRe = regexp.MustCompile(`^v2_(.*?)_.*?_.*$`)
 
 func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")

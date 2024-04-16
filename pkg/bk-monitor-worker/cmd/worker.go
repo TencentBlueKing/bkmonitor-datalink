@@ -84,6 +84,7 @@ func startWorker(cmd *cobra.Command, args []string) {
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
+			workerService.Stop()
 			cancel()
 			srv.Close()
 			logger.Info("Bye")

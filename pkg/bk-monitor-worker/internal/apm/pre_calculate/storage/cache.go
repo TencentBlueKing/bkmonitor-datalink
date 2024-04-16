@@ -29,13 +29,6 @@ var (
 	CacheTypeMemory CacheType = "memory"
 )
 
-const (
-	// SaveTraceCache origin trace info cache action
-	SaveTraceCache Action = "saveTraceCache"
-	// SaveTraceMeta trace meta info cache action
-	SaveTraceMeta Action = "saveTraceMeta"
-)
-
 // CacheKey cache key format class
 type CacheKey struct {
 	Format func(bkBizId, appName, traceId string) string

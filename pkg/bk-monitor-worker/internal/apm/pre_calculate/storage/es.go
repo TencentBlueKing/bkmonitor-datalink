@@ -23,27 +23,23 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-const (
-	SavePrecalculateResult Action = "savePrecalculateResult"
-)
-
 type Converter func(io.ReadCloser) (any, error)
 
 var (
 	BytesConverter Converter = func(body io.ReadCloser) (any, error) {
+		defer body.Close()
+
 		var resInstance EsQueryResult
 		if err := jsonx.Decode(body, &resInstance); err != nil {
 			return nil, err
 		}
 
-		var resMap []map[string]any
+		resMap := make([]map[string]any, 0, len(resInstance.Hits.Hits))
 		for _, item := range resInstance.Hits.Hits {
 			resMap = append(resMap, item.Source)
 		}
-		if resMap == nil {
-			return nil, nil
-		}
-		return jsonx.Marshal(resMap)
+
+		return resMap, nil
 	}
 
 	AggsCountConvert Converter = func(body io.ReadCloser) (any, error) {
@@ -199,18 +195,10 @@ func (e *esStorage) Query(data any) (any, error) {
 		e.client.Search.WithBody(&buf),
 		e.client.Search.WithTrackTotalHits(true),
 	)
-	defer func() {
-		if res != nil {
-			err = res.Body.Close()
-			if err != nil {
-				logger.Warnf("[Query] failed to close the body")
-			}
-		}
-	}()
-
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
 
 	if res.IsError() {
 		return nil, errors.New(res.String())

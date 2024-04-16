@@ -31,8 +31,6 @@ type DistributiveWindowOptions struct {
 	watchExpiredInterval        time.Duration
 	concurrentProcessCount      int
 	concurrentExpirationMaximum int
-	//// messageConcurrentListener Set the concurrency number to listen for messages in the queue.
-	//messageConcurrentListener int
 }
 
 type DistributiveWindowOption func(*DistributiveWindowOptions)
@@ -68,12 +66,6 @@ func ConcurrentExpirationMaximum(c int) DistributiveWindowOption {
 		options.concurrentExpirationMaximum = c
 	}
 }
-
-//func MessageConcurrentListener(c int) DistributiveWindowOption {
-//	return func(options *DistributiveWindowOptions) {
-//		options.messageConcurrentListener = c
-//	}
-//}
 
 // DistributiveWindow Parent-child window implementation classes.
 // where each independent child window maintains its own data, when a span is to be added to the parent window,
@@ -155,9 +147,6 @@ func (w *DistributiveWindow) Start(spanChan <-chan []StandardSpan, errorReceiveC
 	)
 
 	go w.Handle(spanChan, errorReceiveChan)
-	//for i := 0; i < w.config.messageConcurrentListener; i++ {
-	//	go w.Handle(spanChan)
-	//}
 }
 
 func (w *DistributiveWindow) GetWindowsLength() int {

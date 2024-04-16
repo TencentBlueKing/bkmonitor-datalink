@@ -35,7 +35,7 @@ const (
 
 const (
 	// DefaultMaxRetry 默认最大重试次数
-	DefaultMaxRetry = 10
+	DefaultMaxRetry = 5
 	// DefaultTimeout 默认超时时间
 	DefaultTimeout = 30 * time.Minute
 	// DefaultShutdownTimeout 默认等待时间

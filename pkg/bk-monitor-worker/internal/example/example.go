@@ -39,7 +39,15 @@ func HandleExampleTask(ctx context.Context, t *task.Task) error {
 func PeriodicHandleExampleTask(ctx context.Context, t *task.Task) error {
 	logger.Info("periodic example func trigger")
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(2 * time.Minute)
 	logger.Printf("periodic end")
+	return nil
+}
+
+func PeriodicHandleExampleTask1(ctx context.Context, t *task.Task) error {
+	logger.Info("periodic1 example func trigger")
+
+	time.Sleep(2 * time.Minute)
+	logger.Printf("periodic1 end")
 	return nil
 }

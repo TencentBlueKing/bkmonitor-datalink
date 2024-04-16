@@ -92,6 +92,13 @@ var (
 	ProfileAppIdx string
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
 	SemaphoreReportInterval time.Duration
+
+	// PromRemoteWriteEnabled Whether to enabled prometheus remote write
+	PromRemoteWriteEnabled bool
+	// PromRemoteWriteUrl remote write target url
+	PromRemoteWriteUrl string
+	// PromRemoteWriteHeaders remote write headers of http request
+	PromRemoteWriteHeaders map[string]string
 )
 
 func initApmVariables() {
@@ -115,12 +122,12 @@ func initApmVariables() {
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 1000)
 	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 500*time.Millisecond, viper.GetDuration)
 
-	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.01)
+	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.1)
 	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*time.Hour, viper.GetDuration)
 	StorageBloomNormalOverlapResetDuration = GetValue("taskConfig.apmPreCalculate.storage.bloom.normalOverlap.resetDuration", 2*time.Hour, viper.GetDuration)
 	StorageBloomLayersBloomLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.layersBloom.layers", 5)
-	StorageBloomDecreaseCap = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.cap", 100000000)
-	StorageBloomDecreaseLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.layers", 10)
+	StorageBloomDecreaseCap = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.cap", 10000000)
+	StorageBloomDecreaseLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.layers", 5)
 	StorageBloomDecreaseDivisor = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.divisor", 2)
 
 	/*
@@ -130,4 +137,9 @@ func initApmVariables() {
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
 	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
+
+	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
+	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
+	// todo 获取不到 headers
+	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
 }

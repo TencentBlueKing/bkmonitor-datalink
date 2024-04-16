@@ -161,7 +161,7 @@ func GetBcsProjectApi() (*bcsproject.Client, error) {
 		return bcsProjectApi, nil
 	}
 	config := bkapi.ClientConfig{
-		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/clustermanager/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
+		Endpoint:      fmt.Sprintf("%s/bcsapi/v4/bcsproject/v1/", strings.TrimRight(cfg.BkApiBcsApiMicroGwUrl, "/")),
 		JsonMarshaler: jsonx.Marshal,
 	}
 	var err error

@@ -308,6 +308,7 @@ func (r *RDB) Dequeue(qnames ...string) (msg *task.TaskMessage, leaseExpirationT
 		}
 		res, err := dequeueCmd.Run(context.Background(), r.client, keys, argv...).Result()
 		if err == redis.Nil {
+			logger.Debugf("No processable task found in queue %s, keys: %v, args: %v", qname, keys, argv)
 			continue
 		} else if err != nil {
 			return nil, time.Time{}, errors.E(op, errors.Unknown, fmt.Sprintf("redis eval error: %v", err))
@@ -337,12 +338,8 @@ func (r *RDB) Dequeue(qnames ...string) (msg *task.TaskMessage, leaseExpirationT
 // ARGV[2] -> stats expiration timestamp
 // ARGV[3] -> max int64 value
 var doneCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[1], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[1], 0, ARGV[1])
+redis.call("ZREM", KEYS[2], ARGV[1])
 if redis.call("DEL", KEYS[3]) == 0 then
   return redis.error_reply("NOT FOUND")
 end
@@ -370,12 +367,8 @@ return redis.status_reply("OK")
 // ARGV[2] -> stats expiration timestamp
 // ARGV[3] -> max int64 value
 var doneUniqueCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[1], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[1], 0, ARGV[1])
+redis.call("ZREM", KEYS[2], ARGV[1])
 if redis.call("DEL", KEYS[3]) == 0 then
   return redis.error_reply("NOT FOUND")
 end
@@ -779,12 +772,8 @@ const (
 // ARGV[6] -> stats expiration timestamp
 // ARGV[7] -> max int64 value
 var archiveCmd = redis.NewScript(`
-if redis.call("LREM", KEYS[2], 0, ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
-if redis.call("ZREM", KEYS[3], ARGV[1]) == 0 then
-  return redis.error_reply("NOT FOUND")
-end
+redis.call("LREM", KEYS[2], 0, ARGV[1])
+redis.call("ZREM", KEYS[3], ARGV[1])
 redis.call("ZADD", KEYS[4], ARGV[3], ARGV[1])
 redis.call("ZREMRANGEBYSCORE", KEYS[4], "-inf", ARGV[4])
 redis.call("ZREMRANGEBYRANK", KEYS[4], 0, -ARGV[5])

@@ -146,14 +146,13 @@ func NewWorker(cfg WorkerConfig) (*Worker, error) {
 
 // wait signal to shutdown
 func (w *Worker) waitForSignals() {
-	logger.Info("Send signal to stop processing new tasks")
-
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGTSTP)
 	for {
 		sig := <-sigs
 		// 走停止流程
-		if sig == syscall.SIGTSTP {
+		if sig == syscall.SIGTSTP || sig == syscall.SIGTERM || sig == syscall.SIGINT {
+			logger.Infof("Received signal %s, stopping worker", sig.String())
 			w.Stop()
 			continue
 		}

@@ -113,7 +113,7 @@ func (c *Client) EnqueueWithContext(ctx context.Context, task *t.Task, opts ...t
 		return nil, fmt.Errorf("task already exists")
 	case errors.Is(err, errors.ErrTaskIdConflict):
 		logger.Warnf("task: %s conflict with exist task, not schedule a task again", task.Kind)
-		return nil, fmt.Errorf("")
+		return nil, fmt.Errorf("task conflict with exist task")
 	case err != nil:
 		logger.Errorf("task: %s is error, not schedule a task again", task.Kind)
 		return nil, err

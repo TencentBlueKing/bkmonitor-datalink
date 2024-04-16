@@ -15,15 +15,16 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 func TestMerge(t *testing.T) {
 	tests := []struct {
-		name   string
-		param   *gin.H
+		name          string
+		param         *gin.H
 		mergedParam   *gin.H
 		expectedParam gin.H
 	}{
@@ -41,13 +42,12 @@ func TestMerge(t *testing.T) {
 	}
 }
 
-
 func TestGetMessage(t *testing.T) {
 	tests := []struct {
-		name string
-		candidate string
-		format string
-		v []interface{}
+		name        string
+		candidate   string
+		format      string
+		v           []interface{}
 		expectedStr string
 	}{
 		{"candidate without format and args", "only candidate", "", nil, "only candidate"},
@@ -64,7 +64,6 @@ func TestGetMessage(t *testing.T) {
 	}
 }
 
-
 func response(c *gin.Context) {
 	Response(c, nil)
 }
@@ -80,13 +79,11 @@ func TestResponse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-
 const defaultTestMessage = "this is a test"
 
-func responseWithMessage(c *gin.Context){
+func responseWithMessage(c *gin.Context) {
 	ResponseWithMessage(c, nil, defaultTestMessage)
 }
-
 
 func TestResponseWithMessage(t *testing.T) {
 	router := gin.Default()
@@ -107,8 +104,7 @@ func TestResponseWithMessage(t *testing.T) {
 	assert.Equal(t, ttt.Message, defaultTestMessage)
 }
 
-
-func badResponse(c *gin.Context){
+func badResponse(c *gin.Context) {
 	BadReqResponse(c, defaultTestMessage)
 }
 
@@ -123,11 +119,9 @@ func TestBadReqResponse(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-
-func serverErrResponse(c *gin.Context){
+func serverErrResponse(c *gin.Context) {
 	ServerErrResponse(c, defaultTestMessage)
 }
-
 
 func TestServerErrResponse(t *testing.T) {
 	router := gin.Default()

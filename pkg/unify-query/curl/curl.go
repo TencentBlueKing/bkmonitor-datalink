@@ -134,7 +134,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 		decoder := json.NewDecoder(buf)
 		err = decoder.Decode(&res)
-		size = buf.Cap()
+		size = buf.Len()
 		return
 	}
 }

@@ -51,6 +51,8 @@ type Manager interface {
 	CleanByBiz(ctx context.Context, bizID int) error
 	// CleanGlobal 清理全局缓存
 	CleanGlobal(ctx context.Context) error
+	// Reset 重置
+	Reset()
 
 	// UseBiz 是否按业务执行
 	useBiz() bool
@@ -88,6 +90,15 @@ func NewBaseCacheManager(prefix string, opt *redis.Options, concurrentLimit int)
 		updateFieldLocks: make(map[string]*sync.Mutex),
 		ConcurrentLimit:  concurrentLimit,
 	}, nil
+}
+
+// Reset 重置
+func (c *BaseCacheManager) Reset() {
+	for key := range c.updatedFieldSet {
+		c.updateFieldLocks[key].Lock()
+		c.updatedFieldSet[key] = make(map[string]struct{})
+		c.updateFieldLocks[key].Unlock()
+	}
 }
 
 // initUpdatedFieldSet 初始化更新字段集合，确保后续不存在并发问题

@@ -14,7 +14,7 @@ import (
 	"log"
 
 	consul "github.com/hashicorp/consul/api"
-	"github.com/hashicorp/consul/watch"
+	"github.com/hashicorp/consul/api/watch"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"

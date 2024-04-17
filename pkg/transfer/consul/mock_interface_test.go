@@ -19,7 +19,7 @@ import (
 	EventBus "github.com/asaskevich/EventBus"
 	gomock "github.com/golang/mock/gomock"
 	api "github.com/hashicorp/consul/api"
-	watch "github.com/hashicorp/consul/watch"
+	watch "github.com/hashicorp/consul/api/watch"
 
 	consul "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/consul"
 	define "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"

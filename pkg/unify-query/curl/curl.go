@@ -12,8 +12,11 @@ package curl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -26,6 +29,16 @@ const (
 	Get  = "GET"
 	Post = "POST"
 )
+
+var (
+	bufPool sync.Pool
+)
+
+func init() {
+	bufPool.New = func() any {
+		return bytes.NewBuffer(make([]byte, 0, 1024))
+	}
+}
 
 // Options Curl 入参
 type Options struct {
@@ -40,19 +53,21 @@ type Options struct {
 }
 
 type Curl interface {
-	Request(ctx context.Context, method string, opt Options) (*http.Response, error)
+	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error))
+	Request(ctx context.Context, method string, opt Options, res interface{}) (int, error)
 }
 
 // HttpCurl http 请求方法
 type HttpCurl struct {
-	Log *log.Logger
+	Log     *log.Logger
+	decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)
 }
 
-// Request 公共调用方法实现
-func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
-	var (
-		err error
-	)
+func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, res interface{}) (int, error)) {
+	c.decoder = decoder
+}
+
+func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (size int, err error) {
 
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)
@@ -63,13 +78,14 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 	}
 
 	if opt.UrlPath == "" {
-		return nil, fmt.Errorf("url is emtpy")
+		err = fmt.Errorf("url is emtpy")
+		return
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
 		c.Log.Errorf(ctx, "client new request error:%v", err)
-		return nil, err
+		return
 	}
 
 	if opt.UserName != "" {
@@ -90,5 +106,35 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options) (*ht
 		}
 	}
 
-	return client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer func() {
+		_ = resp.Body.Close()
+		buf.Reset()
+		bufPool.Put(buf)
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("http code error: %s", resp.Status)
+		return
+	}
+
+	if c.decoder != nil {
+		size, err = c.decoder(ctx, resp.Body, res)
+		return
+	} else {
+		_, err = io.Copy(buf, resp.Body)
+		if err != nil {
+			return
+		}
+
+		decoder := json.NewDecoder(buf)
+		err = decoder.Decode(&res)
+		size = buf.Cap()
+		return
+	}
 }

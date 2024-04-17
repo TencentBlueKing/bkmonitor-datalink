@@ -23,15 +23,13 @@ type MsgPackDecoder struct {
 }
 
 // Decode
-func (d *MsgPackDecoder) Decode(ctx context.Context, reader io.Reader) (*Response, error) {
-	resp := new(Response)
+func (d *MsgPackDecoder) Decode(ctx context.Context, reader io.Reader, resp *Response) (size int, err error) {
 	resp.Ctx = ctx
-
-	err := msgp.Decode(reader, resp)
+	err = msgp.Decode(reader, resp)
 	if err != nil {
-		return nil, err
+		return
 	}
-	return resp, nil
+	return
 }
 
 // init

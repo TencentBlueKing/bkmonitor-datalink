@@ -9,7 +9,9 @@
 
 package util
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // ValidateParams validate params
 func ValidateParams(src string, dst string) error {

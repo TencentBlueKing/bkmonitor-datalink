@@ -22,7 +22,9 @@
 
 package cmdbcache
 
-import "context"
+import (
+	"context"
+)
 
 type ResourceWatchDaemon struct {
 }

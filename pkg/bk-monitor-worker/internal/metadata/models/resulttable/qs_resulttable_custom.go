@@ -9,7 +9,9 @@
 
 package resulttable
 
-import "strings"
+import (
+	"strings"
+)
 
 // TableIdsLike filter many table id by `like`
 // table_id LIKE ? OR table_id LIKE ?", "L12%", "A12%

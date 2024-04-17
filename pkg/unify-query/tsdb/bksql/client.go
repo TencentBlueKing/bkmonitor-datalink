@@ -13,11 +13,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 type Client struct {
@@ -66,7 +68,7 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 
-	resp, err := c.Curl.Request(
+	size, err := c.Curl.Request(
 		ctx, method,
 		curl.Options{
 			UrlPath: url,
@@ -75,16 +77,15 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 				ContentType: c.ContentType,
 			},
 		},
+		res,
 	)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf(resp.Status)
-	}
 
-	return json.NewDecoder(resp.Body).Decode(res)
+	user := metadata.GetUser(ctx)
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, consul.BkSqlStorageType)
+	return nil
 }
 
 func (c *Client) QuerySync(ctx context.Context, sql string) *Result {

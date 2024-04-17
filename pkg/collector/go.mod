@@ -1,4 +1,4 @@
-go 1.19
+go 1.21
 
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector
 
@@ -7,7 +7,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/apache/thrift v0.16.0
 	github.com/buraksezer/consistent v0.10.0
-	github.com/bytedance/sonic v1.10.2
+	github.com/bytedance/sonic v1.11.2
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/elastic/go-ucfg v0.7.0

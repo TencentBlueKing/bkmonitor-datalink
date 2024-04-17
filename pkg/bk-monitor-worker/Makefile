@@ -40,3 +40,6 @@ test:
 
 tidy:
 	go mod tidy
+
+imports:
+	goimports-reviser -project-name "github.com/TencentBlueKing/bkmonitor-datalink/pkg" ./...

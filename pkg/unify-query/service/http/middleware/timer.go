@@ -86,8 +86,8 @@ func Timer(p *Params) gin.HandlerFunc {
 
 		// 把用户名注入到 metadata 中
 		metadata.SetUser(ctx, source, spaceUid, skipSpace)
-
-		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid)
+		user := metadata.GetUser(ctx)
+		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid, user.Source)
 
 		if span != nil {
 			defer func() {

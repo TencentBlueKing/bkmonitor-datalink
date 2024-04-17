@@ -11,6 +11,8 @@ package kafka
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -24,6 +26,7 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/xdg/scram"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -61,6 +64,8 @@ const (
 	sslCertificateKey         = "ssl_certificate_key"
 
 	prefixBase64 = "base64://"
+
+	optSaslMechanisms = "sasl_mechanisms"
 )
 
 func decodeSslContent(s string) ([]byte, error) {
@@ -337,6 +342,31 @@ func (f *Frontend) Close() error {
 	return err
 }
 
+var (
+	SHA256 scram.HashGeneratorFcn = sha256.New
+	SHA512 scram.HashGeneratorFcn = sha512.New
+)
+
+type XDGSCRAMClient struct {
+	*scram.Client
+	*scram.ClientConversation
+	scram.HashGeneratorFcn
+}
+
+func (x *XDGSCRAMClient) Begin(userName, password, authzID string) (err error) {
+	x.Client, err = x.HashGeneratorFcn.NewClient(userName, password, authzID)
+	if err != nil {
+		return err
+	}
+	x.ClientConversation = x.Client.NewConversation()
+	return nil
+}
+
+func (x *XDGSCRAMClient) Step(challenge string) (response string, err error) {
+	response, err = x.ClientConversation.Step(challenge)
+	return
+}
+
 func (f *Frontend) init() error {
 	var (
 		conf        = config.FromContext(f.ctx)
@@ -358,7 +388,8 @@ func (f *Frontend) init() error {
 		return err
 	}
 
-	auth := config.NewAuthInfo(config.MQConfigFromContext(f.ctx))
+	mqConfig := config.MQConfigFromContext(f.ctx)
+	auth := config.NewAuthInfo(mqConfig)
 	userName, err := auth.GetUserName()
 	if err != nil {
 		logging.Warnf("kafka may not establish connection %v: username", define.ErrGetAuth)
@@ -379,8 +410,25 @@ func (f *Frontend) init() error {
 		c.Net.SASL.User = userName
 		c.Net.SASL.Password = passWord
 		c.Net.SASL.Enable = true
+
+		// 目前仅支持 sha512/sha256
+		info := utils.NewMapHelper(mqConfig.AuthInfo)
+		if mechanisms, ok := info.GetString(optSaslMechanisms); ok {
+			switch mechanisms {
+			case "SCRAM-SHA-512":
+				c.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
+				c.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+					return &XDGSCRAMClient{HashGeneratorFcn: SHA512}
+				}
+			case "SCRAM-SHA-256":
+				c.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
+				c.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
+					return &XDGSCRAMClient{HashGeneratorFcn: SHA256}
+				}
+			}
+		}
 	}
-	logging.Infof("KAFKA MaxProcessTime: %s", c.Consumer.MaxProcessingTime)
+
 	if err != nil {
 		logging.Warnf("create kafka config error: %v", err)
 		return err

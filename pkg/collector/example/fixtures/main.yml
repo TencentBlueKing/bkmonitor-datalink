@@ -59,6 +59,7 @@ bk-collector:
     patterns:
       - "../example/fixtures/platform.yml"
       - "../example/fixtures/subconfig.yml"
+      - "../example/fixtures/privileged.yml"
 
   # =============================== Logging ==================================
   logging:

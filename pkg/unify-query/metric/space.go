@@ -37,13 +37,13 @@ var (
 )
 
 func SpaceRequestCountInc(ctx context.Context, params ...string) {
-	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
+	metric, _ := spaceRequestCount.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
 }
 
 func SpaceRequestCountAdd(ctx context.Context, val float64, params ...string) {
-	metric, err := spaceRequestCount.GetMetricWithLabelValues(params...)
-	counterAdd(ctx, metric, val, err, params...)
+	metric, _ := spaceRequestCount.GetMetricWithLabelValues(params...)
+	counterAdd(ctx, metric, val)
 }
 
 func init() {

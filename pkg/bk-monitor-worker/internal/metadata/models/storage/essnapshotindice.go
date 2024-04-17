@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-//go:generate goqueryset -in essnapshotindice.go -out qs_essnapshotindice.go
+//go:generate goqueryset -in essnapshotindice.go -out qs_essnapshotindice_gen.go
 
 // EsSnapshotIndice es snapshot indice model
 // gen:qs

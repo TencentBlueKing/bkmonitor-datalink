@@ -43,7 +43,7 @@ var (
 			Name:      "api_request_total",
 			Help:      "unify-query api request",
 		},
-		[]string{"api", "status", "space_uid"},
+		[]string{"api", "status", "space_uid", "source_type"},
 	)
 
 	apiRequestSecondHistogram = prometheus.NewHistogramVec(
@@ -85,56 +85,52 @@ var (
 )
 
 func APIRequestInc(ctx context.Context, params ...string) {
-	metric, err := apiRequestTotal.GetMetricWithLabelValues(params...)
-	counterInc(ctx, metric, err, params...)
+	metric, _ := apiRequestTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
 }
 
 func APIRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, err := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
-	observe(ctx, metric, err, duration, params...)
+	metric, _ := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
+	observe(ctx, metric, duration)
 }
 
 func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, err := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
-	observe(ctx, metric, err, duration, params...)
+	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
+	observe(ctx, metric, duration)
 }
 
 func ResultTableInfoSet(ctx context.Context, value float64, params ...string) {
-	metric, err := resultTableInfo.GetMetricWithLabelValues(params...)
-	gaugeSet(ctx, metric, err, value, params...)
+	metric, _ := resultTableInfo.GetMetricWithLabelValues(params...)
+	gaugeSet(ctx, metric, value)
 }
 
 func VmQueryInfo(ctx context.Context, value float64, params ...string) {
-	metric, err := vmQuerySpaceUidInfo.GetMetricWithLabelValues(params...)
-	gaugeSet(ctx, metric, err, value, params...)
+	metric, _ := vmQuerySpaceUidInfo.GetMetricWithLabelValues(params...)
+	gaugeSet(ctx, metric, value)
 }
 
 func gaugeSet(
-	ctx context.Context, metric prometheus.Gauge, err error, value float64, params ...string,
+	_ context.Context, metric prometheus.Gauge, value float64,
 ) {
-	if err != nil {
-		log.Warnf(ctx, "metric gauge: %v failed, error:%s", params, err)
+	if metric == nil {
 		return
 	}
-
 	metric.Set(value)
 }
 
 func counterInc(
-	ctx context.Context, metric prometheus.Counter, err error, params ...string,
+	ctx context.Context, metric prometheus.Counter,
 ) {
-	counterAdd(ctx, metric, 1, err, params...)
+	counterAdd(ctx, metric, 1)
 }
 
 // handleCount
 func counterAdd(
-	ctx context.Context, metric prometheus.Counter, val float64, err error, params ...string,
+	ctx context.Context, metric prometheus.Counter, val float64,
 ) {
-	if err != nil {
-		log.Warnf(ctx, "metric counter:%v failed,error:%s", params, err)
+	if metric == nil {
 		return
 	}
-
 	sp := trace.SpanFromContext(ctx).SpanContext()
 	if sp.IsSampled() {
 		exemplarAdder, ok := metric.(prometheus.ExemplarAdder)
@@ -152,10 +148,9 @@ func counterAdd(
 }
 
 func observe(
-	ctx context.Context, metric prometheus.Observer, err error, duration time.Duration, params ...string,
+	ctx context.Context, metric prometheus.Observer, duration time.Duration,
 ) {
-	if err != nil {
-		log.Warnf(ctx, "metric histogram:%v failed,error:%s", params, err)
+	if metric == nil {
 		return
 	}
 

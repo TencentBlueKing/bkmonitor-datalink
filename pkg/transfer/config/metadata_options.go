@@ -181,6 +181,8 @@ const (
 	MetaFieldOptTimeZone = "time_zone"
 	// MetaFieldOptTimeFormat : 时间格式（string)
 	MetaFieldOptTimeFormat = "time_format"
+	// MetaFieldOptTimeLayout 时间格式模板
+	MetaFieldOptTimeLayout = "time_layout"
 	// MetaFieldOptRealPath : "提取的真实路径"
 	MetaFieldOptRealPath = "real_path"
 
@@ -192,6 +194,10 @@ const (
 	MetaFieldOptDbmField = "dbm_field"
 	// MetaFieldOptDbmRetry dbm 解析 URL 重试次数
 	MetaFieldOptDbmRetry = "dbm_retry"
+
+	// 允许通过函数决定缺省值
+	MetaFieldOptDefaultFunc   = "default_function"
+	MetaFieldOptTimestampUnit = "timestamp_unit"
 
 	// 时序类
 	// MetaFieldOptInfluxDisabled : 禁止写入 influxdb

@@ -18,28 +18,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	bolt "go.etcd.io/bbolt"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
-)
-
-const (
-	BboltDefaultPathConfigPath = "bbolt.default_path"
-	BboltDefaultBucketNamePath = "bbolt.default_bucket_name"
-	BboltDefaultSyncPath       = "bbolt.default_sync"
 )
 
 var (
 	mutex *sync.RWMutex
 )
-
-func init() {
-	mutex = new(sync.RWMutex)
-	viper.SetDefault(BboltDefaultPathConfigPath, "bolt.db")
-	viper.SetDefault(BboltDefaultSyncPath, false)
-	viper.SetDefault(BboltDefaultBucketNamePath, "spaceBucket")
-}
 
 // Client bbolt client struct
 type Instance struct {
@@ -53,10 +40,10 @@ var instance *Instance
 // NewInstance create a new client instance
 func NewInstance(path string, bucketName string) (*Instance, error) {
 	if path == "" {
-		path = viper.GetString(BboltDefaultPathConfigPath)
+		path = config.StorageBboltDefaultPath
 	}
 	if bucketName == "" {
-		bucketName = viper.GetString(BboltDefaultBucketNamePath)
+		bucketName = config.StorageBboltDefaultBucketName
 	}
 
 	return &Instance{Path: path, BucketName: store.String2byte(bucketName)}, nil
@@ -114,7 +101,7 @@ func (c *Instance) Open() error {
 	// 提高数据库写入性能
 	c.DB.NoFreelistSync = true
 	// set db noSync
-	c.DB.NoSync = !viper.GetBool(BboltDefaultSyncPath)
+	c.DB.NoSync = !config.StorageBboltDefaultSync
 
 	return nil
 }

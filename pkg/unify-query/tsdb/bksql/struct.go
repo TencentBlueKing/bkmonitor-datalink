@@ -17,7 +17,7 @@ const (
 	endTime          = "_endTime_"
 	theDate          = "thedate"
 
-	timeStamp = "time"
+	timeStamp = "_timestamp_"
 )
 
 const (

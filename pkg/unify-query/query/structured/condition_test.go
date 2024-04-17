@@ -164,6 +164,20 @@ func TestConditionListFieldAnalysis(t *testing.T) {
 			vm:     `job="kube-state-metrics", namespace!="", pod_name!="", bcs_cluster_id=~"BCS-K8S-40822|BCS-K8S-40839|BCS-K8S-40840|BCS-K8S-40989|BCS-K8S-41105|BCS-K8S-41106", container!="fluentd", result_table_id="table_id"`,
 			sql:    `(job = 'kube-state-metrics' and namespace != '' and pod_name != '' and (bcs_cluster_id REGEXP 'BCS-K8S-40822' or bcs_cluster_id REGEXP 'BCS-K8S-40839' or bcs_cluster_id REGEXP 'BCS-K8S-40840' or bcs_cluster_id REGEXP 'BCS-K8S-40989' or bcs_cluster_id REGEXP 'BCS-K8S-41105' or bcs_cluster_id REGEXP 'BCS-K8S-41106') and container != 'fluentd')`,
 		},
+		{
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "p1",
+						Operator:      ConditionContains,
+						Value:         []string{`{"moduleType":3}`},
+					},
+				},
+			},
+			result: []int{1},
+			vm:     `p1="{\"moduleType\":3}", result_table_id="table_id"`,
+			sql:    `p1 = '{"moduleType":3}'`,
+		},
 	}
 
 	for idx, testCase := range testCases {

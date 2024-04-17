@@ -588,6 +588,34 @@ func TestCheckVmQuery(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:     "测试 conditions 转义问题",
+			spaceUid: "vm-query",
+			ref: QueryReference{
+				refNameA: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:             "system",
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							IsSingleMetric: true,
+							VmRt:           "100147_ieod_system_detail_raw",
+							VmCondition:    `p1="{\"moduleType\":3}", result_table_id="table_id"`,
+						},
+					},
+					ReferenceName: refNameA,
+				},
+			},
+			expected: checkExpected{
+				ok: true,
+				vmRtList: []string{
+					"100147_ieod_system_detail_raw",
+				},
+				vmConditions: map[string]string{
+					refNameA: `p1="{\"moduleType\":3}", result_table_id="table_id"`,
+				},
+			},
+		},
 	}
 
 	for _, tc := range tt {

@@ -351,6 +351,10 @@ func (i *Instance) vmQuery(
 	}
 
 	queryCost := time.Since(startAnaylize)
+
+	span.Set("query-cost", queryCost.String())
+	span.Set("response-size", size)
+
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
 	)

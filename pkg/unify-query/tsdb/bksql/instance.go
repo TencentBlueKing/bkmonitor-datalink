@@ -68,8 +68,6 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	var (
 		data *QuerySyncResultData
 
-		startAnaylize time.Time
-
 		ok  bool
 		err error
 	)
@@ -80,19 +78,11 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
 	defer cancel()
 
-	user := metadata.GetUser(ctx)
-	startAnaylize = time.Now()
-
 	// 发起异步查询
-	res := i.Client.QuerySync(ctx, sql)
+	res := i.Client.QuerySync(ctx, sql, span)
 	if err = i.checkResult(res); err != nil {
 		return data, err
 	}
-
-	queryCost := time.Since(startAnaylize)
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
-	)
 
 	span.Set("query-timeout", i.Timeout.String())
 	span.Set("query-interval-time", i.IntervalTime.String())
@@ -126,7 +116,7 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 	startAnaylize = time.Now()
 
 	// 发起异步查询
-	res := i.Client.QueryAsync(ctx, sql)
+	res := i.Client.QueryAsync(ctx, sql, span)
 	if err = i.checkResult(res); err != nil {
 		return resultData, err
 	}
@@ -154,7 +144,7 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 			case <-ctx.Done():
 				return fmt.Errorf("queryAsyncState %s timeout %s", data.QueryId, i.Timeout.String())
 			default:
-				stateRes := i.Client.QueryAsyncState(ctx, data.QueryId)
+				stateRes := i.Client.QueryAsyncState(ctx, data.QueryId, span)
 				if err = i.checkResult(res); err != nil {
 					return err
 				}
@@ -178,7 +168,7 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 		return resultData, err
 	}
 
-	resultRes := i.Client.QueryAsyncResult(ctx, data.QueryId)
+	resultRes := i.Client.QueryAsyncResult(ctx, data.QueryId, span)
 	if err = i.checkResult(res); err != nil {
 		return resultData, err
 	}

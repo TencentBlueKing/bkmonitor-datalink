@@ -1103,6 +1103,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
+		span.Set("response-size", size)
 
 		if res.Err != "" {
 			return nil, fmt.Errorf(res.Err)

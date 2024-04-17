@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 type Client struct {
@@ -43,7 +44,7 @@ type Client struct {
 	Curl    curl.Curl
 }
 
-func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result) error {
+func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result, span *trace.Span) error {
 	if method == "" {
 		method = curl.Post
 	}
@@ -68,6 +69,7 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 
+	startAnaylize := time.Now()
 	size, err := c.Curl.Request(
 		ctx, method,
 		curl.Options{
@@ -85,15 +87,22 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result)
 
 	user := metadata.GetUser(ctx)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, consul.BkSqlStorageType)
+
+	queryCost := time.Since(startAnaylize)
+	span.Set("query-cost", queryCost.String())
+
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, consul.BkSqlStorageType,
+	)
 	return nil
 }
 
-func (c *Client) QuerySync(ctx context.Context, sql string) *Result {
+func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *Result {
 	data := &QuerySyncResultData{}
 	res := c.response(data)
 
 	url := fmt.Sprintf("%s/%s", c.Address, QuerySync)
-	err := c.curl(ctx, curl.Post, url, sql, res)
+	err := c.curl(ctx, curl.Post, url, sql, res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}
@@ -101,12 +110,12 @@ func (c *Client) QuerySync(ctx context.Context, sql string) *Result {
 	return res
 }
 
-func (c *Client) QueryAsync(ctx context.Context, sql string) *Result {
+func (c *Client) QueryAsync(ctx context.Context, sql string, span *trace.Span) *Result {
 	data := &QueryAsyncData{}
 	res := c.response(data)
 
 	url := fmt.Sprintf("%s/%s", c.Address, QueryAsync)
-	err := c.curl(ctx, curl.Post, url, sql, res)
+	err := c.curl(ctx, curl.Post, url, sql, res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}
@@ -114,12 +123,12 @@ func (c *Client) QueryAsync(ctx context.Context, sql string) *Result {
 	return res
 }
 
-func (c *Client) QueryAsyncResult(ctx context.Context, queryID string) *Result {
+func (c *Client) QueryAsyncResult(ctx context.Context, queryID string, span *trace.Span) *Result {
 	data := &QueryAsyncResultData{}
 	res := c.response(data)
 
 	url := fmt.Sprintf("%s/%s/result/%s", c.Address, QueryAsync, queryID)
-	err := c.curl(ctx, curl.Get, url, "", res)
+	err := c.curl(ctx, curl.Get, url, "", res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}
@@ -127,12 +136,12 @@ func (c *Client) QueryAsyncResult(ctx context.Context, queryID string) *Result {
 	return res
 }
 
-func (c *Client) QueryAsyncState(ctx context.Context, queryID string) *Result {
+func (c *Client) QueryAsyncState(ctx context.Context, queryID string, span *trace.Span) *Result {
 	data := &QueryAsyncStateData{}
 	res := c.response(data)
 
 	url := fmt.Sprintf("%s/%s/state/%s", c.Address, QueryAsync, queryID)
-	err := c.curl(ctx, curl.Get, url, "", res)
+	err := c.curl(ctx, curl.Get, url, "", res, span)
 	if err != nil {
 		return c.failed(ctx, err)
 	}

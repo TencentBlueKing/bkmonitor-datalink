@@ -211,7 +211,7 @@ const (
 `
 	formatMonitorEndpointMsg = `
 [√] check endpoint
-- Description: operator 监听 monitor endpoints 数量
+- Description: operator 监听 monitor endpoints 数量，共 %d 个
 %s
 `
 	formatScrapeMsg = `
@@ -341,7 +341,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	b, _ = json.MarshalIndent(blacklist, "", "  ")
 	buf.WriteString(fmt.Sprintf(formatCheckMonitorBlacklistMsg, string(b)))
 
-	// 检查集群负载情况
+	// 检查集群工作负载数量
 	workloadInfo, workloadUpdated := objectsref.GetWorkloadInfo()
 	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
 	buf.WriteString(fmt.Sprintf(formatWorkloadMsg, workloadUpdated.Format(time.RFC3339), string(b)))
@@ -349,7 +349,11 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	// 检查 Endpoint 数量
 	counts := c.recorder.getMonitorActiveConfigCount()
 	b, _ = json.MarshalIndent(counts, "", "  ")
-	buf.WriteString(fmt.Sprintf(formatMonitorEndpointMsg, string(b)))
+	var total int
+	for _, v := range counts {
+		total += v
+	}
+	buf.WriteString(fmt.Sprintf(formatMonitorEndpointMsg, total, string(b)))
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")
@@ -496,6 +500,13 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	w.Write(lines)
 }
 
+func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
+	if ConfEnablePromRule {
+		lines := c.promsliController.RuleMetrics()
+		w.Write(lines)
+	}
+}
+
 func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 	content := `
 # Admin Routes
@@ -512,6 +523,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 * GET /workload
 * GET /workload/node/{node}
 * GET /relation/metrics
+* GET /rule/metrics
 
 # Check Routes
 --------------
@@ -555,6 +567,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
+	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 
 	// check 路由
 	router.HandleFunc("/check", c.CheckRoute)

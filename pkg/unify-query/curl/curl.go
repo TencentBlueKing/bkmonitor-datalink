@@ -31,14 +31,12 @@ const (
 )
 
 var (
-	bufPool sync.Pool
-)
-
-func init() {
-	bufPool.New = func() any {
-		return bytes.NewBuffer(make([]byte, 0, 1024))
+	bufPool = sync.Pool{
+		New: func() any {
+			return bytes.NewBuffer(make([]byte, 0, 1024))
+		},
 	}
-}
+)
 
 // Options Curl 入参
 type Options struct {

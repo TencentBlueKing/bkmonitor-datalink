@@ -245,7 +245,7 @@ type HostAndTopoCacheManager struct {
 	hosts []*AlarmHostInfo
 	topo  *cmdb.SearchBizInstTopoData
 
-	hostIpMap     map[string][]string
+	hostIpMap     map[string]map[string]struct{}
 	hostIpMapLock sync.RWMutex
 }
 
@@ -259,7 +259,7 @@ func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLim
 	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
 	return &HostAndTopoCacheManager{
 		BaseCacheManager: manager,
-		hostIpMap:        make(map[string][]string),
+		hostIpMap:        make(map[string]map[string]struct{}),
 	}, nil
 }
 
@@ -288,7 +288,10 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	m.hostIpMapLock.Lock()
 	for _, host := range hosts {
 		if host.BkHostInnerip != "" {
-			m.hostIpMap[host.BkHostInnerip] = append(m.hostIpMap[host.BkHostInnerip], fmt.Sprintf("\"%s|%d\"", host.BkHostInnerip, host.BkCloudId))
+			if _, ok := m.hostIpMap[host.BkHostInnerip]; !ok {
+				m.hostIpMap[host.BkHostInnerip] = make(map[string]struct{})
+			}
+			m.hostIpMap[host.BkHostInnerip][fmt.Sprintf("\"%s|%d\"", host.BkHostInnerip, host.BkCloudId)] = struct{}{}
 		}
 	}
 	m.hostIpMapLock.Unlock()
@@ -333,9 +336,14 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	// 刷新主机IP映射缓存
 	key := m.GetCacheKey(hostIPCacheKey)
 	data := make(map[string]string)
-	for ip, hostIds := range m.hostIpMap {
+	for ip, hostIdMapping := range m.hostIpMap {
+		hostIds := make([]string, 0, len(hostIdMapping))
+		for hostId := range hostIdMapping {
+			hostIds = append(hostIds, hostId)
+		}
 		data[ip] = fmt.Sprintf("[%s]", strings.Join(hostIds, ","))
 	}
+
 	err := m.UpdateHashMapCache(ctx, key, data)
 	if err != nil {
 		return errors.Wrap(err, "update host ip cache failed")
@@ -349,6 +357,12 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Reset 重置
+func (m *HostAndTopoCacheManager) Reset() {
+	m.BaseCacheManager.Reset()
+	m.hostIpMap = make(map[string]map[string]struct{})
 }
 
 // CleanGlobal 清理全局缓存

@@ -315,8 +315,7 @@ func (w *dataIDWatcher) Stop() {
 }
 
 func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
-	w.mm.IncReceivedEventCounter(define.ActionAdd)
-	defer w.mm.IncHandledEventCounter(define.ActionAdd)
+	w.mm.IncHandledCounter(define.ActionAdd)
 
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
@@ -335,8 +334,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 }
 
 func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
-	w.mm.IncReceivedEventCounter(define.ActionDelete)
-	defer w.mm.IncHandledEventCounter(define.ActionDelete)
+	w.mm.IncHandledCounter(define.ActionDelete)
 
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
@@ -355,8 +353,7 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 }
 
 func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
-	w.mm.IncReceivedEventCounter(define.ActionUpdate)
-	defer w.mm.IncHandledEventCounter(define.ActionUpdate)
+	w.mm.IncHandledCounter(define.ActionUpdate)
 
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
@@ -370,7 +367,7 @@ func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		w.mm.IncHandledEventCounter(define.ActionSkip)
+		w.mm.IncHandledCounter(define.ActionSkip)
 		return
 	}
 

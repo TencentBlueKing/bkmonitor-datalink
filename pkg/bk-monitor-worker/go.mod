@@ -1,6 +1,6 @@
 module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 
-go 1.19
+go 1.21
 
 require (
 	github.com/IBM/sarama v1.42.1

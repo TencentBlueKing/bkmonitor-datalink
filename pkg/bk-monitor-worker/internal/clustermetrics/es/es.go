@@ -204,7 +204,7 @@ var httpClient = &http.Client{
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 
-var rtRe = regexp.MustCompile(`^v2_(.*?)_.*?_.*$`)
+var rtRe = regexp.MustCompile(`^v2_(.*)_.*?_.*$`)
 
 func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")

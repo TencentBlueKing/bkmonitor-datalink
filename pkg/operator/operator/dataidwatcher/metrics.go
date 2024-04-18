@@ -11,15 +11,15 @@ package dataidwatcher
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 var (
-	dataIDInfo = prometheus.NewGaugeVec(
+	dataIDInfo = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_info",
@@ -28,51 +28,15 @@ var (
 		[]string{"id", "name", "usage", "system", "common", "bk_env"},
 	)
 
-	watcherHandledTotal = prometheus.NewCounter(
+	watcherHandledTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dataid_watcher_handled_total",
-			Help:      "dataid watcher handled total",
-		},
-	)
-
-	watcherHandledDuration = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_handled_duration_seconds",
-			Help:      "dataid watcher handled duration seconds",
-			Buckets:   define.DefObserveDuration,
-		},
-	)
-
-	watcherReceivedEventTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_received_event_total",
-			Help:      "dataid watcher received kubernetes event total",
-		},
-		[]string{"action"},
-	)
-
-	watcherHandledEventTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "dataid_watcher_handled_event_total",
 			Help:      "dataid watcher handled kubernetes event total",
 		},
 		[]string{"action"},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(
-		dataIDInfo,
-		watcherHandledTotal,
-		watcherHandledDuration,
-		watcherReceivedEventTotal,
-		watcherHandledEventTotal,
-	)
-}
 
 func newMetricMonitor() *metricMonitor {
 	return &metricMonitor{}
@@ -90,18 +54,6 @@ func (m *metricMonitor) SetDataIDInfo(id int, name, usage string, system, common
 	dataIDInfo.WithLabelValues(fmt.Sprintf("%d", id), name, usage, conv(system), conv(common), ConfBkEnv).Set(1)
 }
 
-func (m *metricMonitor) IncHandledCounter() {
-	watcherHandledTotal.Inc()
-}
-
-func (m *metricMonitor) ObserveHandledDuration(t time.Time) {
-	watcherHandledDuration.Observe(time.Since(t).Seconds())
-}
-
-func (m *metricMonitor) IncReceivedEventCounter(action string) {
-	watcherReceivedEventTotal.WithLabelValues(action).Inc()
-}
-
-func (m *metricMonitor) IncHandledEventCounter(action string) {
-	watcherHandledEventTotal.WithLabelValues(action).Inc()
+func (m *metricMonitor) IncHandledCounter(action string) {
+	watcherHandledTotal.WithLabelValues(action).Inc()
 }

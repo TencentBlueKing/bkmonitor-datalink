@@ -7,27 +7,36 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package main
 
 import (
-	"github.com/spf13/viper"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"bytes"
+	"sort"
 )
 
-const (
-	confBkEnvPath = "operator.bk_env"
-)
-
-var ConfBkEnv string
-
-func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
-}
-
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
+func toPromFormat(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+
+	var buf bytes.Buffer
+	buf.WriteString(sliMetric)
+	buf.WriteString(`{`)
+
+	var n int
+	for _, k := range keys {
+		if n > 0 {
+			buf.WriteString(`,`)
+		}
+		n++
+		buf.WriteString(k)
+		buf.WriteString(`="`)
+		buf.WriteString(labels[k])
+		buf.WriteString(`"`)
+	}
+	buf.WriteString("} 1")
+
+	return buf.String()
 }

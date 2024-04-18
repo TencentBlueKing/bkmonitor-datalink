@@ -7,27 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package main
 
 import (
-	"github.com/spf13/viper"
+	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/stretchr/testify/assert"
 )
 
-const (
-	confBkEnvPath = "operator.bk_env"
-)
+func TestToPromFormat(t *testing.T) {
+	t.Run("Unordered", func(t *testing.T) {
+		labels := map[string]string{
+			"biz":     "foo",
+			"creator": "admin",
+			"zone":    "gz",
+		}
 
-var ConfBkEnv string
+		s1 := toPromFormat(labels)
+		assert.Equal(t, `bkm_sli{biz="foo",creator="admin",zone="gz"} 1`, s1)
 
-func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
-}
+		s2 := toPromFormat(labels)
+		assert.Equal(t, s1, s2)
+	})
 
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
-	}
+	t.Run("NoLabels", func(t *testing.T) {
+		s1 := toPromFormat(nil)
+		assert.Equal(t, `bkm_sli{} 1`, s1)
+	})
 }

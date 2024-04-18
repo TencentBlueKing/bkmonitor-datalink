@@ -363,6 +363,9 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 
 		logger.Infof("get cmdb resource(%s) watch event: %d", resourceType, len(events))
 
+		// 重置
+		h.cacheManager.Reset()
+
 		// 如果超过全量刷新间隔时间，执行全量刷新
 		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
 			// 全量刷新

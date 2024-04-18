@@ -10,15 +10,16 @@
 package customreport
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 // SetTagList set tag list value
 func (u TimeSeriesMetricUpdater) CustomSetTagList(tagList []string) TimeSeriesMetricUpdater {
-	jsonTagList, _ := json.Marshal(tagList)
+	jsonTagList, _ := jsonx.Marshal(tagList)
 	u.fields["tag_list"] = jsonTagList
 	return u
 }

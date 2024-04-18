@@ -24,10 +24,11 @@ import (
 )
 
 type HTTPClient struct {
-	base    mb.BaseMetricSet
-	client  *http.Client
-	headers map[string]string
-	method  string
+	base     mb.BaseMetricSet
+	client   *http.Client
+	headers  map[string]string
+	method   string
+	rawQuery string
 }
 
 func NewHTTPClient(base mb.BaseMetricSet) (*HTTPClient, error) {
@@ -40,9 +41,21 @@ func NewHTTPClient(base mb.BaseMetricSet) (*HTTPClient, error) {
 		Username    string             `config:"username"`
 		Password    string             `config:"password"`
 		ProxyURL    string             `config:"proxy_url"`
+		Query       url.Values         `config:"query"`
 	}{}
 	if err := base.Module().UnpackConfig(&config); err != nil {
 		return nil, err
+	}
+
+	params := make(url.Values)
+	for k, v := range config.Query {
+		params[k] = make([]string, len(v))
+		copy(params[k], v)
+	}
+
+	var rawQuery string
+	if len(params) > 0 {
+		rawQuery = params.Encode()
 	}
 
 	if config.Headers == nil {
@@ -98,14 +111,21 @@ func NewHTTPClient(base mb.BaseMetricSet) (*HTTPClient, error) {
 			Transport: trp,
 			Timeout:   config.Timeout,
 		},
-		headers: config.Headers,
-		method:  "GET",
+		headers:  config.Headers,
+		method:   "GET",
+		rawQuery: rawQuery,
 	}, nil
 }
 
 func (cli *HTTPClient) FetchResponse() (*http.Response, error) {
+	u, err := url.Parse(cli.base.HostData().SanitizedURI)
+	if err != nil {
+		return nil, err
+	}
+	u.RawQuery = cli.rawQuery
+
 	var reader io.Reader
-	req, err := http.NewRequest(cli.method, cli.base.HostData().SanitizedURI, reader)
+	req, err := http.NewRequest(cli.method, u.String(), reader)
 	if err != nil {
 		return nil, err
 	}

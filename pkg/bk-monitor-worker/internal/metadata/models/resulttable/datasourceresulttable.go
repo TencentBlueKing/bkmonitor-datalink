@@ -15,7 +15,7 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-//go:generate goqueryset -in datasourceresulttable.go -out qs_datasourceresulttable.go
+//go:generate goqueryset -in datasourceresulttable.go -out qs_datasourceresulttable_gen.go
 
 // DataSourceResultTable data source result table model
 // gen:qs

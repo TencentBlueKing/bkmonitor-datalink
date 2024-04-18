@@ -10,7 +10,7 @@
 package cmd
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,81 +18,54 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/logging"
-	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	serviceTaskListenPath = "service.task.listen"
-	serviceTaskPortPath   = "service.task.port"
-)
-
 func init() {
-	viper.SetDefault(serviceTaskListenPath, "127.0.0.1")
-	viper.SetDefault(serviceTaskPortPath, 10211)
-	// add subcommand
 	rootCmd.AddCommand(taskCmd)
 }
 
 var taskCmd = &cobra.Command{
 	Use:   "task",
-	Short: "bk monitor tasks",
+	Short: "bk monitor worker task",
 	Long:  "task module for blueking monitor worker",
 	Run:   startTask,
 }
 
-// start 启动服务
 func startTask(cmd *cobra.Command, args []string) {
-	fmt.Println("start task service...")
-	// 初始化配置
+	defer runtimex.HandleCrash()
+
 	config.InitConfig()
-
 	// 初始化日志
-	logging.InitLogger()
+	log.InitLogger()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	r := bmwHttp.NewHTTPService()
 
-	// 启动 watcher
-	if err := service.NewWatcherService(ctx); err != nil {
-		logger.Fatalf("start watcher error: %v", err)
-	}
-
-	// 启动 periodic task scheduler
-	go func() {
-		if err := service.NewPeriodicTaskSchedulerService(); err != nil {
-			logger.Fatalf("start periodic task scheduler error: %v", err)
-		}
-	}()
-
-	// start http service, include api router
-	r := service.NewHTTPService(true)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", viper.GetString(serviceTaskListenPath), viper.GetInt(serviceTaskPortPath)),
+		Addr:    fmt.Sprintf("%s:%d", config.TaskListenHost, config.TaskListenPort),
 		Handler: r,
 	}
+	logger.Infof("Starting HTTP server at %s:%d", config.TaskListenHost, config.TaskListenPort)
+
 	go func() {
-		// 服务连接
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
 
-	// 信号处理
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			defer cancel()
-			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("shutdown task service error : %s", err)
-			}
-			logger.Warn("task service exit by syscall SIGQUIT, SIGTERM or SIGINT")
-			return
+			srv.Close()
+			logger.Info("Bye")
+			os.Exit(0)
 		}
 	}
 }

@@ -41,7 +41,7 @@ type Option interface {
 	Value() interface{}
 }
 
-// Internal option representations.
+// Internal Options representations.
 type (
 	retryOption           int
 	queueOption           string
@@ -54,7 +54,7 @@ type (
 	retentionOption       time.Duration
 )
 
-// MaxRetry returns an option to specify the max number of times
+// MaxRetry returns an Options to specify the max number of times
 // the task will be retried.
 //
 // Negative retry count is treated as zero retry.
@@ -71,7 +71,7 @@ func (n retryOption) Type() OptionType { return MaxRetryOpt }
 
 func (n retryOption) Value() interface{} { return int(n) }
 
-// Queue returns an option to specify the queue to enqueue the task into.
+// Queue returns an Options to specify the queue to enqueue the task into.
 func Queue(name string) Option {
 	return queueOption(name)
 }
@@ -82,7 +82,7 @@ func (name queueOption) Type() OptionType { return QueueOpt }
 
 func (name queueOption) Value() interface{} { return string(name) }
 
-// TaskID returns an option to specify the task ID.
+// TaskID returns an Options to specify the task ID.
 func TaskID(id string) Option {
 	return taskIDOption(id)
 }
@@ -93,7 +93,7 @@ func (id taskIDOption) Type() OptionType { return TaskIDOpt }
 
 func (id taskIDOption) Value() interface{} { return string(id) }
 
-// Timeout returns an option to specify how long a task may run.
+// Timeout returns an Options to specify how long a task may run.
 func Timeout(d time.Duration) Option {
 	return timeoutOption(d)
 }
@@ -104,7 +104,7 @@ func (d timeoutOption) Type() OptionType { return TimeoutOpt }
 
 func (d timeoutOption) Value() interface{} { return time.Duration(d) }
 
-// Deadline returns an option to specify the deadline for the given task.
+// Deadline returns an Options to specify the deadline for the given task.
 func Deadline(t time.Time) Option {
 	return deadlineOption(t)
 }
@@ -117,7 +117,7 @@ func (t deadlineOption) Type() OptionType { return DeadlineOpt }
 
 func (t deadlineOption) Value() interface{} { return time.Time(t) }
 
-// Unique returns an option to enqueue a task only if the given task is unique.
+// Unique returns an Options to enqueue a task only if the given task is unique.
 func Unique(ttl time.Duration) Option {
 	return uniqueOption(ttl)
 }
@@ -128,9 +128,9 @@ func (ttl uniqueOption) Type() OptionType { return UniqueOpt }
 
 func (ttl uniqueOption) Value() interface{} { return time.Duration(ttl) }
 
-// ProcessAt returns an option to specify when to process the given task.
+// ProcessAt returns an Options to specify when to process the given task.
 //
-// If there's a conflicting ProcessInterval option, the last option passed to Enqueue overrides the others.
+// If there's a conflicting ProcessInterval Options, the last Options passed to Enqueue overrides the others.
 func ProcessAt(t time.Time) Option {
 	return processAtOption(t)
 }
@@ -143,9 +143,9 @@ func (t processAtOption) Type() OptionType { return ProcessAtOpt }
 
 func (t processAtOption) Value() interface{} { return time.Time(t) }
 
-// ProcessInterval returns an option to specify when to process the given task relative to the current time.
+// ProcessInterval returns an Options to specify when to process the given task relative to the current time.
 //
-// If there's a conflicting ProcessAt option, the last option passed to Enqueue overrides the others.
+// If there's a conflicting ProcessAt Options, the last Options passed to Enqueue overrides the others.
 func ProcessInterval(d time.Duration) Option {
 	return processIntervalOption(d)
 }
@@ -158,7 +158,7 @@ func (d processIntervalOption) Type() OptionType { return ProcessIntervalOpt }
 
 func (d processIntervalOption) Value() interface{} { return time.Duration(d) }
 
-// Retention returns an option to specify the duration of retention period for the task.
+// Retention returns an Options to specify the duration of retention period for the task.
 func Retention(d time.Duration) Option {
 	return retentionOption(d)
 }
@@ -171,15 +171,15 @@ func (ttl retentionOption) Value() interface{} { return time.Duration(ttl) }
 
 // ErrDuplicateTask indicates that the given task could not be enqueued since it's a duplicate of another task.
 //
-// ErrDuplicateTask error only applies to tasks enqueued with a Unique option.
+// ErrDuplicateTask error only applies to tasks enqueued with a Unique Options.
 var ErrDuplicateTask = errors.New("task already exists")
 
 // ErrTaskIDConflict indicates that the given task could not be enqueued since its task ID already exists.
 //
-// ErrTaskIDConflict error only applies to tasks enqueued with a TaskID option.
+// ErrTaskIDConflict error only applies to tasks enqueued with a TaskID Options.
 var ErrTaskIDConflict = errors.New("task ID conflicts with another task")
 
-type option struct {
+type Options struct {
 	Retry     int
 	Queue     string
 	TaskID    string
@@ -190,10 +190,10 @@ type option struct {
 	Retention time.Duration
 }
 
-// ComposeOptions compose option with custom options
-func ComposeOptions(opts ...Option) (option, error) {
-	// 默认 option
-	res := option{
+// ComposeOptions compose Options with custom options
+func ComposeOptions(opts ...Option) (Options, error) {
+	// 默认 Options
+	res := Options{
 		Retry:     common.DefaultMaxRetry,
 		Queue:     common.DefaultQueueName,
 		TaskID:    uuid.NewString(),
@@ -208,13 +208,13 @@ func ComposeOptions(opts ...Option) (option, error) {
 		case queueOption:
 			qname := string(opt)
 			if err := common.ValidateQueueName(qname); err != nil {
-				return option{}, err
+				return Options{}, err
 			}
 			res.Queue = qname
 		case taskIDOption:
 			id := string(opt)
 			if stringx.IsEmpty(id) {
-				return option{}, errors.New("task ID cannot be empty")
+				return Options{}, errors.New("task ID cannot be empty")
 			}
 			res.TaskID = id
 		case timeoutOption:
@@ -224,7 +224,7 @@ func ComposeOptions(opts ...Option) (option, error) {
 		case uniqueOption:
 			ttl := time.Duration(opt)
 			if ttl < 1*time.Second {
-				return option{}, errors.New("Unique TTL cannot be less than 1s")
+				return Options{}, errors.New("Unique TTL cannot be less than 1s")
 			}
 			res.UniqueTTL = ttl
 		case processAtOption:
@@ -234,7 +234,7 @@ func ComposeOptions(opts ...Option) (option, error) {
 		case retentionOption:
 			res.Retention = time.Duration(opt)
 		default:
-			// ignore unexpected option
+			// ignore unexpected Options
 		}
 	}
 	return res, nil

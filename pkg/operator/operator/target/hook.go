@@ -45,7 +45,6 @@ func initConfig() {
 	viper.SetDefault(confEventScrapeMaxSpanPath, "2h")
 	viper.SetDefault(confEventScrapeIntervalPath, "60s")
 	viper.SetDefault(confEventScrapeFilesPath, []string{"/var/log/gse/events.log"})
-	viper.SetDefault(confBuiltInLabelsPath, []string{"instance", "job"})
 	viper.SetDefault(confServiceNamePath, "bkmonitor-operator-stack-operator")
 }
 

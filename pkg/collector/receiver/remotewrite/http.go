@@ -54,11 +54,8 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	start := time.Now()
-	token := req.URL.Query().Get(define.KeyToken)
-	if token == "" {
-		token = req.Header.Get(define.KeyToken)
-	}
 
+	token := define.TokenFromHttpRequest(req)
 	r := &define.Record{
 		RecordType:    define.RecordRemoteWrite,
 		RequestType:   define.RequestHttp,

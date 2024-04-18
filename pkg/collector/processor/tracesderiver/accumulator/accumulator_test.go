@@ -374,3 +374,60 @@ func BenchmarkStatsStruct(b *testing.B) {
 	b.Logf("objs len: %d", len(objs))
 	b.FailNow()
 }
+
+func TestAccumulatorGrownthExceeded(t *testing.T) {
+	accumulator := New(&Config{
+		MetricName:          "bk_apm_count",
+		MaxSeries:           1000,
+		MaxSeriesGrowthRate: 10,
+		GcInterval:          time.Hour,
+		PublishInterval:     time.Minute,
+	}, nil)
+
+	ids := []int32{1001, 1002}
+	for i := 0; i < 100; i++ {
+		for _, id := range ids {
+			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+		}
+	}
+
+	exceeded := accumulator.Exceeded()
+	assert.True(t, accumulator.enableLimitGrowRate())
+	assert.Equal(t, 90, exceeded[1001])
+	assert.Equal(t, 90, exceeded[1002])
+
+	accumulator.resetGrowthRate()
+	for i := 0; i < 100; i++ {
+		for _, id := range ids {
+			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+		}
+	}
+
+	exceeded = accumulator.Exceeded()
+	assert.Equal(t, 180, exceeded[1001])
+	assert.Equal(t, 180, exceeded[1002])
+
+	accumulator.Stop()
+}
+
+func TestAccumulatorGrownthNotExceeded(t *testing.T) {
+	accumulator := New(&Config{
+		MetricName:          "bk_apm_count",
+		MaxSeries:           1000,
+		MaxSeriesGrowthRate: 10,
+		GcInterval:          time.Hour,
+		PublishInterval:     time.Minute,
+	}, nil)
+
+	ids := []int32{1001, 1002}
+	for i := 0; i < 10; i++ {
+		for _, id := range ids {
+			accumulator.Accumulate(id, random.Dimensions(6), float64(i))
+		}
+	}
+
+	ret := accumulator.Exceeded()
+	accumulator.Stop()
+	assert.Equal(t, 0, ret[1001])
+	assert.Equal(t, 0, ret[1002])
+}

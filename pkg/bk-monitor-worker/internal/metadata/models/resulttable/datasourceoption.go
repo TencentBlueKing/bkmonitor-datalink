@@ -13,7 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 )
 
-//go:generate goqueryset -in datasourceoption.go -out qs_datasourceoption.go
+//go:generate goqueryset -in datasourceoption.go -out qs_datasourceoption_gen.go
 
 // DataSourceOption data source option model
 // gen:qs

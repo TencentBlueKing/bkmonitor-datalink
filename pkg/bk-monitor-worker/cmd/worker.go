@@ -18,76 +18,77 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/logging"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	service "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	serviceWorkerListenPath = "service.worker.listen"
-	serviceWorkerPortPath   = "service.worker.port"
-)
-
 func init() {
-	viper.SetDefault(serviceWorkerListenPath, "127.0.0.1")
-	viper.SetDefault(serviceWorkerPortPath, 10212)
 	// add subcommand
 	rootCmd.AddCommand(workerCmd)
+	addFlag("worker.queues", "queues", func() {
+		rootCmd.PersistentFlags().StringSliceVar(
+			&config.WorkerQueues, "queues", config.WorkerQueues, "Specify the queues that worker listens to.",
+		)
+	})
 }
 
 var workerCmd = &cobra.Command{
 	Use:   "worker",
 	Short: "bk monitor workers",
 	Long:  "worker module for blueking monitor worker",
-	Run:   startWroker,
+	Run:   startWorker,
 }
 
 // start 启动服务
-func startWroker(cmd *cobra.Command, args []string) {
-	fmt.Println("start worker service...")
-	// 初始化配置
+func startWorker(cmd *cobra.Command, args []string) {
+	defer runtimex.HandleCrash()
+
 	config.InitConfig()
-
 	// 初始化日志
-	logging.InitLogger()
+	log.InitLogger()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	r := bmwHttp.NewProfHttpService()
 
-	// 启动 worker
-	workerSvr, err := service.NewWorkerService()
-	if err != nil {
-		logger.Fatalf("start worker error, %v", err)
-	}
-
-	// start http service, not include api router
-	r := service.NewHTTPService(false)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", viper.GetString(serviceWorkerListenPath), viper.GetInt(serviceWorkerPortPath)),
+		Addr:    fmt.Sprintf("%s:%d", config.WorkerListenHost, config.WorkerListenPort),
 		Handler: r,
 	}
+	logger.Infof("Starting HTTP server at %s:%d", config.WorkerListenHost, config.WorkerListenPort)
+
 	go func() {
-		// 服务连接
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatalf("listen addr error, %v", err)
 		}
 	}()
+	ctx, cancel := context.WithCancel(context.Background())
 
-	// 信号处理
+	// 1. 启动worker服务
+	workerService, err := service.NewWorkerService(ctx, config.WorkerQueues)
+	if err != nil {
+		logger.Fatalf(err.Error())
+	}
+	go workerService.Run()
+
+	// 2. 启动常驻任务维护器
+	daemonTaskMaintainer := daemon.NewDaemonTaskRunMaintainer(ctx, workerService.GetWorkerId())
+	go daemonTaskMaintainer.Run()
+
 	s := make(chan os.Signal)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {
 		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			defer cancel()
-			workerSvr.Shutdown()
-			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("shutdown worker service error : %s", err)
-			}
-			logger.Warn("worker service exit by syscall SIGQUIT, SIGTERM or SIGINT")
-			return
+			workerService.Stop()
+			cancel()
+			srv.Close()
+			logger.Info("Bye")
+			os.Exit(0)
 		}
 	}
 }

@@ -66,7 +66,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read es request body failed for->[%s]", err)
-		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
@@ -74,7 +74,7 @@ func HandleESQueryRequest(c *gin.Context) {
 	err = json.Unmarshal(body, &req)
 	if err != nil {
 		log.Errorf(context.TODO(), "anaylize es request body failed for->[%s]", err)
-		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
@@ -88,12 +88,12 @@ func HandleESQueryRequest(c *gin.Context) {
 	result, err := es.Query(params)
 	if err != nil {
 		log.Errorf(context.TODO(), "query es failed for->[%s]", err)
-		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid)
+		metric.APIRequestInc(ctx, servicePath, metric.StatusFailed, user.SpaceUid, user.Source)
 		c.JSON(400, ErrResponse{err.Error()})
 		return
 	}
 
-	metric.APIRequestInc(ctx, servicePath, metric.StatusSuccess, user.SpaceUid)
+	metric.APIRequestInc(ctx, servicePath, metric.StatusSuccess, user.SpaceUid, user.Source)
 	c.String(200, "%s", result)
 }
 

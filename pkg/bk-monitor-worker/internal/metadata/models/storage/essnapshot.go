@@ -15,16 +15,16 @@ import (
 	"github.com/jinzhu/gorm"
 )
 
-//go:generate goqueryset -in essnapshot.go -out qs_essnapshot.go
+//go:generate goqueryset -in essnapshot.go -out qs_essnapshot_gen.go
 
 // EsSnapshot es snapshot model
 // gen:qs
 type EsSnapshot struct {
 	TableID                      string    `json:"table_id" gorm:"index;size:128"`
 	TargetSnapshotRepositoryName string    `json:"target_snapshot_repository_name" gorm:"index;size:128"`
-	SnapshotDays                 int       `json:"snapshot_days" gorm:"default:0"`
+	SnapshotDays                 int       `json:"snapshot_days" gorm:"column:snapshot_days"`
 	CreateTime                   time.Time `json:"create_time"`
-	Creator                      string    `gorm:"size:32;default:system" json:"creator"`
+	Creator                      string    `gorm:"size:32" json:"creator"`
 	LastModifyTime               time.Time `gorm:"last_modify_time" json:"last_modify_time"`
 	LastModifyUser               string    `gorm:"size:32" json:"last_modify_user"`
 }
@@ -36,6 +36,9 @@ func (EsSnapshot) TableName() string {
 
 // BeforeCreate 新建前时间字段设置为当前时间
 func (e *EsSnapshot) BeforeCreate(tx *gorm.DB) error {
+	if e.Creator == "" {
+		e.Creator = "system"
+	}
 	e.LastModifyTime = time.Now()
 	e.CreateTime = time.Now()
 	return nil

@@ -16,15 +16,16 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
-	"github.com/spf13/viper"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/hashconsul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-//go:generate goqueryset -in influxdbtaginfo.go -out qs_influxdbtaginfo.go
+//go:generate goqueryset -in influxdbtaginfo.go -out qs_influxdbtaginfo_gen.go
 
 // InfluxdbTagInfo influxdb tag info model
 // gen:qs
@@ -36,7 +37,7 @@ type InfluxdbTagInfo struct {
 	ClusterName          string `gorm:"size:128" json:"cluster_name"`
 	HostList             string `gorm:"size:128" json:"host_list"`
 	ManualUnreadableHost string `gorm:"size:128" json:"manual_unreadable_host"`
-	ForceOverwrite       bool   `gorm:"default:false" json:"force_overwrite"`
+	ForceOverwrite       bool   `gorm:"column:force_overwrite" json:"force_overwrite"`
 }
 
 // TableName 用于设置表的别名
@@ -49,7 +50,7 @@ func (i InfluxdbTagInfo) GenerateTagKey() string {
 }
 
 func (InfluxdbTagInfo) ConsulPath() string {
-	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, viper.GetString(consul.ConsulBasePath))
+	return fmt.Sprintf(models.InfluxdbTagInfoConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
 }
 
 func (i InfluxdbTagInfo) RedisField() string {
@@ -128,7 +129,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 		Status:         "ready",
 	}
 
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
@@ -136,7 +137,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 	if err != nil {
 		return err
 	}
@@ -145,7 +146,7 @@ func (i InfluxdbTagInfo) AddConsulInfo(ctx context.Context) error {
 
 // GetConsulInfo 从consul中获取信息
 func (i InfluxdbTagInfo) GetConsulInfo(ctx context.Context) (*TagItemInfo, error) {
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return nil, err
 	}
@@ -176,11 +177,11 @@ func (i InfluxdbTagInfo) ModifyConsulInfo(ctx context.Context, oldInfo TagItemIn
 	if err != nil {
 		return err
 	}
-	consulClient, err := consul.GetInstance(ctx)
+	consulClient, err := consul.GetInstance()
 	if err != nil {
 		return err
 	}
-	err = consulClient.Put(i.ConsulConfigPath(), val, 0)
+	err = hashconsul.Put(consulClient, i.ConsulConfigPath(), val)
 
 	models.PushToRedis(ctx, models.InfluxdbTagInfoKey, i.RedisField(), val, true)
 	return nil

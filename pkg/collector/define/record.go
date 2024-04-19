@@ -41,6 +41,8 @@ const (
 
 	KeyToken    = "X-BK-TOKEN"
 	KeyTenantID = "X-Tps-TenantID"
+
+	basicAuthUsername = "bkmonitor"
 )
 
 type RecordType string
@@ -270,6 +272,12 @@ func TokenFromHttpRequest(req *http.Request) string {
 	}
 	if token == "" {
 		token = req.URL.Query().Get(KeyTenantID)
+	}
+
+	// 3）从 basicauth 中读取（当且 username 为 bkmonitor 才生效
+	username, password, ok := req.BasicAuth()
+	if ok && username == basicAuthUsername && password != "" {
+		token = password
 	}
 	return token
 }

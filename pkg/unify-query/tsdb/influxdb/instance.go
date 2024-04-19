@@ -115,6 +115,8 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		sLimitStr string
 		limitStr  string
 		err       error
+
+		res = new(decoder.Response)
 	)
 	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-exemplar")
 	defer span.End(&err)
@@ -177,7 +179,18 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		urlPath, where,
 	)
 
-	resp, err := i.curl.Request(
+	dec, err := decoder.GetDecoder(i.contentType)
+	if err != nil {
+		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		return nil, err
+	}
+
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		dr := resp.(*decoder.Response)
+		return dec.Decode(ctx, reader, dr)
+	})
+
+	size, err := i.curl.Request(
 		ctx, curl.Get,
 		curl.Options{
 			UrlPath: urlPath,
@@ -187,28 +200,10 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 			UserName: i.username,
 			Password: i.password,
 		},
+		res,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
-	respContentType := resp.Header.Get("Content-type")
-	dec, err := decoder.GetDecoder(respContentType)
-	if err != nil {
-		data, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-			return nil, err
-		}
-		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-		return nil, err
-	}
-	res, err := dec.Decode(ctx, resp.Body)
-	if err != nil {
-		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
-		return nil, err
-	}
 	return res, nil
 }
 
@@ -378,6 +373,8 @@ func (i *Instance) query(
 
 		expandTag []prompb.Label
 		err       error
+
+		res = new(decoder.Response)
 	)
 	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-raw")
 	defer span.End(&err)
@@ -492,7 +489,18 @@ func (i *Instance) query(
 		urlPath, where,
 	)
 
-	resp, err := i.curl.Request(
+	dec, err := decoder.GetDecoder(i.contentType)
+	if err != nil {
+		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		return nil, err
+	}
+
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		dr := resp.(*decoder.Response)
+		return dec.Decode(ctx, reader, dr)
+	})
+
+	size, err := i.curl.Request(
 		ctx, curl.Get,
 		curl.Options{
 			UrlPath: urlPath,
@@ -502,27 +510,9 @@ func (i *Instance) query(
 			UserName: i.username,
 			Password: i.password,
 		},
+		res,
 	)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respContentType := resp.Header.Get("Content-type")
-	dec, err := decoder.GetDecoder(respContentType)
-	if err != nil {
-		data, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-			return nil, err
-		}
-		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-		return nil, err
-	}
-
-	res, err := dec.Decode(ctx, resp.Body)
-	if err != nil {
-		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
 		return nil, err
 	}
 
@@ -530,8 +520,9 @@ func (i *Instance) query(
 	span.Set("query-cost", queryCost.String())
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, fmt.Sprintf("%s_http", consul.InfluxDBStorageType),
+		ctx, queryCost, user.SpaceUid, fmt.Sprintf("%s_http", i.GetInstanceType()),
 	)
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
 	series := make([]*decoder.Row, 0)
 	for _, r := range res.Results {
@@ -788,6 +779,8 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			measurement = query.Measurement
 			field       = query.Field
 			condition   = query.Condition
+
+			res = new(decoder.Response)
 		)
 		where := fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
 		if condition != "" {
@@ -831,8 +824,18 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			"influxdb query: %s, where: %s",
 			urlPath, where,
 		)
+		dec, err := decoder.GetDecoder(i.contentType)
+		if err != nil {
+			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			return nil, err
+		}
 
-		resp, err := i.curl.Request(
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+			dr := resp.(*decoder.Response)
+			return dec.Decode(ctx, reader, dr)
+		})
+
+		size, err := i.curl.Request(
 			ctx, curl.Get,
 			curl.Options{
 				UrlPath: urlPath,
@@ -842,27 +845,9 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 				UserName: i.username,
 				Password: i.password,
 			},
+			res,
 		)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		respContentType := resp.Header.Get("Content-type")
-		dec, err := decoder.GetDecoder(respContentType)
-		if err != nil {
-			data, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-				return nil, err
-			}
-			log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-			return nil, err
-		}
-		res, err := dec.Decode(ctx, resp.Body)
-		if err != nil {
-			log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
-			return nil, err
-		}
+		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -907,6 +892,7 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 		field       = query.Field
 
 		sql string
+		res = new(decoder.Response)
 	)
 	ctx, span := trace.NewSpan(ctx, "influxdb-metrics")
 	defer span.End(&err)
@@ -949,8 +935,18 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 	log.Debugf(ctx,
 		"influxdb query: %s", urlPath,
 	)
+	dec, err := decoder.GetDecoder(i.contentType)
+	if err != nil {
+		log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+		return nil, err
+	}
 
-	resp, err := i.curl.Request(
+	i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+		dr := resp.(*decoder.Response)
+		return dec.Decode(ctx, reader, dr)
+	})
+
+	size, err := i.curl.Request(
 		ctx, curl.Get,
 		curl.Options{
 			UrlPath: urlPath,
@@ -960,27 +956,9 @@ func (i *Instance) metrics(ctx context.Context, query *metadata.Query) ([]string
 			UserName: i.username,
 			Password: i.password,
 		},
+		res,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	respContentType := resp.Header.Get("Content-type")
-	dec, err := decoder.GetDecoder(respContentType)
-	if err != nil {
-		data, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-			return nil, err
-		}
-		log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-		return nil, err
-	}
-	res, err := dec.Decode(ctx, resp.Body)
-	if err != nil {
-		log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
-		return nil, err
-	}
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
 	span.Set("query-cost", time.Since(startAnaylize).String())
 
@@ -1036,6 +1014,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		measurement = query.Measurement
 		field       = query.Field
 		condition   = query.Condition
+
+		res = new(decoder.Response)
 	)
 
 	if name == labels.MetricName {
@@ -1097,8 +1077,18 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			"influxdb query: %s, where: %s",
 			urlPath, where,
 		)
+		dec, err := decoder.GetDecoder(i.contentType)
+		if err != nil {
+			log.Errorf(ctx, "get decoder:%s error:%s", i.contentType, err)
+			return nil, err
+		}
 
-		resp, err := i.curl.Request(
+		i.curl.WithDecoder(func(ctx context.Context, reader io.Reader, resp interface{}) (int, error) {
+			dr := resp.(*decoder.Response)
+			return dec.Decode(ctx, reader, dr)
+		})
+
+		size, err := i.curl.Request(
 			ctx, curl.Get,
 			curl.Options{
 				UrlPath: urlPath,
@@ -1108,29 +1098,12 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 				UserName: i.username,
 				Password: i.password,
 			},
+			res,
 		)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		respContentType := resp.Header.Get("Content-type")
-		dec, err := decoder.GetDecoder(respContentType)
-		if err != nil {
-			data, readErr := io.ReadAll(resp.Body)
-			if readErr != nil {
-				log.Errorf(ctx, "get decoder:%s error:%s and read error:%s", respContentType, err, readErr)
-				return nil, err
-			}
-			log.Errorf(ctx, "get decoder:%s error:%s,data in body:%s", respContentType, err, data)
-			return nil, err
-		}
-		res, err := dec.Decode(ctx, resp.Body)
-		if err != nil {
-			log.Errorf(ctx, "decoder:%s decode error:%s", respContentType, err)
-			return nil, err
-		}
+		metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
 		span.Set("query-cost", time.Since(startAnaylize).String())
+		span.Set("response-size", size)
 
 		if res.Err != "" {
 			return nil, fmt.Errorf(res.Err)

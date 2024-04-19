@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 type Instance struct {

@@ -14,9 +14,11 @@ package static
 
 import (
 	"context"
+	"regexp"
 
 	"github.com/shirou/gopsutil/v3/disk"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -28,13 +30,24 @@ func GetVirtualInterfaceSet() (common.Set, error) {
 }
 
 // GetDiskStatus :
-var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
+var GetDiskStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Disk, error) {
 	infos, err := disk.PartitionsWithContext(ctx, true)
 	if err != nil {
 		logger.Errorf("failed to get disk info for: %s", err)
 		return nil, err
 	}
+
+	var blacklist []*regexp.Regexp
+	for i := 0; i < len(cfg.MountpointBlackList); i++ {
+		r, err := regexp.Compile(cfg.MountpointBlackList[i])
+		if err != nil {
+			continue
+		}
+		blacklist = append(blacklist, r)
+	}
+
 	var total uint64 = 0
+	partitions := make([]DiskPartition, 0)
 	repeatMap := make(map[string]bool)
 	for _, info := range infos {
 		// 重复的设备去重
@@ -51,8 +64,25 @@ var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
 		}
 		total = total + usage.Total
 
+		// 黑名单过滤不需要的挂载点
+		var matched bool
+		for _, rule := range blacklist {
+			if rule.MatchString(info.Mountpoint) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		partitions = append(partitions, DiskPartition{
+			Total:      usage.Total,
+			MountPoint: info.Mountpoint,
+			FileSystem: info.Fstype,
+		})
 	}
 	return &Disk{
-		Total: total,
+		Total:      total,
+		Partitions: partitions,
 	}, nil
 }

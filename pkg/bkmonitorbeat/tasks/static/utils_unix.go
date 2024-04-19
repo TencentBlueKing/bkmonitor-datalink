@@ -18,16 +18,18 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/shirou/gopsutil/v3/disk"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // GetDiskStatus linux相比windows,多了去除虚拟挂载的逻辑
-var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
+var GetDiskStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Disk, error) {
 	infos, err := disk.PartitionsWithContext(ctx, true)
 	if err != nil {
 		return nil, err
@@ -36,6 +38,17 @@ var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
 	// 获取真实磁盘列表
 	diskSet := GetDisks()
 	var total uint64 = 0
+
+	var blacklist []*regexp.Regexp
+	for i := 0; i < len(cfg.MountpointBlackList); i++ {
+		r, err := regexp.Compile(cfg.MountpointBlackList[i])
+		if err != nil {
+			continue
+		}
+		blacklist = append(blacklist, r)
+	}
+
+	partitions := make([]DiskPartition, 0)
 	repeatMap := make(map[string]bool)
 	for _, info := range infos {
 		// 非真实设备不录入
@@ -70,9 +83,26 @@ var GetDiskStatus = func(ctx context.Context) (*Disk, error) {
 		}
 		total = total + usage.Total
 
+		// 黑名单过滤不需要的挂载点
+		var matched bool
+		for _, rule := range blacklist {
+			if rule.MatchString(info.Mountpoint) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		partitions = append(partitions, DiskPartition{
+			Total:      usage.Total,
+			MountPoint: info.Mountpoint,
+			FileSystem: info.Fstype,
+		})
 	}
 	return &Disk{
-		Total: total,
+		Total:      total,
+		Partitions: partitions,
 	}, nil
 }
 

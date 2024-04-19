@@ -358,7 +358,7 @@ func (i *Instance) vmQuery(
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
 	)
-	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, consul.BkSqlStorageType)
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 	return nil
 }
 

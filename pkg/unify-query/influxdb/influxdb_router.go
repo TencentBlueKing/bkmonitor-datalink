@@ -119,7 +119,7 @@ func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grp
 
 func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int) {
 	// 不存在 host 信息则直接返回
-	if r.hostInfo == nil || len(r.hostInfo) == 0 {
+	if len(r.hostInfo) == 0 {
 		return
 	}
 
@@ -129,8 +129,8 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 		// 重试 pingCount 次数
 		var read bool
 		for i := 0; i < pingCount; i++ {
-			addr := fmt.Sprintf("%s://%s:%d", v.Protocol, v.DomainName, v.Port)
-			req, err := http.NewRequest("GET", addr+"/ping", nil)
+			addr := fmt.Sprintf("%s://%s:%d/ping", v.Protocol, v.DomainName, v.Port)
+			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
 				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)
 				continue

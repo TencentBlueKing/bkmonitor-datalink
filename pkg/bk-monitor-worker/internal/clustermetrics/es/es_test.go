@@ -68,9 +68,23 @@ func (s *TestSuite) initStoreData() {
 func (s *TestSuite) TestReportESClusterMetrics() {
 	ctx := context.Background()
 	tConfig := task.Task{}
-
 	err := ReportESClusterMetrics(ctx, &tConfig)
 	if err != nil {
 		s.T().Errorf("Fail to report es cluster metrics, %v", err)
 	}
+}
+
+func (s *TestSuite) TestIndexRegex() {
+	index1 := "v2_1_bkmonitor_event_1_20240219_0"
+	index2 := "v2_space_1_bklog_bcs_k8s_1_bk_gse_file_r5lmh_path_20240418_2"
+	bizMatch1 := targetBizRe.FindStringSubmatch(index1)
+	bizMatch2 := targetBizRe.FindStringSubmatch(index2)
+	targetBizId := ""
+	if len(bizMatch2) > 0 {
+		if bizMatch2[1] == "_space" {
+			targetBizId = "-" + bizMatch2[2]
+		}
+		targetBizId = bizMatch2[2]
+	}
+	s.T().Logf("bizMatch1: %v, bizMatch2: %v, targetBizId：%s", bizMatch1[2], bizMatch2[2], targetBizId)
 }

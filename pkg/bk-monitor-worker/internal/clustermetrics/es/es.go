@@ -144,11 +144,14 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			if index, ok := d["index"].(string); ok {
 				bizMatch := targetBizRe.FindStringSubmatch(index)
 				if len(bizMatch) > 0 {
+					if bizMatch[1] == "_space" {
+						d["target_biz_id"] = "-" + bizMatch[2]
+					}
 					d["target_biz_id"] = bizMatch[2]
 				}
 				rtMatch := rtRe.FindStringSubmatch(index)
 				if len(rtMatch) > 1 {
-					d["result_table_id"] = rtMatch[1]
+					d["table_id"] = rtMatch[1]
 				}
 				logger.Infof("index: %s, bizMatch: %s, rtMatch: %s", index, strings.Join(bizMatch, " "),
 					strings.Join(rtMatch, " "))

@@ -79,12 +79,25 @@ func (s *TestSuite) TestIndexRegex() {
 	index2 := "v2_space_1_bklog_bcs_k8s_1_bk_gse_file_r5lmh_path_20240418_2"
 	bizMatch1 := targetBizRe.FindStringSubmatch(index1)
 	bizMatch2 := targetBizRe.FindStringSubmatch(index2)
-	targetBizId := ""
+	targetBizId1 := ""
+	if len(bizMatch1) > 0 {
+		if bizMatch1[1] == "_space" {
+			targetBizId1 = "-" + bizMatch1[2]
+		}
+		targetBizId1 = bizMatch1[2]
+	}
+	targetBizId2 := ""
 	if len(bizMatch2) > 0 {
 		if bizMatch2[1] == "_space" {
-			targetBizId = "-" + bizMatch2[2]
+			targetBizId2 = "-" + bizMatch2[2]
+		} else {
+			targetBizId2 = bizMatch2[2]
 		}
-		targetBizId = bizMatch2[2]
 	}
-	s.T().Logf("bizMatch1: %v, bizMatch2: %v, targetBizId：%s", bizMatch1[2], bizMatch2[2], targetBizId)
+	if targetBizId1 != "1" {
+		s.T().Errorf("expected 1, targetBizId：%s", targetBizId1)
+	}
+	if targetBizId2 != "-1" {
+		s.T().Errorf("expected -1, targetBizId：%s", targetBizId2)
+	}
 }

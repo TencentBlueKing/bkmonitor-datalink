@@ -15,7 +15,7 @@ import (
 )
 
 type Decoder interface {
-	Decode(ctx context.Context, reader io.Reader) (*Response, error)
+	Decode(ctx context.Context, reader io.Reader, resp *Response) (int, error)
 }
 
 var decoders = make(map[string]Decoder)

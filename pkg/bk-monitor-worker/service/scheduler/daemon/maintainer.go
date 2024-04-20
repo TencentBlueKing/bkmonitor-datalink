@@ -212,7 +212,10 @@ func (r *RunMaintainer) listenRunningState(
 			if rB.retryValid {
 				define, _ := r.methodOperatorMapping[rB.TaskBinding.Kind]
 				go define.Start(rB.baseCtx, rB.errorReceiveChan, rB.SerializerTask.Payload)
-				logger.Infof("[RETRY] Task: %s retry performed", taskUniId)
+				logger.Infof(
+					"[RETRY] Task: %s retry performed.\nParams: \n-----\n%s\n-----\n",
+					taskUniId, rB.SerializerTask.Payload,
+				)
 				retryTicker = &time.Ticker{}
 				metrics.RecordDaemonTaskRetryCount(taskDimension)
 			}
@@ -282,11 +285,12 @@ func (r *RunMaintainer) handleReloadBinding(taskBinding TaskBinding) {
 	if !exist {
 		logger.Errorf(
 			"[handleReloadBinding] receive taskUniId: %s reload request, "+
-				"but not in runningInstance!, ignored it", taskBinding.UniId,
+				"but not in runningInstance!, ignored", taskBinding.UniId,
 		)
 		return
 	}
 	runningInstance := v.(*runningBinding)
+	runningInstance.TaskBinding = taskBinding
 	runningInstance.errorReceiveChan <- ReloadSignal{}
 	logger.Infof(
 		"[handleReloadBinding] send reload signal to errorReceiveChan, "+

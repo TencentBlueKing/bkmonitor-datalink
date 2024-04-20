@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"golang.org/x/exp/maps"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -30,8 +31,9 @@ type watchWorkerMark struct {
 }
 
 type watchTaskMark struct {
-	taskUniId string
-	task      task.SerializerTask
+	taskUniId  string
+	task       task.SerializerTask
+	newPayload []byte
 }
 
 type DefaultWatcherOptions struct {
@@ -230,48 +232,134 @@ func (d *DefaultWatcher) watchReloadRequest() {
 			}
 			if taskInfo == nil {
 				logger.Errorf(
-					"TaskUniId: %s not found in queue: %s, error: %s",
+					"TaskUniId: %s not found in daemonTasks: %s, this reload will not effect, error: %s",
 					taskUniId, common.DaemonTaskKey(), err,
 				)
 				continue
 			}
-			d.reassign(watchTaskMark{taskUniId: taskUniId, task: *taskInfo})
+
+			mark := watchTaskMark{taskUniId: taskUniId, task: *taskInfo}
+			if payloadExist, err := d.redisClient.HExists(
+				d.ctx, common.DaemonReloadReqPayloadHash(), taskUniId).Result(); payloadExist && err == nil {
+				valueStr, err := d.redisClient.HGet(d.ctx, common.DaemonReloadReqPayloadHash(), taskUniId).Result()
+				if err != nil {
+					logger.Errorf(
+						"TaskUniId: %s in %s, but get value from broker failed: %s",
+						taskUniId, common.DaemonReloadReqPayloadHash(), err,
+					)
+					continue
+				}
+				mark.newPayload = []byte(valueStr)
+				if _, err = d.redisClient.HDel(
+					d.ctx, common.DaemonReloadReqPayloadHash(), taskUniId).Result(); err != nil {
+					logger.Errorf(
+						"failed to delete taskUniId: %s in hashKey: %s, error: %s",
+						taskUniId, common.DaemonReloadReqPayloadHash(), err,
+					)
+				}
+			}
+			d.reassign(mark)
 		}
 	}
 }
 
-func (d *DefaultWatcher) reassign(task watchTaskMark) {
+func (d *DefaultWatcher) reassign(mark watchTaskMark) {
 
 	// Step1: 判断 Binding 是否存在
-	workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(task.taskUniId)
+	workerId, err := GetBinding().GetBindingWorkerIdByTaskUniId(mark.taskUniId)
 	if err != nil {
 		logger.Errorf(
 			"[reassign] Failed to obtained binding with taskUniId: %s, error: %s",
-			task.taskUniId, err,
+			mark.taskUniId, err,
 		)
 		return
 	}
+
+	if err = d.overrideAndUpdateTaskPayload(&mark); err != nil {
+		logger.Errorf("Override and update taskPayload in daemonTaskQueue failed, error: %s", err)
+		return
+	}
+
 	if workerId == "" {
-		// Binding 不存在 -> 直接添加
 		logger.Warnf(
 			"TaskUniId: %s exist in the task queue, "+
-				"but not in the binding queue, this task will be added normally", task.taskUniId,
+				"but not in the binding queue, this task will be added normally", mark.taskUniId,
 		)
-		d.handleAddTask(task)
+		// Binding 不存在 -> 直接添加
+		d.handleAddTask(mark)
 	} else {
 		// Binding 存在 -> 保留 WorkerId 关系
-		if err = GetBinding().addReloadExecuteRequest(task.taskUniId, task.task, workerId); err != nil {
+		if err = GetBinding().addReloadExecuteRequest(mark.taskUniId, mark.task, workerId); err != nil {
 			logger.Errorf("Failed to send reload singal to worker queue, error: %s", err)
 			return
 		}
 	}
 
-	logger.Infof("Reload taskUniId: %s successfully", task.taskUniId)
+	logger.Infof("Reload taskUniId: %s successfully", mark.taskUniId)
+}
+
+func (d *DefaultWatcher) overrideAndUpdateTaskPayload(mark *watchTaskMark) error {
+	originData, err := jsonx.Marshal(mark.task)
+	if err != nil {
+		return err
+	}
+
+	if len(mark.newPayload) != 0 {
+		logger.Infof(
+			"[OverridePayload] find new payload, override.\nNEW: %s\nOLD: %s\n",
+			mark.newPayload, mark.task.Payload,
+		)
+		mergePayload, err := d.mergeMapping(mark.task.Payload, mark.newPayload)
+		if err != nil {
+			return err
+		}
+		mark.task.Payload = mergePayload
+		if ComputeTaskUniId(mark.task) != mark.taskUniId {
+			return fmt.Errorf("[OverridePayload] taskUniId: %s is inconsistent after update, "+
+				"the dimension field of this task.payload cannot be modified", mark.taskUniId)
+		}
+	}
+	newData, err := jsonx.Marshal(mark.task)
+	if err != nil {
+		return err
+	}
+
+	pipe := d.redisClient.Pipeline()
+	pipe.SRem(d.ctx, common.DaemonTaskKey(), originData)
+	pipe.SAdd(d.ctx, common.DaemonTaskKey(), newData)
+	_, err = pipe.Exec(d.ctx)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (d *DefaultWatcher) mergeMapping(origin []byte, target []byte) ([]byte, error) {
+	// Merge two map
+	var originMapping map[string]any
+	var targetMapping map[string]any
+
+	if err := jsonx.Unmarshal(origin, &originMapping); err != nil {
+		return nil, err
+	}
+
+	if err := jsonx.Unmarshal(target, &targetMapping); err != nil {
+		return nil, err
+	}
+
+	maps.Copy(originMapping, targetMapping)
+	merge, err := jsonx.Marshal(originMapping)
+	if err != nil {
+		return nil, err
+	}
+
+	return merge, nil
 }
 
 // getDaemonTask obtained the daemon task
 func (d *DefaultWatcher) getDaemonTask(taskUniId string) (*task.SerializerTask, error) {
-	members, err := rdb.GetRDB().Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
+	members, err := d.redisClient.SMembers(context.Background(), common.DaemonTaskKey()).Result()
 	if err != nil {
 		return nil, err
 	}

@@ -84,8 +84,8 @@ func (k *kafkaNotifier) Spans() <-chan []window.StandardSpan {
 func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 	logger.Infof(
-		"KafkaNotifier started. host: %s topic: %s groupId: %s qps: %f",
-		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId, k.handler.limiter.limiter.QPS(),
+		"KafkaNotifier started. host: %s topic: %s groupId: %s qps: %d",
+		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId, k.handler.qps,
 	)
 	for {
 		select {
@@ -107,6 +107,7 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 
 type consumeHandler struct {
 	ctx     context.Context
+	qps     int
 	limiter *tokenBucketRateLimiter
 	dataId  string
 	spans   chan []window.StandardSpan
@@ -134,7 +135,7 @@ loop:
 		select {
 		case msg := <-claim.Messages():
 			if !c.limiter.TryAccept() {
-				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %f", c.topic, c.limiter.limiter.QPS())
+				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %d", c.topic, c.qps)
 				metrics.AddApmPreCalcNotifierRejectMessageCount(c.dataId, c.topic)
 				continue
 			}
@@ -209,6 +210,7 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 		handler: consumeHandler{
 			ctx:     args.ctx,
 			dataId:  dataId,
+			qps:     args.qps,
 			limiter: &limiter,
 			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
 			groupId: config.KafkaGroupId,

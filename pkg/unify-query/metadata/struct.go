@@ -94,6 +94,7 @@ type Query struct {
 	SegmentedEnable bool // 是否开启分段查询
 
 	// Es 查询扩展
+	AlignResult     bool
 	DataSource      string
 	AllConditions   [][]ConditionField
 	Source          []string

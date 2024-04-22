@@ -375,13 +375,14 @@ func (i *Instance) QueryRaw(
 	start := hints.Start
 	end := hints.End
 
-	// 获取 window 对齐开始时间
 	if query.TimeAggregation == nil {
 		err = fmt.Errorf("empty time aggregation with %+v", query)
 		return storage.ErrSeriesSet(err)
 	}
 	window := query.TimeAggregation.WindowDuration
-	if window.Milliseconds() > 0 {
+
+	// 是否对齐开始时间
+	if query.AlignResult && window.Milliseconds() > 0 {
 		start = intMathFloor(start, window.Milliseconds()) * window.Milliseconds()
 	}
 

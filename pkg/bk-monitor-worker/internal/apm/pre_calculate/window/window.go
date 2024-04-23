@@ -11,9 +11,7 @@ package window
 
 import (
 	"strconv"
-	"strings"
 
-	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -45,27 +43,27 @@ type Span struct {
 	StartTime    int            `json:"start_time"`
 }
 
-func ToStandardSpan(originSpan *fastjson.Value) *StandardSpan {
+func ToStandardSpan(originSpan Span) *StandardSpan {
 	standardSpan := StandardSpan{
-		TraceId:      string(originSpan.GetStringBytes("trace_id")),
-		SpanId:       string(originSpan.GetStringBytes("span_id")),
-		SpanName:     string(originSpan.GetStringBytes("span_name")),
-		ParentSpanId: string(originSpan.GetStringBytes("parent_span_id")),
-		StartTime:    originSpan.GetInt("start_time"),
-		EndTime:      originSpan.GetInt("end_time"),
-		ElapsedTime:  originSpan.GetInt("elapsed_time"),
-		StatusCode:   core.SpanStatusCode(originSpan.Get("status").GetInt("code")),
-		Kind:         originSpan.GetInt("kind"),
+		TraceId:      originSpan.TraceId,
+		SpanId:       originSpan.SpanId,
+		SpanName:     originSpan.SpanName,
+		ParentSpanId: originSpan.ParentSpanId,
+		StartTime:    originSpan.StartTime,
+		EndTime:      originSpan.EndTime,
+		ElapsedTime:  originSpan.ElapsedTime,
+		StatusCode:   originSpan.Status.Code,
+		Kind:         originSpan.Kind,
 	}
 	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
 	return &standardSpan
 }
 
-func exactStandardFields(standardSpan StandardSpan, originSpan *fastjson.Value) map[string]string {
+func exactStandardFields(standardSpan StandardSpan, originSpan Span) map[string]string {
 	res := make(map[string]string)
 
-	attrVal := originSpan.Get("attributes")
-	resourceVal := originSpan.Get("resource")
+	attrVal := originSpan.Attributes
+	resourceVal := originSpan.Resource
 
 	for _, f := range core.StandardFields {
 		var valueStr string
@@ -78,15 +76,13 @@ func exactStandardFields(standardSpan StandardSpan, originSpan *fastjson.Value) 
 				targetVal = resourceVal
 			}
 
-			if v := targetVal.Get(f.Key); v != nil {
+			if v := targetVal[f.Key]; v != nil {
 				found = true
-				switch v.Type() {
-				case fastjson.TypeNumber:
-					if originV, err := v.Float64(); err == nil {
-						valueStr = strconv.FormatFloat(originV, 'f', -1, 64)
-					}
+				switch v.(type) {
+				case float64:
+					valueStr = strconv.FormatFloat(v.(float64), 'f', -1, 64)
 				default:
-					valueStr = strings.Trim(string(v.GetStringBytes()), `"`)
+					valueStr = v.(string)
 				}
 			}
 		case core.SourceOuter:

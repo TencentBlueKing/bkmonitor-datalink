@@ -10,12 +10,13 @@
 package notifier
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha512"
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/valyala/fastjson"
+	"github.com/bytedance/sonic"
 	"github.com/xdg-go/scram"
 	"k8s.io/client-go/util/flowcontrol"
 
@@ -130,6 +131,7 @@ func (c consumeHandler) Cleanup(_ sarama.ConsumerGroupSession) error {
 // Once the Messages() channel is closed, the Handler must finish its processing
 // loop and exit.
 func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+
 loop:
 	for {
 		select {
@@ -159,10 +161,14 @@ loop:
 func (c consumeHandler) sendSpans(message []byte) {
 	start := time.Now()
 	var res []window.StandardSpan
-	v, _ := fastjson.ParseBytes(message)
-	items := v.GetArray("items")
 
-	for _, item := range items {
+	var msg window.OriginMessage
+	dec := sonic.ConfigDefault.NewDecoder(bytes.NewBuffer(message))
+	if err := dec.Decode(&msg); err != nil {
+		return
+	}
+
+	for _, item := range msg.Items {
 		res = append(res, *window.ToStandardSpan(item))
 	}
 	metrics.RecordNotifierParseSpanDuration(c.dataId, c.topic, start)

@@ -41,7 +41,7 @@ func NewTokenDecoder(c Config) TokenDecoder {
 		return newProxyTokenDecoder(c)
 	}
 
-	// 未指定 token decoder 时使用固定的解析方案（for test）
+	// 未指定 token decoder 时使用固定的解析方案
 	return newFixedTokenDecoder(Config{
 		Type:       decoderTypeFixed,
 		FixedToken: "unspecified-token",
@@ -55,7 +55,7 @@ type TokenDecoder interface {
 	Decode(s string) (define.Token, error)
 }
 
-// newFixedTokenDecoder 根据配置生成固定 Token 用于测试场景
+// newFixedTokenDecoder 根据配置生成固定 Token
 func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
 		token: define.Token{

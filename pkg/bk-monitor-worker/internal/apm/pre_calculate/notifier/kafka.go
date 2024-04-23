@@ -10,7 +10,6 @@
 package notifier
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha512"
 	"time"
@@ -163,8 +162,7 @@ func (c consumeHandler) sendSpans(message []byte) {
 	var res []window.StandardSpan
 
 	var msg window.OriginMessage
-	dec := sonic.ConfigDefault.NewDecoder(bytes.NewBuffer(message))
-	if err := dec.Decode(&msg); err != nil {
+	if err := sonic.Unmarshal(message, &msg); err != nil {
 		return
 	}
 

@@ -193,7 +193,7 @@ func (e *esStorage) Query(data any) (any, error) {
 		e.client.Search.WithContext(e.ctx),
 		e.client.Search.WithIndex(e.indexName),
 		e.client.Search.WithBody(&buf),
-		e.client.Search.WithTrackTotalHits(true),
+		e.client.Search.WithTrackTotalHits(false),
 	)
 	if err != nil {
 		return nil, err

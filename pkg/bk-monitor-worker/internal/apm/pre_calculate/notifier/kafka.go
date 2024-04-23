@@ -17,6 +17,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/valyala/fastjson"
 	"github.com/xdg-go/scram"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -83,8 +84,8 @@ func (k *kafkaNotifier) Spans() <-chan []window.StandardSpan {
 func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 	logger.Infof(
-		"KafkaNotifier started. host: %s topic: %s groupId: %s",
-		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId,
+		"KafkaNotifier started. host: %s topic: %s groupId: %s qps: %d",
+		k.config.KafkaHost, k.config.KafkaTopic, k.config.KafkaGroupId, k.handler.qps,
 	)
 	for {
 		select {
@@ -106,6 +107,8 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 
 type consumeHandler struct {
 	ctx     context.Context
+	qps     int
+	limiter *tokenBucketRateLimiter
 	dataId  string
 	spans   chan []window.StandardSpan
 	groupId string
@@ -131,6 +134,12 @@ loop:
 	for {
 		select {
 		case msg := <-claim.Messages():
+			if !c.limiter.TryAccept() {
+				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %d", c.topic, c.qps)
+				metrics.AddApmPreCalcNotifierRejectMessageCount(c.dataId, c.topic)
+				continue
+			}
+
 			metrics.AddApmNotifierReceiveMessageCount(c.dataId, c.topic)
 			if session != nil {
 				session.MarkMessage(msg, "")
@@ -186,6 +195,16 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 		)
 		return nil, err
 	}
+
+	var limiter tokenBucketRateLimiter
+	if args.qps == 0 {
+		limiter = tokenBucketRateLimiter{unlimited: true}
+	} else if args.qps < 0 {
+		limiter = tokenBucketRateLimiter{rejected: true}
+	} else {
+		limiter = tokenBucketRateLimiter{limiter: flowcontrol.NewTokenBucketRateLimiter(float32(args.qps), args.qps*2)}
+	}
+
 	return &kafkaNotifier{
 		ctx:           args.ctx,
 		config:        args.kafkaConfig,
@@ -193,6 +212,8 @@ func newKafkaNotifier(dataId string, setters ...Option) (Notifier, error) {
 		handler: consumeHandler{
 			ctx:     args.ctx,
 			dataId:  dataId,
+			qps:     args.qps,
+			limiter: &limiter,
 			spans:   make(chan []window.StandardSpan, args.chanBufferSize),
 			groupId: config.KafkaGroupId,
 			topic:   config.KafkaTopic,

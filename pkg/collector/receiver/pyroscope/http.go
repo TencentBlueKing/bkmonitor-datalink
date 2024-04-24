@@ -186,6 +186,23 @@ func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
 }
 
+const nanoTimestamp2020 = 1577836800000000000 // nanoseconds for 2020-01-01 00:00:00 +0000 UTC
+// parseTime Used to parse timestamp format, compatible with seconds and nanosecond formats
+// 2020-01-01 00:00:00 +0000 UTC
+// 1577836800           // seconds
+// 1577836800000        // milliseconds
+// 1577836800000000     // microseconds
+// 1577836800000000000  // nanoseconds
+// if the timestamp is greater than 1577836800000000000, it must be nanosecond format
+// Notice: only use to parse pyroscope time format, do not copy to other place
+func parseTime(timestamp int64) time.Time {
+	if timestamp > nanoTimestamp2020 {
+		return time.Unix(0, timestamp)
+	} else {
+		return time.Unix(timestamp, 0)
+	}
+}
+
 func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
 	var zero time.Time
 	startTs, err := strconv.ParseInt(query.Get("from"), 10, 64)
@@ -197,7 +214,7 @@ func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
 		return zero, zero, err
 	}
 
-	return time.Unix(startTs, 0), time.Unix(endTs, 0), nil
+	return parseTime(startTs), parseTime(endTs), nil
 }
 
 func getFormatBySpy(spyName string) string {

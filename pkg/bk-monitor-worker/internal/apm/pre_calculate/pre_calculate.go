@@ -38,7 +38,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithDistributiveWindowConfig(
 			window.DistributiveWindowSubSize(config.DistributiveWindowSubSize),
 			window.DistributiveWindowWatchExpiredInterval(config.DistributiveWindowWatchExpireInterval),
-			window.ConcurrentProcessCount(),
+			window.ConcurrentProcessCount(config.DistributiveWindowHandleEventConcurrentCount),
 			window.ConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
 		).
 		WithProcessorConfig(

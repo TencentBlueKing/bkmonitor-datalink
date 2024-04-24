@@ -54,9 +54,13 @@ func DistributiveWindowWatchExpiredInterval(interval time.Duration) Distributive
 // For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
 // then each sub-window can have a maximum of 10 traces running at the same time,
 // and a total of 5 * 10 can be processed at the same time.
-func ConcurrentProcessCount() DistributiveWindowOption {
+func ConcurrentProcessCount(c int) DistributiveWindowOption {
 	return func(options *DistributiveWindowOptions) {
-		options.concurrentProcessCount = runtime.NumCPU() * 2
+		if c <= 0 {
+			options.concurrentProcessCount = runtime.NumCPU() * 2
+		} else {
+			options.concurrentProcessCount = c
+		}
 	}
 }
 
@@ -250,7 +254,7 @@ type distributiveSubWindow struct {
 }
 
 func newDistributiveSubWindow(dataId string, ctx context.Context, index int, processor Processor, saveReqChan chan<- storage.SaveRequest, concurrentMaximum int) *distributiveSubWindow {
-	return &distributiveSubWindow{
+	subWindow := &distributiveSubWindow{
 		id:                   index,
 		dataId:               dataId,
 		eventChan:            make(chan Event, concurrentMaximum),
@@ -264,6 +268,10 @@ func newDistributiveSubWindow(dataId string, ctx context.Context, index int, pro
 			zap.String("sub-window-id", strconv.Itoa(index)),
 		),
 	}
+	subWindow.logger.Infof(
+		"Create SubWindow -> dataId: %s subWindowId: %d eventChanSize: %d", dataId, index, concurrentMaximum,
+	)
+	return subWindow
 }
 
 func (d *distributiveSubWindow) assembleRuntimeConfig(runtimeOpt ...RuntimeConfigOption) {

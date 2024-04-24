@@ -199,6 +199,11 @@ loop:
 			start := time.Now()
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)
+				for {
+					if len(subWindow.eventChan) < w.config.concurrentExpirationMaximum {
+						break
+					}
+				}
 				subWindow.add(span)
 			}
 			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)

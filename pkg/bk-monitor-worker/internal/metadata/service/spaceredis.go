@@ -437,19 +437,28 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 	db := mysql.GetDBSession().DB
 	// 获取数据
 	var esStorageList []storage.ESStorage
-	if err := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID).TableIDIn(tableIdList...).All(&esStorageList); err != nil {
-		logger.Errorf("compose es table id detail error, %s", err)
-		return err
+	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID)
+	// 如果过滤结果表存在，则添加过来条件
+	if len(tableIdList) != 0 {
+		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
+			logger.Errorf("compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
+			return err
+		}
+	} else {
+		if err := esQuerySet.All(&esStorageList); err != nil {
+			logger.Errorf("compose es table id detail error, %s", err)
+			return err
+		}
 	}
 	// 组装数据
 	client := redis.GetStorageRedisInstance()
 	wg := &sync.WaitGroup{}
 	// 因为每个完全独立，可以并发执行
-	ch := make(chan bool, 50)
+	ch := make(chan struct{}, 50)
 	wg.Add(len(esStorageList))
 	for _, es := range esStorageList {
-		ch <- true
-		go func(es storage.ESStorage, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(es storage.ESStorage, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()

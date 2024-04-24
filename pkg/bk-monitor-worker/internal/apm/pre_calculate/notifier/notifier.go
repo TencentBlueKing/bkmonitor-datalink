@@ -32,6 +32,8 @@ type Options struct {
 	ctx context.Context
 	// chanBufferSize The maximum amount of cached data in the queue
 	chanBufferSize int
+	// qps rate limiter
+	qps int
 }
 
 type Option func(*Options)
@@ -47,6 +49,12 @@ func BufferSize(s int) Option {
 func Context(ctx context.Context) Option {
 	return func(options *Options) {
 		options.ctx = ctx
+	}
+}
+
+func Qps(q int) Option {
+	return func(options *Options) {
+		options.qps = q
 	}
 }
 

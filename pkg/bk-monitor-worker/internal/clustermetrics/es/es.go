@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -144,14 +143,18 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			if index, ok := d["index"].(string); ok {
 				bizMatch := targetBizRe.FindStringSubmatch(index)
 				if len(bizMatch) > 0 {
-					d["target_biz_id"] = bizMatch[2]
+					if bizMatch[1] == "_space" {
+						d["target_biz_id"] = "-" + bizMatch[2]
+					} else {
+						d["target_biz_id"] = bizMatch[2]
+					}
 				}
 				rtMatch := rtRe.FindStringSubmatch(index)
 				if len(rtMatch) > 1 {
-					d["result_table_id"] = rtMatch[1]
+					d["table_id"] = rtMatch[1]
 				}
-				logger.Infof("index: %s, bizMatch: %s, rtMatch: %s", index, strings.Join(bizMatch, " "),
-					strings.Join(rtMatch, " "))
+				logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
+					d["table_id"])
 			}
 
 			esm := &clustermetrics.EsMetric{

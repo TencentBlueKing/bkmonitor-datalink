@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
@@ -107,111 +108,86 @@ func TestSplitLabels(t *testing.T) {
 	}
 }
 
-func TestHttpExportMetricsValidateFailed(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
-
+func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {
+	n := atomic.NewInt64(0)
 	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
+		receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
 		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusBadRequest, define.ProcessorTokenChecker, errors.New("MUST ERROR")
+			return code, msg, err
 		}},
 	}
-
-	req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
-	rw := httptest.NewRecorder()
-	svc.ExportMetrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusBadRequest)
+	return svc, n
 }
 
-func TestHttpExportMetricsNoJob(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/jox/some_job", buf)
+func TestHttpRequest(t *testing.T) {
+	t.Run("validate failed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", &bytes.Buffer{})
 
-	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
+		svc, n := newSvc(define.StatusBadRequest, define.ProcessorTokenChecker, errors.New("MUST ERROR"))
+		req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
+		rw := httptest.NewRecorder()
+		svc.ExportMetrics(rw, req)
+		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		assert.Equal(t, int64(0), n.Load())
+	})
 
-	req = mux.SetURLVars(req, map[string]string{"jox": "some_job"})
-	rw := httptest.NewRecorder()
-	svc.ExportMetrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusBadRequest)
-}
+	t.Run("no job", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/jox/some_job", &bytes.Buffer{})
 
-func TestHttpExportMetricsInvalidBody(t *testing.T) {
-	buf := &bytes.Buffer{}
-	buf.Write([]byte("{-}"))
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"jox": "some_job"})
+		rw := httptest.NewRecorder()
+		svc.ExportMetrics(rw, req)
+		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		assert.Equal(t, int64(0), n.Load())
+	})
 
-	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
+	t.Run("invalid body", func(t *testing.T) {
+		buf := bytes.NewBuffer([]byte("{-}"))
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job", buf)
 
-	req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
-	rw := httptest.NewRecorder()
-	svc.ExportMetrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusBadRequest)
-}
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
+		rw := httptest.NewRecorder()
+		svc.ExportMetrics(rw, req)
+		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		assert.Equal(t, int64(0), n.Load())
+	})
 
-func TestHttpExportBase64Metrics(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA", buf)
+	t.Run("base64 url success", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA", &bytes.Buffer{})
 
-	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"job": "L3Zhci90bXA"})
+		rw := httptest.NewRecorder()
+		svc.ExportBase64Metrics(rw, req)
+		assert.Equal(t, rw.Code, http.StatusOK)
+		assert.Equal(t, int64(0), n.Load())
+	})
 
-	req = mux.SetURLVars(req, map[string]string{"job": "L3Zhci90bXA"})
-	rw := httptest.NewRecorder()
-	svc.ExportBase64Metrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusOK)
-}
+	t.Run("base64 url failed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA??", &bytes.Buffer{})
 
-func TestHttpExportBase64MetricsFailed(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/L3Zhci90bXA??", buf)
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		req = mux.SetURLVars(req, map[string]string{"job": "L3Zhci90bXA??"})
+		rw := httptest.NewRecorder()
+		svc.ExportBase64Metrics(rw, req)
+		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		assert.Equal(t, int64(0), n.Load())
+	})
 
-	svc := HttpService{
-		receiver.Publisher{Func: func(r *define.Record) {}},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
+	t.Run("report success", func(t *testing.T) {
+		content, err := os.ReadFile("../../example/fixtures/prometheus.txt")
+		assert.NoError(t, err)
+		buf := bytes.NewBuffer(content)
+		req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job?X-BK-TOKEN=mytoken", buf)
 
-	req = mux.SetURLVars(req, map[string]string{"job": "L3Zhci90bXA??"})
-	rw := httptest.NewRecorder()
-	svc.ExportBase64Metrics(rw, req)
-	assert.Equal(t, rw.Code, http.StatusBadRequest)
-}
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		rw := httptest.NewRecorder()
+		req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
+		svc.ExportMetrics(rw, req)
 
-func TestHttpTokenAfterPreCheck(t *testing.T) {
-	buf := &bytes.Buffer{}
-	content, err := os.ReadFile("../../example/fixtures/prometheus.txt")
-	assert.NoError(t, err)
-	buf.Write(content)
-
-	req := httptest.NewRequest(http.MethodPut, "http://localhost/metrics/job/some_job?X-BK-TOKEN=mytoken", buf)
-
-	var n int
-	svc := HttpService{
-		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
-	}
-	rw := httptest.NewRecorder()
-	req = mux.SetURLVars(req, map[string]string{"job": "some_job"})
-	svc.ExportMetrics(rw, req)
-
-	assert.Equal(t, rw.Code, http.StatusOK)
-	assert.Equal(t, 41, n)
+		assert.Equal(t, rw.Code, http.StatusOK)
+		assert.Equal(t, int64(41), n.Load())
+	})
 }

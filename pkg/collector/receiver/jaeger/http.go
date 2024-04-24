@@ -82,10 +82,9 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 
 	traces, httpCode, err := decodeThriftHTTPBody(buf.Bytes(), req.Header.Get("Content-Type"))
 	if err != nil {
-		err = errors.Wrapf(err, "failed to parse jaeger exported content, ip=%v", ip)
-		logger.Warn(err)
+		logger.Warnf("failed to parse jaeger exported content, ip=%v, err: %v", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
-		receiver.WriteResponse(w, define.ContentTypeJson, httpCode, []byte(err.Error()))
+		receiver.WriteErrResponse(w, define.ContentTypeJson, httpCode, err)
 		return
 	}
 
@@ -102,7 +101,7 @@ func (s HttpService) JaegerTraces(w http.ResponseWriter, req *http.Request) {
 		err = errors.Wrapf(err, "run pre-check failed, rtype=traces, code=%d, ip=%s", code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, r.Token.Original, code)
-		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
+		receiver.WriteErrResponse(w, define.ContentTypeJson, int(code), err)
 		return
 	}
 
@@ -122,7 +121,7 @@ func decodeThriftHTTPBody(bs []byte, ctype string) (ptrace.Traces, int, error) {
 
 	traces, err := newThriftV1Encoder().UnmarshalTraces(bs)
 	if err != nil {
-		return ptrace.Traces{}, http.StatusBadRequest, errors.Errorf("unable to process request body: %v", err)
+		return ptrace.Traces{}, http.StatusBadRequest, errors.Wrap(err, "unmarshal request body failed")
 	}
 
 	return traces, http.StatusOK, nil

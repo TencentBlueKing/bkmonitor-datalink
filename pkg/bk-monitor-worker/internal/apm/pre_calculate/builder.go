@@ -45,7 +45,7 @@ type PreCalculateProcessor interface {
 	GetTaskDimension(payload []byte) string
 	Run(errorChan chan<- error)
 
-	StartByDataId(ctx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption)
+	StartByDataId(ctx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption)
 
 	WatchConnections(filePath string)
 }
@@ -57,6 +57,7 @@ var (
 
 type StartInfo struct {
 	DataId string `json:"data_id"`
+	Qps    int    `json:"qps"`
 }
 
 type Precalculate struct {
@@ -86,7 +87,7 @@ type PrecalculateOption struct {
 
 type readySignal struct {
 	ctx              context.Context
-	dataId           string
+	startInfo        StartInfo
 	config           PrecalculateOption
 	errorReceiveChan chan<- error
 }
@@ -174,19 +175,19 @@ func (p *Precalculate) Start(runInstanceCtx context.Context, errorReceiveChan ch
 		return
 	}
 
-	p.StartByDataId(runInstanceCtx, startInfo.DataId, errorReceiveChan)
+	p.StartByDataId(runInstanceCtx, startInfo, errorReceiveChan)
 }
 
-func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, dataId string, errorReceiveChan chan<- error, config ...PrecalculateOption) {
+func (p *Precalculate) StartByDataId(runInstanceCtx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption) {
 	ticker := time.NewTicker(5 * time.Second)
 loop:
 	for {
 		select {
 		case <-ticker.C:
-			if err := core.GetMetadataCenter().AddDataId(dataId); err != nil {
+			if err := core.GetMetadataCenter().AddDataId(startInfo.DataId); err != nil {
 				apmLogger.Errorf(
 					"Failed to start the pre-calculation with dataId: %s, it will not be executed. error: %s",
-					dataId, err,
+					startInfo.DataId, err,
 				)
 				continue
 			}
@@ -194,12 +195,12 @@ loop:
 			var signal readySignal
 			if len(config) == 0 {
 				signal = readySignal{
-					ctx: runInstanceCtx, dataId: dataId, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
+					ctx: runInstanceCtx, startInfo: startInfo, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
 				}
 			} else {
 				// config overwrite
 				signal = readySignal{
-					ctx: runInstanceCtx, dataId: dataId, config: config[0], errorReceiveChan: errorReceiveChan,
+					ctx: runInstanceCtx, startInfo: startInfo, config: config[0], errorReceiveChan: errorReceiveChan,
 				}
 			}
 			p.readySignalChan <- signal
@@ -211,7 +212,7 @@ loop:
 		}
 	}
 
-	apmLogger.Infof("[StartByDataId] done - %s", dataId)
+	apmLogger.Infof("[StartByDataId] done - DataId: %s Qps: %d", startInfo.DataId, startInfo.Qps)
 }
 
 func (p *Precalculate) Run(runSuccess chan<- error) {
@@ -225,8 +226,8 @@ loop:
 	for {
 		select {
 		case signal := <-p.readySignalChan:
-			apmLogger.Infof("Pre-calculation with dataId: %s was received.", signal.dataId)
-			p.launch(signal.ctx, signal.dataId, signal.config, signal.errorReceiveChan)
+			apmLogger.Infof("Pre-calculation with dataId: %s was received.", signal.startInfo.DataId)
+			p.launch(signal.ctx, signal.startInfo, signal.config, signal.errorReceiveChan)
 		case <-p.ctx.Done():
 			apmLogger.Info("Precalculate[MAIN] received the stop signal.")
 			break loop
@@ -235,21 +236,21 @@ loop:
 }
 
 func (p *Precalculate) launch(
-	runInstanceCtx context.Context, dataId string, conf PrecalculateOption, errorReceiveChan chan<- error,
+	runInstanceCtx context.Context, startInfo StartInfo, conf PrecalculateOption, errorReceiveChan chan<- error,
 ) {
 	defer runtimex.HandleCrashToChan(errorReceiveChan)
 
-	runInstance := RunInstance{dataId: dataId, config: conf, ctx: runInstanceCtx, errorReceiveChan: errorReceiveChan}
+	runInstance := RunInstance{startInfo: startInfo, config: conf, ctx: runInstanceCtx, errorReceiveChan: errorReceiveChan}
 
 	messageChan, err := runInstance.startNotifier()
 	if err != nil {
-		errorReceiveChan <- fmt.Errorf("failed to start notifier, dataId: %s, error: %s", dataId, err)
+		errorReceiveChan <- fmt.Errorf("failed to start notifier, dataId: %s, error: %s", startInfo.DataId, err)
 		return
 	}
 
 	saveReqChan, err := runInstance.startStorageBackend()
 	if err != nil {
-		errorReceiveChan <- fmt.Errorf("failed to start storage backend, dataId: %s, error: %s", dataId, err)
+		errorReceiveChan <- fmt.Errorf("failed to start storage backend, dataId: %s, error: %s", startInfo.DataId, err)
 		return
 	}
 
@@ -257,13 +258,13 @@ func (p *Precalculate) launch(
 	runInstance.startProfileReport()
 	go runInstance.startRecordSemaphoreAcquired()
 
-	apmLogger.Infof("dataId: %s launch successfully", dataId)
+	apmLogger.Infof("dataId: %s launch successfully", startInfo.DataId)
 }
 
 type RunInstance struct {
 	ctx context.Context
 
-	dataId           string
+	startInfo        StartInfo
 	config           PrecalculateOption
 	errorReceiveChan chan<- error
 
@@ -275,11 +276,11 @@ type RunInstance struct {
 }
 
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
-	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.dataId)
+	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.startInfo.DataId)
 	groupId := "go-apm-pre-calculate-consumer-group"
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
-		p.dataId,
+		p.startInfo.DataId,
 		append([]notifier.Option{
 			notifier.Context(p.ctx),
 			notifier.KafkaGroupId(groupId),
@@ -287,6 +288,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 			notifier.KafkaUsername(kafkaConfig.Username),
 			notifier.KafkaPassword(kafkaConfig.Password),
 			notifier.KafkaTopic(kafkaConfig.Topic),
+			notifier.Qps(p.startInfo.Qps),
 		}, p.config.notifierConfig...,
 		)...,
 	)
@@ -301,11 +303,11 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.dataId, p.proxy, p.config.processorConfig...)
+	processor := window.NewProcessor(p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(
-			p.dataId,
+			p.startInfo.DataId,
 			p.ctx,
 			processor,
 			saveReqChan,
@@ -318,11 +320,11 @@ func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpa
 }
 
 func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) {
-	traceEsConfig := core.GetMetadataCenter().GetTraceEsConfig(p.dataId)
-	saveEsConfig := core.GetMetadataCenter().GetSaveEsConfig(p.dataId)
+	traceEsConfig := core.GetMetadataCenter().GetTraceEsConfig(p.startInfo.DataId)
+	saveEsConfig := core.GetMetadataCenter().GetSaveEsConfig(p.startInfo.DataId)
 
 	proxy, err := storage.NewProxyInstance(
-		p.dataId,
+		p.startInfo.DataId,
 		p.ctx,
 		append([]storage.ProxyOption{
 			storage.TraceEsConfig(
@@ -366,7 +368,7 @@ func (p *RunInstance) startProfileReport() {
 		setter(&opt)
 	}
 
-	p.profileCollector = NewProfileCollector(p.ctx, opt, p.dataId)
+	p.profileCollector = NewProfileCollector(p.ctx, opt, p.startInfo.DataId)
 	p.profileCollector.StartReport()
 }
 
@@ -380,11 +382,11 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 	for {
 		select {
 		case <-ticker.C:
-			metrics.RecordApmPreCalcSemaphoreTotal(p.dataId, metrics.TaskProcessChan, len(p.notifier.Spans()))
+			metrics.RecordApmPreCalcSemaphoreTotal(p.startInfo.DataId, metrics.TaskProcessChan, len(p.notifier.Spans()))
 			metrics.RecordApmPreCalcSemaphoreTotal(
-				p.dataId, metrics.WindowProcessEventChan, p.windowHandler.Operator.GetWindowsLength(),
+				p.startInfo.DataId, metrics.WindowProcessEventChan, p.windowHandler.Operator.GetWindowsLength(),
 			)
-			metrics.RecordApmPreCalcSemaphoreTotal(p.dataId, metrics.SaveRequestChan, len(p.proxy.SaveRequest()))
+			metrics.RecordApmPreCalcSemaphoreTotal(p.startInfo.DataId, metrics.SaveRequestChan, len(p.proxy.SaveRequest()))
 			p.windowHandler.Operator.RecordTraceAndSpanCountMetric()
 
 		case <-p.ctx.Done():

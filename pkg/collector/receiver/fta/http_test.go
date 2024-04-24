@@ -17,6 +17,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
@@ -27,6 +28,17 @@ import (
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
+}
+
+func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {
+	n := atomic.NewInt64(0)
+	svc := HttpService{
+		receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+			return code, msg, err
+		}},
+	}
+	return svc, n
 }
 
 func TestExportEventCommon(t *testing.T) {
@@ -113,30 +125,22 @@ func TestExportEventCommon(t *testing.T) {
 	}
 
 	t.Run("broken request", func(t *testing.T) {
-		svc := HttpService{
-			receiver.Publisher{Func: func(record *define.Record) {}},
-			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-				return define.StatusCodeOK, "", nil
-			}},
-		}
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		buf := testkits.NewBrokenReader()
 		req := httptest.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
 		rw := httptest.NewRecorder()
 		svc.ExportEvent(rw, req)
 		assert.Equal(t, http.StatusBadRequest, rw.Code)
+		assert.Equal(t, int64(0), n.Load())
 	})
 
 	t.Run("validator failed", func(t *testing.T) {
-		svc := HttpService{
-			receiver.Publisher{Func: func(record *define.Record) {}},
-			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-				return define.StatusCodeUnauthorized, "", errors.New("MUST ERROR")
-			}},
-		}
+		svc, n := newSvc(define.StatusCodeUnauthorized, "", errors.New("MUST ERROR"))
 		buf := bytes.NewBufferString(`{"test": "1"}`)
 		req := httptest.NewRequest(http.MethodPost, "http://localhost/fta/v1/event?token=5", buf)
 		rw := httptest.NewRecorder()
 		svc.ExportEvent(rw, req)
 		assert.Equal(t, http.StatusUnauthorized, rw.Code)
+		assert.Equal(t, int64(0), n.Load())
 	})
 }

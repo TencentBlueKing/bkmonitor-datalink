@@ -94,8 +94,7 @@ type Config struct {
 }
 
 func (c *Config) GetGatherUpDataID() int32 {
-	//TODO implement me
-	panic("implement me")
+	return 0
 }
 
 // GetTaskConfigListByType :

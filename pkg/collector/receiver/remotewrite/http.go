@@ -66,14 +66,14 @@ func (s HttpService) Write(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
-		receiver.WriteResponse(w, define.ContentTypeText, int(code), []byte(err.Error()))
+		receiver.WriteErrResponse(w, define.ContentTypeText, int(code), err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordRemoteWrite, processorName, r.Token.Original, code)
 		return
 	}
 
 	writeReq, size, err := utils.DecodeWriteRequest(req.Body)
 	if err != nil {
-		receiver.WriteResponse(w, define.ContentTypeText, http.StatusBadRequest, []byte(err.Error()))
+		receiver.WriteErrResponse(w, define.ContentTypeText, http.StatusBadRequest, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordRemoteWrite)
 		logger.Warnf("failed to decode write request, code=%d, ip=%v, error: %s", code, ip, err)
 		return

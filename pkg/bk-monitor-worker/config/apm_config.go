@@ -105,7 +105,7 @@ var (
 )
 
 func initApmVariables() {
-	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 100*5)
+	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 100)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
@@ -113,9 +113,9 @@ func initApmVariables() {
 	WindowExpireIntervalIncrement = GetValue("taskConfig.apmPreCalculate.window.expireIntervalIncrement", 60)
 	WindowNoDataMaxDuration = GetValue("taskConfig.apmPreCalculate.window.noDataMaxDuration", 2*time.Minute, viper.GetDuration)
 
-	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 5)
+	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 3)
 	DistributiveWindowWatchExpireInterval = GetValue("taskConfig.apmPreCalculate.window.distributive.watchExpireInterval", 500*time.Millisecond, viper.GetDuration)
-	DistributiveWindowHandleEventConcurrentCount = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentHandleCount", 10)
+	DistributiveWindowHandleEventConcurrentCount = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentHandleCount", 5)
 	DistributiveWindowConcurrentExpirationMaximum = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentExpirationMaximum", 100)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
@@ -144,6 +144,5 @@ func initApmVariables() {
 
 	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
 	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
-	// todo 获取不到 headers
 	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
 }

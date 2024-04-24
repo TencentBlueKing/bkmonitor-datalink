@@ -59,6 +59,10 @@ type prometheusWriter struct {
 }
 
 func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
+	if !p.config.enabled {
+		return nil
+	}
+
 	var series []prompb.TimeSeries
 	for _, item := range data {
 		series = append(series, item.Value...)
@@ -92,6 +96,10 @@ func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 	}
 
 	return nil
+}
+
+func (p *prometheusWriter) ShouldSample() {
+
 }
 
 func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter {

@@ -199,11 +199,7 @@ loop:
 			start := time.Now()
 			for _, span := range m {
 				subWindow := w.locate(span.TraceId)
-				for {
-					if len(subWindow.eventChan) < w.config.concurrentExpirationMaximum {
-						break
-					}
-				}
+				subWindow.blockChan <- 1
 				subWindow.add(span)
 			}
 			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
@@ -250,6 +246,7 @@ type distributiveSubWindow struct {
 	eventChan            chan Event
 	processor            Processor
 	writeSaveRequestChan chan<- storage.SaveRequest
+	blockChan            chan int
 
 	m     *sync.Map
 	mLock sync.Mutex
@@ -263,6 +260,7 @@ func newDistributiveSubWindow(dataId string, ctx context.Context, index int, pro
 		id:                   index,
 		dataId:               dataId,
 		eventChan:            make(chan Event, concurrentMaximum),
+		blockChan:            make(chan int, concurrentMaximum*500),
 		writeSaveRequestChan: saveReqChan,
 		processor:            processor,
 		m:                    &sync.Map{},
@@ -328,6 +326,9 @@ loop:
 			start := time.Now()
 			d.processor.PreProcess(d.writeSaveRequestChan, e)
 			metrics.RecordApmPreCalcProcessEventDuration(d.dataId, d.id, start)
+			for i := 0; i < len(e.Spans); i++ {
+				<-d.blockChan
+			}
 		case <-d.ctx.Done():
 			break loop
 		}

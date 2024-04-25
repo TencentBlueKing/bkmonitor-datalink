@@ -264,8 +264,20 @@ loop:
 				}
 			}
 
+			// custom report 支持两种配置形式
+			// custom_report 为 true 或者提供了 dataid 白名单（兼容逻辑）
+			var isWhitelist bool
+			if len(t.taskConf.CustomReportDataIDWhitelist) > 0 {
+				for _, id := range t.taskConf.CustomReportDataIDWhitelist {
+					if id == t.taskConf.DataID {
+						isWhitelist = true
+						break
+					}
+				}
+			}
+
 			// 启动自定义上报时，按自定义上报格式发送数据
-			if t.taskConf.CustomReport {
+			if t.taskConf.CustomReport || isWhitelist {
 				logger.Debugf("dataid:%d use custom report format metricbeat event", t.taskConf.DataID)
 				event.DataID = t.taskConf.DataID
 				sendEvent = &tasks.CustomMetricEvent{

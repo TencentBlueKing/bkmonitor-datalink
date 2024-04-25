@@ -35,6 +35,7 @@ tasks:
     period: {{ period }}s
     # 超时
     timeout: {{ timeout | default(60, true) }}s
+    custom_report_dataid_whitelist: [554030]
     module:
       module: prometheus
       metricsets: ["collector"]

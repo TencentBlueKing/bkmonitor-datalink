@@ -47,11 +47,11 @@ bin:
 	-X main.version=$(VERSION) \
 	-X main.buildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \
 	-X main.gitHash=$(shell git rev-parse HEAD)" \
-	-o $(BIN) .
+	-o $(BIN) ./cmd/collector
 
 .PHONY: dev
 dev:
-	$(GO) run . -c ./example/example.yml
+	$(GO) run ./cmd/collector -c ./example/example.yml
 
 .PHONY: install
 install:

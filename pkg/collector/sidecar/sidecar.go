@@ -29,18 +29,18 @@ import (
 )
 
 type Config struct {
-	ConfigPath    string    `config:"config_path" mapstructure:"config_path"`
-	PidPath       string    `config:"pid_path" mapstructure:"pid_path"`
-	Kubconfig     string    `config:"kubeconfig" mapstructure:"kubeconfig"`
-	ApiServerHost string    `config:"apiserver_host" mapstructure:"apiserver_host"`
-	Tls           TlsConfig `config:"tls" mapstructure:"tls"`
+	ConfigPath    string    `yaml:"config_path"`
+	PidPath       string    `yaml:"pid_path"`
+	Kubconfig     string    `yaml:"kubeconfig"`
+	ApiServerHost string    `yaml:"apiserver_host"`
+	Tls           TlsConfig `yaml:"tls"`
 }
 
 type TlsConfig struct {
-	Insecure bool   `config:"insecure" mapstructure:"Insecure"`
-	CertFile string `config:"cert_file" mapstructure:"cert_file"`
-	KeyFile  string `config:"key_file" mapstructure:"key_file"`
-	CAFile   string `config:"ca_file" mapstructure:"ca_file"`
+	Insecure bool   `yaml:"insecure"`
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	CAFile   string `yaml:"ca_file"`
 }
 
 type Sidecar struct {
@@ -52,7 +52,7 @@ type Sidecar struct {
 	prevPrivilegedConfig privilegedConfig
 }
 
-func NewSidecar(ctx context.Context, config *Config) (*Sidecar, error) {
+func New(ctx context.Context, config *Config) (*Sidecar, error) {
 	if config == nil {
 		return nil, errors.New("nil config")
 	}
@@ -72,8 +72,11 @@ func NewSidecar(ctx context.Context, config *Config) (*Sidecar, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	return &Sidecar{
-		watcher: NewWatcher(ctx, client),
+		ctx:     ctx,
+		cancel:  cancel,
+		watcher: newWatcher(ctx, client),
 		config:  config,
 	}, nil
 }
@@ -99,14 +102,18 @@ type privilegedConfig struct {
 	ProfilesDataID int
 }
 
-func (s *Sidecar) Start() {
+func (s *Sidecar) Start() error {
+	if err := s.watcher.Start(); err != nil {
+		return err
+	}
+
 	ticker := time.NewTicker(time.Second * 5)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 
 		case <-ticker.C:
 			ok, err := s.updatePrivilegedConfigFile()
@@ -156,7 +163,17 @@ func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
 
 func (s *Sidecar) updatePrivilegedConfigFile() (bool, error) {
 	config := s.getPrivilegedConfig()
+
+	// 避免无意义的更新
 	if config == s.prevPrivilegedConfig {
+		return false, nil
+	}
+	path := filepath.Join(s.config.ConfigPath, "privileged.conf")
+
+	// 如果 dataid 被删除则需要把配置文件删除
+	var empty privilegedConfig
+	if config == empty {
+		_ = os.Remove(path)
 		return false, nil
 	}
 
@@ -171,7 +188,7 @@ func (s *Sidecar) updatePrivilegedConfigFile() (bool, error) {
 		return true, err
 	}
 
-	f, err := os.Create(filepath.Join(s.config.ConfigPath, "privileged.conf"))
+	f, err := os.Create(path)
 	if err != nil {
 		return true, err
 	}

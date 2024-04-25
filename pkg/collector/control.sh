@@ -53,7 +53,7 @@ function package() {
   	-X main.version=${version} \
   	-X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
   	-X main.gitHash=$(git rev-parse HEAD)" \
-    -o ${dir}/bin/${MODULE} .
+    -o ${dir}/bin/${MODULE} ./cmd/collector
 
   # 复制配置
   cp -R ./support-files/templates/${goos}/${arch}/project.yaml ${dir}/project.yaml

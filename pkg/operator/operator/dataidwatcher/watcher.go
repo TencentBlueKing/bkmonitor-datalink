@@ -34,8 +34,9 @@ const (
 	// dataid 有两种用途:
 	// 1) event
 	// 2) metric
-	keyUsage   = "usage"
-	usageEvent = "event"
+	keyUsage    = "usage"
+	usageEvent  = "event"
+	usageMetric = "metric"
 
 	// 表示集群所在环境
 	labelBkEnv = "bk_env"
@@ -204,8 +205,10 @@ func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
 	switch dataID.Labels[keyUsage] {
 	case usageEvent:
 		w.updateEventDataID(dataID.DeepCopy())
-	default: // usageMetric
+	case usageMetric:
 		w.updateMetricDataID(dataID.DeepCopy())
+	default:
+		return
 	}
 	Publish()
 }

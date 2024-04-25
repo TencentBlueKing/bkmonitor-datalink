@@ -43,6 +43,8 @@ type IDSpec struct {
 	DataID int
 }
 
+// Watcher 负责监听和处理 DataID 资源
+// 目前仅负责处理 collector 自己归属的 dataid
 type Watcher struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -52,7 +54,7 @@ type Watcher struct {
 	dataids map[string]IDSpec
 }
 
-func NewWatcher(ctx context.Context, client bkversioned.Interface) *Watcher {
+func newWatcher(ctx context.Context, client bkversioned.Interface) *Watcher {
 	ctx, cancel := context.WithCancel(ctx)
 	factory := bkinformers.NewSharedInformerFactory(client, 5*time.Minute)
 
@@ -110,7 +112,7 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 		logger.Warnf("want collector dataid, but go '%s', skipped", usage)
 		return
 	}
-	parts := strings.Split(usage, "/")
+	parts := strings.Split(usage, ".")
 	if len(parts) != 2 {
 		logger.Warnf("invalid usage format '%s'", usage)
 		return

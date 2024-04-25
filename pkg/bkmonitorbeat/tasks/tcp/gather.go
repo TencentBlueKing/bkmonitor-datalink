@@ -174,20 +174,26 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		for _, targetHost := range result {
 
 			// 获取并发限制信号量
-			err := g.GetSemaphore().Acquire(ctx, 1)
+			s := g.GetSemaphore()
+			err := s.Acquire(ctx, 1)
 			if err != nil {
 				logger.Errorf("Semaphore Acquire failed for task tcp task id: %d", g.TaskConfig.GetTaskID())
 				return
 			}
 			wg.Add(1)
-			go func(tHost, host string) {
+			go func(tHost, host string, s tasks.Semaphore) {
+				defer func() {
+					if err := recover(); err != nil {
+						logger.Errorf("tcp task something happend, error is %s\n", err)
+					}
+				}()
 				// 初始化事件
 				event := g.newEvent(taskConf, startAt, tHost)
 				event.ResolvedIP = host
 
 				defer func() {
 					wg.Done()
-					g.GetSemaphore().Release(1)
+					s.Release(1)
 					e <- event
 				}()
 				// 检查单个目标
@@ -197,7 +203,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				} else {
 					event.Fail(code)
 				}
-			}(taskHost, targetHost)
+			}(taskHost, targetHost, s)
 		}
 	}
 	wg.Wait()

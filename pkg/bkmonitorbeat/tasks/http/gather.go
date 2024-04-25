@@ -402,7 +402,8 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		var wg sync.WaitGroup
 		for u, ips := range pResultMap {
 			// 获取并发限制信号量
-			err := g.GetSemaphore().Acquire(ctx, int64(len(ips)))
+			sp := g.GetSemaphore()
+			err := sp.Acquire(ctx, int64(len(ips)))
 			if err != nil {
 				logger.Errorf("Semaphore Acquire failed for task http task id: %d", g.TaskConfig.GetTaskID())
 				return
@@ -410,7 +411,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			// 按照代理IP列表逐个请求
 			for _, ipStr := range ips {
 				wg.Add(1)
-				go func(i int, s *configs.HTTPTaskStepConfig, url, h string) {
+				go func(i int, s *configs.HTTPTaskStepConfig, url, h string, sp tasks.Semaphore) {
+					defer func() {
+						if err := recover(); err != nil {
+							logger.Errorf("http task something happend, error is %s\n", err)
+						}
+					}()
 					event := NewEvent(g)
 					event.ToStep(i+1, step, url)
 					event.ResolvedIP = h
@@ -421,14 +427,14 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 						event.EndAt = time.Now()
 						wg.Done()
 						// 释放信号量
-						g.GetSemaphore().Release(1)
+						sp.Release(1)
 						// 发送事件
 						e <- event
 					}()
 					event.StartAt = time.Now()
 					// 检查url并设置结果事件
 					g.GatherURL(gCtx, event, s, u, h)
-				}(index, step, u, ipStr)
+				}(index, step, u, ipStr, sp)
 			}
 		}
 

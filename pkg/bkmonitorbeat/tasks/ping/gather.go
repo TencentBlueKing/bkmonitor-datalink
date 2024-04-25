@@ -124,8 +124,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
+	s := g.GetSemaphore()
 	// 获取ping工具
-	tool, err := NewBatchPingTool(subCtx, targetList, totalNum, maxRTT, pingSize, batchSize, ipType, dnsCheckMode, g.GetSemaphore())
+	tool, err := NewBatchPingTool(subCtx, targetList, totalNum, maxRTT, pingSize, batchSize, ipType, dnsCheckMode, s)
 	if err != nil {
 		logger.Errorf("new ping tool failed, error:%s", err)
 		tasks.SendFailEvent(taskConf.GetDataID(), e)
@@ -138,8 +139,13 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	// doFunc提供一个回调函数给pingTool，提供处理ping结果的能力
 	var doFunc = func(resMap map[string]map[string]*Info, wg *sync.WaitGroup) {
 		defer func() {
+			if err := recover(); err != nil {
+				logger.Errorf("ping task something happend, error is %s\n", err)
+			}
+		}()
+		defer func() {
 			wg.Done()
-			g.GetSemaphore().Release(1)
+			s.Release(1)
 		}()
 		// 结果计数叠加
 		resultCount = resultCount + len(resMap)

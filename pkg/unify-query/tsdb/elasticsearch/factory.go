@@ -21,30 +21,12 @@ import (
 )
 
 const (
-	OLDSEP = "."
-	NEWSEP = "__"
-
 	BKAPM = "bkapm"
 	BKLOG = "bklog"
 	BKES  = "bkes"
 
 	ATTRIBUTES = "attributes"
 	EXT        = "__ext"
-
-	MIN   = "min"
-	MAX   = "max"
-	SUM   = "sum"
-	COUNT = "count"
-	LAST  = "last"
-	MEAN  = "mean"
-	AVG   = "avg"
-
-	MinOT   = "min_over_time"
-	MaxOT   = "max_over_time"
-	SumOT   = "sum_over_time"
-	CountOT = "count_over_time"
-	LastOT  = "last_over_time"
-	AvgOT   = "avg_over_time"
 )
 
 var (
@@ -57,8 +39,8 @@ var (
 func NewFactory(k string) *Factory {
 	fact := &Factory{}
 	if sourceTag, ok := sourceTagMap[k]; ok {
-		fact.oldPrefix = sourceTag + OLDSEP
-		fact.newPrefix = sourceTag + NEWSEP
+		fact.oldPrefix = sourceTag + OldStep
+		fact.newPrefix = sourceTag + NewStep
 	}
 	return fact
 }
@@ -137,9 +119,10 @@ func (f *Factory) key(a, b string) string {
 }
 
 func (f *Factory) Aggs(query *metadata.Query) (esAggs *EsAggs, err error) {
+	esAggs = &EsAggs{}
 	idx := 1
+
 	if len(query.AggregateMethodList) < idx {
-		err = fmt.Errorf("functions is error, %+v", query.AggregateMethodList)
 		return
 	}
 

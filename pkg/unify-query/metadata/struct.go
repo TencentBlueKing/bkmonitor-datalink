@@ -43,6 +43,8 @@ type OffSetInfo struct {
 	SLimit  int
 }
 
+type AggregateMethodList []AggrMethod
+
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
 	SourceType string // 查询数据源 InfluxDB 或者 VictoriaMetrics
@@ -76,7 +78,7 @@ type Query struct {
 	// 用于 promql 查询
 	IsHasOr bool // 标记是否有 or 条件
 
-	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
+	AggregateMethodList AggregateMethodList // 聚合方法列表，从内到外排序
 
 	Condition string // 过滤条件
 
@@ -94,13 +96,16 @@ type Query struct {
 	SegmentedEnable bool // 是否开启分段查询
 
 	// Es 查询扩展
-	AlignResult     bool
 	DataSource      string
-	AllConditions   [][]ConditionField
+	AllConditions   AllConditions
 	Source          []string
 	QueryString     string
 	TimeAggregation *TimeAggregation
+	From            int
+	Size            int
 }
+
+type AllConditions [][]ConditionField
 
 type QueryList []*Query
 

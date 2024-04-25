@@ -11,6 +11,8 @@ package elasticsearch
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,8 +24,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func TestInstance_QuerySegmentedRaw(t *testing.T) {
-	ctx := context.Background()
+func TestInstance_esQuery(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
 
 	log.InitTestLogger()
 
@@ -32,7 +34,6 @@ func TestInstance_QuerySegmentedRaw(t *testing.T) {
 	password := ""
 	timeout := time.Minute * 10
 	maxRouting := 10
-	keepAlive := "1s"
 	maxSize := 10000
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -44,7 +45,59 @@ func TestInstance_QuerySegmentedRaw(t *testing.T) {
 		Password:   password,
 		MaxRouting: maxRouting,
 		MaxSize:    maxSize,
-		KeepAlive:  keepAlive,
+	})
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	end := time.Now()
+	start := end.Add(-1 * time.Hour)
+
+	query := &metadata.Query{
+		QueryString: "test",
+		DB:          "2_bkapm_trace_shamcleren_testshamcleren_test",
+		Field:       "gseIndex",
+		From:        0,
+		Size:        20,
+	}
+
+	qr, err := ins.QueryReference(ctx, query, start.UnixMilli(), end.UnixMilli())
+
+	for _, r := range qr.Timeseries {
+		lbs := make([]string, 0)
+		for _, lb := range r.GetLabels() {
+			lbs = append(lbs, fmt.Sprintf("%s=%s", lb.GetName(), lb.GetValue()))
+		}
+
+		fmt.Printf("%s\n", strings.Join(lbs, ", "))
+		for _, sample := range r.GetSamples() {
+			fmt.Printf("%v, %v\n", sample.GetTimestamp(), sample.GetValue())
+		}
+	}
+}
+
+func TestInstance_QuerySegmentedRaw(t *testing.T) {
+	ctx := context.Background()
+
+	log.InitTestLogger()
+
+	url := ""
+	username := ""
+	password := ""
+	timeout := time.Minute * 10
+	maxRouting := 10
+	maxSize := 10000
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ins, err := NewInstance(ctx, &InstanceOption{
+		Url:        url,
+		Username:   username,
+		Password:   password,
+		MaxRouting: maxRouting,
+		MaxSize:    maxSize,
 	})
 	if err != nil {
 		t.Fatal(err)

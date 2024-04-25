@@ -636,8 +636,7 @@ func (q *Query) BuildMetadataQuery(
 
 	// 写入 ES 所需内容
 	query.DataSource = q.DataSource
-	query.AlignResult = q.AlignInfluxdbResult
-	query.AllConditions = make([][]metadata.ConditionField, len(allCondition))
+	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {
 		conds := make([]metadata.ConditionField, len(conditions))
 		for j, c := range conditions {

@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -88,9 +89,10 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index string
-	start int64
-	end   int64
+	index    string
+	start    int64
+	end      int64
+	timeZone string
 
 	query *metadata.Query
 }
@@ -101,12 +103,10 @@ type indexOpt struct {
 	end     int64
 }
 
-var TimeSeriesResultPool sync.Pool
-
-func init() {
-	TimeSeriesResultPool.New = func() any {
+var TimeSeriesResultPool = sync.Pool{
+	New: func() any {
 		return &TimeSeriesResult{}
-	}
+	},
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
@@ -139,6 +139,25 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
+func (i *Instance) getMapping(ctx context.Context, index string) (map[string]interface{}, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(ctx, fmt.Sprintf("get mapping error: %s", r))
+		}
+	}()
+
+	mappings, err := i.client.GetMapping().Index(index).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
+		return mapping, nil
+	} else {
+		return nil, fmt.Errorf("get mappings error with index: %s", index)
+	}
+}
+
 func (i *Instance) getAlias(opt *indexOpt) (indexes []string) {
 	for ti := opt.start; ti <= opt.end; ti += int64((time.Hour * 24).Seconds()) {
 		index := fmt.Sprintf("%s_%s_read", opt.tableID, time.Unix(ti, 0).Format("20060102"))
@@ -146,6 +165,237 @@ func (i *Instance) getAlias(opt *indexOpt) (indexes []string) {
 	}
 
 	return
+}
+
+func (i *Instance) query(
+	ctx context.Context,
+	query *metadata.Query,
+	start int64,
+	end int64,
+) (chan *TimeSeriesResult, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	defer span.End(&err)
+
+	indexOptions, err := i.makeQueryOption(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(indexOptions) == 0 {
+		return nil, nil
+	}
+
+	rets := make(chan *TimeSeriesResult, len(indexOptions))
+
+	go func() {
+		wg := &sync.WaitGroup{}
+		defer func() {
+			wg.Wait()
+			close(rets)
+		}()
+
+		for _, qo := range indexOptions {
+			wg.Add(1)
+			q := qo
+			err = pool.Submit(func() {
+				defer func() {
+					wg.Done()
+				}()
+
+				if len(query.AggregateMethodList) > 0 {
+					err = i.queryWithAgg(ctx, q, rets)
+				} else {
+					err = i.queryWithoutAgg(ctx, q, rets)
+				}
+			})
+		}
+	}()
+
+	user := metadata.GetUser(ctx)
+	span.Set("query-space-uid", user.SpaceUid)
+	span.Set("query-source", user.Source)
+	span.Set("query-username", user.Name)
+	span.Set("query-index-options", indexOptions)
+
+	span.Set("query-storage-id", query.StorageID)
+	span.Set("query-max-size", i.maxSize)
+	span.Set("query-db", query.DB)
+	span.Set("query-measurement", query.Measurement)
+	span.Set("query-measurements", strings.Join(query.Measurements, ","))
+	span.Set("query-field", query.Field)
+	span.Set("query-fields", strings.Join(query.Fields, ","))
+
+	return rets, err
+}
+
+func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
+	var (
+		err error
+		qb  = qo.query
+	)
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
+	defer span.End(&err)
+
+	filterQueries := make([]elastic.Query, 0)
+
+	query, err := fact.Query(qb.QueryString, qb.AllConditions)
+	if err != nil {
+		return nil, err
+	}
+	if query != nil {
+		filterQueries = append(filterQueries, query)
+	}
+	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
+
+	ss := i.client.Search().
+		Size(qb.Size).
+		From(qb.From).
+		Index(qo.index).
+		Sort(Timestamp, true)
+
+	if len(filterQueries) > 0 {
+		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
+		ss = ss.Query(esQuery)
+
+		esQueryString, _ := json.Marshal(esQuery)
+		span.Set("query-dsl", esQueryString)
+	}
+
+	if len(qb.Source) > 0 {
+		fetchSource := elastic.NewFetchSourceContext(true)
+		fetchSource.Include(qb.Source...)
+		ss = ss.FetchSourceContext(fetchSource)
+	}
+
+	name, agg, err := fact.Agg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone)
+	if err != nil {
+		return nil, err
+	}
+
+	if name != "" && agg != nil {
+		ss.Aggregation(name, agg)
+	}
+
+	sr, err := ss.Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return sr, nil
+}
+
+func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
+	var (
+		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
+		qb  = qo.query
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "without-aggregation")
+	defer span.End(&err)
+
+	defer func() {
+		rets <- ret
+	}()
+
+	mapping, err := i.getMapping(ctx, qo.index)
+	if err != nil {
+		return err
+	}
+
+	formatFactory := NewFormatFactory(qb.Field, mapping)
+
+	sr, err := i.esQuery(ctx, qo, formatFactory)
+	if err != nil {
+		return nil
+	}
+
+	ret.TimeSeriesMap = make(map[string]*prompb.TimeSeries)
+	for _, d := range sr.Hits.Hits {
+		data := make(map[string]interface{})
+		if err = json.Unmarshal(d.Source, &data); err != nil {
+			return err
+		}
+		formatFactory.SetData(data)
+
+		lbs, vErr := formatFactory.Labels()
+		if vErr != nil {
+			return vErr
+		}
+
+		sample, vErr := formatFactory.Sample()
+		if vErr != nil {
+			return vErr
+		}
+
+		if _, ok := ret.TimeSeriesMap[lbs.String()]; !ok {
+			ret.TimeSeriesMap[lbs.String()] = &prompb.TimeSeries{
+				Labels:  lbs.GetLabels(),
+				Samples: make([]prompb.Sample, 0),
+			}
+		}
+		ret.TimeSeriesMap[lbs.String()].Samples = append(ret.TimeSeriesMap[lbs.String()].Samples, sample)
+	}
+
+	return nil
+}
+
+func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
+	var (
+		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
+		qb  = qo.query
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "without-aggregation")
+	defer span.End(&err)
+
+	defer func() {
+		rets <- ret
+	}()
+
+	mapping, err := i.getMapping(ctx, qo.index)
+	if err != nil {
+		return err
+	}
+
+	formatFactory := NewFormatFactory(qb.Field, mapping)
+
+	sr, err := i.esQuery(ctx, qo, formatFactory)
+	if err != nil {
+		return nil
+	}
+
+	ret.TimeSeriesMap = make(map[string]*prompb.TimeSeries)
+	for _, d := range sr.Hits.Hits {
+		data := make(map[string]interface{})
+		if err = json.Unmarshal(d.Source, &data); err != nil {
+			return err
+		}
+		formatFactory.SetData(data)
+
+		lbs, vErr := formatFactory.Labels()
+		if vErr != nil {
+			return vErr
+		}
+
+		sample, vErr := formatFactory.Sample()
+		if vErr != nil {
+			return vErr
+		}
+
+		if _, ok := ret.TimeSeriesMap[lbs.String()]; !ok {
+			ret.TimeSeriesMap[lbs.String()] = &prompb.TimeSeries{
+				Labels:  lbs.GetLabels(),
+				Samples: make([]prompb.Sample, 0),
+			}
+		}
+		ret.TimeSeriesMap[lbs.String()].Samples = append(ret.TimeSeriesMap[lbs.String()].Samples, sample)
+	}
+
+	return nil
 }
 
 func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
@@ -204,10 +454,6 @@ func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- 
 	span.Set("query-agg-name", aggs.Agg().Name)
 	aggStr, _ := aggs.Agg().Agg.Source()
 	span.Set("query-agg-name", aggStr)
-
-	fetchSource := elastic.NewFetchSourceContext(true)
-	fetchSource.Include("")
-	ss = ss.FetchSourceContext(fetchSource)
 
 	sr, err := ss.Do(ctx)
 	if err != nil {
@@ -287,41 +533,48 @@ func (i *Instance) makeQueryOption(ctx context.Context, query *metadata.Query, s
 	}
 
 	indexQueryOpts = make([]*queryOption, 0)
-
 	for _, index := range indexes {
-		docCount, storeSize, err1 := i.indexOption(ctx, index)
-		if err1 != nil {
-			err = err1
-			return
-		}
-		qs, err1 := newRangeSegment(ctx, &querySegmentOption{
-			start:     start,
-			end:       end,
-			interval:  query.TimeAggregation.WindowDuration.Milliseconds(),
-			docCount:  docCount,
-			storeSize: storeSize,
-		})
-		if err1 != nil {
-			err = err1
-			return
+		var (
+			list      [][2]int64
+			docCount  int64
+			storeSize int64
+		)
+
+		if query.TimeAggregation != nil && query.TimeAggregation.WindowDuration.Milliseconds() > 0 {
+			docCount, storeSize, err = i.indexOption(ctx, index)
+			if err != nil {
+				return
+			}
+			list, err = newRangeSegment(&querySegmentOption{
+				start:     start,
+				end:       end,
+				interval:  query.TimeAggregation.WindowDuration.Milliseconds(),
+				docCount:  docCount,
+				storeSize: storeSize,
+			})
+			if err != nil {
+				err = err
+				return
+			}
+		} else {
+			list = [][2]int64{{start, end}}
 		}
 
-		for _, l := range qs.list {
-			nqo := &queryOption{
-				query: query,
-			}
-			nqo.index = index
-			nqo.start = l[0]
-			nqo.end = l[1]
-			indexQueryOpts = append(indexQueryOpts, nqo)
+		for _, l := range list {
+			indexQueryOpts = append(indexQueryOpts, &queryOption{
+				index:    index,
+				start:    l[0],
+				end:      l[1],
+				query:    query,
+				timeZone: query.Timezone,
+			})
 		}
-		qs.close()
 	}
 
 	return
 }
 
-func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (storage.SeriesSet, error) {
+func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryResult, error) {
 	seriesMap := make(map[string]*prompb.TimeSeries)
 
 	for ret := range rets {
@@ -355,7 +608,22 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (storage.SeriesS
 		qr.Timeseries = append(qr.Timeseries, ts)
 	}
 
-	return remote.FromQueryResult(false, qr), nil
+	return qr, nil
+}
+
+func (i *Instance) QueryReference(
+	ctx context.Context,
+	query *metadata.Query,
+	start int64,
+	end int64,
+) (*prompb.QueryResult, error) {
+	rets, err := i.query(ctx, query, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	qr, err := i.mergeTimeSeries(rets)
+	return qr, err
 }
 
 // QueryRaw 查询原始数据
@@ -369,9 +637,6 @@ func (i *Instance) QueryRaw(
 		err error
 	)
 
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
-	defer span.End(&err)
-
 	start := hints.Start
 	end := hints.End
 
@@ -382,57 +647,20 @@ func (i *Instance) QueryRaw(
 	window := query.TimeAggregation.WindowDuration
 
 	// 是否对齐开始时间
-	if query.AlignResult && window.Milliseconds() > 0 {
+	if window.Milliseconds() > 0 {
 		start = intMathFloor(start, window.Milliseconds()) * window.Milliseconds()
 	}
 
-	indexQueryOpts, err := i.makeQueryOption(ctx, query, start, end)
-	if err != nil {
-		return storage.ErrSeriesSet(err)
-	}
-
-	rets := make(chan *TimeSeriesResult, len(indexQueryOpts))
-
-	go func() {
-		var wg sync.WaitGroup
-		defer func() {
-			wg.Wait()
-			close(rets)
-		}()
-		for _, qo := range indexQueryOpts {
-			wg.Add(1)
-			qo := qo
-			err = pool.Submit(func() {
-				defer func() {
-					wg.Done()
-				}()
-				err = i.esAggQuery(ctx, qo, rets)
-			})
-		}
-	}()
-
-	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
-	span.Set("query-source", user.Source)
-	span.Set("query-username", user.Name)
-	span.Set("query-index-options", indexQueryOpts)
-
-	span.Set("query-storage-id", query.StorageID)
-	span.Set("query-max-size", i.maxSize)
-	span.Set("query-db", query.DB)
-	span.Set("query-measurement", query.Measurement)
-	span.Set("query-measurements", strings.Join(query.Measurements, ","))
-	span.Set("query-field", query.Field)
-	span.Set("query-fields", strings.Join(query.Fields, ","))
+	rets, err := i.query(ctx, query, start, end)
 
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
 
-	set, err := i.mergeTimeSeries(rets)
+	qr, err := i.mergeTimeSeries(rets)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
 
-	return set
+	return remote.FromQueryResult(false, qr)
 }

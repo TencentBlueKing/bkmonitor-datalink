@@ -10,13 +10,10 @@
 package elasticsearch
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
 	"github.com/magiconair/properties/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 func jsonEqual(t *testing.T, a, b interface{}) {
@@ -69,11 +66,9 @@ func TestSegmentedList(t *testing.T) {
 	}
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
-			ctx := metadata.InitHashID(context.Background())
-			qs, err := newRangeSegment(ctx, c.segmentOption)
+			list, err := newRangeSegment(c.segmentOption)
 			assert.Equal(t, err, nil)
-			defer qs.close()
-			assert.Equal(t, qs.list, c.list)
+			assert.Equal(t, list, c.list)
 		})
 	}
 }

@@ -10,7 +10,6 @@
 package segmented
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,17 +21,7 @@ type Item struct {
 	Max int64
 }
 
-type Segmented interface {
-	Name() string
-	Count() int32
-	Add(time int64)
-	List() []*Item
-	String() string
-}
-
-type segmented struct {
-	ctx   context.Context
-	name  string
+type Segmented struct {
 	count int32
 	list  []*Item
 
@@ -40,7 +29,7 @@ type segmented struct {
 	lock  sync.RWMutex
 }
 
-func (s *segmented) String() string {
+func (s *Segmented) String() string {
 	arr := make([]string, 0, atomic.LoadInt32(&s.count))
 	for _, l := range s.List() {
 		arr = append(arr, fmt.Sprintf("%d-%d", l.Min, l.Max))
@@ -48,21 +37,17 @@ func (s *segmented) String() string {
 	return strings.Join(arr, ", ")
 }
 
-func (s *segmented) Name() string {
-	return s.name
-}
-
-func (s *segmented) List() []*Item {
+func (s *Segmented) List() []*Item {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	return s.list
 }
 
-func (s *segmented) Count() int32 {
+func (s *Segmented) Count() int32 {
 	return atomic.LoadInt32(&s.count)
 }
 
-func (s *segmented) Add(t int64) {
+func (s *Segmented) Add(t int64) {
 	s.lock.Lock()
 	if s.lastT != nil {
 		s.list = append(s.list, &Item{
@@ -75,18 +60,16 @@ func (s *segmented) Add(t int64) {
 	s.lock.Unlock()
 }
 
-func (s *segmented) intCount() {
+func (s *Segmented) intCount() {
 	atomic.AddInt32(&s.count, 1)
 }
 
-func (s *segmented) decCount() {
+func (s *Segmented) decCount() {
 	atomic.AddInt32(&s.count, -1)
 }
 
-func NewSegmented(ctx context.Context, name string) Segmented {
-	s := &segmented{
-		ctx:  ctx,
-		name: name,
+func NewSegmented() *Segmented {
+	s := &Segmented{
 		list: make([]*Item, 0),
 	}
 	return s

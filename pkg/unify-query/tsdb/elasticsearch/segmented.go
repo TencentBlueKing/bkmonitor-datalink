@@ -10,24 +10,10 @@
 package elasticsearch
 
 import (
-	"context"
-	"fmt"
-	"sync"
-	"time"
-
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/segmented"
 )
-
-var querySegmentPool sync.Pool
-
-func init() {
-	querySegmentPool.New = func() any {
-		return &querySegment{}
-	}
-
-}
 
 type querySegmentOption struct {
 	start    int64
@@ -38,27 +24,8 @@ type querySegmentOption struct {
 	storeSize int64
 }
 
-func (o *querySegmentOption) string() string {
-	start := time.Unix(o.start, 0)
-	end := time.Unix(o.end, 0)
-	return fmt.Sprintf("%s:%s", start, end)
-}
-
-type querySegment struct {
-	list  [][2]int64
-	count int32
-}
-
-func (qs *querySegment) close() {
-	qs.count = 0
-	qs.list = nil
-	querySegmentPool.Put(qs)
-}
-
-func newRangeSegment(ctx context.Context, opt *querySegmentOption) (*querySegment, error) {
-	qs := querySegmentPool.Get().(*querySegment)
-
-	s := segmented.NewSegmented(ctx, opt.string())
+func newRangeSegment(opt *querySegmentOption) ([][2]int64, error) {
+	s := segmented.NewSegmented()
 	// 根据文本数量计算分片数
 	maxDocCount := viper.GetInt64(SegmentDocCountPath)
 	docCountSegmentNum := intMathCeil(opt.docCount, maxDocCount)
@@ -98,11 +65,10 @@ func newRangeSegment(ctx context.Context, opt *querySegmentOption) (*querySegmen
 		data += seg
 	}
 
-	qs.list = make([][2]int64, 0, s.Count())
+	list := make([][2]int64, 0, s.Count())
 	for _, l := range s.List() {
-		qs.list = append(qs.list, [2]int64{l.Min, l.Max})
+		list = append(list, [2]int64{l.Min, l.Max})
 	}
-	qs.count = s.Count()
 
-	return qs, nil
+	return list, nil
 }

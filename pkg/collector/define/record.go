@@ -41,6 +41,8 @@ const (
 
 	KeyToken    = "X-BK-TOKEN"
 	KeyTenantID = "X-Tps-TenantID"
+
+	basicAuthUsername = "bkmonitor"
 )
 
 type RecordType string
@@ -263,15 +265,33 @@ func TokenFromHttpRequest(req *http.Request) string {
 	if token == "" {
 		token = req.Header.Get(KeyToken)
 	}
+	if token != "" {
+		return token
+	}
 
 	// 2) 从 tenantidKey 中读取
-	if token == "" {
-		token = req.Header.Get(KeyTenantID)
-	}
+	token = req.Header.Get(KeyTenantID)
 	if token == "" {
 		token = req.URL.Query().Get(KeyTenantID)
 	}
-	return token
+	if token != "" {
+		return token
+	}
+
+	// 3）从 basicauth 中读取（当且仅当 username 为 bkmonitor 才生效
+	username, password, ok := req.BasicAuth()
+	if ok && username == basicAuthUsername && password != "" {
+		return password
+	}
+
+	// 4）从 bearerauth 中读取 token
+	bearer := strings.Split(req.Header.Get("Authorization"), "Bearer ")
+	if len(bearer) == 2 {
+		return bearer[1]
+	}
+
+	// 弃疗 ┓(-´∀`-)┏
+	return ""
 }
 
 func TokenFromGrpcMetadata(md metadata.MD) string {

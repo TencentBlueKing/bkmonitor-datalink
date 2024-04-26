@@ -231,6 +231,7 @@ func getConnectionSASLConfig(username, password string) *sarama.Config {
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 	config.Version = sarama.V0_10_2_1
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
 
 	if username != "" && password != "" {
 		config.Net.SASL.Enable = true

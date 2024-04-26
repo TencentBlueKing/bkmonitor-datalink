@@ -245,8 +245,11 @@ loop:
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			case Prometheus:
-				item := r.Data.(PrometheusStorageData)
+				if !p.prometheusWriter.ShouldSample() {
+					continue
+				}
 
+				item := r.Data.(PrometheusStorageData)
 				prometheusData = append(prometheusData, item)
 				if len(prometheusData) >= p.config.saveHoldMaxCount {
 					err := p.prometheusWriter.WriteBatch(prometheusData)

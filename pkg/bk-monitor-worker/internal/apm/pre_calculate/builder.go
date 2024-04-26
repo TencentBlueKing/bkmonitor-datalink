@@ -343,6 +343,7 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.PrometheusWriterEnabled(config.PromRemoteWriteEnabled),
 				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+				storage.PrometheusWriterSampleRate(config.PromRemoteWriteSampleRate),
 			),
 		}, p.config.storageConfig...,
 		)...,

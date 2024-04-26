@@ -32,7 +32,9 @@ func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeG
 
 // findParentChildMetric find the metrics which contains c-s relation
 // include: system <-> system / system <-> service / service <-> service
-func (m *MetricProcessor) findParentChildMetric(receiver chan<- storage.SaveRequest, fullTreeGraph *DiGraph) int {
+func (m *MetricProcessor) findParentChildMetric(
+	receiver chan<- storage.SaveRequest, fullTreeGraph *DiGraph,
+) int {
 
 	count := 0
 	ts := time.Now().UnixNano() / int64(time.Millisecond)

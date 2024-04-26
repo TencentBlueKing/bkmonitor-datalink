@@ -110,7 +110,9 @@ func (pc *ProcCollector) AsOneCmdbConfMapStr(stat define.ProcStat) common.MapStr
 			"start_time": startTime,
 		})
 
-		mstr.Put("uptime", time.Now().Unix()-startTime.Unix())
+		if _, err := mstr.GetValue("uptime"); err != nil {
+			mstr.Put("uptime", time.Now().Unix()-startTime.Unix())
+		}
 		mstr.Put("cpu.user.ticks", stat.CPU.User)
 		mstr.Put("cpu.system.ticks", stat.CPU.Sys)
 		mstr.Put("cpu.total.ticks", stat.CPU.Total)

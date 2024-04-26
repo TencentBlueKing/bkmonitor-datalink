@@ -210,6 +210,8 @@ func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
 		kits.CheckIfSystemResource(dataID.Labels),
 		kits.CheckIfCommonResource(dataID.Labels),
 	)
+
+	logger.Infof("add DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	Publish()
 }
 
@@ -258,6 +260,8 @@ func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	default:
 		return
 	}
+
+	logger.Infof("delete DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	Publish()
 }
 
@@ -327,14 +331,12 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-
 	env := dataID.Labels[labelBkEnv]
 	if env != ConfBkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
 		return
 	}
 
-	logger.Infof("add DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	w.updateDataID(dataID)
 }
 
@@ -346,14 +348,12 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-
 	env := dataID.Labels[labelBkEnv]
 	if env != ConfBkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
 		return
 	}
 
-	logger.Infof("delete DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	w.deleteDataID(dataID)
 }
 

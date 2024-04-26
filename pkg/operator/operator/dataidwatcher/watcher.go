@@ -34,8 +34,9 @@ const (
 	// dataid 有两种用途:
 	// 1) event
 	// 2) metric
-	keyUsage   = "usage"
-	usageEvent = "event"
+	keyUsage    = "usage"
+	usageEvent  = "event"
+	usageMetric = "metric"
 
 	// 表示集群所在环境
 	labelBkEnv = "bk_env"
@@ -193,6 +194,15 @@ func (w *dataIDWatcher) MatchEventDataID(meta define.MonitorMeta, systemResource
 }
 
 func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
+	switch dataID.Labels[keyUsage] {
+	case usageEvent:
+		w.updateEventDataID(dataID.DeepCopy())
+	case usageMetric:
+		w.updateMetricDataID(dataID.DeepCopy())
+	default:
+		return
+	}
+
 	w.mm.SetDataIDInfo(
 		dataID.Spec.DataID,
 		dataID.Name,
@@ -200,13 +210,6 @@ func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
 		kits.CheckIfSystemResource(dataID.Labels),
 		kits.CheckIfCommonResource(dataID.Labels),
 	)
-
-	switch dataID.Labels[keyUsage] {
-	case usageEvent:
-		w.updateEventDataID(dataID.DeepCopy())
-	default: // usageMetric
-		w.updateMetricDataID(dataID.DeepCopy())
-	}
 	Publish()
 }
 
@@ -250,8 +253,10 @@ func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	switch dataID.Labels[keyUsage] {
 	case usageEvent:
 		w.deleteEventDataID(dataID.DeepCopy())
-	default: // usageMetric
+	case usageMetric:
 		w.deleteMetricDataID(dataID.DeepCopy())
+	default:
+		return
 	}
 	Publish()
 }
@@ -371,18 +376,14 @@ func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{
 		return
 	}
 
-	env := cur.Labels[labelBkEnv]
 	// 删除旧 dataid
-	if env == ConfBkEnv {
+	if old.Labels[labelBkEnv] == ConfBkEnv {
 		w.deleteDataID(old)
 		logger.Infof("delete DataID, name=%v, id=%v, labels=%v", old.Name, old.Spec.DataID, old.Labels)
 	}
-
 	// 添加新 dataid
-	if env != ConfBkEnv {
-		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
-		return
+	if cur.Labels[labelBkEnv] == ConfBkEnv {
+		w.updateDataID(cur)
+		logger.Infof("update DataID, name=%v, id=%v, labels=%v", cur.Name, cur.Spec.DataID, cur.Labels)
 	}
-	w.updateDataID(cur)
-	logger.Infof("update DataID, name=%v, id=%v, labels=%v", cur.Name, cur.Spec.DataID, cur.Labels)
 }

@@ -144,6 +144,7 @@ func (e *esStorage) Save(data EsStorageData) error {
 		}
 	}()
 
+	buf.Reset()
 	return err
 }
 
@@ -198,6 +199,7 @@ func (e *esStorage) Query(data any) (any, error) {
 		return nil, errors.New(res.String())
 	}
 
+	buf.Reset()
 	return body.Converter(res.Body)
 }
 

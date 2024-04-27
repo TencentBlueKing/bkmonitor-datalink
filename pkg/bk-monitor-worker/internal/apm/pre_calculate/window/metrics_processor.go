@@ -14,6 +14,7 @@ import (
 
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -25,9 +26,10 @@ type MetricProcessor struct {
 }
 
 func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeGraph *DiGraph) {
-	parentChildMetricCount := m.findParentChildMetric(receiver, fullTreeGraph)
-
-	metrics.RecordApmRelationMetricFindCount(m.dataId, metrics.RelationMetricSystem, parentChildMetricCount)
+	if config.PromRemoteWriteEnabled {
+		parentChildMetricCount := m.findParentChildMetric(receiver, fullTreeGraph)
+		metrics.RecordApmRelationMetricFindCount(m.dataId, metrics.RelationMetricSystem, parentChildMetricCount)
+	}
 }
 
 // findParentChildMetric find the metrics which contains c-s relation

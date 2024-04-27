@@ -74,7 +74,8 @@ type Processor struct {
 	// Metric discover
 	metricProcessor MetricProcessor
 
-	logger monitorLogger.Logger
+	logger   monitorLogger.Logger
+	baseInfo core.BaseInfo
 }
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
@@ -270,12 +271,11 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 		foundStatusCode = true
 	}
 
-	baseInfo := core.GetMetadataCenter().GetBaseInfo(p.dataId)
 	res := ProcessResult{
-		BizId:               baseInfo.BkBizId,
-		BizName:             baseInfo.BkBizName,
-		AppId:               baseInfo.AppId,
-		AppName:             baseInfo.AppName,
+		BizId:               p.baseInfo.BkBizId,
+		BizName:             p.baseInfo.BkBizName,
+		AppId:               p.baseInfo.AppId,
+		AppName:             p.baseInfo.AppName,
 		TraceId:             event.TraceId,
 		HierarchyCount:      graph.LongestPath() + 1,
 		ServiceCount:        len(services.ToSlice()),
@@ -482,5 +482,6 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("dataId", dataId),
 		),
 		metricProcessor: newMetricProcessor(dataId),
+		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

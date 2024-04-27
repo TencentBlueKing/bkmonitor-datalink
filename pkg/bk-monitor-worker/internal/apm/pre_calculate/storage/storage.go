@@ -209,7 +209,6 @@ loop:
 
 				esSaveData = append(esSaveData, item)
 				if len(esSaveData) >= p.config.saveHoldMaxCount {
-					// todo 是否需要满时动态调整
 					err := p.saveEs.SaveBatch(esSaveData)
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageSaveEs, len(esSaveData))

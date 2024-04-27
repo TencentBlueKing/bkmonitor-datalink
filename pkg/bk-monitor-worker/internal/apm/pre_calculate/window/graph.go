@@ -123,8 +123,21 @@ func (g *DiGraph) NodeDepths() []NodeDegree {
 	return res
 }
 
+func (g *DiGraph) Length() int {
+	return len(g.Nodes)
+}
+
 func (g *DiGraph) Empty() bool {
 	return len(g.Nodes) == 0
+}
+
+func (g *DiGraph) StandardSpans() []*StandardSpan {
+	var res []*StandardSpan
+	for _, item := range g.Nodes {
+		res = append(res, item.StandardSpan)
+	}
+
+	return res
 }
 
 // FindParentChildPairs Return all pairs of parent-child nodes

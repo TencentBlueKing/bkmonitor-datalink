@@ -18,6 +18,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -31,6 +32,7 @@ type DistributiveWindowOptions struct {
 	watchExpiredInterval        time.Duration
 	concurrentProcessCount      int
 	concurrentExpirationMaximum int
+	mappingMaxSpanCount         int
 }
 
 type DistributiveWindowOption func(*DistributiveWindowOptions)
@@ -50,11 +52,11 @@ func DistributiveWindowWatchExpiredInterval(interval time.Duration) Distributive
 	}
 }
 
-// ConcurrentProcessCount The maximum concurrency.
+// DistributiveWindowConcurrentProcessCount The maximum concurrency.
 // For example, concurrentProcessCount is set to 10 and subWindowSize is set to 5,
 // then each sub-window can have a maximum of 10 traces running at the same time,
 // and a total of 5 * 10 can be processed at the same time.
-func ConcurrentProcessCount(c int) DistributiveWindowOption {
+func DistributiveWindowConcurrentProcessCount(c int) DistributiveWindowOption {
 	return func(options *DistributiveWindowOptions) {
 		if c <= 0 {
 			options.concurrentProcessCount = runtime.NumCPU() * 2
@@ -64,10 +66,17 @@ func ConcurrentProcessCount(c int) DistributiveWindowOption {
 	}
 }
 
-// ConcurrentExpirationMaximum Maximum number of concurrent expirations
-func ConcurrentExpirationMaximum(c int) DistributiveWindowOption {
+// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
+func DistributiveWindowConcurrentExpirationMaximum(c int) DistributiveWindowOption {
 	return func(options *DistributiveWindowOptions) {
 		options.concurrentExpirationMaximum = c
+	}
+}
+
+// DistributiveWindowMappingMaxSpanCount maximum number of span in sub-window
+func DistributiveWindowMappingMaxSpanCount(c int) DistributiveWindowOption {
+	return func(options *DistributiveWindowOptions) {
+		options.mappingMaxSpanCount = c
 	}
 }
 
@@ -99,6 +108,7 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 	for _, setter := range specificOptions {
 		setter(specificConfig)
 	}
+
 	window := &DistributiveWindow{
 		dataId:          dataId,
 		config:          *specificConfig,
@@ -115,7 +125,8 @@ func NewDistributiveWindow(dataId string, ctx context.Context, processor Process
 	subWindowMapping := make(map[int]*distributiveSubWindow, specificConfig.subWindowSize)
 	for i := 0; i < specificConfig.subWindowSize; i++ {
 		w := newDistributiveSubWindow(
-			dataId, ctx, i, processor, window.saveRequestChan, specificConfig.concurrentExpirationMaximum,
+			dataId, ctx, i, processor, window.saveRequestChan,
+			specificConfig.concurrentExpirationMaximum, specificConfig.mappingMaxSpanCount,
 		)
 		subWindowMapping[i] = w
 		window.register(w)
@@ -181,7 +192,7 @@ func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
 	subWindow.m.Range(func(key, value any) bool {
 		traceCount++
 		v := value.(*CollectTrace)
-		spanCount += len(v.Spans)
+		spanCount += v.Graph.Length()
 		return true
 	})
 
@@ -251,9 +262,13 @@ type distributiveSubWindow struct {
 
 	ctx    context.Context
 	logger monitorLogger.Logger
+
+	sem *semaphore.Weighted
 }
 
-func newDistributiveSubWindow(dataId string, ctx context.Context, index int, processor Processor, saveReqChan chan<- storage.SaveRequest, concurrentMaximum int) *distributiveSubWindow {
+func newDistributiveSubWindow(
+	dataId string, ctx context.Context, index int, processor Processor, saveReqChan chan<- storage.SaveRequest,
+	concurrentMaximum int, mappingMaxSpanCount int) *distributiveSubWindow {
 	subWindow := &distributiveSubWindow{
 		id:                   index,
 		dataId:               dataId,
@@ -267,9 +282,11 @@ func newDistributiveSubWindow(dataId string, ctx context.Context, index int, pro
 			zap.String("dataId", dataId),
 			zap.String("sub-window-id", strconv.Itoa(index)),
 		),
+		sem: semaphore.NewWeighted(int64(mappingMaxSpanCount)),
 	}
 	subWindow.logger.Infof(
-		"Create SubWindow -> dataId: %s subWindowId: %d eventChanSize: %d", dataId, index, concurrentMaximum,
+		"DataId: %s Create SubWindow[%d] -> eventChanSize: %d semaphoreSize: %d",
+		dataId, index, concurrentMaximum, mappingMaxSpanCount,
 	)
 	return subWindow
 }
@@ -323,6 +340,7 @@ loop:
 			start := time.Now()
 			d.processor.PreProcess(d.writeSaveRequestChan, e)
 			metrics.RecordApmPreCalcProcessEventDuration(d.dataId, d.id, start)
+			d.sem.Release(int64(e.Graph.Length()))
 		case <-d.ctx.Done():
 			break loop
 		}
@@ -330,27 +348,27 @@ loop:
 }
 
 func (d *distributiveSubWindow) add(span StandardSpan) {
+	if err := d.sem.Acquire(d.ctx, 1); err != nil {
+		logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
+		return
+	}
+
 	d.mLock.Lock()
 	value, exist := d.m.Load(span.TraceId)
-
 	if !exist {
-
 		graph := NewDiGraph()
 		graph.AddNode(&Node{StandardSpan: &span})
 		rt := d.runtimeStrategy.handleNew()
 		d.m.Store(span.TraceId, &CollectTrace{
 			TraceId: span.TraceId,
-			Spans:   []*StandardSpan{&span},
 			Graph:   graph,
 
 			Runtime: rt,
 		})
 	} else {
-
 		collect := value.(*CollectTrace)
 		graph := collect.Graph
 		graph.AddNode(&Node{StandardSpan: &span})
-		collect.Spans = append(collect.Spans, &span)
 		collect.Graph = graph
 
 		d.runtimeStrategy.handleExist(&collect.Runtime, *collect)

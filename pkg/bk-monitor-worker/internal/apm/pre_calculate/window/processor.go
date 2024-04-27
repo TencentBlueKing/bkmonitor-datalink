@@ -94,7 +94,6 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 }
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
-	event.Spans = append(event.Spans, exists...)
 	for _, s := range exists {
 		event.Graph.AddNode(&Node{StandardSpan: s})
 	}
@@ -211,7 +210,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	kindCategoryStatistics := initKindCategoryStatistics()
 	collections := make(map[string][]string, len(core.StandardFields))
 
-	for _, span := range event.Spans {
+	for _, span := range event.Graph.Nodes {
 		if svrName := span.GetFieldValue(core.ServiceNameField); svrName != "" {
 			services.Add(svrName)
 		}
@@ -280,7 +279,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 		TraceId:             event.TraceId,
 		HierarchyCount:      graph.LongestPath() + 1,
 		ServiceCount:        len(services.ToSlice()),
-		SpanCount:           len(event.Spans),
+		SpanCount:           event.Graph.Length(),
 		MinStartTime:        startTimes[0],
 		MaxEndTime:          endTimes[len(endTimes)-1],
 		TraceDuration:       endTimes[len(endTimes)-1] - startTimes[0],
@@ -312,7 +311,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
 	if p.config.enabledInfoCache {
-		spanBytes, _ := jsonx.Marshal(event.Spans)
+		spanBytes, _ := jsonx.Marshal(event.Graph.StandardSpans())
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
 			Data: storage.CacheStorageData{

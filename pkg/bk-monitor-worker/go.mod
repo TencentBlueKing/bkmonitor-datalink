@@ -50,13 +50,13 @@ require (
 	github.com/spf13/viper v1.16.0
 	github.com/stretchr/testify v1.9.0
 	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
-	github.com/valyala/fastjson v1.6.4
 	github.com/wcharczuk/go-chart/v2 v2.1.1
 	github.com/xdg-go/scram v1.1.2
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a
+	golang.org/x/sync v0.4.0
 	golang.org/x/time v0.5.0
 	google.golang.org/protobuf v1.33.0
 	gopkg.in/yaml.v2 v2.4.0

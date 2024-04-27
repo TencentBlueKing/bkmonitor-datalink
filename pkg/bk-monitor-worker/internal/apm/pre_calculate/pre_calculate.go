@@ -38,8 +38,9 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithDistributiveWindowConfig(
 			window.DistributiveWindowSubSize(config.DistributiveWindowSubSize),
 			window.DistributiveWindowWatchExpiredInterval(config.DistributiveWindowWatchExpireInterval),
-			window.ConcurrentProcessCount(config.DistributiveWindowHandleEventConcurrentCount),
-			window.ConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
+			window.DistributiveWindowConcurrentProcessCount(config.DistributiveWindowHandleEventConcurrentCount),
+			window.DistributiveWindowConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
+			window.DistributiveWindowMappingMaxSpanCount(config.DistributiveWindowSubWindowMappingMaxSpanCount),
 		).
 		WithProcessorConfig(
 			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),

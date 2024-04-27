@@ -93,7 +93,7 @@ var (
 	}
 
 	ReentrantLimitMaxCount ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, collect CollectTrace) {
-		if len(collect.Spans) > config.maxSize {
+		if collect.Graph.Length() > config.maxSize {
 			runtime.Expiration = time.Now()
 		}
 	}

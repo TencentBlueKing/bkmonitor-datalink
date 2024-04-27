@@ -161,14 +161,8 @@ func (e *esStorage) SaveBatch(items []EsStorageData) error {
 
 	req := esapi.BulkRequest{Index: e.getSaveIndexName(e.indexName), Body: &buf}
 	response, err := req.Do(e.ctx, e.client)
-	defer func() {
-		if response != nil {
-			err = response.Body.Close()
-			if err != nil {
-				logger.Warnf("[SaveBatch] failed to close the body")
-			}
-		}
-	}()
+	buf.Reset()
+	defer response.Body.Close()
 
 	if err != nil {
 		return err

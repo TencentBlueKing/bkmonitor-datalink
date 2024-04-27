@@ -181,7 +181,6 @@ func exactStandardFieldsFromMapping(standardSpan StandardSpan, originSpan map[st
 
 type CollectTrace struct {
 	TraceId string
-	Spans   []*StandardSpan
 	Graph   *DiGraph
 
 	Runtime Runtime

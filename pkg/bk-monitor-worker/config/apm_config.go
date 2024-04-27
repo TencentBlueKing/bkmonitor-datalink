@@ -42,9 +42,11 @@ var (
 	// DistributiveWindowHandleEventConcurrentCount Set the number of goroutine that processes event concurrently
 	// in each sub-window
 	DistributiveWindowHandleEventConcurrentCount int
-
 	// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
 	DistributiveWindowConcurrentExpirationMaximum int
+	// DistributiveWindowSubWindowMappingMaxSpanCount Maximum number of span in mapping
+	DistributiveWindowSubWindowMappingMaxSpanCount int
+
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
 	// If this is enabled, the query frequency of elasticsearch is reduced.
 	EnabledTraceInfoCache int
@@ -119,14 +121,15 @@ func initApmVariables() {
 	DistributiveWindowWatchExpireInterval = GetValue("taskConfig.apmPreCalculate.window.distributive.watchExpireInterval", 500*time.Millisecond, viper.GetDuration)
 	DistributiveWindowHandleEventConcurrentCount = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentHandleCount", 5)
 	DistributiveWindowConcurrentExpirationMaximum = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentExpirationMaximum", 100)
+	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
-	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 2000)
-	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
-	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 100)
-	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 500*time.Millisecond, viper.GetDuration)
+	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 500)
+	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 5)
+	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
+	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 1*time.Second, viper.GetDuration)
 
 	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.1)
 	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*time.Hour, viper.GetDuration)

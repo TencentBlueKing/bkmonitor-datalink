@@ -133,7 +133,12 @@ func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim 
 loop:
 	for {
 		select {
-		case msg := <-claim.Messages():
+		case msg, ok := <-claim.Messages():
+			if !ok || msg == nil {
+				logger.Warnf("kafka received a nil message!, skip")
+				continue
+			}
+
 			if !c.limiter.TryAccept() {
 				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %d", c.topic, c.qps)
 				metrics.AddApmPreCalcNotifierRejectMessageCount(c.dataId, c.topic)
@@ -162,6 +167,7 @@ func (c consumeHandler) sendSpans(message []byte) {
 
 	var msg window.OriginMessage
 	if err := sonic.Unmarshal(message, &msg); err != nil {
+		logger.Errorf("kafka received a abnormal message! dataId: %s error: %s message: %s", c.dataId, err, message)
 		return
 	}
 

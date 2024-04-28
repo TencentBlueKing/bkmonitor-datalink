@@ -115,8 +115,9 @@ type Memory struct {
 
 type DiskPartition struct {
 	Total      uint64 `json:"total"`
-	MountPoint string `json:"mount_point"` // 挂载路径
-	FileSystem string `json:"file_system"` // 文件系统
+	Device     string `json:"device"`
+	FsType     string `json:"fstype"`
+	MountPoint string `json:"mount_point"`
 }
 
 // Disk :

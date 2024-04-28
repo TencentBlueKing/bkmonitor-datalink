@@ -97,7 +97,8 @@ var GetDiskStatus = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*D
 		partitions = append(partitions, DiskPartition{
 			Total:      usage.Total,
 			MountPoint: info.Mountpoint,
-			FileSystem: info.Fstype,
+			FsType:     info.Fstype,
+			Device:     info.Device,
 		})
 	}
 	return &Disk{

@@ -171,7 +171,7 @@ func (r *RunMaintainer) listenRunningState(
 				logger.Infof("errorReceiveChan close, return")
 				return
 			}
-			v, _ := r.runningInstance.Load(taskUniId)
+			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
 			rB.lastRetryTime = time.Now()
@@ -189,6 +189,7 @@ func (r *RunMaintainer) listenRunningState(
 				}
 			}
 
+			close(errorChan)
 			rB.nextRetryTime = time.Now().Add(nextRetryTime)
 			rB.errorReceiveChan = make(chan error, 1)
 			newCtx, newCancel := context.WithCancel(r.ctx)
@@ -205,6 +206,9 @@ func (r *RunMaintainer) listenRunningState(
 					"The retry time of the next attempt is: %s, (%.2f seconds later)",
 				receiveErr, taskUniId, rB.retryCount, rB.reloadCount, rB.nextRetryTime, nextRetryTime.Seconds(),
 			)
+			if retryTicker != nil {
+				retryTicker.Stop()
+			}
 			retryTicker = time.NewTicker(nextRetryTime)
 		case <-retryTicker.C:
 			v, _ := r.runningInstance.Load(taskUniId)
@@ -216,13 +220,16 @@ func (r *RunMaintainer) listenRunningState(
 					"[RETRY] Task: %s retry performed.\nParams: \n-----\n%s\n-----\n",
 					taskUniId, rB.SerializerTask.Payload,
 				)
+				if retryTicker != nil {
+					retryTicker.Stop()
+				}
 				retryTicker = &time.Ticker{}
 				metrics.RecordDaemonTaskRetryCount(taskDimension)
 			}
 		case <-r.ctx.Done():
 			logger.Infof("[RetryListen] receive root context done singal, stopped and return")
 			retryTicker.Stop()
-			v, _ := r.runningInstance.Load(taskUniId)
+			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
 			close(errorChan)
@@ -230,6 +237,10 @@ func (r *RunMaintainer) listenRunningState(
 		case <-lifeline.Done():
 			logger.Infof("[RetryListen] receive lifeline context done singal, stopped and return")
 			retryTicker.Stop()
+			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
+			rB := v.(*runningBinding)
+			rB.baseCtxCancel()
+			close(errorChan)
 			return
 		}
 	}

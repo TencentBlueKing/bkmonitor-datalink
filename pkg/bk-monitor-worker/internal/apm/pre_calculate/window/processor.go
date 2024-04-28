@@ -96,7 +96,7 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
 	for _, s := range exists {
-		event.Graph.AddNode(&Node{StandardSpan: s})
+		event.Graph.AddNode(Node{StandardSpan: *s})
 	}
 }
 
@@ -235,9 +235,9 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	var rootSpan Node
 	if len(nodeDegrees) != 0 {
 		sort.Slice(nodeDegrees, sortNode(nodeDegrees))
-		rootSpan = *nodeDegrees[0].Node
+		rootSpan = nodeDegrees[0].Node
 	} else {
-		rootSpan = Node{StandardSpan: &StandardSpan{}}
+		rootSpan = Node{StandardSpan: StandardSpan{}}
 	}
 
 	// Root Service Span
@@ -251,12 +251,12 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	var rSc string
 	var rootServiceName string
 	if len(calledKindSpans) != 0 {
-		rootServiceSpan = *calledKindSpans[0].Node
+		rootServiceSpan = calledKindSpans[0].Node
 		rootServiceCategory, _ := inferCategory(rootServiceSpan.Collections)
 		rSc = string(rootServiceCategory)
 		rootServiceName = rootServiceSpan.GetFieldValue(core.ServiceNameField)
 	} else {
-		rootServiceSpan = Node{StandardSpan: &StandardSpan{}}
+		rootServiceSpan = Node{StandardSpan: StandardSpan{}}
 	}
 	// status code of trace originates from http/rpc
 	var statusCodeOptional int

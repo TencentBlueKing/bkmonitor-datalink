@@ -191,7 +191,7 @@ func (w *DistributiveWindow) getSubWindowMetrics(subId int) (int, int) {
 
 	subWindow.m.Range(func(key, value any) bool {
 		traceCount++
-		v := value.(*CollectTrace)
+		v := value.(CollectTrace)
 		spanCount += v.Graph.Length()
 		return true
 	})
@@ -215,6 +215,13 @@ loop:
 			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
 		case <-w.ctx.Done():
 			w.logger.Infof("Handle span stopped.")
+			// clear data
+			for _, subWindow := range w.subWindows {
+				subWindow.m = &sync.Map{}
+				close(subWindow.eventChan)
+				subWindow.processor = Processor{}
+			}
+			w.subWindows = make(map[int]*distributiveSubWindow)
 			break loop
 		}
 	}
@@ -237,8 +244,8 @@ func (w *DistributiveWindow) startWatch(errorReceiveChan chan<- error) {
 	for {
 		select {
 		case <-w.ctx.Done():
-			w.logger.Info("trigger watch stopped.")
 			tick.Stop()
+			w.logger.Info("trigger watch stopped.")
 			return
 		case <-tick.C:
 			for ob, _ := range w.observers {
@@ -310,8 +317,8 @@ func (d *distributiveSubWindow) detectNotify() {
 	expiredKeys := make([]string, 0)
 
 	d.m.Range(func(key, value any) bool {
-		v := value.(*CollectTrace)
-		if d.runtimeStrategy.predicate(&v.Runtime, *v) {
+		v := value.(CollectTrace)
+		if d.runtimeStrategy.predicate(v.Runtime, v) {
 			expiredKeys = append(expiredKeys, key.(string))
 		}
 		return true
@@ -325,7 +332,7 @@ func (d *distributiveSubWindow) detectNotify() {
 				d.logger.Errorf("An expired key[%s] was detected but does not exist in the mapping", k)
 				continue
 			}
-			trace := v.(*CollectTrace)
+			trace := v.(CollectTrace)
 			d.eventChan <- Event{trace}
 		}
 	}
@@ -357,21 +364,21 @@ func (d *distributiveSubWindow) add(span StandardSpan) {
 	value, exist := d.m.Load(span.TraceId)
 	if !exist {
 		graph := NewDiGraph()
-		graph.AddNode(&Node{StandardSpan: &span})
+		graph.AddNode(Node{StandardSpan: span})
 		rt := d.runtimeStrategy.handleNew()
-		d.m.Store(span.TraceId, &CollectTrace{
+		d.m.Store(span.TraceId, CollectTrace{
 			TraceId: span.TraceId,
 			Graph:   graph,
 
 			Runtime: rt,
 		})
 	} else {
-		collect := value.(*CollectTrace)
+		collect := value.(CollectTrace)
 		graph := collect.Graph
-		graph.AddNode(&Node{StandardSpan: &span})
+		graph.AddNode(Node{StandardSpan: span})
 		collect.Graph = graph
 
-		d.runtimeStrategy.handleExist(&collect.Runtime, *collect)
+		d.runtimeStrategy.handleExist(collect.Runtime, collect)
 		d.m.Store(span.TraceId, collect)
 	}
 	d.mLock.Unlock()

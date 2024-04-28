@@ -25,7 +25,7 @@ type MetricProcessor struct {
 	dpReqChan chan []prompb.TimeSeries
 }
 
-func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeGraph *DiGraph) {
+func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
 	if config.PromRemoteWriteEnabled {
 		parentChildMetricCount := m.findParentChildMetric(receiver, fullTreeGraph)
 		metrics.RecordApmRelationMetricFindCount(m.dataId, metrics.RelationMetricSystem, parentChildMetricCount)
@@ -35,7 +35,7 @@ func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeG
 // findParentChildMetric find the metrics which contains c-s relation
 // include: system <-> system / system <-> service / service <-> service
 func (m *MetricProcessor) findParentChildMetric(
-	receiver chan<- storage.SaveRequest, fullTreeGraph *DiGraph,
+	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
 ) int {
 
 	count := 0

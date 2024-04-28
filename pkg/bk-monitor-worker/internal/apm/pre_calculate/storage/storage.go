@@ -297,6 +297,7 @@ loop:
 		case <-p.ctx.Done():
 			ticker.Stop()
 			p.cache.Close()
+			close(p.saveRequestChan)
 			break loop
 		}
 	}

@@ -94,6 +94,7 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 				logger.Errorf("Failed to close ConsumerGroup, error: %s", err)
 			}
 			logger.Infof("ConsumerGroup stopped.")
+			close(k.handler.spans)
 			return
 		default:
 			if err := k.consumerGroup.Consume(k.ctx, []string{k.config.KafkaTopic}, k.handler); err != nil {
@@ -172,7 +173,7 @@ func (c consumeHandler) sendSpans(message []byte) {
 	}
 
 	for _, item := range msg.Items {
-		res = append(res, *window.ToStandardSpan(item))
+		res = append(res, window.ToStandardSpan(item))
 	}
 	metrics.RecordNotifierParseSpanDuration(c.dataId, c.topic, start)
 	c.spans <- res

@@ -53,7 +53,7 @@ func init() {
 	}
 }
 
-func ToStandardSpan(originSpan Span) *StandardSpan {
+func ToStandardSpan(originSpan Span) StandardSpan {
 	standardSpan := StandardSpan{
 		TraceId:      originSpan.TraceId,
 		SpanId:       originSpan.SpanId,
@@ -66,7 +66,7 @@ func ToStandardSpan(originSpan Span) *StandardSpan {
 		Kind:         originSpan.Kind,
 	}
 	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
-	return &standardSpan
+	return standardSpan
 }
 
 func exactStandardFields(standardSpan StandardSpan, originSpan Span) map[string]string {
@@ -181,7 +181,7 @@ func exactStandardFieldsFromMapping(standardSpan StandardSpan, originSpan map[st
 
 type CollectTrace struct {
 	TraceId string
-	Graph   *DiGraph
+	Graph   DiGraph
 
 	Runtime Runtime
 }

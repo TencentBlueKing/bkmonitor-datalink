@@ -122,11 +122,15 @@ func (c *CommonField) DisplayKey() string {
 	case SourceAttributes:
 		builder.WriteString("attributes.")
 		builder.WriteString(c.Key)
-		return builder.String()
+		r := builder.String()
+		builder.Reset()
+		return r
 	case SourceResource:
 		builder.WriteString("resource.")
 		builder.WriteString(c.Key)
-		return builder.String()
+		r := builder.String()
+		builder.Reset()
+		return r
 	default:
 		return c.Key
 	}

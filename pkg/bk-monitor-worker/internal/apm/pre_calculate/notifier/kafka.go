@@ -102,7 +102,6 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 			}
 		}
 	}
-
 }
 
 type consumeHandler struct {
@@ -143,8 +142,8 @@ loop:
 
 			metrics.AddApmNotifierReceiveMessageCount(c.dataId, c.topic)
 			if session != nil {
-				session.MarkMessage(msg, "")
 				c.sendSpans(msg.Value)
+				session.MarkMessage(msg, "")
 			}
 		case <-session.Context().Done():
 			logger.Infof("kafka consume handler session done. topic: %s groupId: %s", c.topic, c.groupId)

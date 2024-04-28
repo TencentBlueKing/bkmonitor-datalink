@@ -7,22 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package resulttable
+package notifier
 
-import (
-	"strings"
-)
+import "k8s.io/client-go/util/flowcontrol"
 
-// TableIdsLike filter many table id by `like`
-// table_id LIKE ? OR table_id LIKE ?", "L12%", "A12%
-func (qs ResultTableQuerySet) TableIdsLike(tableIds []string) ResultTableQuerySet {
-	var sqlList []string
-	interfaceSlice := make([]interface{}, len(tableIds))
-	for i, v := range tableIds {
-		sqlList = append(sqlList, "table_id LIKE ?")
-		interfaceSlice[i] = v
+type tokenBucketRateLimiter struct {
+	unlimited bool
+	rejected  bool
+	limiter   flowcontrol.RateLimiter
+}
+
+// Stop 实现 RateLimiter Stop 方法
+func (rl *tokenBucketRateLimiter) Stop() {
+	if rl.rejected || rl.unlimited {
+		return
 	}
-	// 以 `OR` 拼接 sql
-	sql := strings.Join(sqlList, " OR ")
-	return qs.w(qs.db.Where(sql, interfaceSlice...))
+	rl.limiter.Stop()
+}
+
+// TryAccept 实现 RateLimiter TryAccept 方法
+func (rl *tokenBucketRateLimiter) TryAccept() bool {
+	if rl.unlimited {
+		return true
+	}
+	if rl.rejected {
+		return false
+	}
+	return rl.limiter.TryAccept()
 }

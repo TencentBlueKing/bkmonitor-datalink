@@ -18,6 +18,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
@@ -33,84 +34,69 @@ func TestReady(t *testing.T) {
 	assert.NotPanics(t, Ready)
 }
 
-func TestHttpInvalidBody(t *testing.T) {
-	buf := &bytes.Buffer{}
-	buf.WriteString("{-}")
-
-	req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
-
-	var n int
-	svc := HttpService{
-		receiver.Publisher{Func: func(record *define.Record) { n++ }},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
-		}},
+func readContent() []byte {
+	content, err := os.ReadFile("../../example/fixtures/jaeger.bytes")
+	if err != nil {
+		panic(err)
 	}
-	rw := httptest.NewRecorder()
-	svc.JaegerTraces(rw, req)
-	assert.Equal(t, rw.Code, http.StatusBadRequest)
-	assert.Equal(t, 0, n)
+	return content
 }
 
-func TestHttpReadFailed(t *testing.T) {
-	buf := testkits.NewBrokenReader()
-	req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
-
-	var n int
+func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {
+	n := atomic.NewInt64(0)
 	svc := HttpService{
-		receiver.Publisher{Func: func(record *define.Record) { n++ }},
+		receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
 		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			return define.StatusCodeOK, "", nil
+			return code, msg, err
 		}},
 	}
-	rw := httptest.NewRecorder()
-	svc.JaegerTraces(rw, req)
-	assert.Equal(t, rw.Code, http.StatusInternalServerError)
-	assert.Equal(t, 0, n)
+	return svc, n
 }
 
-func TestHttpPreCheck(t *testing.T) {
-	t.Run("Success", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		content, err := os.ReadFile("../../example/fixtures/jaeger.bytes")
-		assert.NoError(t, err)
-		buf.Write(content)
+func TestHttpRequest(t *testing.T) {
+	t.Run("invalid body", func(t *testing.T) {
+		buf := bytes.NewBufferString("{-}")
+		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		rw := httptest.NewRecorder()
+		svc.JaegerTraces(rw, req)
+		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		assert.Equal(t, int64(0), n.Load())
+	})
+
+	t.Run("read failed", func(t *testing.T) {
+		buf := testkits.NewBrokenReader()
+		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
+
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
+		rw := httptest.NewRecorder()
+		svc.JaegerTraces(rw, req)
+		assert.Equal(t, rw.Code, http.StatusInternalServerError)
+		assert.Equal(t, int64(0), n.Load())
+	})
+
+	t.Run("success", func(t *testing.T) {
+		buf := bytes.NewBuffer(readContent())
 		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 		req.Header.Set("Content-Type", "application/x-thrift")
 
-		var n int
-		svc := HttpService{
-			receiver.Publisher{Func: func(record *define.Record) { n++ }},
-			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-				return define.StatusCodeOK, "", nil
-			}},
-		}
+		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
 		svc.JaegerTraces(rw, req)
 		assert.Equal(t, http.StatusOK, rw.Code)
-		assert.Equal(t, 1, n)
+		assert.Equal(t, int64(1), n.Load())
 	})
 
-	t.Run("Failed", func(t *testing.T) {
-		buf := &bytes.Buffer{}
-		content, err := os.ReadFile("../../example/fixtures/jaeger.bytes")
-		assert.NoError(t, err)
-		buf.Write(content)
-
+	t.Run("precheck failed", func(t *testing.T) {
+		buf := bytes.NewBuffer(readContent())
 		req := httptest.NewRequest(http.MethodPut, localJaegerV1TracesURL, buf)
 		req.Header.Set("Content-Type", "application/x-thrift")
 
-		var n int
-		svc := HttpService{
-			receiver.Publisher{Func: func(record *define.Record) { n++ }},
-			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-				return define.StatusCodeTooManyRequests, "", errors.New("MUST ERROR")
-			}},
-		}
+		svc, n := newSvc(define.StatusCodeTooManyRequests, "", errors.New("MUST ERROR"))
 		rw := httptest.NewRecorder()
 		svc.JaegerTraces(rw, req)
 		assert.Equal(t, http.StatusTooManyRequests, rw.Code)
-		assert.Equal(t, 0, n)
+		assert.Equal(t, int64(0), n.Load())
 	})
 }

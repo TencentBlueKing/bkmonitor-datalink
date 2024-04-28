@@ -10,11 +10,11 @@
 package receiver
 
 import (
-	"fmt"
 	"net/http"
 	"sort"
 
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -71,7 +71,7 @@ func registerHttpRoute(source, httpMethod, relativePath string, handleFunc http.
 		Path:       relativePath,
 	}
 	if _, ok := mgr.httpRoutes[ri.Key()]; ok {
-		return fmt.Errorf("duplicated http route '%v'", ri)
+		return errors.Errorf("duplicated http route '%v'", ri)
 	}
 
 	mgr.httpRoutes[ri.Key()] = ri

@@ -24,33 +24,37 @@ type JSONDecoder struct {
 }
 
 // Decode :
-func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader) (*Response, error) {
-	resp := new(Response)
+func (d *JSONDecoder) Decode(ctx context.Context, reader io.Reader, resp *Response) (size int, err error) {
+	resp.Ctx = ctx
+	resp.Results = make([]Result, 0)
 
 	rd := bufio.NewReader(reader)
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("context timeout")
+			err = fmt.Errorf("context timeout")
+			return
 		default:
-			var res Response
-			line, err := rd.ReadBytes('\n')
+			var (
+				line []byte
+			)
+			line, err = rd.ReadBytes('\n')
+			if len(line) > 0 {
+				res := new(Response)
+				size += len(line)
+				err = json.Unmarshal(line, res)
+				if err != nil {
+					return
+				}
+				resp.Results = append(resp.Results, res.Results...)
+			}
+
 			if err == io.EOF {
-				return resp, nil
+				err = nil
+				return
 			}
 			if err != nil {
-				return nil, err
-			}
-			err = json.Unmarshal(line, &res)
-			if err != nil {
-				return nil, err
-			}
-			resp.Results = append(resp.Results, res.Results...)
-			if err == io.EOF {
-				return resp, nil
-			}
-			if err != nil {
-				return nil, err
+				return
 			}
 		}
 	}

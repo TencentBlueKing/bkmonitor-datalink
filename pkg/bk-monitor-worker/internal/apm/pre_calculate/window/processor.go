@@ -205,7 +205,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	graph.RefreshEdges()
 
 	// discover metrics of relation and remote-write to Prometheus
-	p.metricProcessor.process(receiver, event, graph)
+	p.metricProcessor.process(receiver, graph)
 
 	nodeDegrees := graph.NodeDepths()
 

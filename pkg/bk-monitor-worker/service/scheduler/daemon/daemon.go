@@ -81,6 +81,24 @@ var taskDefine = map[string]OperatorDefine{
 	}},
 }
 
+var daemonTaskDimensionOperatorMapping map[string]func(payload []byte) string
+
+// getDimensionOperator because we need to get the dimension of the daemonTask to compute the taskUniId.
+// And the taskUniId must be not change when daemonTask update
+func getDimensionOperator(kind string) func(payload []byte) string {
+	if daemonTaskDimensionOperatorMapping != nil {
+		return daemonTaskDimensionOperatorMapping[kind]
+	}
+	daemonTaskDimensionOperatorMapping = make(map[string]func(payload []byte) string)
+	for k, item := range taskDefine {
+		// mock initial
+		op, _ := item.initialFunc(context.Background())
+		daemonTaskDimensionOperatorMapping[k] = op.GetTaskDimension
+	}
+
+	return daemonTaskDimensionOperatorMapping[kind]
+}
+
 type TaskScheduler struct {
 	ctx context.Context
 
@@ -113,8 +131,14 @@ func NewDaemonTaskScheduler(ctx context.Context) *TaskScheduler {
 }
 
 func ComputeTaskUniId(task task.SerializerTask) string {
-	// 统一名称+参数视为同一个常驻任务
-	return fmt.Sprintf("%s-%s", task.Kind, hex.EncodeToString(task.Payload))
+	dimension := getDimensionOperator(task.Kind)(task.Payload)
+	if dimension == "" {
+		// 如果任务没有定义唯一维度 则取参数作为唯一维度来计算 Id
+		return fmt.Sprintf("%s-%s", task.Kind, hex.EncodeToString(task.Payload))
+	}
+
+	// 如果有定义唯一维度 则取维度来计算 Id
+	return fmt.Sprintf("%s-%s", task.Kind, hex.EncodeToString([]byte(dimension)))
 }
 
 func computeWorkerId(t task.SerializerTask) (string, error) {

@@ -38,6 +38,27 @@ const (
 }`
 )
 
+func doRequest() {
+	data := fmt.Sprintf(template, time.Now().Format("2006-01-02 15:04:05+07:00"))
+	request, _ := http.NewRequest(http.MethodPost, URL, bytes.NewBufferString(data))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-BK-TOKEN", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		log.Printf("post data failed, err: %v\n", err)
+		return
+	}
+	defer response.Body.Close()
+
+	b, err := io.ReadAll(response.Body)
+	if err != nil {
+		log.Printf("read response failed, err: %v\n", err)
+		return
+	}
+	log.Println(string(b))
+}
+
 func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
@@ -51,18 +72,7 @@ func main() {
 			return
 
 		case <-ticker.C:
-			data := fmt.Sprintf(template, time.Now().Format("2006-01-02 15:04:05+07:00"))
-			request, _ := http.NewRequest(http.MethodPost, URL, bytes.NewBufferString(data))
-			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("X-BK-TOKEN", "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==")
-
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				log.Printf("post data failed, err: %v\n", err)
-				continue
-			}
-			b, _ := io.ReadAll(response.Body)
-			log.Println(string(b))
+			doRequest()
 		}
 	}
 }

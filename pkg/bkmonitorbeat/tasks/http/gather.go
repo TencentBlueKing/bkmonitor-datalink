@@ -14,6 +14,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -149,6 +151,36 @@ func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) er
 	}
 
 	return nil
+}
+
+func validateConfig(c *configs.HTTPTaskStepConfig) {
+	const base64Prefix = "base64://"
+
+	decode := func(s string) string {
+		s = s[len(base64Prefix):]
+		b, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(s, "="))
+		if err != nil {
+			return s // 解析失败原路返回
+		}
+		return string(b)
+	}
+
+	if strings.HasPrefix(c.Request, base64Prefix) {
+		c.Request = decode(c.Request)
+	}
+	if strings.HasPrefix(c.Response, base64Prefix) {
+		c.Response = decode(c.Response)
+	}
+
+	headers := make(map[string]string)
+	for k, v := range c.Headers {
+		if strings.HasPrefix(v, base64Prefix) {
+			headers[k] = decode(v)
+		} else {
+			headers[k] = v
+		}
+	}
+	c.Headers = headers
 }
 
 // makeRequest 从配置生成请求
@@ -355,6 +387,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	var (
 		conf = g.GetConfig().(*configs.HTTPTaskConfig)
 	)
+
+	for _, c := range conf.Steps {
+		validateConfig(c)
+		logger.Debugf("validated step config: %#v", c)
+	}
 
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)

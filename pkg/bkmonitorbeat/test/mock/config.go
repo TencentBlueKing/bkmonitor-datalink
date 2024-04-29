@@ -93,6 +93,10 @@ type Config struct {
 	Task TaskMetaConfig `inject:"inline"`
 }
 
+func (c *Config) GetGatherUpDataID() int32 {
+	return 0
+}
+
 // GetTaskConfigListByType :
 func (c *Config) GetTaskConfigListByType(_ string) []define.TaskConfig {
 	return c.Task.GetTaskConfigList()

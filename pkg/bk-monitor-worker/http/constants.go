@@ -22,7 +22,7 @@ const (
 	// DeleteAllTaskPath 删除所有任务
 	DeleteAllTaskPath = "/all"
 	// DaemonTaskReload 常驻任务重载(重新启动)
-	DaemonTaskReload = "/daemon/reload"
+	DaemonTaskReloadPath = "/daemon/reload"
 	// SetLogLevelPath 动态设置日志级别
 	SetLogLevelPath = "/log/level"
 )

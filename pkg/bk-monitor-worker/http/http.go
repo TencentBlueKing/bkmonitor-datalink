@@ -44,7 +44,8 @@ func addMetricMiddleware(svr *gin.Engine) {
 		c.Next()
 		status := c.Writer.Status()
 		method, reqPath := c.Request.Method, c.Request.URL.Path
-		if status != http.StatusOK {
+		// NOTE: 20x 和 30x 都是成功场景，其它为失败场景
+		if status >= http.StatusOK && status < http.StatusBadRequest {
 			metrics.RequestApiTotal(method, reqPath, "success")
 			metrics.RequestApiCostTime(c.Request.Method, c.Request.URL.Path, startTime)
 		} else {
@@ -66,7 +67,7 @@ func NewHTTPService() *gin.Engine {
 		taskRouter.POST("", CreateTask)
 		taskRouter.DELETE("", RemoveTask)
 		taskRouter.DELETE(DeleteAllTaskPath, RemoveAllTask)
-		taskRouter.POST(DaemonTaskReload, ReloadDaemonTask)
+		taskRouter.POST(DaemonTaskReloadPath, ReloadDaemonTask)
 	}
 	// 动态设置日志级别
 	bmwRouter.POST(SetLogLevelPath, SetLogLevel)

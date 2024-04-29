@@ -15,6 +15,7 @@ package window
 type (
 	Event struct {
 		CollectTrace
+		ReleaseCount int64
 	}
 
 	observer interface {

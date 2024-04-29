@@ -333,7 +333,7 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(CollectTrace)
-			d.eventChan <- Event{trace}
+			d.eventChan <- Event{CollectTrace: trace, ReleaseCount: int64(trace.Graph.Length())}
 		}
 	}
 }
@@ -347,9 +347,7 @@ loop:
 			start := time.Now()
 			d.processor.PreProcess(d.writeSaveRequestChan, e)
 			metrics.RecordApmPreCalcProcessEventDuration(d.dataId, d.id, start)
-			d.mLock.Lock()
-			d.sem.Release(int64(e.Graph.Length()))
-			d.mLock.Unlock()
+			d.sem.Release(e.ReleaseCount)
 		case <-d.ctx.Done():
 			break loop
 		}

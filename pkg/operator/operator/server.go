@@ -246,14 +246,6 @@ const (
 [√] check monitor resources
 - Description: 无 'monitor' 请求参数，无资源匹配。
 `
-	formatCheckHangHandledSuccessMsg = `
-[√] check kubernetes event handled
-- Description: Kubernetes 监听事件处理无卡住情况，接收事件数 %d，处理事件数 %d
-`
-	formatCheckHangHandledFailedMsg = `
-[x] check kubernetes event handled
-- Description: Kubernetes 监听事件处理出现卡住情况，接收事件数 %d，处理事件数 %d，考虑重启/删除 ${bkm-operator-pod}
-`
 	formatOperatorLogMsg = `
 [o] bkmonitor-operator logs
 - Description: 使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息
@@ -285,7 +277,6 @@ const (
 // 检查采集指标数据量
 // 检查节点列表
 // 检查处理 secrets 是否有问题
-// 检查操作事件是否有卡住情况
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf := &bytes.Buffer{}
@@ -382,19 +373,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		buf.WriteString(fmt.Sprintf(formatHandledSecretSuccessMsg, c.mm.handledSecretSuccessTime.Format(time.RFC3339)))
 	} else {
 		buf.WriteString(fmt.Sprintf(formatHandledSecretFailedMsg, c.mm.handledSecretFailedTime.Format(time.RFC3339)))
-	}
-
-	// 检查操作事件是否有卡住情况
-	for i := 0; i < 2; i++ {
-		if c.mm.handledK8sEvent == c.mm.receivedK8sEvent {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if c.mm.handledK8sEvent != c.mm.receivedK8sEvent {
-		buf.WriteString(fmt.Sprintf(formatCheckHangHandledFailedMsg, c.mm.receivedK8sEvent, c.mm.handledK8sEvent))
-	} else {
-		buf.WriteString(fmt.Sprintf(formatCheckHangHandledSuccessMsg, c.mm.receivedK8sEvent, c.mm.handledK8sEvent))
 	}
 
 	// 检查给定关键字监测资源

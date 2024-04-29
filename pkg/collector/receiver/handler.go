@@ -37,6 +37,12 @@ func WriteResponse(w http.ResponseWriter, contentType string, statusCode int, ms
 	_, _ = w.Write(msg)
 }
 
+func WriteErrResponse(w http.ResponseWriter, contentType string, statusCode int, err error) {
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(statusCode)
+	_, _ = w.Write([]byte(err.Error()))
+}
+
 func RecordHandleMetrics(mm *metricMonitor, token define.Token, protocol define.RequestType, rtype define.RecordType, bs int, t time.Time) {
 	mm.AddReceivedBytesCounter(float64(bs), protocol, rtype, token.Original)
 	mm.ObserveBytesDistribution(float64(bs), protocol, rtype, token.Original)

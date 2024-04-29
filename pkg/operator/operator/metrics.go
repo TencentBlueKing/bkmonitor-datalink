@@ -161,9 +161,6 @@ func newMetricMonitor() *metricMonitor {
 }
 
 type metricMonitor struct {
-	receivedK8sEvent int
-	handledK8sEvent  int
-
 	handledSecretFailed      int       // 记录 secrets 处理失败次数
 	handledSecretFailedTime  time.Time // 记录 secrets 处理失败时间
 	handledSecretSuccessTime time.Time // 记录 secrets 处理成功时间

@@ -106,18 +106,26 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
-	// 只处理 collector 用途 dataid
+	// 只处理 collector 用途且 privileged scope 的 dataid
 	usage := dataID.Labels[keyUsage]
 	if !strings.HasPrefix(usage, usagePrefix) {
 		logger.Warnf("want collector dataid, but go '%s', skipped", usage)
 		return
 	}
+	scope := dataID.Labels[keyScope]
+	if scope != define.ConfigTypePrivileged {
+		logger.Warnf("want privileged scope, but go '%s'", scope)
+		return
+	}
+
+	// collector.traces
+	// collector.metrics
+	// ...
 	parts := strings.Split(usage, ".")
 	if len(parts) != 2 {
 		logger.Warnf("invalid usage format '%s'", usage)
 		return
 	}
-
 	switch parts[1] {
 	case define.RecordTraces.S(), define.RecordMetrics.S(), define.RecordLogs.S(), define.RecordProfiles.S():
 	default:
@@ -131,8 +139,9 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 		Token:  token,
 		Type:   parts[1],
 		DataID: dataID.Spec.DataID,
-		Scope:  dataID.Labels[keyScope],
+		Scope:  scope,
 	}
+	logger.Infof("handle dataid: %+v", w.dataids[uid])
 }
 
 func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
@@ -140,6 +149,11 @@ func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	defer w.mut.Unlock()
 
 	uid := fmt.Sprintf("%s/%d", dataID.Labels[keyTokenRef], dataID.Spec.DataID)
+
+	v, ok := w.dataids[uid]
+	if ok {
+		logger.Infof("remove dataid: %+v", v)
+	}
 	delete(w.dataids, uid)
 }
 
@@ -149,8 +163,6 @@ func (w *Watcher) handleDataIDAdd(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-
-	logger.Infof("found DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	w.upsertDataID(dataID)
 }
 
@@ -160,12 +172,10 @@ func (w *Watcher) handleDataIDDelete(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-
-	logger.Infof("delete DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
 	w.deleteDataID(dataID)
 }
 
 func (w *Watcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
-	w.handleDataIDDelete(oldObj)
-	w.handleDataIDAdd(newObj)
+	w.handleDataIDDelete(oldObj) // 辞旧
+	w.handleDataIDAdd(newObj)    // 迎新
 }

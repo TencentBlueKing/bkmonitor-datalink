@@ -25,7 +25,8 @@ import (
 )
 
 type DaemonTaskReloadParam struct {
-	UniId string `json:"task_uni_id"`
+	UniId   string         `json:"task_uni_id"`
+	Payload map[string]any `json:"payload"`
 }
 
 // ReloadDaemonTask 重载常驻任务 将 task_uni_id 放入重载队列中，由调度器负责监听并处理
@@ -69,11 +70,21 @@ func ReloadDaemonTask(c *gin.Context) {
 		return
 	}
 
-	// 推送重载请求到调度队列中
-	if err = broker.Client().Publish(
-		context.Background(), common.DaemonReloadReqChannel(), params.UniId).Err(); err != nil {
+	// 推送重载请求到调度队队列中、并将此次 payload 更新存储在 hash 结构中等待消费
+	pipe := broker.Client().Pipeline()
+	pipe.Publish(context.Background(), common.DaemonReloadReqChannel(), params.UniId)
+	if len(params.Payload) > 0 {
+		payloadData, err := jsonx.Marshal(params.Payload)
+		if err != nil {
+			metrics.RequestApiTotal(c.Request.Method, DaemonTaskReload, "failure")
+			BadReqResponse(c, "failed to parse payload to bytes, error: %s", err)
+			return
+		}
+		pipe.HSetNX(context.Background(), common.DaemonReloadReqPayloadHash(), params.UniId, payloadData)
+	}
+	if _, err = pipe.Exec(context.Background()); err != nil {
 		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReload, "failure")
-		BadReqResponse(c, "get daemonTask failed, error: %v", err)
+		BadReqResponse(c, "execute publish reload signal to broker failed, error: %v", err)
 		return
 	}
 

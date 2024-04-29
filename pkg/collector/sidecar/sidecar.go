@@ -142,10 +142,6 @@ func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
 
 	var config privilegedConfig
 	for _, id := range ids {
-		if id.Scope != define.ConfigTypePrivileged {
-			continue
-		}
-
 		config.Token = id.Token
 		switch id.Type {
 		case define.RecordTraces.S():

@@ -145,9 +145,11 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
 		}
 	}()
+
+	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息
 	var spaceList []space.Space
-	if err := space.NewSpaceQuerySet(mysql.GetDBSession().DB).All(&spaceList); err != nil {
+	if err := space.NewSpaceQuerySet(db).All(&spaceList); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo get all space error, %s", err)
 		return err
 	}
@@ -187,7 +189,6 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}
 
-	db := mysql.GetDBSession().DB
 	// 获取所有可用的结果表
 	var tableIdList []string
 	var rtList []resulttable.ResultTable
@@ -206,6 +207,10 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 	// 推送结果表详情路由
 	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
+	}
+
+	if err := pusher.PushEsTableIdDetail([]string{}, true); err!= nil {
 		return err
 	}
 

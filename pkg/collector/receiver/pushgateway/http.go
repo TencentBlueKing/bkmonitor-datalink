@@ -11,7 +11,6 @@ package pushgateway
 
 import (
 	"encoding/base64"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -102,67 +101,40 @@ type HttpService struct {
 
 var httpSvc HttpService
 
-const (
-	statusError = "error"
-)
-
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePushGateway)
-
-type response struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
-}
-
-func (s HttpService) getResponse(status, err string) []byte {
-	bs, _ := json.Marshal(response{Status: status, Error: err})
-	return bs
-}
-
-func (s HttpService) extractVars(req *http.Request) map[string]string {
-	vars := mux.Vars(req)
-	if vars == nil {
-		vars = make(map[string]string)
-	}
-	return vars
-}
 
 func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, jobBase64Encoded bool) {
 	defer utils.HandleCrash()
 	ip := utils.ParseRequestIP(req.RemoteAddr)
 
 	start := time.Now()
-	vars := s.extractVars(req)
+	vars := extractVars(req)
 	job := vars[fieldJob]
 
 	var err error
 	if jobBase64Encoded {
 		if job, err = decodeBase64(job); err != nil {
-			err = errors.Wrapf(err, "invalid base64 encoding in job name, job: %s", job)
-			logger.Warn(err)
-			msg := s.getResponse(statusError, err.Error())
+			logger.Warnf("invalid base64 encoding in job name, job=%s, err: %v", job, err)
 			metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
-			receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
+			receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
 			return
 		}
 	}
 
 	if job == "" {
-		err = fmt.Errorf("empty job name in request url: %s", req.URL)
+		err = errors.Errorf("empty job name in request url: %s", req.URL)
 		logger.Warn(err)
-		msg := s.getResponse(statusError, err.Error())
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
 		return
 	}
 
 	lbs := vars[fieldLabels]
 	labels, err := splitLabels(lbs)
 	if err != nil {
-		err = errors.Wrapf(err, "invalid labels field in request url: %s", lbs)
-		logger.Warn(err)
-		msg := s.getResponse(statusError, err.Error())
+		logger.Warnf("invalid labels field in request url=%s, err: %v", lbs, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
 		return
 	}
 
@@ -194,11 +166,9 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	}
 
 	if err != nil {
-		err = errors.Wrapf(err, "failed to parse body, ip=%v", ip)
-		logger.Warn(err)
-		msg := s.getResponse(statusError, err.Error())
+		logger.Warnf("failed to parse body, ip=%v, err: %v", ip, err)
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordPushGateway)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, msg)
+		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, errResponse(err))
 		return
 	}
 
@@ -213,8 +183,7 @@ func (s HttpService) exportMetrics(w http.ResponseWriter, req *http.Request, job
 	if err != nil {
 		err = errors.Wrapf(err, "run pre-check failed, code=%d, ip=%s", code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
-		msg := []byte(fmt.Sprintf(`{"status": "failed", "error": "%s"}`, err.Error()))
-		receiver.WriteResponse(w, define.ContentTypeJson, int(code), msg)
+		receiver.WriteResponse(w, define.ContentTypeJson, int(code), errResponse(err))
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordPushGateway, processorName, r.Token.Original, code)
 		return
 	}
@@ -244,6 +213,22 @@ func (s HttpService) ExportBase64Metrics(w http.ResponseWriter, req *http.Reques
 
 func (s HttpService) ExportMetrics(w http.ResponseWriter, req *http.Request) {
 	s.exportMetrics(w, req, false)
+}
+
+func errResponse(err error) []byte {
+	b, _ := json.Marshal(map[string]string{
+		"status": "error",
+		"error":  err.Error(),
+	})
+	return b
+}
+
+func extractVars(req *http.Request) map[string]string {
+	vars := mux.Vars(req)
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+	return vars
 }
 
 func decodeBase64(in string) (string, error) {

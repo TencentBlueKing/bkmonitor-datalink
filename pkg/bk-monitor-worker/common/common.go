@@ -167,6 +167,12 @@ func DaemonReloadReqChannel() string {
 	return "bmw:daemonTasks:reload:request"
 }
 
+// DaemonReloadReqPayloadHash [scheduler] used by the scheduler
+// save the payload in hash-obj
+func DaemonReloadReqPayloadHash() string {
+	return "bmw:daemonTasks:reload:request:payload"
+}
+
 // DaemonReloadExecQueue actual execution queue of worker, it will consume message from this queue at once in atomic
 func DaemonReloadExecQueue(workerId string) string {
 	return fmt.Sprintf("%sworkerId:%s:reload", WorkerKeyPrefix(), workerId)

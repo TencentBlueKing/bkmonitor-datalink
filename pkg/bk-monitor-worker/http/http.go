@@ -10,6 +10,9 @@
 package http
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,22 +37,40 @@ func prometheusHandler() gin.HandlerFunc {
 	}
 }
 
+// addMetricMiddleware add metric middleware
+func addMetricMiddleware(svr *gin.Engine) {
+	svr.Use(func(c *gin.Context) {
+		startTime := time.Now()
+		c.Next()
+		status := c.Writer.Status()
+		method, reqPath := c.Request.Method, c.Request.URL.Path
+		if status != http.StatusOK {
+			metrics.RequestApiTotal(method, reqPath, "success")
+			metrics.RequestApiCostTime(c.Request.Method, c.Request.URL.Path, startTime)
+		} else {
+			metrics.RequestApiTotal(method, reqPath, "failure")
+		}
+	})
+}
+
 // NewHTTPService new a http service
 func NewHTTPService() *gin.Engine {
 	svr := NewProfHttpService()
+	addMetricMiddleware(svr)
 
-	// 注册任务
-	svr.POST(CreateTaskPath, CreateTask)
-	// 获取运行中的任务列表
-	svr.GET(ListTaskPath, ListTask)
-	// 删除任务
-	svr.DELETE(DeleteTaskPath, RemoveTask)
-	// 删除所有任务
-	svr.DELETE(DeleteAllTaskPath, RemoveAllTask)
-	// 重新启动常驻任务
-	svr.POST(DaemonTaskReload, ReloadDaemonTask)
+	// 路由配置
+	bmwRouter := svr.Group(RouterPrefix)
+	taskRouter := bmwRouter.Group(TaskRouterPrefix)
+	{
+		taskRouter.GET("", ListTask)
+		taskRouter.POST("", CreateTask)
+		taskRouter.DELETE("", RemoveTask)
+		taskRouter.DELETE(DeleteAllTaskPath, RemoveAllTask)
+		taskRouter.POST(DaemonTaskReload, ReloadDaemonTask)
+	}
 	// 动态设置日志级别
-	svr.POST(SetLogLevelPath, SetLogLevel)
+	bmwRouter.POST(SetLogLevelPath, SetLogLevel)
+
 	return svr
 }
 

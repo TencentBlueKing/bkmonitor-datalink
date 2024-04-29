@@ -91,6 +91,19 @@ var (
 		{
 			TypeMeta: metav1.TypeMeta{},
 			ObjectMeta: metav1.ObjectMeta{
+				Name: "unsupported-usage-dot",
+				Labels: map[string]string{
+					keyUsage: "collector.foo",
+					keyScope: "privileged",
+				},
+			},
+			Spec: bkv1beta1.DataIDSpec{
+				DataID: 1005,
+			},
+		},
+		{
+			TypeMeta: metav1.TypeMeta{},
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "unsupported-scope",
 				Labels: map[string]string{
 					keyUsage: "collector.metrics",
@@ -113,10 +126,10 @@ func TestWatcher(t *testing.T) {
 	}
 
 	for _, id := range accepted {
-		w.upsertDataID(id)
+		w.handleDataIDAdd(id)
 	}
 	for _, id := range rejected {
-		w.upsertDataID(id)
+		w.handleDataIDDelete(id)
 	}
 
 	t.Run("upsert", func(t *testing.T) {

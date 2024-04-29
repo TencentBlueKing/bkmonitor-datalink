@@ -131,7 +131,7 @@ func initApmVariables() {
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
 	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 1*time.Second, viper.GetDuration)
 
-	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.1)
+	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.01)
 	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*time.Hour, viper.GetDuration)
 	StorageBloomNormalOverlapResetDuration = GetValue("taskConfig.apmPreCalculate.storage.bloom.normalOverlap.resetDuration", 2*time.Hour, viper.GetDuration)
 	StorageBloomLayersBloomLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.layersBloom.layers", 5)

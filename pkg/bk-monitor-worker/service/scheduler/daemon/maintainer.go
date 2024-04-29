@@ -189,7 +189,6 @@ func (r *RunMaintainer) listenRunningState(
 				}
 			}
 
-			close(errorChan)
 			rB.nextRetryTime = time.Now().Add(nextRetryTime)
 			rB.errorReceiveChan = make(chan error, 1)
 			newCtx, newCancel := context.WithCancel(r.ctx)
@@ -232,7 +231,6 @@ func (r *RunMaintainer) listenRunningState(
 			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
-			close(errorChan)
 			return
 		case <-lifeline.Done():
 			logger.Infof("[RetryListen] receive lifeline context done singal, stopped and return")
@@ -240,7 +238,6 @@ func (r *RunMaintainer) listenRunningState(
 			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
 			rB := v.(*runningBinding)
 			rB.baseCtxCancel()
-			close(errorChan)
 			return
 		}
 	}

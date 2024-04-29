@@ -59,7 +59,8 @@ func (r *Report) AsMapStr() common.MapStr {
 
 	if r.Disk != nil {
 		result["disk"] = common.MapStr{
-			"total": r.Disk.Total,
+			"total":      r.Disk.Total,
+			"partitions": r.Disk.Partitions,
 		}
 	}
 
@@ -112,9 +113,17 @@ type Memory struct {
 	Total uint64
 }
 
+type DiskPartition struct {
+	Total      uint64 `json:"total"`
+	Device     string `json:"device"`
+	FsType     string `json:"fstype"`
+	MountPoint string `json:"mount_point"`
+}
+
 // Disk :
 type Disk struct {
-	Total uint64
+	Total      uint64
+	Partitions []DiskPartition
 }
 
 // Net :
@@ -152,7 +161,7 @@ var GetData = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Report,
 		logger.Errorf("failed to get mem status: %v", err)
 	}
 
-	disk, err := GetDiskStatus(ctx)
+	disk, err := GetDiskStatus(ctx, cfg)
 	if err != nil {
 		logger.Errorf("failed to get disk status: %v", err)
 	}

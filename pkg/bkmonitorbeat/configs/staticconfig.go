@@ -27,6 +27,7 @@ type StaticTaskConfig struct {
 	CheckPeriod           time.Duration `config:"check_period"`
 	ReportPeriod          time.Duration `config:"report_period"`
 	VirtualIfaceWhitelist []string      `config:"virtual_iface_whitelist"`
+	MountpointBlackList   []string      `config:"mountpoint_black_list"`
 }
 
 // InitIdent :

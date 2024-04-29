@@ -388,6 +388,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		conf = g.GetConfig().(*configs.HTTPTaskConfig)
 	)
 
+	for _, c := range conf.Steps {
+		validateConfig(c)
+		logger.Debugf("validated step config: %#v", c)
+	}
+
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 

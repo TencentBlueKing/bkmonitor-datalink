@@ -14,7 +14,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	nethttp "net/http"
+	"net/http"
 	"net/url"
 	"testing"
 
@@ -27,7 +27,6 @@ import (
 	testmock "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/test/mock"
 )
 
-// GatherSuite :
 type GatherSuite struct {
 	suite.Suite
 
@@ -36,12 +35,10 @@ type GatherSuite struct {
 	newClient func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) Client
 }
 
-// TestHTTPGather :
 func TestHTTPGather(t *testing.T) {
 	suite.Run(t, &GatherSuite{})
 }
 
-// SetupTestSuite :
 func (s *GatherSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 	s.client = testmock.NewMockClient(s.ctrl)
@@ -51,7 +48,6 @@ func (s *GatherSuite) SetupTest() {
 	}
 }
 
-// TearDownTestSuite :
 func (s *GatherSuite) TearDownTest() {
 	s.ctrl.Finish()
 	NewClient = s.newClient
@@ -72,7 +68,6 @@ func (s *GatherSuite) newGather(steps []*configs.HTTPTaskStepConfig, checkAll bo
 	}
 
 	s.Nil(globalConf.Clean())
-
 	s.Nil(taskConf.Clean())
 
 	return New(globalConf, taskConf).(*Gather)
@@ -92,10 +87,11 @@ func (e *timeoutTestError) Timeout() bool {
 
 func (s *GatherSuite) TestGatherRun() {
 	cases := []struct {
-		code, response_code int
-		error_code          define.BeatErrorCode
-		expect              string
-		err                 error
+		code         int
+		responseCode int
+		errorCode    define.BeatErrorCode
+		expect       string
+		err          error
 	}{
 		{200, 200, define.BeatErrCodeOK, "", nil},
 		{200, 200, define.BeatErrCodeResponseMatchError, "x", nil},
@@ -109,11 +105,11 @@ func (s *GatherSuite) TestGatherRun() {
 	}
 
 	for _, c := range cases {
-		s.client.EXPECT().Do(gomock.Any()).DoAndReturn(func(request *nethttp.Request) (*nethttp.Response, error) {
+		s.client.EXPECT().Do(gomock.Any()).DoAndReturn(func(request *http.Request) (*http.Response, error) {
 			if c.err != nil {
 				return nil, c.err
 			}
-			response := &nethttp.Response{
+			response := &http.Response{
 				Request:    request,
 				Status:     "?",
 				StatusCode: c.code,
@@ -125,6 +121,7 @@ func (s *GatherSuite) TestGatherRun() {
 			{
 				URL: "http://localhost/1",
 				SimpleMatchParam: configs.SimpleMatchParam{
+					Request:        "base64://cmVxdWVzdA==",
 					Response:       c.expect,
 					ResponseFormat: "startswith",
 				},
@@ -132,16 +129,16 @@ func (s *GatherSuite) TestGatherRun() {
 		}, false)
 		e := make(chan define.Event, 1)
 		gather.Run(context.Background(), e)
+
 		gather.Wait()
 		ev := <-e
 		event := ev.AsMapStr()
 
-		s.Equal(c.response_code, event["response_code"])
-		s.Equal(c.error_code, event["error_code"])
+		s.Equal(c.responseCode, event["response_code"])
+		s.Equal(c.errorCode, event["error_code"])
 	}
 }
 
-// TestUpdateEventByResponse 测试根据http返回更新event信息
 func (s *GatherSuite) TestUpdateEventByResponse() {
 	type fields struct {
 		globalConfig define.Config
@@ -149,18 +146,18 @@ func (s *GatherSuite) TestUpdateEventByResponse() {
 	}
 	type args struct {
 		event    *Event
-		response *nethttp.Response
+		response *http.Response
 	}
 	type want struct {
 		mediaType string
 		charset   string
 	}
-	getResponse := func(header map[string]string) *nethttp.Response {
-		h := nethttp.Header{}
+	getResponse := func(header map[string]string) *http.Response {
+		h := http.Header{}
 		for k, v := range header {
 			h.Add(k, v)
 		}
-		return &nethttp.Response{
+		return &http.Response{
 			Header: h,
 		}
 	}

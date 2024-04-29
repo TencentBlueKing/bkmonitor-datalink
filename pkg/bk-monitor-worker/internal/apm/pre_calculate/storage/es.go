@@ -163,12 +163,11 @@ func (e *esStorage) SaveBatch(items []EsStorageData) error {
 	req := esapi.BulkRequest{Index: e.getSaveIndexName(e.indexName), Body: &buf}
 	response, err := req.Do(e.ctx, e.client)
 	buf.Reset()
-	defer response.Body.Close()
-
 	if err != nil {
 		return err
 	}
 
+	defer response.Body.Close()
 	if response.IsError() {
 		return fmt.Errorf("bulk insert returned an abnormal status code： %d", response.StatusCode)
 	}
@@ -193,12 +192,12 @@ func (e *esStorage) Query(data any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
 
 	if res.IsError() {
 		return nil, errors.New(res.String())
 	}
 
+	defer res.Body.Close()
 	buf.Reset()
 	return body.Converter(res.Body)
 }

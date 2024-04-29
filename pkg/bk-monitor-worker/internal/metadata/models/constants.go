@@ -106,8 +106,11 @@ const (
 
 // bcs cluster
 const (
+	// 兼容状态
 	BcsClusterStatusRunning         = "running"                   // 集群状态running
+	BcsRawClusterStatusRunning      = "RUNNING"                   // 集群状态RUNNING
 	BcsClusterStatusDeleted         = "deleted"                   // 集群状态deleted
+	BcsRawClusterStatusDeleted      = "DELETED"                   // 集群状态RUNNING
 	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
 	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
 	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据

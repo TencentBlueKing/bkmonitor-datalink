@@ -840,7 +840,7 @@ func (s SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string, 
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义
-	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusEq(models.BcsClusterStatusRunning)
+	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted)
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
 	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
@@ -1417,7 +1417,7 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	} else if len(clusterIdList) != 0 {
 		// 如果集群存在，则获取集群下的内置和自定义数据源
 		var clusterList []bcs.BCSClusterInfo
-		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID).StatusEq(models.BcsClusterStatusRunning).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
+		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
 			return nil, err
 		}
 		for _, cluster := range clusterList {
@@ -1432,7 +1432,8 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	dataIdClusterIdMap := make(map[uint]string)
 
 	var clusterListA []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).K8sMetricDataIDIn(dataIdList...).All(&clusterListA); err != nil {
+	// 已经限制了data id, 也就是状态已经确认，不需要在根据状态进行过滤
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIdList...).All(&clusterListA); err != nil {
 		return nil, err
 	}
 	for _, cluster := range clusterListA {
@@ -1440,7 +1441,7 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	}
 
 	var clusterListB []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).CustomMetricDataIDIn(dataIdList...).All(&clusterListB); err != nil {
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).CustomMetricDataIDIn(dataIdList...).All(&clusterListB); err != nil {
 		return nil, err
 	}
 	for _, cluster := range clusterListB {

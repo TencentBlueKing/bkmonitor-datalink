@@ -408,7 +408,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 	// 获取存储在metadata中的集群数据
 	var metadataClusterId []string
 	var bcsClusterInfoList []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(tx).Select(bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+	if err := bcs.NewBCSClusterInfoQuerySet(tx).Select(bcs.BCSClusterInfoDBSchema.ClusterID).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).All(&bcsClusterInfoList); err != nil {
 		tx.Rollback()
 		return errors.Wrap(err, "query BCSClusterInfo failed")
 	}
@@ -434,7 +434,7 @@ func (s *SpaceSvc) CreateBcsSpace(project map[string]string) error {
 		}
 		var clusterDataIdList []uint
 		var cluster bcs.BCSClusterInfo
-		if err := bcs.NewBCSClusterInfoQuerySet(tx).StatusEq(models.BcsClusterStatusRunning).ClusterIDEq(clusterId).One(&cluster); err != nil {
+		if err := bcs.NewBCSClusterInfoQuerySet(tx).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).ClusterIDEq(clusterId).One(&cluster); err != nil {
 			tx.Rollback()
 			return errors.Wrapf(err, "query BCSClusterInfo with cluster_id [%s] status [%s] failed", clusterId, models.BcsClusterStatusRunning)
 		}

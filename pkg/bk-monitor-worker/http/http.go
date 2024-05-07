@@ -67,7 +67,7 @@ func NewHTTPService() *gin.Engine {
 		taskRouter.POST("", CreateTask)
 		taskRouter.DELETE("", RemoveTask)
 		taskRouter.DELETE(DeleteAllTaskPath, RemoveAllTask)
-		taskRouter.POST(DaemonTaskReload, ReloadDaemonTask)
+		taskRouter.POST(DaemonTaskReloadPath, ReloadDaemonTask)
 	}
 	// 动态设置日志级别
 	bmwRouter.POST(SetLogLevelPath, SetLogLevel)

@@ -49,8 +49,8 @@ func (m *MetricProcessor) findParentChildMetric(
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	var existParis []string
 
+	var series []prompb.TimeSeries
 	for _, pair := range fullTreeGraph.FindParentChildPairs() {
-		var series []prompb.TimeSeries
 
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
@@ -134,13 +134,14 @@ func (m *MetricProcessor) findParentChildMetric(
 			}
 		}
 
-		if len(series) > 0 {
-			receiver <- storage.SaveRequest{
-				Target: storage.Prometheus,
-				Data:   storage.PrometheusStorageData{Value: series},
-			}
-		}
 		count += len(series)
+	}
+
+	if len(series) > 0 {
+		receiver <- storage.SaveRequest{
+			Target: storage.Prometheus,
+			Data:   storage.PrometheusStorageData{Value: series},
+		}
 	}
 
 	return count

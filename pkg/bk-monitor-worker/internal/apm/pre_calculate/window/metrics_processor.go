@@ -11,11 +11,11 @@ package window
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
-	"golang.org/x/time/rate"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"golang.org/x/exp/slices"
+	"golang.org/x/time/rate"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"

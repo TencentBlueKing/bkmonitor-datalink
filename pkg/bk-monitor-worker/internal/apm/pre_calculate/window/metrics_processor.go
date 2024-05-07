@@ -24,7 +24,10 @@ import (
 )
 
 type MetricProcessor struct {
-	dataId string
+	bkBizId string
+	appName string
+	appId   string
+	dataId  string
 
 	rateLimiter *rate.Limiter
 }
@@ -60,18 +63,13 @@ func (m *MetricProcessor) findParentChildMetric(
 			if !slices.Contains(existParis, pairStr) {
 				series = append(series, prompb.TimeSeries{
 					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "service_to_service_flow",
-						},
-						{
-							Name:  "from_service_name",
-							Value: cService,
-						},
-						{
-							Name:  "to_service_name",
-							Value: sService,
-						},
+						{Name: "__name__", Value: "service_to_service_flow"},
+						{Name: "bk_biz_id", Value: m.bkBizId},
+						{Name: "app_name", Value: m.appName},
+						{Name: "app_id", Value: m.appId},
+						{Name: "data_id", Value: m.dataId},
+						{Name: "from_service_name", Value: cService},
+						{Name: "to_service_name", Value: sService},
 					},
 					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
 				})
@@ -84,18 +82,13 @@ func (m *MetricProcessor) findParentChildMetric(
 			if !slices.Contains(existParis, pairStr) {
 				series = append(series, prompb.TimeSeries{
 					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "system_to_service_flow",
-						},
-						{
-							Name:  "from_bk_target_ip",
-							Value: parentIp,
-						},
-						{
-							Name:  "to_service_name",
-							Value: sService,
-						},
+						{Name: "__name__", Value: "system_to_service_flow"},
+						{Name: "bk_biz_id", Value: m.bkBizId},
+						{Name: "app_name", Value: m.appName},
+						{Name: "app_id", Value: m.appId},
+						{Name: "data_id", Value: m.dataId},
+						{Name: "from_bk_target_ip", Value: parentIp},
+						{Name: "to_service_name", Value: sService},
 					},
 					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
 				})
@@ -108,18 +101,13 @@ func (m *MetricProcessor) findParentChildMetric(
 			if !slices.Contains(existParis, pairStr) {
 				series = append(series, prompb.TimeSeries{
 					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "service_to_system_flow",
-						},
-						{
-							Name:  "from_service_name",
-							Value: cService,
-						},
-						{
-							Name:  "to_bk_target_ip",
-							Value: childIp,
-						},
+						{Name: "__name__", Value: "service_to_system_flow"},
+						{Name: "bk_biz_id", Value: m.bkBizId},
+						{Name: "app_name", Value: m.appName},
+						{Name: "app_id", Value: m.appId},
+						{Name: "data_id", Value: m.dataId},
+						{Name: "from_service_name", Value: cService},
+						{Name: "to_bk_target_ip", Value: childIp},
 					},
 					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
 				})
@@ -133,6 +121,10 @@ func (m *MetricProcessor) findParentChildMetric(
 				series = append(series, prompb.TimeSeries{
 					Labels: []prompb.Label{
 						{Name: "__name__", Value: "system_to_system_flow"},
+						{Name: "bk_biz_id", Value: m.bkBizId},
+						{Name: "app_name", Value: m.appName},
+						{Name: "app_id", Value: m.appId},
+						{Name: "data_id", Value: m.dataId},
 						{Name: "from_bk_target_ip", Value: parentIp},
 						{Name: "to_ip", Value: childIp},
 					},
@@ -156,8 +148,12 @@ func (m *MetricProcessor) findParentChildMetric(
 
 func newMetricProcessor(dataId string, sampleRate int) MetricProcessor {
 	logger.Infof("[RelationMetric] create metric processor, dataId: %s rateLimit: %d", dataId, sampleRate)
+	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
 	return MetricProcessor{
 		dataId:      dataId,
 		rateLimiter: rate.NewLimiter(rate.Limit(sampleRate), sampleRate*2),
+		bkBizId:     baseInfo.BkBizId,
+		appName:     baseInfo.AppName,
+		appId:       baseInfo.AppId,
 	}
 }

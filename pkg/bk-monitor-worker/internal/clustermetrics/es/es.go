@@ -98,7 +98,6 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 
 	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
-	registry := prometheus.NewRegistry()
 	exporter, err := collector.NewElasticsearchCollector(
 		collectorLogger,
 		[]string{},
@@ -108,90 +107,103 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
-	registry.MustRegister(exporter)
-	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, true, true))
-	registry.MustRegister(collector.NewShards(collectorLogger, httpClient, esURL))
-	// todo: 补充状态维度
-	registry.MustRegister(collector.NewClusterHealth(collectorLogger, httpClient, esURL))
-	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))
-	metricFamilies, err := registry.Gather()
-	if err != nil {
-		return errors.WithMessage(err, "collect es cluster metrics failed")
+
+	esCollectors := map[string]prometheus.Collector{
+		"exporter":       exporter,
+		"indices":        collector.NewIndices(collectorLogger, httpClient, esURL, true, true),
+		"shards":         collector.NewShards(collectorLogger, httpClient, esURL),
+		"cluster_health": collector.NewClusterHealth(collectorLogger, httpClient, esURL),
+		"nodes":          collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"),
 	}
 
-	esMetrics := make([]*clustermetrics.EsMetric, 0)
+	for metricType, esCollector := range esCollectors {
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(esCollector)
+		metricFamilies, err := registry.Gather()
 
-	for _, mf := range metricFamilies {
-		// 处理指标数据
-		metricType := mf.GetType()
-		metricName := mf.GetName()
-		for _, metric := range mf.GetMetric() {
-			// 填充指标值
-			m := make(map[string]float64)
-			m[metricName] = GetMetricValue(metricType, metric)
-			d := make(map[string]interface{})
-
-			// 填充指标维度
-			for _, label := range metric.GetLabel() {
-				d[label.GetName()] = label.GetValue()
-			}
-
-			// 填充默认维度
-			d["bk_biz_id"] = bkBizID
-			d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
-			d["cluster_name"] = c.ClusterName
-			if index, ok := d["index"].(string); ok {
-				bizMatch := targetBizRe.FindStringSubmatch(index)
-				if len(bizMatch) > 0 {
-					if bizMatch[1] == "_space" {
-						d["target_biz_id"] = "-" + bizMatch[2]
-					} else {
-						d["target_biz_id"] = bizMatch[2]
-					}
-				}
-				rtMatch := rtRe.FindStringSubmatch(index)
-				if len(rtMatch) > 1 {
-					d["table_id"] = rtMatch[1]
-				}
-				logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
-					d["table_id"])
-			}
-
-			esm := &clustermetrics.EsMetric{
-				Metrics:   m,
-				Target:    cfg.ESClusterMetricTarget,
-				Timestamp: timestamp,
-				Dimension: d,
-			}
-			esMetrics = append(esMetrics, esm)
+		if err != nil {
+			return errors.WithMessagef(err, "collect es %s metrics failed", metricType)
 		}
-	}
 
-	logger.Infof("process es cluster metrics success [%s], all metric count: %v, current timestamp: %v ",
-		c.ClusterName, len(esMetrics), timestamp)
+		esMetrics := make([]*clustermetrics.EsMetric, 0)
 
-	customReportData := clustermetrics.CustomReportData{
-		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
-	jsonData, err := jsonx.Marshal(customReportData)
-	if err != nil {
-		return errors.WithMessage(err, "custom report data json marshal failed")
-	}
+		for _, mf := range metricFamilies {
+			// 处理指标数据
+			metricType := mf.GetType()
+			metricName := mf.GetName()
+			for _, metric := range mf.GetMetric() {
+				// 填充指标值
+				m := make(map[string]float64)
+				m[metricName] = GetMetricValue(metricType, metric)
+				d := make(map[string]interface{})
 
-	u, err := url.Parse(cfg.ESClusterMetricReportUrl)
-	if err != nil {
-		return errors.WithMessage(err, "parse es cluster metric report url failed")
-	}
+				// 填充指标维度
+				for _, label := range metric.GetLabel() {
+					d[label.GetName()] = label.GetValue()
+				}
 
-	customReportUrl := u.String()
-	req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return errors.WithMessage(err, "report es metrics failed")
+				// 填充默认维度
+				d["bk_biz_id"] = bkBizID
+				d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
+				d["cluster_name"] = c.ClusterName
+				if index, ok := d["index"].(string); ok {
+					bizMatch := targetBizRe.FindStringSubmatch(index)
+					if len(bizMatch) > 0 {
+						if bizMatch[1] == "_space" {
+							d["target_biz_id"] = "-" + bizMatch[2]
+						} else {
+							d["target_biz_id"] = bizMatch[2]
+						}
+					}
+					rtMatch := rtRe.FindStringSubmatch(index)
+					if len(rtMatch) > 1 {
+						d["table_id"] = rtMatch[1]
+					}
+					logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
+						d["table_id"])
+				}
+
+				esm := &clustermetrics.EsMetric{
+					Metrics:   m,
+					Target:    cfg.ESClusterMetricTarget,
+					Timestamp: timestamp,
+					Dimension: d,
+				}
+				esMetrics = append(esMetrics, esm)
+			}
+		}
+
+		logger.Infof("process es [%s] metrics success [%s], all metric count: %v, current timestamp: %v ",
+			metricType, c.ClusterName, len(esMetrics), timestamp)
+
+		customReportData := clustermetrics.CustomReportData{
+			DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
+		jsonData, err := jsonx.Marshal(customReportData)
+		if err != nil {
+			return errors.WithMessage(err, "custom report data json marshal failed")
+		}
+
+		u, err := url.Parse(cfg.ESClusterMetricReportUrl)
+		if err != nil {
+			return errors.WithMessage(err, "parse es cluster metric report url failed")
+		}
+
+		customReportUrl := u.String()
+		_ = func() error {
+			req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return errors.WithMessage(err, "report es metrics failed")
+			}
+			defer resp.Body.Close()
+
+			return nil
+		}()
+
+		elapsed := time.Since(start)
+		logger.Infof("report es %s metrics success [%s], task execution time：%s", metricType, c.ClusterName, elapsed)
 	}
-	defer resp.Body.Close()
-	elapsed := time.Since(start)
-	logger.Infof("report es metrics success [%s], task execution time：%s", c.ClusterName, elapsed)
 
 	return nil
 }

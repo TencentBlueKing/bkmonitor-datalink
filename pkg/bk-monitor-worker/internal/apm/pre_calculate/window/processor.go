@@ -442,6 +442,7 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 type ProcessorOptions struct {
 	enabledInfoCache bool
 	traceEsQueryRate int
+	metricSampleRate int
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -459,6 +460,13 @@ func EnabledTraceInfoCache(b bool) ProcessorOption {
 func TraceEsQueryRate(r int) ProcessorOption {
 	return func(options *ProcessorOptions) {
 		options.traceEsQueryRate = r
+	}
+}
+
+// MetricSampleRate If the current limit value > indicator, relation index will not be calculated for trace.
+func MetricSampleRate(r int) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.metricSampleRate = r
 	}
 }
 
@@ -481,7 +489,7 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId),
+		metricProcessor: newMetricProcessor(dataId, opts.metricSampleRate),
 		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

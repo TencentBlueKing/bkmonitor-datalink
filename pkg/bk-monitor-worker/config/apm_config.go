@@ -53,6 +53,8 @@ var (
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
+	// RelationMetricSampleRate rate of metric
+	RelationMetricSampleRate int
 	// StorageSaveRequestBufferSize Number of storage chan
 	StorageSaveRequestBufferSize int
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
@@ -104,8 +106,6 @@ var (
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
-	// PromRemoteWriteSampleRate rate of metric
-	PromRemoteWriteSampleRate int
 )
 
 func initApmVariables() {
@@ -126,6 +126,7 @@ func initApmVariables() {
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
+	RelationMetricSampleRate = GetValue("taskConfig.apmPreCalculate.processor.relationMetricSampleRate", 1000, viper.GetInt)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)
 	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
@@ -150,5 +151,4 @@ func initApmVariables() {
 	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
 	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
 	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
-	PromRemoteWriteSampleRate = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.sampleRate", 100, viper.GetInt)
 }

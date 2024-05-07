@@ -244,9 +244,6 @@ loop:
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			case Prometheus:
-				if !p.prometheusWriter.ShouldSample() {
-					continue
-				}
 
 				item := r.Data.(PrometheusStorageData)
 				prometheusData = append(prometheusData, item)

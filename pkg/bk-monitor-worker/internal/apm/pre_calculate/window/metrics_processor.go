@@ -10,6 +10,9 @@
 package window
 
 import (
+	"fmt"
+	"golang.org/x/exp/slices"
+	"golang.org/x/time/rate"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
@@ -21,12 +24,13 @@ import (
 )
 
 type MetricProcessor struct {
-	dataId    string
-	dpReqChan chan []prompb.TimeSeries
+	dataId string
+
+	rateLimiter *rate.Limiter
 }
 
 func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
-	if config.PromRemoteWriteEnabled {
+	if config.PromRemoteWriteEnabled && m.rateLimiter.Allow() {
 		parentChildMetricCount := m.findParentChildMetric(receiver, fullTreeGraph)
 		metrics.RecordApmRelationMetricFindCount(m.dataId, metrics.RelationMetricSystem, parentChildMetricCount)
 	}
@@ -40,6 +44,8 @@ func (m *MetricProcessor) findParentChildMetric(
 
 	count := 0
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	var existParis []string
+
 	for _, pair := range fullTreeGraph.FindParentChildPairs() {
 		var series []prompb.TimeSeries
 
@@ -50,74 +56,90 @@ func (m *MetricProcessor) findParentChildMetric(
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
-			series = append(series, prompb.TimeSeries{
-				Labels: []prompb.Label{
-					{
-						Name:  "__name__",
-						Value: "service_to_service_flow",
+			pairStr := fmt.Sprintf("%s%s", cService, sService)
+			if !slices.Contains(existParis, pairStr) {
+				series = append(series, prompb.TimeSeries{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "service_to_service_flow",
+						},
+						{
+							Name:  "from_service_name",
+							Value: cService,
+						},
+						{
+							Name:  "to_service_name",
+							Value: sService,
+						},
 					},
-					{
-						Name:  "from_service_name",
-						Value: cService,
-					},
-					{
-						Name:  "to_service_name",
-						Value: sService,
-					},
-				},
-				Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-			})
+					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
+				})
+				existParis = append(existParis, pairStr)
+			}
 		}
 		if parentIp != "" {
 			// ----> Find system -> service relation
-			series = append(series, prompb.TimeSeries{
-				Labels: []prompb.Label{
-					{
-						Name:  "__name__",
-						Value: "system_to_service_flow",
+			pairStr := fmt.Sprintf("%s%s", parentIp, sService)
+			if !slices.Contains(existParis, pairStr) {
+				series = append(series, prompb.TimeSeries{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "system_to_service_flow",
+						},
+						{
+							Name:  "from_bk_target_ip",
+							Value: parentIp,
+						},
+						{
+							Name:  "to_service_name",
+							Value: sService,
+						},
 					},
-					{
-						Name:  "from_bk_target_ip",
-						Value: parentIp,
-					},
-					{
-						Name:  "to_service_name",
-						Value: sService,
-					},
-				},
-				Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-			})
+					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
+				})
+				existParis = append(existParis, pairStr)
+			}
 		}
 		if childIp != "" {
 			// ----> Find service -> system relation
-			series = append(series, prompb.TimeSeries{
-				Labels: []prompb.Label{
-					{
-						Name:  "__name__",
-						Value: "service_to_system_flow",
+			pairStr := fmt.Sprintf("%s%s", cService, childIp)
+			if !slices.Contains(existParis, pairStr) {
+				series = append(series, prompb.TimeSeries{
+					Labels: []prompb.Label{
+						{
+							Name:  "__name__",
+							Value: "service_to_system_flow",
+						},
+						{
+							Name:  "from_service_name",
+							Value: cService,
+						},
+						{
+							Name:  "to_bk_target_ip",
+							Value: childIp,
+						},
 					},
-					{
-						Name:  "from_service_name",
-						Value: cService,
-					},
-					{
-						Name:  "to_bk_target_ip",
-						Value: childIp,
-					},
-				},
-				Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-			})
+					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
+				})
+				existParis = append(existParis, pairStr)
+			}
 		}
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
-			series = append(series, prompb.TimeSeries{
-				Labels: []prompb.Label{
-					{Name: "__name__", Value: "system_to_system_flow"},
-					{Name: "from_bk_target_ip", Value: parentIp},
-					{Name: "to_ip", Value: childIp},
-				},
-				Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-			})
+			pairStr := fmt.Sprintf("%s%s", parentIp, childIp)
+			if !slices.Contains(existParis, pairStr) {
+				series = append(series, prompb.TimeSeries{
+					Labels: []prompb.Label{
+						{Name: "__name__", Value: "system_to_system_flow"},
+						{Name: "from_bk_target_ip", Value: parentIp},
+						{Name: "to_ip", Value: childIp},
+					},
+					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
+				})
+				existParis = append(existParis, pairStr)
+			}
 		}
 
 		if len(series) > 0 {
@@ -132,6 +154,10 @@ func (m *MetricProcessor) findParentChildMetric(
 	return count
 }
 
-func newMetricProcessor(dataId string) MetricProcessor {
-	return MetricProcessor{dataId: dataId}
+func newMetricProcessor(dataId string, sampleRate int) MetricProcessor {
+	logger.Infof("[RelationMetric] create metric processor, dataId: %s rateLimit: %d", dataId, sampleRate)
+	return MetricProcessor{
+		dataId:      dataId,
+		rateLimiter: rate.NewLimiter(rate.Limit(sampleRate), sampleRate*2),
+	}
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
-	"golang.org/x/time/rate"
 )
 
 type PrometheusStorageData struct {
@@ -30,10 +29,9 @@ type PrometheusStorageData struct {
 type PrometheusWriterOption func(options *PrometheusWriterOptions)
 
 type PrometheusWriterOptions struct {
-	enabled    bool
-	url        string
-	headers    map[string]string
-	sampleRate int
+	enabled bool
+	url     string
+	headers map[string]string
 }
 
 func PrometheusWriterEnabled(b bool) PrometheusWriterOption {
@@ -54,15 +52,8 @@ func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	}
 }
 
-func PrometheusWriterSampleRate(r int) PrometheusWriterOption {
-	return func(options *PrometheusWriterOptions) {
-		options.sampleRate = r
-	}
-}
-
 type prometheusWriter struct {
-	config      PrometheusWriterOptions
-	rateLimiter *rate.Limiter
+	config PrometheusWriterOptions
 
 	client *http.Client
 }
@@ -107,10 +98,6 @@ func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 	return nil
 }
 
-func (p *prometheusWriter) ShouldSample() bool {
-	return p.rateLimiter.Allow()
-}
-
 func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -121,8 +108,7 @@ func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter
 	}
 
 	return &prometheusWriter{
-		config:      config,
-		client:      client,
-		rateLimiter: rate.NewLimiter(rate.Limit(config.sampleRate), config.sampleRate*2),
+		config: config,
+		client: client,
 	}
 }

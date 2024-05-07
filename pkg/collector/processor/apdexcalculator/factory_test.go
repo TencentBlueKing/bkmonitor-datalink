@@ -10,7 +10,6 @@
 package apdexcalculator
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -240,7 +239,7 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 				dp := dps.At(n)
 				v, ok := dp.Attributes().Get(dst)
 				if !ok || status != v.AsString() {
-					errs = append(errs, fmt.Errorf("attribute does not exist, apdex_type=%v", v.AsString()))
+					errs = append(errs, errors.Errorf("attribute does not exist, apdex_type=%v", v.AsString()))
 				}
 			}
 		}

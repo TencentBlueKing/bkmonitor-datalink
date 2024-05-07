@@ -431,6 +431,78 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 
 }
 
+// ComposeEsTableIdDetail compose the es table id detail
+func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
+	logger.Infof("start to compose es table id detail data, table_id_list [%v]", tableIdList)
+	db := mysql.GetDBSession().DB
+	// 获取数据
+	var esStorageList []storage.ESStorage
+	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID)
+	// 如果过滤结果表存在，则添加过来条件
+	if len(tableIdList) != 0 {
+		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
+			logger.Errorf("compose es table id detail error, table_id: %v, error: %s", tableIdList, err)
+			return err
+		}
+	} else {
+		if err := esQuerySet.All(&esStorageList); err != nil {
+			logger.Errorf("compose es table id detail error, %s", err)
+			return err
+		}
+	}
+	// 组装数据
+	client := redis.GetStorageRedisInstance()
+	wg := &sync.WaitGroup{}
+	// 因为每个完全独立，可以并发执行
+	ch := make(chan struct{}, 50)
+	wg.Add(len(esStorageList))
+	for _, es := range esStorageList {
+		ch <- struct{}{}
+		go func(es storage.ESStorage, wg *sync.WaitGroup, ch chan struct{}) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			tableId := es.TableID
+			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, es.StorageClusterID)
+			if err != nil {
+				logger.Errorf("compose es table id detail error, table_id: %s, error: %s", tableId, err)
+				return
+			}
+			// 推送数据
+			if err := client.HSetWithCompare(cfg.ResultTableDetailKey, _tableId, detailStr); err != nil {
+				return
+			}
+			// 发布通知
+			if isPublish {
+				if err := client.Publish(cfg.ResultTableDetailChannel, _tableId); err != nil {
+					logger.Errorf("publish es table id detail error, table_id: %s, error: %s", tableId, err)
+				}
+			}
+		}(es, wg, ch)
+	}
+	wg.Wait()
+	return nil
+}
+
+func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uint) (string, string, error) {
+	splitList := stringx.SplitStringByDot(tableId)
+	// 拆分后长度应该为2， 如果小于2，则补充结果表默认后缀
+	db, measurement := splitList[0], models.TSGroupDefaultMeasurement
+	if len(splitList) == 2 {
+		db, measurement = splitList[0], splitList[1]
+	} else {
+		tableId = strings.Join([]string{db, measurement}, ".")
+	}
+	// 组装数据
+	detailStr, err := jsonx.MarshalString(map[string]any{
+		"storage_id":  storageClusterId,
+		"db":          db,
+		"measurement": measurement,
+	})
+	return tableId, detailStr, err
+}
+
 type InfluxdbTableData struct {
 	InfluxdbProxyStorageId uint     `json:"influxdb_proxy_storage_id"`
 	Database               string   `json:"database"`
@@ -768,7 +840,7 @@ func (s SpacePusher) getTableIdClusterId(tableIds []string) (map[string]string, 
 		dataIds = append(dataIds, dsrt.BkDataId)
 	}
 	// 过滤到集群的数据源，仅包含两类，集群内置和集群自定义
-	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusEq(models.BcsClusterStatusRunning)
+	qs := bcs.NewBCSClusterInfoQuerySet(db).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted)
 	dataIds = slicex.RemoveDuplicate(&dataIds)
 	var clusterListA []bcs.BCSClusterInfo
 	if err := qs.Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIds...).All(&clusterListA); err != nil {
@@ -1345,7 +1417,7 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	} else if len(clusterIdList) != 0 {
 		// 如果集群存在，则获取集群下的内置和自定义数据源
 		var clusterList []bcs.BCSClusterInfo
-		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID).StatusEq(models.BcsClusterStatusRunning).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
+		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
 			return nil, err
 		}
 		for _, cluster := range clusterList {
@@ -1360,7 +1432,8 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	dataIdClusterIdMap := make(map[uint]string)
 
 	var clusterListA []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).K8sMetricDataIDIn(dataIdList...).All(&clusterListA); err != nil {
+	// 已经限制了data id, 也就是状态已经确认，不需要在根据状态进行过滤
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).K8sMetricDataIDIn(dataIdList...).All(&clusterListA); err != nil {
 		return nil, err
 	}
 	for _, cluster := range clusterListA {
@@ -1368,7 +1441,7 @@ func (s SpacePusher) getClusterDataIds(clusterIdList, tableIdList []string) (map
 	}
 
 	var clusterListB []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).CustomMetricDataIDIn(dataIdList...).All(&clusterListB); err != nil {
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.ClusterID).CustomMetricDataIDIn(dataIdList...).All(&clusterListB); err != nil {
 		return nil, err
 	}
 	for _, cluster := range clusterListB {

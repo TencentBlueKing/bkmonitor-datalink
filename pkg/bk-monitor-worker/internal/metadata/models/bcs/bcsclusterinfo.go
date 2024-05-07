@@ -66,7 +66,7 @@ func (r *BCSClusterInfo) BeforeCreate(tx *gorm.DB) error {
 		r.ApiKeyType = "authorization"
 	}
 	if r.Status == "" {
-		r.Status = models.BcsClusterStatusRunning
+		r.Status = models.BcsRawClusterStatusRunning
 	}
 	var bkEnv string
 	if r.BkEnv == nil {

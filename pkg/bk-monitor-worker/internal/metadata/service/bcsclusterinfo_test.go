@@ -65,7 +65,7 @@ func TestBcsClusterInfoSvc_UpdateBcsClusterCloudIdConfig(t *testing.T) {
 		BCSApiClusterId:    "BCS-K8S-00000",
 		BkBizId:            2,
 		ProjectId:          "xxxxx",
-		Status:             models.BcsClusterStatusRunning,
+		Status:             models.BcsRawClusterStatusRunning,
 		DomainName:         "www.xxx.com",
 		Port:               80,
 		ServerAddressPath:  "clusters",
@@ -271,7 +271,7 @@ func TestBCSClusterInfo_Create(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "Bearer", c.ApiKeyPrefix)
 	assert.Equal(t, "authorization", c.ApiKeyType)
-	assert.Equal(t, models.BcsClusterStatusRunning, c.Status)
+	assert.Contains(t, []string{models.BcsClusterStatusRunning, models.BcsRawClusterStatusRunning}, c.Status)
 }
 
 func TestBcsClusterInfoSvc_IsClusterIdInGray(t *testing.T) {

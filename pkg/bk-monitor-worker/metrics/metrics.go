@@ -26,8 +26,8 @@ var (
 	apiRequestTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: bmwMetricNamespace,
-			Name:      "api_request_count",
-			Help:      "api request count",
+			Name:      "api_request_total",
+			Help:      "api request total",
 		},
 		[]string{"method", "path", "status"},
 	)

@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -68,19 +67,15 @@ type removeAllTaskParams struct {
 
 // CreateTask create a delay task
 func CreateTask(c *gin.Context) {
-	method := c.Request.Method
-	beginTime := time.Now()
 	// get data
 	params := new(taskParams)
 	if err := BindJSON(c, params); err != nil {
-		metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
 	// compose task
 	payload, err := jsonx.Marshal(params.Payload)
 	if err != nil {
-		metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 		ServerErrResponse(c, "json marshal error: %v", err)
 		return
 	}
@@ -98,30 +93,24 @@ func CreateTask(c *gin.Context) {
 	// 根据类型做判断
 	if strings.HasPrefix(kind, AsyncTask) {
 		if err = enqueueAsyncTask(newedTask); err != nil {
-			metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "enqueue async task error, %v", err)
 			return
 		}
 	} else if strings.HasPrefix(kind, PeriodicTask) {
 		if err = pushPeriodicTaskToRedis(newedTask); err != nil {
-			metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "push task to redis error, %v", err)
 			return
 		}
 	} else if strings.HasPrefix(kind, DaemonTask) {
 		if err = enqueueDaemonTask(newedTask); err != nil {
-			metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 			ServerErrResponse(c, "enqueue daemon task error error, %v", err)
 			return
 		}
 	} else {
-		metrics.RequestApiTotal(method, CreateTaskPath, "failure")
 		BadReqResponse(c, "task kind: %s not support", kind)
 		return
 	}
 
-	metrics.RequestApiTotal(method, CreateTaskPath, "success")
-	metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 	// success response
 	Response(c, nil)
 }
@@ -203,11 +192,8 @@ func enqueueDaemonTask(t *task.Task) error {
 
 // RemoveAllTask 删除所有任务
 func RemoveAllTask(c *gin.Context) {
-	beginTime := time.Now()
-	method := c.Request.Method
 	params := new(removeAllTaskParams)
 	if err := BindJSON(c, params); err != nil {
-		metrics.RequestApiTotal(method, DeleteAllTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
@@ -217,28 +203,19 @@ func RemoveAllTask(c *gin.Context) {
 		broker := rdb.GetRDB()
 		_, err := broker.Client().Del(context.Background(), common.DaemonTaskKey()).Result()
 		if err != nil {
-			metrics.RequestApiTotal(method, DeleteAllTaskPath, "failure")
 			ServerErrResponse(c, fmt.Sprintf("failed to delete key: %s.", common.DaemonTaskKey()), err)
 			return
 		}
 		Response(c, &gin.H{})
 	default:
-		metrics.RequestApiTotal(method, DeleteAllTaskPath, "failure")
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}
-
-	metrics.RequestApiTotal(method, DeleteAllTaskPath, "success")
-	metrics.RequestApiCostTime(method, DeleteAllTaskPath, beginTime)
-	return
 }
 
 // RemoveTask 删除某个任务
 func RemoveTask(c *gin.Context) {
-	beginTime := time.Now()
-	method := c.Request.Method
 	params := new(removeTaskParams)
 	if err := BindJSON(c, params); err != nil {
-		metrics.RequestApiTotal(method, DeleteTaskPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
@@ -247,16 +224,12 @@ func RemoveTask(c *gin.Context) {
 	case DaemonTask:
 		daemonTaskBytes, err := getDaemonTask(params.TaskUniId)
 		if err != nil {
-			metrics.RequestApiTotal(method, DeleteTaskPath, "failure")
 			BadReqResponse(c, "get daemonTask failed error: %v", err)
 			return
 		}
 		if daemonTaskBytes != nil {
 			rdb.GetRDB().Client().SRem(context.Background(), common.DaemonTaskKey(), daemonTaskBytes)
 			Response(c, &gin.H{"data": params.TaskUniId})
-
-			metrics.RequestApiTotal(method, CreateTaskPath, "success")
-			metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 			return
 		}
 		ServerErrResponse(c, fmt.Sprintf(
@@ -267,23 +240,17 @@ func RemoveTask(c *gin.Context) {
 	default:
 		ServerErrResponse(c, fmt.Sprintf("Task remove not support type: %s", params.TaskType))
 	}
-
-	metrics.RequestApiTotal(method, DeleteTaskPath, "failure")
-	return
 }
 
 // ListTask 获取broker中的任务列表
 func ListTask(c *gin.Context) {
-	beginTime := time.Now()
 	taskType := c.DefaultQuery("task_type", "empty")
 
-	method := c.Request.Method
 	switch taskType {
 	case DaemonTask:
 		client := rdb.GetRDB()
 		tasks, err := client.Client().SMembers(context.Background(), common.DaemonTaskKey()).Result()
 		if err != nil {
-			metrics.RequestApiTotal(method, ListTaskPath, "failure")
 			ServerErrResponse(c, fmt.Sprintf("failed to list task by key: %s.", common.DaemonTaskKey()), err)
 			return
 		}
@@ -292,7 +259,6 @@ func ListTask(c *gin.Context) {
 			var item task.SerializerTask
 			if err = jsonx.Unmarshal([]byte(i), &item); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse key: %v to Task on value: %s", common.DaemonTaskKey(), i), err)
-				metrics.RequestApiTotal(method, ListTaskPath, "failure")
 				return
 			}
 
@@ -300,7 +266,6 @@ func ListTask(c *gin.Context) {
 			var payload map[string]any
 			if err = jsonx.Unmarshal(item.Payload, &payload); err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to parse payload, value: %s, error: %s", item.Payload, err), err)
-				metrics.RequestApiTotal(method, ListTaskPath, "failure")
 				return
 			}
 
@@ -308,7 +273,6 @@ func ListTask(c *gin.Context) {
 			workerId, err := daemon.GetBinding().GetBindingWorkerIdByTask(item)
 			if err != nil {
 				ServerErrResponse(c, fmt.Sprintf("failed to get worker for taskUnid: %s", taskUinId), err)
-				metrics.RequestApiTotal(method, ListTaskPath, "failure")
 				return
 			}
 			taskRes := daemonTaskItem{
@@ -325,7 +289,6 @@ func ListTask(c *gin.Context) {
 				alive, err = daemon.GetBinding().IsWorkerAlive(workerId, item.Options.Queue)
 				if err != nil {
 					ServerErrResponse(c, fmt.Sprintf("failed to get worker status for taskUnid: %s", taskUinId), err)
-					metrics.RequestApiTotal(method, ListTaskPath, "failure")
 					return
 				}
 				bindingInfo.WorkerIsNormal = alive
@@ -334,15 +297,12 @@ func ListTask(c *gin.Context) {
 			res = append(res, taskRes)
 		}
 
-		metrics.RequestApiTotal(method, ListTaskPath, "success")
-		metrics.RequestApiCostTime(method, CreateTaskPath, beginTime)
 		Response(c, &gin.H{"data": res})
 		return
 	default:
-		ServerErrResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
+		BadReqResponse(c, fmt.Sprintf("Task list not support type: %s", taskType))
 	}
 
-	metrics.RequestApiTotal(method, DeleteTaskPath, "failure")
 }
 
 // SetLogLevel 动态设置日志级别

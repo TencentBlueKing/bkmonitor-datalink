@@ -125,6 +125,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	}()
 
 	for metricType, esCollector := range esCollectors {
+		registry := prometheus.NewRegistry()
 		registry.MustRegister(esCollector)
 		metricFamilies, err := registry.Gather()
 		registry.Unregister(esCollector)
@@ -224,8 +225,6 @@ var httpClient = &http.Client{
 		Proxy:           http.ProxyFromEnvironment,
 	},
 }
-
-var registry = prometheus.NewRegistry()
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 

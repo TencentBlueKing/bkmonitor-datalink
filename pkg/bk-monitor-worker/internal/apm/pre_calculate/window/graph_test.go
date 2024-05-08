@@ -19,7 +19,7 @@ import (
 func TestSpanGraph(t *testing.T) {
 
 	rootSpan := Node{
-		StandardSpan: &StandardSpan{
+		StandardSpan: StandardSpan{
 			TraceId:      "445e8696539f4a07cde400e0fbbe2341",
 			SpanId:       "984e737f16c14b61",
 			SpanName:     "rootSpan",
@@ -30,7 +30,7 @@ func TestSpanGraph(t *testing.T) {
 		},
 	}
 	child1with1Span := Node{
-		StandardSpan: &StandardSpan{
+		StandardSpan: StandardSpan{
 			TraceId:      "445e8696539f4a07cde400e0fbbe2341",
 			SpanId:       "fc931cd577c2b8d4",
 			SpanName:     "1-1",
@@ -41,7 +41,7 @@ func TestSpanGraph(t *testing.T) {
 		},
 	}
 	child2with1Span := Node{
-		StandardSpan: &StandardSpan{
+		StandardSpan: StandardSpan{
 			TraceId:      "445e8696539f4a07cde400e0fbbe2341",
 			SpanId:       "2ef9eb548c622d19",
 			SpanName:     "2-1",
@@ -52,7 +52,7 @@ func TestSpanGraph(t *testing.T) {
 		},
 	}
 	child2with2Span := Node{
-		StandardSpan: &StandardSpan{
+		StandardSpan: StandardSpan{
 			TraceId:      "445e8696539f4a07cde400e0fbbe2341",
 			SpanId:       "4b477f46b2298b0b",
 			SpanName:     "2-2",
@@ -64,10 +64,10 @@ func TestSpanGraph(t *testing.T) {
 	}
 
 	graph := NewDiGraph()
-	graph.AddNode(&rootSpan)
-	graph.AddNode(&child1with1Span)
-	graph.AddNode(&child2with1Span)
-	graph.AddNode(&child2with2Span)
+	graph.AddNode(rootSpan)
+	graph.AddNode(child1with1Span)
+	graph.AddNode(child2with1Span)
+	graph.AddNode(child2with2Span)
 	graph.RefreshEdges()
 
 	nodeDegrees := graph.NodeDepths()

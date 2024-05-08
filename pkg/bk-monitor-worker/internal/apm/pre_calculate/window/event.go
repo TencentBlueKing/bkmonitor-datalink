@@ -14,7 +14,8 @@ package window
 // when the processing time is triggered
 type (
 	Event struct {
-		*CollectTrace
+		CollectTrace
+		ReleaseCount int64
 	}
 
 	observer interface {

@@ -98,7 +98,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 
 	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
-	exporter, err := collector.NewElasticsearchCollector(
+	exporterCollector, err := collector.NewElasticsearchCollector(
 		collectorLogger,
 		[]string{},
 		collector.WithElasticsearchURL(esURL),
@@ -107,19 +107,27 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
+	indicesCollector := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
+	shardsCollector := collector.NewShards(collectorLogger, httpClient, esURL)
+	clusterHeathCollector := collector.NewClusterHealth(collectorLogger, httpClient, esURL)
+	nodesCollector := collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local")
 
 	esCollectors := map[string]prometheus.Collector{
-		"exporter":       exporter,
-		"indices":        collector.NewIndices(collectorLogger, httpClient, esURL, true, true),
-		"shards":         collector.NewShards(collectorLogger, httpClient, esURL),
-		"cluster_health": collector.NewClusterHealth(collectorLogger, httpClient, esURL),
-		"nodes":          collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"),
+		"exporter":       exporterCollector,
+		"indices":        indicesCollector,
+		"shards":         shardsCollector,
+		"cluster_health": clusterHeathCollector,
+		"nodes":          nodesCollector,
 	}
+	defer func() {
+		close(*indicesCollector.ClusterLabelUpdates())
+		close(*shardsCollector.ClusterLabelUpdates())
+	}()
 
 	for metricType, esCollector := range esCollectors {
-		registry := prometheus.NewRegistry()
 		registry.MustRegister(esCollector)
 		metricFamilies, err := registry.Gather()
+		registry.Unregister(esCollector)
 
 		if err != nil {
 			return errors.WithMessagef(err, "collect es %s metrics failed", metricType)
@@ -173,7 +181,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			}
 		}
 
-		logger.Infof("process es [%s] metrics success [%s], all metric count: %v, current timestamp: %v ",
+		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",
 			metricType, c.ClusterName, len(esMetrics), timestamp)
 
 		customReportData := clustermetrics.CustomReportData{
@@ -216,6 +224,8 @@ var httpClient = &http.Client{
 		Proxy:           http.ProxyFromEnvironment,
 	},
 }
+
+var registry = prometheus.NewRegistry()
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 

@@ -117,9 +117,9 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	}
 
 	for metricType, esCollector := range esCollectors {
-		registry := prometheus.NewRegistry()
 		registry.MustRegister(esCollector)
 		metricFamilies, err := registry.Gather()
+		registry.Unregister(esCollector)
 
 		if err != nil {
 			return errors.WithMessagef(err, "collect es %s metrics failed", metricType)
@@ -173,7 +173,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 			}
 		}
 
-		logger.Infof("process es [%s] metrics success [%s], all metric count: %v, current timestamp: %v ",
+		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",
 			metricType, c.ClusterName, len(esMetrics), timestamp)
 
 		customReportData := clustermetrics.CustomReportData{
@@ -216,6 +216,8 @@ var httpClient = &http.Client{
 		Proxy:           http.ProxyFromEnvironment,
 	},
 }
+
+var registry = prometheus.NewRegistry()
 
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 

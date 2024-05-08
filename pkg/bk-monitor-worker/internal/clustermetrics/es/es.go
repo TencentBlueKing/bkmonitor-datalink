@@ -98,7 +98,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 
 	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
-	exporter, err := collector.NewElasticsearchCollector(
+	exporterCollector, err := collector.NewElasticsearchCollector(
 		collectorLogger,
 		[]string{},
 		collector.WithElasticsearchURL(esURL),
@@ -107,21 +107,21 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
-	indices := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
-	shards := collector.NewShards(collectorLogger, httpClient, esURL)
-	clusterHeath := collector.NewClusterHealth(collectorLogger, httpClient, esURL)
-	nodes := collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local")
+	indicesCollector := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
+	shardsCollector := collector.NewShards(collectorLogger, httpClient, esURL)
+	clusterHeathCollector := collector.NewClusterHealth(collectorLogger, httpClient, esURL)
+	nodesCollector := collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local")
 
 	esCollectors := map[string]prometheus.Collector{
-		"exporter":       exporter,
-		"indices":        indices,
-		"shards":         shards,
-		"cluster_health": clusterHeath,
-		"nodes":          nodes,
+		"exporter":       exporterCollector,
+		"indices":        indicesCollector,
+		"shards":         shardsCollector,
+		"cluster_health": clusterHeathCollector,
+		"nodes":          nodesCollector,
 	}
 	defer func() {
-		close(*indices.ClusterLabelUpdates())
-		close(*shards.ClusterLabelUpdates())
+		close(*indicesCollector.ClusterLabelUpdates())
+		close(*shardsCollector.ClusterLabelUpdates())
 	}()
 
 	for metricType, esCollector := range esCollectors {

@@ -107,14 +107,22 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
+	indices := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
+	shards := collector.NewShards(collectorLogger, httpClient, esURL)
+	clusterHeath := collector.NewClusterHealth(collectorLogger, httpClient, esURL)
+	nodes := collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local")
 
 	esCollectors := map[string]prometheus.Collector{
 		"exporter":       exporter,
-		"indices":        collector.NewIndices(collectorLogger, httpClient, esURL, true, true),
-		"shards":         collector.NewShards(collectorLogger, httpClient, esURL),
-		"cluster_health": collector.NewClusterHealth(collectorLogger, httpClient, esURL),
-		"nodes":          collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"),
+		"indices":        indices,
+		"shards":         shards,
+		"cluster_health": clusterHeath,
+		"nodes":          nodes,
 	}
+	defer func() {
+		close(*indices.ClusterLabelUpdates())
+		close(*shards.ClusterLabelUpdates())
+	}()
 
 	for metricType, esCollector := range esCollectors {
 		registry.MustRegister(esCollector)

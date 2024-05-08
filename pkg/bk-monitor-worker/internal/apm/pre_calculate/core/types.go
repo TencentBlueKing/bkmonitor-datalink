@@ -11,6 +11,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 )
 
 const (
@@ -116,11 +117,20 @@ type CommonField struct {
 
 // DisplayKey field name in span origin data
 func (c *CommonField) DisplayKey() string {
+	var builder strings.Builder
 	switch c.Source {
 	case SourceAttributes:
-		return fmt.Sprintf("attributes.%s", c.Key)
+		builder.WriteString("attributes.")
+		builder.WriteString(c.Key)
+		r := builder.String()
+		builder.Reset()
+		return r
 	case SourceResource:
-		return fmt.Sprintf("resource.%s", c.Key)
+		builder.WriteString("resource.")
+		builder.WriteString(c.Key)
+		r := builder.String()
+		builder.Reset()
+		return r
 	default:
 		return c.Key
 	}

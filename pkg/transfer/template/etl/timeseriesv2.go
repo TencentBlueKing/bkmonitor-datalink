@@ -87,7 +87,9 @@ func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define
 		}
 		record.Dimensions["target"] = item.Target
 
-		p.metricsReporter.process(d, record, outputChan, killChan)
+		if p.metricsReporter != nil {
+			p.metricsReporter.process(d, record, outputChan, killChan)
+		}
 		output, err := define.DerivePayload(d, record)
 		if err != nil {
 			p.CounterFails.Inc()
@@ -100,9 +102,18 @@ func (p *TimeseriesV2Handler) Process(d define.Payload, outputChan chan<- define
 }
 
 func NewTimeseriesV2Handler(ctx context.Context, name, timeUnit string) (*TimeseriesV2Handler, error) {
-	metricReporter, err := NewMetricsReportProcessor(ctx, name)
-	if err != nil {
-		return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
+	var metricReporter *MetricsReportProcessor
+	var err error
+
+	// 允许关闭指标记录特性（默认开启
+	pipe := config.PipelineConfigFromContext(ctx)
+	opts := utils.NewMapHelper(pipe.Option)
+	disabled, _ := opts.GetBool(config.PipelineConfigDisableMetricsReporter)
+	if !disabled {
+		metricReporter, err = NewMetricsReportProcessor(ctx, name)
+		if err != nil {
+			return nil, errors.Wrapf(define.ErrOperationForbidden, "create metricreporter failed")
+		}
 	}
 
 	return &TimeseriesV2Handler{

@@ -56,6 +56,8 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
+	// IsNotPromQL 是否使用 PromQL 查询
+	IsNotPromQL bool `json:"is_not_promql"`
 }
 
 // 根据 timezone 偏移对齐
@@ -302,6 +304,9 @@ type Query struct {
 
 	// QueryString es 专用关键字查询
 	QueryString string `json:"query_string"`
+
+	// IsNotPromQL 是否使用 PromQL 查询
+	IsNotPromQL bool `json:"-" swaggerignore:"true"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -630,6 +635,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
+	query.IsNotPromQL = q.IsNotPromQL
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)

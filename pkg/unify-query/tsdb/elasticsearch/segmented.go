@@ -45,8 +45,27 @@ func newRangeSegment(opt *querySegmentOption) ([][2]int64, error) {
 		segmentNum = storeSizeSegmentNum
 	}
 
+	// 最大分片数
+	maxSegmentNum := viper.GetInt64(SegmentMaxNumPath)
+	if segmentNum > maxSegmentNum {
+		segmentNum = maxSegmentNum
+	}
+
+	// 最小按小时分片
+	maxTimeRange := viper.GetDuration(SegmentMaxTimeRangePath)
 	left := opt.end - opt.start
+	timeMaxSegNum := intMathCeil(left, maxTimeRange.Milliseconds())
+	if segmentNum > timeMaxSegNum {
+		segmentNum = timeMaxSegNum
+	}
+
+	// 如果分片数为 1 则无需分片
+	if segmentNum == 1 {
+		return [][2]int64{{opt.start, opt.end}}, nil
+	}
+
 	seg := intMathCeil(left, segmentNum)
+
 	// 根据聚合周期 interval 对齐分片数，因为进行了聚合操作，所以分片周期不能小于聚合周期，不然计算出来的时间不对
 	if opt.interval > 0 {
 		intervalNum := intMathCeil(left, opt.interval)

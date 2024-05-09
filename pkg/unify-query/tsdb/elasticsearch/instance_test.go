@@ -12,25 +12,20 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/prometheus/prometheus/storage"
-	"github.com/prometheus/prometheus/tsdb/chunkenc"
-	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func TestInstance_esQuery(t *testing.T) {
+func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	log.InitTestLogger()
 
-	url := ""
-	username := ""
+	url := "http://127.0.0.1:9200"
+	username := "elastic"
 	password := ""
 	timeout := time.Minute * 10
 	maxRouting := 10
@@ -51,137 +46,125 @@ func TestInstance_esQuery(t *testing.T) {
 		return
 	}
 
-	end := time.Now()
-	start := end.Add(-1 * time.Hour)
+	defaultEnd := time.Now()
+	defaultStart := defaultEnd.Add(-1 * time.Hour)
 
-	query := &metadata.Query{
-		QueryString: "test",
-		DB:          "2_bkapm_trace_shamcleren_testshamcleren_test",
-		Field:       "gseIndex",
-		From:        0,
-		Size:        20,
-	}
+	db := "2_bklog_bkapigateway_esb_container1"
+	field := "gseIndex"
 
-	qr, err := ins.QueryReference(ctx, query, start.UnixMilli(), end.UnixMilli())
+	for idx, c := range []struct {
+		query *metadata.Query
+		start time.Time
+		end   time.Time
 
-	for _, r := range qr.Timeseries {
-		lbs := make([]string, 0)
-		for _, lb := range r.GetLabels() {
-			lbs = append(lbs, fmt.Sprintf("%s=%s", lb.GetName(), lb.GetValue()))
-		}
-
-		fmt.Printf("%s\n", strings.Join(lbs, ", "))
-		for _, sample := range r.GetSamples() {
-			fmt.Printf("%v, %v\n", sample.GetTimestamp(), sample.GetValue())
-		}
-	}
-}
-
-func TestInstance_QuerySegmentedRaw(t *testing.T) {
-	ctx := context.Background()
-
-	log.InitTestLogger()
-
-	url := ""
-	username := ""
-	password := ""
-	timeout := time.Minute * 10
-	maxRouting := 10
-	maxSize := 10000
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ins, err := NewInstance(ctx, &InstanceOption{
-		Url:        url,
-		Username:   username,
-		Password:   password,
-		MaxRouting: maxRouting,
-		MaxSize:    maxSize,
-	})
-	if err != nil {
-		t.Fatal(err)
-		return
-	}
-
-	end := time.Now()
-	start := end.Add(time.Hour * -1)
-
-	tcs := []struct {
-		name     string
-		query    *metadata.Query
-		start    int64
-		end      int64
-		interval int64
+		expected interface{}
 	}{
 		{
-			name: "test-1",
 			query: &metadata.Query{
-				DataSource: BKLOG,
-				TableID:    "2_bklog_bk_unify_query",
-				Field:      Timestamp,
-
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
 				TimeAggregation: &metadata.TimeAggregation{
-					Function:       CountOT,
-					WindowDuration: time.Minute,
+					Function:       AvgOT,
+					WindowDuration: time.Minute * 1,
 				},
-				AggregateMethodList: []metadata.AggrMethod{
+				AggregateMethodList: metadata.AggregateMethodList{
 					{
-						Name: SUM,
+						Name: AVG,
+						Dimensions: []string{
+							"__ext___io_kubernetes_pod",
+							"__ext___container_name",
+						},
 					},
 				},
 			},
-			start:    start.UnixMilli(),
-			end:      end.UnixMilli(),
-			interval: time.Minute.Milliseconds(),
+			start: defaultStart,
+			end:   defaultEnd,
 		},
-	}
-
-	for _, c := range tcs {
-		t.Run(c.name, func(t *testing.T) {
-			ctx = metadata.InitHashID(ctx)
-
-			hints := &storage.SelectHints{
-				Start: c.start,
-				End:   c.end,
-				Step:  c.interval,
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: COUNT,
+						Dimensions: []string{
+							"serverIp",
+						},
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+	} {
+		t.Run(fmt.Sprintf("testing run: %d", idx), func(t *testing.T) {
+			refName := "a"
+			reference := metadata.QueryReference{
+				refName: &metadata.QueryMetric{
+					QueryList: metadata.QueryList{
+						c.query,
+					},
+					ReferenceName: refName,
+				},
 			}
-
-			ss := ins.QueryRaw(ctx, c.query, hints, nil)
-			if ss.Err() != nil {
-				assert.Nil(t, ss.Err())
+			err = metadata.SetQueryReference(ctx, reference)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
 				return
 			}
 
-			seriesNum := 0
-			pointsNum := 0
-
-			for ss.Next() {
-				seriesNum++
-				series := ss.At()
-				lbs := series.Labels()
-				it := series.Iterator(nil)
-				log.Infof(ctx, "------------------------------------------------")
-				log.Infof(ctx, "series: %s", lbs)
-				log.Infof(ctx, "------------------------------------------------")
-				if it.Err() != nil {
-					panic(it.Err())
-				}
-				for it.Next() == chunkenc.ValFloat {
-					pointsNum++
-					ts, val := it.At()
-					tt := time.UnixMilli(ts)
-
-					log.Infof(ctx, "V: %d, T: %s", int(val), tt.Format("2006-01-02 15:04:05"))
-				}
+			matrix, err := ins.QueryRange(ctx, refName, c.start, c.end, 0)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+				return
 			}
 
-			if ws := ss.Warnings(); len(ws) > 0 {
-				panic(ws)
-			}
+			fmt.Printf("is promql: %vs\n", !c.query.IsNotPromQL)
+			left := c.end.Unix() - c.start.Unix()
+			fmt.Printf("range time: %ds\n", left)
 
-			log.Infof(ctx, "series: %d, points: %d", seriesNum, pointsNum)
+			fmt.Println(matrix.String())
+
+			//for _, r := range matrix {
+			//	lbs := make([]string, 0)
+			//	for _, lb := range r.Metric {
+			//		lbs = append(lbs, fmt.Sprintf("%s=%s", lb.Name, lb.Value))
+			//	}
+			//
+			//	fmt.Printf("name: %s\n", strings.Join(lbs, ", "))
+			//	fmt.Printf("sample num: %d\n", len(r.String()))
+			//	i := 0
+			//	for {
+			//		if len(r.GetSamples()) > i {
+			//			sample := r.GetSamples()[i]
+			//			fmt.Printf("sample example %d: timestamp: %d, value: %.f\n", i+1, sample.GetTimestamp(), sample.GetValue())
+			//			if i >= 4 {
+			//				break
+			//			}
+			//		} else {
+			//			break
+			//		}
+			//		i++
+			//	}
+			//}
 		})
 	}
-
 }

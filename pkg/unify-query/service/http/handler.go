@@ -139,6 +139,20 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
+func queryReference(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "query-reference")
+	defer span.End(&err)
+
+	qStr, _ := json.Marshal(query)
+	span.Set("query-ts", string(qStr))
+
+	return nil, err
+}
+
 func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
 		err error
@@ -154,6 +168,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 		promExprOpt = &structured.PromExprOption{}
 	)
+
+	// 只支持 PromQL 查询
+	query.IsNotPromQL = false
 
 	ctx, span := trace.NewSpan(ctx, "query-ts")
 	defer span.End(&err)
@@ -171,6 +188,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	// 是否打开对齐
 	for _, q := range query.QueryList {
 		q.AlignInfluxdbResult = AlignInfluxdbResult
+		q.IsNotPromQL = query.IsNotPromQL
 	}
 
 	if query.LookBackDelta != "" {

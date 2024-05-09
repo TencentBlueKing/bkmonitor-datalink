@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,11 +20,16 @@ import (
 	"github.com/olivere/elastic/v7"
 	"github.com/prometheus/prometheus/prompb"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 const (
+	BKAPM = "bkapm"
+	BKLOG = "bklog"
+	BKES  = "bkes"
+
 	Timestamp  = "dtEventTimeStamp"
 	TimeFormat = "epoch_millis"
 
@@ -31,7 +37,7 @@ const (
 	Properties = "properties"
 
 	OldStep = "."
-	NewStep = "__"
+	NewStep = "___"
 
 	MIN   = "min"
 	MAX   = "max"
@@ -48,21 +54,25 @@ const (
 	LastOT  = "last_over_time"
 	AvgOT   = "avg_over_time"
 
-	TypeNested = "nested"
+	TypeNested        = "nested"
+	TypeTerms         = "terms"
+	TypeDateHistogram = "date_histogram"
+	TypeValue         = "value"
 )
 
 var (
 	AggregationMap = map[string]string{
-		MIN + MinOT:   MIN,
-		MAX + MaxOT:   MAX,
-		SUM + SumOT:   SUM,
-		AVG + AvgOT:   AVG,
-		SUM + CountOT: COUNT,
+		MIN + NewStep + MinOT:   MIN,
+		MAX + NewStep + MaxOT:   MAX,
+		SUM + NewStep + SumOT:   SUM,
+		AVG + NewStep + AvgOT:   AVG,
+		SUM + NewStep + CountOT: COUNT,
 	}
 )
 
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
+	Error         error
 }
 
 func mapData(prefix string, data map[string]any, res map[string]any) {
@@ -97,40 +107,118 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 			}
 		}
 	}
-
 }
 
+type aggInfo struct {
+	name     string
+	typeName string
+
+	ext map[string]string
+}
+
+type aggInfoList []aggInfo
+
 type FormatFactory struct {
+	ctx context.Context
+
 	valueKey string
 
 	mapping map[string]string
 	data    map[string]any
+
+	aggInfoList aggInfoList
 }
 
-func NewFormatFactory(valueKey string, mapping map[string]any) *FormatFactory {
+func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]any) *FormatFactory {
 	f := &FormatFactory{
-		valueKey: valueKey,
-		mapping:  make(map[string]string),
+		ctx: ctx,
+
+		valueKey:    valueKey,
+		mapping:     make(map[string]string),
+		aggInfoList: make(aggInfoList, 0),
 	}
 
 	mapProperties("", mapping, f.mapping)
 	return f
 }
 
-func (f *FormatFactory) nestedAgg(key, name string, agg elastic.Aggregation) (string, elastic.Aggregation) {
+func (f *FormatFactory) appendAgg(name, typeName string, ext map[string]string) {
+	f.aggInfoList = append(
+		f.aggInfoList, aggInfo{
+			name: name, typeName: typeName, ext: ext,
+		},
+	)
+}
+
+func (f *FormatFactory) nestedAgg(key string) {
 	lbs := strings.Split(key, OldStep)
 
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], OldStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == TypeNested {
-				agg = elastic.NewNestedAggregation().Path(checkKey).SubAggregation(name, agg)
-				name = checkKey
+				f.appendAgg(checkKey, TypeNested, nil)
 			}
 		}
 	}
 
-	return name, agg
+	return
+}
+
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool) (map[string]*prompb.TimeSeries, error) {
+	af := &aggFormat{
+		aggInfoList: f.aggInfoList,
+		relabel:     f.toEs,
+		isNotPromQL: isNotPromQL,
+		items:       make(items, 0),
+	}
+
+	af.start()
+	defer af.close()
+
+	err := af.ts(len(f.aggInfoList), data)
+	if err != nil {
+		return nil, err
+	}
+
+	timeSeriesMap := make(map[string]*prompb.TimeSeries)
+	for _, im := range af.items {
+		var (
+			tsLabels          []prompb.Label
+			seriesNameBuilder strings.Builder
+		)
+		if len(im.labels) > 0 {
+			tsLabels = make([]prompb.Label, 0, len(im.labels))
+			for _, dim := range af.dims {
+				seriesNameBuilder.WriteString(dim)
+				seriesNameBuilder.WriteString(im.labels[dim])
+				tsLabels = append(tsLabels, prompb.Label{
+					Name:  dim,
+					Value: im.labels[dim],
+				})
+			}
+		}
+
+		seriesKey := seriesNameBuilder.String()
+		if _, ok := timeSeriesMap[seriesKey]; !ok {
+			timeSeriesMap[seriesKey] = &prompb.TimeSeries{
+				Samples: make([]prompb.Sample, 0),
+			}
+		}
+
+		// 移除空算的点
+		if tsLabels == nil && im.timestamp == 0 && im.value == 0 {
+			continue
+		}
+
+		timeSeriesMap[seriesKey].Labels = tsLabels
+		timeSeriesMap[seriesKey].Samples = append(timeSeriesMap[seriesKey].Samples, prompb.Sample{
+			Value:     im.value,
+			Timestamp: im.timestamp,
+		})
+	}
+
+	return timeSeriesMap, nil
 }
 
 func (f *FormatFactory) toEs(key string) string {
@@ -143,64 +231,106 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) Agg(timeAggregation *metadata.TimeAggregation, aggregateMethodList metadata.AggregateMethodList, timeZone string) (name string, agg elastic.Aggregation, err error) {
-	if len(aggregateMethodList) == 0 && timeAggregation == nil {
-		return
+func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
+		}
+	}()
+
+	for _, info := range f.aggInfoList {
+		switch info.typeName {
+		case TypeValue:
+			// 增加聚合函数
+			switch info.name {
+			case MIN:
+				agg = elastic.NewMinAggregation().Field(f.valueKey)
+			case MAX:
+				agg = elastic.NewMaxAggregation().Field(f.valueKey)
+			case AVG:
+				agg = elastic.NewAvgAggregation().Field(f.valueKey)
+			case SUM:
+				agg = elastic.NewSumAggregation().Field(f.valueKey)
+			case COUNT:
+				agg = elastic.NewValueCountAggregation().Field("_index")
+			default:
+				err = fmt.Errorf("aggregation is not support, with %+v", info)
+				return
+			}
+		case TypeDateHistogram:
+			agg = elastic.NewDateHistogramAggregation().
+				Field(Timestamp).FixedInterval(info.ext["window"]).TimeZone(info.ext["timezone"]).
+				MinDocCount(1).SubAggregation(name, agg)
+		case TypeNested:
+			agg = elastic.NewNestedAggregation().Path(info.name).SubAggregation(name, agg)
+		case TypeTerms:
+			agg = elastic.NewTermsAggregation().Field(info.name).SubAggregation(name, agg)
+		default:
+			err = fmt.Errorf("aggregation is not support, with %+v", info)
+			return
+		}
+		name = info.name
+	}
+
+	return
+}
+
+func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) (string, elastic.Aggregation, error) {
+	if len(aggregateMethodList) == 0 {
+		err := errors.New("aggregate_method_list is empty")
+		return "", nil, err
+	}
+
+	aggregateMethod := aggregateMethodList[0]
+	f.appendAgg(aggregateMethod.Name, TypeValue, nil)
+	f.nestedAgg(aggregateMethod.Name)
+
+	for _, dim := range aggregateMethod.Dimensions {
+		dim = f.toEs(dim)
+		f.appendAgg(dim, TypeTerms, nil)
+		f.nestedAgg(dim)
+	}
+	return f.Agg()
+}
+
+func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggregateMethodList metadata.AggregateMethodList, timeZone string) (string, elastic.Aggregation, error) {
+	if len(aggregateMethodList) == 0 || timeAggregation == nil {
+		err := errors.New("aggregateMethodList or timeAggregation is empty")
+		return "", nil, err
 	}
 
 	// 如果使用了时间函数需要进行转换, sum(count_over_time) => count
-	if timeAggregation != nil {
-		if len(aggregateMethodList) > 0 {
-			err = errors.New("aggregate_method_list is empty")
-			return
-		}
 
-		var ok bool
+	if !aggregateMethodList[0].Without && timeAggregation.WindowDuration > 0 {
+		key := aggregateMethodList[0].Name + NewStep + timeAggregation.Function
+		if name, ok := AggregationMap[key]; ok {
+			f.appendAgg(name, TypeValue, nil)
 
-		if !aggregateMethodList[0].Without && timeAggregation.WindowDuration > 0 {
-			key := aggregateMethodList[0].Name + timeAggregation.Function
-			if name, ok = AggregationMap[key]; !ok {
-				err = fmt.Errorf("aggregation is not support with: %s", key)
-				return
-			} else {
-				// 增加聚合函数
-				switch name {
-				case MIN:
-					agg = elastic.NewMinAggregation().Field(f.valueKey)
-				case MAX:
-					agg = elastic.NewMaxAggregation().Field(f.valueKey)
-				case AVG:
-					agg = elastic.NewAvgAggregation().Field(f.valueKey)
-				case SUM:
-					agg = elastic.NewSumAggregation().Field(f.valueKey)
-				case COUNT:
-					agg = elastic.NewValueCountAggregation().Field("_index")
-				default:
-					err = fmt.Errorf("aggregation is not support, with %+v", name)
-					return
-				}
+			// 判断是否是 nested
+			f.nestedAgg(f.valueKey)
 
-				// 判断是否是 nested
-				name, agg = f.nestedAgg(f.valueKey, name, agg)
+			// 增加时间函数
+			f.appendAgg(Timestamp, TypeDateHistogram, map[string]string{
+				"window":   shortDur(timeAggregation.WindowDuration),
+				"timezone": timeZone,
+			})
 
-				// 增加时间函数
-				agg = elastic.NewDateHistogramAggregation().
-					Field(Timestamp).FixedInterval(shortDur(timeAggregation.WindowDuration)).TimeZone(timeZone).
-					MinDocCount(1).SubAggregation(name, agg)
-
-				// 增加维度聚合函数
-				for _, dim := range aggregateMethodList[0].Dimensions {
-					dim = f.toEs(dim)
-					agg = elastic.NewTermsAggregation().Field(dim).SubAggregation(name, agg)
-					name, agg = f.nestedAgg(dim, dim, agg)
-				}
+			// 增加维度聚合函数
+			for _, dim := range aggregateMethodList[0].Dimensions {
+				dim = f.toEs(dim)
+				f.appendAgg(dim, TypeTerms, nil)
+				f.nestedAgg(dim)
 			}
 		} else {
-			err = fmt.Errorf("aggregation is not support with: %+v", aggregateMethodList)
-			return
+			err := fmt.Errorf("aggregation is not support with: %s", key)
+			return "", nil, err
 		}
+	} else {
+		err := fmt.Errorf("aggregation is not support with: %+v", aggregateMethodList)
+		return "", nil, err
 	}
-	return
+
+	return f.Agg()
 }
 
 // Query 把 ts 的 conditions 转换成 es 查询

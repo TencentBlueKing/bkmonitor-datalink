@@ -103,6 +103,8 @@ type Query struct {
 	TimeAggregation *TimeAggregation
 	From            int
 	Size            int
+
+	IsNotPromQL bool
 }
 
 type AllConditions [][]ConditionField

@@ -45,9 +45,61 @@ type Instance struct {
 	maxSize int
 }
 
-func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
-	panic("implement me")
+// QueryRange 使用 es 直接查询引擎
+func (i *Instance) QueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+	var (
+		err    error
+		matrix = make(promql.Matrix, 0)
+	)
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-range")
+	defer span.End(&err)
+
+	references := metadata.GetQueryReference(ctx)
+
+	if ref, ok := references[referenceName]; ok {
+		for _, ql := range ref.QueryList {
+			var (
+				rets chan *TimeSeriesResult
+				qr   *prompb.QueryResult
+			)
+			rets, err = i.query(ctx, ql, start.UnixMilli(), end.UnixMilli())
+			if err != nil {
+				return nil, err
+			}
+
+			qr, err = i.mergeTimeSeries(rets)
+			if err != nil {
+				return nil, err
+			}
+
+			for _, r := range qr.GetTimeseries() {
+				metric := make(labels.Labels, 0, len(r.GetLabels()))
+				for _, l := range r.GetLabels() {
+					metric = append(metric, labels.Label{
+						Name:  l.GetName(),
+						Value: l.GetValue(),
+					})
+				}
+
+				points := make([]promql.Point, 0, len(r.GetSamples()))
+				for _, p := range r.GetSamples() {
+					points = append(points, promql.Point{
+						T: p.GetTimestamp(),
+						V: p.GetValue(),
+					})
+				}
+
+				matrix = append(matrix, promql.Series{
+					Metric: metric,
+					Points: points,
+				})
+			}
+		}
+
+		return matrix, nil
+	} else {
+		return nil, fmt.Errorf("reference is empty %s", referenceName)
+	}
 }
 
 func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -177,6 +229,12 @@ func (i *Instance) query(
 		err error
 	)
 
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
 
@@ -207,9 +265,9 @@ func (i *Instance) query(
 				}()
 
 				if len(query.AggregateMethodList) > 0 {
-					err = i.queryWithAgg(ctx, q, rets)
+					i.queryWithAgg(ctx, q, rets)
 				} else {
-					err = i.queryWithoutAgg(ctx, q, rets)
+					i.queryWithoutAgg(ctx, q, rets)
 				}
 			})
 		}
@@ -257,26 +315,45 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		Index(qo.index).
 		Sort(Timestamp, true)
 
+	log.Infof(ctx, "es query index: %s", qo.index)
+
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
 		ss = ss.Query(esQuery)
 
-		esQueryString, _ := json.Marshal(esQuery)
+		esQueryString, _ := esQuery.Source()
 		span.Set("query-dsl", esQueryString)
+
+		log.Infof(ctx, "es query dsl: %v", esQueryString)
 	}
 
 	if len(qb.Source) > 0 {
 		fetchSource := elastic.NewFetchSourceContext(true)
 		fetchSource.Include(qb.Source...)
 		ss = ss.FetchSourceContext(fetchSource)
+
+		log.Infof(ctx, "es query source: %v", qb.Source)
 	}
 
-	name, agg, err := fact.Agg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone)
+	var (
+		name string
+		agg  elastic.Aggregation
+	)
+	// 如果 判断是否走 PromQL 查询
+	if len(qb.AggregateMethodList) > 0 && !qb.IsNotPromQL {
+		name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone)
+	} else if len(qb.AggregateMethodList) > 0 {
+		name, agg, err = fact.EsAgg(qb.AggregateMethodList)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	if name != "" && agg != nil {
+		aggStr, _ := agg.Source()
+		log.Infof(ctx, "es query agg: %s, %v", name, aggStr)
+
 		ss.Aggregation(name, agg)
 	}
 
@@ -288,7 +365,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	return sr, nil
 }
 
-func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
+func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) {
 	var (
 		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
 		qb  = qo.query
@@ -298,37 +375,74 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 	defer span.End(&err)
 
 	defer func() {
+		ret.Error = err
 		rets <- ret
 	}()
 
 	mapping, err := i.getMapping(ctx, qo.index)
 	if err != nil {
-		return err
+		return
 	}
 
-	formatFactory := NewFormatFactory(qb.Field, mapping)
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping)
+
+	qo.query.Size = 0
+	sr, err := i.esQuery(ctx, qo, formatFactory)
+	if err != nil {
+		return
+	}
+
+	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qb.IsNotPromQL)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) {
+	var (
+		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
+		qb  = qo.query
+		err error
+	)
+	ctx, span := trace.NewSpan(ctx, "without-aggregation")
+	defer span.End(&err)
+
+	defer func() {
+		ret.Error = err
+		rets <- ret
+	}()
+
+	mapping, err := i.getMapping(ctx, qo.index)
+	if err != nil {
+		return
+	}
+
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping)
 
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
-		return nil
+		return
 	}
 
 	ret.TimeSeriesMap = make(map[string]*prompb.TimeSeries)
 	for _, d := range sr.Hits.Hits {
 		data := make(map[string]interface{})
 		if err = json.Unmarshal(d.Source, &data); err != nil {
-			return err
+			return
 		}
 		formatFactory.SetData(data)
 
 		lbs, vErr := formatFactory.Labels()
 		if vErr != nil {
-			return vErr
+			err = vErr
+			return
 		}
 
 		sample, vErr := formatFactory.Sample()
 		if vErr != nil {
-			return vErr
+			err = vErr
+			return
 		}
 
 		if _, ok := ret.TimeSeriesMap[lbs.String()]; !ok {
@@ -340,146 +454,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		ret.TimeSeriesMap[lbs.String()].Samples = append(ret.TimeSeriesMap[lbs.String()].Samples, sample)
 	}
 
-	return nil
-}
-
-func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
-	var (
-		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
-		qb  = qo.query
-		err error
-	)
-	ctx, span := trace.NewSpan(ctx, "without-aggregation")
-	defer span.End(&err)
-
-	defer func() {
-		rets <- ret
-	}()
-
-	mapping, err := i.getMapping(ctx, qo.index)
-	if err != nil {
-		return err
-	}
-
-	formatFactory := NewFormatFactory(qb.Field, mapping)
-
-	sr, err := i.esQuery(ctx, qo, formatFactory)
-	if err != nil {
-		return nil
-	}
-
-	ret.TimeSeriesMap = make(map[string]*prompb.TimeSeries)
-	for _, d := range sr.Hits.Hits {
-		data := make(map[string]interface{})
-		if err = json.Unmarshal(d.Source, &data); err != nil {
-			return err
-		}
-		formatFactory.SetData(data)
-
-		lbs, vErr := formatFactory.Labels()
-		if vErr != nil {
-			return vErr
-		}
-
-		sample, vErr := formatFactory.Sample()
-		if vErr != nil {
-			return vErr
-		}
-
-		if _, ok := ret.TimeSeriesMap[lbs.String()]; !ok {
-			ret.TimeSeriesMap[lbs.String()] = &prompb.TimeSeries{
-				Labels:  lbs.GetLabels(),
-				Samples: make([]prompb.Sample, 0),
-			}
-		}
-		ret.TimeSeriesMap[lbs.String()].Samples = append(ret.TimeSeriesMap[lbs.String()].Samples, sample)
-	}
-
-	return nil
-}
-
-func (i *Instance) esAggQuery(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) error {
-	var (
-		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
-		qb  = qo.query
-		err error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-agg-query")
-	defer span.End(&err)
-
-	// 只做聚合计算
-	if len(qb.AggregateMethodList) == 0 {
-		return nil
-	}
-
-	defer func() {
-		rets <- ret
-	}()
-
-	fact := NewFactory(qb.DataSource)
-	query, err := fact.Query(qo.query)
-	if err != nil {
-		return err
-	}
-
-	queryRange := elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat)
-	dslQuery := elastic.NewBoolQuery().Filter(queryRange, query)
-
-	ss := i.client.Search().
-		Size(0).
-		From(0).
-		Index(qo.index).
-		Query(dslQuery).
-		Sort(Timestamp, true)
-
-	if len(qb.Source) > 0 {
-		fetchSource := elastic.NewFetchSourceContext(true)
-		fetchSource.Include(qb.Source...)
-		ss = ss.FetchSourceContext(fetchSource)
-	}
-
-	dsl, _ := dslQuery.Source()
-	span.Set("query-dsl", dsl)
-	ran, _ := queryRange.Source()
-	span.Set("query-range", ran)
-
-	aggs, err := fact.Aggs(qo.query)
-	if err != nil {
-		return err
-	}
-
-	ss.Aggregation(aggs.Agg().Name, aggs.Agg().Agg)
-
-	span.Set("query-agg-name", aggs.Agg().Name)
-	aggStr, _ := aggs.Agg().Agg.Source()
-	span.Set("query-agg-name", aggStr)
-
-	sr, err := ss.Do(ctx)
-	if err != nil {
-		return nil
-	}
-
-	res, err := dataFormat(aggs.Aggs, sr.Aggregations, fact.Relabel)
-	if err != nil {
-		return err
-	}
-
-	log.Debugf(ctx, "es agg query %d, %d, %s, result: %s", qo.start, qo.end, qo.index, res.String())
-
-	ret = &TimeSeriesResult{
-		TimeSeriesMap: res.TimeSeriesMap,
-	}
-
-	span.Set("resp-series-num", len(res.TimeSeriesMap))
-
-	return nil
-}
-
-func (i *Instance) Close() {
-	i.wg.Wait()
-	i.ctx = nil
-	i.client = nil
+	return
 }
 
 func (i *Instance) getIndexes(ctx context.Context, aliases []string) ([]string, error) {
@@ -578,6 +553,10 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	seriesMap := make(map[string]*prompb.TimeSeries)
 
 	for ret := range rets {
+		if ret.Error != nil {
+			return nil, ret.Error
+		}
+
 		if len(ret.TimeSeriesMap) == 0 {
 			continue
 		}
@@ -594,6 +573,7 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 		}
 
 		ret.TimeSeriesMap = nil
+		ret.Error = nil
 		TimeSeriesResultPool.Put(ret)
 	}
 
@@ -611,22 +591,7 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
-func (i *Instance) QueryReference(
-	ctx context.Context,
-	query *metadata.Query,
-	start int64,
-	end int64,
-) (*prompb.QueryResult, error) {
-	rets, err := i.query(ctx, query, start, end)
-	if err != nil {
-		return nil, err
-	}
-
-	qr, err := i.mergeTimeSeries(rets)
-	return qr, err
-}
-
-// QueryRaw 查询原始数据
+// QueryRaw 给 PromEngine 提供查询接口
 func (i *Instance) QueryRaw(
 	ctx context.Context,
 	query *metadata.Query,
@@ -639,6 +604,8 @@ func (i *Instance) QueryRaw(
 
 	start := hints.Start
 	end := hints.End
+	// 只支持 PromQL 查询
+	query.IsNotPromQL = false
 
 	if query.TimeAggregation == nil {
 		err = fmt.Errorf("empty time aggregation with %+v", query)
@@ -652,7 +619,6 @@ func (i *Instance) QueryRaw(
 	}
 
 	rets, err := i.query(ctx, query, start, end)
-
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

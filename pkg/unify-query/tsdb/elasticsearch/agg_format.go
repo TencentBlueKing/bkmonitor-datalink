@@ -12,151 +12,156 @@ package elasticsearch
 import (
 	"fmt"
 	"strings"
-	"time"
+	"sync"
 
 	elastic "github.com/olivere/elastic/v7"
-	"github.com/prometheus/prometheus/prompb"
+	"golang.org/x/exp/slices"
 )
 
-type AggFormat struct {
-	aggs []*EsAgg
-
-	sample     prompb.Sample
-	seriesKey  strings.Builder
-	timeSeries *prompb.TimeSeries
-
-	relabel func(lb prompb.Label) prompb.Label
-
-	TimeSeriesMap map[string]*prompb.TimeSeries
+var itemsPool = sync.Pool{
+	New: func() any {
+		return items{}
+	},
 }
 
-func dataFormat(aggs []*EsAgg, data elastic.Aggregations, relabel func(lb prompb.Label) prompb.Label) (a *AggFormat, err error) {
-	a = &AggFormat{
-		aggs:          aggs,
-		relabel:       relabel,
-		TimeSeriesMap: make(map[string]*prompb.TimeSeries),
-	}
-	// 初始化 a.timeSeries
-	a.reset()
-	err = a.ts(-1, data)
-	if err != nil {
-		return
-	}
-	return a, nil
+type item struct {
+	labels    map[string]string
+	timestamp int64
+	value     float64
 }
 
-func (a *AggFormat) String() string {
-	var s strings.Builder
-	s.WriteString("\n")
-	for _, ts := range a.TimeSeriesMap {
-		lbs := make([]string, 0, len(ts.Labels))
-		for _, lb := range ts.Labels {
-			lbs = append(lbs, fmt.Sprintf("%s=%s", lb.GetName(), lb.GetValue()))
+type items []item
+
+type aggFormat struct {
+	aggInfoList aggInfoList
+
+	relabel     func(string) string
+	isNotPromQL bool
+
+	dims  []string
+	item  item
+	items items
+}
+
+func (a *aggFormat) start() {
+	a.items = itemsPool.Get().(items)
+	a.items = make(items, 0)
+}
+
+func (a *aggFormat) close() {
+	a.items = nil
+	itemsPool.Put(a.items)
+}
+
+func (a *aggFormat) addLabel(name, value string) {
+	value = strings.Trim(value, `""`)
+	newLb := make(map[string]string)
+	for k, v := range a.item.labels {
+		newLb[k] = v
+	}
+	newLb[name] = value
+	a.item.labels = newLb
+}
+
+func (a *aggFormat) reset() {
+	if len(a.dims) == 0 && len(a.item.labels) > 0 {
+		for k := range a.item.labels {
+			a.dims = append(a.dims, k)
 		}
-		s.WriteString(strings.Join(lbs, ",") + "\n")
-		for _, p := range ts.Samples {
-			t := time.UnixMilli(p.GetTimestamp())
-			s.WriteString(fmt.Sprintf("%s, %.f\n", t.Format("2006-01-02 15:04:05"), p.GetValue()))
-		}
+		slices.Sort(a.dims)
 	}
 
-	return s.String()
+	a.items = append(a.items, a.item)
 }
 
-func (a *AggFormat) reset() {
-	a.seriesKey.Reset()
-	a.timeSeries = &prompb.TimeSeries{
-		Labels:  make([]prompb.Label, 0),
-		Samples: make([]prompb.Sample, 0),
-	}
-}
-
-func (a *AggFormat) addLabel(name, value string) {
-	lb := a.relabel(prompb.Label{
-		Name: name, Value: value,
-	})
-	a.seriesKey.WriteString(fmt.Sprintf("%s=%s,", name, value))
-	a.timeSeries.Labels = append(a.timeSeries.Labels, lb)
-}
-
-// 使用暂存的时间加上参数值，构建一个 sample，同时清理暂存的 a.sample
-func (a *AggFormat) addSample(v float64) {
-	a.sample.Value = v
-	a.timeSeries.Samples = append(a.timeSeries.Samples, a.sample)
-}
-
-// idx 是层级信息，默认为 -1，通过聚合层级递归解析 data 里面的内容
+// idx 是层级信息，默认为 len(a.aggInfoList), 因为聚合结果跟聚合列表是相反的，通过聚合层级递归解析 data 里面的内容
 // 例如该查询 sum(count_over_time(metric[1m])) by (dim-1, dim-2) 的聚合层级为：dim-1, dim-2, time range, count
-func (a *AggFormat) ts(idx int, data elastic.Aggregations) error {
-	idx++
-	if idx < len(a.aggs) {
-		agg := a.aggs[idx]
-		name := agg.Name
-		switch agg.Agg.(type) {
-		case *elastic.TermsAggregation:
-			if histogram, ok := data.Range(name); ok {
-				for _, bucket := range histogram.Buckets {
-					// 每一个 label 都是一个新的层级，需要把 label 暂存在 a.timeSeries 里面
-					a.addLabel(name, bucket.Key)
-					if err := a.ts(idx, bucket.Aggregations); err != nil {
-						return err
-					}
-				}
-			}
-		case *elastic.DateHistogramAggregation:
-			if histogram, ok := data.Histogram(name); ok {
-				for _, bucket := range histogram.Buckets {
-					// 时间和值也是不同层级，需要暂存在 a.sample 里
-					a.sample.Timestamp = int64(bucket.Key)
-					if err := a.ts(idx, bucket.Aggregations); err != nil {
-						return err
-					}
+func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
+	idx--
+	if idx >= 0 {
+		info := a.aggInfoList[idx]
+		switch info.typeName {
+		case TypeTerms:
+			if bucketRangeItems, ok := data.Range(info.name); ok {
+				if len(bucketRangeItems.Buckets) == 0 {
+					return nil
 				}
 
-				// 该 series 下的所有时序点都添加完成
-				a.TimeSeriesMap[a.seriesKey.String()] = a.timeSeries
-				// 把暂存的 a.timeSeries 置空
-				a.reset()
+				for _, bucket := range bucketRangeItems.Buckets {
+					// 每一个 name 都是一个新的层级，需要把 name 暂存在 a.timeSeries 里面
+					if value, ok := bucket.Aggregations["key"]; ok {
+						vs, err := value.MarshalJSON()
+						if err != nil {
+							return err
+						}
+
+						a.addLabel(info.name, string(vs))
+						if err = a.ts(idx, bucket.Aggregations); err != nil {
+							return err
+						}
+					}
+				}
 			}
-		default:
+		case TypeNested:
+			if singleBucket, ok := data.Nested(info.name); ok {
+				if err := a.ts(idx, singleBucket.Aggregations); err != nil {
+					return err
+				}
+			}
+		case TypeDateHistogram:
+			if bucketHistogramItems, ok := data.Histogram(info.name); ok {
+				if len(bucketHistogramItems.Buckets) == 0 {
+					return nil
+				}
+
+				for _, bucket := range bucketHistogramItems.Buckets {
+					// 时间和值也是不同层级，需要暂存在 a.sample 里
+					a.item.timestamp = int64(bucket.Key)
+					if err := a.ts(idx, bucket.Aggregations); err != nil {
+						return err
+					}
+				}
+			}
+		case TypeValue:
 			var (
 				value *elastic.AggregationValueMetric
 				ok    bool
 			)
-			switch agg.Agg.(type) {
-			case *elastic.MinAggregation:
-				if value, ok = data.Min(name); !ok {
-					return fmt.Errorf("%s is empty", name)
+			switch info.name {
+			case MIN:
+				if value, ok = data.Min(info.name); !ok {
+					return fmt.Errorf("%s is empty", info.name)
 				}
-			case *elastic.SumAggregation:
-				if value, ok = data.Sum(name); !ok {
-					return fmt.Errorf("%s is empty", name)
+			case SUM:
+				if value, ok = data.Sum(info.name); !ok {
+					return fmt.Errorf("%s is empty", info.name)
 				}
-			case *elastic.AvgAggregation:
-				if value, ok = data.Avg(name); !ok {
-					return fmt.Errorf("%s is empty", name)
+			case AVG:
+				if value, ok = data.Avg(info.name); !ok {
+					return fmt.Errorf("%s is empty", info.name)
 				}
-			case *elastic.ValueCountAggregation:
-				if value, ok = data.ValueCount(name); !ok {
-					return fmt.Errorf("%s is empty", name)
+			case COUNT:
+				if value, ok = data.ValueCount(info.name); !ok {
+					return fmt.Errorf("%s is empty", info.name)
 				}
-			case *elastic.MaxAggregation:
-				if value, ok = data.Max(name); !ok {
-					return fmt.Errorf("%s is empty", name)
+			case MAX:
+				if value, ok = data.Max(info.name); !ok {
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			default:
-				return fmt.Errorf("%T type is error", agg.Agg)
+				return fmt.Errorf("%s type is error", info)
 			}
 
 			// 计算数量需要造数据
 			repNum := 1
-			if agg.Name == COUNT {
+			if !a.isNotPromQL && info.name == COUNT {
 				repNum = int(*value.Value)
 			}
+
 			for j := 0; j < repNum; j++ {
-				a.addSample(*value.Value)
+				a.item.value = *value.Value
+				a.reset()
 			}
-			a.sample = prompb.Sample{}
 		}
 	}
 	return nil

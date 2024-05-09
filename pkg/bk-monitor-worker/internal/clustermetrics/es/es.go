@@ -109,8 +109,16 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
 	registry.MustRegister(exporter)
-	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, true, true))
-	registry.MustRegister(collector.NewShards(collectorLogger, httpClient, esURL))
+
+	indices := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
+	shards := collector.NewShards(collectorLogger, httpClient, esURL)
+	defer func() {
+		close(*indices.ClusterLabelUpdates())
+		close(*shards.ClusterLabelUpdates())
+	}()
+
+	registry.MustRegister(indices)
+	registry.MustRegister(shards)
 	// todo: 补充状态维度
 	registry.MustRegister(collector.NewClusterHealth(collectorLogger, httpClient, esURL))
 	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))

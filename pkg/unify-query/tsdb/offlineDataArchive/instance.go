@@ -31,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 var (
@@ -38,6 +39,28 @@ var (
 	client             remoteRead.QueryTimeSeriesServiceClient
 	mutex              sync.Mutex
 )
+
+var _ tsdb.Instance = &Instance{}
+
+type Instance struct {
+	Ctx           context.Context
+	Address       string
+	Timeout       time.Duration
+	MaxLimit      int
+	MaxSLimit     int
+	Toleration    int
+	ReadRateLimit float64
+
+	GrpcMaxCallRecvMsgSize int
+	GrpcMaxCallSendMsgSize int
+}
+
+type StreamSeriesSetOption struct {
+	Span    *trace.Span
+	Stream  remoteRead.QueryTimeSeriesService_RawClient
+	Limiter *rate.Limiter
+	Timeout time.Duration
+}
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {

@@ -19,9 +19,12 @@ const (
 	PasswordPath = "elasticsearch.password"
 	TimeoutPath  = "elasticsearch.timeout"
 
-	SegmentDocCountPath  = "elasticsearch.segment.doc_count"
-	SegmentStoreSizePath = "elasticsearch.segment.store_size"
-	MaxRoutingPath       = "elasticsearch.max_routing"
+	SegmentDocCountPath     = "elasticsearch.segment.doc_count"
+	SegmentStoreSizePath    = "elasticsearch.segment.store_size"
+	SegmentMaxNumPath       = "elasticsearch.segment.max_num"
+	SegmentMaxTimeRangePath = "elasticsearch.segment.max_time_range"
+
+	MaxRoutingPath = "elasticsearch.max_routing"
 
 	MaxSizePath   = "elasticsearch.max_size"
 	KeepAlivePath = "elasticsearch.keep_alive"
@@ -29,7 +32,9 @@ const (
 
 func init() {
 	viper.SetDefault(SegmentDocCountPath, 1e4)
-	viper.SetDefault(SegmentStoreSizePath, "10MB")
+	viper.SetDefault(SegmentStoreSizePath, "100MB")
+	viper.SetDefault(SegmentMaxNumPath, 20)
+	viper.SetDefault(SegmentMaxTimeRangePath, "1h")
 	viper.SetDefault(MaxRoutingPath, 10)
 	viper.SetDefault(MaxSizePath, 1e4)
 	viper.SetDefault(KeepAlivePath, "5s")

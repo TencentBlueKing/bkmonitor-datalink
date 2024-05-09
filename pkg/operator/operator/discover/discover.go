@@ -522,6 +522,8 @@ func metaFromSource(s string) (string, string, error) {
 
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
 func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
+	d.mm.IncHandledTgCounter()
+
 	namespace, _, err := metaFromSource(targetGroup.Source)
 	if err != nil {
 		logger.Errorf("failed to parse source: %v", err)

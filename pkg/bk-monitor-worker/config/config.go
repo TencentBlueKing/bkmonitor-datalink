@@ -237,6 +237,7 @@ var (
 	ESClusterMetricReportUrl         string
 	ESClusterMetricReportDataId      int
 	ESClusterMetricReportAccessToken string
+	ESClusterMetricReportBlackList   []int
 )
 
 func initVariables() {
@@ -401,6 +402,7 @@ func initVariables() {
 	ESClusterMetricReportUrl = GetValue("taskConfig.logSearch.metric.reportUrl", "")
 	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
 	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
+	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
 }
 
 var (

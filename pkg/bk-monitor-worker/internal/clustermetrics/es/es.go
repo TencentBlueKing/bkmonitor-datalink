@@ -62,7 +62,6 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 // collectAndReportMetrics 采集&上报ES集群指标
 func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
-	start := time.Now()
 	// 从custom option中获取集群业务id
 	var bkBizID float64
 	var customOption map[string]interface{}
@@ -125,6 +124,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	}()
 
 	for metricType, esCollector := range esCollectors {
+		start := time.Now()
 		registry := prometheus.NewRegistry()
 		registry.MustRegister(esCollector)
 		metricFamilies, err := registry.Gather()
@@ -244,6 +244,23 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 		logger.Infof("no es cluster need to report metrics.")
 		return nil
 	}
+
+	blacklist := cfg.ESClusterMetricReportBlackList
+	blacklistMap := make(map[uint]bool)
+	for _, cluster := range blacklist {
+		clusterID := uint(cluster)
+		blacklistMap[clusterID] = true
+	}
+
+	// 创建一个新的列表，用于存储不在黑名单中的集群
+	var filteredClusterInfoList []storage.ClusterInfo
+	for _, cluster := range esClusterInfoList {
+		// 检查集群是否在黑名单中
+		if _, found := blacklistMap[cluster.ClusterID]; !found {
+			filteredClusterInfoList = append(filteredClusterInfoList, cluster)
+		}
+	}
+	esClusterInfoList = filteredClusterInfoList
 
 	// 2. 遍历存储获取集群信息
 	wg := &sync.WaitGroup{}

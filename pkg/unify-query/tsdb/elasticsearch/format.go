@@ -168,7 +168,8 @@ func (f *FormatFactory) nestedAgg(key string) {
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool) (map[string]*prompb.TimeSeries, error) {
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
-		relabel:     f.toEs,
+		toEs:        f.toEs,
+		toProm:      f.toProm,
 		isNotPromQL: isNotPromQL,
 		items:       make(items, 0),
 	}
@@ -221,6 +222,11 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL boo
 	return timeSeriesMap, nil
 }
 
+func (f *FormatFactory) toProm(key string) string {
+	vs := strings.Split(key, OldStep)
+	return strings.Join(vs, NewStep)
+}
+
 func (f *FormatFactory) toEs(key string) string {
 	vs := strings.Split(key, NewStep)
 	return strings.Join(vs, OldStep)
@@ -231,7 +237,7 @@ func (f *FormatFactory) SetData(data map[string]any) {
 	mapData("", data, f.data)
 }
 
-func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) {
+func (f *FormatFactory) Agg(size int) (name string, agg elastic.Aggregation, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("get mapping error: %s", r))
@@ -264,7 +270,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case TypeNested:
 			agg = elastic.NewNestedAggregation().Path(info.name).SubAggregation(name, agg)
 		case TypeTerms:
-			agg = elastic.NewTermsAggregation().Field(info.name).SubAggregation(name, agg)
+			agg = elastic.NewTermsAggregation().Field(info.name).SubAggregation(name, agg).Size(size)
 		default:
 			err = fmt.Errorf("aggregation is not support, with %+v", info)
 			return
@@ -275,7 +281,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
-func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList, size int) (string, elastic.Aggregation, error) {
 	if len(aggregateMethodList) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -290,10 +296,10 @@ func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) 
 		f.appendAgg(dim, TypeTerms, nil)
 		f.nestedAgg(dim)
 	}
-	return f.Agg()
+	return f.Agg(size)
 }
 
-func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggregateMethodList metadata.AggregateMethodList, timeZone string) (string, elastic.Aggregation, error) {
+func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggregateMethodList metadata.AggregateMethodList, timeZone string, size int) (string, elastic.Aggregation, error) {
 	if len(aggregateMethodList) == 0 || timeAggregation == nil {
 		err := errors.New("aggregateMethodList or timeAggregation is empty")
 		return "", nil, err
@@ -330,7 +336,7 @@ func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggre
 		return "", nil, err
 	}
 
-	return f.Agg()
+	return f.Agg(size)
 }
 
 // Query 把 ts 的 conditions 转换成 es 查询

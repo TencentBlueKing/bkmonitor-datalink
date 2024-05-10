@@ -309,16 +309,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
-	var size int
-	if qb.Size > 0 {
-		size = qb.Size
-	} else {
-		size = i.maxSize
-	}
-
 	ss := i.client.Search().
-		Size(size).
-		From(qb.From).
 		Index(qo.index).
 		Sort(Timestamp, true)
 
@@ -345,13 +336,22 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var (
 		name string
+		size int
 		agg  elastic.Aggregation
 	)
+
+	// size 如果为 0，则去 maxSize
+	if qb.Size > 0 {
+		size = qb.Size
+	} else {
+		size = i.maxSize
+	}
+
 	// 如果 判断是否走 PromQL 查询
 	if len(qb.AggregateMethodList) > 0 && !qb.IsNotPromQL {
-		name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone)
+		name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone, size)
 	} else if len(qb.AggregateMethodList) > 0 {
-		name, agg, err = fact.EsAgg(qb.AggregateMethodList)
+		name, agg, err = fact.EsAgg(qb.AggregateMethodList, size)
 	}
 
 	if err != nil {
@@ -363,6 +363,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		log.Infof(ctx, "es query agg: %s, %v", name, aggStr)
 
 		ss.Aggregation(name, agg)
+	} else {
+		// 非聚合查询需要使用 from 和 size
+		ss = ss.From(qb.From).Size(size)
 	}
 
 	sr, err := ss.Do(ctx)
@@ -394,7 +397,6 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 
 	formatFactory := NewFormatFactory(ctx, qb.Field, mapping)
 
-	qo.query.Size = 0
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
 		return

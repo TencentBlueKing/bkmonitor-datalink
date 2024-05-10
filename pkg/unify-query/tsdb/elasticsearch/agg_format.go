@@ -35,7 +35,9 @@ type items []item
 type aggFormat struct {
 	aggInfoList aggInfoList
 
-	relabel     func(string) string
+	toEs   func(string) string
+	toProm func(string) string
+
 	isNotPromQL bool
 
 	dims  []string
@@ -54,6 +56,8 @@ func (a *aggFormat) close() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
+	name = a.toProm(name)
+
 	value = strings.Trim(value, `""`)
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {

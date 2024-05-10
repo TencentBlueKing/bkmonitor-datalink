@@ -105,7 +105,7 @@ func TestInstance_queryReference(t *testing.T) {
 					{
 						Name: COUNT,
 						Dimensions: []string{
-							"serverIp",
+							"gseIndex",
 						},
 					},
 				},

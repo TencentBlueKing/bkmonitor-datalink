@@ -56,8 +56,6 @@ type QueryTs struct {
 	LookBackDelta string `json:"look_back_delta,omitempty"`
 	// Instant 瞬时数据
 	Instant bool `json:"instant"`
-	// IsNotPromQL 是否使用 PromQL 查询
-	IsNotPromQL bool `json:"is_not_promql"`
 }
 
 // 根据 timezone 偏移对齐
@@ -271,6 +269,8 @@ type Query struct {
 	Dimensions []string `json:"dimensions,omitempty" example:"bk_target_ip,bk_target_cloud_id"`
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
+	// From 翻页开启数字
+	From int `json:"from,omitempty" example:"0"`
 	// Timestamp @-modifier 标记
 	Timestamp *int64 `json:"timestamp,omitempty"`
 	// StartOrEnd @-modifier 标记，start or end
@@ -398,6 +398,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	for _, tsDB := range tsDBs {
 		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		query.Size = q.Limit
+		query.From = q.From
+
 		if err != nil {
 			return nil, err
 		}

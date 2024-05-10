@@ -309,13 +309,21 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
+	var size int
+	if qb.Size > 0 {
+		size = qb.Size
+	} else {
+		size = i.maxSize
+	}
+
 	ss := i.client.Search().
-		Size(qb.Size).
+		Size(size).
 		From(qb.From).
 		Index(qo.index).
 		Sort(Timestamp, true)
 
 	log.Infof(ctx, "es query index: %s", qo.index)
+	log.Infof(ctx, "es query size: %d, size: %d", qb.From, qb.Size)
 
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)

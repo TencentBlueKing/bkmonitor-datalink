@@ -126,31 +126,63 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 				}
 			}
+
 		case TypeValue:
 			var (
-				value *elastic.AggregationValueMetric
-				ok    bool
+				value float64
 			)
 			switch info.name {
-			case MIN:
-				if value, ok = data.Min(info.name); !ok {
+			case Min:
+				if valueMetric, ok := data.Min(info.name); !ok {
 					return fmt.Errorf("%s is empty", info.name)
+				} else {
+					value = *valueMetric.Value
 				}
-			case SUM:
-				if value, ok = data.Sum(info.name); !ok {
+			case Sum:
+				if valueMetric, ok := data.Sum(info.name); !ok {
 					return fmt.Errorf("%s is empty", info.name)
+				} else {
+					value = *valueMetric.Value
 				}
-			case AVG:
-				if value, ok = data.Avg(info.name); !ok {
+			case Avg:
+				if valueMetric, ok := data.Avg(info.name); !ok {
 					return fmt.Errorf("%s is empty", info.name)
+				} else {
+					value = *valueMetric.Value
 				}
-			case COUNT:
-				if value, ok = data.ValueCount(info.name); !ok {
+			case Count:
+				if valueMetric, ok := data.ValueCount(info.name); !ok {
 					return fmt.Errorf("%s is empty", info.name)
+				} else {
+					value = *valueMetric.Value
 				}
-			case MAX:
-				if value, ok = data.Max(info.name); !ok {
+			case Max:
+				if valueMetric, ok := data.Max(info.name); !ok {
 					return fmt.Errorf("%s is empty", info.name)
+				} else {
+					value = *valueMetric.Value
+				}
+			case Percentiles:
+				if len(info.args) != 1 {
+					return fmt.Errorf("args length is not 1, %+v", info.args)
+				}
+
+				var key string
+				switch v := info.args[0].(type) {
+				case int, int32, int64:
+					key = fmt.Sprintf("%d.0", v)
+				case float64:
+					key = fmt.Sprintf("%.1f", v)
+				case string:
+					key = v
+				default:
+					return fmt.Errorf("aggregation is not support this type %T, with %v", v, v)
+				}
+
+				if percentMetric, ok := data.Percentiles(info.name); ok {
+					if value, ok = percentMetric.Values[key]; !ok {
+						return fmt.Errorf("percent metric values is error, key: %s in %+v", key, percentMetric.Values)
+					}
 				}
 			default:
 				return fmt.Errorf("%s type is error", info)
@@ -158,12 +190,12 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 
 			// 计算数量需要造数据
 			repNum := 1
-			if !a.isNotPromQL && info.name == COUNT {
-				repNum = int(*value.Value)
+			if !a.isNotPromQL && info.name == Count {
+				repNum = int(value)
 			}
 
 			for j := 0; j < repNum; j++ {
-				a.item.value = *value.Value
+				a.item.value = value
 				a.reset()
 			}
 		}

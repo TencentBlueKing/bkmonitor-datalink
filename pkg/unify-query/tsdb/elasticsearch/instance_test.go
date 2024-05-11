@@ -12,6 +12,9 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/spf13/viper"
+	"os"
 	"testing"
 	"time"
 
@@ -22,14 +25,20 @@ import (
 func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
-	log.InitTestLogger()
+	mock.Init()
 
-	url := "http://127.0.0.1:9200"
-	username := "elastic"
-	password := ""
-	timeout := time.Minute * 10
-	maxRouting := 10
-	maxSize := 10000
+	err := os.Setenv("UNIFY-QUERY-CONFIG-FILE-PATH", "")
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+		return
+	}
+
+	url := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -83,7 +92,7 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
-						Name: AVG,
+						Name: Avg,
 						Dimensions: []string{
 							"__ext___io_kubernetes_pod",
 							"__ext___container_name",
@@ -103,9 +112,29 @@ func TestInstance_queryReference(t *testing.T) {
 				Size:        20,
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
-						Name: COUNT,
+						Name: Count,
 						Dimensions: []string{
 							"gseIndex",
+						},
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: Percentiles,
+						Args: []interface{}{
+							50,
 						},
 					},
 				},

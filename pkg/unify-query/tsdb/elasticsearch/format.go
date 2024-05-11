@@ -39,13 +39,15 @@ const (
 	OldStep = "."
 	NewStep = "___"
 
-	MIN   = "min"
-	MAX   = "max"
-	SUM   = "sum"
-	COUNT = "count"
-	LAST  = "last"
-	MEAN  = "mean"
-	AVG   = "avg"
+	Min   = "min"
+	Max   = "max"
+	Sum   = "sum"
+	Count = "count"
+	Last  = "last"
+	Mean  = "mean"
+	Avg   = "avg"
+
+	Percentiles = "percentiles"
 
 	MinOT   = "min_over_time"
 	MaxOT   = "max_over_time"
@@ -58,15 +60,16 @@ const (
 	TypeTerms         = "terms"
 	TypeDateHistogram = "date_histogram"
 	TypeValue         = "value"
+	TypePercentiles   = "percentiles"
 )
 
 var (
 	AggregationMap = map[string]string{
-		MIN + NewStep + MinOT:   MIN,
-		MAX + NewStep + MaxOT:   MAX,
-		SUM + NewStep + SumOT:   SUM,
-		AVG + NewStep + AvgOT:   AVG,
-		SUM + NewStep + CountOT: COUNT,
+		Min + NewStep + MinOT:   Min,
+		Max + NewStep + MaxOT:   Max,
+		Sum + NewStep + SumOT:   Sum,
+		Avg + NewStep + AvgOT:   Avg,
+		Sum + NewStep + CountOT: Count,
 	}
 )
 
@@ -112,8 +115,8 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 type aggInfo struct {
 	name     string
 	typeName string
-
-	ext map[string]string
+	args     []any
+	kwArgs   map[string]any
 }
 
 type aggInfoList []aggInfo
@@ -142,10 +145,10 @@ func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]a
 	return f
 }
 
-func (f *FormatFactory) appendAgg(name, typeName string, ext map[string]string) {
+func (f *FormatFactory) appendAgg(name, typeName string, args ...any) {
 	f.aggInfoList = append(
 		f.aggInfoList, aggInfo{
-			name: name, typeName: typeName, ext: ext,
+			name: name, typeName: typeName, args: args,
 		},
 	)
 }
@@ -157,7 +160,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 		checkKey := strings.Join(lbs[0:i], OldStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == TypeNested {
-				f.appendAgg(checkKey, TypeNested, nil)
+				f.appendAgg(checkKey, TypeNested)
 			}
 		}
 	}
@@ -249,30 +252,57 @@ func (f *FormatFactory) Agg(size int) (name string, agg elastic.Aggregation, err
 		case TypeValue:
 			// 增加聚合函数
 			switch info.name {
-			case MIN:
+			case Min:
 				agg = elastic.NewMinAggregation().Field(f.valueKey)
-			case MAX:
+			case Max:
 				agg = elastic.NewMaxAggregation().Field(f.valueKey)
-			case AVG:
+			case Avg:
 				agg = elastic.NewAvgAggregation().Field(f.valueKey)
-			case SUM:
+			case Sum:
 				agg = elastic.NewSumAggregation().Field(f.valueKey)
-			case COUNT:
+			case Count:
 				agg = elastic.NewValueCountAggregation().Field("_index")
+			case Percentiles:
+				if len(info.args) != 1 {
+					err = fmt.Errorf("type %s is error with args %+v", info.typeName, info.args)
+					return
+				}
+
+				var percent float64
+				switch v := info.args[0].(type) {
+				case float64:
+					percent = float64(int64(v))
+				case int:
+					percent = float64(v)
+				case int32:
+					percent = float64(v)
+				case int64:
+					percent = float64(v)
+				default:
+					err = fmt.Errorf("percent type is error: %T, %+v", v, v)
+				}
+				agg = elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percent)
 			default:
-				err = fmt.Errorf("aggregation is not support, with %+v", info)
+				err = fmt.Errorf("aggregation is not support this name %s, with %+v", info.name, info)
 				return
 			}
 		case TypeDateHistogram:
+			if len(info.args) != 2 {
+				err = fmt.Errorf("type %s is error with args %+v", info.typeName, info.args)
+				return
+			}
+			window := info.args[0].(string)
+			timezone := info.args[1].(string)
+
 			agg = elastic.NewDateHistogramAggregation().
-				Field(Timestamp).FixedInterval(info.ext["window"]).TimeZone(info.ext["timezone"]).
+				Field(Timestamp).FixedInterval(window).TimeZone(timezone).
 				MinDocCount(1).SubAggregation(name, agg)
 		case TypeNested:
 			agg = elastic.NewNestedAggregation().Path(info.name).SubAggregation(name, agg)
 		case TypeTerms:
 			agg = elastic.NewTermsAggregation().Field(info.name).SubAggregation(name, agg).Size(size)
 		default:
-			err = fmt.Errorf("aggregation is not support, with %+v", info)
+			err = fmt.Errorf("aggregation is not support, with type %s, info: %+v", info.typeName, info)
 			return
 		}
 		name = info.name
@@ -288,12 +318,12 @@ func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList, 
 	}
 
 	aggregateMethod := aggregateMethodList[0]
-	f.appendAgg(aggregateMethod.Name, TypeValue, nil)
+	f.appendAgg(aggregateMethod.Name, TypeValue, aggregateMethod.Args...)
 	f.nestedAgg(aggregateMethod.Name)
 
 	for _, dim := range aggregateMethod.Dimensions {
 		dim = f.toEs(dim)
-		f.appendAgg(dim, TypeTerms, nil)
+		f.appendAgg(dim, TypeTerms)
 		f.nestedAgg(dim)
 	}
 	return f.Agg(size)
@@ -306,25 +336,21 @@ func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggre
 	}
 
 	// 如果使用了时间函数需要进行转换, sum(count_over_time) => count
-
 	if !aggregateMethodList[0].Without && timeAggregation.WindowDuration > 0 {
 		key := aggregateMethodList[0].Name + NewStep + timeAggregation.Function
 		if name, ok := AggregationMap[key]; ok {
-			f.appendAgg(name, TypeValue, nil)
+			f.appendAgg(name, TypeValue)
 
 			// 判断是否是 nested
 			f.nestedAgg(f.valueKey)
 
 			// 增加时间函数
-			f.appendAgg(Timestamp, TypeDateHistogram, map[string]string{
-				"window":   shortDur(timeAggregation.WindowDuration),
-				"timezone": timeZone,
-			})
+			f.appendAgg(Timestamp, TypeDateHistogram, shortDur(timeAggregation.WindowDuration), timeZone)
 
 			// 增加维度聚合函数
 			for _, dim := range aggregateMethodList[0].Dimensions {
 				dim = f.toEs(dim)
-				f.appendAgg(dim, TypeTerms, nil)
+				f.appendAgg(dim, TypeTerms)
 				f.nestedAgg(dim)
 			}
 		} else {
@@ -332,7 +358,7 @@ func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggre
 			return "", nil, err
 		}
 	} else {
-		err := fmt.Errorf("aggregation is not support with: %+v", aggregateMethodList)
+		err := fmt.Errorf("aggregation is not supoort without or window is zero: %+v", aggregateMethodList)
 		return "", nil, err
 	}
 

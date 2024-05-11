@@ -600,6 +600,7 @@ func (q *Query) BuildMetadataQuery(
 			Name:       aggr.Method,
 			Dimensions: aggr.Dimensions,
 			Without:    aggr.Without,
+			Args:       aggr.VArgsList,
 		})
 	}
 

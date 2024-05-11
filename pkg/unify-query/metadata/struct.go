@@ -33,6 +33,9 @@ type AggrMethod struct {
 	Name       string
 	Dimensions []string
 	Without    bool
+
+	Args   []interface{}
+	KwArgs map[string]interface{}
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用

@@ -133,71 +133,60 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			)
 			switch info.name {
 			case Min:
-				if valueMetric, ok := data.Min(info.name); !ok {
-					return fmt.Errorf("%s is empty", info.name)
+				if valueMetric, ok := data.Min(info.name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
 				} else {
-					value = *valueMetric.Value
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			case Sum:
-				if valueMetric, ok := data.Sum(info.name); !ok {
-					return fmt.Errorf("%s is empty", info.name)
+				if valueMetric, ok := data.Sum(info.name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
 				} else {
-					value = *valueMetric.Value
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			case Avg:
-				if valueMetric, ok := data.Avg(info.name); !ok {
-					return fmt.Errorf("%s is empty", info.name)
+				if valueMetric, ok := data.Avg(info.name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
 				} else {
-					value = *valueMetric.Value
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			case Count:
-				if valueMetric, ok := data.ValueCount(info.name); !ok {
-					return fmt.Errorf("%s is empty", info.name)
+				if valueMetric, ok := data.ValueCount(info.name); ok {
+					// 计算数量需要造数据
+					repNum := 1
+					if !a.isNotPromQL {
+						repNum = int(value)
+					}
+
+					for j := 0; j < repNum; j++ {
+						a.item.value = *valueMetric.Value
+						a.reset()
+					}
 				} else {
-					value = *valueMetric.Value
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			case Max:
-				if valueMetric, ok := data.Max(info.name); !ok {
-					return fmt.Errorf("%s is empty", info.name)
+				if valueMetric, ok := data.Max(info.name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
 				} else {
-					value = *valueMetric.Value
+					return fmt.Errorf("%s is empty", info.name)
 				}
 			case Percentiles:
-				if len(info.args) != 1 {
-					return fmt.Errorf("args length is not 1, %+v", info.args)
-				}
-
-				var key string
-				switch v := info.args[0].(type) {
-				case int, int32, int64:
-					key = fmt.Sprintf("%d.0", v)
-				case float64:
-					key = fmt.Sprintf("%.1f", v)
-				case string:
-					key = v
-				default:
-					return fmt.Errorf("aggregation is not support this type %T, with %v", v, v)
-				}
-
 				if percentMetric, ok := data.Percentiles(info.name); ok {
-					if value, ok = percentMetric.Values[key]; !ok {
-						return fmt.Errorf("percent metric values is error, key: %s in %+v", key, percentMetric.Values)
+					for k, v := range percentMetric.Values {
+						a.addLabel("le", k)
+						a.item.value = v
+						a.reset()
 					}
 				}
 			default:
 				return fmt.Errorf("%s type is error", info)
 			}
 
-			// 计算数量需要造数据
-			repNum := 1
-			if !a.isNotPromQL && info.name == Count {
-				repNum = int(value)
-			}
-
-			for j := 0; j < repNum; j++ {
-				a.item.value = value
-				a.reset()
-			}
 		}
 	}
 	return nil

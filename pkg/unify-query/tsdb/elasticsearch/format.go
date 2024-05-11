@@ -263,25 +263,24 @@ func (f *FormatFactory) Agg(size int) (name string, agg elastic.Aggregation, err
 			case Count:
 				agg = elastic.NewValueCountAggregation().Field("_index")
 			case Percentiles:
-				if len(info.args) != 1 {
-					err = fmt.Errorf("type %s is error with args %+v", info.typeName, info.args)
-					return
+				percents := make([]float64, 0)
+				for _, arg := range info.args {
+					var percent float64
+					switch v := arg.(type) {
+					case float64:
+						percent = float64(int(v))
+					case int:
+						percent = float64(v)
+					case int32:
+						percent = float64(v)
+					case int64:
+						percent = float64(v)
+					default:
+						err = fmt.Errorf("percent type is error: %T, %+v", v, v)
+					}
+					percents = append(percents, percent)
 				}
-
-				var percent float64
-				switch v := info.args[0].(type) {
-				case float64:
-					percent = float64(int64(v))
-				case int:
-					percent = float64(v)
-				case int32:
-					percent = float64(v)
-				case int64:
-					percent = float64(v)
-				default:
-					err = fmt.Errorf("percent type is error: %T, %+v", v, v)
-				}
-				agg = elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percent)
+				agg = elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percents...)
 			default:
 				err = fmt.Errorf("aggregation is not support this name %s, with %+v", info.name, info)
 				return

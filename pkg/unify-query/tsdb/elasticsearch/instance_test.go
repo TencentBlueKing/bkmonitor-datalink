@@ -133,9 +133,7 @@ func TestInstance_queryReference(t *testing.T) {
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
 						Name: Percentiles,
-						Args: []interface{}{
-							50,
-						},
+						Args: []interface{}{},
 					},
 				},
 				IsNotPromQL: true,

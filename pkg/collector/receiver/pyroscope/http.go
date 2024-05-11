@@ -11,7 +11,6 @@ package pyroscope
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
@@ -80,8 +80,8 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	buf := &bytes.Buffer{}
 	if _, err := io.Copy(buf, req.Body); err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to read request body, err: %s", err)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		logger.Errorf("failed to read request body, err: %v", err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 	defer req.Body.Close()
@@ -90,9 +90,8 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	startTime, endTime, err := getTimeFromQuery(query)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to parse start or end time, err: %s", err)
-		logger.Error(errMsg)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		logger.Warnf("failed to parse startTime or endTime: %v", err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 
@@ -106,26 +105,25 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	}
 	if format == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("spy: %s data is not supported, may be supported in the future :)", spyName)
-		logger.Error(errMsg)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		err = errors.Errorf("spyName '%s' is not supported", spyName)
+		logger.Warn(err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 
-	token := getBearerToken(req)
+	token := define.TokenFromHttpRequest(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		errMsg := fmt.Sprintf("failed to get token in profiles ingestion from %s", ip)
-		logger.Error(errMsg)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(errMsg))
+		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 
 	f, err := parseForm(req, buf.Bytes())
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("failed to parse boundary, err: %s, token: %s", err, token)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		logger.Warnf("failed to parse boundary, token=%s, err: %v", token, err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 	defer func() {
@@ -136,8 +134,8 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	origin, err := convertToOrigin(spyName, f)
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
-		logger.Errorf("read profile failed from %s, err: %s, token: %s", ip, err, token)
-		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusBadRequest, []byte(err.Error()))
+		logger.Warnf("read profile failed, ip=%s, token=%s, err: %v", ip, token, err)
+		receiver.WriteErrResponse(w, define.ContentTypeJson, http.StatusBadRequest, err)
 		return
 	}
 
@@ -168,7 +166,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		err = errors.Wrapf(err, "run pre-check %s failed, code=%d, ip=%s", processorName, code, ip)
 		logger.WarnRate(time.Minute, r.Token.Original, err)
-		receiver.WriteResponse(w, define.ContentTypeJson, int(code), []byte(err.Error()))
+		receiver.WriteErrResponse(w, define.ContentTypeJson, int(code), err)
 		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordProfiles, processorName, r.Token.Original, code)
 		return
 	}
@@ -188,25 +186,35 @@ func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {
 	return multipart.NewReader(bytes.NewReader(body), boundary).ReadForm(32 << 20)
 }
 
-func getBearerToken(req *http.Request) string {
-	token := strings.Split(req.Header.Get("Authorization"), "Bearer ")
-	if len(token) < 2 {
-		return ""
+const nanoTimestamp2020 = 1577836800000000000 // nanoseconds for 2020-01-01 00:00:00 +0000 UTC
+// parseTime Used to parse timestamp format, compatible with seconds and nanosecond formats
+// 2020-01-01 00:00:00 +0000 UTC
+// 1577836800           // seconds
+// 1577836800000        // milliseconds
+// 1577836800000000     // microseconds
+// 1577836800000000000  // nanoseconds
+// if the timestamp is greater than 1577836800000000000, it must be nanosecond format
+// Notice: only use to parse pyroscope time format, do not copy to other place
+func parseTime(timestamp int64) time.Time {
+	if timestamp > nanoTimestamp2020 {
+		return time.Unix(0, timestamp)
+	} else {
+		return time.Unix(timestamp, 0)
 	}
-	return token[1]
 }
 
 func getTimeFromQuery(query url.Values) (time.Time, time.Time, error) {
+	var zero time.Time
 	startTs, err := strconv.ParseInt(query.Get("from"), 10, 64)
 	if err != nil {
-		return time.Time{}, time.Time{}, err
+		return zero, zero, err
 	}
 	endTs, err := strconv.ParseInt(query.Get("until"), 10, 64)
 	if err != nil {
-		return time.Time{}, time.Time{}, err
+		return zero, zero, err
 	}
 
-	return time.Unix(startTs, 0), time.Unix(endTs, 0), nil
+	return parseTime(startTs), parseTime(endTs), nil
 }
 
 func getFormatBySpy(spyName string) string {
@@ -273,23 +281,10 @@ func getAppNameAndTags(req *http.Request) (string, map[string]string) {
 	for _, pair := range pairs {
 		kv := strings.SplitN(pair, "=", 2)
 		if len(kv) == 2 {
-			if !contains(ignoredTagNames, kv[0]) {
+			if !slices.Contains(ignoredTagNames, kv[0]) {
 				reportTags[kv[0]] = kv[1]
 			}
 		}
 	}
 	return parts[0], reportTags
-}
-
-func contains[S ~[]E, E comparable](s S, v E) bool {
-	return index(s, v) >= 0
-}
-
-func index[S ~[]E, E comparable](s S, v E) int {
-	for i := range s {
-		if v == s[i] {
-			return i
-		}
-	}
-	return -1
 }

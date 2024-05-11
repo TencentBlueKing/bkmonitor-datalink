@@ -16,7 +16,6 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/valyala/fastjson"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"
@@ -75,12 +74,12 @@ type Processor struct {
 	// Metric discover
 	metricProcessor MetricProcessor
 
-	logger monitorLogger.Logger
+	logger   monitorLogger.Logger
+	baseInfo core.BaseInfo
 }
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
 	exist, err := p.proxy.Exist(storage.ExistRequest{Target: storage.BloomFilter, Key: event.TraceId})
-
 	if err != nil {
 		p.logger.Warnf(
 			"Attempt to retrieve traceMeta from Bloom-filter failed, "+
@@ -96,9 +95,8 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 }
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
-	event.Spans = append(event.Spans, exists...)
 	for _, s := range exists {
-		event.Graph.AddNode(&Node{StandardSpan: s})
+		event.Graph.AddNode(Node{StandardSpan: *s})
 	}
 }
 
@@ -170,7 +168,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.QueryEsReturnEmpty)
 		return spans
 	}
-	originSpans, err := p.recoverSpans(spanBytes.([]byte))
+	originSpans, err := p.recoverSpans(spanBytes.([]map[string]any))
 	if err != nil {
 		p.logger.Errorf(
 			"The data structure in ES is inconsistent, this data will be ignored. traceId: %s. error: %s ",
@@ -184,16 +182,11 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	return spans
 }
 
-func (p *Processor) recoverSpans(originSpans []byte) ([]*StandardSpan, error) {
+func (p *Processor) recoverSpans(originSpans []map[string]any) ([]*StandardSpan, error) {
 	var res []*StandardSpan
-	v, _ := fastjson.ParseBytes(originSpans)
-	spans, err := v.Array()
-	if err != nil {
-		return nil, err
-	}
 
-	for _, s := range spans {
-		res = append(res, ToStandardSpan(s))
+	for _, s := range originSpans {
+		res = append(res, ToStandardSpanFromMapping(s))
 	}
 
 	return res, nil
@@ -205,7 +198,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	graph.RefreshEdges()
 
 	// discover metrics of relation and remote-write to Prometheus
-	p.metricProcessor.process(receiver, event, graph)
+	p.metricProcessor.process(receiver, graph)
 
 	nodeDegrees := graph.NodeDepths()
 
@@ -218,7 +211,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	kindCategoryStatistics := initKindCategoryStatistics()
 	collections := make(map[string][]string, len(core.StandardFields))
 
-	for _, span := range event.Spans {
+	for _, span := range event.Graph.Nodes {
 		if svrName := span.GetFieldValue(core.ServiceNameField); svrName != "" {
 			services.Add(svrName)
 		}
@@ -242,9 +235,9 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	var rootSpan Node
 	if len(nodeDegrees) != 0 {
 		sort.Slice(nodeDegrees, sortNode(nodeDegrees))
-		rootSpan = *nodeDegrees[0].Node
+		rootSpan = nodeDegrees[0].Node
 	} else {
-		rootSpan = Node{StandardSpan: &StandardSpan{}}
+		rootSpan = Node{StandardSpan: StandardSpan{}}
 	}
 
 	// Root Service Span
@@ -258,12 +251,12 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 	var rSc string
 	var rootServiceName string
 	if len(calledKindSpans) != 0 {
-		rootServiceSpan = *calledKindSpans[0].Node
+		rootServiceSpan = calledKindSpans[0].Node
 		rootServiceCategory, _ := inferCategory(rootServiceSpan.Collections)
 		rSc = string(rootServiceCategory)
 		rootServiceName = rootServiceSpan.GetFieldValue(core.ServiceNameField)
 	} else {
-		rootServiceSpan = Node{StandardSpan: &StandardSpan{}}
+		rootServiceSpan = Node{StandardSpan: StandardSpan{}}
 	}
 	// status code of trace originates from http/rpc
 	var statusCodeOptional int
@@ -278,16 +271,15 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 		foundStatusCode = true
 	}
 
-	baseInfo := core.GetMetadataCenter().GetBaseInfo(p.dataId)
 	res := ProcessResult{
-		BizId:               baseInfo.BkBizId,
-		BizName:             baseInfo.BkBizName,
-		AppId:               baseInfo.AppId,
-		AppName:             baseInfo.AppName,
+		BizId:               p.baseInfo.BkBizId,
+		BizName:             p.baseInfo.BkBizName,
+		AppId:               p.baseInfo.AppId,
+		AppName:             p.baseInfo.AppName,
 		TraceId:             event.TraceId,
 		HierarchyCount:      graph.LongestPath() + 1,
 		ServiceCount:        len(services.ToSlice()),
-		SpanCount:           len(event.Spans),
+		SpanCount:           event.Graph.Length(),
 		MinStartTime:        startTimes[0],
 		MaxEndTime:          endTimes[len(endTimes)-1],
 		TraceDuration:       endTimes[len(endTimes)-1] - startTimes[0],
@@ -319,7 +311,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 
 func (p *Processor) sendStorageRequests(receiver chan<- storage.SaveRequest, result ProcessResult, event Event) {
 	if p.config.enabledInfoCache {
-		spanBytes, _ := jsonx.Marshal(event.Spans)
+		spanBytes, _ := jsonx.Marshal(event.Graph.StandardSpans())
 		receiver <- storage.SaveRequest{
 			Target: storage.Cache,
 			Data: storage.CacheStorageData{
@@ -450,6 +442,7 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 type ProcessorOptions struct {
 	enabledInfoCache bool
 	traceEsQueryRate int
+	metricSampleRate int
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -467,6 +460,13 @@ func EnabledTraceInfoCache(b bool) ProcessorOption {
 func TraceEsQueryRate(r int) ProcessorOption {
 	return func(options *ProcessorOptions) {
 		options.traceEsQueryRate = r
+	}
+}
+
+// MetricSampleRate If the current limit value > indicator, relation index will not be calculated for trace.
+func MetricSampleRate(r int) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.metricSampleRate = r
 	}
 }
 
@@ -489,6 +489,7 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId),
+		metricProcessor: newMetricProcessor(dataId, opts.metricSampleRate),
+		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

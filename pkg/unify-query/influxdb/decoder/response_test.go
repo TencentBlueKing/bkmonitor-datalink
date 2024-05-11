@@ -24,11 +24,13 @@ func TestMSGPack(t *testing.T) {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/x-msgpack")
-	resp, err := dec.Decode(ctx, data)
+	var resp = new(Response)
+	size, err := dec.Decode(ctx, data, resp)
 	if err != nil {
 		panic(err)
 	}
-	if resp == nil {
+	if resp != nil {
+		fmt.Println(size)
 		fmt.Println(resp)
 	}
 
@@ -42,11 +44,13 @@ func TestJSON(t *testing.T) {
 		panic(err)
 	}
 	dec, _ := GetDecoder("application/json")
-	resp, err := dec.Decode(ctx, data)
+	var resp = new(Response)
+	size, err := dec.Decode(ctx, data, resp)
 	if err != nil {
 		panic(err)
 	}
-	if resp == nil {
+	if resp != nil {
+		fmt.Println(size)
 		fmt.Println(resp)
 	}
 }

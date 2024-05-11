@@ -46,6 +46,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -192,7 +193,7 @@ func (b BcsClusterInfoSvc) UpdateBcsClusterCloudIdConfig() error {
 		return errors.New("BCSClusterInfo obj can not be nil")
 	}
 	// 非running状态和已有云区域id则不处理
-	if b.Status != models.BcsClusterStatusRunning || b.BkCloudId != nil {
+	if stringx.StringInSlice(b.Status, []string{models.BcsClusterStatusRunning, models.BcsRawClusterStatusRunning}) || b.BkCloudId != nil {
 		return nil
 	}
 
@@ -423,7 +424,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		ApiKeyType:        "authorization",
 		ApiKeyContent:     cfg.BkApiBcsApiGatewayToken,
 		ApiKeyPrefix:      "Bearer",
-		Status:            models.BcsClusterStatusRunning,
+		Status:            models.BcsRawClusterStatusRunning,
 		IsSkipSslVerify:   true,
 		BkEnv:             &bkEnv,
 		Creator:           creator,
@@ -1245,7 +1246,7 @@ func (b BcsClusterInfoSvc) RefreshClusterResource() error {
 	// 根据项目查询项目下资源的变化
 	var metadataClusters []string
 	var bcsClusterInfoList []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.ClusterID).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+	if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.ClusterID).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).All(&bcsClusterInfoList); err != nil {
 		return errors.Wrapf(err, "query BCSClusterInfo with status [%s] failed", models.BcsClusterStatusRunning)
 	}
 	for _, c := range bcsClusterInfoList {
@@ -1433,7 +1434,7 @@ func (b BcsClusterInfoSvc) getClusterDataIds(clusterIdList []string) ([]uint, er
 	db := mysql.GetDBSession().DB
 	var clusterList []bcs.BCSClusterInfo
 	if len(clusterIdList) != 0 {
-		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.K8sEventDataID).StatusEq(models.BcsClusterStatusRunning).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
+		if err := bcs.NewBCSClusterInfoQuerySet(db).Select(bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID, bcs.BCSClusterInfoDBSchema.K8sEventDataID).StatusNotIn(models.BcsClusterStatusDeleted, models.BcsRawClusterStatusDeleted).ClusterIDIn(clusterIdList...).All(&clusterList); err != nil {
 			return nil, errors.Wrapf(err, "query BCSClusterInfo with cluster_id [%v] failed", clusterList)
 		}
 	}

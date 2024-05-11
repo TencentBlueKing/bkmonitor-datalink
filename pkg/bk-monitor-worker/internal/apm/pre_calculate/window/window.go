@@ -10,10 +10,10 @@
 package window
 
 import (
+	"reflect"
 	"strconv"
-	"strings"
 
-	"github.com/valyala/fastjson"
+	"github.com/bytedance/sonic"
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -45,68 +45,143 @@ type Span struct {
 	StartTime    int            `json:"start_time"`
 }
 
-func ToStandardSpan(originSpan *fastjson.Value) *StandardSpan {
-	standardSpan := StandardSpan{
-		TraceId:      string(originSpan.GetStringBytes("trace_id")),
-		SpanId:       string(originSpan.GetStringBytes("span_id")),
-		SpanName:     string(originSpan.GetStringBytes("span_name")),
-		ParentSpanId: string(originSpan.GetStringBytes("parent_span_id")),
-		StartTime:    originSpan.GetInt("start_time"),
-		EndTime:      originSpan.GetInt("end_time"),
-		ElapsedTime:  originSpan.GetInt("elapsed_time"),
-		StatusCode:   core.SpanStatusCode(originSpan.Get("status").GetInt("code")),
-		Kind:         originSpan.GetInt("kind"),
+func init() {
+	var v OriginMessage
+	err := sonic.Pretouch(reflect.TypeOf(v))
+	if err != nil {
+		panic(err)
 	}
-	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
-	return &standardSpan
 }
 
-func exactStandardFields(standardSpan StandardSpan, originSpan *fastjson.Value) map[string]string {
-	// Most spans do not have half of standard fields, capacity is converted to half
-	res := make(map[string]string, len(core.StandardFields)/2)
+func ToStandardSpan(originSpan Span) StandardSpan {
+	standardSpan := StandardSpan{
+		TraceId:      originSpan.TraceId,
+		SpanId:       originSpan.SpanId,
+		SpanName:     originSpan.SpanName,
+		ParentSpanId: originSpan.ParentSpanId,
+		StartTime:    originSpan.StartTime,
+		EndTime:      originSpan.EndTime,
+		ElapsedTime:  originSpan.ElapsedTime,
+		StatusCode:   originSpan.Status.Code,
+		Kind:         originSpan.Kind,
+	}
+	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
+	return standardSpan
+}
+
+func exactStandardFields(standardSpan StandardSpan, originSpan Span) map[string]string {
+	res := make(map[string]string)
+
+	attrVal := originSpan.Attributes
+	resourceVal := originSpan.Resource
 
 	for _, f := range core.StandardFields {
+		var valueStr string
+		found := false
+
 		switch f.Source {
-		case core.SourceAttributes:
-			v := originSpan.Get("attributes").Get(f.Key)
-			if v != nil {
-				switch v.Type() {
-				case fastjson.TypeNumber:
-					originV, _ := v.Float64()
-					res[f.FullKey] = strconv.FormatFloat(originV, 'f', -1, 64)
-				default:
-					res[f.FullKey] = strings.Trim(v.String(), `"`)
-				}
+		case core.SourceAttributes, core.SourceResource:
+			targetVal := attrVal
+			if f.Source == core.SourceResource {
+				targetVal = resourceVal
 			}
-		case core.SourceResource:
-			v := originSpan.Get("resource").Get(f.Key)
-			if v != nil {
-				switch v.Type() {
-				case fastjson.TypeNumber:
-					originV, _ := v.Float64()
-					res[f.FullKey] = strconv.FormatFloat(originV, 'f', -1, 64)
+
+			if v := targetVal[f.Key]; v != nil {
+				found = true
+				switch v.(type) {
+				case float64:
+					valueStr = strconv.FormatFloat(v.(float64), 'f', -1, 64)
 				default:
-					res[f.FullKey] = strings.Trim(v.String(), `"`)
+					valueStr = v.(string)
 				}
 			}
 		case core.SourceOuter:
+			found = true
 			switch f.FullKey {
 			case "kind":
-				res[f.FullKey] = strconv.Itoa(standardSpan.Kind)
+				valueStr = strconv.Itoa(standardSpan.Kind)
 			case "span_name":
-				res[f.FullKey] = standardSpan.SpanName
+				valueStr = standardSpan.SpanName
 			default:
 				logger.Warnf("Try to get a standard field: %s that does not exist. Is the standard field been updated?", f.Key)
+				found = false
 			}
 		}
+
+		if found {
+			res[f.FullKey] = valueStr
+		}
 	}
+
+	return res
+}
+
+func ToStandardSpanFromMapping(originSpan map[string]any) *StandardSpan {
+	standardSpan := StandardSpan{
+		TraceId:      originSpan["trace_id"].(string),
+		SpanId:       originSpan["span_id"].(string),
+		SpanName:     originSpan["span_name"].(string),
+		ParentSpanId: originSpan["parent_span_id"].(string),
+		StartTime:    int(originSpan["start_time"].(float64)),
+		EndTime:      int(originSpan["end_time"].(float64)),
+		ElapsedTime:  int(originSpan["elapsed_time"].(float64)),
+		StatusCode:   core.SpanStatusCode(int(originSpan["status"].(map[string]any)["code"].(float64))),
+		Kind:         int(originSpan["kind"].(float64)),
+	}
+
+	standardSpan.Collections = exactStandardFieldsFromMapping(standardSpan, originSpan)
+	return &standardSpan
+}
+
+func exactStandardFieldsFromMapping(standardSpan StandardSpan, originSpan map[string]any) map[string]string {
+	res := make(map[string]string)
+	attrVal := originSpan["attributes"].(map[string]any)
+	resourceVal := originSpan["resource"].(map[string]any)
+
+	for _, f := range core.StandardFields {
+		var valueStr string
+		var found bool
+		var targetVal map[string]any
+
+		if f.Source == core.SourceAttributes || f.Source == core.SourceResource {
+			targetVal = attrVal
+			if f.Source == core.SourceResource {
+				targetVal = resourceVal
+			}
+
+			if v, ok := targetVal[f.Key]; ok {
+				found = true
+				switch v := v.(type) {
+				case float64:
+					valueStr = strconv.FormatFloat(v, 'f', -1, 64)
+				case string:
+					valueStr = v
+				}
+			}
+		} else if f.Source == core.SourceOuter {
+			found = true
+			switch f.FullKey {
+			case "kind":
+				valueStr = strconv.Itoa(standardSpan.Kind)
+			case "span_name":
+				valueStr = standardSpan.SpanName
+			default:
+				logger.Warnf("Try to get a standard field: %s that does not exist. Is the standard field been updated?", f.Key)
+				found = false
+			}
+		}
+
+		if found {
+			res[f.FullKey] = valueStr
+		}
+	}
+
 	return res
 }
 
 type CollectTrace struct {
 	TraceId string
-	Spans   []*StandardSpan
-	Graph   *DiGraph
+	Graph   DiGraph
 
 	Runtime Runtime
 }

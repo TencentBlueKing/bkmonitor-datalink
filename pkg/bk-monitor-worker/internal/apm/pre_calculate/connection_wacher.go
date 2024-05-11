@@ -120,5 +120,5 @@ func (p *Precalculate) StartByConnection(conn Connection, _ ...PrecalculateOptio
 			},
 		},
 	)
-	p.readySignalChan <- readySignal{dataId: conn.DataId, config: p.defaultConfig}
+	p.readySignalChan <- readySignal{startInfo: StartInfo{DataId: conn.DataId}, config: p.defaultConfig}
 }

@@ -314,7 +314,7 @@ $ make test
 
 * Fork 本仓库并新建分支，使用 `make dev` 可以运行程序。 
 * 使用 `make install` 按照前置检查工具。
-* 提交代码前确保已经执行代码检查及单测（`make lint && make test`），单测覆盖度不得低于 85%。
+* 提交代码前确保已经执行代码检查及单测（`make lint && make test`）。
 * 中文文档或注释书写请参考 [中文技术文档的写作规范](https://github.com/ruanyf/document-style-guide)。
 * 单测请尽量参照项目整体风格，包括命名，书写方式。
 * 如果新增 **recevier** 请提供 [example](https://github.com/TencentBlueKing/bkmonitor-datalink/tree/master/pkg/collector/example) 运行示例。

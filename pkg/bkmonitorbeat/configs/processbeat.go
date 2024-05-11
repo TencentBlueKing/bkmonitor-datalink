@@ -41,6 +41,7 @@ type ProcessbeatConfig struct {
 	MustHostIDExist      bool                    `config:"must_host_id_exist" yaml:"must_host_id_exist"`
 	MonitorCollectorPath string                  `config:"monitor_collector_path" yaml:"monitor_collector_path"`
 	ConvergePID          bool                    `config:"converge_pid" yaml:"converge_pid"`
+	MaxNoListenPorts     int                     `config:"max_nolisten_ports" yaml:"max_nolisten_ports"`
 
 	namestore map[string][]ProcessbeatPortConfig // name -> configs
 	confs     map[string]ProcessbeatPortConfig   // id -> config

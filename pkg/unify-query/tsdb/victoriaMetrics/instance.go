@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -336,7 +335,7 @@ func (i *Instance) vmQuery(
 		address, body, sql,
 	)
 
-	resp, err := i.Curl.Request(
+	size, err := i.Curl.Request(
 		ctx, curl.Post,
 		curl.Options{
 			UrlPath: address,
@@ -344,27 +343,22 @@ func (i *Instance) vmQuery(
 			Headers: map[string]string{
 				ContentType: i.ContentType,
 			},
-			Timeout: i.Timeout,
 		},
+		data,
 	)
 	if err != nil {
 		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf(resp.Status)
 	}
 
 	queryCost := time.Since(startAnaylize)
+
+	span.Set("query-cost", queryCost.String())
+	span.Set("response-size", size)
+
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
 	)
-
-	err = json.NewDecoder(resp.Body).Decode(data)
-	if err != nil {
-		return err
-	}
-
+	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 	return nil
 }
 

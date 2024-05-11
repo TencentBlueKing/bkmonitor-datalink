@@ -1070,7 +1070,6 @@ bk-collector:
       type: "profiles"
       processors:
         - "token_checker/aes256"
-        - "sampler/drop"
         - "pprof_translator/common"
 
     - name: "profiles_pipeline/common"

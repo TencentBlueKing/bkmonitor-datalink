@@ -31,6 +31,15 @@ var (
 		},
 		[]string{"data_id", "topic"},
 	)
+	// apmPreCalcNotifierRejectMessageCount apm预计算任务拒绝数量(触发限流)
+	apmPreCalcNotifierRejectMessageCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "notifier_reject_message_count",
+			Help:      "notifier reject message count",
+		},
+		[]string{"data_id", "topic"},
+	)
 	apmPreCalcParseSpanDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: ApmNamespace,
@@ -163,7 +172,11 @@ var (
 	// RelationMetricSystem 主机关联指标
 	RelationMetricSystem       = "system_flow"
 	apmRelationMetricFindCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{},
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "relation_metric_find_count",
+			Help:      "relation metric find count",
+		},
 		[]string{"data_id", "metric"},
 	)
 )
@@ -211,6 +224,11 @@ func RecordApmPreCalcSemaphoreTotal(dataId, scene string, n int) {
 // AddApmNotifierReceiveMessageCount apm预计算任务接收数量指标 + 1
 func AddApmNotifierReceiveMessageCount(dataId, topic string) {
 	apmPreCalcNotifierReceiveMessageCount.WithLabelValues(dataId, topic).Inc()
+}
+
+// AddApmPreCalcNotifierRejectMessageCount apm预计算任务拒绝数量指标 + 1
+func AddApmPreCalcNotifierRejectMessageCount(dataId, topic string) {
+	apmPreCalcNotifierRejectMessageCount.WithLabelValues(dataId, topic).Inc()
 }
 
 func RecordApmPreCalcWindowTraceTotal(dataId string, subWindowId int, n int) {

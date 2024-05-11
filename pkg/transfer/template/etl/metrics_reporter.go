@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
@@ -43,7 +44,17 @@ var (
 	reconcilePeriod   = time.Duration(7200+rand.Intn(10)) * time.Minute // reconcile 周期为 5d+[0, 10)m
 	timeUnix          = func() int64 { return time.Now().Unix() }
 	syncPeriod        = time.Second * 5
+
+	monitorMetricsReporterRecords = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: define.AppName,
+		Name:      "metrics_reporter_records",
+		Help:      "Metrics reporter records",
+	}, []string{"id"})
 )
+
+func init() {
+	prometheus.MustRegister(monitorMetricsReporterRecords)
+}
 
 // DimensionsEntity 维度信息 保存到 redis 中的结构
 type DimensionsEntity struct {
@@ -73,6 +84,7 @@ type MetricsReportProcessor struct {
 	redisStore RedisKV
 	once       sync.Once
 
+	dataid            int
 	redisMetricKey    string             // metricTimeMap 数据存放在 redis 中 sorted set key
 	redisDimensionKey string             // metricDimensionsMap 数据存放在 redis 中 hash key
 	dimensionOpt      DimensionValuesOpt // 需要上报的维度值列表
@@ -326,6 +338,7 @@ func (p *MetricsReportProcessor) flushRedis() error {
 	if err := p.redisStore.ZAddBatch(p.redisMetricKey, cloned); err != nil {
 		return fmt.Errorf("%v refresh redis failed, ZAddBatch err: %+v", p, err)
 	}
+	monitorMetricsReporterRecords.WithLabelValues(strconv.Itoa(p.dataid)).Set(float64(len(cloned)))
 
 	localMetrics := make([]string, 0, len(cloned))
 	for metric := range cloned {
@@ -471,6 +484,7 @@ func newMetricsReportProcessor(ctx context.Context, name string) *MetricsReportP
 
 	processor := &MetricsReportProcessor{
 		ctx:               ctx,
+		dataid:            pipelineConfig.DataID,
 		BaseDataProcessor: define.NewBaseDataProcessor(name),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, pipelineConfig),
 		redisMetricKey:    redisMetricKeyPrefix + strconv.Itoa(pipelineConfig.DataID),

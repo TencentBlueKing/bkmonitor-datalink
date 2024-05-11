@@ -27,19 +27,19 @@ type Converter func(io.ReadCloser) (any, error)
 
 var (
 	BytesConverter Converter = func(body io.ReadCloser) (any, error) {
+		defer body.Close()
+
 		var resInstance EsQueryResult
 		if err := jsonx.Decode(body, &resInstance); err != nil {
 			return nil, err
 		}
 
-		var resMap []map[string]any
+		resMap := make([]map[string]any, 0, len(resInstance.Hits.Hits))
 		for _, item := range resInstance.Hits.Hits {
 			resMap = append(resMap, item.Source)
 		}
-		if resMap == nil {
-			return nil, nil
-		}
-		return jsonx.Marshal(resMap)
+
+		return resMap, nil
 	}
 
 	AggsCountConvert Converter = func(body io.ReadCloser) (any, error) {
@@ -144,6 +144,7 @@ func (e *esStorage) Save(data EsStorageData) error {
 		}
 	}()
 
+	buf.Reset()
 	return err
 }
 
@@ -161,19 +162,12 @@ func (e *esStorage) SaveBatch(items []EsStorageData) error {
 
 	req := esapi.BulkRequest{Index: e.getSaveIndexName(e.indexName), Body: &buf}
 	response, err := req.Do(e.ctx, e.client)
-	defer func() {
-		if response != nil {
-			err = response.Body.Close()
-			if err != nil {
-				logger.Warnf("[SaveBatch] failed to close the body")
-			}
-		}
-	}()
-
+	buf.Reset()
 	if err != nil {
 		return err
 	}
 
+	defer response.Body.Close()
 	if response.IsError() {
 		return fmt.Errorf("bulk insert returned an abnormal status code： %d", response.StatusCode)
 	}
@@ -193,17 +187,8 @@ func (e *esStorage) Query(data any) (any, error) {
 		e.client.Search.WithContext(e.ctx),
 		e.client.Search.WithIndex(e.indexName),
 		e.client.Search.WithBody(&buf),
-		e.client.Search.WithTrackTotalHits(true),
+		e.client.Search.WithTrackTotalHits(false),
 	)
-	defer func() {
-		if res != nil {
-			err = res.Body.Close()
-			if err != nil {
-				logger.Warnf("[Query] failed to close the body")
-			}
-		}
-	}()
-
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +197,8 @@ func (e *esStorage) Query(data any) (any, error) {
 		return nil, errors.New(res.String())
 	}
 
+	defer res.Body.Close()
+	buf.Reset()
 	return body.Converter(res.Body)
 }
 

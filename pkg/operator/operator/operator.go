@@ -942,8 +942,7 @@ func (c *Operator) handleDataIDNotify() {
 			} else {
 				c.pusher.StartOrUpdate(*info, ConfPodName)
 			}
-
-			logger.Infof("reload discovers(dataid), count=%d, take: %v", count, time.Since(start))
+			logger.Infof("reload discovers, count=%d, take: %v", count, time.Since(start))
 		}
 	}
 }

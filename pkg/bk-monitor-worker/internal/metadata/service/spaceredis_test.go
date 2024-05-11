@@ -297,3 +297,33 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
+
+func TestComposeEsTableIdDetail(t *testing.T) {
+	defaultStorageClusterId := 1
+	tests := []struct {
+		name string
+		tableId string
+		expectedTableId string
+	}{
+		{"table_id_with_dot", "test.demo", "test.demo"},
+		{"table_id_without_dot", "test_demo", "test_demo.__default__"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, uint(defaultStorageClusterId))
+			assert.Equal(t, tt.expectedTableId, actualTableId)
+		})
+	}
+
+	// 检验 key
+	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", uint(defaultStorageClusterId))
+	var detail map[string]any
+	err := jsonx.UnmarshalString(detailStr, &detail)
+	assert.NoError(t, err)
+	expectedKey := mapset.NewSet[string]("storage_id", "db", "measurement")
+	actualKey := mapset.NewSet[string]()
+	for key, _ := range detail {
+		actualKey.Add(key)
+	}
+	assert.True(t, expectedKey.Equal(actualKey))
+}

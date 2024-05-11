@@ -11,6 +11,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -192,7 +193,7 @@ func exportChart(x, y []float64, duration time.Duration, title string) {
 }
 
 func startBenchmark(count, magnitude int, title string, options BloomOptions) {
-	bloomFilter, _ := newLayersCapDecreaseBloomClient(options)
+	bloomFilter, _ := newLayersCapDecreaseBloomClient(context.TODO(), options)
 	xValues, yValues, duration := readAndWrite(bloomFilter, count, magnitude)
 	exportChart(xValues, yValues, duration, title)
 }

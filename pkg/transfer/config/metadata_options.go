@@ -76,6 +76,8 @@ const (
 	PipelineConfigOptMaxQps = "max_qps"
 	// PipelineConfigDropEmptyMetrics 是否丢弃空 metrics
 	PipelineConfigDropEmptyMetrics = "drop_empty_metrics"
+	// PipelineConfigDisableMetricsReporter 是否关闭 metrics_reporter 特性
+	PipelineConfigDisableMetricsReporter = "disable_metrics_reporter"
 
 	// 日志类
 	// PipelineConfigOptSeparatorNode : "字段提取节点路径"

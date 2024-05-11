@@ -12,14 +12,15 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/spf13/viper"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 func TestInstance_queryReference(t *testing.T) {
@@ -133,7 +134,9 @@ func TestInstance_queryReference(t *testing.T) {
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
 						Name: Percentiles,
-						Args: []interface{}{},
+						Args: []interface{}{
+							50.0, 90.0,
+						},
 					},
 				},
 				IsNotPromQL: true,

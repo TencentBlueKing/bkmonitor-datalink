@@ -27,6 +27,10 @@ victoria_metrics:
   secret:
   token:
 influxdb:
+  ping:
+    count: 3
+    period: 20s
+    timeout: 5s
   target_address: http://127.0.0.1:8086
   timeout: 1m
   query_raw:

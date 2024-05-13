@@ -13,6 +13,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
@@ -26,6 +27,7 @@ type PeriodicTask struct {
 	Cron    string
 	Handler processor.HandlerFunc
 	Payload []byte
+	Option  []task.Option
 }
 
 var (
@@ -182,8 +184,20 @@ type PeriodicTaskScheduler struct {
 
 func (p *PeriodicTaskScheduler) Run() {
 	for taskName, config := range p.fullTaskMapping {
-		opts := []task.Option{
-			task.TaskID(taskName),
+		opts := config.Option
+		// 添加 task id
+		opts = append(opts, task.TaskID(taskName))
+		// NOTE: 现阶段所有任务设置默认全局唯一
+		uniqueTTLExist := false
+		for _, opt := range opts {
+			if opt.Type() == task.UniqueOpt {
+				uniqueTTLExist = true
+				break
+			}
+		}
+		// 如果不存在配置，则添加
+		if uniqueTTLExist == false {
+			opts = append(opts, task.Unique(common.DefaultUniqueTTL))
 		}
 
 		taskInstance := task.NewTask(taskName, config.Payload, opts...)

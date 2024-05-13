@@ -125,7 +125,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	}
 
 	if !p.traceEsQueryLimiter.Allow() {
-		logger.Warnf(
+		logger.Debugf(
 			"[NOTE] dataId: %s This es query exceeds the threshold %d. This request will be discarded.",
 			p.dataId,
 			p.config.traceEsQueryRate,

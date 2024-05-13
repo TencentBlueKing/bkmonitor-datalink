@@ -276,7 +276,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkTableIds...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().TableIdIn(chunkTableIds...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -287,7 +287,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	var dataLabelList []string
 	for _, dl := range dataLabels {
-		dataLabelList = append(dataLabelList, dl.TableId)
+		dataLabelList = append(dataLabelList, *dl.DataLabel)
 	}
 	return dataLabelList, nil
 }

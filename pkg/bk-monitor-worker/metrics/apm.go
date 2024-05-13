@@ -172,7 +172,11 @@ var (
 	// RelationMetricSystem 主机关联指标
 	RelationMetricSystem       = "system_flow"
 	apmRelationMetricFindCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{},
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "relation_metric_find_count",
+			Help:      "relation metric find count",
+		},
 		[]string{"data_id", "metric"},
 	)
 )

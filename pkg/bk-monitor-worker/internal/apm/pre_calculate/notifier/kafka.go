@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/valyala/fastjson"
+	"github.com/bytedance/sonic"
 	"github.com/xdg-go/scram"
 	"k8s.io/client-go/util/flowcontrol"
 
@@ -94,6 +94,7 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 				logger.Errorf("Failed to close ConsumerGroup, error: %s", err)
 			}
 			logger.Infof("ConsumerGroup stopped.")
+			close(k.handler.spans)
 			return
 		default:
 			if err := k.consumerGroup.Consume(k.ctx, []string{k.config.KafkaTopic}, k.handler); err != nil {
@@ -102,7 +103,6 @@ func (k *kafkaNotifier) Start(errorReceiveChan chan<- error) {
 			}
 		}
 	}
-
 }
 
 type consumeHandler struct {
@@ -130,10 +130,14 @@ func (c consumeHandler) Cleanup(_ sarama.ConsumerGroupSession) error {
 // Once the Messages() channel is closed, the Handler must finish its processing
 // loop and exit.
 func (c consumeHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-loop:
 	for {
 		select {
-		case msg := <-claim.Messages():
+		case msg, ok := <-claim.Messages():
+			if !ok {
+				logger.Warnf("kafka claim session chan closed, return")
+				return nil
+			}
+
 			if !c.limiter.TryAccept() {
 				logger.Errorf("[RateLimiter] Topic: %s reject the message, max qps: %d", c.topic, c.qps)
 				metrics.AddApmPreCalcNotifierRejectMessageCount(c.dataId, c.topic)
@@ -141,27 +145,32 @@ loop:
 			}
 
 			metrics.AddApmNotifierReceiveMessageCount(c.dataId, c.topic)
-			session.MarkMessage(msg, "")
-			c.sendSpans(msg.Value)
+			if session != nil {
+				c.sendSpans(msg.Value)
+				session.MarkMessage(msg, "")
+			}
 		case <-session.Context().Done():
 			logger.Infof("kafka consume handler session done. topic: %s groupId: %s", c.topic, c.groupId)
-			break loop
+			return nil
 		case <-c.ctx.Done():
 			logger.Infof("kafka consume handler context done. topic: %s groupId: %s", c.topic, c.groupId)
-			break loop
+			return nil
 		}
 	}
-	return nil
 }
 
 func (c consumeHandler) sendSpans(message []byte) {
 	start := time.Now()
 	var res []window.StandardSpan
-	v, _ := fastjson.ParseBytes(message)
-	items := v.GetArray("items")
 
-	for _, item := range items {
-		res = append(res, *window.ToStandardSpan(item))
+	var msg window.OriginMessage
+	if err := sonic.Unmarshal(message, &msg); err != nil {
+		logger.Errorf("kafka received a abnormal message! dataId: %s error: %s message: %s", c.dataId, err, message)
+		return
+	}
+
+	for _, item := range msg.Items {
+		res = append(res, window.ToStandardSpan(item))
 	}
 	metrics.RecordNotifierParseSpanDuration(c.dataId, c.topic, start)
 	c.spans <- res
@@ -225,6 +234,7 @@ func getConnectionSASLConfig(username, password string) *sarama.Config {
 	config := sarama.NewConfig()
 	config.Producer.Return.Successes = true
 	config.Version = sarama.V0_10_2_1
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
 
 	if username != "" && password != "" {
 		config.Net.SASL.Enable = true

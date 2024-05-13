@@ -39,15 +39,22 @@ var (
 	// DistributiveWindowWatchExpireInterval unit: ms. The duration of check expiration trace in window.
 	// If value is too small, the concurrent performance may be affected
 	DistributiveWindowWatchExpireInterval time.Duration
-
+	// DistributiveWindowHandleEventConcurrentCount Set the number of goroutine that processes event concurrently
+	// in each sub-window
+	DistributiveWindowHandleEventConcurrentCount int
 	// DistributiveWindowConcurrentExpirationMaximum Maximum number of concurrent expirations
 	DistributiveWindowConcurrentExpirationMaximum int
+	// DistributiveWindowSubWindowMappingMaxSpanCount Maximum number of span in mapping
+	DistributiveWindowSubWindowMappingMaxSpanCount int
+
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
 	// If this is enabled, the query frequency of elasticsearch is reduced.
 	EnabledTraceInfoCache int
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
+	// RelationMetricSampleRate rate of metric
+	RelationMetricSampleRate int
 	// StorageSaveRequestBufferSize Number of storage chan
 	StorageSaveRequestBufferSize int
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
@@ -102,7 +109,7 @@ var (
 )
 
 func initApmVariables() {
-	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 100000)
+	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
@@ -110,19 +117,22 @@ func initApmVariables() {
 	WindowExpireIntervalIncrement = GetValue("taskConfig.apmPreCalculate.window.expireIntervalIncrement", 60)
 	WindowNoDataMaxDuration = GetValue("taskConfig.apmPreCalculate.window.noDataMaxDuration", 2*time.Minute, viper.GetDuration)
 
-	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 10)
-	DistributiveWindowWatchExpireInterval = GetValue("taskConfig.apmPreCalculate.window.distributive.watchExpireInterval", 100*time.Millisecond, viper.GetDuration)
-	DistributiveWindowConcurrentExpirationMaximum = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentExpirationMaximum", 100000)
+	DistributiveWindowSubSize = GetValue("taskConfig.apmPreCalculate.window.distributive.subSize", 3)
+	DistributiveWindowWatchExpireInterval = GetValue("taskConfig.apmPreCalculate.window.distributive.watchExpireInterval", 500*time.Millisecond, viper.GetDuration)
+	DistributiveWindowHandleEventConcurrentCount = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentHandleCount", 50)
+	DistributiveWindowConcurrentExpirationMaximum = GetValue("taskConfig.apmPreCalculate.window.distributive.concurrentExpirationMaximum", 1000)
+	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
-	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 100000)
+	RelationMetricSampleRate = GetValue("taskConfig.apmPreCalculate.processor.relationMetricSampleRate", 100, viper.GetInt)
+	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)
 	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
-	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 1000)
-	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 500*time.Millisecond, viper.GetDuration)
+	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
+	StorageSaveHoldMaxDuration = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxDuration", 1*time.Second, viper.GetDuration)
 
-	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.1)
+	StorageBloomFpRate = GetValue("taskConfig.apmPreCalculate.storage.bloom.fpRate", 0.01)
 	StorageBloomNormalAutoClean = GetValue("taskConfig.apmPreCalculate.storage.bloom.normal.autoClean", 24*time.Hour, viper.GetDuration)
 	StorageBloomNormalOverlapResetDuration = GetValue("taskConfig.apmPreCalculate.storage.bloom.normalOverlap.resetDuration", 2*time.Hour, viper.GetDuration)
 	StorageBloomLayersBloomLayers = GetValue("taskConfig.apmPreCalculate.storage.bloom.layersBloom.layers", 5)
@@ -140,6 +150,5 @@ func initApmVariables() {
 
 	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
 	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
-	// todo 获取不到 headers
 	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
 }

@@ -33,7 +33,7 @@ type CombinedQueryParams struct {
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge MetricMerge `json:"metric_merge" example:"a"`
 
-	// OrderBy 弃用字段
+	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
 	OrderBy OrderBy `json:"order_by" swaggerignore:"true"`
 	// ResultColumns 指定保留返回字段值
 	ResultColumns []string `json:"result_columns" swaggerignore:"true"`

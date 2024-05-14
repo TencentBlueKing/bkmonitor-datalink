@@ -132,7 +132,7 @@ func (i *Instance) GetInstanceType() string {
 }
 
 type InstanceOption struct {
-	Url        string
+	Address    string
 	Username   string
 	Password   string
 	MaxSize    int
@@ -162,28 +162,33 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
-	if opt.Url == "" || opt.Username == "" || opt.Password == "" {
-		return nil, errors.New("empty es client options")
-	}
 	ins := &Instance{
 		ctx:     ctx,
 		timeout: opt.Timeout,
 		maxSize: opt.MaxSize,
 	}
 
-	cli, err := elastic.NewClient(
-		elastic.SetURL(opt.Url),
+	if opt.Address == "" {
+		return ins, errors.New("empty es client options")
+	}
+
+	cliOpts := []elastic.ClientOptionFunc{
+		elastic.SetURL(opt.Address),
 		elastic.SetSniff(false),
-		elastic.SetBasicAuth(opt.Username, opt.Password),
-	)
+	}
+	if opt.Username != "" && opt.Password != "" {
+		cliOpts = append(cliOpts, elastic.SetBasicAuth(opt.Username, opt.Password))
+	}
+
+	cli, err := elastic.NewClient(cliOpts...)
 	if err != nil {
-		return nil, err
+		return ins, err
 	}
 
 	if opt.MaxRouting > 0 {
 		err = pool.Tune(opt.MaxRouting)
 		if err != nil {
-			return nil, err
+			return ins, err
 		}
 	}
 
@@ -237,6 +242,10 @@ func (i *Instance) query(
 
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
+
+	if i.client == nil {
+		return nil, fmt.Errorf("es client is nil")
+	}
 
 	indexOptions, err := i.makeQueryOption(ctx, query, start, end)
 	if err != nil {
@@ -314,7 +323,14 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		Sort(Timestamp, true)
 
 	log.Infof(ctx, "es query index: %s", qo.index)
-	log.Infof(ctx, "es query size: %d, size: %d", qb.From, qb.Size)
+
+	order := fact.Order()
+
+	log.Infof(ctx, "es query order: %+v", order)
+
+	for key, asc := range order {
+		ss.Sort(key, asc)
+	}
 
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
@@ -336,22 +352,17 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	var (
 		name string
-		size int
 		agg  elastic.Aggregation
 	)
 
-	// size 如果为 0，则去 maxSize
-	if qb.Size > 0 {
-		size = qb.Size
-	} else {
-		size = i.maxSize
-	}
-
-	// 如果 判断是否走 PromQL 查询
-	if len(qb.AggregateMethodList) > 0 && !qb.IsNotPromQL {
-		name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList, qo.timeZone, size)
-	} else if len(qb.AggregateMethodList) > 0 {
-		name, agg, err = fact.EsAgg(qb.AggregateMethodList, size)
+	// 判断是否有聚合
+	if len(qb.AggregateMethodList) > 0 {
+		// 如果 判断是否走 PromQL 查询
+		if qb.IsNotPromQL {
+			name, agg, err = fact.EsAgg(qb.AggregateMethodList)
+		} else {
+			name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList)
+		}
 	}
 
 	if err != nil {
@@ -365,12 +376,25 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		ss.Aggregation(name, agg)
 	} else {
 		// 非聚合查询需要使用 from 和 size
-		ss = ss.From(qb.From).Size(size)
+		ss = fact.Size(ss)
+
+		log.Infof(ctx, "es query ftom: %d to size: %d", qb.From, fact.size)
 	}
 
 	sr, err := ss.Do(ctx)
 	if err != nil {
-		return nil, err
+		var (
+			e   *elastic.Error
+			msg strings.Builder
+		)
+		if errors.As(err, &e) {
+			for _, rc := range e.Details.RootCause {
+				msg.WriteString(fmt.Sprintf("%s: %s, ", rc.Index, rc.Reason))
+			}
+			return nil, errors.New(msg.String())
+		} else {
+			return nil, err
+		}
 	}
 
 	return sr, nil
@@ -395,7 +419,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		return
 	}
 
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping)
+	// size 如果为 0，则去 maxSize
+	var size int
+	if qb.Size > 0 {
+		size = qb.Size
+	} else {
+		size = i.maxSize
+	}
+
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone)
 
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
@@ -428,7 +460,14 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 		return
 	}
 
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping)
+	var size int
+	if qb.Size > 0 {
+		size = qb.Size
+	} else {
+		size = i.maxSize
+	}
+
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone)
 
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
@@ -468,6 +507,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 }
 
 func (i *Instance) getIndexes(ctx context.Context, aliases []string) ([]string, error) {
+
 	catAlias, err := i.client.CatAliases().Alias(aliases...).Do(ctx)
 	if err != nil {
 		return nil, err

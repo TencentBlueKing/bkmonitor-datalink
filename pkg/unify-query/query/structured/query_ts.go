@@ -40,6 +40,8 @@ type QueryTs struct {
 	QueryList []*Query `json:"query_list,omitempty"`
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
+	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
+	OrderBy OrderBy `json:"order_by,omitempty"`
 	// ResultColumns 指定保留返回字段值
 	ResultColumns []string `json:"result_columns,omitempty" swaggerignore:"true"`
 	// Start 开始时间：单位为毫秒的时间戳
@@ -126,9 +128,14 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	queryReference := make(metadata.QueryReference)
 	for _, qry := range q.QueryList {
+		// 时间复用
 		qry.Timezone = q.Timezone
 		qry.Start = q.Start
 		qry.End = q.End
+
+		// 排序复用
+		qry.OrderBy = q.OrderBy
+
 		// 如果 qry.Step 不存在去外部统一的 step
 		if qry.Step == "" {
 			qry.Step = q.Step
@@ -293,6 +300,8 @@ type Query struct {
 	// AlignInfluxdbResult 是否对齐开始时间
 	AlignInfluxdbResult bool `json:"align_result,omitempty"`
 
+	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
+	OrderBy OrderBy `json:"-,omitempty"`
 	// Start 保留字段，会被外面的 Start 覆盖
 	Start string `json:"-" swaggerignore:"true"`
 	// End 保留字段，会被外面的 End 覆盖
@@ -596,11 +605,17 @@ func (q *Query) BuildMetadataQuery(
 
 	query.AggregateMethodList = make([]metadata.AggrMethod, 0, len(q.AggregateMethodList))
 	for _, aggr := range q.AggregateMethodList {
+		var window time.Duration
+		if aggr.Window != "" {
+			window, _ = time.ParseDuration(string(aggr.Window))
+		}
 		query.AggregateMethodList = append(query.AggregateMethodList, metadata.AggrMethod{
 			Name:       aggr.Method,
 			Dimensions: aggr.Dimensions,
 			Without:    aggr.Without,
 			Args:       aggr.VArgsList,
+			Window:     window,
+			TimeZone:   q.Timezone,
 		})
 	}
 
@@ -668,6 +683,21 @@ func (q *Query) BuildMetadataQuery(
 			Function:       q.TimeAggregation.Function,
 			WindowDuration: windowDuration,
 		}
+	}
+	query.Orders = make(metadata.Orders)
+	for _, o := range q.OrderBy {
+		if len(o) == 0 {
+			continue
+		}
+
+		asc := true
+		name := o
+
+		if strings.HasPrefix(o, "-") {
+			asc = false
+			name = name[1:]
+		}
+		query.Orders[name] = asc
 	}
 
 	span.Set("query-source-type", query.SourceType)

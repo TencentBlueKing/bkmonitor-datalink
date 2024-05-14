@@ -34,7 +34,7 @@ func TestInstance_queryReference(t *testing.T) {
 		return
 	}
 
-	url := viper.GetString("mock.es.address")
+	address := viper.GetString("mock.es.address")
 	username := viper.GetString("mock.es.username")
 	password := viper.GetString("mock.es.password")
 	timeout := viper.GetDuration("mock.es.timeout")
@@ -45,7 +45,7 @@ func TestInstance_queryReference(t *testing.T) {
 	defer cancel()
 
 	ins, err := NewInstance(ctx, &InstanceOption{
-		Url:        url,
+		Address:    address,
 		Username:   username,
 		Password:   password,
 		MaxRouting: maxRouting,
@@ -76,6 +76,9 @@ func TestInstance_queryReference(t *testing.T) {
 				Field:       field,
 				From:        0,
 				Size:        10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,
@@ -110,12 +113,61 @@ func TestInstance_queryReference(t *testing.T) {
 				DB:          db,
 				Field:       field,
 				From:        0,
-				Size:        20,
+				Size:        3,
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
 						Name: Count,
 						Dimensions: []string{
-							"gseIndex",
+							field,
+						},
+					},
+				},
+				IsNotPromQL: true,
+				Orders: metadata.Orders{
+					FieldValue: true,
+				},
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: Percentiles,
+						Args: []interface{}{
+							50.0, 90.0,
+						},
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        20,
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: DateHistogram,
+						Args: []interface{}{
+							"1m",
+						},
+					},
+					{
+						Name: Percentiles,
+						Args: []interface{}{
+							50.0, 90.0,
 						},
 					},
 				},
@@ -138,8 +190,35 @@ func TestInstance_queryReference(t *testing.T) {
 							50.0, 90.0,
 						},
 					},
+					{
+						Name:   DateHistogram,
+						Window: time.Minute,
+					},
 				},
 				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		{
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: Count,
+						Dimensions: []string{
+							field,
+						},
+					},
+				},
+				IsNotPromQL: true,
+				Orders: map[string]bool{
+					FieldValue: true,
+				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,

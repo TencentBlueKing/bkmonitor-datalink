@@ -34,6 +34,9 @@ type AggrMethod struct {
 	Dimensions []string
 	Without    bool
 
+	Window   time.Duration
+	TimeZone string
+
 	Args   []interface{}
 	KwArgs map[string]interface{}
 }
@@ -106,9 +109,12 @@ type Query struct {
 	TimeAggregation *TimeAggregation
 	From            int
 	Size            int
+	Orders          Orders
 
 	IsNotPromQL bool
 }
+
+type Orders map[string]bool
 
 type AllConditions [][]ConditionField
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -431,9 +432,6 @@ func TestQueryReference(t *testing.T) {
 	tableID := fmt.Sprintf("%s.%s", db, measurement)
 
 	esTestStorageID := 999
-	timeout := time.Second * 30
-	maxLimit := int(1e4)
-	maxRouting := int(5)
 
 	mock.Init()
 	mock.SetRedisClient(ctx, "test")
@@ -459,13 +457,20 @@ func TestQueryReference(t *testing.T) {
 
 	ctx = metadata.InitHashID(ctx)
 
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
 	tsdb.SetStorage(strconv.Itoa(esTestStorageID), &tsdb.Storage{
 		Type:       consul.ElasticsearchStorageType,
-		Address:    "http://127.0.0.1:9200",
-		Username:   "elastic",
-		Password:   "",
+		Address:    address,
+		Username:   username,
+		Password:   password,
 		Timeout:    timeout,
-		MaxLimit:   maxLimit,
+		MaxLimit:   maxSize,
 		MaxRouting: maxRouting,
 	})
 
@@ -487,6 +492,65 @@ func TestQueryReference(t *testing.T) {
 						From:          0,
 						ReferenceName: "a",
 					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         5,
+						From:          0,
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext___container_name"},
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         5,
+						From:          0,
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"gseIndex"},
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"-_value",
 				},
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
@@ -518,6 +582,7 @@ func TestQueryReference(t *testing.T) {
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
 				Instant:     false,
 				SpaceUid:    spaceUid,
+				OrderBy:     []string{"-__ext___container_name", "_time"},
 			},
 		},
 	} {

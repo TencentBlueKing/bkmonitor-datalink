@@ -83,10 +83,9 @@ func (a *aggFormat) reset() {
 func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 	idx--
 	if idx >= 0 {
-		info := a.aggInfoList[idx]
-		switch info.typeName {
-		case TypeTerms:
-			if bucketRangeItems, ok := data.Range(info.name); ok {
+		switch info := a.aggInfoList[idx].(type) {
+		case TermAgg:
+			if bucketRangeItems, ok := data.Range(info.Name); ok {
 				if len(bucketRangeItems.Buckets) == 0 {
 					return nil
 				}
@@ -99,21 +98,21 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 							return err
 						}
 
-						a.addLabel(info.name, string(vs))
+						a.addLabel(info.Name, string(vs))
 						if err = a.ts(idx, bucket.Aggregations); err != nil {
 							return err
 						}
 					}
 				}
 			}
-		case TypeNested:
-			if singleBucket, ok := data.Nested(info.name); ok {
+		case NestedAgg:
+			if singleBucket, ok := data.Nested(info.Name); ok {
 				if err := a.ts(idx, singleBucket.Aggregations); err != nil {
 					return err
 				}
 			}
-		case TypeDateHistogram:
-			if bucketHistogramItems, ok := data.Histogram(info.name); ok {
+		case TimeAgg:
+			if bucketHistogramItems, ok := data.Histogram(info.Name); ok {
 				if len(bucketHistogramItems.Buckets) == 0 {
 					return nil
 				}
@@ -126,39 +125,35 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 				}
 			}
-
-		case TypeValue:
-			var (
-				value float64
-			)
-			switch info.name {
+		case ValueAgg:
+			switch info.FuncType {
 			case Min:
-				if valueMetric, ok := data.Min(info.name); ok {
+				if valueMetric, ok := data.Min(info.Name); ok {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
-					return fmt.Errorf("%s is empty", info.name)
+					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Sum:
-				if valueMetric, ok := data.Sum(info.name); ok {
+				if valueMetric, ok := data.Sum(info.Name); ok {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
-					return fmt.Errorf("%s is empty", info.name)
+					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Avg:
-				if valueMetric, ok := data.Avg(info.name); ok {
+				if valueMetric, ok := data.Avg(info.Name); ok {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
-					return fmt.Errorf("%s is empty", info.name)
+					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Count:
-				if valueMetric, ok := data.ValueCount(info.name); ok {
+				if valueMetric, ok := data.ValueCount(info.Name); ok {
 					// 计算数量需要造数据
 					repNum := 1
 					if !a.isNotPromQL {
-						repNum = int(value)
+						repNum = int(*valueMetric.Value)
 					}
 
 					for j := 0; j < repNum; j++ {
@@ -166,17 +161,17 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 						a.reset()
 					}
 				} else {
-					return fmt.Errorf("%s is empty", info.name)
+					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Max:
-				if valueMetric, ok := data.Max(info.name); ok {
+				if valueMetric, ok := data.Max(info.Name); ok {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
-					return fmt.Errorf("%s is empty", info.name)
+					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Percentiles:
-				if percentMetric, ok := data.Percentiles(info.name); ok {
+				if percentMetric, ok := data.Percentiles(info.Name); ok {
 					for k, v := range percentMetric.Values {
 						a.addLabel("le", k)
 						a.item.value = v
@@ -184,9 +179,10 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 				}
 			default:
-				return fmt.Errorf("%s type is error", info)
+				return fmt.Errorf("%s type is error", info.FuncType)
 			}
-
+		default:
+			return fmt.Errorf("%s type is error", info)
 		}
 	}
 	return nil

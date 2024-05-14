@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 
@@ -26,6 +28,9 @@ const (
 	StaticField = "value"
 
 	UUID = "query_uuid"
+
+	VmDruidQueryRawSuffixConfigPath  = "victoria_metrics.druid_query.raw_suffix"
+	VmDruidQueryCmdbSuffixConfigPath = "victoria_metrics.druid_query.cmdb_suffix"
 )
 
 // AggrMethod 聚合方法
@@ -193,6 +198,18 @@ func ReplaceVmCondition(condition string, replaceLabels ReplaceLabels) string {
 	return string(cond)
 }
 
+func ReplaceVmRt(oldVmRT string) string {
+	var newVmRT string
+
+	// oldVmRT如果以_raw结尾,_raw替换成_cmdb
+	if strings.HasSuffix(oldVmRT, viper.GetString(VmDruidQueryRawSuffixConfigPath)) {
+		newVmRT = strings.Replace(oldVmRT, viper.GetString(VmDruidQueryRawSuffixConfigPath),
+			viper.GetString(VmDruidQueryCmdbSuffixConfigPath), 1)
+		return newVmRT
+	}
+	return oldVmRT + viper.GetString(VmDruidQueryCmdbSuffixConfigPath)
+}
+
 func (qRef QueryReference) CheckMustVmQuery(ctx context.Context) bool {
 	for _, reference := range qRef {
 		if len(reference.QueryList) > 0 {
@@ -259,7 +276,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 
 					// 替换 vmrt 的值
 					oldVmRT := query.VmRt
-					newVmRT := strings.Replace(oldVmRT, "_raw", "_cmdb", 1)
+					newVmRT := ReplaceVmRt(oldVmRT)
 
 					if newVmRT != oldVmRT {
 						query.VmRt = newVmRT

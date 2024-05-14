@@ -70,7 +70,7 @@ func TransformMapBySeparator(separator string, fields []string) TransformFn {
 		total := len(parts)
 		for i, name := range fields {
 			if i < total {
-				results[name] = parts[i]
+				results[name] = strings.TrimSpace(parts[i])
 			} else {
 				results[name] = nil
 			}

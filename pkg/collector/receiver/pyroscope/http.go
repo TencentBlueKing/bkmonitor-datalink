@@ -38,9 +38,10 @@ const (
 )
 
 const (
-	GoSpy   = "gospy"
-	JavaSpy = "javaspy"
-	PerfSpy = "perf_script"
+	GoSpy      = "gospy"
+	JavaSpy    = "javaspy"
+	DDTraceSpy = "ddtrace"
+	PerfSpy    = "perf_script"
 )
 
 // TagServiceName 需要忽略的服务 Tag 名称
@@ -221,6 +222,8 @@ func getFormatBySpy(spyName string) string {
 	switch spyName {
 	case GoSpy:
 		return define.FormatPprof
+	case DDTraceSpy:
+		return define.FormatPprof
 	case JavaSpy:
 		return define.FormatJFR
 	// TODO 暂不支持 PerfScript
@@ -274,7 +277,7 @@ func getAppNameAndTags(req *http.Request) (string, map[string]string) {
 
 	parts := strings.SplitN(valueDecoded, "{", 2)
 	if len(parts) < 2 {
-		return "", reportTags
+		return valueDecoded, reportTags
 	}
 
 	pairs := strings.Split(strings.TrimRight(parts[1], "}"), ",")

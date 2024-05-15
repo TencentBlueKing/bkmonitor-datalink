@@ -305,7 +305,6 @@ func (p *Processor) HandleFailedMessage(ctx context.Context, l *common.Lease, ms
 	} else {
 		logger.Warnf("Task failed and retry for task id=%s, error: %v", msg.ID, err)
 		p.Retry(l, msg, err, true)
-		logger.Errorf("yyyyy")
 	}
 }
 

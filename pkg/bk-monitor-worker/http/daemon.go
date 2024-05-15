@@ -12,7 +12,6 @@ package http
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -30,8 +29,6 @@ type DaemonTaskReloadParam struct {
 
 // ReloadDaemonTask 重载常驻任务 将 task_uni_id 放入重载队列中，由调度器负责监听并处理
 func ReloadDaemonTask(c *gin.Context) {
-	beginTime := time.Now()
-
 	params := new(DaemonTaskReloadParam)
 	if err := BindJSON(c, params); err != nil {
 		BadReqResponse(c, "parse params error: %v", err)

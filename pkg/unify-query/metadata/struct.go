@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/viper"
-
 	"github.com/VictoriaMetrics/metricsql"
 	"github.com/prometheus/prometheus/model/labels"
 
@@ -261,8 +259,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 
 					// 替换 vmrt 的值
 					oldVmRT := query.VmRt
-					newVmRT := strings.TrimSuffix(oldVmRT, viper.GetString(MaDruidQueryRawSuffixPath)) +
-						viper.GetString(MaDruidQueryCmdbSuffixPath)
+					newVmRT := strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
 
 					if newVmRT != oldVmRT {
 						query.VmRt = newVmRT

@@ -148,6 +148,20 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
+			case Cardinality:
+				if valueMetric, ok := data.Cardinality(info.Name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
+				} else {
+					return fmt.Errorf("%s is empty", info.Name)
+				}
+			case Max:
+				if valueMetric, ok := data.Max(info.Name); ok {
+					a.item.value = *valueMetric.Value
+					a.reset()
+				} else {
+					return fmt.Errorf("%s is empty", info.Name)
+				}
 			case Count:
 				if valueMetric, ok := data.ValueCount(info.Name); ok {
 					// 计算数量需要造数据
@@ -160,13 +174,6 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 						a.item.value = *valueMetric.Value
 						a.reset()
 					}
-				} else {
-					return fmt.Errorf("%s is empty", info.Name)
-				}
-			case Max:
-				if valueMetric, ok := data.Max(info.Name); ok {
-					a.item.value = *valueMetric.Value
-					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}

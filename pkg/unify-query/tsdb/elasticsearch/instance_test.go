@@ -34,6 +34,11 @@ func TestInstance_queryReference(t *testing.T) {
 		return
 	}
 
+	viper.SetDefault("mock.test", "_raw")
+
+	a := viper.GetString("mock.test")
+	fmt.Println(a)
+
 	address := viper.GetString("mock.es.address")
 	username := viper.GetString("mock.es.username")
 	password := viper.GetString("mock.es.password")
@@ -62,14 +67,96 @@ func TestInstance_queryReference(t *testing.T) {
 	db := "2_bklog_bkapigateway_esb_container1"
 	field := "gseIndex"
 
-	for idx, c := range []struct {
+	for idx, c := range map[string]struct {
 		query *metadata.Query
 		start time.Time
 		end   time.Time
 
 		expected interface{}
 	}{
-		{
+		"统计 __ext___io_kubernetes_pod 不为空的文档数量": {
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       "__ext___io_kubernetes_pod",
+				From:        0,
+				Size:        10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "__ext___io_kubernetes_pod",
+							Operator:      "ncontains",
+							Value:         []string{""},
+						},
+					},
+				},
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: Count,
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		"统计 __ext___io_kubernetes_pod 不为空的去重文档数量": {
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       "__ext___io_kubernetes_pod",
+				From:        0,
+				Size:        10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "__ext___io_kubernetes_pod",
+							Operator:      "ncontains",
+							Value:         []string{""},
+						},
+					},
+				},
+				AggregateMethodList: metadata.AggregateMethodList{
+					{
+						Name: Cardinality,
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		"获取 10条 不 field 为空的原始数据": {
+			query: &metadata.Query{
+				QueryString: "",
+				DB:          db,
+				Field:       field,
+				From:        0,
+				Size:        10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: field,
+							Operator:      "ncontains",
+							Value:         []string{""},
+						},
+					},
+				},
+				IsNotPromQL: true,
+			},
+			start: defaultStart,
+			end:   defaultEnd,
+		},
+		"获取 10条 原始数据": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -83,7 +170,7 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		{
+		"使用 promql 计算平均值 avg(avg_over_time(field[1m]))": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -107,7 +194,7 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		{
+		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -117,20 +204,14 @@ func TestInstance_queryReference(t *testing.T) {
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
 						Name: Count,
-						Dimensions: []string{
-							field,
-						},
 					},
 				},
 				IsNotPromQL: true,
-				Orders: metadata.Orders{
-					FieldValue: true,
-				},
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		{
+		"获取 50 分位值": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -141,7 +222,7 @@ func TestInstance_queryReference(t *testing.T) {
 					{
 						Name: Percentiles,
 						Args: []interface{}{
-							50.0, 90.0,
+							50.0,
 						},
 					},
 				},
@@ -150,7 +231,7 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		{
+		"获取 50, 90 分支值，同时按 1分钟时间聚合": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -176,31 +257,7 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		{
-			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        20,
-				AggregateMethodList: metadata.AggregateMethodList{
-					{
-						Name: Percentiles,
-						Args: []interface{}{
-							50.0, 90.0,
-						},
-					},
-					{
-						Name:   DateHistogram,
-						Window: time.Minute,
-					},
-				},
-				IsNotPromQL: true,
-			},
-			start: defaultStart,
-			end:   defaultEnd,
-		},
-		{
+		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
@@ -224,7 +281,7 @@ func TestInstance_queryReference(t *testing.T) {
 			end:   defaultEnd,
 		},
 	} {
-		t.Run(fmt.Sprintf("testing run: %d", idx), func(t *testing.T) {
+		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			refName := "a"
 			reference := metadata.QueryReference{
 				refName: &metadata.QueryMetric{

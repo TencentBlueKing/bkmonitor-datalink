@@ -160,7 +160,7 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
-	start, end, step, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	_, end, _, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}
@@ -169,53 +169,33 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 		return nil, err
 	}
 
+	var lookBackDelta time.Duration
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+		QueryMaxRouting: QueryMaxRouting,
+		Timeout:         SingleflightTimeout,
+	}, lookBackDelta)
+
+	res, err := instance.Query(ctx, query.MetricMerge, end)
+	if err != nil {
+		return nil, err
+	}
+
 	tables := promql.NewTables()
 	seriesNum := 0
 	pointsNum := 0
 
-	for _, ref := range queryRef {
-		span.Set("ref_name", ref.ReferenceName)
-		span.Set("start", start.String())
-		span.Set("end", end.String())
-		span.Set("step", step.String())
+	for index, series := range res {
+		tables.Add(promql.NewTableWithSample(index, series))
 
-		for _, qry := range ref.QueryList {
-			inst := prometheus.GetInstance(ctx, qry)
-			if inst == nil {
-				return nil, fmt.Errorf("tsdb instance is empty: %+v", qry)
-			}
-
-			var res any
-			if query.Instant {
-				res, err = inst.Query(ctx, ref.ReferenceName, end)
-			} else {
-				res, err = inst.QueryRange(ctx, ref.ReferenceName, start, end, step)
-			}
-
-			if err != nil {
-				return nil, err
-			}
-
-			switch v := res.(type) {
-			case promPromql.Matrix:
-				for index, series := range v {
-					tables.Add(promql.NewTable(index, series))
-
-					seriesNum++
-					pointsNum += len(series.Points)
-				}
-			case promPromql.Vector:
-				for index, series := range v {
-					tables.Add(promql.NewTableWithSample(index, series))
-
-					seriesNum++
-					pointsNum++
-				}
-			default:
-				err = fmt.Errorf("data type wrong: %T", v)
-				return nil, err
-			}
-		}
+		seriesNum++
+		pointsNum++
 	}
 
 	span.Set("resp-series-num", seriesNum)
@@ -262,6 +242,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 	// 是否打开对齐
 	for _, q := range query.QueryList {
+		q.IsNotPromQL = false
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
 

@@ -434,7 +434,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		return
 	}
 
-	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qb.IsNotPromQL)
+	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qb.IsNotPromQL, qo.end)
 	if err != nil {
 		return
 	}
@@ -655,17 +655,19 @@ func (i *Instance) QueryRaw(
 	start := hints.Start
 	end := hints.End
 	// 只支持 PromQL 查询
-	query.IsNotPromQL = false
+	// query.IsNotPromQL = false
 
-	if query.TimeAggregation == nil {
-		err = fmt.Errorf("empty time aggregation with %+v", query)
-		return storage.ErrSeriesSet(err)
-	}
-	window := query.TimeAggregation.WindowDuration
+	//if query.TimeAggregation == nil {
+	//	err = fmt.Errorf("empty time aggregation with %+v", query)
+	//	return storage.ErrSeriesSet(err)
+	//}
+	if query.TimeAggregation != nil {
+		window := query.TimeAggregation.WindowDuration
 
-	// 是否对齐开始时间
-	if window.Milliseconds() > 0 {
-		start = intMathFloor(start, window.Milliseconds()) * window.Milliseconds()
+		// 是否对齐开始时间
+		if window.Milliseconds() > 0 {
+			start = intMathFloor(start, window.Milliseconds()) * window.Milliseconds()
+		}
 	}
 
 	rets, err := i.query(ctx, query, start, end)

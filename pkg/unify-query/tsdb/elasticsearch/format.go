@@ -19,6 +19,7 @@ import (
 
 	"github.com/olivere/elastic/v7"
 	"github.com/prometheus/prometheus/prompb"
+	mapping "github.com/zhuliquan/es-mapping"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -43,13 +44,14 @@ const (
 	OldStep = "."
 	NewStep = "___"
 
-	Min   = "min"
-	Max   = "max"
-	Sum   = "sum"
-	Count = "count"
-	Last  = "last"
-	Mean  = "mean"
-	Avg   = "avg"
+	Min         = "min"
+	Max         = "max"
+	Sum         = "sum"
+	Count       = "count"
+	Last        = "last"
+	Mean        = "mean"
+	Avg         = "avg"
+	Cardinality = "cardinality"
 
 	DateHistogram = "date_histogram"
 	Percentiles   = "percentiles"
@@ -144,8 +146,9 @@ type FormatFactory struct {
 
 	valueKey string
 
-	mapping map[string]string
-	data    map[string]any
+	propertyMapping *mapping.PropertyMapping
+	mapping         map[string]string
+	data            map[string]any
 
 	aggInfoList aggInfoList
 	orders      metadata.Orders
@@ -157,9 +160,7 @@ type FormatFactory struct {
 
 func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]any, orders map[string]bool, from, size int, timezone string) *FormatFactory {
 	f := &FormatFactory{
-		ctx: ctx,
-
-		valueKey:    valueKey,
+		ctx:         ctx,
 		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
 		orders:      orders,
@@ -167,6 +168,8 @@ func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]a
 		size:        size,
 		timezone:    timezone,
 	}
+
+	f.valueKey = f.toEs(valueKey)
 
 	mapProperties("", mapping, f.mapping)
 	return f
@@ -225,7 +228,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool, end int64) (map[string]*prompb.TimeSeries, error) {
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
 		toEs:        f.toEs,
@@ -270,6 +273,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL boo
 		// 移除空算的点
 		if tsLabels == nil && im.timestamp == 0 && im.value == 0 {
 			continue
+		}
+
+		if isNotPromQL && im.timestamp == 0 {
+			im.timestamp = end
 		}
 
 		timeSeriesMap[seriesKey].Labels = tsLabels
@@ -321,7 +328,10 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				agg = elastic.NewSumAggregation().Field(f.valueKey)
 				name = FieldValue
 			case Count:
-				agg = elastic.NewValueCountAggregation().Field("_index")
+				agg = elastic.NewValueCountAggregation().Field(f.valueKey)
+				name = FieldValue
+			case Cardinality:
+				agg = elastic.NewCardinalityAggregation().Field(f.valueKey)
 				name = FieldValue
 			case Percentiles:
 				percents := make([]float64, 0)
@@ -383,7 +393,7 @@ func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) 
 		switch am.Name {
 		case DateHistogram:
 			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
-		case Max, Min, Avg, Sum, Count, Percentiles:
+		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(am.Name)
 
@@ -472,31 +482,44 @@ func (f *FormatFactory) Query(queryString string, allConditions metadata.AllCond
 			key := f.toEs(con.DimensionName)
 
 			value := strings.Join(con.Value, ",")
-			switch con.Operator {
-			case structured.ConditionEqual, structured.ConditionContains:
-				q.Must(elastic.NewMatchQuery(key, value))
-			case structured.ConditionNotEqual, structured.ConditionNotContains:
-				q.MustNot(elastic.NewMatchQuery(key, value))
-			case structured.ConditionRegEqual:
-				q.Must(elastic.NewRegexpQuery(key, value))
-			case structured.ConditionNotRegEqual:
-				q.MustNot(elastic.NewRegexpQuery(key, value))
-			case structured.ConditionGt:
-				q.Must(elastic.NewRangeQuery(key).Gt(value))
-			case structured.ConditionGte:
-				q.Must(elastic.NewRangeQuery(key).Gte(value))
-			case structured.ConditionLt:
-				q.Must(elastic.NewRangeQuery(key).Lt(value))
-			case structured.ConditionLte:
-				q.Must(elastic.NewRangeQuery(key).Lte(value))
-			default:
-				return nil, fmt.Errorf("operator is not support, %+v", con)
+			// 如果为空则，则使用判断是否存在的逻辑
+			if value == "" {
+				switch con.Operator {
+				case structured.ConditionRegEqual, structured.ConditionEqual, structured.Contains:
+					q.MustNot(elastic.NewExistsQuery(key))
+				case structured.ConditionNotRegEqual, structured.ConditionNotEqual, structured.Ncontains:
+					q.Must(elastic.NewExistsQuery(key))
+				}
+			} else {
+				// 非空才进行验证
+				switch con.Operator {
+				case structured.ConditionEqual, structured.ConditionContains:
+					q.Must(elastic.NewMatchQuery(key, value))
+				case structured.ConditionNotEqual, structured.ConditionNotContains:
+					q.MustNot(elastic.NewMatchQuery(key, value))
+				case structured.ConditionRegEqual:
+					q.Must(elastic.NewRegexpQuery(key, value))
+				case structured.ConditionNotRegEqual:
+					q.MustNot(elastic.NewRegexpQuery(key, value))
+				case structured.ConditionGt:
+					q.Must(elastic.NewRangeQuery(key).Gt(value))
+				case structured.ConditionGte:
+					q.Must(elastic.NewRangeQuery(key).Gte(value))
+				case structured.ConditionLt:
+					q.Must(elastic.NewRangeQuery(key).Lt(value))
+				case structured.ConditionLte:
+					q.Must(elastic.NewRangeQuery(key).Lte(value))
+				default:
+					return nil, fmt.Errorf("operator is not support, %+v", con)
+				}
 			}
+
 			andQuery.Must(q)
 		}
 		boolQuery.Should(andQuery)
 	}
 	if queryString != "" {
+
 		qs := elastic.NewQueryStringQuery(queryString)
 		boolQuery = boolQuery.Must(qs)
 	}

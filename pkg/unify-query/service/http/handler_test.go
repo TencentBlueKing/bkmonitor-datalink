@@ -425,6 +425,13 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 func TestQueryReference(t *testing.T) {
 	ctx := context.Background()
 
+	promql.NewEngine(&promql.Params{
+		Timeout:              2 * time.Hour,
+		MaxSamples:           500000,
+		LookbackDelta:        2 * time.Minute,
+		EnableNegativeOffset: true,
+	})
+
 	spaceUid := "space_uid"
 
 	db := "2_bklog_bkapigateway_esb_container1"
@@ -477,11 +484,11 @@ func TestQueryReference(t *testing.T) {
 	defaultEnd := time.Now()
 	defaultStart := defaultEnd.Add(-1 * time.Hour)
 
-	for i, c := range []struct {
+	for i, c := range map[string]struct {
 		queryTs *structured.QueryTs
 		result  string
 	}{
-		{
+		"查询 10 条原始数据，按照字段正向排序": {
 			queryTs: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -503,7 +510,7 @@ func TestQueryReference(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 		},
-		{
+		"根据维度 __ext___container_name 进行 sum 聚合，同时用值正向排序": {
 			queryTs: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -531,7 +538,7 @@ func TestQueryReference(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 		},
-		{
+		"根据维度 gseIndex 进行 count 聚合，同时用值倒序": {
 			queryTs: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
@@ -559,20 +566,34 @@ func TestQueryReference(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 		},
-		{
+		"统计 __ext___container_name 和 __ext___io_kubernetes_pod 不为空的文档数量": {
 			queryTs: &structured.QueryTs{
 				QueryList: []*structured.Query{
 					{
 						DataSource:    structured.BkLog,
 						TableID:       structured.TableID(tableID),
-						FieldName:     "gseIndex",
-						Limit:         10,
-						From:          0,
+						FieldName:     "__ext___container_name",
 						ReferenceName: "a",
+						Conditions: structured.Conditions{
+							FieldList: []structured.ConditionField{
+								{
+									DimensionName: "__ext___io_kubernetes_pod",
+									Operator:      "ncontains",
+									Value:         []string{""},
+								},
+								{
+									DimensionName: "__ext___container_name",
+									Operator:      "ncontains",
+									Value:         []string{""},
+								},
+							},
+							ConditionList: []string{
+								"and",
+							},
+						},
 						AggregateMethodList: structured.AggregateMethodList{
 							{
-								Method:     "sum",
-								Dimensions: []string{"__ext___container_name"},
+								Method: "count",
 							},
 						},
 					},
@@ -582,11 +603,87 @@ func TestQueryReference(t *testing.T) {
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
 				Instant:     false,
 				SpaceUid:    spaceUid,
-				OrderBy:     []string{"-__ext___container_name", "_time"},
+			},
+		},
+		"a + b": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "__ext___io_kubernetes_pod",
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "__ext___io_kubernetes_pod",
+						ReferenceName: "b",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a + b",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		"__ext___io_kubernetes_pod 统计去重数量": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "__ext___io_kubernetes_pod",
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "cardinality",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		"__ext___io_kubernetes_pod 统计数量": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "__ext___io_kubernetes_pod",
+						ReferenceName: "b",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "b",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
 			},
 		},
 	} {
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s", i), func(t *testing.T) {
 			metadata.SetUser(ctx, "username:test", spaceUid, "true")
 
 			data, err := queryReference(ctx, c.queryTs)

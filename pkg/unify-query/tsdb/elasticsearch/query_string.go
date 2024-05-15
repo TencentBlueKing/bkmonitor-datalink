@@ -9,6 +9,20 @@
 
 package elasticsearch
 
-func convert(queryString string) {
+type QueryString struct {
+	q string
+}
 
+func NewQueryString(q string) *QueryString {
+	return &QueryString{
+		q: q,
+	}
+}
+
+func (s *QueryString) ToDsl() error {
+	if s.q == "" {
+		return nil
+	}
+
+	return nil
 }

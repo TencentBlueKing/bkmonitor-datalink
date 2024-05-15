@@ -210,7 +210,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}
 
-	if err := pusher.PushEsTableIdDetail([]string{}, true); err!= nil {
+	if err := pusher.PushEsTableIdDetail([]string{}, true); err != nil {
 		return err
 	}
 

@@ -36,6 +36,11 @@ type TestCurl struct {
 	Params []byte
 }
 
+func (c *TestCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error)) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (c *TestCurl) resp(body string) *http.Response {
 	return &http.Response{
 		Status:        "200 OK",
@@ -49,15 +54,16 @@ func (c *TestCurl) resp(body string) *http.Response {
 	}
 }
 
-func (c *TestCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
+func (c *TestCurl) Request(ctx context.Context, method string, opt Options, resp interface{}) (int, error) {
 	c.log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
 
 	c.Url = opt.UrlPath
 	c.Params = opt.Body
 
 	if res, ok := c.data[opt.UrlPath]; ok {
-		return c.resp(res), nil
+		resp = res
+		return len(res), nil
 	} else {
-		return nil, errors.New("mock data is not exists: " + url.QueryEscape(opt.UrlPath))
+		return 0, errors.New("mock data is not exists: " + url.QueryEscape(opt.UrlPath))
 	}
 }

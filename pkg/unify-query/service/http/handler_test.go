@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
@@ -419,6 +420,190 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 
 	mock.SetRedisClient(context.TODO(), "test")
 	return mockCurl
+}
+
+func TestQueryReference(t *testing.T) {
+	ctx := context.Background()
+
+	spaceUid := "space_uid"
+
+	db := "2_bklog_bkapigateway_esb_container1"
+	measurement := "base"
+	tableID := fmt.Sprintf("%s.%s", db, measurement)
+
+	esTestStorageID := 999
+
+	mock.Init()
+	mock.SetRedisClient(ctx, "test")
+	mock.SetSpaceTsDbMockData(
+		ctx,
+		"query_reference.db",
+		"query_reference",
+		ir.SpaceInfo{
+			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+		},
+		ir.ResultTableDetailInfo{
+			tableID: &ir.ResultTableDetail{
+				Fields:          nil,
+				MeasurementType: redis.BKTraditionalMeasurement,
+				StorageId:       int64(esTestStorageID),
+				DB:              db,
+				Measurement:     measurement,
+				TableId:         tableID,
+			},
+		},
+		nil, nil,
+	)
+
+	ctx = metadata.InitHashID(ctx)
+
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
+	tsdb.SetStorage(strconv.Itoa(esTestStorageID), &tsdb.Storage{
+		Type:       consul.ElasticsearchStorageType,
+		Address:    address,
+		Username:   username,
+		Password:   password,
+		Timeout:    timeout,
+		MaxLimit:   maxSize,
+		MaxRouting: maxRouting,
+	})
+
+	defaultEnd := time.Now()
+	defaultStart := defaultEnd.Add(-1 * time.Hour)
+
+	for i, c := range []struct {
+		queryTs *structured.QueryTs
+		result  string
+	}{
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         10,
+						From:          0,
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         5,
+						From:          0,
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext___container_name"},
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         5,
+						From:          0,
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "count",
+								Dimensions: []string{"gseIndex"},
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"-_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		{
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         10,
+						From:          0,
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext___container_name"},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+				OrderBy:     []string{"-__ext___container_name", "_time"},
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			metadata.SetUser(ctx, "username:test", spaceUid, "true")
+
+			data, err := queryReference(ctx, c.queryTs)
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+				return
+			}
+
+			if data.Status != nil && data.Status.Code != "" {
+				fmt.Println("code: ", data.Status.Code)
+				fmt.Println("message: ", data.Status.Message)
+				return
+			}
+
+			log.Infof(ctx, fmt.Sprintf("%+v", data.Tables))
+		})
+	}
 }
 
 func TestQueryTs(t *testing.T) {

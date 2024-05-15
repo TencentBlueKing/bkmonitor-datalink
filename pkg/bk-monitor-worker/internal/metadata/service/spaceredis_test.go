@@ -301,8 +301,8 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 func TestComposeEsTableIdDetail(t *testing.T) {
 	defaultStorageClusterId := 1
 	tests := []struct {
-		name string
-		tableId string
+		name            string
+		tableId         string
 		expectedTableId string
 	}{
 		{"table_id_with_dot", "test.demo", "test.demo"},

@@ -42,6 +42,11 @@ type Instance struct {
 	Client *Client
 }
 
+func (i Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 var _ tsdb.Instance = (*Instance)(nil)
 
 func (i Instance) checkResult(res *Result) error {

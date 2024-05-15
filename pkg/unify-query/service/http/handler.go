@@ -139,6 +139,98 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
+func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "query-reference")
+	defer span.End(&err)
+
+	qStr, _ := json.Marshal(query)
+	span.Set("query-ts", string(qStr))
+
+	for _, q := range query.QueryList {
+		q.IsNotPromQL = true
+
+		if q.TableID == "" {
+			err = fmt.Errorf("tableID is empty")
+			return nil, err
+		}
+	}
+
+	queryRef, err := query.ToQueryReference(ctx)
+	start, end, step, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	if err != nil {
+		return nil, err
+	}
+	err = metadata.SetQueryReference(ctx, queryRef)
+	if err != nil {
+		return nil, err
+	}
+
+	tables := promql.NewTables()
+	seriesNum := 0
+	pointsNum := 0
+
+	for _, ref := range queryRef {
+		span.Set("ref_name", ref.ReferenceName)
+		span.Set("start", start.String())
+		span.Set("end", end.String())
+		span.Set("step", step.String())
+
+		for _, qry := range ref.QueryList {
+			inst := prometheus.GetInstance(ctx, qry)
+			if inst == nil {
+				return nil, fmt.Errorf("tsdb instance is empty: %+v", qry)
+			}
+
+			var res any
+			if query.Instant {
+				res, err = inst.Query(ctx, ref.ReferenceName, end)
+			} else {
+				res, err = inst.QueryRange(ctx, ref.ReferenceName, start, end, step)
+			}
+
+			if err != nil {
+				return nil, err
+			}
+
+			switch v := res.(type) {
+			case promPromql.Matrix:
+				for index, series := range v {
+					tables.Add(promql.NewTable(index, series))
+
+					seriesNum++
+					pointsNum += len(series.Points)
+				}
+			case promPromql.Vector:
+				for index, series := range v {
+					tables.Add(promql.NewTableWithSample(index, series))
+
+					seriesNum++
+					pointsNum++
+				}
+			default:
+				err = fmt.Errorf("data type wrong: %T", v)
+				return nil, err
+			}
+		}
+	}
+
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-points-num", pointsNum)
+
+	resp := NewPromData(query.ResultColumns)
+	err = resp.Fill(tables)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Status = metadata.GetStatus(ctx)
+	return resp, err
+}
+
 func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
 		err error
@@ -180,7 +272,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		}
 	}
 
-	queryReference, err := query.ToQueryReference(ctx)
+	queryRef, err := query.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +290,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	})
 
 	// 判断是否是直查
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryRef.CheckVmQuery(ctx)
 	if err != nil {
 		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
 	}
@@ -225,7 +317,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			return nil, err
 		}
 	} else {
-		err = metadata.SetQueryReference(ctx, queryReference)
+		err = metadata.SetQueryReference(ctx, queryRef)
 
 		if err != nil {
 			return nil, err
@@ -705,6 +797,69 @@ func HandlerQueryPromQL(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
+	resp.success(ctx, res)
+}
+
+// HandlerQueryReference
+// @Summary  query monitor by reference
+// @ID       query_ts
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      structured.QueryTs  			true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/reference [post]
+func HandlerQueryReference(c *gin.Context) {
+	var (
+		ctx = c.Request.Context()
+
+		resp = &response{
+			c: c,
+		}
+		user = metadata.GetUser(ctx)
+		err  error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-query-reference")
+	defer span.End(&err)
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+
+	span.Set("query-source", user.Key)
+	span.Set("query-space-uid", user.SpaceUid)
+
+	// 解析请求 body
+	query := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(query)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+
+	// metadata 中的 spaceUid 是从 header 头信息中获取
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
+	}
+
+	queryStr, _ := json.Marshal(query)
+	span.Set("query-body", string(queryStr))
+	span.Set("query-body-size", len(queryStr))
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
+	res, err := queryReference(ctx, query)
+
+	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	resp.success(ctx, res)
 }
 

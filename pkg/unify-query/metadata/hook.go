@@ -33,6 +33,9 @@ var (
 func setDefaultConfig() {
 	viper.SetDefault(DefaultExpirationPath, time.Minute*1)
 	viper.SetDefault(CleanupIntervalPath, time.Minute*5)
+
+	viper.SetDefault(MaDruidQueryRawSuffixPath, "_raw")
+	viper.SetDefault(MaDruidQueryCmdbSuffixPath, "_cmdb")
 }
 
 // InitMetadata 初始化

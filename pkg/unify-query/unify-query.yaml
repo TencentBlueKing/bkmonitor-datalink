@@ -26,9 +26,6 @@ victoria_metrics:
   code: bkmonitorv3
   secret:
   token:
-  druid_query:
-    raw_suffix: _raw
-    cmdb_suffix: _cmdb
 influxdb:
   ping:
     count: 3
@@ -85,3 +82,7 @@ trace:
     type: grpc
 bbolt:
   default_path: bolt.db
+metadata:
+  druid_query:
+    raw_suffix: "_raw"
+    cmdb_suffix: "_cmdb"

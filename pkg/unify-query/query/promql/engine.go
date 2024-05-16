@@ -93,7 +93,7 @@ func Query(ctx context.Context, q string, now time.Time) (*Tables, error) {
 
 	tables := NewTables()
 	for index, sample := range vector {
-		tables.Add(NewTableWithSample(index, sample))
+		tables.Add(NewTableWithSample(index, sample, nil))
 	}
 
 	return tables, nil

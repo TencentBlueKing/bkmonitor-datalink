@@ -74,11 +74,11 @@ func TestInstance_queryReference(t *testing.T) {
 
 		expected interface{}
 	}{
-		"统计 __ext___io_kubernetes_pod 不为空的文档数量": {
+		"统计 __ext.io_kubernetes_pod 不为空的文档数量": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
-				Field:       "__ext___io_kubernetes_pod",
+				Field:       "__ext.io_kubernetes_pod",
 				From:        0,
 				Size:        10,
 				Orders: metadata.Orders{
@@ -87,7 +87,7 @@ func TestInstance_queryReference(t *testing.T) {
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "__ext___io_kubernetes_pod",
+							DimensionName: "__ext.io_kubernetes_pod",
 							Operator:      "ncontains",
 							Value:         []string{""},
 						},
@@ -103,11 +103,11 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		"统计 __ext___io_kubernetes_pod 不为空的去重文档数量": {
+		"统计 __ext.io_kubernetes_pod 不为空的去重文档数量": {
 			query: &metadata.Query{
 				QueryString: "",
 				DB:          db,
-				Field:       "__ext___io_kubernetes_pod",
+				Field:       "__ext.io_kubernetes_pod",
 				From:        0,
 				Size:        10,
 				Orders: metadata.Orders{
@@ -116,7 +116,7 @@ func TestInstance_queryReference(t *testing.T) {
 				AllConditions: metadata.AllConditions{
 					{
 						{
-							DimensionName: "__ext___io_kubernetes_pod",
+							DimensionName: "__ext.io_kubernetes_pod",
 							Operator:      "ncontains",
 							Value:         []string{""},
 						},
@@ -185,8 +185,8 @@ func TestInstance_queryReference(t *testing.T) {
 					{
 						Name: Avg,
 						Dimensions: []string{
-							"__ext___io_kubernetes_pod",
-							"__ext___container_name",
+							"__ext.io_kubernetes_pod",
+							"__ext.container_name",
 						},
 					},
 				},

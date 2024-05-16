@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -32,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -192,7 +194,12 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	pointsNum := 0
 
 	for index, series := range res {
-		tables.Add(promql.NewTableWithSample(index, series))
+		// 层级需要转换
+		tables.Add(promql.NewTableWithSample(index, series, func(l labels.Label) labels.Label {
+			vs := strings.Split(l.Name, elasticsearch.NewStep)
+			l.Name = strings.Join(vs, elasticsearch.OldStep)
+			return l
+		}))
 
 		seriesNum++
 		pointsNum++
@@ -348,7 +355,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series))
+			tables.Add(promql.NewTableWithSample(index, series, nil))
 
 			seriesNum++
 			pointsNum++
@@ -931,7 +938,7 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series))
+			tables.Add(promql.NewTableWithSample(index, series, nil))
 			seriesNum++
 			pointsNum++
 		}

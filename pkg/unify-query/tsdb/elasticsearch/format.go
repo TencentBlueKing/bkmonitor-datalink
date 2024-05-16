@@ -85,7 +85,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + NewStep + k
+			k = prefix + OldStep + k
 		}
 		switch v.(type) {
 		case map[string]any:

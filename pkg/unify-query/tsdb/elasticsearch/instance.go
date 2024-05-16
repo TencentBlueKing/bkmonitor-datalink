@@ -318,36 +318,23 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
-	ss := i.client.Search().
-		Index(qo.index).
-		Sort(Timestamp, true)
-
-	log.Infof(ctx, "es query index: %s", qo.index)
-
+	source := elastic.NewSearchSource()
+	source.Sort(Timestamp, true)
 	order := fact.Order()
 
-	log.Infof(ctx, "es query order: %+v", order)
-
 	for key, asc := range order {
-		ss.Sort(key, asc)
+		source.Sort(key, asc)
 	}
 
 	if len(filterQueries) > 0 {
 		esQuery := elastic.NewBoolQuery().Filter(filterQueries...)
-		ss = ss.Query(esQuery)
-
-		esQueryString, _ := esQuery.Source()
-		span.Set("query-dsl", esQueryString)
-
-		log.Infof(ctx, "es query dsl: %v", esQueryString)
+		source.Query(esQuery)
 	}
 
 	if len(qb.Source) > 0 {
 		fetchSource := elastic.NewFetchSourceContext(true)
 		fetchSource.Include(qb.Source...)
-		ss = ss.FetchSourceContext(fetchSource)
-
-		log.Infof(ctx, "es query source: %v", qb.Source)
+		source.FetchSourceContext(fetchSource)
 	}
 
 	var (
@@ -370,18 +357,27 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	if name != "" && agg != nil {
-		aggStr, _ := agg.Source()
-		log.Infof(ctx, "es query agg: %s, %v", name, aggStr)
-
-		ss.Aggregation(name, agg)
+		source.Size(0)
+		source.Aggregation(name, agg)
 	} else {
 		// 非聚合查询需要使用 from 和 size
-		ss = fact.Size(ss)
-
-		log.Infof(ctx, "es query ftom: %d to size: %d", qb.From, fact.size)
+		fact.Size(source)
 	}
 
-	sr, err := ss.Do(ctx)
+	body, _ := source.Source()
+	bodyJson, _ := json.Marshal(body)
+	bodyString := string(bodyJson)
+
+	span.Set("query-index", qo.index)
+	span.Set("query-body", bodyString)
+
+	log.Infof(ctx, "es query index: %s", qo.index)
+	log.Infof(ctx, "es query body: %s", bodyString)
+
+	search := i.client.Search().Index(qo.index).SearchSource(source)
+
+	res, err := search.Do(ctx)
+
 	if err != nil {
 		var (
 			e   *elastic.Error
@@ -397,7 +393,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
-	return sr, nil
+	return res, nil
 }
 
 func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) {

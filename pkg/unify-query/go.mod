@@ -8,8 +8,8 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
 	github.com/agiledragon/gomonkey/v2 v2.11.0
-	github.com/antlr/antlr4/runtime/Go/antlr/v4 v4.0.0-20220911224424-aa1f1f12a846
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
+	github.com/bytedance/go-querystring-parser v0.0.0-20230310053818-dcfffcaee797
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0
 	github.com/elastic/go-elasticsearch/v8 v8.0.0-20210317102009-a9d74cec0186
@@ -28,7 +28,6 @@ require (
 	github.com/magiconair/properties v1.8.7
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/olivere/elastic/v7 v7.0.32
-	github.com/omurbekjk/convert-dsl-to-es-query-with-antlr v0.0.0-20200227083714-3257e68fb2a4
 	github.com/panjf2000/ants/v2 v2.9.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
@@ -66,7 +65,7 @@ require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/VictoriaMetrics/metrics v1.24.0 // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
-	github.com/antlr/antlr4/runtime/Go/antlr v1.4.10 // indirect
+	github.com/antlr/antlr4/runtime/Go/antlr/v4 v4.0.0-20220911224424-aa1f1f12a846 // indirect
 	github.com/armon/go-metrics v0.4.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.280 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -137,7 +136,6 @@ require (
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
 	github.com/nikunjy/rules v1.2.0 // indirect
 	github.com/oklog/ulid v1.3.1 // indirect
-	github.com/olivere/elastic v6.2.37+incompatible // indirect
 	github.com/otiai10/copy v1.9.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.8 // indirect
 	github.com/philhofer/fwd v1.1.1 // indirect
@@ -146,6 +144,7 @@ require (
 	github.com/prometheus/common/sigv4 v0.1.0 // indirect
 	github.com/prometheus/procfs v0.10.1 // indirect
 	github.com/rogpeppe/go-internal v1.8.0 // indirect
+	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/spf13/afero v1.9.3 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect

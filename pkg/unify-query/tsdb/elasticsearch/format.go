@@ -447,9 +447,8 @@ func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggre
 	return f.Agg()
 }
 
-func (f *FormatFactory) Size(ss *elastic.SearchService) *elastic.SearchService {
-	ss = ss.From(f.from).Size(f.size)
-	return ss
+func (f *FormatFactory) Size(ss *elastic.SearchSource) {
+	ss.From(f.from).Size(f.size)
 }
 
 func (f *FormatFactory) Order() map[string]bool {

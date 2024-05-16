@@ -9,13 +9,37 @@
 
 package elasticsearch
 
+import (
+	"encoding/json"
+	"fmt"
+
+	parser "github.com/bytedance/go-querystring-parser"
+)
+
+type Field struct {
+	Key      string
+	Value    string
+	Operator string
+}
+
+type Conditions struct {
+	FieldList     []Field
+	ConditionList []string
+}
+
 type QueryString struct {
 	q string
+
+	Conditions Conditions
 }
 
 func NewQueryString(q string) *QueryString {
 	return &QueryString{
 		q: q,
+		Conditions: Conditions{
+			FieldList:     make([]Field, 0),
+			ConditionList: make([]string, 0),
+		},
 	}
 }
 
@@ -23,6 +47,81 @@ func (s *QueryString) ToDsl() error {
 	if s.q == "" {
 		return nil
 	}
+	ast, err := parser.Parse(s.q)
+	if err != nil {
+		return err
+	}
+
+	s.Walk(ast)
+
+	cs, err := json.Marshal(s.Conditions)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(cs))
 
 	return nil
+}
+
+func (s *QueryString) Walk(conditions ...parser.Condition) {
+
+	for _, condition := range conditions {
+		switch c := condition.(type) {
+		case *parser.OrCondition:
+			s.Walk(c.Left, c.Right)
+			s.Conditions.ConditionList = append(
+				s.Conditions.ConditionList,
+				"or",
+			)
+		case *parser.AndCondition:
+			s.Walk(c.Left, c.Right)
+			s.Conditions.ConditionList = append(
+				s.Conditions.ConditionList,
+				"and",
+			)
+		case *parser.MatchCondition:
+			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
+				Key:      c.Field,
+				Value:    c.Value,
+				Operator: "eq",
+			})
+		case *parser.NumberRangeCondition:
+			var operator string
+			if c.IncludeStart {
+				operator = "gte"
+			} else {
+				operator = "gt"
+			}
+			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
+				Key:      c.Field,
+				Value:    *c.Start,
+				Operator: operator,
+			})
+
+			if c.IncludeStart {
+				operator = "lte"
+			} else {
+				operator = "lt"
+			}
+			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
+				Key:      c.Field,
+				Value:    *c.End,
+				Operator: operator,
+			})
+
+			s.Conditions.ConditionList = append(
+				s.Conditions.ConditionList,
+				"and",
+			)
+		case *parser.WildcardCondition:
+			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
+				Key:      c.Field,
+				Value:    c.Value,
+				Operator: "reg",
+			})
+		default:
+			panic(fmt.Sprintf("type is wrong %T", c))
+		}
+	}
 }

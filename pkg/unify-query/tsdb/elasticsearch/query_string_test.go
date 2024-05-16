@@ -27,6 +27,30 @@ func TestQsToDsl(t *testing.T) {
 		q string
 	}{
 		{
+			q: `msg.\*: (ERROR OR INFO)`,
+		},
+		{
+			q: `log: "ERROR MSG"`,
+		},
+		{
+			q: `quick brown fox`,
+		},
+		{
+			q: `quick AND brown`,
+		},
+		{
+			q: `age:[18 TO 30]`,
+		},
+		{
+			q: `qu?ck br*wn`,
+		},
+		{
+			q: `(quick OR brown) AND fox`,
+		},
+		{
+			q: `title:quick`,
+		},
+		{
 			q: `log: /data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py`,
 		},
 	} {

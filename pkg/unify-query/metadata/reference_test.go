@@ -476,6 +476,81 @@ func TestCheckVmQuery(t *testing.T) {
 			},
 		},
 		{
+			name:     "测试不同环境下多指标多聚合符合 druid-query 查询",
+			spaceUid: "druid-query",
+			ref: QueryReference{
+				refNameA: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:             "system",
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							IsSingleMetric: false,
+							VmRt:           "2_vm_system_cpu_detail",
+							VmCondition:    `result_table_id="2_vm_system_cpu_detail", __name__="usage_value"`,
+							AggregateMethodList: []AggrMethod{
+								{
+									Name: "sum",
+									Dimensions: []string{
+										"bk_obj_id",
+										"bk_inst_id",
+									},
+								},
+								{
+									Name: "count",
+									Dimensions: []string{
+										"bk_obj_id",
+										"bk_inst_id",
+									},
+								},
+							},
+						},
+					},
+					ReferenceName: refNameA,
+				},
+				refNameB: &QueryMetric{
+					QueryList: []*Query{
+						{
+							DB:             "system",
+							Measurement:    "cpu_summary",
+							Field:          "usage",
+							IsSingleMetric: false,
+							VmRt:           "2_vm_system_mem",
+							VmCondition:    `result_table_id="2_vm_system_mem", __name__="usage_value"`,
+							AggregateMethodList: []AggrMethod{
+								{
+									Name: "sum",
+									Dimensions: []string{
+										"bk_obj_id",
+										"bk_inst_id",
+									},
+								},
+								{
+									Name: "max",
+									Dimensions: []string{
+										"bk_obj_id",
+										"bk_inst_id",
+									},
+								},
+							},
+						},
+					},
+					ReferenceName: refNameB,
+				},
+			},
+			expected: checkExpected{
+				ok: true,
+				vmConditions: map[string]string{
+					refNameA: `result_table_id="2_vm_system_cpu_detail_cmdb", __name__="usage_value"`,
+					refNameB: `result_table_id="2_vm_system_mem_cmdb", __name__="usage_value"`,
+				},
+				vmRtList: []string{
+					"2_vm_system_cpu_detail_cmdb",
+					"2_vm_system_mem_cmdb",
+				},
+			},
+		},
+		{
 			name:     "测试多指标符合的 druid 和 vm 混合查询",
 			spaceUid: "druid-query",
 			ref: QueryReference{

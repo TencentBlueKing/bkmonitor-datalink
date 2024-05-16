@@ -14,4 +14,12 @@ const (
 	CleanupIntervalPath   = "metadata.cache.cleanup_interval_path"
 
 	MaxVmConditionNum = ""
+
+	MaDruidQueryRawSuffixPath  = "metadata.druid_query.raw_suffix"
+	MaDruidQueryCmdbSuffixPath = "metadata.druid_query.cmdb_suffix"
+)
+
+var (
+	MaDruidQueryRawSuffix  string
+	MaDruidQueryCmdbSuffix string
 )

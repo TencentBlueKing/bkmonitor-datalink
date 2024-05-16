@@ -82,3 +82,7 @@ trace:
     type: grpc
 bbolt:
   default_path: bolt.db
+metadata:
+  druid_query:
+    raw_suffix: "_raw"
+    cmdb_suffix: "_cmdb"

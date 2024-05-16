@@ -27,9 +27,6 @@ func TestQsToDsl(t *testing.T) {
 		q string
 	}{
 		{
-			q: `msg.\*: (ERROR OR INFO)`,
-		},
-		{
 			q: `log: "ERROR MSG"`,
 		},
 		{

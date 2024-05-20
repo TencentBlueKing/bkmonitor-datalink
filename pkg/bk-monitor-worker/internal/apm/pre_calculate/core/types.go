@@ -17,8 +17,6 @@ import (
 const (
 	// SpanMaxSize Maximum of analyses
 	SpanMaxSize = 10000
-	// HashSecret secret of hash
-	HashSecret = "NMXhKSoWSa1APz0T68etCgHnmJQiim1B"
 )
 
 // SpanCategory Classification of span

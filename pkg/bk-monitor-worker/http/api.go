@@ -18,7 +18,6 @@ import (
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	storeRedis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -83,7 +82,6 @@ func CreateTask(c *gin.Context) {
 	// 如果是异步任务，则直接写入到队列，然后执行任务
 	// 如果是常驻任务，则直接写入到常驻任务队列中即可
 	kind := params.Kind
-	metrics.RegisterTaskTotal(kind, common.TaskModuleName)
 	// 组装 task
 	newedTask := &task.Task{
 		Kind:    kind,

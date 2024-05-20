@@ -327,3 +327,35 @@ func TestComposeEsTableIdDetail(t *testing.T) {
 	}
 	assert.True(t, expectedKey.Equal(actualKey))
 }
+
+func TestGetDataLabelByTableId(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	// not data_label
+	obj := resulttable.ResultTable{TableId: "not_data_label", DataLabel: nil}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+	// with data_label
+	dataLabel := "data_label_value"
+	obj = resulttable.ResultTable{TableId: "data_label", DataLabel: &dataLabel}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	tests := []struct {
+		name         string
+		tableIdList  []string
+		expectedList []string
+	}{
+		{"table_id is nil", []string{}, nil},
+		{"table_id without data_label", []string{"not_data_label"}, nil},
+		{"table_id with data_label", []string{"data_label"}, []string{dataLabel}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actualList, _ := NewSpacePusher().getDataLabelByTableId(tt.tableIdList)
+			assert.Equal(t, tt.expectedList, actualList)
+		})
+	}
+}

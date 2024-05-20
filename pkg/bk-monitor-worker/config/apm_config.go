@@ -106,6 +106,8 @@ var (
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
+	// HashSecret secret for hash
+	HashSecret string
 )
 
 func initApmVariables() {
@@ -151,4 +153,6 @@ func initApmVariables() {
 	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
 	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
 	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
+
+	HashSecret = GetValue("taskConfig.apmPreCalculate.hashSecret", "")
 }

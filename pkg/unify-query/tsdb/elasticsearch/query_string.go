@@ -33,6 +33,7 @@ type QueryString struct {
 	Conditions Conditions
 }
 
+// NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
 func NewQueryString(q string) *QueryString {
 	return &QueryString{
 		q: q,

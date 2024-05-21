@@ -64,7 +64,7 @@ func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskC
 	}
 
 	defer func() {
-		event.EndAt = time.Now()
+		event.EndAt = time.Now() // tcp 三次握手后统计耗时 挥手不计入耗时内
 		err := conn.Close()
 		if err != nil {
 			logger.Warnf("%v: close conn error: %v", taskConf.TaskID, err)

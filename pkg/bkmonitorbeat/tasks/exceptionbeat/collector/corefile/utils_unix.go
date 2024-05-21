@@ -492,7 +492,7 @@ func (c *CoreFileCollector) fillDimension(filePath string) (beat.MapStr, bool) {
 	m, ok := c.fillDimensionV0(filePath)
 	// 正则匹配模式下，不需要关心是否 dimensions 能否匹配到
 	if c.matchRegx != nil {
-		matched := c.matchRegx.MatchString(filePath)
+		matched := c.matchRegx.MatchString(filepath.Base(filePath))
 		return m, matched
 	}
 

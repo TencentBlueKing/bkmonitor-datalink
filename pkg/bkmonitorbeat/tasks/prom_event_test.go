@@ -35,6 +35,27 @@ func TestPromEventExemplars(t *testing.T) {
 	assert.Equal(t, 0.15, event.Exemplar.Value)
 }
 
+func TestPromEventTs(t *testing.T) {
+	timeOffset := 24 * time.Hour * 365 * 200
+	tsHandler, _ := GetTimestampHandler("s")
+
+	t.Run("Without Timestamp", func(t *testing.T) {
+		line := `my_histogram_bucketx{le="0.25"} 205.5`
+		nowTs := int64(1637839803000) // 设定为当前时间
+		event, err := NewPromEvent(line, nowTs, timeOffset, tsHandler)
+		assert.NoError(t, err)
+		assert.Equal(t, nowTs/1000, event.GetTimestamp())
+	})
+
+	t.Run("With Timestamp", func(t *testing.T) {
+		line := `my_histogram_bucketx{le="0.25"} 205.5 1637839804000`
+		nowTs := int64(1637839803000)
+		event, err := NewPromEvent(line, nowTs, timeOffset, tsHandler)
+		assert.NoError(t, err)
+		assert.Equal(t, int64(1637839804), event.GetTimestamp())
+	})
+}
+
 func TestPromEvent(t *testing.T) {
 	line := `my_histogram_bucketx{le="0.25"} 205.5`
 	event, err := NewPromEvent(line, 1637839803, time.Second, func(_ int64, ts int64, _ time.Duration) int64 {

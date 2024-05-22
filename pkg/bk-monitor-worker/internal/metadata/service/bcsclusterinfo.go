@@ -12,6 +12,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkmonitor"
+	"golang.org/x/exp/maps"
 	"io"
 	"net/http"
 	"net/url"
@@ -74,6 +76,17 @@ var bcsDatasourceRegisterInfo = map[string]*DatasourceRegister{
 		IsSystem:        true,
 		Usage:           "event",
 	},
+	models.K8sDefaultApp: {
+		Usage:                    models.K8sDefaultApp,
+		IsSystem:                 true,
+		overwriteRegisterHandler: registerCollectorDataIds,
+		overwriteConfigHandler:   configCollectorDataIds,
+	},
+}
+
+type KubeConfigDefine struct {
+	Data *unstructured.Unstructured
+	Name string
 }
 
 // BcsClusterInfoSvc bcs cluster info service
@@ -453,6 +466,17 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	logger.Infof("cluster [%s] create database record success", cluster.ClusterID)
 	// 注册6个必要的data_id和自定义事件及自定义时序上报内容
 	for usage, register := range bcsDatasourceRegisterInfo {
+
+		// ---> 单独 dataId 注册逻辑
+		if register.overwriteRegisterHandler != nil {
+			// 如果有定义覆盖逻辑，则不执行默认 data_id 注册逻辑，交给 handler 单独执行
+			if err = register.overwriteRegisterHandler(*register, &cluster); err != nil {
+				logger.Errorf("cluster [%s] usage [%s] registry failed, error: %s", cluster.ClusterID, register.Usage, err)
+			}
+			continue
+		}
+
+		// ---> 默认 dataId 注册逻辑
 		// 注册data_id
 		datasource, err := NewBcsClusterInfoSvc(&cluster).CreateDataSource(usage, register.EtlConfig, creator, cfg.BcsKafkaStorageClusterId, "default")
 		if err != nil {
@@ -519,14 +543,25 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 	}
 	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "discover_bcs_clusters") {
 		logger.Info(diffutil.BuildLogStr("discover_bcs_clusters", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(cluster.TableName(), map[string]interface{}{
-			bcs.BCSClusterInfoDBSchema.ID.String():                 cluster.ID,
-			bcs.BCSClusterInfoDBSchema.K8sMetricDataID.String():    cluster.K8sMetricDataID,
-			bcs.BCSClusterInfoDBSchema.CustomMetricDataID.String(): cluster.CustomMetricDataID,
-			bcs.BCSClusterInfoDBSchema.K8sEventDataID.String():     cluster.K8sEventDataID,
+			bcs.BCSClusterInfoDBSchema.ID.String():                      cluster.ID,
+			bcs.BCSClusterInfoDBSchema.K8sMetricDataID.String():         cluster.K8sMetricDataID,
+			bcs.BCSClusterInfoDBSchema.CustomMetricDataID.String():      cluster.CustomMetricDataID,
+			bcs.BCSClusterInfoDBSchema.K8sEventDataID.String():          cluster.K8sEventDataID,
+			bcs.BCSClusterInfoDBSchema.DefaultAppTraceDataId.String():   cluster.DefaultAppTraceDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppMetricDataId.String():  cluster.DefaultAppMetricDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppProfileDataId.String(): cluster.DefaultAppProfileDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppLogDataId.String():     cluster.DefaultAppLogDataId,
 		}), ""))
 	} else {
-		if err := cluster.Update(db, bcs.BCSClusterInfoDBSchema.K8sMetricDataID, bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
-			bcs.BCSClusterInfoDBSchema.K8sEventDataID); err != nil {
+		if err := cluster.Update(db,
+			bcs.BCSClusterInfoDBSchema.K8sMetricDataID,
+			bcs.BCSClusterInfoDBSchema.CustomMetricDataID,
+			bcs.BCSClusterInfoDBSchema.K8sEventDataID,
+			bcs.BCSClusterInfoDBSchema.DefaultAppTraceDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppMetricDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppProfileDataId,
+			bcs.BCSClusterInfoDBSchema.DefaultAppLogDataId,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -569,13 +604,16 @@ func (b BcsClusterInfoSvc) InitResource() error {
 	}
 	// 基于各dataid，生成配置并写入bcs集群
 	for _, register := range bcsDatasourceRegisterInfo {
-		dataidConfig, err := b.makeConfig(register)
+		dataIdConfigs, err := b.makeConfigs(register)
 		if err != nil {
 			return err
 		}
-		name := b.composeDataidResourceName(strings.ToLower(register.DatasourceName))
-		if err := b.ensureDataIdResource(name, dataidConfig); err != nil {
-			return errors.Wrap(err, "ensure data id resource error")
+		for index, dataIdConfig := range dataIdConfigs {
+			name := b.composeDataidResourceName(strings.ToLower(dataIdConfig.Name))
+			if err = b.ensureDataIdResource(name, dataIdConfig.Data); err != nil {
+				return errors.Wrap(err, "ensure data id resource error")
+			}
+			logger.Infof("[InitResource] DataId[%d] deploy successfully", index)
 		}
 	}
 	return nil
@@ -719,7 +757,15 @@ func (b BcsClusterInfoSvc) CreateK8sResource(group, version, resource string, co
 	return dynamicClient.Resource(gvr).Create(context.Background(), config, metav1.CreateOptions{})
 }
 
-func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (*unstructured.Unstructured, error) {
+func (b BcsClusterInfoSvc) makeConfigs(register *DatasourceRegister) ([]KubeConfigDefine, error) {
+
+	// 	---> 单独配置生成逻辑
+	if register.overwriteConfigHandler != nil {
+		// 如果有定义覆盖逻辑，则不执行默认配置生成逻辑，交给 handler 单独执行
+		return register.overwriteConfigHandler(b)
+	}
+
+	// ---> 默认配置生成逻辑
 	rcSvc := NewReplaceConfigSvc(nil)
 	replaceConfig, err := rcSvc.GetCommonReplaceConfig()
 	if err != nil {
@@ -774,7 +820,7 @@ func (b BcsClusterInfoSvc) makeConfig(register *DatasourceRegister) (*unstructur
 			"dimensionReplace": replaceConfig[models.ReplaceTypesDimension],
 		},
 	}
-	return &unstructured.Unstructured{Object: result}, nil
+	return []KubeConfigDefine{{Data: &unstructured.Unstructured{Object: result}, Name: register.DatasourceName}}, nil
 }
 
 // 组装下发的配置资源的名称
@@ -819,28 +865,45 @@ func (b BcsClusterInfoSvc) RefreshCommonResource() error {
 	}
 
 	for _, register := range bcsDatasourceRegisterInfo {
-		datasourceNameLower := b.composeDataidResourceName(strings.ToLower(register.DatasourceName))
-		dataIdConfig, err := b.makeConfig(register)
+		dataIdConfigs, err := b.makeConfigs(register)
 		if err != nil {
 			return err
 		}
-		// 检查k8s集群里是否已经存在对应resource
-		if _, ok := resourceMap[datasourceNameLower]; !ok {
-			// 如果k8s_resource不存在，则增加
-			if err := b.ensureDataIdResource(datasourceNameLower, dataIdConfig); err != nil {
-				return err
+		for index, dataIdConfig := range dataIdConfigs {
+			datasourceNameLower := b.composeDataidResourceName(strings.ToLower(dataIdConfig.Name))
+			// 检查k8s集群里是否已经存在对应resource
+			if _, ok := resourceMap[datasourceNameLower]; !ok {
+				// 如果k8s_resource不存在，则增加
+				if err = b.ensureDataIdResource(datasourceNameLower, dataIdConfig.Data); err != nil {
+					logger.Errorf(
+						"[RefreshResource] dataId[%d](%s) failed to deploy in clusterId: %s, resource: [%v] err: %s",
+						index, datasourceNameLower, b.ClusterID, dataIdConfig.Data, err,
+					)
+				} else {
+					logger.Infof(
+						"[RefreshResource] dataId[%d](%s) create resource in clusterId: %s, resource: [%v]",
+						index, datasourceNameLower, b.ClusterID, dataIdConfig.Data,
+					)
+				}
+			} else {
+				// 如果存在，则检查信息是否一致，不一致则更新
+				res := resourceMap[datasourceNameLower]
+				if !b.isSameResourceConfig(dataIdConfig.Data.UnstructuredContent(), res.UnstructuredContent()) {
+					if err = b.ensureDataIdResource(datasourceNameLower, dataIdConfig.Data); err != nil {
+						logger.Errorf(
+							"[RefreshResource] dataId[%d](%s) failed to update in clusterId: %s, resource: [%v] err: %s",
+							index, datasourceNameLower, b.ClusterID, dataIdConfig.Data, err,
+						)
+					} else {
+						logger.Infof(
+							"[RefreshResource] dataId[%d](%s) update resource in clusterId: %s, resource: [%v]",
+							index, datasourceNameLower, b.ClusterID, dataIdConfig.Data,
+						)
+					}
+				}
 			}
-			return nil
-		}
-		// 否则检查信息是否一致，不一致则更新
-		res := resourceMap[datasourceNameLower]
-		if !b.isSameResourceConfig(dataIdConfig.UnstructuredContent(), res.UnstructuredContent()) {
-			if err := b.ensureDataIdResource(datasourceNameLower, dataIdConfig); err != nil {
-				return err
-			}
-			logger.Infof("cluster [%s] update resource [%v]", b.ClusterID, dataIdConfig)
-		}
 
+		}
 	}
 	return nil
 }
@@ -1221,6 +1284,10 @@ type DatasourceRegister struct {
 	IsSpitMeasurement bool
 	IsSystem          bool
 	Usage             string
+	// overwriteRegisterHandler: 如果集群注册不走默认的 data_id 注册逻辑，可以实现此方法，将会在注册时单独执行
+	overwriteRegisterHandler DatasourceRegisterHandler
+	// overwriteConfigHandler: 如果集群注册后生成 k8s配置时不走默认的生成逻辑，可以实现此方法，将会在生成 CRD 配置时单独执行
+	overwriteConfigHandler DatasourceConfigHandler
 }
 
 // RefreshClusterResource 当绑定资源的集群信息变动时，刷新绑定的集群资源
@@ -1445,4 +1512,69 @@ func (b BcsClusterInfoSvc) getClusterDataIds(clusterIdList []string) ([]uint, er
 		dataidSet.Add(cluster.K8sEventDataID)
 	}
 	return dataidSet.ToSlice(), nil
+}
+
+type DatasourceRegisterHandler func(DatasourceRegister, *bcs.BCSClusterInfo) error
+
+func registerCollectorDataIds(register DatasourceRegister, info *bcs.BCSClusterInfo) error {
+
+	// Step1: 调用 apm 接口一键创建
+	monitorApi, err := api.GetMonitorApi()
+	if err != nil {
+		return err
+	}
+	var resp bkmonitor.ApplicationHubDetail
+	params := map[string]interface{}{"bk_biz_id": info.BkBizId, "bcs_cluster_id": info.ClusterID}
+	if _, err = monitorApi.CreateApplicationHub().SetBody(params).SetResult(&resp).Request(); err != nil {
+		return errors.Errorf("request [create_application_hub] failed, cluster_id: %s, error: %s", info.ClusterID, err)
+	}
+
+	// Step2: 更新字段
+	info.DefaultAppMetricDataId = uint(resp.MetricDataId)
+	info.DefaultAppTraceDataId = uint(resp.TraceDataId)
+	info.DefaultAppProfileDataId = uint(resp.ProfileDataId)
+	info.DefaultAppLogDataId = uint(resp.LogDataId)
+	logger.Infof(
+		"cluster: [%s] usage: [%s] create application hub successfully, response: %+v",
+		info.ClusterID, register.Usage, resp,
+	)
+	return nil
+}
+
+type DatasourceConfigHandler func(BcsClusterInfoSvc) ([]KubeConfigDefine, error)
+
+func configCollectorDataIds(info BcsClusterInfoSvc) ([]KubeConfigDefine, error) {
+	commonConfig := map[string]any{
+		"apiVersion": fmt.Sprintf("%s/%s", models.BcsResourceGroupName, models.BcsResourceVersion),
+		"kind":       models.BcsResourceDataIdResourceKind,
+	}
+
+	var res []KubeConfigDefine
+	requiredDataIds := []struct {
+		usageKey int
+		dataId   uint
+	}{
+		{models.DefaultAppMetric, info.DefaultAppMetricDataId},
+		{models.DefaultAppTrace, info.DefaultAppTraceDataId},
+		{models.DefaultAppLog, info.DefaultAppLogDataId},
+		{models.DefaultAppProfile, info.DefaultAppProfileDataId},
+	}
+
+	for _, config := range requiredDataIds {
+		usageInfo := models.DefaultAppUsageMapping[config.usageKey]
+
+		dConfig := make(map[string]any)
+		maps.Copy(dConfig, commonConfig)
+		dConfig["metadata"] = map[string]any{
+			"name": usageInfo.Name,
+			"labels": info.composeDataidResourceLabel(map[string]any{
+				"usage": usageInfo.Usage,
+				"scope": "privileged",
+			}),
+		}
+		dConfig["spec"] = map[string]uint{"dataID": config.dataId}
+		res = append(res, KubeConfigDefine{Data: &unstructured.Unstructured{Object: dConfig}, Name: usageInfo.Name})
+	}
+
+	return res, nil
 }

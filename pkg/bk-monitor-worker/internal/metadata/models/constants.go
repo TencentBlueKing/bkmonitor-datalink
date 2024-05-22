@@ -114,6 +114,7 @@ const (
 	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
 	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
 	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据
+	K8sDefaultApp                   = "k8s_default_app"           // bcs k8s 默认应用
 	BcsResourceGroupName            = "monitoring.bk.tencent.com" // 容器资源组名
 	BcsResourceVersion              = "v1beta1"                   // 容器资源版本号
 	BcsResourceDataIdResourceKind   = "DataID"                    // data_id注入资源类型
@@ -268,3 +269,21 @@ var AllSpaceTableIds = []string{"custom_report_aggate.base", "bkm_statistics.bas
 
 // 插件授权给 bkci 访问的插件列表
 var BkciSpaceAccessPlugins = []string{"script_p4d_process_monitor.__default__"}
+
+const (
+	DefaultAppTrace = iota
+	DefaultAppMetric
+	DefaultAppProfile
+	DefaultAppLog
+)
+
+// DefaultAppUsageMapping collector data_ids 资源与 K8S 配置中 usage 的对应关系
+var DefaultAppUsageMapping = map[int]struct {
+	Name  string
+	Usage string
+}{
+	DefaultAppMetric:  {Name: "collector-metrics", Usage: "collector.metrics"},
+	DefaultAppTrace:   {Name: "collector-traces", Usage: "collector.traces"},
+	DefaultAppProfile: {Name: "collector-profiles", Usage: "collector.profiles"},
+	DefaultAppLog:     {Name: "collector-logs", Usage: "collector.logs"},
+}

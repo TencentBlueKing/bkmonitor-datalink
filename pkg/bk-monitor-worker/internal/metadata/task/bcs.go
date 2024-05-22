@@ -29,7 +29,7 @@ import (
 )
 
 // DiscoverBcsClusters 周期刷新bcs集群列表，将未注册进metadata的集群注册进来
-func DiscoverBcsClusters(ctx context.Context, t *t.Task) error {
+func DiscoverBcsClusters(_ context.Context, _ *t.Task) error {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Errorf("DiscoverBcsClusters Runtime panic caught: %v", err)

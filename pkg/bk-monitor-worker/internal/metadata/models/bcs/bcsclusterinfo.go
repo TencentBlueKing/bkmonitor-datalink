@@ -24,32 +24,36 @@ var DefaultServiceMonitorDimensionTerm = []string{"bk_monitor_name", "bk_monitor
 // BCSClusterInfo BCS cluster info model
 // gen:qs
 type BCSClusterInfo struct {
-	ID                 uint      `gorm:"primary_key" json:"id"`
-	ClusterID          string    `gorm:"size:128;index" json:"cluster_id"`
-	BCSApiClusterId    string    `gorm:"column:bcs_api_cluster_id;index" json:"bcs_api_cluster_id"`
-	BkBizId            int       `gorm:"column:bk_biz_id" json:"bk_biz_id"`
-	BkCloudId          *int      `gorm:"column:bk_cloud_id" json:"bk_cloud_id"`
-	ProjectId          string    `gorm:"size:128" json:"project_id"`
-	Status             string    `gorm:"size:50" json:"status"`
-	DomainName         string    `gorm:"size:512" json:"domain_name"`
-	Port               uint      `json:"port"`
-	ServerAddressPath  string    `gorm:"size:512" json:"server_address_path"`
-	ApiKeyType         string    `gorm:"size:128" json:"api_key_type"`
-	ApiKeyContent      string    `gorm:"size:128" json:"api_key_content"`
-	ApiKeyPrefix       string    `gorm:"size:128" json:"api_key_prefix"`
-	IsSkipSslVerify    bool      `gorm:"column:is_skip_ssl_verify" json:"is_skip_ssl_verify"`
-	CertContent        *string   `json:"cert_content"`
-	K8sMetricDataID    uint      `gorm:"column:K8sMetricDataID" json:"K8sMetricDataID"`
-	CustomMetricDataID uint      `gorm:"column:CustomMetricDataID" json:"CustomMetricDataID"`
-	K8sEventDataID     uint      `gorm:"column:K8sEventDataID" json:"K8sEventDataID"`
-	CustomEventDataID  uint      `gorm:"column:CustomEventDataID" json:"CustomEventDataID"`
-	SystemLogDataID    uint      `gorm:"column:SystemLogDataID" json:"SystemLogDataID"`
-	CustomLogDataID    uint      `gorm:"column:CustomLogDataID" json:"CustomLogDataID"`
-	BkEnv              *string   `gorm:"size:32" json:"bk_env"`
-	Creator            string    `json:"creator" gorm:"size:32"`
-	CreateTime         time.Time `json:"create_time"`
-	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
-	LastModifyUser     string    `gorm:"size:32" json:"last_modify_user"`
+	ID                      uint      `gorm:"primary_key" json:"id"`
+	ClusterID               string    `gorm:"size:128;index" json:"cluster_id"`
+	BCSApiClusterId         string    `gorm:"column:bcs_api_cluster_id;index" json:"bcs_api_cluster_id"`
+	BkBizId                 int       `gorm:"column:bk_biz_id" json:"bk_biz_id"`
+	BkCloudId               *int      `gorm:"column:bk_cloud_id" json:"bk_cloud_id"`
+	ProjectId               string    `gorm:"size:128" json:"project_id"`
+	Status                  string    `gorm:"size:50" json:"status"`
+	DomainName              string    `gorm:"size:512" json:"domain_name"`
+	Port                    uint      `json:"port"`
+	ServerAddressPath       string    `gorm:"size:512" json:"server_address_path"`
+	ApiKeyType              string    `gorm:"size:128" json:"api_key_type"`
+	ApiKeyContent           string    `gorm:"size:128" json:"api_key_content"`
+	ApiKeyPrefix            string    `gorm:"size:128" json:"api_key_prefix"`
+	IsSkipSslVerify         bool      `gorm:"column:is_skip_ssl_verify" json:"is_skip_ssl_verify"`
+	CertContent             *string   `json:"cert_content"`
+	K8sMetricDataID         uint      `gorm:"column:K8sMetricDataID" json:"K8sMetricDataID"`
+	CustomMetricDataID      uint      `gorm:"column:CustomMetricDataID" json:"CustomMetricDataID"`
+	K8sEventDataID          uint      `gorm:"column:K8sEventDataID" json:"K8sEventDataID"`
+	CustomEventDataID       uint      `gorm:"column:CustomEventDataID" json:"CustomEventDataID"`
+	SystemLogDataID         uint      `gorm:"column:SystemLogDataID" json:"SystemLogDataID"`
+	CustomLogDataID         uint      `gorm:"column:CustomLogDataID" json:"CustomLogDataID"`
+	DefaultAppMetricDataId  uint      `gorm:"column:DefaultAppMetricDataId" json:"DefaultAppMetricDataId"`
+	DefaultAppTraceDataId   uint      `gorm:"column:DefaultAppTraceDataId" json:"DefaultAppTraceDataId"`
+	DefaultAppProfileDataId uint      `gorm:"column:DefaultAppProfileDataId" json:"DefaultAppProfileDataId"`
+	DefaultAppLogDataId     uint      `gorm:"column:DefaultAppLogDataId" json:"DefaultAppLogDataId"`
+	BkEnv                   *string   `gorm:"size:32" json:"bk_env"`
+	Creator                 string    `json:"creator" gorm:"size:32"`
+	CreateTime              time.Time `json:"create_time"`
+	LastModifyTime          time.Time `gorm:"last_modify_time" json:"last_modify_time"`
+	LastModifyUser          string    `gorm:"size:32" json:"last_modify_user"`
 }
 
 // TableName: 用于设置表的别名

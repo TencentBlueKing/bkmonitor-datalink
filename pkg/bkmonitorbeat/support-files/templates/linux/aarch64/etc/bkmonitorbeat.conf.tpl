@@ -29,9 +29,13 @@ logging.backups: 5
 
 # ============================= Resource ==================================
 resource_limit:
+{%- if extra_vars is defined and extra_vars.disable_resource_limit is defined and extra_vars.disable_resource_limit == "true" %}
+  enabled: false
+{%- else %}
   enabled: true
   cpu: 1    # CPU 资源限制 单位 core(float64)
   mem: -1 # 内存资源限制 单位 MB(int)，-1 代表无限制
+{%- endif %}
 
 # ================================= Tasks =======================================
 bkmonitorbeat:

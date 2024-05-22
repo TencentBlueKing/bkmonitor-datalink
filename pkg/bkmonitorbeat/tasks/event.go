@@ -72,7 +72,9 @@ func (e *Event) SuccessWithTime(start, end time.Time) {
 
 // SuccessOrTimeout :
 func (e *Event) SuccessOrTimeout() {
-	e.EndAt = time.Now()
+	if e.EndAt.IsZero() {
+		e.EndAt = time.Now()
+	}
 	if e.AvailableDuration > time.Nanosecond && e.TaskDuration() > e.AvailableDuration {
 		logger.Debugf("fail because task duration exceed")
 		e.Fail(define.BeatErrCodeTimeout)

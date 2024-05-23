@@ -61,6 +61,7 @@ func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, 
 			return err
 		}
 
+		payload.SetETLRecord(record)
 		outputChan <- payload
 		return nil
 	})

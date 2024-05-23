@@ -126,11 +126,28 @@ type AlarmHostInfo struct {
 	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
 }
 
+// AlarmServiceInstanceInfo 服务实例信息
+type AlarmServiceInstanceInfo struct {
+	BkBizId          int             `json:"bk_biz_id"`
+	ID               int             `json:"id"`
+	Name             string          `json:"name"`
+	BkModuleId       int             `json:"bk_module_id"`
+	BkHostId         int             `json:"bk_host_id"`
+	ProcessInstances json.RawMessage `json:"process_instances"`
+
+	// 补充字段
+	IP        string                              `json:"ip"`
+	BkCloudId int                                 `json:"bk_cloud_id"`
+	TopoLinks map[string][]map[string]interface{} `json:"topo_link"`
+}
+
 const (
-	hostCacheKey        = "cmdb.host"
-	hostAgentIDCacheKey = "cmdb.agent_id"
-	hostIPCacheKey      = "cmdb.host_ip"
-	topoCacheKey        = "cmdb.topo"
+	hostCacheKey                  = "cmdb.host"
+	serviceInstanceCacheKey       = "cmdb.service_instance"
+	hostToServiceInstanceCacheKey = "cmdb.host_to_service_instance"
+	hostAgentIDCacheKey           = "cmdb.agent_id"
+	hostIPCacheKey                = "cmdb.host_ip"
+	topoCacheKey                  = "cmdb.topo"
 )
 
 // NewAlarmHostInfoByListBizHostsTopoDataInfo 通过ListBizHostsTopoDataInfo构造AlarmHostInfo
@@ -242,8 +259,9 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 type HostAndTopoCacheManager struct {
 	*BaseCacheManager
 
-	hosts []*AlarmHostInfo
-	topo  *cmdb.SearchBizInstTopoData
+	hosts            []*AlarmHostInfo
+	serviceInstances []*AlarmServiceInstanceInfo
+	topo             *cmdb.SearchBizInstTopoData
 
 	hostIpMap     map[string]map[string]struct{}
 	hostIpMapLock sync.RWMutex
@@ -256,7 +274,7 @@ func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLim
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
 
-	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
+	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey, serviceInstanceCacheKey, hostToServiceInstanceCacheKey)
 	return &HostAndTopoCacheManager{
 		BaseCacheManager: manager,
 		hostIpMap:        make(map[string]map[string]struct{}),
@@ -277,12 +295,13 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	}()
 
 	// 获取业务下的主机及拓扑信息
-	hosts, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
+	hosts, serviceInstances, topo, err := getHostAndTopoByBiz(ctx, bkBizId)
 	if err != nil {
 		return errors.Wrap(err, "get host by biz failed")
 	}
 	m.hosts = hosts
 	m.topo = topo
+	m.serviceInstances = serviceInstances
 
 	// 记录主机IP映射
 	m.hostIpMapLock.Lock()
@@ -297,7 +316,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	m.hostIpMapLock.Unlock()
 
 	wg := sync.WaitGroup{}
-	wg.Add(3)
+	wg.Add(4)
 
 	// 刷新topo缓存
 	go func() {
@@ -322,6 +341,15 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		err := m.refreshHostAgentIDCache(ctx)
 		if err != nil {
 			logger.Error("refresh cmdb host agent id cache failed, err: %v", err)
+		}
+		wg.Done()
+	}()
+
+	// 刷新服务实例缓存
+	go func() {
+		err := m.refreshServiceInstanceCache(ctx)
+		if err != nil {
+			logger.Error("refresh cmdb service instance cache failed, err: %v", err)
 		}
 		wg.Done()
 	}()
@@ -400,7 +428,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
 
 	err := m.UpdateHashMapCache(ctx, key, topoNodes)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update cmdb topo hashmap cache failed")
 	}
 	return nil
 }
@@ -421,7 +449,38 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
 
 	err := m.UpdateHashMapCache(ctx, key, hosts)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update cmdb host hashmap cache failed")
+	}
+	return nil
+}
+
+// 刷新服务实例缓存
+func (m *HostAndTopoCacheManager) refreshServiceInstanceCache(ctx context.Context) error {
+	// 刷新服务实例缓存
+	key := m.GetCacheKey(serviceInstanceCacheKey)
+	serviceInstances := make(map[string]string)
+	for _, instance := range m.serviceInstances {
+		value, _ := json.Marshal(instance)
+		serviceInstances[strconv.Itoa(instance.ID)] = string(value)
+	}
+	err := m.UpdateHashMapCache(ctx, key, serviceInstances)
+	if err != nil {
+		return errors.Wrap(err, "update hashmap cmdb service instance cache failed")
+	}
+
+	// 刷新主机到服务实例缓存
+	key = m.GetCacheKey(hostToServiceInstanceCacheKey)
+	hostToServiceInstances := make(map[string][]string)
+	for _, instance := range m.serviceInstances {
+		hostToServiceInstances[strconv.Itoa(instance.BkHostId)] = append(hostToServiceInstances[strconv.Itoa(instance.BkHostId)], strconv.Itoa(instance.ID))
+	}
+	hostToServiceInstancesStr := make(map[string]string)
+	for hostId, instances := range hostToServiceInstances {
+		hostToServiceInstancesStr[hostId] = fmt.Sprintf("[%s]", strings.Join(instances, ","))
+	}
+	err = m.UpdateHashMapCache(ctx, key, hostToServiceInstancesStr)
+	if err != nil {
+		return errors.Wrap(err, "update hashmap host to service instance cache failed")
 	}
 	return nil
 }
@@ -439,16 +498,16 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) e
 
 	err := m.UpdateHashMapCache(ctx, key, agentIDs)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update hashmap cmdb host agent id cache failed")
 	}
 	return nil
 }
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
-func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
+func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, []*AlarmServiceInstanceInfo, *cmdb.SearchBizInstTopoData, error) {
 	cmdbApi, err := api.GetCmdbApi()
 	if err != nil {
-		return nil, nil, errors.Wrap(err, "get cmdb api client failed")
+		return nil, nil, nil, errors.Wrap(err, "get cmdb api client failed")
 	}
 
 	// 设置超时时间
@@ -471,14 +530,14 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 		10,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	hosts := make([]*AlarmHostInfo, 0)
 	for _, result := range results {
 		var res cmdb.ListBizHostsTopoResp
 		err := mapstructure.Decode(result, &res)
 		if err != nil {
-			return nil, nil, errors.Wrap(err, "decode response failed")
+			return nil, nil, nil, errors.Wrap(err, "decode response failed")
 		}
 		for _, rawHost := range res.Data.Info {
 			host := NewAlarmHostInfoByListBizHostsTopoDataInfo(&rawHost)
@@ -487,12 +546,71 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 		}
 	}
 
+	// 构建主机ID到IP的映射
+	hostIdToIp := make(map[int]struct {
+		ip      string
+		cloudId int
+	})
+	for _, host := range hosts {
+		hostIdToIp[host.BkHostId] = struct {
+			ip      string
+			cloudId int
+		}{ip: host.BkHostInnerip, cloudId: host.BkCloudId}
+	}
+
+	// 批量拉取业务下的服务实例信息
+	results, err = api.BatchApiRequest(
+		cmdbApiPageSize,
+		func(resp interface{}) (int, error) {
+			var res cmdb.ListServiceInstanceDetailResp
+			err := mapstructure.Decode(resp, &res)
+			if err != nil {
+				return 0, errors.Wrap(err, "decode response failed")
+			}
+			return res.Data.Count, nil
+		},
+		func(page int) define.Operation {
+			return cmdbApi.ListServiceInstanceDetail().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizID})
+		},
+		10,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	serviceInstances := make([]*AlarmServiceInstanceInfo, 0)
+	for _, result := range results {
+		var res cmdb.ListServiceInstanceDetailResp
+		err := mapstructure.Decode(result, &res)
+		if err != nil {
+			return nil, nil, nil, errors.Wrap(err, "decode response failed")
+		}
+		for _, instance := range res.Data.Info {
+			serviceInstance := &AlarmServiceInstanceInfo{
+				BkBizId:          bkBizID,
+				ID:               instance.ID,
+				Name:             instance.Name,
+				BkModuleId:       instance.BkModuleId,
+				BkHostId:         instance.BkHostId,
+				ProcessInstances: instance.ProcessInstances,
+				TopoLinks:        make(map[string][]map[string]interface{}),
+			}
+
+			// 补充IP信息
+			if host, ok := hostIdToIp[instance.BkHostId]; ok {
+				serviceInstance.IP = host.ip
+				serviceInstance.BkCloudId = host.cloudId
+			}
+
+			serviceInstances = append(serviceInstances, serviceInstance)
+		}
+	}
+
 	// 拉取云区域信息
 	var cloudAreaResp cmdb.SearchCloudAreaResp
 	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]interface{}{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
 	err = api.HandleApiResultError(cloudAreaResp.ApiCommonRespMeta, err, "search cloud area failed")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	cloudIdToName := make(map[int]string)
 	for _, cloudArea := range cloudAreaResp.Data.Info {
@@ -513,7 +631,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
 	err = api.HandleApiResultError(bizInstTopoResp.ApiCommonRespMeta, err, "search biz inst topo failed")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// 查询业务下的内置节点
@@ -521,7 +639,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	_, err = cmdbApi.GetBizInternalModule().SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// 将内置节点补充到拓扑树中
@@ -550,15 +668,20 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	// 补充拓扑信息到主机
 	for _, host := range hosts {
 		for _, bkModuleId := range host.BkModuleIds {
-			topoLink, ok := moduleIdToTopoLinks[bkModuleId]
-			if !ok {
-				continue
+			if topoLink, ok := moduleIdToTopoLinks[bkModuleId]; ok {
+				host.TopoLinks[fmt.Sprintf("module|%d", bkModuleId)] = topoLink
 			}
-			host.TopoLinks[fmt.Sprintf("module|%d", bkModuleId)] = topoLink
 		}
 	}
 
-	return hosts, &bizInstTopoResp.Data[0], nil
+	// 补充拓扑信息到服务实例
+	for _, instance := range serviceInstances {
+		if topoLink, ok := moduleIdToTopoLinks[instance.BkModuleId]; ok {
+			instance.TopoLinks[fmt.Sprintf("module|%d", instance.BkModuleId)] = topoLink
+		}
+	}
+
+	return hosts, serviceInstances, &bizInstTopoResp.Data[0], nil
 }
 
 // CleanByEvents 通过变更事件清理缓存
@@ -566,6 +689,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 	if len(events) == 0 {
 		return nil
 	}
+
+	needUpdateBizIds := make(map[int]struct{})
 
 	client := m.RedisClient
 	switch resourceType {
@@ -623,7 +748,45 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 		if err != nil {
 			return errors.Wrap(err, "hdel failed")
 		}
+	case "host_relation":
+	case "process":
+		for _, event := range events {
+			bkBizID, ok := event["bk_biz_id"].(float64)
+			if !ok {
+				continue
+			}
+			needUpdateBizIds[int(bkBizID)] = struct{}{}
+		}
 	}
+
+	// 记录需要更新的业务ID
+	needUpdateBizIdSlice := make([]string, 0, len(needUpdateBizIds))
+	for bizID := range needUpdateBizIds {
+		needUpdateBizIdSlice = append(needUpdateBizIdSlice, strconv.Itoa(bizID))
+	}
+	logger.Infof("need update biz ids: %v", strings.Join(needUpdateBizIdSlice, ","))
+
+	// 按业务刷新缓存
+	wg := sync.WaitGroup{}
+	limitChan := make(chan struct{}, m.ConcurrentLimit)
+	for bizID := range needUpdateBizIds {
+		wg.Add(1)
+		limitChan <- struct{}{}
+
+		go func(bizId int) {
+			defer func() {
+				<-limitChan
+				wg.Done()
+			}()
+			err := m.RefreshByBiz(ctx, bizId)
+			if err != nil {
+				logger.Errorf("failed to refresh host cache by biz: %d, err: %v", bizId, err)
+			}
+		}(bizID)
+	}
+
+	wg.Wait()
+
 	return nil
 }
 
@@ -700,6 +863,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		}
 		return nil
 	case "host_relation":
+	case "process":
 		for _, event := range events {
 			bkBizID, ok := event["bk_biz_id"].(float64)
 			if !ok {

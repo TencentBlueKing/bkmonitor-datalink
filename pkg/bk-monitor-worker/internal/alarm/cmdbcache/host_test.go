@@ -95,6 +95,27 @@ var DemoHosts = []*AlarmHostInfo{
 	},
 }
 
+var DemoServiceInstances = []*AlarmServiceInstanceInfo{
+	{
+		BkBizId:          2,
+		ID:               1,
+		Name:             "service1",
+		BkModuleId:       6,
+		BkHostId:         3,
+		ProcessInstances: []byte(`[{"bk_host_id": 3, "bk_cloud_id": 0, "bk_host_innerip": "127.0.0.1"]`),
+		IP:               "127.0.0.3",
+		BkCloudId:        0,
+		TopoLinks: map[string][]map[string]interface{}{
+			"module|6": {
+				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},
+				{"bk_inst_id": 3, "bk_inst_name": "测试集群", "bk_obj_id": "set", "bk_obj_name": "集群"},
+				{"bk_inst_id": 2, "bk_inst_name": "测试节点", "bk_obj_id": "test", "bk_obj_name": "测试"},
+				{"bk_inst_id": 2, "bk_inst_name": "蓝鲸", "bk_obj_id": "biz", "bk_obj_name": "业务"},
+			},
+		},
+	},
+}
+
 var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 	BkObjId:    "biz",
 	BkObjName:  "业务",
@@ -154,8 +175,8 @@ var DemoTopoTree = &cmdb.SearchBizInstTopoData{
 
 func TestHostAndTopoCacheManager(t *testing.T) {
 	// mock 主机和拓扑查询
-	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-		return DemoHosts, DemoTopoTree, nil
+	patches := gomonkey.ApplyFunc(getHostAndTopoByBiz, func(ctx context.Context, bizId int) ([]*AlarmHostInfo, []*AlarmServiceInstanceInfo, *cmdb.SearchBizInstTopoData, error) {
+		return DemoHosts, DemoServiceInstances, DemoTopoTree, nil
 	})
 	defer patches.Reset()
 
@@ -185,6 +206,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		expectedHostKeys := make([]string, 0, len(DemoHosts))
 		expectedAgentIds := make([]string, 0, len(DemoHosts))
 		expectedHostIpKeys := make([]string, 0, len(DemoHosts))
+		expectedServiceInstanceKeys := make([]string, 0, len(DemoServiceInstances))
+
 		for _, host := range DemoHosts {
 			if host.BkHostInnerip != "" {
 				expectedHostIpKeys = append(expectedHostIpKeys, host.BkHostInnerip)
@@ -203,6 +226,13 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		assert.EqualValues(t, expectedHostKeys, actualHostKeys)
 		assert.EqualValues(t, expectedAgentIds, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.EqualValues(t, 8, int(client.HLen(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val()))
+
+		// 服务实例缓存验证
+		for _, serviceInstance := range DemoServiceInstances {
+			expectedServiceInstanceKeys = append(expectedServiceInstanceKeys, strconv.Itoa(serviceInstance.ID))
+		}
+		assert.EqualValues(t, expectedServiceInstanceKeys, client.HKeys(ctx, cacheManager.GetCacheKey(serviceInstanceCacheKey)).Val())
+		assert.EqualValues(t, "[1]", client.HGet(ctx, cacheManager.GetCacheKey(hostToServiceInstanceCacheKey), "3").Val())
 
 		// 刷新全局缓存
 		err = cacheManager.RefreshGlobal(ctx)

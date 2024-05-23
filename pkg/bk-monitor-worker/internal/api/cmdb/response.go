@@ -10,6 +10,7 @@
 package cmdb
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -321,4 +322,26 @@ type SearchSetResp struct {
 		Count int                      `json:"count" mapstructure:"count"`
 		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
+}
+
+// ListServiceInstanceDetailResp 查询服务实例详情返回
+type ListServiceInstanceDetailResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ListServiceInstanceDetailData `json:"data"`
+}
+
+// ListServiceInstanceDetailData 查询服务实例详情数据
+type ListServiceInstanceDetailData struct {
+	Count int                             `json:"count"`
+	Info  []ListServiceInstanceDetailInfo `json:"info"`
+}
+
+// ListServiceInstanceDetailInfo 查询服务实例详情信息
+type ListServiceInstanceDetailInfo struct {
+	BkBizId          int             `json:"bk_biz_id"`
+	ID               int             `json:"id"`
+	Name             string          `json:"name"`
+	BkModuleId       int             `json:"bk_module_id"`
+	BkHostId         int             `json:"bk_host_id"`
+	ProcessInstances json.RawMessage `json:"process_instances"`
 }

@@ -36,14 +36,16 @@ import (
 
 var DemoServiceInstances = []*AlarmServiceInstanceInfo{
 	{
-		BkBizId:          2,
-		ID:               1,
-		Name:             "service1",
-		BkModuleId:       6,
-		BkHostId:         3,
-		ProcessInstances: []byte(`[{"bk_host_id": 3, "bk_cloud_id": 0, "bk_host_innerip": "127.0.0.1"}]`),
-		IP:               "127.0.0.3",
-		BkCloudId:        0,
+		BkBizId:           2,
+		ID:                1,
+		ServiceInstanceId: 1,
+		Name:              "service1",
+		BkModuleId:        6,
+		BkHostId:          3,
+		ServiceTemplateId: 1,
+		ProcessInstances:  []byte(`[{"bk_host_id": 3, "bk_cloud_id": 0, "bk_host_innerip": "127.0.0.1"}]`),
+		IP:                "127.0.0.3",
+		BkCloudId:         0,
 		TopoLinks: map[string][]map[string]interface{}{
 			"module|6": {
 				{"bk_inst_id": 6, "bk_inst_name": "测试模块", "bk_obj_id": "module", "bk_obj_name": "模块"},

@@ -12,9 +12,9 @@ package curl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 
 	"github.com/pkg/errors"
 
@@ -36,6 +36,40 @@ type TestCurl struct {
 	Params []byte
 }
 
+func (c *TestCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error)) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (c *TestCurl) hashOption(opt Options) string {
+	s := opt.UrlPath + string(opt.Body)
+	return s
+}
+
+func (c *TestCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (int, error) {
+	c.log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
+
+	c.Url = opt.UrlPath
+	c.Params = opt.Body
+
+	var (
+		err error
+		out string
+		ok  bool
+	)
+
+	hashKey := c.hashOption(opt)
+	if out, ok = c.data[hashKey]; ok {
+		err = json.Unmarshal([]byte(out), res)
+	} else {
+		err = errors.New("mock data is not exists: " + hashKey)
+	}
+
+	return len(out), err
+}
+
+var _ Curl = &TestCurl{}
+
 func (c *TestCurl) resp(body string) *http.Response {
 	return &http.Response{
 		Status:        "200 OK",
@@ -46,18 +80,5 @@ func (c *TestCurl) resp(body string) *http.Response {
 		Body:          io.NopCloser(bytes.NewBufferString(body)),
 		ContentLength: int64(len(body)),
 		Header:        make(http.Header, 0),
-	}
-}
-
-func (c *TestCurl) Request(ctx context.Context, method string, opt Options) (*http.Response, error) {
-	c.log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
-
-	c.Url = opt.UrlPath
-	c.Params = opt.Body
-
-	if res, ok := c.data[opt.UrlPath]; ok {
-		return c.resp(res), nil
-	} else {
-		return nil, errors.New("mock data is not exists: " + url.QueryEscape(opt.UrlPath))
 	}
 }

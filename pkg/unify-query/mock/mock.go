@@ -12,7 +12,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
 	goRedis "github.com/go-redis/redis/v8"
@@ -34,7 +33,8 @@ var (
 
 func Init() {
 	once.Do(func() {
-		config.CustomConfigFilePath = os.Getenv("UNIFY-QUERY-CONFIG-FILE-PATH")
+		config.CustomConfigFilePath = `../../dist/local/unify-query.yaml`
+		config.InitConfig()
 		log.InitTestLogger()
 
 		metadata.InitMetadata()

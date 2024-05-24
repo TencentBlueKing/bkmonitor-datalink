@@ -42,6 +42,7 @@ type Processor struct {
 	*define.ProcessorMonitor
 	pipelineConfig *config.PipelineConfig
 	handlers       RecordHandlers
+	etlConfig      string
 }
 
 // Process : process json data
@@ -55,13 +56,18 @@ func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, 
 	}
 
 	err = p.handlers.Handle(record, func(record *define.ETLRecord) error {
+		// 只对日志数据进行处理
+		if p.etlConfig == "bk_flat_batch" {
+			d.SetETLRecord(record)
+			outputChan <- d
+			return nil
+		}
+
 		payload, err := define.DerivePayload(d, record)
 		if err != nil {
 			logging.Warnf("%v handle payload %#v failed: %v", p, d, err)
 			return err
 		}
-
-		payload.SetETLRecord(record)
 		outputChan <- payload
 		return nil
 	})
@@ -82,6 +88,7 @@ func NewProcessor(ctx context.Context, name string, handlers RecordHandlers) *Pr
 		BaseDataProcessor: define.NewBaseDataProcessor(pipeConf.FormatName(name)),
 		ProcessorMonitor:  pipeline.NewDataProcessorMonitor(name, config.PipelineConfigFromContext(ctx)),
 		handlers:          handlers,
+		etlConfig:         pipeConf.ETLConfig,
 	}
 
 	return p

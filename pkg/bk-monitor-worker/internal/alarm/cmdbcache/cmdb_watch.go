@@ -376,7 +376,7 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 				logger.Errorf("refresh all cache failed: %v", err)
 			}
 
-			logger.Infof("refresh all cmdb resource(%s) cache", resourceType)
+			logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
 
 			// 记录全量刷新时间
 			lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
@@ -476,9 +476,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 全量刷新间隔时间，最低10分钟
 	fullRefreshIntervals := make(map[string]time.Duration, len(params.FullRefreshIntervals))
 	for cacheType, interval := range params.FullRefreshIntervals {
-		if interval <= 600 {
-			interval = 600
-		}
 		fullRefreshIntervals[cacheType] = time.Second * time.Duration(interval)
 	}
 
@@ -505,7 +502,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		cacheType := cacheType
 		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]
 		// 最低600秒的间隔
-		if !ok || fullRefreshInterval <= time.Second*600 {
+		if !ok {
 			fullRefreshInterval = time.Second * 600
 		}
 

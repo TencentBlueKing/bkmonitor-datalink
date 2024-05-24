@@ -47,12 +47,12 @@ const (
 
 // AlarmServiceInstanceInfo 服务实例信息
 type AlarmServiceInstanceInfo struct {
-	BkBizId          int             `json:"bk_biz_id"`
-	ID               int             `json:"service_instance_id"`
-	Name             string          `json:"name"`
-	BkModuleId       int             `json:"bk_module_id"`
-	BkHostId         int             `json:"bk_host_id"`
-	ProcessInstances json.RawMessage `json:"process_instances"`
+	BkBizId          int         `json:"bk_biz_id"`
+	ID               int         `json:"service_instance_id"`
+	Name             string      `json:"name"`
+	BkModuleId       int         `json:"bk_module_id"`
+	BkHostId         int         `json:"bk_host_id"`
+	ProcessInstances interface{} `json:"process_instances"`
 
 	// 补充字段
 	IP        string                              `json:"ip"`
@@ -81,6 +81,11 @@ func NewServiceInstanceCacheManager(prefix string, opt *redis.Options, concurren
 // Type 缓存类型
 func (m *ServiceInstanceCacheManager) Type() string {
 	return "service_instance"
+}
+
+// UseBiz 是否按业务执行
+func (m *ServiceInstanceCacheManager) useBiz() bool {
+	return true
 }
 
 // getServiceInstances 获取服务实例列表

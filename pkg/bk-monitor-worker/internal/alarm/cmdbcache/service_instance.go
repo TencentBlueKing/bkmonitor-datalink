@@ -47,12 +47,14 @@ const (
 
 // AlarmServiceInstanceInfo 服务实例信息
 type AlarmServiceInstanceInfo struct {
-	BkBizId          int         `json:"bk_biz_id"`
-	ID               int         `json:"service_instance_id"`
-	Name             string      `json:"name"`
-	BkModuleId       int         `json:"bk_module_id"`
-	BkHostId         int         `json:"bk_host_id"`
-	ProcessInstances interface{} `json:"process_instances"`
+	BkBizId           int         `json:"bk_biz_id"`
+	ID                int         `json:"id"`
+	ServiceInstanceId int         `json:"service_instance_id"`
+	Name              string      `json:"name"`
+	BkModuleId        int         `json:"bk_module_id"`
+	BkHostId          int         `json:"bk_host_id"`
+	ServiceTemplateId int         `json:"service_template_id"`
+	ProcessInstances  interface{} `json:"process_instances"`
 
 	// 补充字段
 	IP        string                              `json:"ip"`
@@ -126,13 +128,15 @@ func getServiceInstances(ctx context.Context, bkBizId int) ([]*AlarmServiceInsta
 		}
 		for _, instance := range res.Data.Info {
 			serviceInstance := &AlarmServiceInstanceInfo{
-				BkBizId:          bkBizId,
-				ID:               instance.ID,
-				Name:             instance.Name,
-				BkModuleId:       instance.BkModuleId,
-				BkHostId:         instance.BkHostId,
-				ProcessInstances: instance.ProcessInstances,
-				TopoLinks:        make(map[string][]map[string]interface{}),
+				BkBizId:           bkBizId,
+				ID:                instance.ID,
+				ServiceInstanceId: instance.ID,
+				Name:              instance.Name,
+				BkModuleId:        instance.BkModuleId,
+				BkHostId:          instance.BkHostId,
+				ServiceTemplateId: instance.ServiceTemplateId,
+				ProcessInstances:  instance.ProcessInstances,
+				TopoLinks:         make(map[string][]map[string]interface{}),
 			}
 			serviceInstances = append(serviceInstances, serviceInstance)
 		}

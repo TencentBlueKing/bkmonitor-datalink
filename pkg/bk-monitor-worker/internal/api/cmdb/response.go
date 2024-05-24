@@ -337,10 +337,11 @@ type ListServiceInstanceDetailData struct {
 
 // ListServiceInstanceDetailInfo 查询服务实例详情信息
 type ListServiceInstanceDetailInfo struct {
-	BkBizId          int         `json:"bk_biz_id" mapstructure:"bk_biz_id"`
-	ID               int         `json:"id" mapstructure:"id"`
-	Name             string      `json:"name" mapstructure:"name"`
-	BkModuleId       int         `json:"bk_module_id" mapstructure:"bk_module_id"`
-	BkHostId         int         `json:"bk_host_id" mapstructure:"bk_host_id"`
-	ProcessInstances interface{} `json:"process_instances" mapstructure:"process_instances"`
+	BkBizId           int         `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	ID                int         `json:"id" mapstructure:"id"`
+	Name              string      `json:"name" mapstructure:"name"`
+	BkModuleId        int         `json:"bk_module_id" mapstructure:"bk_module_id"`
+	BkHostId          int         `json:"bk_host_id" mapstructure:"bk_host_id"`
+	ServiceTemplateId int         `json:"service_template_id" mapstructure:"service_template_id"`
+	ProcessInstances  interface{} `json:"process_instances" mapstructure:"process_instances"`
 }

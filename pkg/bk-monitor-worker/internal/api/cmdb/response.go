@@ -322,3 +322,26 @@ type SearchSetResp struct {
 		Info  []map[string]interface{} `json:"info" mapstructure:"info"`
 	} `json:"data" mapstructure:"data"`
 }
+
+// ListServiceInstanceDetailResp 查询服务实例详情返回
+type ListServiceInstanceDetailResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ListServiceInstanceDetailData `json:"data" mapstructure:"data"`
+}
+
+// ListServiceInstanceDetailData 查询服务实例详情数据
+type ListServiceInstanceDetailData struct {
+	Count int                             `json:"count" mapstructure:"count"`
+	Info  []ListServiceInstanceDetailInfo `json:"info" mapstructure:"info"`
+}
+
+// ListServiceInstanceDetailInfo 查询服务实例详情信息
+type ListServiceInstanceDetailInfo struct {
+	BkBizId           int         `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	ID                int         `json:"id" mapstructure:"id"`
+	Name              string      `json:"name" mapstructure:"name"`
+	BkModuleId        int         `json:"bk_module_id" mapstructure:"bk_module_id"`
+	BkHostId          int         `json:"bk_host_id" mapstructure:"bk_host_id"`
+	ServiceTemplateId int         `json:"service_template_id" mapstructure:"service_template_id"`
+	ProcessInstances  interface{} `json:"process_instances" mapstructure:"process_instances"`
+}

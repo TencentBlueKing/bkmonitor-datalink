@@ -185,6 +185,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		expectedHostKeys := make([]string, 0, len(DemoHosts))
 		expectedAgentIds := make([]string, 0, len(DemoHosts))
 		expectedHostIpKeys := make([]string, 0, len(DemoHosts))
+
 		for _, host := range DemoHosts {
 			if host.BkHostInnerip != "" {
 				expectedHostIpKeys = append(expectedHostIpKeys, host.BkHostInnerip)

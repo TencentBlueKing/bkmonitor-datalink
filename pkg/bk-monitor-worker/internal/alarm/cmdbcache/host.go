@@ -400,7 +400,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
 
 	err := m.UpdateHashMapCache(ctx, key, topoNodes)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update cmdb topo hashmap cache failed")
 	}
 	return nil
 }
@@ -421,7 +421,7 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
 
 	err := m.UpdateHashMapCache(ctx, key, hosts)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update cmdb host hashmap cache failed")
 	}
 	return nil
 }
@@ -439,7 +439,7 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) e
 
 	err := m.UpdateHashMapCache(ctx, key, agentIDs)
 	if err != nil {
-		return errors.Wrap(err, "update hashmap cache failed")
+		return errors.Wrap(err, "update hashmap cmdb host agent id cache failed")
 	}
 	return nil
 }
@@ -550,11 +550,9 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	// 补充拓扑信息到主机
 	for _, host := range hosts {
 		for _, bkModuleId := range host.BkModuleIds {
-			topoLink, ok := moduleIdToTopoLinks[bkModuleId]
-			if !ok {
-				continue
+			if topoLink, ok := moduleIdToTopoLinks[bkModuleId]; ok {
+				host.TopoLinks[fmt.Sprintf("module|%d", bkModuleId)] = topoLink
 			}
-			host.TopoLinks[fmt.Sprintf("module|%d", bkModuleId)] = topoLink
 		}
 	}
 
@@ -714,7 +712,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 	for bizID := range needUpdateBizIds {
 		needUpdateBizIdSlice = append(needUpdateBizIdSlice, strconv.Itoa(bizID))
 	}
-	logger.Infof("need update biz ids: %v", strings.Join(needUpdateBizIdSlice, ","))
+	logger.Infof("need update host cache biz ids: %v", strings.Join(needUpdateBizIdSlice, ","))
 
 	// 按业务刷新缓存
 	wg := sync.WaitGroup{}

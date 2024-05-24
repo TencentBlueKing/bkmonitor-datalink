@@ -187,7 +187,7 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 			instance.IP = host.BkHostInnerip
 			instance.BkCloudId = host.BkCloudId
 			for moduleId, links := range host.TopoLinks {
-				if moduleId == strconv.Itoa(instance.BkModuleId) {
+				if moduleId == fmt.Sprintf("module|%d", instance.BkModuleId) {
 					instance.TopoLinks[moduleId] = links
 					break
 				}

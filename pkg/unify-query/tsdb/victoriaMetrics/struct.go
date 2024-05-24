@@ -17,11 +17,9 @@ import (
 type Params struct {
 	SQL                        string `json:"sql"`
 	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
-	BkUsername                 string `json:"bk_username"`
 	BkAppCode                  string `json:"bk_app_code"`
 	PreferStorage              string `json:"prefer_storage"`
 	BkdataDataToken            string `json:"bkdata_data_token"`
-	BkAppSecret                string `json:"bk_app_secret"`
 }
 
 type ParamsQueryRange struct {

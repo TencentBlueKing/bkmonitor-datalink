@@ -33,7 +33,8 @@ var (
 
 func Init() {
 	once.Do(func() {
-		config.CustomConfigFilePath = "../../dist/local/unify-query.yaml"
+		config.CustomConfigFilePath = `../../dist/local/unify-query.yaml`
+		config.InitConfig()
 		log.InitTestLogger()
 
 		metadata.InitMetadata()

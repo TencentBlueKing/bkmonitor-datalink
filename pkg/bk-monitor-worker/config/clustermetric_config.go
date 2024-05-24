@@ -23,6 +23,7 @@ var (
 	ClusterMetricFieldName        string
 	ClusterMetricHostFieldName    string
 	ESClusterMetricTarget         string
+	ESClusterMetricQueueName      string
 )
 
 func initClusterMetricVariables() {
@@ -37,4 +38,5 @@ func initClusterMetricVariables() {
 	ClusterMetricHostFieldName = "bkm_hostname"
 
 	ESClusterMetricTarget = "bk_log_search"
+	ESClusterMetricQueueName = GetValue("taskConfig.logSearch.queueName", "log-search")
 }

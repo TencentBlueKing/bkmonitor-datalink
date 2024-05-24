@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -33,12 +34,14 @@ type item struct {
 type items []item
 
 type aggFormat struct {
+	ctx context.Context
+
 	aggInfoList aggInfoList
 
-	toEs   func(string) string
-	toProm func(string) string
-
 	isNotPromQL bool
+
+	toEs   func(k string) string
+	toProm func(k string) string
 
 	dims  []string
 	item  item

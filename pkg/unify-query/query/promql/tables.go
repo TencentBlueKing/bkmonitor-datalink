@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/prometheus/prometheus/model/labels"
 	prom "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
@@ -34,7 +33,7 @@ type Table struct {
 }
 
 // NewTableWithSample
-func NewTableWithSample(index int, sample prom.Sample, labelFormat func(l labels.Label) labels.Label) *Table {
+func NewTableWithSample(index int, sample prom.Sample, queryRawFormat func(string) string) *Table {
 	var t = new(Table)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
@@ -48,8 +47,8 @@ func NewTableWithSample(index int, sample prom.Sample, labelFormat func(l labels
 	t.GroupValues = make([]string, 0, len(sample.Metric))
 	// 根据labels获取group信息
 	for _, label := range sample.Metric {
-		if labelFormat != nil {
-			label = labelFormat(label)
+		if queryRawFormat != nil {
+			label.Name = queryRawFormat(label.Name)
 		}
 		t.GroupKeys = append(t.GroupKeys, label.Name)
 		t.GroupValues = append(t.GroupValues, label.Value)
@@ -58,12 +57,13 @@ func NewTableWithSample(index int, sample prom.Sample, labelFormat func(l labels
 	t.Name = "series" + strconv.Itoa(index)
 
 	return t
-
 }
 
 // NewTable
-func NewTable(index int, series prom.Series) *Table {
-	var t = new(Table)
+func NewTable(index int, series prom.Series, queryRawFormat func(string) string) *Table {
+	var (
+		t = new(Table)
+	)
 	// header对应的就是列名,promql的数据列是固定的
 	t.Headers = []string{"_time", "_value"}
 	t.Types = []string{"float", "float"}
@@ -85,6 +85,10 @@ func NewTable(index int, series prom.Series) *Table {
 	for _, label := range series.Metric {
 		// 过滤随机标签数据
 		if label.Name != influxdb.BKTaskIndex {
+			if queryRawFormat != nil {
+				label.Name = queryRawFormat(label.Name)
+			}
+
 			t.GroupKeys = append(t.GroupKeys, label.Name)
 			t.GroupValues = append(t.GroupValues, label.Value)
 		}

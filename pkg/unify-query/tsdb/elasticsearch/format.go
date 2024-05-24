@@ -27,10 +27,6 @@ import (
 )
 
 const (
-	BKAPM = "bkapm"
-	BKLOG = "bklog"
-	BKES  = "bkes"
-
 	KeyValue   = "_key"
 	FieldValue = "_value"
 	FieldTime  = "_time"
@@ -40,9 +36,6 @@ const (
 
 	Type       = "type"
 	Properties = "properties"
-
-	OldStep = "."
-	NewStep = "___"
 
 	Min         = "min"
 	Max         = "max"
@@ -69,11 +62,11 @@ const (
 
 var (
 	AggregationMap = map[string]string{
-		Min + NewStep + MinOT:   Min,
-		Max + NewStep + MaxOT:   Max,
-		Sum + NewStep + SumOT:   Sum,
-		Avg + NewStep + AvgOT:   Avg,
-		Sum + NewStep + CountOT: Count,
+		Min + structured.EsNewStep + MinOT:   Min,
+		Max + structured.EsNewStep + MaxOT:   Max,
+		Sum + structured.EsNewStep + SumOT:   Sum,
+		Avg + structured.EsNewStep + AvgOT:   Avg,
+		Sum + structured.EsNewStep + CountOT: Count,
 	}
 )
 
@@ -85,7 +78,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + OldStep + k
+			k = prefix + structured.EsNewStep + k
 		}
 		switch v.(type) {
 		case map[string]any:
@@ -106,7 +99,7 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if properties, ok := data[Properties]; ok {
 		for k, v := range properties.(map[string]any) {
 			if prefix != "" {
-				k = prefix + OldStep + k
+				k = prefix + structured.EsOldStep + k
 			}
 			switch v.(type) {
 			case map[string]any:
@@ -146,6 +139,9 @@ type FormatFactory struct {
 
 	valueKey string
 
+	toEs   func(k string) string
+	toProm func(k string) string
+
 	propertyMapping *mapping.PropertyMapping
 	mapping         map[string]string
 	data            map[string]any
@@ -158,7 +154,7 @@ type FormatFactory struct {
 	timezone string
 }
 
-func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]any, orders map[string]bool, from, size int, timezone string) *FormatFactory {
+func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]any, orders map[string]bool, from, size int, timezone string, toEs, toProm func(string) string) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
 		mapping:     make(map[string]string),
@@ -167,9 +163,11 @@ func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]a
 		from:        from,
 		size:        size,
 		timezone:    timezone,
-	}
 
-	f.valueKey = f.toEs(valueKey)
+		toEs:     toEs,
+		toProm:   toProm,
+		valueKey: toEs(valueKey),
+	}
 
 	mapProperties("", mapping, f.mapping)
 	return f
@@ -210,10 +208,10 @@ func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
 }
 
 func (f *FormatFactory) nestedAgg(key string) {
-	lbs := strings.Split(key, OldStep)
+	lbs := strings.Split(key, structured.EsOldStep)
 
 	for i := len(lbs) - 1; i >= 0; i-- {
-		checkKey := strings.Join(lbs[0:i], OldStep)
+		checkKey := strings.Join(lbs[0:i], structured.EsOldStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == Nested {
 				f.aggInfoList = append(
@@ -231,10 +229,10 @@ func (f *FormatFactory) nestedAgg(key string) {
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool, end int64) (map[string]*prompb.TimeSeries, error) {
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
-		toEs:        f.toEs,
-		toProm:      f.toProm,
 		isNotPromQL: isNotPromQL,
 		items:       make(items, 0),
+		toEs:        f.toEs,
+		toProm:      f.toProm,
 	}
 
 	af.start()
@@ -289,16 +287,6 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL boo
 	return timeSeriesMap, nil
 }
 
-func (f *FormatFactory) toProm(key string) string {
-	vs := strings.Split(key, OldStep)
-	return strings.Join(vs, NewStep)
-}
-
-func (f *FormatFactory) toEs(key string) string {
-	vs := strings.Split(key, NewStep)
-	return strings.Join(vs, OldStep)
-}
-
 func (f *FormatFactory) SetData(data map[string]any) {
 	f.data = map[string]any{}
 	mapData("", data, f.data)
@@ -316,23 +304,59 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 		case ValueAgg:
 			switch info.FuncType {
 			case Min:
-				agg = elastic.NewMinAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewMinAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Max:
-				agg = elastic.NewMaxAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewMaxAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Avg:
-				agg = elastic.NewAvgAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewAvgAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Sum:
-				agg = elastic.NewSumAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewSumAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Count:
-				agg = elastic.NewValueCountAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewValueCountAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Cardinality:
-				agg = elastic.NewCardinalityAggregation().Field(f.valueKey)
-				name = FieldValue
+				curName := FieldValue
+				curAgg := elastic.NewCardinalityAggregation().Field(f.valueKey)
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			case Percentiles:
 				percents := make([]float64, 0)
 				for _, arg := range info.Args {
@@ -352,27 +376,44 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					percents = append(percents, percent)
 				}
 
-				agg = elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percents...)
-				name = FieldValue
+				curAgg := elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percents...)
+				curName := FieldValue
+				if agg != nil {
+					curAgg = curAgg.SubAggregation(name, agg)
+				}
+
+				agg = curAgg
+				name = curName
 			default:
 				err = fmt.Errorf("valueagg aggregation is not support this type %s, info: %+v", info.FuncType, info)
 				return
 			}
 		case TimeAgg:
-			agg = elastic.NewDateHistogramAggregation().
+			curName := info.Name
+			curAgg := elastic.NewDateHistogramAggregation().
 				Field(Timestamp).FixedInterval(info.Window).TimeZone(info.Timezone).
-				MinDocCount(1).SubAggregation(name, agg)
-			name = info.Name
-		case NestedAgg:
-			agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
-		case TermAgg:
-			termsAgg := elastic.NewTermsAggregation().Field(info.Name).SubAggregation(name, agg).Size(f.size)
-			for key, asc := range info.Order {
-				termsAgg = termsAgg.Order(key, asc)
+				MinDocCount(1)
+			if agg != nil {
+				curAgg = curAgg.SubAggregation(name, agg)
 			}
 
-			agg = termsAgg
+			agg = curAgg
+			name = curName
+		case NestedAgg:
+			agg = elastic.NewNestedAggregation().Path(info.Name).SubAggregation(name, agg)
 			name = info.Name
+		case TermAgg:
+			curName := info.Name
+			curAgg := elastic.NewTermsAggregation().Field(info.Name).Size(f.size)
+			for key, asc := range info.Order {
+				curAgg = curAgg.Order(key, asc)
+			}
+			if agg != nil {
+				curAgg = curAgg.SubAggregation(name, agg)
+			}
+
+			agg = curAgg
+			name = curName
 		default:
 			err = fmt.Errorf("aggInfoList aggregation is not support this type %T, info: %+v", info, info)
 			return
@@ -419,7 +460,7 @@ func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggre
 
 	// 如果使用了时间函数需要进行转换, sum(count_over_time) => count
 	if !aggregateMethodList[0].Without && timeAggregation.WindowDuration > 0 {
-		key := aggregateMethodList[0].Name + NewStep + timeAggregation.Function
+		key := aggregateMethodList[0].Name + structured.EsNewStep + timeAggregation.Function
 		if name, ok := AggregationMap[key]; ok {
 			f.valueAgg(FieldValue, name)
 

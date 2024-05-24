@@ -346,6 +346,8 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 	// 判断是否查询非路由 tsdb
 	if q.DataSource != "" {
+		metadata.GetQueryParams(ctx).SetDataSource(q.DataSource)
+
 		// 如果是 BkSql 查询无需获取 tsdb 路由关系
 		if q.DataSource == BkData {
 			allConditions, err := q.Conditions.AnalysisConditions()
@@ -829,6 +831,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
+	pqFormat := PromQueryFormat(ctx)
+
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
 			result, err = q.TimeAggregation.ToProm(result)
@@ -841,6 +845,14 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 				methodIdx -= 1
 			}
 			method := q.AggregateMethodList[methodIdx]
+
+			// 查询维度转换，不同的 datasource 比如说 bk_log，使用 . 作分隔符，在 promql 不支持，需要转换为 ___
+			for i, dim := range method.Dimensions {
+				if pqFormat != nil {
+					method.Dimensions[i] = pqFormat(dim)
+				}
+			}
+
 			if result, err = method.ToProm(result); err != nil {
 				log.Errorf(ctx, "failed to translate function for->[%s]", err)
 				return nil, err

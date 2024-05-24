@@ -31,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -43,6 +44,9 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
+
+	toEs   func(string) string
+	toProm func(string) string
 }
 
 // QueryRange 使用 es 直接查询引擎
@@ -162,10 +166,13 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
+
 	ins := &Instance{
 		ctx:     ctx,
 		timeout: opt.Timeout,
 		maxSize: opt.MaxSize,
+		toEs:    structured.QueryRawFormat(ctx),
+		toProm:  structured.PromQueryFormat(ctx),
 	}
 
 	if opt.Address == "" {
@@ -247,16 +254,25 @@ func (i *Instance) query(
 		return nil, fmt.Errorf("es client is nil")
 	}
 
-	indexOptions, err := i.makeQueryOption(ctx, query, start, end)
+	// 不使用分片的模式（优化效果有限，同时会引入计算问题），直接通过 * 号，完成跨天查询
+	//indexOptions, err := i.makeQueryOption(ctx, query, start, end)
+	queryOptions := []*queryOption{
+		{
+			index: fmt.Sprintf("%s_*_read", query.DB),
+			start: start,
+			end:   end,
+			query: query,
+		},
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	if len(indexOptions) == 0 {
+	if len(queryOptions) == 0 {
 		return nil, nil
 	}
 
-	rets := make(chan *TimeSeriesResult, len(indexOptions))
+	rets := make(chan *TimeSeriesResult, len(queryOptions))
 
 	go func() {
 		wg := &sync.WaitGroup{}
@@ -265,7 +281,7 @@ func (i *Instance) query(
 			close(rets)
 		}()
 
-		for _, qo := range indexOptions {
+		for _, qo := range queryOptions {
 			wg.Add(1)
 			q := qo
 			err = pool.Submit(func() {
@@ -286,7 +302,7 @@ func (i *Instance) query(
 	span.Set("query-space-uid", user.SpaceUid)
 	span.Set("query-source", user.Source)
 	span.Set("query-username", user.Name)
-	span.Set("query-index-options", indexOptions)
+	span.Set("query-index-options", queryOptions)
 
 	span.Set("query-storage-id", query.StorageID)
 	span.Set("query-max-size", i.maxSize)
@@ -423,7 +439,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		size = i.maxSize
 	}
 
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone)
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone, i.toEs, i.toProm)
 
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
@@ -463,7 +479,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 		size = i.maxSize
 	}
 
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone)
+	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone, i.toEs, i.toProm)
 
 	sr, err := i.esQuery(ctx, qo, formatFactory)
 	if err != nil {
@@ -503,7 +519,6 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 }
 
 func (i *Instance) getIndexes(ctx context.Context, aliases []string) ([]string, error) {
-
 	catAlias, err := i.client.CatAliases().Alias(aliases...).Do(ctx)
 	if err != nil {
 		return nil, err

@@ -422,6 +422,147 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 	return mockCurl
 }
 
+func TestQueryTsWithEs(t *testing.T) {
+	ctx := context.Background()
+
+	promql.NewEngine(&promql.Params{
+		Timeout:              2 * time.Hour,
+		MaxSamples:           500000,
+		LookbackDelta:        2 * time.Minute,
+		EnableNegativeOffset: true,
+	})
+
+	spaceUid := "space_uid"
+
+	db := "2_bklog_bkapigateway_esb_container1"
+	measurement := "base"
+	tableID := fmt.Sprintf("%s.%s", db, measurement)
+
+	esTestStorageID := 999
+
+	mock.Init()
+	mock.SetRedisClient(ctx, "test")
+	mock.SetSpaceTsDbMockData(
+		ctx,
+		"query_reference.db",
+		"query_reference",
+		ir.SpaceInfo{
+			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+		},
+		ir.ResultTableDetailInfo{
+			tableID: &ir.ResultTableDetail{
+				Fields:          nil,
+				MeasurementType: redis.BKTraditionalMeasurement,
+				StorageId:       int64(esTestStorageID),
+				DB:              db,
+				Measurement:     measurement,
+				TableId:         tableID,
+			},
+		},
+		nil, nil,
+	)
+
+	ctx = metadata.InitHashID(ctx)
+
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
+	tsdb.SetStorage(strconv.Itoa(esTestStorageID), &tsdb.Storage{
+		Type:       consul.ElasticsearchStorageType,
+		Address:    address,
+		Username:   username,
+		Password:   password,
+		Timeout:    timeout,
+		MaxLimit:   maxSize,
+		MaxRouting: maxRouting,
+	})
+
+	defaultEnd := time.Now()
+	defaultStart := defaultEnd.Add(-1 * time.Hour)
+
+	for i, c := range map[string]struct {
+		queryTs *structured.QueryTs
+		result  string
+	}{
+		"查询 10 条原始数据，按照字段正向排序": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         10,
+						From:          0,
+						ReferenceName: "a",
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+		"根据维度 __ext.container_name 进行 count 聚合，同时用值正向排序": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						Limit:         5,
+						From:          0,
+						ReferenceName: "a",
+						TimeAggregation: structured.TimeAggregation{
+							Function: "count_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"__ext.container_name"},
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"gseIndex",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     false,
+				SpaceUid:    spaceUid,
+			},
+		},
+	} {
+		t.Run(fmt.Sprintf("%s", i), func(t *testing.T) {
+			metadata.SetUser(ctx, "username:test", spaceUid, "true")
+
+			res, err := queryTs(ctx, c.queryTs)
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+				return
+			}
+			data := res.(*PromData)
+			if data.Status != nil && data.Status.Code != "" {
+				fmt.Println("code: ", data.Status.Code)
+				fmt.Println("message: ", data.Status.Message)
+				return
+			}
+
+			log.Infof(ctx, fmt.Sprintf("%+v", data.Tables))
+		})
+	}
+}
+
 func TestQueryReference(t *testing.T) {
 	ctx := context.Background()
 
@@ -510,6 +651,51 @@ func TestQueryReference(t *testing.T) {
 				SpaceUid:    spaceUid,
 			},
 		},
+		"分组统计": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				SpaceUid:    spaceUid,
+			},
+		},
+		"统计数量": {
+			queryTs: &structured.QueryTs{
+				QueryList: []*structured.Query{
+					{
+						DataSource:    structured.BkLog,
+						TableID:       structured.TableID(tableID),
+						FieldName:     "gseIndex",
+						ReferenceName: "a",
+						AggregateMethodList: structured.AggregateMethodList{
+							{
+								Method: "count",
+							},
+						},
+					},
+				},
+				OrderBy: structured.OrderBy{
+					"_value",
+				},
+				MetricMerge: "a",
+				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
+				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				SpaceUid:    spaceUid,
+			},
+		},
 		"根据维度 __ext.container_name 进行 sum 聚合，同时用值正向排序": {
 			queryTs: &structured.QueryTs{
 				QueryList: []*structured.Query{
@@ -522,7 +708,7 @@ func TestQueryReference(t *testing.T) {
 						ReferenceName: "a",
 						AggregateMethodList: structured.AggregateMethodList{
 							{
-								Method:     "sum",
+								Method:     "count",
 								Dimensions: []string{"__ext.container_name"},
 							},
 						},

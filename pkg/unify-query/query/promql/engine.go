@@ -145,7 +145,7 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 
 	tables := NewTables()
 	for index, series := range matrix {
-		tables.Add(NewTable(index, series))
+		tables.Add(NewTable(index, series, nil))
 	}
 
 	// 计算分析时间

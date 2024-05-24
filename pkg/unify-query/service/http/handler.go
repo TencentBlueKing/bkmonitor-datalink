@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 	"unsafe"
 
@@ -33,7 +32,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/redis"
 )
@@ -195,11 +193,7 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 
 	for index, series := range res {
 		// 层级需要转换
-		tables.Add(promql.NewTableWithSample(index, series, func(l labels.Label) labels.Label {
-			vs := strings.Split(l.Name, elasticsearch.NewStep)
-			l.Name = strings.Join(vs, elasticsearch.OldStep)
-			return l
-		}))
+		tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
 
 		seriesNum++
 		pointsNum++
@@ -271,11 +265,8 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	query.Timezone = timezone
 
-	// 写入查询缓存
-	metadata.SetQueryParams(ctx, &metadata.QueryParams{
-		Start: start.Unix(),
-		End:   end.Unix(),
-	})
+	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
 	// 判断是否是直查
 	ok, vmExpand, err := queryRef.CheckVmQuery(ctx)
@@ -348,14 +339,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series))
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
 
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series, nil))
+			// 层级需要转换
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
 
 			seriesNum++
 			pointsNum++
@@ -932,13 +924,13 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series))
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series, nil))
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
 			seriesNum++
 			pointsNum++
 		}

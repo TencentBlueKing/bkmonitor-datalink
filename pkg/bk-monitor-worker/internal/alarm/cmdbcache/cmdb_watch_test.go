@@ -22,6 +22,7 @@
 
 package cmdbcache
 
+//
 //import (
 //	"context"
 //	"encoding/json"
@@ -78,10 +79,10 @@ package cmdbcache
 //		defer wg.Done()
 //
 //		params := &RefreshTaskParams{
-//			Redis:                redisOptions,
-//			Prefix:               prefix,
-//			EventHandleInterval:  60,
-//			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
+//			Redis:               redisOptions,
+//			Prefix:              prefix,
+//			EventHandleInterval: 60,
+//			//FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
 //		}
 //		payload, _ := json.Marshal(params)
 //		if err := CacheRefreshTask(ctx, payload); err != nil {

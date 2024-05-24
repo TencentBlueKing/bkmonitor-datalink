@@ -256,7 +256,7 @@ func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLim
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
 
-	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey, serviceInstanceCacheKey, hostToServiceInstanceCacheKey)
+	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
 	return &HostAndTopoCacheManager{
 		BaseCacheManager: manager,
 		hostIpMap:        make(map[string]map[string]struct{}),
@@ -485,18 +485,6 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 			host.BkBizId = bkBizID
 			hosts = append(hosts, host)
 		}
-	}
-
-	// 构建主机ID到IP的映射
-	hostIdToIp := make(map[int]struct {
-		ip      string
-		cloudId int
-	})
-	for _, host := range hosts {
-		hostIdToIp[host.BkHostId] = struct {
-			ip      string
-			cloudId int
-		}{ip: host.BkHostInnerip, cloudId: host.BkCloudId}
 	}
 
 	// 拉取云区域信息

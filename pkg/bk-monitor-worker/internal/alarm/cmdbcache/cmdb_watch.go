@@ -504,8 +504,9 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		wg.Add(1)
 		cacheType := cacheType
 		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]
-		if !ok || fullRefreshInterval <= 600 {
-			fullRefreshInterval = 600
+		// 最低600秒的间隔
+		if !ok || fullRefreshInterval <= time.Second*600 {
+			fullRefreshInterval = time.Second * 600
 		}
 
 		go func() {

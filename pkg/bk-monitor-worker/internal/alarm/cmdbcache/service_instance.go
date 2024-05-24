@@ -48,7 +48,7 @@ const (
 // AlarmServiceInstanceInfo 服务实例信息
 type AlarmServiceInstanceInfo struct {
 	BkBizId          int             `json:"bk_biz_id"`
-	ID               int             `json:"id"`
+	ID               int             `json:"service_instance_id"`
 	Name             string          `json:"name"`
 	BkModuleId       int             `json:"bk_module_id"`
 	BkHostId         int             `json:"bk_host_id"`

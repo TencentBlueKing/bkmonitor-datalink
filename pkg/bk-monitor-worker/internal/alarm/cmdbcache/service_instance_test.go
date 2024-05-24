@@ -116,7 +116,7 @@ func TestServiceInstanceCacheManager(t *testing.T) {
 		assert.EqualValues(t, expectedServiceInstanceKeys, actualServiceInstanceKeys)
 
 		result := client.HGetAll(ctx, cacheManager.GetCacheKey(serviceInstanceCacheKey)).Val()
-		t.Log(result)
+		t.Log(result["1"])
 
 		assert.EqualValues(t, client.HGet(ctx, cacheManager.GetCacheKey(hostToServiceInstanceCacheKey), "3").Val(), "[1]")
 	})

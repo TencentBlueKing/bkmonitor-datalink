@@ -568,7 +568,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	router.HandleFunc("/debug/pprof/{other}", pprof.Index)
 
-	addr := ":8080"
+	addr := fmt.Sprintf(":%d", ConfHttpPort)
 	c.srv = &http.Server{
 		Handler:      router,
 		Addr:         addr,

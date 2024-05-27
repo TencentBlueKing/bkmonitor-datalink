@@ -101,7 +101,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 		}
 		return &yaml.MapItem{
 			Key:   "metric_relabel_remote",
-			Value: fmt.Sprintf("http://%s:8080/workload/node/%s", ConfServiceName, t.NodeName),
+			Value: fmt.Sprintf("http://%s:%d/workload/node/%s", ConfServiceName, ConfServicePort, t.NodeName),
 		}
 	}
 	return nil

@@ -10,22 +10,22 @@
 package procsnapshot
 
 import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/processbeat/process"
 	"github.com/elastic/beats/libbeat/common"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
 type Event struct {
-	DataID  int32
-	Process []ProcMeta
-	Network process.PidSockets
+	DataID      int32
+	Process     []ProcMeta
+	Connections []ProcConn
 }
 
 func (e *Event) AsMapStr() common.MapStr {
 	return common.MapStr{
-		"process": e.Process,
-		"network": e.Network,
-		"dataid":  e.DataID,
+		"process":     e.Process,
+		"connections": e.Connections,
+		"dataid":      e.DataID,
 	}
 }
 

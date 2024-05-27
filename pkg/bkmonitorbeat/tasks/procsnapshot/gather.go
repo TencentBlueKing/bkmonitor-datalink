@@ -49,16 +49,16 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		pids = append(pids, procs[i].Pid)
 	}
 
-	fs, err := allProcsFileSockets(pids)
+	conn, err := allProcsConn(pids)
 	if err != nil {
 		logger.Errorf("faile to get filesockets: %v", err)
 		return
 	}
 
 	evt := &Event{
-		DataID:  g.config.DataID,
-		Process: procs,
-		Network: fs,
+		DataID:      g.config.DataID,
+		Process:     procs,
+		Connections: conn,
 	}
 	e <- evt
 }

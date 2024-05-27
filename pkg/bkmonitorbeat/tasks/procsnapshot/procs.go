@@ -14,21 +14,28 @@ import (
 
 	shiroups "github.com/shirou/gopsutil/v3/process"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/processbeat/process"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type ProcMeta struct {
-	Pid      int32    `json:"pid"`
-	PPid     int32    `json:"ppid"`
-	Name     string   `json:"name"`
-	Cwd      string   `json:"cwd"`
-	Exe      string   `json:"exe"`
-	Cmd      string   `json:"cmd"`
-	CmdSlice []string `json:"cmd_slice"`
-	Username string   `json:"username"`
-	Created  int64    `json:"created"`
-	Uids     []int32  `json:"uids"`
+	Pid      int32   `json:"pid"`
+	PPid     int32   `json:"ppid"`
+	Name     string  `json:"name"`
+	Cwd      string  `json:"cwd"`
+	Exe      string  `json:"exe"`
+	Cmd      string  `json:"cmd"`
+	Username string  `json:"username"`
+	Created  int64   `json:"created"`
+	Uids     []int32 `json:"uids"`
+}
+
+type ProcConn struct {
+	Pid       int32  `json:"pid"`
+	Protocol  string `json:"protocol"`
+	LocalAddr string `json:"local_addr"`
+	LocalPort uint32 `json:"local_port"`
 }
 
 const (
@@ -48,7 +55,6 @@ func getProcMeta(pid int32) (ProcMeta, error) {
 	meta.Username, _ = proc.Username()
 	meta.Name, _ = proc.Name()
 	meta.Cmd, _ = proc.Cmdline()
-	meta.CmdSlice, _ = proc.CmdlineSlice()
 	meta.Exe, _ = proc.Exe()
 	meta.Cwd, _ = proc.Cwd()
 	meta.Created, _ = proc.CreateTime()
@@ -79,7 +85,37 @@ func allProcsMeta() ([]ProcMeta, error) {
 	return ret, nil
 }
 
-func allProcsFileSockets(pids []int32) (process.PidSockets, error) {
-	detector := process.NetlinkDetector{}
-	return detector.Get(pids)
+func allProcsConn(pids []int32) ([]ProcConn, error) {
+	var ret []ProcConn
+	sockets, err := getConnDetector().Get(pids)
+	if err != nil {
+		return nil, err
+	}
+
+	appendConn := func(sockets map[int32][]process.FileSocket) {
+		for k, items := range sockets {
+			for _, item := range items {
+				ret = append(ret, ProcConn{
+					Pid:       k,
+					Protocol:  item.Protocol,
+					LocalAddr: item.ConnLaddr,
+					LocalPort: item.ConnLport,
+				})
+			}
+		}
+	}
+
+	appendConn(sockets.TCP)
+	appendConn(sockets.TCP6)
+	appendConn(sockets.UDP)
+	appendConn(sockets.UDP6)
+
+	return ret, nil
+}
+
+func getConnDetector() process.ConnDetector {
+	if configs.DisableNetlink {
+		return process.StdDetector{}
+	}
+	return process.NetlinkDetector{}
 }

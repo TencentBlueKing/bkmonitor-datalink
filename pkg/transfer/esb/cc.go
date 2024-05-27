@@ -25,6 +25,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+const (
+	authKey = "X-Bkapi-Authorization"
+)
+
 type APIClient interface {
 	GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error)
 	GetServiceInstance(bizID, limit, start int, ServiceInstanceIds []int) (*CCSearchServiceInstanceResponseData, error)
@@ -121,7 +125,6 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 
 	reqBody := &json.Provider{
 		Payload: &CCSearchHostRequest{
-			CommonArgs: c.client.CommonArgs(),
 			Page: CCSearchHostRequestPageInfo{
 				Start: start,
 				Limit: limit,
@@ -140,7 +143,10 @@ func (c *CCApiClient) GetHostsByRange(bizID, limit, start int) (*CCSearchHostRes
 			},
 		},
 	}
-	response, err := c.Agent().Post("list_biz_hosts_topo").BodyProvider(reqBody).Receive(&result /* success */, &result /* failed */)
+	response, err := c.Agent().
+		Set(authKey, c.client.commonArgs.JSON()).
+		Post("list_biz_hosts_topo").
+		BodyProvider(reqBody).Receive(&result /* success */, &result /* failed */)
 	if err != nil {
 		c.SearchHostCounter.CounterFails.Inc()
 		logging.Errorf("get hosts by range %d:%d failed: %v, %v", start, limit, result, err)
@@ -165,17 +171,15 @@ func (c *CCApiClient) GetSearchBizInstTopo(start, bizID, limit, level int) ([]CC
 		APIResponse
 		Data []CCSearchBizInstTopoResponseInfo `json:"data"`
 	}{}
-	response, err := c.Agent().Get("search_biz_inst_topo/").
+	response, err := c.Agent().
+		Set(authKey, c.client.commonArgs.JSON()).
+		Get("search_biz_inst_topo/").
 		QueryStruct(
 			&CCSearchBizInstTopoParams{
-				AppCode:   c.client.commonArgs.AppCode,
-				AppSecret: c.client.commonArgs.AppSecret,
-				BKToken:   c.client.commonArgs.BKToken,
-				UserName:  c.client.commonArgs.UserName,
-				BkBizID:   bizID,
-				Level:     level,
-				Start:     start,
-				Limit:     limit,
+				BkBizID: bizID,
+				Level:   level,
+				Start:   start,
+				Limit:   limit,
 			}).
 		Receive(&result, &result)
 	if err != nil {
@@ -202,10 +206,11 @@ func (c *CCApiClient) GetSearchBusiness() ([]CCSearchBusinessResponseInfo, error
 		Data *CCSearchBusinessResponseData `json:"data"`
 	}{}
 	// 请求并将结果写入到result中
-	response, err := c.Agent().Post("search_business/").BodyProvider(&json.Provider{Payload: &CCSearchBusinessRequest{
-		CommonArgs: c.client.CommonArgs(),
-		Fields:     []string{"bk_biz_id", "bk_biz_name"},
-	}}).Receive(&result /* success */, &result /* failed */)
+	response, err := c.Agent().
+		Post("search_business/").
+		Set(authKey, c.client.commonArgs.JSON()).
+		BodyProvider(&json.Provider{Payload: &CCSearchBusinessRequest{Fields: []string{"bk_biz_id", "bk_biz_name"}}}).
+		Receive(&result /* success */, &result /* failed */)
 	if err != nil {
 		c.SearchBusinessCounter.CounterFails.Inc()
 		logging.Errorf("get business failed: %v, %v", result, err)
@@ -246,15 +251,18 @@ func (c *CCApiClient) GetServiceInstance(bizID, limit, start int, ServiceInstanc
 		APIResponse
 		Data *CCSearchServiceInstanceResponseData `json:"data"`
 	}{}
-	response, err := c.Agent().Post("list_service_instance_detail/").BodyProvider(&json.Provider{Payload: &CCSearchServiceInstanceRequest{
-		CommonArgs: c.client.CommonArgs(),
-		Page: CCSearchServiceInstanceRequestMetadataLabelPage{
-			Start: start,
-			Limit: limit,
-			Sort:  "bk_host_id",
-		},
-		BkBizID: bizID,
-	}}).Receive(&result, &result)
+	response, err := c.Agent().
+		Post("list_service_instance_detail/").
+		Set(authKey, c.client.commonArgs.JSON()).
+		BodyProvider(&json.Provider{Payload: &CCSearchServiceInstanceRequest{
+			Page: CCSearchServiceInstanceRequestMetadataLabelPage{
+				Start: start,
+				Limit: limit,
+				Sort:  "bk_host_id",
+			},
+			BkBizID: bizID,
+		}}).
+		Receive(&result, &result)
 	if err != nil {
 		c.SearchServiceInstanceCounter.CounterFails.Inc()
 		logging.Errorf("get service_instance failed: %v, %v", result, err)
@@ -454,10 +462,12 @@ func (c *CCApiClient) FilterCMDBV3Biz(originalResponse []CCSearchBusinessRespons
 	}
 	logging.Infof("going to request cmdb filter bizList->[%v]", bizList)
 
-	response, err := c.Agent().Post("get_biz_location/").BodyProvider(&json.Provider{Payload: &CCGetBusinessLocationRequest{
-		CommonArgs: c.client.CommonArgs(),
-		BkBizIDs:   bizList,
-	}}).Receive(&result /* success */, &result /* failed */)
+	response, err := c.Agent().
+		Set(authKey, c.client.commonArgs.JSON()).
+		Post("get_biz_location/").
+		BodyProvider(&json.Provider{Payload: &CCGetBusinessLocationRequest{BkBizIDs: bizList}}).
+		Receive(&result /* success */, &result /* failed */)
+
 	// 判断请求是否成功
 	if err != nil {
 		c.GetBizLocationCounter.CounterFails.Inc()

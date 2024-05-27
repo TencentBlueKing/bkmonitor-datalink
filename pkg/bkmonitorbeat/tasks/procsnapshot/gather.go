@@ -10,77 +10,55 @@
 package procsnapshot
 
 import (
-	"time"
+	"context"
 
-	shiroups "github.com/shirou/gopsutil/v3/process"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type ProcMeta struct {
-	Pid      int32
-	PPid     int32
-	Name     string
-	Cwd      string
-	Exe      string
-	Cmd      string
-	CmdSlice []string
-	Username string
-	Created  int64
-	Uids     []int32
+type Gather struct {
+	config *configs.ProcSnapshotConfig
+	tasks.BaseTask
 }
 
-const (
-	socketPerformanceThreshold = 1000
-	socketPerformanceSleep     = 10
-)
+func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
+	gather := &Gather{}
+	gather.GlobalConfig = globalConfig
+	gather.TaskConfig = taskConfig
+	gather.config = taskConfig.(*configs.ProcSnapshotConfig)
 
-func allProcsMeta() ([]ProcMeta, error) {
-	var ret []ProcMeta
-	pids, err := shiroups.Pids()
+	gather.Init()
+
+	logger.Info("New a ProcSnapshot Task Instance")
+	return gather
+}
+
+func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	logger.Info("ProcSnapshot is running....")
+
+	procs, err := allProcsMeta()
 	if err != nil {
-		return ret, err
+		logger.Errorf("faile to get all procs meta: %v", err)
+		return
 	}
 
-	for idx, pid := range pids {
-		if (idx+1)%socketPerformanceThreshold == 0 {
-			time.Sleep(time.Millisecond * socketPerformanceSleep)
-		}
-
-		stat, err := getProcMeta(pid)
-		if err != nil {
-			logger.Warnf("get process meta data failed, pid: %d, err: %v", pid, err)
-			continue
-		}
-		ret = append(ret, stat)
+	pids := make([]int32, 0, len(procs))
+	for i := 0; i < len(procs); i++ {
+		pids = append(pids, procs[i].Pid)
 	}
 
-	return ret, nil
-}
-
-func getProcMeta(pid int32) (ProcMeta, error) {
-	var meta ProcMeta
-	proc, err := shiroups.NewProcess(pid)
+	fs, err := allProcsFileSockets(pids)
 	if err != nil {
-		return meta, err
+		logger.Errorf("faile to get filesockets: %v", err)
+		return
 	}
 
-	meta.Pid = pid
-	meta.PPid, _ = proc.Ppid()
-	meta.Username, _ = proc.Username()
-	meta.Name, _ = proc.Name()
-	meta.Cmd, _ = proc.Cmdline()
-	meta.CmdSlice, _ = proc.CmdlineSlice()
-	meta.Exe, _ = proc.Exe()
-	meta.Cwd, _ = proc.Cwd()
-	meta.Created, _ = proc.CreateTime()
-	meta.Uids, _ = proc.Uids()
-	return meta, nil
+	evt := &Event{
+		DataID:  g.config.DataID,
+		Process: procs,
+		Network: fs,
+	}
+	e <- evt
 }
-
-//func allProcsInodes() {
-//	//for _, pid := range
-//	process.GetProcInodes("/proc", 1)
-//
-//	process.NetlinkDetector{}.Get(allpids)
-//}

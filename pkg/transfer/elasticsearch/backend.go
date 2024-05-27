@@ -88,10 +88,15 @@ func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {
 // Product
 func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killChan chan<- error) (result interface{}, at time.Time, ok bool) {
 	var etlRecord define.ETLRecord
-	err := payload.To(&etlRecord)
-	if err != nil {
-		logging.Warnf("%v error %v dropped payload %+v", b, err, payload)
-		return nil, time.Time{}, false
+	r := payload.GetETLRecord()
+	if r != nil {
+		etlRecord = *r
+	} else {
+		err := payload.To(&etlRecord)
+		if err != nil {
+			logging.Warnf("%v error %v dropped payload %+v", b, err, payload)
+			return nil, time.Time{}, false
+		}
 	}
 
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true

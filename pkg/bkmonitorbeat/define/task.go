@@ -35,6 +35,7 @@ const (
 	ModuleProcCustom      = "proccustom"
 	ModuleProcSync        = "procsync"
 	ModuleProcStatus      = "procstatus"
+	ModuleLoginLog        = "loginlog"
 )
 
 // Status :

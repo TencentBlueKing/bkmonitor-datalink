@@ -380,8 +380,8 @@ loop:
 	return filesockets, nil
 }
 
-// getProcInodes returns inodes of the specified pid
-func getProcInodes(root string, pid int32) ([]uint64, error) {
+// GetProcInodes returns inodes of the specified pid
+func GetProcInodes(root string, pid int32) ([]uint64, error) {
 	var inodefds []uint64
 	dir := fmt.Sprintf("%s/%d/fd", root, pid)
 	f, err := os.Open(dir)
@@ -423,7 +423,7 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 		if (idx+1)%socketPerformanceThreshold == 0 {
 			time.Sleep(time.Millisecond * socketPerformanceSleep)
 		}
-		inodes, err := getProcInodes("/proc", pid)
+		inodes, err := GetProcInodes("/proc", pid)
 		if err != nil {
 			logger.Errorf("failed to get /proc info: %v", err)
 			continue

@@ -84,6 +84,10 @@ func (a *aggFormat) reset() {
 // idx 是层级信息，默认为 len(a.aggInfoList), 因为聚合结果跟聚合列表是相反的，通过聚合层级递归解析 data 里面的内容
 // 例如该查询 sum(count_over_time(metric[1m])) by (dim-1, dim-2) 的聚合层级为：dim-1, dim-2, time range, count
 func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
+	if data == nil {
+		return nil
+	}
+
 	idx--
 	if idx >= 0 {
 		switch info := a.aggInfoList[idx].(type) {

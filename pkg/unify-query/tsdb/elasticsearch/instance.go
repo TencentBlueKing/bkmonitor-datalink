@@ -203,23 +203,32 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getMapping(ctx context.Context, index string) (map[string]interface{}, error) {
+func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(ctx, fmt.Sprintf("get mapping error: %s", r))
 		}
 	}()
 
-	mappings, err := i.client.GetMapping().Index(index).Do(ctx)
+	indexs, err := i.getIndexes(ctx, alias)
 	if err != nil {
 		return nil, err
 	}
 
-	if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
-		return mapping, nil
-	} else {
-		return nil, fmt.Errorf("get mappings error with index: %s", index)
+	for _, index := range indexs {
+		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
+			return mapping, nil
+		} else {
+			return nil, fmt.Errorf("get mappings error with index: %s", index)
+		}
 	}
+
+	return nil, nil
 }
 
 func (i *Instance) getAlias(opt *indexOpt) (indexes []string) {
@@ -518,7 +527,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 	return
 }
 
-func (i *Instance) getIndexes(ctx context.Context, aliases []string) ([]string, error) {
+func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string, error) {
 	catAlias, err := i.client.CatAliases().Alias(aliases...).Do(ctx)
 	if err != nil {
 		return nil, err
@@ -559,7 +568,7 @@ func (i *Instance) makeQueryOption(ctx context.Context, query *metadata.Query, s
 		alias := fmt.Sprintf("%s_%s_read", query.DB, time.UnixMilli(ti).Format("20060102"))
 		aliases = append(aliases, alias)
 	}
-	indexes, err := i.getIndexes(ctx, aliases)
+	indexes, err := i.getIndexes(ctx, aliases...)
 	if err != nil {
 		return
 	}
@@ -663,15 +672,11 @@ func (i *Instance) QueryRaw(
 		err error
 	)
 
-	start := hints.Start
-	end := hints.End
-	// 只支持 PromQL 查询
-	// query.IsNotPromQL = false
+	qp := metadata.GetQueryParams(ctx)
 
-	//if query.TimeAggregation == nil {
-	//	err = fmt.Errorf("empty time aggregation with %+v", query)
-	//	return storage.ErrSeriesSet(err)
-	//}
+	start := qp.Start
+	end := qp.End
+
 	if query.TimeAggregation != nil {
 		window := query.TimeAggregation.WindowDuration
 

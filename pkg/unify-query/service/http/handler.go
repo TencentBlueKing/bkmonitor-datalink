@@ -160,10 +160,13 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
-	_, end, _, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	start, end, _, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		return nil, err
 	}
+
+	// es 需要使用自己的查询时间范围
+	metadata.GetQueryParams(ctx).SetTime(start.UnixMilli(), end.UnixMilli())
 	err = metadata.SetQueryReference(ctx, queryRef)
 	if err != nil {
 		return nil, err

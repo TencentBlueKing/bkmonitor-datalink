@@ -669,13 +669,20 @@ func (i *Instance) QueryRaw(
 	matchers ...*labels.Matcher,
 ) storage.SeriesSet {
 	var (
-		err error
+		err   error
+		start int64
+		end   int64
 	)
 
 	qp := metadata.GetQueryParams(ctx)
-
-	start := qp.Start
-	end := qp.End
+	// instant 需要替换使用查询时间，其他的则使用 prom 回传时间
+	if qp.IsInstant {
+		start = qp.Start * 1e3
+		end = qp.End * 1e3
+	} else {
+		start = hints.Start
+		end = hints.End
+	}
 
 	if query.TimeAggregation != nil {
 		window := query.TimeAggregation.WindowDuration

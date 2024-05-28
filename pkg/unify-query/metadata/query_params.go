@@ -21,6 +21,13 @@ type QueryParams struct {
 	End   int64
 
 	DataSource map[string]struct{}
+	IsInstant  bool
+}
+
+func (q *QueryParams) SetIsInstant(isInstant bool) *QueryParams {
+	q.IsInstant = isInstant
+	q.set()
+	return q
 }
 
 func (q *QueryParams) SetDataSource(ds string) *QueryParams {

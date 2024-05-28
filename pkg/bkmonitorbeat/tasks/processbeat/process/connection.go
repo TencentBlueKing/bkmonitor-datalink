@@ -92,8 +92,9 @@ func (s *PortStat) sortPorts() {
 }
 
 type ConnDetector interface {
-	Get(pids []int32) (PidSockets, error)
 	Type() string
+	Get(pids []int32) (PidSockets, error)
+	GetState(pids []int32, state string) (PidSockets, error)
 }
 
 type StdDetector struct{}
@@ -112,7 +113,7 @@ func (d StdDetector) Type() string {
 	return DetectorStd
 }
 
-func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}) (PidSockets, error) {
+func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, state string) (PidSockets, error) {
 	pidSockets := NewPidSockets()
 	tcp, err := net.Connections("tcp")
 	if err != nil {
@@ -120,7 +121,7 @@ func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}) (PidSockets, e
 	}
 
 	for _, conn := range tcp {
-		if conn.Status != "LISTEN" {
+		if conn.Status != state {
 			continue
 		}
 		if _, ok := pidSet[conn.Pid]; !ok {
@@ -231,6 +232,10 @@ func (d StdDetector) mergePidSockets(items ...PidSockets) PidSockets {
 }
 
 func (d StdDetector) Get(pids []int32) (PidSockets, error) {
+	return d.GetState(pids, StateListen)
+}
+
+func (d StdDetector) GetState(pids []int32, state string) (PidSockets, error) {
 	dst := NewPidSockets()
 	set := make(map[int32]struct{})
 	for _, pid := range pids {
@@ -238,7 +243,7 @@ func (d StdDetector) Get(pids []int32) (PidSockets, error) {
 	}
 
 	logger.Debug("std detector round1")
-	tcp1, err := d.getTcpConnections(set)
+	tcp1, err := d.getTcpConnections(set, state)
 	if err != nil {
 		return dst, err
 	}
@@ -250,7 +255,7 @@ func (d StdDetector) Get(pids []int32) (PidSockets, error) {
 	time.Sleep(time.Second * 5) // TODO(mando): 考虑改成可配置
 
 	logger.Debug("std detector round2")
-	tcp2, err := d.getTcpConnections(set)
+	tcp2, err := d.getTcpConnections(set, state)
 	if err != nil {
 		return dst, err
 	}

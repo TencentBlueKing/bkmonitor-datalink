@@ -33,6 +33,7 @@ type ProcMeta struct {
 
 type ProcConn struct {
 	Pid       int32  `json:"pid"`
+	State     string `json:"state"`
 	Protocol  string `json:"protocol"`
 	LocalAddr string `json:"local_addr"`
 	LocalPort uint32 `json:"local_port"`
@@ -87,16 +88,22 @@ func allProcsMeta() ([]ProcMeta, error) {
 
 func allProcsConn(pids []int32) ([]ProcConn, error) {
 	var ret []ProcConn
-	sockets, err := getConnDetector().Get(pids)
+	d := getConnDetector()
+	listenFs, err := d.GetState(pids, process.StateListen)
+	if err != nil {
+		return nil, err
+	}
+	estabFs, err := d.GetState(pids, process.StateEstab)
 	if err != nil {
 		return nil, err
 	}
 
 	appendConn := func(sockets map[int32][]process.FileSocket) {
-		for k, items := range sockets {
+		for pid, items := range sockets {
 			for _, item := range items {
 				ret = append(ret, ProcConn{
-					Pid:       k,
+					Pid:       pid,
+					State:     item.Status,
 					Protocol:  item.Protocol,
 					LocalAddr: item.ConnLaddr,
 					LocalPort: item.ConnLport,
@@ -105,10 +112,15 @@ func allProcsConn(pids []int32) ([]ProcConn, error) {
 		}
 	}
 
-	appendConn(sockets.TCP)
-	appendConn(sockets.TCP6)
-	appendConn(sockets.UDP)
-	appendConn(sockets.UDP6)
+	appendConn(listenFs.TCP)
+	appendConn(listenFs.TCP6)
+	appendConn(listenFs.UDP)
+	appendConn(listenFs.UDP6)
+
+	appendConn(estabFs.TCP)
+	appendConn(estabFs.TCP6)
+	appendConn(estabFs.UDP)
+	appendConn(estabFs.UDP6)
 
 	return ret, nil
 }

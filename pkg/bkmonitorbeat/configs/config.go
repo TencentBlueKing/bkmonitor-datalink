@@ -113,7 +113,7 @@ type Config struct {
 	ProcSyncTask      *ProcSyncConfig        `config:"procsync_task"`
 	ProcStatusTask    *ProcStatusConfig      `config:"procstatus_task"`
 	LoginLogTask      *LoginLogConfig        `config:"loginlog_task"`
-	ProcSnapshotTask  *ProcSnapshotConfig    `config:"procsnapshot_tsak"`
+	ProcSnapshotTask  *ProcSnapshotConfig    `config:"procsnapshot_task"`
 }
 
 // NewConfig : new config struct

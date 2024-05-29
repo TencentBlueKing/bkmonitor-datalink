@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 
@@ -423,6 +424,8 @@ func getProcInodes(root string, pid int32) ([]uint64, error) {
 	return inodefds, nil
 }
 
+var inodesCache = expirable.NewLRU[int32, []uint64](65535, nil, 30*time.Second)
+
 // getConcernPidInodes pid -> inodes
 func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 	ret := make(map[int32][]uint64)
@@ -431,12 +434,20 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 		if (idx+1)%socketPerformanceThreshold == 0 {
 			time.Sleep(time.Millisecond * socketPerformanceSleep)
 		}
+
+		inodes, ok := inodesCache.Get(pid)
+		if ok {
+			ret[pid] = inodes
+			continue
+		}
+
 		inodes, err := getProcInodes("/proc", pid)
 		if err != nil {
 			logger.Errorf("failed to get /proc info: %v", err)
 			continue
 		}
 		ret[pid] = inodes
+		inodesCache.Add(pid, inodes)
 	}
 
 	return ret

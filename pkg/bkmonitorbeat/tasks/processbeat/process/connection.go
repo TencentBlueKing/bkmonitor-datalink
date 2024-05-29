@@ -132,12 +132,12 @@ func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, state string) 
 		logger.Debugf("pid %d listening tcp %+v", conn.Pid, conn.Laddr)
 		for _, listenIP := range tasks.GetListeningIPs(conn.Laddr.IP) {
 			s := FileSocket{
-				Status:    conn.Status,
-				Type:      int(conn.Type),
-				Pid:       conn.Pid,
-				Family:    conn.Family,
-				ConnLaddr: listenIP,
-				ConnLport: conn.Laddr.Port,
+				Status: conn.Status,
+				Type:   int(conn.Type),
+				Pid:    conn.Pid,
+				Family: conn.Family,
+				Saddr:  listenIP,
+				Sport:  conn.Laddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {
@@ -169,12 +169,12 @@ func (d StdDetector) getUdpConnections(pidSet map[int32]struct{}) (PidSockets, e
 		logger.Debugf("pid %d listening udp %+v", conn.Pid, conn.Laddr)
 		for _, listenIP := range tasks.GetListeningIPs(conn.Laddr.IP) {
 			s := FileSocket{
-				Status:    conn.Status,
-				Type:      int(conn.Type),
-				Pid:       conn.Pid,
-				Family:    conn.Family,
-				ConnLaddr: listenIP,
-				ConnLport: conn.Laddr.Port,
+				Status: conn.Status,
+				Type:   int(conn.Type),
+				Pid:    conn.Pid,
+				Family: conn.Family,
+				Saddr:  listenIP,
+				Sport:  conn.Laddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {
@@ -368,7 +368,7 @@ func calcPortStat(conf configs.ProcessbeatPortConfig, sockets []FileSocket, pidc
 	socketSet := make(map[string]struct{})
 	portSet := make(map[uint32]struct{})
 	for _, socket := range sockets {
-		portSet[socket.ConnLport] = struct{}{}
+		portSet[socket.Sport] = struct{}{}
 		socketSet[socket.Listen()] = struct{}{}
 	}
 
@@ -428,7 +428,7 @@ func calcPortStat(conf configs.ProcessbeatPortConfig, sockets []FileSocket, pidc
 		}
 
 		for _, socket := range sockets {
-			if _, ok := notaccuratelisten[uint16(socket.ConnLport)]; !ok {
+			if _, ok := notaccuratelisten[uint16(socket.Sport)]; !ok {
 				continue
 			}
 			ps.NotAccurateListen = append(ps.NotAccurateListen, socket.Listen())

@@ -100,15 +100,15 @@ func (e portEvent) alive() []ConnState {
 			continue
 		}
 		var alive int
-		if err := e.touch(conn.ConnLaddr, int(conn.ConnLport)); err != nil {
-			logger.Errorf("touch addr %s port %d failed", conn.ConnLaddr, conn.ConnLport)
+		if err := e.touch(conn.Saddr, int(conn.Sport)); err != nil {
+			logger.Errorf("touch addr %s port %d failed", conn.Saddr, conn.Sport)
 			alive = 0
 		} else {
 			alive = 1
 		}
 		c := ConnState{
-			Address: conn.ConnLaddr,
-			Port:    fmt.Sprintf("%d", conn.ConnLport),
+			Address: conn.Saddr,
+			Port:    fmt.Sprintf("%d", conn.Sport),
 			Alive:   alive,
 		}
 		logger.Debugf("%d(%s) got connState: %+v", e.pid, e.procName, c)

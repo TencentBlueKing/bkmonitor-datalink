@@ -20,23 +20,27 @@ import (
 )
 
 type ProcMeta struct {
-	Pid      int32   `json:"pid"`
-	PPid     int32   `json:"ppid"`
-	Name     string  `json:"name"`
-	Cwd      string  `json:"cwd"`
-	Exe      string  `json:"exe"`
-	Cmd      string  `json:"cmd"`
-	Username string  `json:"username"`
-	Created  int64   `json:"created"`
-	Uids     []int32 `json:"uids"`
+	Pid      int32  `json:"pid"`
+	PPid     int32  `json:"ppid"`
+	Cwd      string `json:"cwd"`
+	Cmd      string `json:"cmd"`
+	Created  int64  `json:"created"`
+	Uid      int32  `json:"uid"`
+	Tid      int32  `json:"tid"`
+	Exe      string `json:"exe"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
 }
 
 type ProcConn struct {
-	Pid       int32  `json:"pid"`
-	State     string `json:"state"`
-	Protocol  string `json:"protocol"`
-	LocalAddr string `json:"local_addr"`
-	LocalPort uint32 `json:"local_port"`
+	Pid      int32  `json:"pid"`
+	Protocol string `json:"protocol"`
+	State    string `json:"state"`
+	Saddr    string `json:"saddr"`
+	Sport    uint32 `json:"uint16"`
+	Daddr    string `json:"daddr"`
+	Dport    uint32 `json:"dport"`
+	Family   string `json:"family"`
 }
 
 const (
@@ -59,7 +63,7 @@ func getProcMeta(pid int32) (ProcMeta, error) {
 	meta.Exe, _ = proc.Exe()
 	meta.Cwd, _ = proc.Cwd()
 	meta.Created, _ = proc.CreateTime()
-	meta.Uids, _ = proc.Uids()
+	//meta.Uids, _ = proc.Uids()
 	return meta, nil
 }
 
@@ -102,11 +106,13 @@ func allProcsConn(pids []int32) ([]ProcConn, error) {
 		for pid, items := range sockets {
 			for _, item := range items {
 				ret = append(ret, ProcConn{
-					Pid:       pid,
-					State:     item.Status,
-					Protocol:  item.Protocol,
-					LocalAddr: item.ConnLaddr,
-					LocalPort: item.ConnLport,
+					Pid:      pid,
+					State:    item.Status,
+					Protocol: item.Protocol,
+					Saddr:    item.Saddr,
+					Sport:    item.Sport,
+					Daddr:    item.Daddr,
+					Dport:    item.Dport,
 				})
 			}
 		}

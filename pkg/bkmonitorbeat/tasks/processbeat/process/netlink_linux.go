@@ -363,12 +363,15 @@ loop:
 			data := netlinkMessage.Data
 			m := (*inetDiagMsg)(unsafe.Pointer(&data[0]))
 			srcIPString, _ := ipHex2String(m.IDiagFamily, m.ID.IdiagSrc)
+			dstIPString, _ := ipHex2String(m.IDiagFamily, m.ID.IdiagDst)
 			filesocket := FileSocket{
-				Status:    stateMap[m.IDiagState],
-				Inode:     m.IDiagInode,
-				Family:    uint32(m.IDiagFamily),
-				ConnLaddr: srcIPString,
-				ConnLport: uint32(m.ID.IdiagSport.Int()),
+				Status: stateMap[m.IDiagState],
+				Inode:  m.IDiagInode,
+				Family: uint32(m.IDiagFamily),
+				Saddr:  srcIPString,
+				Sport:  uint32(m.ID.IdiagSport.Int()),
+				Daddr:  dstIPString,
+				Dport:  uint32(m.ID.IdiagDport.Int()),
 			}
 
 			switch proto {
@@ -480,13 +483,13 @@ func getPidSockets(sni socketNetInfo, pids []int32, state string) PidSockets {
 	cloneFileSocket := func(fs FileSocket, protocol, ip string) FileSocket {
 		cloned := fs
 		cloned.Protocol = protocol
-		cloned.ConnLaddr = ip
+		cloned.Saddr = ip
 		return cloned
 	}
 
 	for _, sockets := range netTcp {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.TCP[v.Pid] = append(ret.TCP[v.Pid], cloneFileSocket(v, ProtocolTCP, listenIP))
 			}
 		}
@@ -494,7 +497,7 @@ func getPidSockets(sni socketNetInfo, pids []int32, state string) PidSockets {
 
 	for _, sockets := range netUdp {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.UDP[v.Pid] = append(ret.UDP[v.Pid], cloneFileSocket(v, ProtocolUDP, listenIP))
 			}
 		}
@@ -502,7 +505,7 @@ func getPidSockets(sni socketNetInfo, pids []int32, state string) PidSockets {
 
 	for _, sockets := range netTcp6 {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.TCP6[v.Pid] = append(ret.TCP6[v.Pid], cloneFileSocket(v, ProtocolTCP6, listenIP))
 			}
 		}
@@ -510,7 +513,7 @@ func getPidSockets(sni socketNetInfo, pids []int32, state string) PidSockets {
 
 	for _, sockets := range netUdp6 {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.UDP6[v.Pid] = append(ret.UDP6[v.Pid], cloneFileSocket(v, ProtocolUDP6, listenIP))
 			}
 		}

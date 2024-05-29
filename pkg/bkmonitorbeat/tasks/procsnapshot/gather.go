@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/elastic/beats/libbeat/common"
 )
 
 type Gather struct {
@@ -44,21 +45,22 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
+	var pdata []common.MapStr
 	pids := make([]int32, 0, len(procs))
 	for i := 0; i < len(procs); i++ {
+		pdata = append(pdata, newProcessEvent(procs[i]).AsMap())
 		pids = append(pids, procs[i].Pid)
 	}
+	e <- &Event{dataid: g.config.DataID, data: pdata}
 
-	conn, err := allProcsConn(pids)
+	conns, err := allProcsConn(pids)
 	if err != nil {
 		logger.Errorf("faile to get filesockets: %v", err)
 		return
 	}
-
-	evt := &Event{
-		DataID:      g.config.DataID,
-		Process:     procs,
-		Connections: conn,
+	var sdata []common.MapStr
+	for _, conn := range conns {
+		sdata = append(sdata, newSocketEvent(conn).AsMap())
 	}
-	e <- evt
+	e <- &Event{dataid: g.config.DataID, data: sdata}
 }

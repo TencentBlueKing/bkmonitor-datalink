@@ -192,12 +192,12 @@ quantile_over_time(scalar, range-vector) : 区间向量内每个度量指标的�
 stddev_over_time(range-vector) : 区间向量内每个度量指标的总体标准差。
 
 stdvar_over_time(range-vector) : 区间向量内每个度量指标的总体标准方差
-## 在 HTTP API 中使用 PromQL
-在 Prometheus 中，你可以通过其 HTTP API 使用 PromQL 来执行查询，获取实时或瞬时时间数据。这样的功能允许开发者和系统管理员在应用程序中集成 Prometheus 数据，或者使用自动化脚本来获取和处理监控数据
+## 在unify-query的API中使用 PromQL
+在unify-query模块中，你可以通过其API请求中使用 PromQL 来执行查询，获取实时或瞬时时间数据。这样的功能允许开发者和系统管理员在应用程序中集成 Prometheus 数据，或者使用自动化脚本来获取和处理监控数据
 ### 基本步骤
 1.选择API类型：Prometheus 提供了两种主要的 API 来执行 PromQL 查询：即时查询 (/api/v1/query)：用于执行对某一特定时间点的查询。范围查询 (/api/v1/query_range)：用于执行在一个时间范围内的查询。
 构建查询语句：根据需要的监控数据，编写 PromQL 查询语句。
-通过 HTTP 请求发送查询：使用适当的 HTTP 请求向 Prometheus 的 query API 发起请求，将 PromQL 查询语句作为参数传递。
+通过unify-query的请求发送查询：使用unify-query的API请求向 Prometheus 的 query API 发起请求，将 PromQL 查询语句作为参数传递。
 ### 使用即时查询 API
 构建一个查询 Prometheus 的即时查询请求：
 ```

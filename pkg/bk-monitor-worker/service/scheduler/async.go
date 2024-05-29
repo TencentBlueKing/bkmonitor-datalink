@@ -29,7 +29,7 @@ var (
 	RefreshCustomLogReportConfig = "async:refresh_custom_log_report_config"
 	AccessToBkData               = "async:access_to_bk_data"
 	CreateFullCMDBLevelDataFlow  = "async:create_full_cmdb_level_data_flow"
-	collectESTask                = "async:collect_es_task"
+	CollectESTask                = "async:collect_es_task"
 
 	asyncTaskDefine = map[string]Task{
 		exampleTask: {
@@ -59,7 +59,7 @@ var (
 		CreateFullCMDBLevelDataFlow: {
 			Handler: task.CreateFullCMDBLevelDataFlow,
 		},
-		collectESTask: {
+		CollectESTask: {
 			Handler: task.CollectESTask,
 		},
 	}

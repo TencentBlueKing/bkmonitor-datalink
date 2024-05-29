@@ -285,7 +285,8 @@ func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 			if _, err = client.Enqueue(&t.Task{
 				Kind:    "async:collect_es_task",
 				Payload: payload,
-				Options: []t.Option{t.Queue("bk-log-search")},
+				//Options: []t.Option{t.Queue("log-search")},
+				Options: []t.Option{},
 			}); err != nil {
 				logger.Errorf("es_cluster_info: [%v] name [%s] try to enqueue collect task failed, %v", c.ClusterID, c.ClusterName, err)
 			}

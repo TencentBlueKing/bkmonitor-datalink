@@ -12,11 +12,12 @@ package procsnapshot
 import (
 	"context"
 
+	"github.com/elastic/beats/libbeat/common"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	"github.com/elastic/beats/libbeat/common"
 )
 
 type Gather struct {

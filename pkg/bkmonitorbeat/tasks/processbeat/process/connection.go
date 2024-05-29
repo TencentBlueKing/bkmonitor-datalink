@@ -138,6 +138,8 @@ func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, state string) 
 				Family: conn.Family,
 				Saddr:  listenIP,
 				Sport:  conn.Laddr.Port,
+				Daddr:  conn.Raddr.IP,
+				Dport:  conn.Raddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {
@@ -175,6 +177,8 @@ func (d StdDetector) getUdpConnections(pidSet map[int32]struct{}) (PidSockets, e
 				Family: conn.Family,
 				Saddr:  listenIP,
 				Sport:  conn.Laddr.Port,
+				Daddr:  conn.Raddr.IP,
+				Dport:  conn.Raddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {

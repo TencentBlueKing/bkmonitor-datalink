@@ -10,6 +10,9 @@
 package procsnapshot
 
 import (
+	"fmt"
+	"strings"
+	"syscall"
 	"time"
 
 	shiroups "github.com/shirou/gopsutil/v3/process"
@@ -43,6 +46,31 @@ type ProcConn struct {
 	Family   string `json:"family"`
 }
 
+func MappingTcpFamily(n int) string {
+	mapping := map[int]string{
+		syscall.AF_INET6: "AF_INET6",
+		syscall.AF_INET:  "AF_INET",
+	}
+
+	v, ok := mapping[n]
+	if ok {
+		return v
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func MappingUdpFamily(n int) string {
+	mapping := map[int]string{
+		syscall.SOCK_DGRAM: "SOCK_DGRAM",
+	}
+
+	v, ok := mapping[n]
+	if ok {
+		return v
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 const (
 	socketPerformanceThreshold = 1000
 	socketPerformanceSleep     = 10
@@ -63,7 +91,12 @@ func getProcMeta(pid int32) (ProcMeta, error) {
 	meta.Exe, _ = proc.Exe()
 	meta.Cwd, _ = proc.Cwd()
 	meta.Created, _ = proc.CreateTime()
-	//meta.Uids, _ = proc.Uids()
+	meta.Tid, _ = proc.Tgid()
+
+	uids, _ := proc.Uids()
+	if len(uids) > 0 {
+		meta.Uid = uids[0]
+	}
 	return meta, nil
 }
 
@@ -105,6 +138,12 @@ func allProcsConn(pids []int32) ([]ProcConn, error) {
 	appendConn := func(sockets map[int32][]process.FileSocket) {
 		for pid, items := range sockets {
 			for _, item := range items {
+				var family string
+				if strings.HasPrefix(item.Protocol, "tcp") {
+					family = MappingTcpFamily(int(item.Family))
+				} else {
+					family = MappingUdpFamily(int(item.Family))
+				}
 				ret = append(ret, ProcConn{
 					Pid:      pid,
 					State:    item.Status,
@@ -113,6 +152,7 @@ func allProcsConn(pids []int32) ([]ProcConn, error) {
 					Sport:    item.Sport,
 					Daddr:    item.Daddr,
 					Dport:    item.Dport,
+					Family:   family,
 				})
 			}
 		}

@@ -31,7 +31,7 @@ hset "bkmonitorv3:spaces:data_label_to_result_table"  "wz_test_613"   "[\"2_bkmo
 先在consul上创建influxdb实例，创建之后可以获取storageID为6的实例
 
 ```bash
-consul kv put bkmonitorv3/unify-query/data/storage/6 {"address":"http://bk-monitor-influxdb-proxy-http2:10203","username":"","password":"","type":"influxdb"}
+consul kv put bkmonitorv3/unify-query/data/storage/8 {"address":"http://bk-monitor-influxdb-proxy-http2:10203","username":"","password":"","type":"influxdb"}
 ```
 
 在redis储存influxdb所在的集群信息和主机信息

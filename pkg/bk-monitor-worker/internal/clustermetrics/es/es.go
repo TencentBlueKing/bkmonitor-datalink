@@ -32,7 +32,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -265,7 +264,7 @@ func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 
 	// 2. 遍历存储获取集群信息
 	wg := &sync.WaitGroup{}
-	ch := make(chan struct{}, task.GetGoroutineLimit("report_es"))
+	ch := make(chan struct{}, clustermetrics.GetGoroutineLimit("report_es"))
 	wg.Add(len(esClusterInfoList))
 
 	client, err := worker.GetClient()

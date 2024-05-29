@@ -5,8 +5,6 @@
 
 ## 快速部署
 
-安装preCI，pre-commit，gtm插件， 参考链接：https://iwiki.woa.com/p/4009081966
-
 在docker desktop上安装consul，redis，influxdb
 
 ### 本地创建redis数据
@@ -36,28 +34,296 @@ hset "bkmonitorv3:spaces:data_label_to_result_table"  "wz_test_613"   "[\"2_bkmo
 consul kv put bkmonitorv3/unify-query/data/storage/6 {"address":"http://bk-monitor-influxdb-proxy-http2:10203","username":"","password":"","type":"influxdb"}
 ```
 
-本地需要加段代码，用来获取主机信息，加在influxdb_router.go文件232行defer span.End(&err)语句后面，这段代码不要提交
-
+在redis储存influxdb所在的集群信息和主机信息
 ```
-      r.clusterInfo = make(influxdb.ClusterInfo)
-      r.clusterInfo["default"] = &influxdb.Cluster{
-      HostList: []string{"localhost"},
-      }
-      r.hostInfo = make(influxdb.HostInfo)
-      r.hostInfo["localhost"] = &influxdb.Host{
-      DomainName: "localhost",
-      Port:       8086,
-      Protocol:   "http",
-      }
-      r.hostStatusInfo = make(influxdb.HostStatusInfo)
-      r.hostStatusInfo["localhost"] = &influxdb.HostStatus{
-      Read: true,
-      }
+hset bkmonitorv3:influxdb:cluster_info "default" "{\"host_list\":[\"influxdb\"],\"unreadable_host_list\":[\"default\"]}"
+hset bkmonitorv3:influxdb:host_info "influxdb" "{\"domain_name\":\"127.0.0.1\",\"port\":8086,\"username\":\"\",\"password\":\"\",\"status\":false,\"backup_rate_limit\":0.0,\"grpc_port\":8089,\"protocol\":\"http\",\"read_rate_limit\":0.0}"
 ```
 
-在influxdb\instance.go文件中的query方法可以获取查询sql语句，可以根据sql语句创建influxdb原始数据，创建完数据，可以用工具图形化显示，工具链接：https://blog.csdn.net/u012593638/article/details/106541755/
+可以按照这几个请求和日志中的sql语句创建数据
 
-创建完数据，可以用单测数据测试数据是否正确
+test query:
+```
+curl --location 'http://127.0.0.1:10205/query/ts' \
+--header 'Content-Type: application/json' \
+--data '{
+    "space_uid": "influxdb",
+    "query_list": [
+        {
+            "data_source": "",
+            "table_id": "system.cpu_summary",
+            "field_name": "usage",
+            "field_list": null,
+            "function": [
+                {
+                    "method": "mean",
+                    "without": false,
+                    "dimensions": [],
+                    "position": 0,
+                    "args_list": null,
+                    "vargs_list": null
+                }
+            ],
+            "time_aggregation": {
+                "function": "avg_over_time",
+                "window": "60s",
+                "position": 0,
+                "vargs_list": null
+            },
+            "reference_name": "a",
+            "dimensions": [],
+            "limit": 0,
+            "timestamp": null,
+            "start_or_end": 0,
+            "vector_offset": 0,
+            "offset": "",
+            "offset_forward": false,
+            "slimit": 0,
+            "soffset": 0,
+            "conditions": {
+                "field_list": [],
+                "condition_list": []
+            },
+            "keep_columns": [
+                "_time",
+                "a"
+            ]
+        }
+    ],
+    "metric_merge": "a",
+    "result_columns": null,
+    "start_time": "1716946204",
+    "end_time": "1716985804",
+    "step": "60s"
+}'
+
+{
+    "series": [
+        {
+            "name": "_result0",
+            "metric_name": "",
+            "columns": [
+                "_time",
+                "_value"
+            ],
+            "types": [
+                "float",
+                "float"
+            ],
+            "group_keys": [],
+            "group_values": [],
+            "values": [
+                [
+                    1716976440000,
+                    66.6
+                ],
+                [
+                    1716976500000,
+                    66.6
+                ]
+            ]
+        }
+    ]
+}
+```
+test lost sample in increase
+```
+curl --location 'http://127.0.0.1:10205/query/ts' \
+--header 'Content-Type: application/json' \
+--data '{
+    "space_uid": "a_100147",
+    "query_list": [
+        {
+            "data_source": "bkmonitor",
+            "table_id": "custom_report_aggate.base",
+            "field_name": "bkmonitor_action_notice_api_call_count_total",
+            "field_list": null,
+            "function": null,
+            "time_aggregation": {
+                "function": "increase",
+                "window": "5m0s",
+                "position": 0,
+                "vargs_list": null
+            },
+            "reference_name": "a",
+            "dimensions": null,
+            "limit": 0,
+            "timestamp": null,
+            "start_or_end": 0,
+            "vector_offset": 0,
+            "offset": "",
+            "offset_forward": false,
+            "slimit": 0,
+            "soffset": 0,
+            "conditions": {
+                "field_list": [
+                    {
+                        "field_name": "notice_way",
+                        "value": [
+                            "weixin"
+                        ],
+                        "op": "eq"
+                    },
+                    {
+                        "field_name": "status",
+                        "value": [
+                            "failed"
+                        ],
+                        "op": "eq"
+                    }
+                ],
+                "condition_list": [
+                    "and"
+                ]
+            },
+            "keep_columns": null
+        }
+    ],
+    "metric_merge": "a",
+    "result_columns": null,
+    "start_time": "1716946204",
+    "end_time": "1716985804",
+    "step": "60s"
+}'
+
+{
+    "series": [
+        {
+            "name": "_result0",
+            "metric_name": "",
+            "columns": [
+                "_time",
+                "_value"
+            ],
+            "types": [
+                "float",
+                "float"
+            ],
+            "group_keys": [
+                "job",
+                "notice_way",
+                "status",
+                "target"
+            ],
+            "group_values": [
+                "SLI",
+                "weixin",
+                "failed",
+                "unknown"
+            ],
+            "values": [
+                [
+                    1716977880000,
+                    0
+                ],
+                [
+                    1716977940000,
+                    0
+                ],
+                [
+                    1716978000000,
+                    0
+                ],
+                [
+                    1716978060000,
+                    0
+                ],
+                [
+                    1716978120000,
+                    0
+                ]
+            ]
+        }
+    ]
+}
+
+```
+test query support fuzzy `__name__`
+```
+curl --location 'http://127.0.0.1:10205/query/ts' \
+--header 'Content-Type: application/json' \
+--data '{
+    "space_uid": "influxdb",
+    "query_list": [
+        {
+            "data_source": "",
+            "table_id": "system.cpu_summary",
+            "field_name": ".*",
+			"is_regexp": true,
+            "field_list": null,
+            "function": [
+                {
+                    "method": "mean",
+                    "without": false,
+                    "dimensions": [],
+                    "position": 0,
+                    "args_list": null,
+                    "vargs_list": null
+                }
+            ],
+            "time_aggregation": {
+                "function": "avg_over_time",
+                "window": "60s",
+                "position": 0,
+                "vargs_list": null
+            },
+            "reference_name": "a",
+            "dimensions": [],
+            "limit": 0,
+            "timestamp": null,
+            "start_or_end": 0,
+            "vector_offset": 0,
+            "offset": "",
+            "offset_forward": false,
+            "slimit": 0,
+            "soffset": 0,
+            "conditions": {
+                "field_list": [],
+                "condition_list": []
+            },
+            "keep_columns": [
+                "_time",
+                "a"
+            ]
+        }
+    ],
+    "metric_merge": "a",
+    "result_columns": null,
+    "start_time": "1716946204",
+    "end_time": "1716985804",
+    "step": "60s"
+}'
+
+{
+    "series": [
+        {
+            "name": "_result0",
+            "metric_name": "",
+            "columns": [
+                "_time",
+                "_value"
+            ],
+            "types": [
+                "float",
+                "float"
+            ],
+            "group_keys": [],
+            "group_values": [],
+            "values": [
+                [
+                    1716977820000,
+                    66
+                ],
+                [
+                    1716977880000,
+                    66
+                ]
+            ]
+        }
+    ]
+}
+```
+创建完数据，可以用工具图形化显示，工具链接：https://github.com/CymaticLabs/InfluxDBStudio
 
 ## 接口详情
 ```yaml

@@ -259,7 +259,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 
 					// 替换 vmrt 的值
 					oldVmRT := query.VmRt
-					newVmRT := strings.Replace(oldVmRT, "_raw", "_cmdb", 1)
+					newVmRT := strings.TrimSuffix(oldVmRT, MaDruidQueryRawSuffix) + MaDruidQueryCmdbSuffix
 
 					if newVmRT != oldVmRT {
 						query.VmRt = newVmRT

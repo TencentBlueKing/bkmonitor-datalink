@@ -12,13 +12,11 @@ package http
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	rdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/broker/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/service/scheduler/daemon"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
@@ -31,23 +29,18 @@ type DaemonTaskReloadParam struct {
 
 // ReloadDaemonTask 重载常驻任务 将 task_uni_id 放入重载队列中，由调度器负责监听并处理
 func ReloadDaemonTask(c *gin.Context) {
-	beginTime := time.Now()
-
 	params := new(DaemonTaskReloadParam)
 	if err := BindJSON(c, params); err != nil {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 		BadReqResponse(c, "parse params error: %v", err)
 		return
 	}
 
 	daemonTaskBytes, err := getDaemonTask(params.UniId)
 	if err != nil {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 		BadReqResponse(c, "get daemonTask failed, error: %v", err)
 		return
 	}
 	if daemonTaskBytes == nil {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 		BadReqResponse(c, "taskUniId: [%s] not found!", params.UniId)
 		return
 	}
@@ -56,12 +49,10 @@ func ReloadDaemonTask(c *gin.Context) {
 	// 检查是否已经存在于重载队列中
 	exist, err := broker.Client().SIsMember(context.Background(), common.DaemonReloadReqChannel(), params.UniId).Result()
 	if err != nil {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 		BadReqResponse(c, "found: %s if in queue failed, error: %s", params.UniId, err)
 		return
 	}
 	if exist {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "success")
 		Response(
 			c,
 			&gin.H{"data": fmt.Sprintf(
@@ -76,20 +67,16 @@ func ReloadDaemonTask(c *gin.Context) {
 	if len(params.Payload) > 0 {
 		payloadData, err := jsonx.Marshal(params.Payload)
 		if err != nil {
-			metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 			BadReqResponse(c, "failed to parse payload to bytes, error: %s", err)
 			return
 		}
 		pipe.HSetNX(context.Background(), common.DaemonReloadReqPayloadHash(), params.UniId, payloadData)
 	}
 	if _, err = pipe.Exec(context.Background()); err != nil {
-		metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "failure")
 		BadReqResponse(c, "execute publish reload signal to broker failed, error: %v", err)
 		return
 	}
 
-	metrics.RequestApiTotal(c.Request.Method, DaemonTaskReloadPath, "success")
-	metrics.RequestApiCostTime(c.Request.Method, DaemonTaskReloadPath, beginTime)
 	Response(c, &gin.H{"data": fmt.Sprintf("send %s to channel: %s", params.UniId, common.DaemonReloadReqChannel())})
 }
 

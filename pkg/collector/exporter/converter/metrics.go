@@ -78,9 +78,13 @@ type otMetricMapper struct {
 }
 
 func (p otMetricMapper) AsMapStr() common.MapStr {
+	target, ok := p.Dimensions["target"]
+	if !ok {
+		target = define.Identity()
+	}
 	return common.MapStr{
 		"metrics":   map[string]float64{p.Metric: p.Value},
-		"target":    define.Identity(),
+		"target":    target,
 		"timestamp": p.Time.UnixMilli(),
 		"dimension": p.Dimensions,
 	}

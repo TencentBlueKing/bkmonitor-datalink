@@ -27,8 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	boom "github.com/tylertreat/BoomFilters"
 	"github.com/wcharczuk/go-chart/v2"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
 // TestExists test bloom-filter
@@ -50,7 +48,7 @@ func TestExists(t *testing.T) {
 }
 
 func TestKeyHash(t *testing.T) {
-	h, err := highwayhash.New([]byte(core.HashSecret))
+	h, err := highwayhash.New([]byte("test"))
 	if err != nil {
 		panic(err)
 	}

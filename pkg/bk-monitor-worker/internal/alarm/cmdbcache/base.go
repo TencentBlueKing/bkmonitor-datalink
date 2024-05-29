@@ -238,6 +238,8 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, 
 		cacheManager, err = NewModuleCacheManager(prefix, opt, concurrentLimit)
 	case "set":
 		cacheManager, err = NewSetCacheManager(prefix, opt, concurrentLimit)
+	case "service_instance":
+		cacheManager, err = NewServiceInstanceCacheManager(prefix, opt, concurrentLimit)
 	default:
 		err = errors.Errorf("unsupported cache type: %s", cacheType)
 	}

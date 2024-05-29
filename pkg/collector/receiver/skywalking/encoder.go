@@ -75,6 +75,10 @@ var otSpanTagsMapping = map[string]string{
 	"db.instance": semconv.AttributeDBName,
 	"db.type":     semconv.AttributeDBSystem,
 
+	// cache
+	"cache.type": semconv.AttributeDBSystem,
+	"cache.cmd":  semconv.AttributeDBOperation,
+
 	// MQ
 	"mq.broker": semconv.AttributeNetPeerName,
 	"mq.topic":  semconv.AttributeMessagingDestinationKindTopic,

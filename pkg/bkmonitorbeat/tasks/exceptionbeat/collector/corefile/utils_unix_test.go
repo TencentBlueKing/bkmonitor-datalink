@@ -438,7 +438,7 @@ func TestCoreFileCollector_fillDimension(t *testing.T) {
 			want1: true,
 		},
 		{
-			name: "正则过滤(failed)",
+			name: "正则过滤(failed) - 1",
 			fields: fields{
 				pattern:   "core_%t_%e_%s",
 				isUsesPid: false,
@@ -447,6 +447,19 @@ func TestCoreFileCollector_fillDimension(t *testing.T) {
 				filePath: "/data/corefile/core_gen_core_xtest",
 			},
 			reg:   regexp.MustCompile("gen_core_test"),
+			want:  beat.MapStr{},
+			want1: false,
+		},
+		{
+			name: "正则过滤(failed) - 2",
+			fields: fields{
+				pattern:   "core_%e_%t",
+				isUsesPid: false,
+			},
+			args: args{
+				filePath: "/data/corefile/alarms.txt",
+			},
+			reg:   regexp.MustCompile("core_*"),
 			want:  beat.MapStr{},
 			want1: false,
 		},

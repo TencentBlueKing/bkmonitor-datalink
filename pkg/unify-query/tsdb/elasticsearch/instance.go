@@ -267,7 +267,7 @@ func (i *Instance) query(
 	//indexOptions, err := i.makeQueryOption(ctx, query, start, end)
 	queryOptions := []*queryOption{
 		{
-			index: fmt.Sprintf("%s_*_read", query.DB),
+			index: fmt.Sprintf("%s_%s_*_read", query.DB, query.Measurement),
 			start: start,
 			end:   end,
 			query: query,

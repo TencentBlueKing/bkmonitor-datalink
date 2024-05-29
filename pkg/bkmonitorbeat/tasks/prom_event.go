@@ -136,7 +136,7 @@ func NewPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 
 		var peTs int64
 		if timestamp == nil {
-			peTs = handler(ts, time.Now().UnixMilli(), offsetTime)
+			peTs = handler(ts, ts, offsetTime)
 		} else {
 			peTs = handler(ts, *timestamp, offsetTime)
 		}

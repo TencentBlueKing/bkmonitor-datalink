@@ -65,6 +65,9 @@ config_templates:
             corefile_match_regex:
               title: corefile_match_regex
               type: string
+            disable_resource_limit:
+              title: disable_resource_limit
+              type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf
     version: 1

@@ -50,11 +50,9 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result,
 	}
 	params := &Params{
 		BkdataAuthenticationMethod: c.BkdataAuthenticationMethod,
-		BkUsername:                 c.BkUsername,
 		BkAppCode:                  c.BkAppCode,
 		PreferStorage:              c.PreferStorage,
 		BkdataDataToken:            c.BkdataDataToken,
-		BkAppSecret:                c.BkAppSecret,
 	}
 
 	if sql != "" {
@@ -76,7 +74,8 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result,
 			UrlPath: url,
 			Body:    body,
 			Headers: map[string]string{
-				ContentType: c.ContentType,
+				ContentType:   c.ContentType,
+				Authorization: c.authorization(),
 			},
 		},
 		res,
@@ -95,6 +94,16 @@ func (c *Client) curl(ctx context.Context, method, url, sql string, res *Result,
 		ctx, queryCost, user.SpaceUid, consul.BkSqlStorageType,
 	)
 	return nil
+}
+
+func (c *Client) authorization() string {
+	auth := fmt.Sprintf(
+		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
+		c.BkUsername,
+		c.BkAppCode,
+		c.BkAppSecret,
+	)
+	return auth
 }
 
 func (c *Client) QuerySync(ctx context.Context, sql string, span *trace.Span) *Result {

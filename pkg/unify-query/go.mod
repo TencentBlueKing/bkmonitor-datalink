@@ -7,6 +7,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/VictoriaMetrics/metricsql v0.69.0
+	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/asaskevich/EventBus v0.0.0-20200907212545-49d423059eef
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dominikbraun/graph v0.23.0

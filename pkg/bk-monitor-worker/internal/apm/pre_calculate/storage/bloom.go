@@ -17,12 +17,12 @@ import (
 	"time"
 
 	redisBloom "github.com/RedisBloom/redisbloom-go"
-	"github.com/facebookincubator/go-qfext"
+	qf "github.com/facebookincubator/go-qfext"
 	"github.com/gomodule/redigo/redis"
 	"github.com/minio/highwayhash"
 	boom "github.com/tylertreat/BoomFilters"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
 // BloomStorageData storage request of bloom-filter
@@ -394,7 +394,7 @@ var (
 		},
 		// hash
 		func(s string) []byte {
-			h, _ := highwayhash.New([]byte(core.HashSecret))
+			h, _ := highwayhash.New([]byte(config.HashSecret))
 			h.Write([]byte(s))
 			return h.Sum(nil)
 		},

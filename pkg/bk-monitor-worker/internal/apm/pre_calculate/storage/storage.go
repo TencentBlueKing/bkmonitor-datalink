@@ -209,7 +209,6 @@ loop:
 
 				esSaveData = append(esSaveData, item)
 				if len(esSaveData) >= p.config.saveHoldMaxCount {
-					// todo 是否需要满时动态调整
 					err := p.saveEs.SaveBatch(esSaveData)
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StorageSaveEs, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StorageSaveEs, len(esSaveData))
@@ -245,8 +244,8 @@ loop:
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			case Prometheus:
-				item := r.Data.(PrometheusStorageData)
 
+				item := r.Data.(PrometheusStorageData)
 				prometheusData = append(prometheusData, item)
 				if len(prometheusData) >= p.config.saveHoldMaxCount {
 					err := p.prometheusWriter.WriteBatch(prometheusData)
@@ -295,6 +294,7 @@ loop:
 		case <-p.ctx.Done():
 			ticker.Stop()
 			p.cache.Close()
+			close(p.saveRequestChan)
 			break loop
 		}
 	}

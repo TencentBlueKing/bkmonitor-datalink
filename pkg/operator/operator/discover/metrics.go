@@ -52,6 +52,15 @@ var (
 		},
 		[]string{"name"},
 	)
+
+	discoverHandledTgTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_handled_tg_total",
+			Help:      "discover handled tg total",
+		},
+		[]string{"name"},
+	)
 )
 
 func newMetricMonitor(name string) *metricMonitor {
@@ -76,4 +85,8 @@ func (m *metricMonitor) IncCreatedChildConfigSuccessCounter() {
 
 func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncHandledTgCounter() {
+	discoverHandledTgTotal.WithLabelValues(m.name).Inc()
 }

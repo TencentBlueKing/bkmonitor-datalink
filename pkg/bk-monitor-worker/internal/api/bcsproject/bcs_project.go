@@ -25,7 +25,6 @@ func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientO
 	if err != nil {
 		return nil, err
 	}
-
 	return &Client{BkApiClient: client}, nil
 }
 

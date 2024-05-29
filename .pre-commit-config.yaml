@@ -24,7 +24,7 @@ repos:
       # 执行 preci 扫描
       - id: check-pre-ci-pre-commit
         name: check pre ci pre commit
-        entry: scripts/pre_commit/preci/scan.sh
+        entry: sh scripts/pre_commit/preci/scan.sh
         language: system
         verbose: true
 

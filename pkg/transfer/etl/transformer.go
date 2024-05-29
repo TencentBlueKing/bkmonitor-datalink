@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -69,7 +70,7 @@ func TransformMapBySeparator(separator string, fields []string) TransformFn {
 		total := len(parts)
 		for i, name := range fields {
 			if i < total {
-				results[name] = parts[i]
+				results[name] = strings.TrimSpace(parts[i])
 			} else {
 				results[name] = nil
 			}
@@ -301,6 +302,19 @@ func ParseDbmSlowQuery(url, content string, retry int) (*DbmResponse, error) {
 	return nil, err
 }
 
+var (
+	httpClient = &http.Client{
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout: time.Minute,
+			}).DialContext,
+			MaxIdleConns:        200,
+			MaxIdleConnsPerHost: 100,
+			IdleConnTimeout:     2 * time.Minute,
+		},
+	}
+)
+
 func parseDbmSlowQuery(url, content string) (*DbmResponse, error) {
 	req := DbmRequest{Content: content}
 	body, err := json.Marshal(req)
@@ -309,7 +323,7 @@ func parseDbmSlowQuery(url, content string) (*DbmResponse, error) {
 	}
 
 	buf := bytes.NewBuffer(body)
-	resp, err := http.Post(url, "", buf)
+	resp, err := httpClient.Post(url, "", buf)
 	if err != nil {
 		return nil, err
 	}

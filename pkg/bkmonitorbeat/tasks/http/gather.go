@@ -99,8 +99,11 @@ func (e *Event) FailFromError(err error) {
 // NewEvent :
 func NewEvent(g *Gather) *Event {
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
+	evt := tasks.NewEvent(g)
+	evt.StartAt = time.Now()
+
 	event := &Event{
-		Event: tasks.NewEvent(g),
+		Event: evt,
 		Steps: len(conf.Steps),
 		Index: 1,
 	}
@@ -462,13 +465,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 						// 发送事件
 						e <- event
 					}()
-					event.StartAt = time.Now()
 					// 检查url并设置结果事件
 					g.GatherURL(gCtx, event, s, u, h)
 				}(index, step, u, ipStr)
 			}
 		}
-
 		wg.Wait()
 	}
 }

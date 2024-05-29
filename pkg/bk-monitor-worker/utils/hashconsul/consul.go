@@ -45,6 +45,6 @@ func Put(c *consul.Instance, key, val string) error {
 		logger.Infof("new value [%s] is different from [%s] on consul, will updated it", val, oldValue)
 		return c.Put(key, val, 0)
 	}
-	logger.Infof("new value [%s] is same with [%s] on consul, skip it", val, oldValue)
+	logger.Debugf("new value [%s] is same with [%s] on consul, skip it", val, oldValue)
 	return nil
 }

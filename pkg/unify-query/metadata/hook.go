@@ -33,6 +33,16 @@ var (
 func setDefaultConfig() {
 	viper.SetDefault(DefaultExpirationPath, time.Minute*1)
 	viper.SetDefault(CleanupIntervalPath, time.Minute*5)
+
+	viper.SetDefault(MaDruidQueryRawSuffixPath, "_raw")
+	viper.SetDefault(MaDruidQueryCmdbSuffixPath, "_cmdb")
+}
+
+// LoadConfig
+func LoadConfig() {
+
+	MaDruidQueryRawSuffix = viper.GetString(MaDruidQueryRawSuffixPath)
+	MaDruidQueryCmdbSuffix = viper.GetString(MaDruidQueryCmdbSuffixPath)
 }
 
 // InitMetadata 初始化
@@ -76,6 +86,13 @@ func init() {
 		fmt.Printf(
 			"failed to subscribe event->[%s] for log module for default config, maybe log module won't working.",
 			eventbus.EventSignalConfigPreParse,
+		)
+	}
+
+	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPostParse, LoadConfig); err != nil {
+		fmt.Printf(
+			"failed to subscribe event->[%s] for http module for new config, maybe http module won't working.",
+			eventbus.EventSignalConfigPostParse,
 		)
 	}
 }

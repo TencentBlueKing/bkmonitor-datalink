@@ -38,6 +38,7 @@ import (
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -54,13 +55,8 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 	return 0
 }
 
-//type collectTaskInfo struct {
-//	ClusterInfo storage.ClusterInfo
-//	Timestamp   int64
-//}
-
-// collectAndReportMetrics 采集&上报ES集群指标
-func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
+// CollectAndReportMetrics 采集&上报ES集群指标
+func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
 	// 从custom option中获取集群业务id
 	var bkBizID float64
@@ -226,11 +222,16 @@ var httpClient = &http.Client{
 	},
 }
 
+type CollectESTaskParams struct {
+	ClusterInfo storage.ClusterInfo `json:"cluster_info"`
+	Timestamp   int64               `json:"timestamp"`
+}
+
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 
 var rtRe = regexp.MustCompile(`^v2_(.*)_.*?_.*$`)
 
-func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
+func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")
 	timestamp := time.Now().Truncate(time.Minute).UnixMilli()
 	// 1. 从metadata db中获取所有ES类型集群信息
@@ -266,6 +267,13 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 	wg := &sync.WaitGroup{}
 	ch := make(chan struct{}, task.GetGoroutineLimit("report_es"))
 	wg.Add(len(esClusterInfoList))
+
+	client, err := worker.GetClient()
+	if err != nil {
+		logger.Errorf("get client error, %v", err)
+	}
+	defer client.Close()
+
 	for _, clusterInfo := range esClusterInfoList {
 		ch <- struct{}{}
 		go func(c storage.ClusterInfo, wg *sync.WaitGroup, ch chan struct{}) {
@@ -274,10 +282,13 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 3. 采集并上报集群指标
-			if err := collectAndReportMetrics(c, timestamp); err != nil {
-				logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
-			} else {
-				logger.Infof("es_cluster_info: [%v] name [%s] collect and report metrics success", c.ClusterID, c.ClusterName)
+			payload, err := jsonx.Marshal(CollectESTaskParams{ClusterInfo: c, Timestamp: timestamp})
+			if _, err = client.Enqueue(&t.Task{
+				Kind:    "async:collect_es_task",
+				Payload: payload,
+				Options: []t.Option{t.Queue("bk-log-search")},
+			}); err != nil {
+				logger.Errorf("es_cluster_info: [%v] name [%s] try to enqueue collect task failed, %v", c.ClusterID, c.ClusterName, err)
 			}
 		}(clusterInfo, wg, ch)
 	}

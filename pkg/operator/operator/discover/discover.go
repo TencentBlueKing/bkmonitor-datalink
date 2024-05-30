@@ -120,30 +120,31 @@ func EncodeBase64(s string) string {
 }
 
 type BaseParams struct {
-	Client                 kubernetes.Interface
-	RelabelRule            string
-	RelabelIndex           string
-	Name                   string
-	KubeConfig             string
-	Namespaces             []string
-	Path                   string
-	Scheme                 string
-	ProxyURL               string
-	Period                 string
-	Timeout                string
-	ForwardLocalhost       bool
-	DisableCustomTimestamp bool
-	DataID                 *bkv1beta1.DataID
-	Relabels               []*relabel.Config
-	BasicAuth              *promv1.BasicAuth
-	TLSConfig              *promv1.TLSConfig
-	BearerTokenFile        string
-	BearerTokenSecret      *corev1.SecretKeySelector
-	ExtraLabels            map[string]string
-	System                 bool
-	UrlValues              url.Values
-	MetricRelabelConfigs   []yaml.MapSlice
-	AnnotationSelector     map[string]string
+	Client                  kubernetes.Interface
+	RelabelRule             string
+	RelabelIndex            string
+	Name                    string
+	KubeConfig              string
+	Namespaces              []string
+	Path                    string
+	Scheme                  string
+	ProxyURL                string
+	Period                  string
+	Timeout                 string
+	ForwardLocalhost        bool
+	DisableCustomTimestamp  bool
+	DataID                  *bkv1beta1.DataID
+	Relabels                []*relabel.Config
+	BasicAuth               *promv1.BasicAuth
+	TLSConfig               *promv1.TLSConfig
+	BearerTokenFile         string
+	BearerTokenSecret       *corev1.SecretKeySelector
+	ExtraLabels             map[string]string
+	System                  bool
+	UrlValues               url.Values
+	MetricRelabelConfigs    []yaml.MapSlice
+	AnnotationMatchSelector map[string]string
+	AnnotationDropSelector  map[string]string
 }
 
 type BaseDiscover struct {
@@ -568,9 +569,17 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 		}
 
 		// annotation selector 过滤
-		if !matchSelector(lbls, d.AnnotationSelector) {
-			logger.Debugf("annotation selector not match: %v", d.AnnotationSelector)
+		if !matchSelector(lbls, d.AnnotationMatchSelector) {
+			logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
 			continue
+		}
+
+		// 需要保证有 drop selector 才执行匹配
+		if len(d.AnnotationDropSelector) > 0 {
+			if matchSelector(lbls, d.AnnotationDropSelector) {
+				logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)
+				continue
+			}
 		}
 
 		sort.Sort(lbls)

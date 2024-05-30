@@ -521,12 +521,12 @@ func metaFromSource(s string) (string, string, error) {
 	return parts[1], parts[2], nil
 }
 
-func matchSelector(labels model.LabelSet, selector map[string]string) bool {
+func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	count := 0
 	for k, v := range selector {
-		for name, value := range labels {
-			if string(name) == k {
-				if string(value) != v {
+		for _, lbs := range labels {
+			if lbs.Name == k {
+				if lbs.Value != v {
 					return false
 				}
 				count++
@@ -568,7 +568,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 		}
 
 		// annotation selector 过滤
-		if !matchSelector(tlset, d.AnnotationSelector) {
+		if !matchSelector(lbls, d.AnnotationSelector) {
 			logger.Debugf("annotation selector not match: %v", d.AnnotationSelector)
 			continue
 		}

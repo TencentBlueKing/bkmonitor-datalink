@@ -143,6 +143,7 @@ type BaseParams struct {
 	System                 bool
 	UrlValues              url.Values
 	MetricRelabelConfigs   []yaml.MapSlice
+	AnnotationSelector     map[string]string
 }
 
 type BaseDiscover struct {
@@ -520,6 +521,22 @@ func metaFromSource(s string) (string, string, error) {
 	return parts[1], parts[2], nil
 }
 
+func matchSelector(labels model.LabelSet, selector map[string]string) bool {
+	count := 0
+	for k, v := range selector {
+		for name, value := range labels {
+			if string(name) == k {
+				if string(value) != v {
+					return false
+				}
+				count++
+				break
+			}
+		}
+	}
+	return count == len(selector)
+}
+
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
 func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	d.mm.IncHandledTgCounter()
@@ -548,6 +565,12 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 					Value: string(lv),
 				})
 			}
+		}
+
+		// annotation selector 过滤
+		if !matchSelector(tlset, d.AnnotationSelector) {
+			logger.Debugf("annotation selector not match: %v", d.AnnotationSelector)
+			continue
 		}
 
 		sort.Sort(lbls)

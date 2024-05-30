@@ -44,8 +44,11 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 
-	relabelRuleKey  = "bkm_relabel_rule"
-	relabelIndexKey = "bkm_relabel_index"
+	annotationRelabelRule     = "relabelRule"
+	annotationRelabelIndex    = "relabelIndex"
+	annotationMonitorSelector = "monitorSelector"
+
+	prefixAnnotation = "__meta_kubernetes_pod_annotation_"
 )
 
 // Operator 负责部署和调度任务
@@ -548,8 +551,9 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
 				Client:                 c.client,
-				RelabelRule:            serviceMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           serviceMonitor.Annotations[relabelIndexKey],
+				RelabelRule:            serviceMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:           serviceMonitor.Annotations[annotationRelabelIndex],
+				AnnotationSelector:     parseAnnotationSelector(serviceMonitor.Annotations[annotationMonitorSelector]),
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,
@@ -750,8 +754,9 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
 				Client:                 c.client,
-				RelabelRule:            podMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           podMonitor.Annotations[relabelIndexKey],
+				RelabelRule:            podMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:           podMonitor.Annotations[annotationRelabelIndex],
+				AnnotationSelector:     parseAnnotationSelector(podMonitor.Annotations[annotationMonitorSelector]),
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,

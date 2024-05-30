@@ -201,45 +201,73 @@ stdvar_over_time(range-vector) : 区间向量内每个度量指标的总体标�
 ### 使用即时查询 API
 构建一个查询 Prometheus 的即时查询请求：
 ```
-curl -G --data-urlencode "query=up{job='prometheus'}" http://localhost:9090/api/v1/query 
+curl --location 'http://127.0.0.1:10205/query/ts/promql' \
+--header 'Content-Type: application/json' \
+--data '{
+    "promql":"{"promql":"bkmonitor:etcd_server_slow_apply_total{bk_biz_id=\"2\"}",
+    "start":"1629810830",
+    "end":"1629811070",
+    "step":"30s",
+    "instant":true
+}'
 ```
 
-这里：使用 -G 方法告诉 curl 用 GET 请求。--data-urlencode 是为了确保查询字符串被正确编码。"query=up{job='prometheus'}" 是查询表达式，示例中查询的是 up 指标，过滤出 job 标签为 prometheus 的数据。http://localhost:9090/api/v1/query 是请求的 URL，假设 Prometheus 服务运行在本地机器的 9090 端口。
+字段instant来判定该查询是即时查询还是范围查询，instant为true时是即时查询，为false时是范围查询
 ### 使用范围查询 API
 对于范围查询，需要制定开始时间、结束时间及步长：
 ```
-curl -G --data-urlencode "query=rate(http_requests_total[5m])" \
---data-urlencode "start=1599776675" \
---data-urlencode "end=1599777275" \
---data-urlencode "step=300" \
-http://localhost:9090/api/v1/query_range
+curl --location 'http://127.0.0.1:10205/query/ts/promql' \
+--header 'Content-Type: application/json' \
+--data '{
+    "promql":"rate(bkmonitor:system:cpu_detail:nice{bk_target_ip=\"127.0.0.1\",device_name=\"cpu0\"}[2m]) - bkmonitor:system:cpu_detail:idle{bk_target_ip=\"127.0.0.1\",device_name=\"cpu0\"}",
+    "start":"1629806531",
+    "end":"1629810131",
+    "step":"600s",
+    "instant":false
+}'
 ```
 
-这里："query=rate(http_requests_total[5m])" 查询过去 5 分钟的 http_requests_total 的速率。start 和 end 表示查询时间范围的 UNIX 时间戳，step 表示希望每个数据点的时间间隔（单位是秒）。
+这里："device_name=\"cpu0\"}[2m]" 查询过去2分钟的device_name=\"cpu0\"的数据。start 和 end 表示查询时间范围的开始和结束时间，step 表示希望每个数据点的时间间隔。
 ### 处理返回数据
 Prometheus 会返回 JSON 格式的响应，其中包含了查询结果。你需要在你的应用程序或脚本中对这些数据进行解析和处理。例如，一个返回结果可能看起来像这样：
-
 ```
 {
-  "status": "success",
-  "data": {
-    "resultType": "vector",
-    "result": [
-      {
-        "metric": {
-          "__name__": "up",
-          "job": "prometheus",
-          "instance": "localhost:9090"
-        },
-        "value": [1599777275, "1"]
-      }
-    ]
-  }
+  "series": [
+    {
+      "name": "_result0",
+      "metric_name": "",
+      "columns": [
+        "_time",
+        "_value"
+      ],
+      "types": [
+        "float",
+        "float"
+      ],
+      "group_keys": [
+        "__tmp_prometheus_job_name",
+        "bcs_cluster",
+        "endpoint",
+      ],
+      "group_values": [
+        "",
+        "BCS-K8S-40000",
+        "http-metrics",
+      ],
+      "values": [
+        [
+          1629810810000,
+          537
+        ],
+        [
+          1629810840000,
+          537
+        ]
+      ]
+    }
+  ]
 }
 ```
-
-从这个结果中，你可以提取出实例的状态、时间和值等信息
-
 响应数据格式：区间向量返回的数据类型 resultType 为 matrix，即时向量返回的数据类型 resultType 为 vector，标量返回的数据类型 resultType 为 scalar，字符串返回的数据类型 resultType 为 string，
 
 

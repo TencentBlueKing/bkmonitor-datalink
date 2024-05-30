@@ -12,6 +12,7 @@ package discover
 import (
 	"testing"
 
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -62,6 +63,79 @@ func TestForwardAddressIncorrectly(t *testing.T) {
 			s, err := forwardAddress(c)
 			assert.Error(t, err)
 			assert.Empty(t, s)
+		})
+	}
+}
+
+func TestMatchSelector(t *testing.T) {
+	cases := []struct {
+		labels   model.LabelSet
+		selector map[string]string
+		matched  bool
+	}{
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+				model.LabelName("label2"): model.LabelValue("value2"),
+			},
+			selector: map[string]string{
+				"label1": "value1",
+			},
+			matched: true,
+		},
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+				model.LabelName("label2"): model.LabelValue("value2"),
+			},
+			selector: map[string]string{
+				"label1": "value1",
+				"label2": "value2",
+			},
+			matched: true,
+		},
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+				model.LabelName("label2"): model.LabelValue("value2"),
+			},
+			selector: map[string]string{
+				"label1": "value1",
+				"label2": "value3",
+			},
+			matched: false,
+		},
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+			},
+			selector: map[string]string{
+				"label1": "value1",
+				"label2": "value2",
+			},
+			matched: false,
+		},
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+			},
+			selector: map[string]string{
+				"label1": "value2",
+			},
+			matched: false,
+		},
+		{
+			labels: map[model.LabelName]model.LabelValue{
+				model.LabelName("label1"): model.LabelValue("value1"),
+			},
+			selector: nil,
+			matched:  true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run("", func(t *testing.T) {
+			assert.Equal(t, c.matched, matchSelector(c.labels, c.selector))
 		})
 	}
 }

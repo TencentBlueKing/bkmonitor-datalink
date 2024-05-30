@@ -12,8 +12,6 @@ package procsnapshot
 import (
 	"context"
 
-	"github.com/elastic/beats/libbeat/common"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
@@ -46,22 +44,16 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
-	var pdata []common.MapStr
 	pids := make([]int32, 0, len(procs))
 	for i := 0; i < len(procs); i++ {
-		pdata = append(pdata, newProcessEvent(procs[i]).AsMap())
 		pids = append(pids, procs[i].Pid)
 	}
-	e <- &Event{dataid: g.config.DataID, data: pdata}
+	e <- &Event{dataid: g.config.DataID, data: procs}
 
 	conns, err := allProcsConn(pids)
 	if err != nil {
 		logger.Errorf("faile to get filesockets: %v", err)
 		return
 	}
-	var sdata []common.MapStr
-	for _, conn := range conns {
-		sdata = append(sdata, newSocketEvent(conn).AsMap())
-	}
-	e <- &Event{dataid: g.config.DataID, data: sdata}
+	e <- &Event{dataid: g.config.DataID, data: conns}
 }

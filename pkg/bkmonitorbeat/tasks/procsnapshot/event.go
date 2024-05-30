@@ -15,44 +15,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-const (
-	eventTypeProcess = "process"
-	eventTypeSocket  = "socket"
-)
-
-type pEvent struct {
-	Type  string
-	Event common.MapStr
-}
-
-func (e pEvent) AsMap() common.MapStr {
-	return common.MapStr{
-		"type":  e.Type,
-		"event": e.Event,
-	}
-}
-
-func newProcessEvent(process ProcMeta) pEvent {
-	return pEvent{
-		Type: eventTypeProcess,
-		Event: common.MapStr{
-			"process": process,
-		},
-	}
-}
-
-func newSocketEvent(socket ProcConn) pEvent {
-	return pEvent{
-		Type: eventTypeSocket,
-		Event: common.MapStr{
-			"socket": socket,
-		},
-	}
-}
-
 type Event struct {
 	dataid int32
-	data   []common.MapStr
+	data   interface{}
 }
 
 func (e *Event) AsMapStr() common.MapStr {

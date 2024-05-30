@@ -271,7 +271,6 @@ func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 	if err != nil {
 		logger.Errorf("get client error, %v", err)
 	}
-	defer client.Close()
 
 	for _, clusterInfo := range esClusterInfoList {
 		ch <- struct{}{}
@@ -285,8 +284,7 @@ func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 			if _, err = client.Enqueue(&t.Task{
 				Kind:    "async:collect_es_task",
 				Payload: payload,
-				//Options: []t.Option{t.Queue("log-search")},
-				Options: []t.Option{},
+				Options: []t.Option{t.Queue("log-search")},
 			}); err != nil {
 				logger.Errorf("es_cluster_info: [%v] name [%s] try to enqueue collect task failed, %v", c.ClusterID, c.ClusterName, err)
 			}

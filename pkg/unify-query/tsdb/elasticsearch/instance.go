@@ -231,15 +231,6 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 	return nil, nil
 }
 
-func (i *Instance) getAlias(opt *indexOpt) (indexes []string) {
-	for ti := opt.start; ti <= opt.end; ti += int64((time.Hour * 24).Seconds()) {
-		index := fmt.Sprintf("%s_%s_read", opt.tableID, time.Unix(ti, 0).Format("20060102"))
-		indexes = append(indexes, index)
-	}
-
-	return
-}
-
 func (i *Instance) query(
 	ctx context.Context,
 	query *metadata.Query,
@@ -267,7 +258,7 @@ func (i *Instance) query(
 	//indexOptions, err := i.makeQueryOption(ctx, query, start, end)
 	queryOptions := []*queryOption{
 		{
-			index: fmt.Sprintf("%s_%s_*_read", query.DB, query.Measurement),
+			index: query.DB,
 			start: start,
 			end:   end,
 			query: query,

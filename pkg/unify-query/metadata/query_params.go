@@ -20,12 +20,12 @@ type QueryParams struct {
 	Start int64
 	End   int64
 
-	DataSource map[string]struct{}
-	IsInstant  bool
+	DataSource  map[string]struct{}
+	IsReference bool
 }
 
-func (q *QueryParams) SetIsInstant(isInstant bool) *QueryParams {
-	q.IsInstant = isInstant
+func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
+	q.IsReference = isReference
 	q.set()
 	return q
 }

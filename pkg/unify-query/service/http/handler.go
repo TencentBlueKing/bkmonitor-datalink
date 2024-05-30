@@ -166,7 +166,7 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	}
 
 	// es 需要使用自己的查询时间范围
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsInstant(true)
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
 	err = metadata.SetQueryReference(ctx, queryRef)
 	if err != nil {
 		return nil, err

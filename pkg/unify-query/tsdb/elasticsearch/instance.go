@@ -675,8 +675,8 @@ func (i *Instance) QueryRaw(
 	)
 
 	qp := metadata.GetQueryParams(ctx)
-	// instant 需要替换使用查询时间，其他的则使用 prom 回传时间
-	if qp.IsInstant {
+	// 非时间聚合查询，需要替换使用查询时间，其他的则使用 prom 回传时间
+	if qp.IsReference {
 		start = qp.Start * 1e3
 		end = qp.End * 1e3
 	} else {

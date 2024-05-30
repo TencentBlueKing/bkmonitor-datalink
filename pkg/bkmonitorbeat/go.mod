@@ -16,7 +16,6 @@ require (
 	github.com/fsnotify/fsnotify v1.5.4
 	github.com/golang/mock v1.6.0
 	github.com/gosnmp/gosnmp v1.32.0
-	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/hpcloud/tail v1.0.0
 	github.com/influxdata/telegraf v0.10.2-0.20190611181903-c9d8f7b008f6
 	github.com/magiconair/properties v1.8.1

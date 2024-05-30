@@ -21,7 +21,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 
@@ -50,9 +49,11 @@ const (
 	udpConn uint8 = iota + 7
 )
 
+type StateType uint8
+
 const (
-	StateEstab  = "ESTABLISHED"
-	StateListen = "LISTEN"
+	StateListen      StateType = 0
+	StateListenEstab StateType = 1
 )
 
 // tcpStatesMap tcp state map
@@ -424,8 +425,6 @@ func getProcInodes(root string, pid int32) ([]uint64, error) {
 	return inodefds, nil
 }
 
-var inodesCache = expirable.NewLRU[int32, []uint64](65535, nil, 30*time.Second)
-
 // getConcernPidInodes pid -> inodes
 func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 	ret := make(map[int32][]uint64)
@@ -435,31 +434,33 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 			time.Sleep(time.Millisecond * socketPerformanceSleep)
 		}
 
-		inodes, ok := inodesCache.Get(pid)
-		if ok {
-			ret[pid] = inodes
-			continue
-		}
-
 		inodes, err := getProcInodes("/proc", pid)
 		if err != nil {
 			logger.Errorf("failed to get /proc info: %v", err)
 			continue
 		}
 		ret[pid] = inodes
-		inodesCache.Add(pid, inodes)
 	}
 
 	return ret
 }
 
 // getIntersection inode -> sockets
-func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp bool, state string) map[uint32]map[FileSocket]struct{} {
+func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp bool, status []string) map[uint32]map[FileSocket]struct{} {
+	matchStatus := func(s string, status []string) bool {
+		for i := 0; i < len(status); i++ {
+			if status[i] == s {
+				return true
+			}
+		}
+		return false
+	}
+
 	ret := make(map[uint32]map[FileSocket]struct{})
 	for pid, items := range inodes {
 		for _, inode := range items {
 			if v, ok := conn[uint32(inode)]; ok {
-				if tcp && v.Status != state {
+				if tcp && !matchStatus(v.Status, status) {
 					continue
 				}
 				v.Pid = pid
@@ -476,13 +477,13 @@ func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp 
 }
 
 // getPidSockets fills pid field with socket
-func getPidSockets(sni socketNetInfo, pids []int32, state string) PidSockets {
+func getPidSockets(sni socketNetInfo, pids []int32, status []string) PidSockets {
 	inodes := getConcernPidInodes(pids) // pid -> inodes
 
-	netTcp := getIntersection(sni.TCP, inodes, true, state)
-	netUdp := getIntersection(sni.UDP, inodes, false, state)
-	netTcp6 := getIntersection(sni.TCP6, inodes, true, state)
-	netUdp6 := getIntersection(sni.UDP6, inodes, false, state)
+	netTcp := getIntersection(sni.TCP, inodes, true, status)
+	netUdp := getIntersection(sni.UDP, inodes, false, status)
+	netTcp6 := getIntersection(sni.TCP6, inodes, true, status)
+	netUdp6 := getIntersection(sni.UDP6, inodes, false, status)
 
 	ret := PidSockets{
 		TCP:  map[int32][]FileSocket{},
@@ -545,7 +546,7 @@ func (d NetlinkDetector) Get(pids []int32) (PidSockets, error) {
 	return d.GetState(pids, StateListen)
 }
 
-func (d NetlinkDetector) GetState(pids []int32, state string) (PidSockets, error) {
+func (d NetlinkDetector) GetState(pids []int32, state StateType) (PidSockets, error) {
 	type Task struct {
 		proto      uint8
 		family     uint8
@@ -560,12 +561,15 @@ func (d NetlinkDetector) GetState(pids []int32, state string) (PidSockets, error
 		IPv6UDPIndex
 	)
 
+	var status []string
 	var tcpState uint32
 	switch state {
-	case StateEstab:
-		tcpState = 1<<tcpInit | 1<<tcpEstablished
+	case StateListenEstab:
+		tcpState = 1<<tcpInit | 1<<tcpListen | 1<<tcpEstablished
+		status = []string{"LISTEN", "ESTABLISHED"}
 	default:
 		tcpState = 1<<tcpInit | 1<<tcpListen // 默认为 listen
+		status = []string{"LISTEN"}
 	}
 
 	tasks := []*Task{
@@ -624,5 +628,5 @@ func (d NetlinkDetector) GetState(pids []int32, state string) (PidSockets, error
 	cni.UDP6 = tasks[IPv6UDPIndex].fileSocket
 
 	logger.Debugf("netlink get sockets: %+v, pids=%+v", cni, pids)
-	return getPidSockets(cni, pids, state), nil
+	return getPidSockets(cni, pids, status), nil
 }

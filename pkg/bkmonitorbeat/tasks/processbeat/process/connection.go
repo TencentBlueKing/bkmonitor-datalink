@@ -94,7 +94,7 @@ func (s *PortStat) sortPorts() {
 type ConnDetector interface {
 	Type() string
 	Get(pids []int32) (PidSockets, error)
-	GetState(pids []int32, state string) (PidSockets, error)
+	GetState(pids []int32, state StateType) (PidSockets, error)
 }
 
 type StdDetector struct{}
@@ -113,17 +113,27 @@ func (d StdDetector) Type() string {
 	return DetectorStd
 }
 
-func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, state string) (PidSockets, error) {
+func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, status []string) (PidSockets, error) {
 	pidSockets := NewPidSockets()
 	tcp, err := net.Connections("tcp")
 	if err != nil {
 		return pidSockets, err
 	}
 
+	matchStatus := func(s string, status []string) bool {
+		for i := 0; i < len(status); i++ {
+			if status[i] == s {
+				return true
+			}
+		}
+		return false
+	}
+
 	for _, conn := range tcp {
-		if conn.Status != state {
+		if !matchStatus(conn.Status, status) {
 			continue
 		}
+
 		if _, ok := pidSet[conn.Pid]; !ok {
 			logger.Debugf("pid %d listening tcp %+v, but skip", conn.Pid, conn.Laddr)
 			continue
@@ -239,15 +249,23 @@ func (d StdDetector) Get(pids []int32) (PidSockets, error) {
 	return d.GetState(pids, StateListen)
 }
 
-func (d StdDetector) GetState(pids []int32, state string) (PidSockets, error) {
+func (d StdDetector) GetState(pids []int32, state StateType) (PidSockets, error) {
 	dst := NewPidSockets()
 	set := make(map[int32]struct{})
 	for _, pid := range pids {
 		set[pid] = struct{}{}
 	}
 
+	var status []string
+	switch state {
+	case StateListenEstab:
+		status = []string{"LISTEN", "ESTABLISHED"}
+	default:
+		status = []string{"LISTEN"} // 默认为 listen
+	}
+
 	logger.Debug("std detector round1")
-	tcp1, err := d.getTcpConnections(set, state)
+	tcp1, err := d.getTcpConnections(set, status)
 	if err != nil {
 		return dst, err
 	}
@@ -259,7 +277,7 @@ func (d StdDetector) GetState(pids []int32, state string) (PidSockets, error) {
 	time.Sleep(time.Second * 5) // TODO(mando): 考虑改成可配置
 
 	logger.Debug("std detector round2")
-	tcp2, err := d.getTcpConnections(set, state)
+	tcp2, err := d.getTcpConnections(set, status)
 	if err != nil {
 		return dst, err
 	}

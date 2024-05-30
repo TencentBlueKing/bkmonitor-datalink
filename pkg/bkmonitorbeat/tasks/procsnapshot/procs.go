@@ -126,11 +126,7 @@ func allProcsMeta() ([]ProcMeta, error) {
 func allProcsConn(pids []int32) ([]ProcConn, error) {
 	var ret []ProcConn
 	d := getConnDetector()
-	listenPs, err := d.GetState(pids, process.StateListen)
-	if err != nil {
-		return nil, err
-	}
-	estabPs, err := d.GetState(pids, process.StateEstab)
+	ps, err := d.GetState(pids, process.StateListenEstab)
 	if err != nil {
 		return nil, err
 	}
@@ -158,15 +154,10 @@ func allProcsConn(pids []int32) ([]ProcConn, error) {
 		}
 	}
 
-	handleFs := func(ps process.PidSockets) {
-		appendConn(ps.TCP)
-		appendConn(ps.TCP6)
-		appendConn(ps.UDP)
-		appendConn(ps.UDP6)
-	}
-
-	handleFs(listenPs)
-	handleFs(estabPs)
+	appendConn(ps.TCP)
+	appendConn(ps.TCP6)
+	appendConn(ps.UDP)
+	appendConn(ps.UDP6)
 
 	return ret, nil
 }

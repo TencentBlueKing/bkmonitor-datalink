@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,8 +50,6 @@ const (
 
 	annotationMonitorMatchSelector = "monitorMatchSelector"
 	annotationMonitorDropSelector  = "monitorDropSelector"
-
-	prefixAnnotation = "__meta_kubernetes_pod_annotation_"
 )
 
 // Operator 负责部署和调度任务
@@ -490,6 +489,19 @@ func ifHonorTimestamps(b *bool) bool {
 	return *b
 }
 
+func parseSelector(s string) map[string]string {
+	selector := make(map[string]string)
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		kv := strings.Split(strings.TrimSpace(part), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		selector[kv[0]] = kv[1]
+	}
+	return selector
+}
+
 func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceMonitor) []discover.Discover {
 	var (
 		namespaces []string
@@ -555,8 +567,8 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				Client:                  c.client,
 				RelabelRule:             serviceMonitor.Annotations[annotationRelabelRule],
 				RelabelIndex:            serviceMonitor.Annotations[annotationRelabelIndex],
-				AnnotationMatchSelector: parseAnnotationSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
-				AnnotationDropSelector:  parseAnnotationSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
+				AnnotationMatchSelector: parseSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
 				Name:                    monitorMeta.ID(),
 				DataID:                  dataID,
 				KubeConfig:              ConfKubeConfig,
@@ -759,8 +771,8 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				Client:                  c.client,
 				RelabelRule:             podMonitor.Annotations[annotationRelabelRule],
 				RelabelIndex:            podMonitor.Annotations[annotationRelabelIndex],
-				AnnotationMatchSelector: parseAnnotationSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
-				AnnotationDropSelector:  parseAnnotationSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
+				AnnotationMatchSelector: parseSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
 				Name:                    monitorMeta.ID(),
 				DataID:                  dataID,
 				KubeConfig:              ConfKubeConfig,

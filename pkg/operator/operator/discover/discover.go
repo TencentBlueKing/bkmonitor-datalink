@@ -16,6 +16,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -523,11 +524,16 @@ func metaFromSource(s string) (string, string, error) {
 }
 
 func matchSelector(labels []labels.Label, selector map[string]string) bool {
-	count := 0
+	var count int
 	for k, v := range selector {
+		re, err := regexp.Compile(v)
+		if err != nil {
+			logger.Errorf("failed to compile expr '%s', err: %v", v, err)
+			continue
+		}
 		for _, lbs := range labels {
 			if lbs.Name == k {
-				if lbs.Value != v {
+				if !re.MatchString(lbs.Value) {
 					return false
 				}
 				count++
@@ -568,13 +574,15 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 			}
 		}
 
-		// annotation selector 过滤
-		if !matchSelector(lbls, d.AnnotationMatchSelector) {
-			logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
-			continue
+		// annotations 白名单过滤
+		if len(d.AnnotationMatchSelector) > 0 {
+			if !matchSelector(lbls, d.AnnotationMatchSelector) {
+				logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
+				continue
+			}
 		}
 
-		// 需要保证有 drop selector 才执行匹配
+		// annotations 黑名单过滤
 		if len(d.AnnotationDropSelector) > 0 {
 			if matchSelector(lbls, d.AnnotationDropSelector) {
 				logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)

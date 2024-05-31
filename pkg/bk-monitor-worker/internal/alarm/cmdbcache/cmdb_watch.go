@@ -48,6 +48,7 @@ const (
 	CmdbResourceTypeSet              CmdbResourceType = "set"
 	CmdbResourceTypeModule           CmdbResourceType = "module"
 	CmdbResourceTypeMainlineInstance CmdbResourceType = "mainline_instance"
+	CmdbResourceTypeProcess          CmdbResourceType = "process"
 )
 
 // CmdbResourceTypeFields cmdb资源类型对应的监听字段
@@ -58,6 +59,7 @@ var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "set_template_id"},
 	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id", "service_template_id"},
 	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
+	CmdbResourceTypeProcess:          {"bk_biz_id"},
 }
 
 // CmdbResourceWatcher cmdb资源监听器
@@ -374,7 +376,7 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 				logger.Errorf("refresh all cache failed: %v", err)
 			}
 
-			logger.Infof("refresh all cmdb resource(%s) cache", resourceType)
+			logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
 
 			// 记录全量刷新时间
 			lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
@@ -425,10 +427,11 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 
 // cmdbEventHandlerResourceTypeMap cmdb资源事件执行器与资源类型映射
 var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
-	"host_topo": {CmdbResourceTypeHost, CmdbResourceTypeHostRelation, CmdbResourceTypeMainlineInstance},
-	"business":  {CmdbResourceTypeBiz},
-	"module":    {CmdbResourceTypeModule},
-	"set":       {CmdbResourceTypeSet},
+	"host_topo":        {CmdbResourceTypeHost, CmdbResourceTypeHostRelation, CmdbResourceTypeMainlineInstance},
+	"business":         {CmdbResourceTypeBiz},
+	"module":           {CmdbResourceTypeModule},
+	"set":              {CmdbResourceTypeSet},
+	"service_instance": {CmdbResourceTypeProcess},
 }
 
 // RefreshTaskParams cmdb缓存刷新任务参数
@@ -473,9 +476,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 全量刷新间隔时间，最低10分钟
 	fullRefreshIntervals := make(map[string]time.Duration, len(params.FullRefreshIntervals))
 	for cacheType, interval := range params.FullRefreshIntervals {
-		if interval <= 600 {
-			interval = 600
-		}
 		fullRefreshIntervals[cacheType] = time.Second * time.Duration(interval)
 	}
 
@@ -501,8 +501,9 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		wg.Add(1)
 		cacheType := cacheType
 		fullRefreshInterval, ok := fullRefreshIntervals[cacheType]
-		if !ok || fullRefreshInterval <= 600 {
-			fullRefreshInterval = 600
+		// 最低600秒的间隔
+		if !ok {
+			fullRefreshInterval = time.Second * 600
 		}
 
 		go func() {

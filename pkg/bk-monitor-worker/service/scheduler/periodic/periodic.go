@@ -14,7 +14,7 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
@@ -32,6 +32,7 @@ type PeriodicTask struct {
 }
 
 // NOTE: 周期任务添加 peyload 的动态支持
+// NOTE: 后续增加针对不同的任务，使用不同的调度器
 func getPeriodicTasks() map[string]PeriodicTask {
 	refreshTsMetric := "periodic:metadata:refresh_ts_metric"
 	refreshEventDimension := "periodic:metadata:refresh_event_dimension"
@@ -160,7 +161,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
-			Option:  []task.Option{task.Queue(config.WorkerQueues[0])},
+			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName)},
 		},
 	}
 }

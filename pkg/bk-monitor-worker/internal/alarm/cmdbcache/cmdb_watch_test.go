@@ -22,6 +22,7 @@
 
 package cmdbcache
 
+//
 //import (
 //	"context"
 //	"encoding/json"
@@ -56,22 +57,22 @@ package cmdbcache
 //	prefix := t.Name()
 //
 //	wg := &sync.WaitGroup{}
-//	wg.Add(2)
+//	wg.Add(1)
 //
-//	go func() {
-//		defer cancel()
-//		defer wg.Done()
-//
-//		params := &WatchCmdbResourceChangeEventTaskParams{
-//			Redis:  redisOptions,
-//			Prefix: prefix,
-//		}
-//		payload, _ := json.Marshal(params)
-//		if err := WatchCmdbResourceChangeEventTask(ctx, payload); err != nil {
-//			t.Errorf("TestWatch failed, err: %v", err)
-//			return
-//		}
-//	}()
+//	//go func() {
+//	//	defer cancel()
+//	//	defer wg.Done()
+//	//
+//	//	params := &WatchCmdbResourceChangeEventTaskParams{
+//	//		Redis:  redisOptions,
+//	//		Prefix: prefix,
+//	//	}
+//	//	payload, _ := json.Marshal(params)
+//	//	if err := WatchCmdbResourceChangeEventTask(ctx, payload); err != nil {
+//	//		t.Errorf("TestWatch failed, err: %v", err)
+//	//		return
+//	//	}
+//	//}()
 //
 //	go func() {
 //		defer cancel()
@@ -81,7 +82,8 @@ package cmdbcache
 //			Redis:                redisOptions,
 //			Prefix:               prefix,
 //			EventHandleInterval:  60,
-//			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800},
+//			CacheTypes:           []string{"service_instance", "host_topo"},
+//			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800, "service_instance": 60},
 //		}
 //		payload, _ := json.Marshal(params)
 //		if err := CacheRefreshTask(ctx, payload); err != nil {

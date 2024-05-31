@@ -165,3 +165,14 @@ func (c *Client) SearchSet(opts ...define.OperationOption) define.Operation {
 		Path:   path,
 	}, opts...)
 }
+
+// ListServiceInstanceDetail for cmdb resource list_service_instance_detail
+// 查询服务实例详情
+func (c *Client) ListServiceInstanceDetail(opts ...define.OperationOption) define.Operation {
+	path := "list_service_instance_detail"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "list_service_instance_detail",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

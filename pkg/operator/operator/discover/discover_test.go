@@ -12,7 +12,7 @@ package discover
 import (
 	"testing"
 
-	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -69,14 +69,14 @@ func TestForwardAddressIncorrectly(t *testing.T) {
 
 func TestMatchSelector(t *testing.T) {
 	cases := []struct {
-		labels   model.LabelSet
+		labels   []labels.Label
 		selector map[string]string
 		matched  bool
 	}{
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
-				model.LabelName("label2"): model.LabelValue("value2"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
 			},
 			selector: map[string]string{
 				"label1": "value1",
@@ -84,9 +84,9 @@ func TestMatchSelector(t *testing.T) {
 			matched: true,
 		},
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
-				model.LabelName("label2"): model.LabelValue("value2"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
 			},
 			selector: map[string]string{
 				"label1": "value1",
@@ -95,9 +95,9 @@ func TestMatchSelector(t *testing.T) {
 			matched: true,
 		},
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
-				model.LabelName("label2"): model.LabelValue("value2"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
+				{Name: "label2", Value: "value2"},
 			},
 			selector: map[string]string{
 				"label1": "value1",
@@ -106,8 +106,8 @@ func TestMatchSelector(t *testing.T) {
 			matched: false,
 		},
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
 			},
 			selector: map[string]string{
 				"label1": "value1",
@@ -116,17 +116,17 @@ func TestMatchSelector(t *testing.T) {
 			matched: false,
 		},
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
 			},
 			selector: map[string]string{
-				"label1": "value2",
+				"label1": "value.*",
 			},
-			matched: false,
+			matched: true,
 		},
 		{
-			labels: map[model.LabelName]model.LabelValue{
-				model.LabelName("label1"): model.LabelValue("value1"),
+			labels: []labels.Label{
+				{Name: "label1", Value: "value1"},
 			},
 			selector: nil,
 			matched:  true,

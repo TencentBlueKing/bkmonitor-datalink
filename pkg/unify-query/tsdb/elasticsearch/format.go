@@ -510,11 +510,12 @@ func (f *FormatFactory) Order() map[string]bool {
 
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(queryString string, allConditions metadata.AllConditions) (elastic.Query, error) {
-	if len(allConditions) == 0 {
-		return nil, nil
+	boolQuery := elastic.NewBoolQuery()
+	if queryString != "" {
+		qs := elastic.NewQueryStringQuery(queryString)
+		boolQuery = boolQuery.Must(qs)
 	}
 
-	boolQuery := elastic.NewBoolQuery()
 	for _, conditions := range allConditions {
 		andQuery := elastic.NewBoolQuery()
 		for _, con := range conditions {
@@ -529,8 +530,10 @@ func (f *FormatFactory) Query(queryString string, allConditions metadata.AllCond
 				} else {
 					// 非空才进行验证
 					switch con.Operator {
-					case structured.ConditionEqual, structured.ConditionNotEqual, structured.ConditionContains, structured.ConditionNotContains:
+					case structured.ConditionEqual, structured.ConditionNotEqual:
 						query = elastic.NewMatchPhraseQuery(key, value)
+					case structured.ConditionContains, structured.ConditionNotContains:
+						query = elastic.NewWildcardQuery(key, value)
 					case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
 						query = elastic.NewRegexpQuery(key, value)
 					case structured.ConditionGt:
@@ -564,11 +567,6 @@ func (f *FormatFactory) Query(queryString string, allConditions metadata.AllCond
 			andQuery.Must(q)
 		}
 		boolQuery.Should(andQuery)
-	}
-	if queryString != "" {
-
-		qs := elastic.NewQueryStringQuery(queryString)
-		boolQuery = boolQuery.Must(qs)
 	}
 
 	return boolQuery, nil

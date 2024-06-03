@@ -145,6 +145,8 @@ type TimeAggregation struct {
 	Function string
 	// Window 聚合周期
 	WindowDuration time.Duration
+
+	Without bool
 }
 
 type QueryClusterMetric struct {

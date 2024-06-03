@@ -10,17 +10,6 @@
 package bksql
 
 const (
-	dtEventTimeStamp = "dtEventTimeStamp"
-	dtEventTime      = "dtEventTime"
-	localTime        = "localTime"
-	startTime        = "_startTime_"
-	endTime          = "_endTime_"
-	theDate          = "thedate"
-
-	timeStamp = "_timestamp_"
-)
-
-const (
 	QueryAsync = "query_async"
 	QuerySync  = "query_sync"
 

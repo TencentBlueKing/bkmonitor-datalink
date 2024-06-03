@@ -42,14 +42,14 @@ type Instance struct {
 	Client *Client
 }
 
-func (i Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
+func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func (i Instance) checkResult(res *Result) error {
+func (i *Instance) checkResult(res *Result) error {
 	if !res.Result {
 		return fmt.Errorf(
 			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
@@ -69,7 +69,7 @@ func (i Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
+func (i *Instance) query(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
@@ -99,7 +99,7 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	return data, nil
 }
 
-func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
+func (i *Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
 	var (
 		data       *QueryAsyncData
 		stateData  *QueryAsyncStateData
@@ -185,7 +185,7 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 	return resultData, nil
 }
 
-func (i Instance) dims(dims []string, field string) []string {
+func (i *Instance) dims(dims []string, field string) []string {
 	dimensions := make([]string, 0)
 	for _, dim := range dims {
 		// 判断是否是内置维度，内置维度不是用户上报的维度
@@ -202,7 +202,7 @@ func (i Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i Instance) formatData(field string, isCount bool, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(field string, isCount bool, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -315,7 +315,7 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 }
 
 // bkSql 构建查询语句
-func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) (string, bool) {
+func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) (string, bool) {
 	var (
 		sql string
 
@@ -325,38 +325,45 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 		groupList []string
 		where     string
 
-		limit int
-
 		isCount bool
 	)
 
 	measurement = query.Measurement
-	limit = i.Limit + i.Tolerance
+	maxLimit := i.Limit + i.Tolerance
+	limit := query.Size
+	if limit == 0 || limit > maxLimit {
+		limit = maxLimit
+	}
 
 	// 判断是否需要提前聚合
-	newFuncName, window, dims := query.GetDownSampleFunc(hints)
-	if newFuncName != "" {
-		isCount = newFuncName == metadata.COUNT
-		// 兼容函数
-		if newFuncName == metadata.MEAN {
-			newFuncName = metadata.AVG
-		}
+	if query.IsNotPromQL {
 
-		// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
-		groupList = make([]string, 0, len(dims)+1)
-		for _, dim := range dims {
-			groupList = append(groupList, dim)
-		}
-
-		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
-		groupList = append(groupList, timeField)
-
-		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
-		if len(dims) > 0 {
-			aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
-		}
 	} else {
-		aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
+		newFuncName, window, dims := query.GetDownSampleFunc(hints)
+		if newFuncName != "" {
+			isCount = newFuncName == metadata.COUNT
+			// 兼容函数
+			if newFuncName == metadata.MEAN {
+				newFuncName = metadata.AVG
+			}
+
+			// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
+			groupList = make([]string, 0, len(dims)+1)
+			for _, dim := range dims {
+				dim = fmt.Sprintf("`%s`", dim)
+				groupList = append(groupList, dim)
+			}
+
+			timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
+			groupList = append(groupList, timeField)
+
+			aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
+			if len(dims) > 0 {
+				aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
+			}
+		} else {
+			aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
+		}
 	}
 
 	where = fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, hints.Start, dtEventTimeStamp, hints.End)
@@ -377,7 +384,7 @@ func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stora
 	return sql, isCount
 }
 
-func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	var (
 		err error
 	)
@@ -418,22 +425,22 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		err error
 	)
@@ -456,7 +463,7 @@ func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, 
 	return lbs, err
 }
 
-func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		err error
 
@@ -500,12 +507,12 @@ func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name s
 	return lbs, err
 }
 
-func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) GetInstanceType() string {
+func (i *Instance) GetInstanceType() string {
 	return consul.BkSqlStorageType
 }
 

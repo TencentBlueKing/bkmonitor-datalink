@@ -297,8 +297,8 @@ type Query struct {
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
 
-	// AlignInfluxdbResult 是否对齐开始时间
-	AlignInfluxdbResult bool `json:"align_result,omitempty"`
+	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
+	AlignInfluxdbResult bool `json:"-"`
 
 	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
 	OrderBy OrderBy `json:"-,omitempty"`

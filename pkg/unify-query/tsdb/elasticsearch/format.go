@@ -521,37 +521,44 @@ func (f *FormatFactory) Query(queryString string, allConditions metadata.AllCond
 			q := elastic.NewBoolQuery()
 			key := f.toEs(con.DimensionName)
 
-			value := strings.Join(con.Value, ",")
-			// 如果为空则，则使用判断是否存在的逻辑
-			if value == "" {
-				switch con.Operator {
-				case structured.ConditionRegEqual, structured.ConditionEqual, structured.Contains:
-					q.MustNot(elastic.NewExistsQuery(key))
-				case structured.ConditionNotRegEqual, structured.ConditionNotEqual, structured.Ncontains:
-					q.Must(elastic.NewExistsQuery(key))
+			queries := make([]elastic.Query, 0)
+			for _, value := range con.Value {
+				var query elastic.Query
+				if value == "" {
+					query = elastic.NewExistsQuery(key)
+				} else {
+					// 非空才进行验证
+					switch con.Operator {
+					case structured.ConditionEqual, structured.ConditionNotEqual, structured.ConditionContains, structured.ConditionNotContains:
+						query = elastic.NewMatchPhraseQuery(key, value)
+					case structured.ConditionRegEqual, structured.ConditionNotRegEqual:
+						query = elastic.NewRegexpQuery(key, value)
+					case structured.ConditionGt:
+						query = elastic.NewRangeQuery(key).Gt(value)
+					case structured.ConditionGte:
+						query = elastic.NewRangeQuery(key).Gte(value)
+					case structured.ConditionLt:
+						query = elastic.NewRangeQuery(key).Lt(value)
+					case structured.ConditionLte:
+						query = elastic.NewRangeQuery(key).Lte(value)
+					default:
+						return nil, fmt.Errorf("operator is not support, %+v", con)
+					}
 				}
-			} else {
-				// 非空才进行验证
-				switch con.Operator {
-				case structured.ConditionEqual, structured.ConditionContains:
-					q.Must(elastic.NewMatchQuery(key, value))
-				case structured.ConditionNotEqual, structured.ConditionNotContains:
-					q.MustNot(elastic.NewMatchQuery(key, value))
-				case structured.ConditionRegEqual:
-					q.Must(elastic.NewRegexpQuery(key, value))
-				case structured.ConditionNotRegEqual:
-					q.MustNot(elastic.NewRegexpQuery(key, value))
-				case structured.ConditionGt:
-					q.Must(elastic.NewRangeQuery(key).Gt(value))
-				case structured.ConditionGte:
-					q.Must(elastic.NewRangeQuery(key).Gte(value))
-				case structured.ConditionLt:
-					q.Must(elastic.NewRangeQuery(key).Lt(value))
-				case structured.ConditionLte:
-					q.Must(elastic.NewRangeQuery(key).Lte(value))
-				default:
-					return nil, fmt.Errorf("operator is not support, %+v", con)
-				}
+
+				queries = append(queries, query)
+			}
+
+			// 非空才进行验证
+			switch con.Operator {
+			case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
+				q.Should(queries...)
+			case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
+				q.MustNot(queries...)
+			case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
+				q.Must(queries...)
+			default:
+				return nil, fmt.Errorf("operator is not support, %+v", con)
 			}
 
 			andQuery.Must(q)

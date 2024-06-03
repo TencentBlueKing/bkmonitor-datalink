@@ -172,6 +172,46 @@ func TestInstance_bkSql(t *testing.T) {
 			},
 			sql: "SELECT COUNT(`value`) AS `value`, MAX(dtEventTimeStamp) AS `time` FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 GROUP BY FROM_UNIXTIME((dtEventTimestamp - (dtEventTimestamp % 15000)) / 1000, \"%Y%m%d%H%i%s\") ORDER BY dtEventTimeStamp ASC LIMIT 200000",
 		},
+		{
+			query: &metadata.Query{
+				Measurement:         "100133_ieod_logsearch4_errorlog_p.doris",
+				Field:               "",
+				AggregateMethodList: []metadata.AggrMethod{},
+				Size:                5,
+			},
+			hints: &storage.SelectHints{
+				Start: 1701092460000,
+				End:   1701096060000,
+				Step:  120000,
+				Func:  "",
+				Range: 0,
+			},
+			sql: "SELECT *, dtEventTimeStamp AS `_timestamp_` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 ORDER BY `_timestamp_` ASC LIMIT 5",
+		},
+		{
+			query: &metadata.Query{
+				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
+				Field:       "gseIndex",
+				AggregateMethodList: []metadata.AggrMethod{
+					{
+						Name: "count",
+						Dimensions: []string{
+							"ip",
+						},
+					},
+				},
+				IsNotPromQL: true,
+				Size:        5,
+			},
+			hints: &storage.SelectHints{
+				Start: 1701092460000,
+				End:   1701096060000,
+				Step:  120000,
+				Func:  "",
+				Range: 0,
+			},
+			sql: "SELECT count(`gseIndex`), dtEventTimeStamp AS `_timestamp_` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE `dtEventTimeStamp` >= 1701092460000 AND `dtEventTimeStamp` < 1701096060000 GROUP BY `ip` ORDER BY `_timestamp_` ASC LIMIT 5",
+		},
 	}
 
 	ins := Instance{

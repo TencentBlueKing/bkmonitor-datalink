@@ -46,10 +46,15 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	var items []UserHistory
 	for _, entity := range entities {
-		p := fmt.Sprintf("/home/%s/.bash_history", entity.User)
+		var p string
+		if entity.User == "root" {
+			p = "/root/.bash_history"
+		} else {
+			p = fmt.Sprintf("/home/%s/.bash_history", entity.User)
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
-			logger.Errorf("failed to read file '%s', err: %v", p, err)
+			logger.Warnf("failed to read file '%s', err: %v", p, err)
 			continue
 		}
 

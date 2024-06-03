@@ -37,6 +37,7 @@ const (
 	ModuleProcStatus      = "procstatus"
 	ModuleLoginLog        = "loginlog"
 	ModuleProcSnapshot    = "procsnapshot"
+	ModuleShellHistory    = "shellhistory"
 )
 
 // Status :

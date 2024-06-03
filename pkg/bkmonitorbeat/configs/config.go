@@ -114,6 +114,7 @@ type Config struct {
 	ProcStatusTask    *ProcStatusConfig      `config:"procstatus_task"`
 	LoginLogTask      *LoginLogConfig        `config:"loginlog_task"`
 	ProcSnapshotTask  *ProcSnapshotConfig    `config:"procsnapshot_task"`
+	ShellHistoryTask  *ShellHistoryConfig    `config:"shellhistory_task"`
 }
 
 // NewConfig : new config struct
@@ -147,6 +148,7 @@ func NewConfig() *Config {
 	config.ProcStatusTask = NewProcStatusConfig(config)
 	config.LoginLogTask = NewLoginLogConfig(config)
 	config.ProcSnapshotTask = NewProcSnapshotConfig(config)
+	config.ShellHistoryTask = NewShellHistoryConfig(config)
 
 	return config
 }

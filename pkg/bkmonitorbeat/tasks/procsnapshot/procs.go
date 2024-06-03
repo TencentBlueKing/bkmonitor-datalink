@@ -100,7 +100,7 @@ func getProcMeta(pid int32) (ProcMeta, error) {
 	return meta, nil
 }
 
-func allProcsMeta() ([]ProcMeta, error) {
+func AllProcsMeta() ([]ProcMeta, error) {
 	var ret []ProcMeta
 	pids, err := shiroups.Pids()
 	if err != nil {
@@ -123,7 +123,7 @@ func allProcsMeta() ([]ProcMeta, error) {
 	return ret, nil
 }
 
-func allProcsConn(pids []int32) ([]ProcConn, error) {
+func AllProcsConn(pids []int32) ([]ProcConn, error) {
 	var ret []ProcConn
 	d := getConnDetector()
 	ps, err := d.GetState(pids, process.StateListenEstab)

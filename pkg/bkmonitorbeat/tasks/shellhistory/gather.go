@@ -7,10 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package procsnapshot
+package shellhistory
 
 import (
 	"context"
+	"fmt"
+	"os"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -19,7 +21,7 @@ import (
 )
 
 type Gather struct {
-	config *configs.ProcSnapshotConfig
+	config *configs.ShellHistoryConfig
 	tasks.BaseTask
 }
 
@@ -27,33 +29,36 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
-	gather.config = taskConfig.(*configs.ProcSnapshotConfig)
+	gather.config = taskConfig.(*configs.ShellHistoryConfig)
 
 	gather.Init()
 
-	logger.Info("New a ProcSnapshot Task Instance")
+	logger.Info("New a ShellHistory Task Instance")
 	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	logger.Info("ProcSnapshot is running....")
-
-	procs, err := AllProcsMeta()
+	entities, err := parse()
 	if err != nil {
-		logger.Errorf("faile to get all procs meta: %v", err)
+		logger.Errorf("failed to parse paaswd details, err: %v", err)
 		return
 	}
 
-	pids := make([]int32, 0, len(procs))
-	for i := 0; i < len(procs); i++ {
-		pids = append(pids, procs[i].Pid)
-	}
-	e <- &Event{dataid: g.config.DataID, data: procs}
+	var items []UserHistory
+	for _, entity := range entities {
+		p := fmt.Sprintf("/home/%s/.bash_history", entity.User)
+		b, err := os.ReadFile(p)
+		if err != nil {
+			logger.Errorf("failed to read file '%s', err: %v", p, err)
+			continue
+		}
 
-	conns, err := AllProcsConn(pids)
-	if err != nil {
-		logger.Errorf("faile to get filesockets: %v", err)
-		return
+		items = append(items, UserHistory{
+			User:    entity.User,
+			Path:    p,
+			History: string(b),
+		})
 	}
-	e <- &Event{dataid: g.config.DataID, data: conns}
+
+	e <- &Event{dataid: g.config.DataID, data: items}
 }

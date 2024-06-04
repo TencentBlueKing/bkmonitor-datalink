@@ -111,24 +111,6 @@ func ParseTime(v interface{}) (time.Time, error) {
 
 // ParseFixedTimeZone
 func ParseFixedTimeZone(zone int) *time.Location {
-	v, ok := timeZoneMap[zone]
-	if !ok {
-		return time.FixedZone("UTC"+strconv.Itoa(zone), zone*60*60)
-	}
-	return v
-}
-
-var timeZoneMap = makeTimeZoneMap()
-
-func makeTimeZoneMap() map[int]*time.Location {
-	zone := make(map[int]*time.Location)
-	for i := 0; i <= 12; i++ {
-		n := i
-		zone[n] = time.FixedZone("UTC"+strconv.Itoa(n), n*60*60)
-	}
-	for i := 1; i <= 12; i++ {
-		n := -i
-		zone[n] = time.FixedZone("UTC"+strconv.Itoa(n), n*60*60)
-	}
-	return zone
+	loc := time.FixedZone("UTC"+strconv.Itoa(zone), zone*60*60)
+	return loc
 }

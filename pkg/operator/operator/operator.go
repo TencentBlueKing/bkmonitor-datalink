@@ -608,6 +608,8 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	if ConfEnablePromRule {
 		c.promsliController.UpdateServiceMonitor(serviceMonitor)
 	}
+
+	// 新增的 servicemonitor 命中黑名单则流程终止
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
@@ -638,17 +640,18 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	if ConfEnablePromRule {
 		c.promsliController.UpdateServiceMonitor(cur)
 	}
-	if IfRejectServiceMonitor(old) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
-		return
-	}
-	if IfRejectServiceMonitor(cur) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", cur)
-		return
-	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
 		logger.Debugf("serviceMonitor %+v does not change", old)
+		return
+	}
+
+	// 对于更新的 servicemonitor 如果新的 spec 命中黑名单 则需要将原有的 servicemonitor 移除
+	if IfRejectServiceMonitor(cur) {
+		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", cur)
+		for _, name := range c.getServiceMonitorDiscoversName(cur) {
+			c.deleteDiscoverByName(name)
+		}
 		return
 	}
 
@@ -673,10 +676,6 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 
 	if ConfEnablePromRule {
 		c.promsliController.DeleteServiceMonitor(serviceMonitor)
-	}
-	if IfRejectServiceMonitor(serviceMonitor) {
-		logger.Infof("delete action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
-		return
 	}
 
 	now := time.Now()
@@ -844,6 +843,8 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
 		return
 	}
+
+	// 新增的 podmonitor 命中黑名单则流程终止
 	if IfRejectPodMonitor(podMonitor) {
 		logger.Infof("add action match the blacklist rules, podMonitor=%+v", podMonitor)
 		return
@@ -865,23 +866,23 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 		logger.Errorf("expected PodMonitor type, got %T", oldObj)
 		return
 	}
-	if IfRejectPodMonitor(old) {
-		logger.Infof("update action match the blacklist rules, podMonitor=%+v", old)
-		return
-	}
-
 	cur, ok := newObj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", newObj)
 		return
 	}
-	if IfRejectPodMonitor(cur) {
-		logger.Infof("update action match the blacklist rules, podMonitor=%+v", cur)
-		return
-	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
 		logger.Debugf("podMonitor %+v does not change", old)
+		return
+	}
+
+	// 对于更新的 podmonitor 如果新的 spec 命中黑名单 则需要将原有的 podmonitor 移除
+	if IfRejectPodMonitor(cur) {
+		logger.Infof("update action match the blacklist rules, podMonitor=%+v", cur)
+		for _, name := range c.getPodMonitorDiscoversName(cur) {
+			c.deleteDiscoverByName(name)
+		}
 		return
 	}
 
@@ -901,10 +902,6 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
-		return
-	}
-	if IfRejectPodMonitor(podMonitor) {
-		logger.Infof("delete action match the blacklist rules, podMonitor=%+v", podMonitor)
 		return
 	}
 

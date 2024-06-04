@@ -10,6 +10,8 @@
 package shellhistory
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -37,6 +39,11 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	return gather
 }
 
+const (
+	rootBashHistory  = "/root/.bash_history"
+	usersBashHistory = "/home/%s/.bash_history"
+)
+
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	entities, err := parse()
 	if err != nil {
@@ -48,9 +55,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	for _, entity := range entities {
 		var p string
 		if entity.User == "root" {
-			p = "/root/.bash_history"
+			p = rootBashHistory
 		} else {
-			p = fmt.Sprintf("/home/%s/.bash_history", entity.User)
+			p = fmt.Sprintf(usersBashHistory, entity.User)
 		}
 		b, err := os.ReadFile(p)
 		if err != nil {
@@ -61,9 +68,23 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		items = append(items, UserHistory{
 			User:    entity.User,
 			Path:    p,
-			History: string(b),
+			History: tailN(b, g.config.LastN),
 		})
 	}
 
 	e <- &Event{dataid: g.config.DataID, data: items}
+}
+
+func tailN(b []byte, n int) []string {
+	var lines []string
+	scanner := bufio.NewScanner(bytes.NewBuffer(b))
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	if n <= 0 || len(lines) <= n {
+		return lines
+	}
+
+	return lines[len(lines)-n:]
 }

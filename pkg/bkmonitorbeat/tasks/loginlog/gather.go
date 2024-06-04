@@ -10,6 +10,7 @@
 package loginlog
 
 import (
+	"bytes"
 	"context"
 	"os"
 
@@ -22,6 +23,12 @@ import (
 type Gather struct {
 	config *configs.LoginLogConfig
 	tasks.BaseTask
+}
+
+var logPaths = []string{
+	"/var/log/wtmp",
+	"/var/run/utmp",
+	"/var/log/btmp",
 }
 
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
@@ -37,22 +44,21 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 
 func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	var records []Record
-	for _, file := range g.config.Logs {
-		f, err := os.Open(file)
+	for _, file := range logPaths {
+		b, err := os.ReadFile(file)
 		if err != nil {
 			logger.Errorf("failed to read login logs, file=%s, err: %v", file, err)
 			continue
 		}
-		defer f.Close()
 
-		logs, err := Unpack(f)
+		logs, err := Unpack(bytes.NewBuffer(b))
 		if err != nil {
 			logger.Errorf("failed to unpack login logs, file=%s, err: %v", file, err)
 			continue
 		}
 		records = append(records, Record{
 			Source: file,
-			Logs:   logs,
+			Logs:   tailN(logs, g.config.LastN),
 		})
 	}
 
@@ -60,4 +66,11 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		DataID:  g.config.DataID,
 		Records: records,
 	}
+}
+
+func tailN(entities []UtmpEntity, n int) []UtmpEntity {
+	if n <= 0 || len(entities) <= n {
+		return entities
+	}
+	return entities[len(entities)-n:]
 }

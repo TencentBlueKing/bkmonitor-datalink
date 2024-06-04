@@ -7,36 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package configs
+package socketsanpshot
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+import (
+	"github.com/elastic/beats/libbeat/common"
 
-type ShellHistoryConfig struct {
-	BaseTaskParam `config:"_,inline"`
-	LastN         int `config:"lastn"`
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+)
+
+type Event struct {
+	dataid int32
+	data   interface{}
 }
 
-func (c *ShellHistoryConfig) GetTaskConfigList() []define.TaskConfig {
-	return []define.TaskConfig{c}
-}
-
-func (c *ShellHistoryConfig) InitIdent() error {
-	return c.initIdent(c)
-}
-
-func (c *ShellHistoryConfig) GetType() string {
-	return define.ModuleShellHistory
-}
-
-func (c *ShellHistoryConfig) Clean() error {
-	return nil
-}
-
-func NewShellHistoryConfig(root *Config) *ShellHistoryConfig {
-	config := &ShellHistoryConfig{
-		BaseTaskParam: NewBaseTaskParam(),
+func (e *Event) AsMapStr() common.MapStr {
+	return common.MapStr{
+		"dataid": e.dataid,
+		"data":   e.data,
 	}
-	root.TaskTypeMapping[define.ModuleShellHistory] = config
+}
 
-	return config
+func (e *Event) IgnoreCMDBLevel() bool {
+	return true
+}
+
+func (e *Event) GetType() string {
+	return define.ModuleSocketSnapshot
 }

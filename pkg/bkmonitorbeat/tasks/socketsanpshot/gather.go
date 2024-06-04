@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package procsnapshot
+package socketsanpshot
 
 import (
 	"context"
@@ -15,11 +15,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/procsnapshot"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Gather struct {
-	config *configs.ProcSnapshotConfig
+	config *configs.SocketSnapshotConfig
 	tasks.BaseTask
 }
 
@@ -27,18 +28,18 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
-	gather.config = taskConfig.(*configs.ProcSnapshotConfig)
+	gather.config = taskConfig.(*configs.SocketSnapshotConfig)
 
 	gather.Init()
 
-	logger.Info("New a ProcSnapshot Task Instance")
+	logger.Info("New a SocketSnapshot Task Instance")
 	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	logger.Info("ProcSnapshot is running....")
+	logger.Info("SocketSnapshot is running....")
 
-	procs, err := AllProcsMeta()
+	procs, err := procsnapshot.AllProcsMetaWithCache(g.config.Period)
 	if err != nil {
 		logger.Errorf("faile to get all procs meta: %v", err)
 		return
@@ -49,4 +50,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		pids = append(pids, procs[i].Pid)
 	}
 	e <- &Event{dataid: g.config.DataID, data: procs}
+
+	sockets, err := AllProcsSocket(pids, g.config.Detector)
+	if err != nil {
+		logger.Errorf("faile to get procs sockets: %v", err)
+		return
+	}
+	e <- &Event{dataid: g.config.DataID, data: sockets}
 }

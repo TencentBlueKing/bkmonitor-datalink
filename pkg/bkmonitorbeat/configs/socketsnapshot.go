@@ -11,32 +11,32 @@ package configs
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 
-type ShellHistoryConfig struct {
+type SocketSnapshotConfig struct {
 	BaseTaskParam `config:"_,inline"`
-	LastN         int `config:"lastn"`
+	Detector      string `config:"detector"`
 }
 
-func (c *ShellHistoryConfig) GetTaskConfigList() []define.TaskConfig {
+func (c *SocketSnapshotConfig) GetTaskConfigList() []define.TaskConfig {
 	return []define.TaskConfig{c}
 }
 
-func (c *ShellHistoryConfig) InitIdent() error {
+func (c *SocketSnapshotConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
-func (c *ShellHistoryConfig) GetType() string {
-	return define.ModuleShellHistory
+func (c *SocketSnapshotConfig) GetType() string {
+	return define.ModuleSocketSnapshot
 }
 
-func (c *ShellHistoryConfig) Clean() error {
+func (c *SocketSnapshotConfig) Clean() error {
 	return nil
 }
 
-func NewShellHistoryConfig(root *Config) *ShellHistoryConfig {
-	config := &ShellHistoryConfig{
+func NewSocketSnapshotConfig(root *Config) *SocketSnapshotConfig {
+	config := &SocketSnapshotConfig{
 		BaseTaskParam: NewBaseTaskParam(),
 	}
-	root.TaskTypeMapping[define.ModuleShellHistory] = config
+	root.TaskTypeMapping[define.ModuleSocketSnapshot] = config
 
 	return config
 }

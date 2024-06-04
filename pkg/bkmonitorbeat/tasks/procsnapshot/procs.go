@@ -10,15 +10,11 @@
 package procsnapshot
 
 import (
-	"fmt"
-	"strings"
-	"syscall"
+	"sync"
 	"time"
 
 	shiroups "github.com/shirou/gopsutil/v3/process"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/processbeat/process"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -33,42 +29,6 @@ type ProcMeta struct {
 	Exe      string `json:"exe"`
 	Name     string `json:"name"`
 	Username string `json:"username"`
-}
-
-type ProcConn struct {
-	Pid      int32  `json:"pid"`
-	Protocol string `json:"protocol"`
-	State    string `json:"state"`
-	Saddr    string `json:"saddr"`
-	Sport    uint32 `json:"uint16"`
-	Daddr    string `json:"daddr"`
-	Dport    uint32 `json:"dport"`
-	Family   string `json:"family"`
-}
-
-func MappingTcpFamily(n int) string {
-	mapping := map[int]string{
-		syscall.AF_INET6: "AF_INET6",
-		syscall.AF_INET:  "AF_INET",
-	}
-
-	v, ok := mapping[n]
-	if ok {
-		return v
-	}
-	return fmt.Sprintf("%d", n)
-}
-
-func MappingUdpFamily(n int) string {
-	mapping := map[int]string{
-		syscall.SOCK_DGRAM: "SOCK_DGRAM",
-	}
-
-	v, ok := mapping[n]
-	if ok {
-		return v
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 const (
@@ -123,48 +83,47 @@ func AllProcsMeta() ([]ProcMeta, error) {
 	return ret, nil
 }
 
-func AllProcsConn(pids []int32) ([]ProcConn, error) {
-	var ret []ProcConn
-	d := getConnDetector()
-	ps, err := d.GetState(pids, process.StateListenEstab)
-	if err != nil {
-		return nil, err
+var (
+	metaCache   []ProcMeta
+	metaMut     sync.RWMutex
+	metaUpdated time.Time
+)
+
+func copyProcsMeta(meta []ProcMeta) []ProcMeta {
+	dst := make([]ProcMeta, 0, len(meta))
+	for i := 0; i < len(meta); i++ {
+		d := meta[i]
+		dst = append(dst, d)
 	}
-
-	appendConn := func(sockets map[int32][]process.FileSocket) {
-		for pid, items := range sockets {
-			for _, item := range items {
-				var family string
-				if strings.HasPrefix(item.Protocol, "tcp") {
-					family = MappingTcpFamily(int(item.Family))
-				} else {
-					family = MappingUdpFamily(int(item.Family))
-				}
-				ret = append(ret, ProcConn{
-					Pid:      pid,
-					State:    item.Status,
-					Protocol: item.Protocol,
-					Saddr:    item.Saddr,
-					Sport:    item.Sport,
-					Daddr:    item.Daddr,
-					Dport:    item.Dport,
-					Family:   family,
-				})
-			}
-		}
-	}
-
-	appendConn(ps.TCP)
-	appendConn(ps.TCP6)
-	appendConn(ps.UDP)
-	appendConn(ps.UDP6)
-
-	return ret, nil
+	return dst
 }
 
-func getConnDetector() process.ConnDetector {
-	if configs.DisableNetlink {
-		return process.StdDetector{}
+func AllProcsMetaWithCache(d time.Duration) ([]ProcMeta, error) {
+	metaMut.Lock()
+	defer metaMut.Unlock()
+
+	fn := func() ([]ProcMeta, error) {
+		meta, err := AllProcsMeta()
+		if err != nil {
+			return nil, err
+		}
+
+		metaUpdated = time.Now()
+		metaCache = meta
+		return copyProcsMeta(meta), nil
 	}
-	return process.NetlinkDetector{}
+
+	// 缓存从未更新
+	if metaUpdated.IsZero() {
+		return fn()
+	}
+
+	// 缓存已经更新过
+	// 如果在 duration 周期内 则使用缓存
+	if float64(time.Now().Unix()-metaUpdated.Unix()) < d.Seconds() {
+		return copyProcsMeta(metaCache), nil
+	}
+
+	// 大于缓存周期了
+	return fn()
 }

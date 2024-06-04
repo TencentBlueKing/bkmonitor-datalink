@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,8 +45,11 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 
-	relabelRuleKey  = "bkm_relabel_rule"
-	relabelIndexKey = "bkm_relabel_index"
+	annotationRelabelRule  = "relabelRule"
+	annotationRelabelIndex = "relabelIndex"
+
+	annotationMonitorMatchSelector = "monitorMatchSelector"
+	annotationMonitorDropSelector  = "monitorDropSelector"
 )
 
 // Operator 负责部署和调度任务
@@ -485,6 +489,19 @@ func ifHonorTimestamps(b *bool) bool {
 	return *b
 }
 
+func parseSelector(s string) map[string]string {
+	selector := make(map[string]string)
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		kv := strings.Split(strings.TrimSpace(part), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		selector[kv[0]] = kv[1]
+	}
+	return selector
+}
+
 func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceMonitor) []discover.Discover {
 	var (
 		namespaces []string
@@ -547,29 +564,31 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 
 		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
-				Client:                 c.client,
-				RelabelRule:            serviceMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           serviceMonitor.Annotations[relabelIndexKey],
-				Name:                   monitorMeta.ID(),
-				DataID:                 dataID,
-				KubeConfig:             ConfKubeConfig,
-				Namespaces:             namespaces,
-				Relabels:               resultLabels,
-				Path:                   endpoint.Path,
-				Scheme:                 endpoint.Scheme,
-				TLSConfig:              endpoint.TLSConfig.DeepCopy(),
-				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
-				BearerTokenFile:        endpoint.BearerTokenFile,
-				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
-				Period:                 string(endpoint.Interval),
-				ProxyURL:               proxyURL,
-				Timeout:                string(endpoint.ScrapeTimeout),
-				ExtraLabels:            specLabels,
-				ForwardLocalhost:       kits.CheckIfForwardLocalhost(serviceMonitor.Annotations),
-				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                 systemResource,
-				UrlValues:              endpoint.Params,
-				MetricRelabelConfigs:   metricRelabelings,
+				Client:                  c.client,
+				RelabelRule:             serviceMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:            serviceMonitor.Annotations[annotationRelabelIndex],
+				AnnotationMatchSelector: parseSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
+				Name:                    monitorMeta.ID(),
+				DataID:                  dataID,
+				KubeConfig:              ConfKubeConfig,
+				Namespaces:              namespaces,
+				Relabels:                resultLabels,
+				Path:                    endpoint.Path,
+				Scheme:                  endpoint.Scheme,
+				TLSConfig:               endpoint.TLSConfig.DeepCopy(),
+				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
+				BearerTokenFile:         endpoint.BearerTokenFile,
+				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
+				Period:                  string(endpoint.Interval),
+				ProxyURL:                proxyURL,
+				Timeout:                 string(endpoint.ScrapeTimeout),
+				ExtraLabels:             specLabels,
+				ForwardLocalhost:        kits.CheckIfForwardLocalhost(serviceMonitor.Annotations),
+				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                  systemResource,
+				UrlValues:               endpoint.Params,
+				MetricRelabelConfigs:    metricRelabelings,
 			},
 		})
 
@@ -748,28 +767,30 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		}
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
-				Client:                 c.client,
-				RelabelRule:            podMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           podMonitor.Annotations[relabelIndexKey],
-				Name:                   monitorMeta.ID(),
-				DataID:                 dataID,
-				KubeConfig:             ConfKubeConfig,
-				Namespaces:             namespaces,
-				Relabels:               resultLabels,
-				Path:                   endpoint.Path,
-				Scheme:                 endpoint.Scheme,
-				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
-				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
-				TLSConfig:              &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
-				Period:                 string(endpoint.Interval),
-				Timeout:                string(endpoint.ScrapeTimeout),
-				ProxyURL:               proxyURL,
-				ExtraLabels:            specLabels,
-				ForwardLocalhost:       kits.CheckIfForwardLocalhost(podMonitor.Annotations),
-				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                 systemResource,
-				UrlValues:              endpoint.Params,
-				MetricRelabelConfigs:   metricRelabelings,
+				Client:                  c.client,
+				RelabelRule:             podMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:            podMonitor.Annotations[annotationRelabelIndex],
+				AnnotationMatchSelector: parseSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
+				Name:                    monitorMeta.ID(),
+				DataID:                  dataID,
+				KubeConfig:              ConfKubeConfig,
+				Namespaces:              namespaces,
+				Relabels:                resultLabels,
+				Path:                    endpoint.Path,
+				Scheme:                  endpoint.Scheme,
+				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
+				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
+				TLSConfig:               &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
+				Period:                  string(endpoint.Interval),
+				Timeout:                 string(endpoint.ScrapeTimeout),
+				ProxyURL:                proxyURL,
+				ExtraLabels:             specLabels,
+				ForwardLocalhost:        kits.CheckIfForwardLocalhost(podMonitor.Annotations),
+				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                  systemResource,
+				UrlValues:               endpoint.Params,
+				MetricRelabelConfigs:    metricRelabelings,
 			},
 			TLSConfig: endpoint.TLSConfig,
 		})

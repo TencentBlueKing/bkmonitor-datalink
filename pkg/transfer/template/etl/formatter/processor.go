@@ -48,14 +48,19 @@ type Processor struct {
 // Process : process json data
 func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, killChan chan<- error) {
 	record := new(define.ETLRecord)
-	err := d.To(record)
-	if err != nil {
-		p.CounterFails.Inc()
-		logging.Errorf("%v convert payload %#v error %v", p, d, err)
-		return
+	r := d.GetETLRecord()
+	if r != nil {
+		record = r
+	} else {
+		err := d.To(record)
+		if err != nil {
+			p.CounterFails.Inc()
+			logging.Errorf("%v convert payload %#v error %v", p, d, err)
+			return
+		}
 	}
 
-	err = p.handlers.Handle(record, func(record *define.ETLRecord) error {
+	err := p.handlers.Handle(record, func(record *define.ETLRecord) error {
 		// 只对日志数据进行处理
 		if p.etlConfig == "bk_flat_batch" {
 			d.SetETLRecord(record)
@@ -71,7 +76,6 @@ func (p *Processor) Process(d define.Payload, outputChan chan<- define.Payload, 
 		outputChan <- payload
 		return nil
 	})
-
 	if err != nil {
 		p.CounterFails.Inc()
 		logging.MinuteErrorfSampling(p.String(), "%v handle payload %#v failed: %v", p, d, err)

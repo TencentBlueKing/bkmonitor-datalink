@@ -467,8 +467,7 @@ func (c *CCApiClient) FilterCMDBV3Biz(originalResponse []CCSearchBusinessRespons
 		Post("get_biz_location/").
 		BodyProvider(&json.Provider{Payload: &CCGetBusinessLocationRequest{BkBizIDs: bizList}}).
 		Receive(&result /* success */, &result /* failed */)
-
-	// 判断请求是否成功
+		// 判断请求是否成功
 	if err != nil {
 		c.GetBizLocationCounter.CounterFails.Inc()
 		logging.Errorf("get business location failed: %v, %v, cache response will use", result, err)

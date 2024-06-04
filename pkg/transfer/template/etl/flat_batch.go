@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/pipeline"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/types"
 )
 
 type FlatBatchHandler struct {
@@ -112,6 +113,14 @@ func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Pa
 			continue
 		}
 
+		r := p.asETLRecord(to)
+		if r != nil {
+			d.SetETLRecord(r)
+			outputChan <- d
+			handled++
+			continue
+		}
+
 		output, err := define.DerivePayload(d, &to)
 		if err != nil {
 			logging.Errorf("%v create payload from %v error: %+v", p, d, err)
@@ -129,6 +138,43 @@ func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Pa
 		logging.Debugf("%v push %d items from %v", p, handled, d)
 		p.CounterSuccesses.Inc()
 	}
+}
+
+func (p *FlatBatchHandler) asETLRecord(to etl.MapContainer) *define.ETLRecord {
+	var r define.ETLRecord
+
+	dimsObj, err := to.Get("dimensions")
+	if err != nil {
+		return nil
+	}
+	dims, ok := dimsObj.(etl.MapContainer)
+	if !ok {
+		return nil
+	}
+	r.Dimensions = dims.AsMapStr()
+
+	metricsObj, err := to.Get("metrics")
+	if err != nil {
+		return nil
+	}
+	metrics, ok := metricsObj.(etl.MapContainer)
+	if !ok {
+		return nil
+	}
+	r.Metrics = metrics.AsMapStr()
+
+	timeObj, err := to.Get("time")
+	if err != nil {
+		return nil
+	}
+	t, ok := timeObj.(types.TimeStamp)
+	if !ok {
+		return nil
+	}
+	v := t.Int64()
+	r.Time = &v
+
+	return &r
 }
 
 func NewFlatBatchHandler(ctx context.Context, name string) (*FlatBatchHandler, error) {

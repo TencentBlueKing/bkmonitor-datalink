@@ -10,9 +10,9 @@
 ### 本地创建redis数据
 
 query/ts接口对应redis中三个hash，对应的键分别为
-"bkmonitorv3:spaces:space_to_result_table"：这个hash用来存放space_id关联的所有result_table
+"bkmonitorv3:spaces:space_to_result_table"：这个hash用来存放space_id关联的所有result_table space id 是一个类似于租户的概念 根据 space id 来区别当前的租户可以看到哪些表, 并进行查询
 
-"bkmonitorv3:spaces:result_table_detail"：这个hash用来存放result_table的详情
+"bkmonitorv3:spaces:result_table_detail"：这个hash用来存放result_table的详情 包括一些针对表的过滤详情
 
 "bkmonitorv3:spaces:data_label_to_result_table"：这个hash用来存放result_table中的标签字段
 
@@ -26,12 +26,21 @@ hset "bkmonitorv3:spaces:result_table_detail" "custom_report_aggate.base"  "{\"s
 hset "bkmonitorv3:spaces:data_label_to_result_table"  "wz_test_613"   "[\"2_bkmonitor_time_series_1573001.__default__\",\"custom\"]"
 ```
 
+此处按照下面的简单测试用例 （仅测试使用 非实际环境所包含字段和情况）向redis 写入hash信息
+```bash
+hset  bkmonitorv3:spaces:space_to_result_table  "mydb"   "{\"system.cpu_summary\":{\"filters\":[]},\"custom_report_aggate.base\":{\"filters\":[]}}"  // 假定在 mydb 对应的 space id 下有两张表为system.cpu_summary 和 custom_report_aggate.base
+
+hset "bkmonitorv3:spaces:result_table_detail" "system.cpu_summary"  "{\"storage_id\":8,\"storage_name\":\"\",\"cluster_name\":\"default\",\"db\":\"mydb\",\"measurement\":\"system.cpu_summary\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"_time\",\"usage\"],\"measurement_type\":\"bk_traditional_measurement\"}"  // 缓存system.cpu_summary的表字段信息
+
+hset "bkmonitorv3:spaces:result_table_detail" "custom_report_aggate.base"  "{\"storage_id\":8,\"storage_name\":\"\",\"cluster_name\":\"default\",\"db\":\"mydb\",\"measurement\":\"custom_report_aggate.base\",\"vm_rt\":\"\",\"tags_key\":[],\"fields\":[\"_time\",\"bkmonitor_action_notice_api_call_count_total\"],\"measurement_type\":\"bk_traditional_measurement\"}"  // 缓存 custom_report_aggate.base 的表字段信息
+```
+
 ### 本地创建influxdb数据
 
-先在consul上创建influxdb实例，创建之后可以获取storageID为6的实例
+先在consul上创建influxdb实例，创建之后可以获取storageID为8的实例
 
 ```bash
-consul kv put bkmonitorv3/unify-query/data/storage/8 {"address":"http://bk-monitor-influxdb-proxy-http2:10203","username":"","password":"","type":"influxdb"}
+consul kv put bkmonitorv3/unify-query/data/storage/8 {"address":"http://127.0.0.1:8086","username":"","password":"","type":"influxdb"}
 ```
 
 在redis储存influxdb所在的集群信息和主机信息
@@ -42,7 +51,17 @@ hset bkmonitorv3:influxdb:host_info "influxdb" "{\"domain_name\":\"127.0.0.1\",\
 
 可以按照这几个请求和日志中的sql语句创建数据
 
-test query:
+test query: 假定我们在 system.cpu_summary 的表中 查找每 60s 的平均 CPU 负载
+
+```bash
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'system.cpu_summary usage=60.2 1716946204000000000'
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'system.cpu_summary usage=60.2 1716946206000000000'   // 向influxdb 插入两段模拟数据
+
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'system.cpu_summary usage=50.2 1716946904000000000'
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'system.cpu_summary usage=70.2 1716946906000000000'
+```
+
+
 ```
 curl --location 'http://127.0.0.1:10205/query/ts' \
 --header 'Content-Type: application/json' \
@@ -93,7 +112,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "metric_merge": "a",
     "result_columns": null,
     "start_time": "1716946204",
-    "end_time": "1716985804",
+    "end_time": "1716946906",
     "step": "60s"
 }'
 
@@ -114,19 +133,29 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
             "group_values": [],
             "values": [
                 [
-                    1716976440000,
-                    66.6
+                    1716946200000,  // 第一段 60s 的结果
+                    60.2
                 ],
                 [
-                    1716976500000,
-                    66.6
+                    1716946860000, // 第二段 60s 的结果
+                    60.2
                 ]
             ]
         }
     ]
 }
 ```
-test lost sample in increase
+
+```
+test lost sample in increase 假设我们在 custom_report_aggate.base 中查找条件为 notice_way 字段为 weixin 且 status 为 failed 在给定时间范围内以 5m 为窗口 每 60s 采集计算一次 bkmonitor_action_notice_api_call_count_total指标的增长情况
+```
+
+```bash
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'custom_report_aggate.base,notice_way=weixin,status=failed bkmonitor_action_notice_api_call_count_total=10 1716946204000000000'
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'custom_report_aggate.base,notice_way=weixin,status=failed bkmonitor_action_notice_api_call_count_total=15 1716946254000000000'
+curl -X POST http://localhost:8086/write?db=mydb --data-binary 'custom_report_aggate.base,notice_way=weixin,status=failed bkmonitor_action_notice_api_call_count_total=15 1716946264000000000'
+```
+
 ```
 curl --location 'http://127.0.0.1:10205/query/ts' \
 --header 'Content-Type: application/json' \
@@ -182,7 +211,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "metric_merge": "a",
     "result_columns": null,
     "start_time": "1716946204",
-    "end_time": "1716985804",
+    "end_time": "1716946264",
     "step": "60s"
 }'
 
@@ -200,37 +229,17 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
                 "float"
             ],
             "group_keys": [
-                "job",
                 "notice_way",
                 "status",
-                "target"
             ],
             "group_values": [
-                "SLI",
                 "weixin",
                 "failed",
-                "unknown"
             ],
             "values": [
                 [
-                    1716977880000,
-                    0
-                ],
-                [
-                    1716977940000,
-                    0
-                ],
-                [
-                    1716978000000,
-                    0
-                ],
-                [
-                    1716978060000,
-                    0
-                ],
-                [
-                    1716978120000,
-                    0
+                    1716946200000,
+                    6.8499
                 ]
             ]
         }
@@ -248,7 +257,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
         {
             "data_source": "",
             "table_id": "system.cpu_summary",
-            "field_name": ".*",
+            "field_name": ".*",    // 模糊正则查询 结果和第一个测试用例相同
 			"is_regexp": true,
             "field_list": null,
             "function": [
@@ -290,7 +299,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "metric_merge": "a",
     "result_columns": null,
     "start_time": "1716946204",
-    "end_time": "1716985804",
+    "end_time": "1716946906",
     "step": "60s"
 }'
 
@@ -311,12 +320,12 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
             "group_values": [],
             "values": [
                 [
-                    1716977820000,
-                    66
+                    1716946200000,
+                    60.2
                 ],
                 [
-                    1716977880000,
-                    66
+                    1716946860000,
+                    60.2
                 ]
             ]
         }
@@ -662,5 +671,3 @@ paths:
          disabledStages: []
          descriptionEn:
 ```
-
-

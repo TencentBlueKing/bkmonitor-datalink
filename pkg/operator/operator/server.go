@@ -427,8 +427,11 @@ func (c *Operator) AdminReloadRoute(w http.ResponseWriter, r *http.Request) {
 	case <-timer.C:
 		w.Write([]byte(`{"status": "failed"}`))
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+
 	case beat.ReloadChan <- true:
 		w.Write([]byte(`{"status": "success"}`))
+		return
 	}
 }
 

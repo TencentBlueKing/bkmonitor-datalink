@@ -38,7 +38,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	logger.Info("ProcSnapshot is running....")
 
-	procs, err := AllProcsMeta()
+	procs, err := AllProcsMetaWithCache(g.config.Period)
 	if err != nil {
 		logger.Errorf("faile to get all procs meta: %v", err)
 		return

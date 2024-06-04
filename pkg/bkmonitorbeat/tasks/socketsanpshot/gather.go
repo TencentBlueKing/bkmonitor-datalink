@@ -49,8 +49,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	for i := 0; i < len(procs); i++ {
 		pids = append(pids, procs[i].Pid)
 	}
-	e <- &Event{dataid: g.config.DataID, data: procs}
-
 	sockets, err := AllProcsSocket(pids, g.config.Detector)
 	if err != nil {
 		logger.Errorf("faile to get procs sockets: %v", err)

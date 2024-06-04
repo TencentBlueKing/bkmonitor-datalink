@@ -12,6 +12,7 @@ package periodic
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -161,7 +162,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
-			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName)},
+			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(300 * time.Second)},
 		},
 	}
 }

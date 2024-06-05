@@ -144,6 +144,7 @@ func (s SpacePusher) GetSpaceTableIdDataId(spaceType, spaceId string, tableIdLis
 	// 否则，查询空间下的所有数据源，再过滤对应的结果表
 	var spdsList []space.SpaceDataSource
 	qs := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId)
+
 	// 获取是否授权数据
 	if fromAuthorization, ok := options.GetBool("fromAuthorization"); ok {
 		qs = qs.FromAuthorizationEq(fromAuthorization)
@@ -276,7 +277,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().TableIdIn(chunkTableIds...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkTableIds...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -287,7 +288,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	var dataLabelList []string
 	for _, dl := range dataLabels {
-		dataLabelList = append(dataLabelList, *dl.DataLabel)
+		dataLabelList = append(dataLabelList, dl.TableId)
 	}
 	return dataLabelList, nil
 }
@@ -332,12 +333,35 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 		}
 	}
 
+	// TODO 追加es标签表
+	// 过滤写入 es 的结果表
+	var esStorageList []storage.ESStorage
+	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
+	if len(tableIdList) != 0 {
+		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+			var tempList []storage.ESStorage
+
+			qsTemp := qs3.TableIDIn(chunkTableIdList...)
+			if err := qsTemp.All(&tempList); err != nil {
+				return nil, err
+			}
+			esStorageList = append(esStorageList, tempList...)
+		}
+	} else {
+		if err := qs3.All(&esStorageList); err != nil {
+			return nil, err
+		}
+	}
+
 	var tableIds []string
 	for _, i := range influxdbStorageList {
 		tableIds = append(tableIds, i.TableID)
 	}
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
+	}
+	for _, i := range esStorageList {
+		tableIds = append(tableIds, i.TableID)
 	}
 	tableIds = slicex.RemoveDuplicate(&tableIds)
 	return tableIds, nil
@@ -394,7 +418,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 	}
 
 	client := redis.GetStorageRedisInstance()
-
+	tableIdDetailMap := make(map[string]string)
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -416,6 +440,8 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		if err != nil {
 			return err
 		}
+		tableIdDetailMap[tableId] = detailStr
+
 		// 推送数据
 		if err := client.HSetWithCompare(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
 			return err
@@ -425,6 +451,11 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 				return err
 			}
 		}
+	}
+
+	// TODO 追加es结果详情表
+	if err = s.PushEsTableIdDetail(tableIdList, isPublish); err != nil {
+		return err
 	}
 	logger.Info("push redis result_table_detail")
 	return nil
@@ -437,7 +468,7 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 	db := mysql.GetDBSession().DB
 	// 获取数据
 	var esStorageList []storage.ESStorage
-	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID)
+	esQuerySet := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet)
 	// 如果过滤结果表存在，则添加过来条件
 	if len(tableIdList) != 0 {
 		if err := esQuerySet.TableIDIn(tableIdList...).All(&esStorageList); err != nil {
@@ -464,7 +495,9 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 				wg.Done()
 			}()
 			tableId := es.TableID
-			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, es.StorageClusterID)
+			sourceType := es.SourceType
+			indexSet := es.IndexSet
+			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
 				logger.Errorf("compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -485,7 +518,7 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 	return nil
 }
 
-func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uint) (string, string, error) {
+func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	splitList := stringx.SplitStringByDot(tableId)
 	// 拆分后长度应该为2， 如果小于2，则补充结果表默认后缀
 	db, measurement := splitList[0], models.TSGroupDefaultMeasurement
@@ -493,6 +526,31 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 		db, measurement = splitList[0], splitList[1]
 	} else {
 		tableId = strings.Join([]string{db, measurement}, ".")
+	}
+
+	var indexList []string
+	var processedList []string
+	if sourceType == models.EsSourceTypeLOG {
+		if indexSet != "" {
+			indexList = strings.Split(indexSet, ",")
+		} else {
+			indexList = []string{tableId}
+		}
+		for _, index := range indexList {
+			processedIndex := strings.ReplaceAll(index, ".", "_")
+			finalString := fmt.Sprintf("%s_*_read", processedIndex)
+			processedList = append(processedList, finalString)
+		}
+		db = strings.Join(processedList, ",")
+	} else if sourceType == models.EsSourceTypeBKDATA {
+		if indexSet != "" {
+			indexList = strings.Split(indexSet, ",")
+		}
+		for _, index := range indexList {
+			finalString := fmt.Sprintf("%s_*", index)
+			processedList = append(processedList, finalString)
+		}
+		db = strings.Join(processedList, ",")
 	}
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
@@ -906,6 +964,11 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 	}
 	logger.Infof("start to push bkcc space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeData(spaceType, spaceId, nil, nil, options)
+	// TODO 追加es空间路由表
+	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	for tid, value := range esValues {
+		values[tid] = value
+	}
 	if err != nil {
 		return err
 	}
@@ -945,13 +1008,17 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 	for tid, value := range bkciCrossValues {
 		values[tid] = value
 	}
+	// TODO 追加es空间路由表
+	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	for tid, value := range esValues {
+		values[tid] = value
+	}
 	allTypeTableIdValues, err := s.composeAllTypeTableIds(spaceType, spaceId)
 	if err != nil {
 		for tid, value := range allTypeTableIdValues {
 			values[tid] = value
 		}
 	}
-
 	// 推送数据
 	if len(values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -981,6 +1048,11 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 	for tid, value := range bksaasOtherValues {
 		values[tid] = value
 	}
+	// TODO 追加es空间路由表
+	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	for tid, value := range esValues {
+		values[tid] = value
+	}
 	allTypeTableIdValues, err := s.composeAllTypeTableIds(spaceType, spaceId)
 	if err == nil {
 		for tid, value := range allTypeTableIdValues {
@@ -1002,6 +1074,38 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 	}
 	logger.Infof("push redis space_to_result_table, space_type [%s], space_id [%s]", spaceType, spaceId)
 	return nil
+}
+
+func (s SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (map[string]map[string]interface{}, error) {
+	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
+	bizId, err := s.GetBizIdBySpace(spaceType, spaceId)
+	if err != nil {
+		return nil, err
+	}
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId).BkBizIdEq(bizId).DefaultStorageEq(models.StorageTypeES).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		return nil, err
+	}
+	dataValues := make(map[string]map[string]interface{})
+	for _, rt := range rtList {
+		dataValues[rt.TableId] = map[string]interface{}{"filters": []interface{}{}}
+	}
+	return dataValues, nil
+}
+
+func (s SpacePusher) GetBizIdBySpace(spaceType, spaceId string) (int, error) {
+	db := mysql.GetDBSession().DB
+	var spaceObj space.Space
+	if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(spaceType).SpaceIdEq(spaceId).One(&spaceObj); err != nil {
+		return 0, err
+	}
+	if spaceType == models.SpaceTypeBKCC {
+		bizId, _ := strconv.ParseInt(spaceObj.SpaceId, 10, 64)
+		return int(bizId), nil
+	} else {
+		return -spaceObj.Id, nil
+	}
 }
 
 // 获取平台级 data id

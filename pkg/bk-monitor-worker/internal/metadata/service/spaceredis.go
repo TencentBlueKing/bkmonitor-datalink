@@ -277,7 +277,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkTableIds...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().TableIdIn(chunkTableIds...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -288,7 +288,7 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 	}
 	var dataLabelList []string
 	for _, dl := range dataLabels {
-		dataLabelList = append(dataLabelList, dl.TableId)
+		dataLabelList = append(dataLabelList, *dl.DataLabel)
 	}
 	return dataLabelList, nil
 }
@@ -418,7 +418,6 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 	}
 
 	client := redis.GetStorageRedisInstance()
-	tableIdDetailMap := make(map[string]string)
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -440,7 +439,6 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		if err != nil {
 			return err
 		}
-		tableIdDetailMap[tableId] = detailStr
 
 		// 推送数据
 		if err := client.HSetWithCompare(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {

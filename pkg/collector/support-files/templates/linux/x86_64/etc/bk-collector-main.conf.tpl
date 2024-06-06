@@ -280,6 +280,9 @@ bk-collector:
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
 
+    # DbFilter: db 处理器
+    - name: "db_filter/common"
+
     # PprofTranslator: pprof 协议转换器
     - name: "pprof_translator/common"
       config:
@@ -1728,6 +1731,7 @@ bk-collector:
         - "sampler/drop_traces"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
+        - "db_filter/common"
         - "service_discover/common"
         - "apdex_calculator/standard"
         - "traces_deriver/delta"

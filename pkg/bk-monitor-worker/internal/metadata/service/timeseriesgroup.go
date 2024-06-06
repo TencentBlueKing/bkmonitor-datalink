@@ -68,6 +68,8 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
 	vmMetrics, err := s.QueryMetricAndDimension()
 	if err == nil {
 		s.UpdateMetrics(*vmMetrics)
+		metricStr, _ := jsonx.MarshalString(*vmMetrics)
+		logger.Infof("metrics %s", metricStr)
 	}
 
 	// 获取 redis 中数据，用于后续指标及tag的更新

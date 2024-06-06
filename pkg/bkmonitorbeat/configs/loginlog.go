@@ -26,6 +26,10 @@ func (c *LoginLogConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
+func (c *LoginLogConfig) GetIdent() string {
+	return define.ModuleLoginLog
+}
+
 func (c *LoginLogConfig) GetType() string {
 	return define.ModuleLoginLog
 }

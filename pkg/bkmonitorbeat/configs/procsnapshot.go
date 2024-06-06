@@ -9,7 +9,9 @@
 
 package configs
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+)
 
 type ProcSnapshotConfig struct {
 	BaseTaskParam `config:"_,inline"`
@@ -21,6 +23,10 @@ func (c *ProcSnapshotConfig) GetTaskConfigList() []define.TaskConfig {
 
 func (c *ProcSnapshotConfig) InitIdent() error {
 	return c.initIdent(c)
+}
+
+func (c *ProcSnapshotConfig) GetIdent() string {
+	return define.ModuleProcSnapshot
 }
 
 func (c *ProcSnapshotConfig) GetType() string {

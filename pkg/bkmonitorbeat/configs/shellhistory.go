@@ -24,6 +24,10 @@ func (c *ShellHistoryConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
+func (c *ShellHistoryConfig) GetIdent() string {
+	return define.ModuleShellHistory
+}
+
 func (c *ShellHistoryConfig) GetType() string {
 	return define.ModuleShellHistory
 }

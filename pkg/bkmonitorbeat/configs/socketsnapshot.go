@@ -24,6 +24,10 @@ func (c *SocketSnapshotConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
+func (c *SocketSnapshotConfig) GetIdent() string {
+	return define.ModuleSocketSnapshot
+}
+
 func (c *SocketSnapshotConfig) GetType() string {
 	return define.ModuleSocketSnapshot
 }

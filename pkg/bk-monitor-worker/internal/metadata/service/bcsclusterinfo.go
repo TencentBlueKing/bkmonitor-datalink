@@ -474,7 +474,7 @@ func (b BcsClusterInfoSvc) RegisterCluster(bkBizId, clusterId, projectId, creato
 		var customGroupName string
 		switch register.ReportClassName {
 		case "TimeSeriesGroup":
-			group, err := NewTimeSeriesGroupSvc(nil).CreateCustomGroup(
+			group, err := NewTimeSeriesGroupSvc(nil, 0).CreateCustomGroup(
 				datasource.BkDataId,
 				int(bkBizIdInt),
 				fmt.Sprintf("bcs_%s_%s", cluster.ClusterID, usage),

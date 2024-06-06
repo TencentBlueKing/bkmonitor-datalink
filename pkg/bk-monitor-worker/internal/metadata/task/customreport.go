@@ -31,7 +31,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	}()
 	db := mysql.GetDBSession().DB
 	var tsGroupList []customreport.TimeSeriesGroup
-	if err := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).TableIDEq("2_bkmonitor_time_series_1572978.__default__").IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
 		return errors.Wrap(err, "find ts group record error")
 	}
 	// 收集需要更新推送redis的table_id
@@ -60,7 +60,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 
-			svc := service.NewTimeSeriesGroupSvc(&ts)
+			svc := service.NewTimeSeriesGroupSvc(&ts, 0)
 			updated, err := svc.UpdateTimeSeriesMetrics()
 			if err != nil {
 				logger.Errorf("time_series_group: [%s] try to update metrics from redis failed, %v", ts.TableID, err)

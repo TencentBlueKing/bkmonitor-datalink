@@ -12,6 +12,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -19,9 +20,11 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
@@ -46,16 +49,27 @@ var TSStorageFieldList = []map[string]interface{}{
 // TimeSeriesGroupSvc time series group service
 type TimeSeriesGroupSvc struct {
 	*customreport.TimeSeriesGroup
+	GoroutineLimit int
 }
 
-func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc {
+func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup, goroutineLimit int) TimeSeriesGroupSvc {
+	if goroutineLimit == 0 {
+		goroutineLimit = 100
+	}
 	return TimeSeriesGroupSvc{
 		TimeSeriesGroup: obj,
+		GoroutineLimit:  goroutineLimit,
 	}
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
 func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
+	// 获取 vm rt及metric
+	vmMetrics, err := s.QueryMetricAndDimension()
+	if err == nil {
+		s.UpdateMetrics(*vmMetrics)
+	}
+
 	// 获取 redis 中数据，用于后续指标及tag的更新
 	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
 	if err != nil {
@@ -66,6 +80,47 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
 	}
 	// 记录是否有更新，然后推送redis并发布通知
 	return s.UpdateMetrics(metricInfo)
+}
+
+// RefreshMetric 更新指标
+func (s *TimeSeriesGroupSvc) QueryMetricAndDimension() (vmRtMetrics *[]map[string]interface{}, err error) {
+	db := mysql.GetDBSession().DB
+	var vmObj storage.AccessVMRecord
+	if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.VmResultTableId).ResultTableIdEq(s.TableID).One(&vmObj); err != nil {
+		return nil, err
+	}
+	// 过滤参数
+	vmStorageType, vmRt := "vm", vmObj.VmResultTableId
+
+	metrics, err := apiservice.Bkdata.QueryMetrics(vmStorageType, vmRt)
+	// 过滤维度数据
+	if err != nil && len(*metrics) == 0 {
+		return nil, errors.Wrapf(err, "query metric error, vmRt: %s", vmRt)
+	}
+
+	wg := &sync.WaitGroup{}
+	ch := make(chan struct{}, s.GoroutineLimit)
+	wg.Add(len(*metrics))
+	var vmRtMetricsDimension []map[string]interface{}
+	for metric, timestamp := range *metrics {
+		ch <- struct{}{}
+		go func(metric string, timestamp float64, wg *sync.WaitGroup, ch chan struct{}) {
+			defer func() {
+				<-ch
+				wg.Done()
+			}()
+			dimension, err := apiservice.Bkdata.QueryDimension(vmStorageType, vmRt, metric)
+			if err == nil && len(*dimension) > 0 {
+				vmRtMetricsDimension = append(vmRtMetricsDimension, map[string]interface{}{"field_name": metric,
+					"tag_value_list":   *dimension,
+					"last_modify_time": timestamp})
+			}
+			return
+		}(metric, timestamp, wg, ch)
+	}
+	wg.Wait()
+
+	return &vmRtMetricsDimension, nil
 }
 
 // GetRedisData get data from redis
@@ -477,7 +532,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 			return nil, err
 		}
 	}
-	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup)
+	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup, 0)
 	logger.Infof("TimeSeriesGroup [%v] now is created from data_id [%v] by operator [%s]", tsGroupSvc.TimeSeriesGroupID, bkDataId, operator)
 	// 创建一个关联的存储关系
 	for k, v := range TSDefaultStorageConfig {

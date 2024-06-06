@@ -393,3 +393,68 @@ func (s BkdataService) RestartDataFlow(flowId int, consumingMode, clusterGroup s
 	}
 	return resp.Data, nil
 }
+
+// QueryMetrics 查询指标数据
+func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]float64, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp bkdata.CommonListResp
+	if _, err = bkdataApi.QueryMetrics().SetPathParams(map[string]string{"storage": storage, "result_table_id": rt}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
+	}
+	// parse metrics
+	metrics := make(map[string]float64)
+	for _, data := range resp.Data {
+		metricInfo, ok := data.([]interface{})
+		if !ok {
+			continue
+		}
+		metric, ok := metricInfo[0].(string)
+		if !ok {
+			continue
+		}
+		// NOTE: 如果时间戳不符合预期，则忽略该指标
+		timestamp, ok := metricInfo[1].(float64)
+		if !ok {
+			continue
+		}
+		metrics[metric] = timestamp
+	}
+	return &metrics, nil
+}
+
+// QueryDimension 查询维度数据
+func (s BkdataService) QueryDimension(storage string, rt string, metric string) (*[]string, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp bkdata.CommonListResp
+	if _, err = bkdataApi.QueryDimension().SetPathParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
+	}
+	// parse dimension
+	var dimensions []string
+	for _, data := range resp.Data {
+		dimensionInfo, ok := data.([]interface{})
+		if !ok {
+			continue
+		}
+		dimension, ok := dimensionInfo[0].(string)
+		if !ok {
+			continue
+		}
+		dimensions = append(dimensions, dimension)
+	}
+	return &dimensions, nil
+}

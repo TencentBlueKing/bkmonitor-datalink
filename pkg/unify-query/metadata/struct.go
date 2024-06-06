@@ -105,7 +105,6 @@ type Query struct {
 	DataSource      string
 	AllConditions   AllConditions
 	Source          []string
-	QueryString     string
 	TimeAggregation *TimeAggregation
 	From            int
 	Size            int

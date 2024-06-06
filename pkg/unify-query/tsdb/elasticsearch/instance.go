@@ -325,7 +325,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	filterQueries := make([]elastic.Query, 0)
 
-	query, err := fact.Query(qb.QueryString, qb.AllConditions)
+	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
 		return nil, err
 	}

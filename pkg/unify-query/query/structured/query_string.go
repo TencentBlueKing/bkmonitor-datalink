@@ -7,25 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package elasticsearch
+package structured
 
 import (
-	"encoding/json"
 	"fmt"
 
 	parser "github.com/bytedance/go-querystring-parser"
 )
-
-type Field struct {
-	Key      string
-	Value    string
-	Operator string
-}
-
-type Conditions struct {
-	FieldList     []Field
-	ConditionList []string
-}
 
 type QueryString struct {
 	q string
@@ -38,13 +26,13 @@ func NewQueryString(q string) *QueryString {
 	return &QueryString{
 		q: q,
 		Conditions: Conditions{
-			FieldList:     make([]Field, 0),
+			FieldList:     make([]ConditionField, 0),
 			ConditionList: make([]string, 0),
 		},
 	}
 }
 
-func (s *QueryString) ToDsl() error {
+func (s *QueryString) Parser() error {
 	if s.q == "" {
 		return nil
 	}
@@ -54,72 +42,63 @@ func (s *QueryString) ToDsl() error {
 	}
 
 	s.Walk(ast)
-
-	cs, err := json.Marshal(s.Conditions)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(string(cs))
-
 	return nil
 }
 
 func (s *QueryString) Walk(conditions ...parser.Condition) {
-
 	for _, condition := range conditions {
 		switch c := condition.(type) {
 		case *parser.OrCondition:
 			s.Walk(c.Left, c.Right)
 			s.Conditions.ConditionList = append(
 				s.Conditions.ConditionList,
-				"or",
+				ConditionOr,
 			)
 		case *parser.AndCondition:
 			s.Walk(c.Left, c.Right)
 			s.Conditions.ConditionList = append(
 				s.Conditions.ConditionList,
-				"and",
+				ConditionAnd,
 			)
 		case *parser.MatchCondition:
-			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
-				Key:      c.Field,
-				Value:    c.Value,
-				Operator: "eq",
+			s.Conditions.FieldList = append(s.Conditions.FieldList, ConditionField{
+				DimensionName: c.Field,
+				Value:         []string{c.Value},
+				Operator:      ConditionEqual,
 			})
 		case *parser.NumberRangeCondition:
 			var operator string
 			if c.IncludeStart {
-				operator = "gte"
+				operator = ConditionGte
 			} else {
-				operator = "gt"
+				operator = ConditionGt
 			}
-			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
-				Key:      c.Field,
-				Value:    *c.Start,
-				Operator: operator,
+			s.Conditions.FieldList = append(s.Conditions.FieldList, ConditionField{
+				DimensionName: c.Field,
+				Value:         []string{*c.Start},
+				Operator:      operator,
 			})
 
 			if c.IncludeStart {
-				operator = "lte"
+				operator = ConditionLte
 			} else {
-				operator = "lt"
+				operator = ConditionLt
 			}
-			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
-				Key:      c.Field,
-				Value:    *c.End,
-				Operator: operator,
+			s.Conditions.FieldList = append(s.Conditions.FieldList, ConditionField{
+				DimensionName: c.Field,
+				Value:         []string{*c.End},
+				Operator:      operator,
 			})
 
 			s.Conditions.ConditionList = append(
 				s.Conditions.ConditionList,
-				"and",
+				ConditionAnd,
 			)
 		case *parser.WildcardCondition:
-			s.Conditions.FieldList = append(s.Conditions.FieldList, Field{
-				Key:      c.Field,
-				Value:    c.Value,
-				Operator: "reg",
+			s.Conditions.FieldList = append(s.Conditions.FieldList, ConditionField{
+				DimensionName: c.Field,
+				Value:         []string{c.Value},
+				Operator:      ConditionEqual,
 			})
 		default:
 			panic(fmt.Sprintf("type is wrong %T", c))

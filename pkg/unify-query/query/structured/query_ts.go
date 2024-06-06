@@ -393,11 +393,23 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
+	// 支持 queryString 参数
+	qs := NewQueryString(q.QueryString)
+	err = qs.Parser()
+	if err != nil {
+		return nil, err
+	}
+	qsConditions, err := qs.Conditions.AnalysisConditions()
+	if err != nil {
+		return nil, err
+	}
+
 	queryConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
 	}
 
+	allConditions := MergeConditionField(queryConditions, qsConditions)
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
@@ -409,7 +421,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
-		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
+		query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
 		query.Size = q.Limit
 		query.From = q.From
 
@@ -676,7 +688,6 @@ func (q *Query) BuildMetadataQuery(
 		}
 		query.AllConditions[i] = conds
 	}
-	query.QueryString = q.QueryString
 	if q.TimeAggregation.Window != "" {
 		windowDuration, err := q.TimeAggregation.Window.ToTime()
 		if err != nil {

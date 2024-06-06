@@ -170,7 +170,7 @@ func (f *SqlFactory) String() string {
 		if !asc {
 			ascName = "DESC"
 		}
-		orders = append(orders, fmt.Sprintf("%s %s", orderField, ascName))
+		orders = append(orders, fmt.Sprintf("`%s` %s", orderField, ascName))
 	}
 	if len(orders) > 0 {
 		f.write("ORDER BY")

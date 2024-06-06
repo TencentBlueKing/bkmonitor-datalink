@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package elasticsearch
+package structured
 
 import (
 	"context"
@@ -54,10 +54,11 @@ func TestQsToDsl(t *testing.T) {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
 			qs := NewQueryString(c.q)
-			err := qs.ToDsl()
+			err := qs.Parser()
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 			}
+			fmt.Printf("%+v", qs.Conditions)
 		})
 	}
 }

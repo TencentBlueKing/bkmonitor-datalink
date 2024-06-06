@@ -828,3 +828,31 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeOffset(t *testing.T) {
+	for name, c := range map[string]struct {
+		t    int64
+		tz   string
+		step time.Duration
+	}{
+		"test align": {
+			t:    1701306000, // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
+			tz:   "Asia/Shanghai",
+			step: time.Hour * 3,
+		},
+		"test align -1": {
+			t:    1703732400, // 2023-11-30 09:00:00 +0800 ~ 2024-05-30 09:00:00 +0800
+			tz:   "Asia/Shanghai",
+			step: time.Hour * 3,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mt := time.Unix(c.t, 0)
+			tz1, t1, err := timeOffset(mt, c.tz, c.step)
+
+			assert.Nil(t, err)
+			fmt.Println(c.tz, "=>", tz1)
+			fmt.Println(mt.String(), "=>", t1.String())
+		})
+	}
+}

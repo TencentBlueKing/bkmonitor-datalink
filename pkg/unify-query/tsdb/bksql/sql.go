@@ -30,6 +30,9 @@ const (
 
 	timeStamp = "_timestamp_"
 	value     = "_value_"
+
+	FieldValue = "_value"
+	FieldTime  = "_time"
 )
 
 type SqlFactory struct {
@@ -43,18 +46,28 @@ type SqlFactory struct {
 
 	selects []string
 	groups  []string
+
+	sql strings.Builder
 }
 
-func NewSqlFactory(ctx context.Context, query *metadata.Query, start, end time.Time, step time.Duration) *SqlFactory {
+func NewSqlFactory(ctx context.Context, query *metadata.Query) *SqlFactory {
 	f := &SqlFactory{
 		ctx:     ctx,
 		query:   query,
-		start:   start,
-		end:     end,
-		step:    step,
 		selects: make([]string, 0),
 		groups:  make([]string, 0),
 	}
+	return f
+}
+
+func (f *SqlFactory) write(s string) {
+	f.sql.WriteString(s + " ")
+}
+
+func (f *SqlFactory) WithRangeTime(start, end time.Time, step time.Duration) *SqlFactory {
+	f.start = start
+	f.end = end
+	f.step = step
 	return f
 }
 
@@ -118,16 +131,51 @@ func (f *SqlFactory) ParserQuery() (err error) {
 }
 
 func (f *SqlFactory) String() string {
-	where := fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, f.start.UnixMilli(), dtEventTimeStamp, f.end.UnixMilli())
-	// 拼接过滤条件
+	f.sql.Reset()
+
+	f.write("SELECT")
+	f.write(strings.Join(f.selects, ", "))
+	f.write("FROM")
+	f.write(f.query.DB)
+	f.write("WHERE")
+	f.write(fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, f.start.UnixMilli(), dtEventTimeStamp, f.end.UnixMilli()))
 	if f.query.BkSqlCondition != "" {
-		where = fmt.Sprintf("%s AND (%s)", where, f.query.BkSqlCondition)
+		f.write("AND")
+		f.write(f.query.BkSqlCondition)
+	}
+	if len(f.groups) > 0 {
+		f.write("GROUP BY")
+		f.write(strings.Join(f.groups, ", "))
+	}
+	if f.query.From > 0 {
+		f.write("OFFSET")
+		f.write(fmt.Sprintf("%d", f.query.From))
+	}
+	if f.query.Size > 0 {
+		f.write("LIMIT")
+		f.write(fmt.Sprintf("%d", f.query.Size))
+	}
+	orders := make([]string, 0)
+	for key, asc := range f.query.Orders {
+		var orderField string
+		switch key {
+		case FieldValue:
+			orderField = f.query.Field
+		case FieldTime:
+			orderField = timeStamp
+		default:
+			orderField = key
+		}
+		ascName := "ASC"
+		if !asc {
+			ascName = "DESC"
+		}
+		orders = append(orders, fmt.Sprintf("%s %s", orderField, ascName))
+	}
+	if len(orders) > 0 {
+		f.write("ORDER BY")
+		f.write(strings.Join(orders, ", "))
 	}
 
-	table := fmt.Sprintf("%s.%s", f.query.DB, f.query.Measurement)
-	sql := fmt.Sprintf("SELECT %s FROM %s WHERE %s", strings.Join(f.selects, ", "), table, where)
-	if len(f.groups) > 0 {
-		sql = fmt.Sprintf("%s GROUP BY %s", sql, strings.Join(f.groups, ", "))
-	}
-	return sql
+	return strings.Trim(f.sql.String(), " ")
 }

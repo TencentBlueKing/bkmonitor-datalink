@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/storage"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -30,8 +31,8 @@ func TestNewSqlFactory(t *testing.T) {
 	}{
 		"sum-count_over_time-with-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p",
-				Measurement: "doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
+				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
 				Field:       "gseIndex",
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
@@ -49,15 +50,15 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				From:        0,
 				Size:        0,
-				Orders:      nil,
+				Orders:      metadata.Orders{"_time": true},
 				IsNotPromQL: false,
 			},
 			expected: "SELECT MAX((`dtEventTimeStamp`- (`dtEventTimeStamp` % 60000))) AS `_timestamp_`, count(`gseIndex`) AS `_value_`, `ip` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND (gseIndex > 0) GROUP BY (`dtEventTimeStamp`- (`dtEventTimeStamp` % 60000)), `ip`",
 		},
 		"sum-with-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p",
-				Measurement: "doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
+				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
 				Field:       "gseIndex",
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
@@ -69,20 +70,20 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				BkSqlCondition: "gseIndex > 0",
 				From:           0,
-				Size:           0,
+				Size:           10,
 				Orders:         nil,
 				IsNotPromQL:    false,
 			},
-			expected: "SELECT * FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND (gseIndex > 0) LIMIT 200005",
+			expected: "SELECT * FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND gseIndex > 0 LIMIT 10",
 		},
 		"count-without-promql-1": {
 			query: &metadata.Query{
-				DB:          "100133_ieod_logsearch4_errorlog_p",
-				Measurement: "doris",
+				DB:          "100133_ieod_logsearch4_errorlog_p.doris",
+				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
 				Field:       "gseIndex",
 				AggregateMethodList: metadata.AggregateMethodList{
 					{
-						Name: "count",
+						Name: "sum",
 						Dimensions: []string{
 							"ip",
 						},
@@ -96,15 +97,29 @@ func TestNewSqlFactory(t *testing.T) {
 				},
 				IsNotPromQL: true,
 			},
-			expected: "SELECT count(`gseIndex`) AS `_value_`, `ip` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND (gseIndex > 0) GROUP BY `ip`",
+			expected: "SELECT count(`gseIndex`) AS `_value_`, `ip` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1717144141000 AND dtEventTimeStamp < 1717147741000 AND gseIndex > 0 GROUP BY `ip`",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			fact := NewSqlFactory(ctx, c.query, start, end, step)
+			fact := NewSqlFactory(ctx, c.query).WithRangeTime(start, end, step)
 			err := fact.ParserQuery()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, fact.String())
+
+			inst := &Instance{}
+			hints := &storage.SelectHints{
+				Start:           start.UnixMilli(),
+				End:             end.UnixMilli(),
+				Step:            step.Milliseconds(),
+				Func:            "count_over_time",
+				Grouping:        nil,
+				By:              false,
+				Range:           time.Minute.Milliseconds(),
+				DisableTrimming: false,
+			}
+			oldSql, _ := inst.bkSql(ctx, c.query, hints)
+			assert.Equal(t, fact.String(), oldSql)
 		})
 	}
 }

@@ -19,7 +19,6 @@ import (
 
 	"github.com/olivere/elastic/v7"
 	"github.com/prometheus/prometheus/prompb"
-	mapping "github.com/zhuliquan/es-mapping"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -58,6 +57,14 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+)
+
+const (
+	KeyWord = "keyword"
+	Text    = "text"
+	Integer = "integer"
+	Long    = "long"
+	Date    = "date"
 )
 
 var (
@@ -142,9 +149,8 @@ type FormatFactory struct {
 	toEs   func(k string) string
 	toProm func(k string) string
 
-	propertyMapping *mapping.PropertyMapping
-	mapping         map[string]string
-	data            map[string]any
+	mapping map[string]string
+	data    map[string]any
 
 	aggInfoList aggInfoList
 	orders      metadata.Orders
@@ -510,23 +516,43 @@ func (f *FormatFactory) Order() map[string]bool {
 
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(queryString string, allConditions metadata.AllConditions) (elastic.Query, error) {
-	boolQuery := elastic.NewBoolQuery()
+	bootQueries := make([]elastic.Query, 0)
 	if queryString != "" {
 		qs := elastic.NewQueryStringQuery(queryString)
-		boolQuery = boolQuery.Must(qs)
+		bootQueries = append(bootQueries, qs)
 	}
 
+	orQuery := make([]elastic.Query, 0, len(allConditions))
 	for _, conditions := range allConditions {
-		andQuery := elastic.NewBoolQuery()
+		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
 			q := elastic.NewBoolQuery()
 			key := f.toEs(con.DimensionName)
 
+			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
+			fieldType, ok := f.mapping[key]
+			isExistsQuery := true
+			if ok {
+				if fieldType == Text || fieldType == KeyWord {
+					isExistsQuery = false
+				}
+			}
+
 			queries := make([]elastic.Query, 0)
 			for _, value := range con.Value {
 				var query elastic.Query
-				if value == "" {
+				// 如果是字符串类型，则需要使用 match_phrase 进行非空判断
+				if value == "" && isExistsQuery {
 					query = elastic.NewExistsQuery(key)
+					switch con.Operator {
+					case structured.ConditionEqual, structured.Contains:
+						q.MustNot(query)
+					case structured.ConditionNotEqual, structured.Ncontains:
+						q.Must(query)
+					default:
+						return nil, fmt.Errorf("operator is not support with empty, %+v", con)
+					}
+					continue
 				} else {
 					// 非空才进行验证
 					switch con.Operator {
@@ -564,12 +590,13 @@ func (f *FormatFactory) Query(queryString string, allConditions metadata.AllCond
 				return nil, fmt.Errorf("operator is not support, %+v", con)
 			}
 
-			andQuery.Must(q)
+			andQuery = append(andQuery, q)
 		}
-		boolQuery.Should(andQuery)
+		orQuery = append(orQuery, andQuery...)
 	}
+	bootQueries = append(bootQueries, elastic.NewBoolQuery().Should(orQuery...))
 
-	return boolQuery, nil
+	return elastic.NewBoolQuery().Must(bootQueries...), nil
 }
 
 func (f *FormatFactory) Sample() (prompb.Sample, error) {

@@ -18,39 +18,41 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	configDryRunPath                = "operator.dry_run"
-	confAPIServerHostPath           = "operator.apiserver_host"
-	confKubeConfigPath              = "operator.kube_config"
-	confTLSInsecurePath             = "operator.tls.tls_insecure"
-	confTLSCertFilePath             = "operator.tls.tls_cert_file"
-	confTLSKeyFilePath              = "operator.tls.tls_key_file"
-	confTLSCAFilePath               = "operator.tls.tls_ca_file"
-	confMonitorNamespacePath        = "operator.monitor_namespace"
-	confDenyTargetNamespacesPath    = "operator.deny_target_namespaces"
-	confTargetNamespacesPath        = "operator.target_namespaces"
-	confTargetLabelSelectorPath     = "operator.target_label_selector"
-	confEnableServiceMonitorPath    = "operator.enable_service_monitor"
-	confEnablePodMonitorPath        = "operator.enable_pod_monitor"
-	confEnableProbePath             = "operator.enable_probe" // TODO(mando): 待支持
-	confEnablePromRulePath          = "operator.enable_prometheus_rule"
-	confEnableStatefulSetWorkerPath = "operator.enable_statefulset_worker"
-	confEnableDaemonSetWorkerPath   = "operator.enable_daemonset_worker"
-	confDisableMetricsPusherPath    = "operator.disable_metrics_pusher"
-	confKubeletNamespacePath        = "operator.kubelet.namespace"
-	confKubeletNamePath             = "operator.kubelet.name"
-	confKubeletEnablePath           = "operator.kubelet.enable"
-	confMaxNodeSecretRatioPath      = "operator.node_secret_ratio"
-	confStatefulSetWorkerHpaPath    = "operator.statefulset_worker_hpa"
-	confStatefulSetWorkerFactorPath = "operator.statefulset_worker_factor"
-	confStatefulSetReplicasPath     = "operator.statefulset_replicas"
-	confStatefulSetMaxReplicasPath  = "operator.statefulset_max_replicas"
-	confStatefulSetMatchRulesPath   = "operator.statefulset_match_rules"
-	confStatefulSetDispatchType     = "operator.statefulset_dispatch_type"
-	confMonitorBlacklistMatchRules  = "operator.monitor_blacklist_match_rules"
+	configDryRunPath                   = "operator.dry_run"
+	confAPIServerHostPath              = "operator.apiserver_host"
+	confKubeConfigPath                 = "operator.kube_config"
+	confTLSInsecurePath                = "operator.tls.tls_insecure"
+	confTLSCertFilePath                = "operator.tls.tls_cert_file"
+	confTLSKeyFilePath                 = "operator.tls.tls_key_file"
+	confTLSCAFilePath                  = "operator.tls.tls_ca_file"
+	confMonitorNamespacePath           = "operator.monitor_namespace"
+	confDenyTargetNamespacesPath       = "operator.deny_target_namespaces"
+	confTargetNamespacesPath           = "operator.target_namespaces"
+	confTargetLabelSelectorPath        = "operator.target_label_selector"
+	confEnableServiceMonitorPath       = "operator.enable_service_monitor"
+	confEnablePodMonitorPath           = "operator.enable_pod_monitor"
+	confEnableProbePath                = "operator.enable_probe" // TODO(mando): 待支持
+	confEnablePromRulePath             = "operator.enable_prometheus_rule"
+	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
+	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
+	confDisableMetricsPusherPath       = "operator.disable_metrics_pusher"
+	confKubeletNamespacePath           = "operator.kubelet.namespace"
+	confKubeletNamePath                = "operator.kubelet.name"
+	confKubeletEnablePath              = "operator.kubelet.enable"
+	confMaxNodeSecretRatioPath         = "operator.node_secret_ratio"
+	confStatefulSetWorkerHpaPath       = "operator.statefulset_worker_hpa"
+	confStatefulSetWorkerFactorPath    = "operator.statefulset_worker_factor"
+	confStatefulSetReplicasPath        = "operator.statefulset_replicas"
+	confStatefulSetMaxReplicasPath     = "operator.statefulset_max_replicas"
+	confStatefulSetMatchRulesPath      = "operator.statefulset_match_rules"
+	confStatefulSetDispatchTypePath    = "operator.statefulset_dispatch_type"
+	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
+	confHttpPortPath                   = "operator.http.port"
 )
 
 const (
@@ -108,6 +110,7 @@ var (
 	ConfStatefulSetMatchRules      []StatefulSetMatchRule
 	ConfStatefulSetDispatchType    string
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
+	ConfHttpPort                   int
 )
 
 // IfRejectServiceMonitor 判断是否拒绝 serviceMonitor
@@ -157,7 +160,11 @@ func initConfig() {
 	viper.SetDefault(confStatefulSetWorkerFactorPath, defaultStatefulSetWorkerFactor)
 	viper.SetDefault(confStatefulSetReplicasPath, 1)
 	viper.SetDefault(confStatefulSetMaxReplicasPath, 10)
-	viper.SetDefault(confStatefulSetDispatchType, dispatchTypeHash)
+	viper.SetDefault(confStatefulSetDispatchTypePath, dispatchTypeHash)
+
+	// 同步端口给到 target
+	viper.SetDefault(confHttpPortPath, 8080)
+	target.ConfServicePort = 8080
 }
 
 func updateConfig() {
@@ -189,7 +196,10 @@ func updateConfig() {
 	ConfStatefulSetWorkerFactor = viper.GetInt(confStatefulSetWorkerFactorPath)
 	ConfStatefulSetReplicas = viper.GetInt(confStatefulSetReplicasPath)
 	ConfStatefulSetMaxReplicas = viper.GetInt(confStatefulSetMaxReplicasPath)
-	ConfStatefulSetDispatchType = viper.GetString(confStatefulSetDispatchType)
+	ConfStatefulSetDispatchType = viper.GetString(confStatefulSetDispatchTypePath)
+
+	ConfHttpPort = viper.GetInt(confHttpPortPath)
+	target.ConfServicePort = ConfHttpPort
 
 	// reload 时状态需要置空
 	if viper.IsSet(confStatefulSetMatchRulesPath) {
@@ -200,8 +210,8 @@ func updateConfig() {
 		ConfStatefulSetMatchRules = []StatefulSetMatchRule{}
 	}
 
-	if viper.IsSet(confMonitorBlacklistMatchRules) {
-		if err := viper.UnmarshalKey(confMonitorBlacklistMatchRules, &ConfMonitorBlacklistMatchRules); err != nil {
+	if viper.IsSet(confMonitorBlacklistMatchRulesPath) {
+		if err := viper.UnmarshalKey(confMonitorBlacklistMatchRulesPath, &ConfMonitorBlacklistMatchRules); err != nil {
 			logger.Errorf("failed to unmarshal ConfMonitorBlacklistMatchRules, err: %v", err)
 		}
 	} else {

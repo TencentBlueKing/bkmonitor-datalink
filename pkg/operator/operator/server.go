@@ -427,8 +427,11 @@ func (c *Operator) AdminReloadRoute(w http.ResponseWriter, r *http.Request) {
 	case <-timer.C:
 		w.Write([]byte(`{"status": "failed"}`))
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+
 	case beat.ReloadChan <- true:
 		w.Write([]byte(`{"status": "success"}`))
+		return
 	}
 }
 
@@ -568,7 +571,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	router.HandleFunc("/debug/pprof/{other}", pprof.Index)
 
-	addr := ":8080"
+	addr := fmt.Sprintf(":%d", ConfHttpPort)
 	c.srv = &http.Server{
 		Handler:      router,
 		Addr:         addr,

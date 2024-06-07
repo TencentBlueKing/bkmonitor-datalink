@@ -10,6 +10,7 @@
 package apiservice
 
 import (
+	"reflect"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var Bkdata BkdataService
@@ -408,20 +410,24 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 	if err := resp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
 	}
+	logger.Errorf("query bkdata resp %v", resp.Data)
 	// parse metrics
 	metrics := make(map[string]float64)
 	for _, data := range resp.Data {
 		metricInfo, ok := data.([]interface{})
 		if !ok {
+			logger.Errorf("query metrics data error, metric_info: %v", metricInfo)
 			continue
 		}
 		metric, ok := metricInfo[0].(string)
 		if !ok {
+			logger.Errorf("query metrics data error, metric: %v, type: %v", metric, reflect.TypeOf(metric))
 			continue
 		}
 		// NOTE: 如果时间戳不符合预期，则忽略该指标
 		timestamp, ok := metricInfo[1].(float64)
 		if !ok {
+			logger.Errorf("query metrics data error, timestamp: %v, type: %v", timestamp, reflect.TypeOf(metric))
 			continue
 		}
 		metrics[metric] = timestamp

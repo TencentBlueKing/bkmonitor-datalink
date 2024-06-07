@@ -100,6 +100,11 @@ const (
 	EsSourceTypeES     = "es"
 )
 
+// DefaultMeasurement Default measurement
+const (
+	DefaultMeasurement = "__default__"
+)
+
 // Influxdb Redis Keys
 const (
 	InfluxdbKeyPrefix             = "bkmonitorv3:influxdb" // 前缀

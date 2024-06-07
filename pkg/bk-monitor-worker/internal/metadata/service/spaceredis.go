@@ -199,6 +199,8 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		}
 	} else {
 		tableIds, err := s.refineTableIds(tableIdList)
+		tableEsIds, err := s.refineEsTableIds(tableIdList)
+		tableIds = append(tableIds, tableEsIds...)
 		if err != nil {
 			return err
 		}
@@ -333,14 +335,25 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 		}
 	}
 
-	// TODO 追加es标签表
+	var tableIds []string
+	for _, i := range influxdbStorageList {
+		tableIds = append(tableIds, i.TableID)
+	}
+	for _, i := range vmRecordList {
+		tableIds = append(tableIds, i.ResultTableId)
+	}
+	tableIds = slicex.RemoveDuplicate(&tableIds)
+	return tableIds, nil
+}
+
+func (s SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 	// 过滤写入 es 的结果表
+	db := mysql.GetDBSession().DB
 	var esStorageList []storage.ESStorage
 	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
 	if len(tableIdList) != 0 {
 		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
 			var tempList []storage.ESStorage
-
 			qsTemp := qs3.TableIDIn(chunkTableIdList...)
 			if err := qsTemp.All(&tempList); err != nil {
 				return nil, err
@@ -354,12 +367,6 @@ func (s SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 	}
 
 	var tableIds []string
-	for _, i := range influxdbStorageList {
-		tableIds = append(tableIds, i.TableID)
-	}
-	for _, i := range vmRecordList {
-		tableIds = append(tableIds, i.ResultTableId)
-	}
 	for _, i := range esStorageList {
 		tableIds = append(tableIds, i.TableID)
 	}
@@ -451,7 +458,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		}
 	}
 
-	// TODO 追加es结果详情表
+	// 追加es结果表详细信息
 	if err = s.PushEsTableIdDetail(tableIdList, isPublish); err != nil {
 		return err
 	}
@@ -517,17 +524,9 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 }
 
 func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
-	splitList := stringx.SplitStringByDot(tableId)
-	// 拆分后长度应该为2， 如果小于2，则补充结果表默认后缀
-	db, measurement := splitList[0], models.TSGroupDefaultMeasurement
-	if len(splitList) == 2 {
-		db, measurement = splitList[0], splitList[1]
-	} else {
-		tableId = strings.Join([]string{db, measurement}, ".")
-	}
-
 	var indexList []string
 	var processedList []string
+	tableIdDb := indexSet
 	if sourceType == models.EsSourceTypeLOG {
 		if indexSet != "" {
 			indexList = strings.Split(indexSet, ",")
@@ -539,7 +538,7 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 			finalString := fmt.Sprintf("%s_*_read", processedIndex)
 			processedList = append(processedList, finalString)
 		}
-		db = strings.Join(processedList, ",")
+		tableIdDb = strings.Join(processedList, ",")
 	} else if sourceType == models.EsSourceTypeBKDATA {
 		if indexSet != "" {
 			indexList = strings.Split(indexSet, ",")
@@ -548,13 +547,15 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 			finalString := fmt.Sprintf("%s_*", index)
 			processedList = append(processedList, finalString)
 		}
-		db = strings.Join(processedList, ",")
+		tableIdDb = strings.Join(processedList, ",")
+	} else if sourceType != models.EsSourceTypeES {
+		return tableId, "", errors.Errorf("Source_type [%s] is not a log,bkdata,es of which type", sourceType)
 	}
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_id":  storageClusterId,
-		"db":          db,
-		"measurement": measurement,
+		"db":          tableIdDb,
+		"measurement": models.DefaultMeasurement,
 	})
 	return tableId, detailStr, err
 }
@@ -962,7 +963,7 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 	}
 	logger.Infof("start to push bkcc space table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
 	values, err := s.composeData(spaceType, spaceId, nil, nil, options)
-	// TODO 追加es空间路由表
+	// 追加es空间路由表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	for tid, value := range esValues {
 		values[tid] = value
@@ -1006,7 +1007,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 	for tid, value := range bkciCrossValues {
 		values[tid] = value
 	}
-	// TODO 追加es空间路由表
+	// 追加es空间路由表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	for tid, value := range esValues {
 		values[tid] = value
@@ -1046,7 +1047,7 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 	for tid, value := range bksaasOtherValues {
 		values[tid] = value
 	}
-	// TODO 追加es空间路由表
+	// 追加es空间路由表
 	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
 	for tid, value := range esValues {
 		values[tid] = value

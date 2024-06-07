@@ -14,6 +14,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/inte
 // CommonBkdataRespMeta for bkdata api, code为字符串类型
 type CommonBkdataRespMeta struct {
 	define.ApiCommonRespMeta
+	Code   string      `json:"code"`
 	Errors interface{} `json:"errors"`
 }
 

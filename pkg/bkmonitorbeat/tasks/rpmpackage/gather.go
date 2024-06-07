@@ -11,6 +11,7 @@ package rpmpackage
 
 import (
 	"context"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -45,6 +46,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		if pkg == "" {
 			continue
 		}
+		time.Sleep(time.Millisecond * 20) // 打散 CPU
 		verify, err := RpmVerify(ctx, pkg)
 		if err != nil {
 			logger.Errorf("failed to verfiy rpm package '%s', err: %v", pkg, err)

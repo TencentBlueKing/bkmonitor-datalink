@@ -9,7 +9,9 @@
 
 package configs
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+)
 
 type RpmPackageConfig struct {
 	BaseTaskParam `config:"_,inline"`

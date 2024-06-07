@@ -62,16 +62,27 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup, goroutineLimit int
 	}
 }
 
-// UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
-func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
+// UpdateMetricsByBkData refresh metrics from bkdata
+func (s *TimeSeriesGroupSvc) UpdateMetricsByBkData() (bool, error) {
 	// 获取 vm rt及metric
 	vmMetrics, err := s.QueryMetricAndDimension()
-	if err == nil {
-		s.UpdateMetrics(*vmMetrics)
-		metricStr, _ := jsonx.MarshalString(*vmMetrics)
-		logger.Infof("bkdata metrics %s", metricStr)
+	if err != nil {
+		return false, err
 	}
+	return s.UpdateMetrics(*vmMetrics)
+}
 
+// UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
+func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(wlTableIdList []string) (bool, error) {
+	// 如果在白名单中，则通过计算平台获取指标数据
+	if slicex.IsExistItem(wlTableIdList, s.TableID) {
+		// 获取 vm rt及metric
+		vmMetrics, err := s.QueryMetricAndDimension()
+		if err != nil {
+			return false, err
+		}
+		return s.UpdateMetrics(*vmMetrics)
+	}
 	// 获取 redis 中数据，用于后续指标及tag的更新
 	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
 	if err != nil {

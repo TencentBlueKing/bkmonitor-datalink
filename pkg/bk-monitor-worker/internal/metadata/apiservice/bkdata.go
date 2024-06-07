@@ -10,7 +10,6 @@
 package apiservice
 
 import (
-	"reflect"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -410,7 +409,6 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 	if err := resp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
 	}
-	logger.Errorf("query bkdata resp %v", resp.Data)
 	// parse metrics
 	metrics := make(map[string]float64)
 	for _, data := range resp.Data {
@@ -421,13 +419,13 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 		}
 		metric, ok := metricInfo[0].(string)
 		if !ok {
-			logger.Errorf("parse metrics data error, metric: %v, type: %v", metric, reflect.TypeOf(metric))
+			logger.Errorf("parse metrics data error, metric: %v", metric)
 			continue
 		}
 		// NOTE: 如果时间戳不符合预期，则忽略该指标
 		timestamp, ok := metricInfo[1].(float64)
 		if !ok {
-			logger.Errorf("parse metrics data error, timestamp: %v, type: %v", timestamp, reflect.TypeOf(metric))
+			logger.Errorf("parse metrics data error, timestamp: %v", timestamp)
 			continue
 		}
 		metrics[metric] = timestamp
@@ -446,7 +444,6 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 	if _, err = bkdataApi.QueryDimension().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
 	}
-	logger.Errorf("query bkdata resp %v", resp)
 	if err := resp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
 	}
@@ -455,10 +452,12 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 	for _, data := range resp.Data {
 		dimensionInfo, ok := data.([]interface{})
 		if !ok {
+			logger.Errorf("parse dimension data error, dimension_info: %v", dimensionInfo)
 			continue
 		}
 		dimension, ok := dimensionInfo[0].(string)
 		if !ok {
+			logger.Errorf("parse dimension data error, dimension: %v", dimension)
 			continue
 		}
 		dimensions = append(dimensions, dimension)

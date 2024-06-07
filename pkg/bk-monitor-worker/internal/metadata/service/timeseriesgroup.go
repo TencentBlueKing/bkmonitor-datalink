@@ -97,7 +97,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension() (vmRtMetrics *[]map[strin
 	metrics, err := apiservice.Bkdata.QueryMetrics(vmStorageType, vmRt)
 	logger.Infof("metrics from bkdata error: %v", metrics)
 	// 过滤维度数据
-	if err != nil && len(*metrics) == 0 {
+	if err != nil || metrics == nil {
 		return nil, errors.Wrapf(err, "query metric error, vmRt: %s", vmRt)
 	}
 

@@ -11,6 +11,7 @@ package socketsanpshot
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -20,7 +21,8 @@ import (
 )
 
 type Gather struct {
-	config *configs.SocketSnapshotConfig
+	running atomic.Bool
+	config  *configs.SocketSnapshotConfig
 	tasks.BaseTask
 }
 
@@ -35,6 +37,14 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	if g.running.Load() {
+		logger.Info("SocketSnapshot task has running, will skip")
+		return
+	}
+
+	g.running.Store(true)
+	defer g.running.Store(false)
+
 	procs, err := procsnapshot.AllProcsMetaWithCache(g.config.Period)
 	if err != nil {
 		logger.Errorf("faile to get all procs meta: %v", err)

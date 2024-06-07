@@ -12,6 +12,7 @@ package shellhistory
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -21,7 +22,8 @@ import (
 )
 
 type Gather struct {
-	config *configs.ShellHistoryConfig
+	running atomic.Bool
+	config  *configs.ShellHistoryConfig
 	tasks.BaseTask
 }
 
@@ -36,6 +38,14 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	if g.running.Load() {
+		logger.Info("ShellHistory task has running, will skip")
+		return
+	}
+
+	g.running.Store(true)
+	defer g.running.Store(false)
+
 	entities, err := parse()
 	if err != nil {
 		logger.Errorf("failed to parse paaswd details, err: %v", err)

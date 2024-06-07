@@ -11,6 +11,7 @@ package rpmpackage
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -20,7 +21,8 @@ import (
 )
 
 type Gather struct {
-	config *configs.RpmPackageConfig
+	running atomic.Bool
+	config  *configs.RpmPackageConfig
 	tasks.BaseTask
 }
 
@@ -35,6 +37,14 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	if g.running.Load() {
+		logger.Info("RpmPackage task has running, will skip")
+		return
+	}
+
+	g.running.Store(true)
+	defer g.running.Store(false)
+
 	var items []PackageInfo
 	pkgs, err := RpmList(ctx)
 	if err != nil {

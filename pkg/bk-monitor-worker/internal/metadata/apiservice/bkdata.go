@@ -404,7 +404,7 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 	}
 
 	var resp bkdata.CommonListResp
-	if _, err = bkdataApi.QueryMetrics().SetPathParams(map[string]string{"storage": storage, "result_table_id": rt}).SetResult(&resp).Request(); err != nil {
+	if _, err = bkdataApi.QueryMetrics().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
 	}
 	if err := resp.Err(); err != nil {
@@ -416,18 +416,18 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 	for _, data := range resp.Data {
 		metricInfo, ok := data.([]interface{})
 		if !ok {
-			logger.Errorf("query metrics data error, metric_info: %v", metricInfo)
+			logger.Errorf("parse metrics data error, metric_info: %v", metricInfo)
 			continue
 		}
 		metric, ok := metricInfo[0].(string)
 		if !ok {
-			logger.Errorf("query metrics data error, metric: %v, type: %v", metric, reflect.TypeOf(metric))
+			logger.Errorf("parse metrics data error, metric: %v, type: %v", metric, reflect.TypeOf(metric))
 			continue
 		}
 		// NOTE: 如果时间戳不符合预期，则忽略该指标
 		timestamp, ok := metricInfo[1].(float64)
 		if !ok {
-			logger.Errorf("query metrics data error, timestamp: %v, type: %v", timestamp, reflect.TypeOf(metric))
+			logger.Errorf("parse metrics data error, timestamp: %v, type: %v", timestamp, reflect.TypeOf(metric))
 			continue
 		}
 		metrics[metric] = timestamp
@@ -443,9 +443,10 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 	}
 
 	var resp bkdata.CommonListResp
-	if _, err = bkdataApi.QueryDimension().SetPathParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
+	if _, err = bkdataApi.QueryDimension().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
 	}
+	logger.Errorf("query bkdata resp %v", resp)
 	if err := resp.Err(); err != nil {
 		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
 	}

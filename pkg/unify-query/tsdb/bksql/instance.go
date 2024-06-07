@@ -69,7 +69,7 @@ func (i *Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i *Instance) query(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
+func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
@@ -336,34 +336,30 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stor
 	}
 
 	// 判断是否需要提前聚合
-	if query.IsNotPromQL {
-
-	} else {
-		newFuncName, window, dims := query.GetDownSampleFunc(hints)
-		if newFuncName != "" {
-			isCount = newFuncName == metadata.COUNT
-			// 兼容函数
-			if newFuncName == metadata.MEAN {
-				newFuncName = metadata.AVG
-			}
-
-			// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
-			groupList = make([]string, 0, len(dims)+1)
-			for _, dim := range dims {
-				dim = fmt.Sprintf("`%s`", dim)
-				groupList = append(groupList, dim)
-			}
-
-			timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
-			groupList = append(groupList, timeField)
-
-			aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
-			if len(dims) > 0 {
-				aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
-			}
-		} else {
-			aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
+	newFuncName, window, dims := query.GetDownSampleFunc(hints)
+	if newFuncName != "" {
+		isCount = newFuncName == metadata.COUNT
+		// 兼容函数
+		if newFuncName == metadata.MEAN {
+			newFuncName = metadata.AVG
 		}
+
+		// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
+		groupList = make([]string, 0, len(dims)+1)
+		for _, dim := range dims {
+			dim = fmt.Sprintf("`%s`", dim)
+			groupList = append(groupList, dim)
+		}
+
+		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
+		groupList = append(groupList, timeField)
+
+		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
+		if len(dims) > 0 {
+			aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
+		}
+	} else {
+		aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
 	}
 
 	where = fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, hints.Start, dtEventTimeStamp, hints.End)
@@ -384,6 +380,53 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, hints *stor
 	return sql, isCount
 }
 
+func (i *Instance) query(
+	ctx context.Context,
+	query *metadata.Query,
+	start time.Time,
+	end time.Time,
+	step time.Duration,
+) (*prompb.QueryResult, error) {
+	var (
+		err error
+	)
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query")
+	defer span.End(&err)
+
+	if i.Client == nil {
+		return nil, fmt.Errorf("es client is nil")
+	}
+
+	if i.Limit > 0 {
+		maxLimit := i.Limit + i.Tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.Limit {
+			query.Size = maxLimit
+		}
+	}
+
+	fact := NewQueryFactory(ctx, query).WithRangeTime(start, end, step)
+	err = fact.ParserQuery()
+	if err != nil {
+		return nil, fmt.Errorf("sql parser error: %v", err)
+	}
+
+	data, err := i.sqlQuery(ctx, fact.SQL(), span)
+	if err != nil {
+		return nil, err
+	}
+
+	qr, err := i.formatData(query.Field, fact.IsPromCount(), data.SelectFieldsOrder, data.List)
+	return qr, err
+}
+
 func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
 	var (
 		err error
@@ -395,13 +438,16 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *s
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %d, end: %d ", hints.Start, hints.End))
 	}
 
-	// 确保一定有值
-	if i.Limit <= 0 {
-		i.Limit = 2e5
+	if i.Limit > 0 {
+		maxLimit := i.Limit + i.Tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.Limit {
+			query.Size = maxLimit
+		}
 	}
 
 	sql, isCount := i.bkSql(ctx, query, hints, matchers...)
-	data, err := i.query(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -454,7 +500,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
 	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", query.Measurement, where)
-	data, err := i.query(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +529,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
 	sql := fmt.Sprintf("SELECT COUNT(`%s`) AS `%s`, %s FROM %s WHERE %s GROUP BY %s", query.Field, query.Field, name, query.Measurement, where, name)
-	data, err := i.query(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err
 	}

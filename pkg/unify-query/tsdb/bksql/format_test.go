@@ -102,7 +102,7 @@ func TestNewSqlFactory(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			fact := NewSqlFactory(ctx, c.query).WithRangeTime(start, end, step)
+			fact := NewQueryFactory(ctx, c.query).WithRangeTime(start, end, step)
 			err := fact.ParserQuery()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, fact.String())

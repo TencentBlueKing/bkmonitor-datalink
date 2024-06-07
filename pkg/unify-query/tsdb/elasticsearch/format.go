@@ -405,7 +405,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			curName := info.Name
 			curAgg := elastic.NewDateHistogramAggregation().
 				Field(Timestamp).FixedInterval(info.Window).TimeZone(info.Timezone).
-				MinDocCount(1)
+				MinDocCount(0)
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
 			}

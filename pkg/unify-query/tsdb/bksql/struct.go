@@ -26,18 +26,6 @@ const (
 	Authorization = "X-Bkapi-Authorization"
 )
 
-var (
-	internalDimension = map[string]struct{}{
-		timeStamp:        {},
-		dtEventTimeStamp: {},
-		dtEventTime:      {},
-		localTime:        {},
-		startTime:        {},
-		endTime:          {},
-		theDate:          {},
-	}
-)
-
 type Params struct {
 	SQL                        string `json:"sql"`
 	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`

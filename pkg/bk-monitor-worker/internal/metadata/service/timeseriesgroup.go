@@ -69,7 +69,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
 	if err == nil {
 		s.UpdateMetrics(*vmMetrics)
 		metricStr, _ := jsonx.MarshalString(*vmMetrics)
-		logger.Infof("metrics %s", metricStr)
+		logger.Infof("bkdata metrics %s", metricStr)
 	}
 
 	// 获取 redis 中数据，用于后续指标及tag的更新
@@ -95,6 +95,7 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension() (vmRtMetrics *[]map[strin
 	vmStorageType, vmRt := "vm", vmObj.VmResultTableId
 
 	metrics, err := apiservice.Bkdata.QueryMetrics(vmStorageType, vmRt)
+	logger.Infof("metrics from bkdata error: %v", metrics)
 	// 过滤维度数据
 	if err != nil && len(*metrics) == 0 {
 		return nil, errors.Wrapf(err, "query metric error, vmRt: %s", vmRt)

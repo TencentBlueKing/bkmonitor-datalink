@@ -29,11 +29,13 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			logger.Errorf("RefreshTimeSeriesMetric Runtime panic caught: %v", err)
 		}
 	}()
+	logger.Info("RefreshTimeSeriesMetric start")
 	db := mysql.GetDBSession().DB
 	var tsGroupList []customreport.TimeSeriesGroup
 	if err := customreport.NewTimeSeriesGroupQuerySet(db).TableIDEq("2_bkmonitor_time_series_1572978.__default__").IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
 		return errors.Wrap(err, "find ts group record error")
 	}
+	logger.Infof("find ts group record success, %v", tsGroupList)
 	// 收集需要更新推送redis的table_id
 	tableIdChan := make(chan string, GetGoroutineLimit("refresh_time_series_metric"))
 	var updatedTableIds []string
@@ -62,6 +64,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 
 			svc := service.NewTimeSeriesGroupSvc(&ts, 0)
 			updated, err := svc.UpdateTimeSeriesMetrics()
+			logger.Infof("start to update time series metrics, %v", ts.TableID)
 			if err != nil {
 				logger.Errorf("time_series_group: [%s] try to update metrics from redis failed, %v", ts.TableID, err)
 				return

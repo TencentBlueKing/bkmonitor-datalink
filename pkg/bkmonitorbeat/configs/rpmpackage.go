@@ -9,39 +9,37 @@
 
 package configs
 
-import (
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-)
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 
-type LoginLogConfig struct {
+type RpmPackageConfig struct {
 	BaseTaskParam `config:"_,inline"`
 }
 
-func (c *LoginLogConfig) GetTaskConfigList() []define.TaskConfig {
+func (c *RpmPackageConfig) GetTaskConfigList() []define.TaskConfig {
 	return []define.TaskConfig{c}
 }
 
-func (c *LoginLogConfig) InitIdent() error {
+func (c *RpmPackageConfig) InitIdent() error {
 	return c.initIdent(c)
 }
 
-func (c *LoginLogConfig) GetIdent() string {
-	return define.ModuleLoginLog
+func (c *RpmPackageConfig) GetIdent() string {
+	return define.ModuleRpmPackage
 }
 
-func (c *LoginLogConfig) GetType() string {
-	return define.ModuleLoginLog
+func (c *RpmPackageConfig) GetType() string {
+	return define.ModuleRpmPackage
 }
 
-func (c *LoginLogConfig) Clean() error {
+func (c *RpmPackageConfig) Clean() error {
 	return nil
 }
 
-func NewLoginLogConfig(root *Config) *LoginLogConfig {
-	config := &LoginLogConfig{
+func NewRpmPackageConfig(root *Config) *RpmPackageConfig {
+	config := &RpmPackageConfig{
 		BaseTaskParam: NewBaseTaskParam(),
 	}
-	root.TaskTypeMapping[define.ModuleLoginLog] = config
+	root.TaskTypeMapping[define.ModuleRpmPackage] = config
 
 	return config
 }

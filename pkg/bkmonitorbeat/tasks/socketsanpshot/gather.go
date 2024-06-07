@@ -31,14 +31,10 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.config = taskConfig.(*configs.SocketSnapshotConfig)
 
 	gather.Init()
-
-	logger.Info("New a SocketSnapshot Task Instance")
 	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	logger.Info("SocketSnapshot is running....")
-
 	procs, err := procsnapshot.AllProcsMetaWithCache(g.config.Period)
 	if err != nil {
 		logger.Errorf("faile to get all procs meta: %v", err)

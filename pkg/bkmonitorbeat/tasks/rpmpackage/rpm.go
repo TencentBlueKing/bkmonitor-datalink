@@ -7,36 +7,35 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package shellhistory
+package rpmpackage
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"bytes"
+	"context"
+	"os/exec"
+	"strings"
 )
 
-type UserHistory struct {
-	User    string `json:"user"`
-	Path    string `json:"path"`
-	History string `json:"history"`
-}
+func RpmList(ctx context.Context) ([]string, error) {
+	cmd := exec.CommandContext(ctx, "rpm", "-qa")
 
-type Event struct {
-	dataid int32
-	data   interface{}
-}
-
-func (e *Event) AsMapStr() common.MapStr {
-	return common.MapStr{
-		"dataid": e.dataid,
-		"data":   e.data,
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return nil, err
 	}
+
+	return strings.Split(stdout.String(), "\n"), nil
 }
 
-func (e *Event) IgnoreCMDBLevel() bool {
-	return true
-}
+func RpmVerify(ctx context.Context, pkg string) (string, error) {
+	cmd := exec.CommandContext(ctx, "rpm", "--verify", pkg)
 
-func (e *Event) GetType() string {
-	return define.ModuleShellHistory
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	return stdout.String(), nil
 }

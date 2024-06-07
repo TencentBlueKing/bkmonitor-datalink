@@ -10,15 +10,13 @@
 package shellhistory
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"fmt"
-	"os"
+	"path/filepath"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -34,15 +32,8 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.config = taskConfig.(*configs.ShellHistoryConfig)
 
 	gather.Init()
-
-	logger.Info("New a ShellHistory Task Instance")
 	return gather
 }
-
-const (
-	rootBashHistory  = "/root/.bash_history"
-	usersBashHistory = "/home/%s/.bash_history"
-)
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	entities, err := parse()
@@ -53,38 +44,21 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	var items []UserHistory
 	for _, entity := range entities {
-		var p string
-		if entity.User == "root" {
-			p = rootBashHistory
-		} else {
-			p = fmt.Sprintf(usersBashHistory, entity.User)
-		}
-		b, err := os.ReadFile(p)
-		if err != nil {
-			logger.Warnf("failed to read file '%s', err: %v", p, err)
-			continue
-		}
+		for _, hf := range g.config.HistoryFiles {
+			p := filepath.Join(entity.Home, hf)
+			b, err := utils.ReadFileTail(p, g.config.LastBytes)
+			if err != nil {
+				logger.Warnf("failed to read file '%s', err: %v", p, err)
+				continue
+			}
 
-		items = append(items, UserHistory{
-			User:    entity.User,
-			Path:    p,
-			History: tailN(b, g.config.LastN),
-		})
+			items = append(items, UserHistory{
+				User:    entity.User,
+				Path:    p,
+				History: string(b),
+			})
+		}
 	}
 
 	e <- &Event{dataid: g.config.DataID, data: items}
-}
-
-func tailN(b []byte, n int) []string {
-	var lines []string
-	scanner := bufio.NewScanner(bytes.NewBuffer(b))
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-
-	if n <= 0 || len(lines) <= n {
-		return lines
-	}
-
-	return lines[len(lines)-n:]
 }

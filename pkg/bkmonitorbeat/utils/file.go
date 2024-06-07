@@ -7,36 +7,43 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package shellhistory
+package utils
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"os"
 )
 
-type UserHistory struct {
-	User    string `json:"user"`
-	Path    string `json:"path"`
-	History string `json:"history"`
-}
-
-type Event struct {
-	dataid int32
-	data   interface{}
-}
-
-func (e *Event) AsMapStr() common.MapStr {
-	return common.MapStr{
-		"dataid": e.dataid,
-		"data":   e.data,
+func ReadFileTail(p string, size int64) ([]byte, error) {
+	if size <= 0 {
+		return nil, nil
 	}
-}
 
-func (e *Event) IgnoreCMDBLevel() bool {
-	return true
-}
+	info, err := os.Stat(p)
+	if err != nil {
+		return nil, err
+	}
 
-func (e *Event) GetType() string {
-	return define.ModuleShellHistory
+	fileSize := info.Size()
+	if fileSize < size {
+		size = fileSize
+	}
+
+	buffer := make([]byte, size)
+	file, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	_, err = file.Seek(-size, 2)
+	if err != nil {
+		return nil, err
+	}
+
+	n, err := file.Read(buffer)
+	if err != nil {
+		return nil, err
+	}
+
+	return buffer[:n], nil
 }

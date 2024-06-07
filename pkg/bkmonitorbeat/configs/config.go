@@ -116,6 +116,7 @@ type Config struct {
 	ProcSnapshotTask   *ProcSnapshotConfig    `config:"procsnapshot_task"`
 	SocketSnapshotTask *SocketSnapshotConfig  `config:"socketsnapshot_task"`
 	ShellHistoryTask   *ShellHistoryConfig    `config:"shellhistory_task"`
+	RpmPackageTask     *RpmPackageConfig      `config:"rpmpackage_task"`
 }
 
 // NewConfig : new config struct
@@ -151,6 +152,7 @@ func NewConfig() *Config {
 	config.ProcSnapshotTask = NewProcSnapshotConfig(config)
 	config.SocketSnapshotTask = NewSocketSnapshotConfig(config)
 	config.ShellHistoryTask = NewShellHistoryConfig(config)
+	config.RpmPackageTask = NewRpmPackageConfig(config)
 
 	return config
 }

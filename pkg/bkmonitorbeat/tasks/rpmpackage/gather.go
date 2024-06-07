@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package procsnapshot
+package rpmpackage
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 )
 
 type Gather struct {
-	config *configs.ProcSnapshotConfig
+	config *configs.RpmPackageConfig
 	tasks.BaseTask
 }
 
@@ -27,22 +27,34 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
-	gather.config = taskConfig.(*configs.ProcSnapshotConfig)
+	gather.config = taskConfig.(*configs.RpmPackageConfig)
 
 	gather.Init()
 	return gather
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	procs, err := AllProcsMetaWithCache(g.config.Period)
+	var items []PackageInfo
+	pkgs, err := RpmList(ctx)
 	if err != nil {
-		logger.Errorf("faile to get all procs meta: %v", err)
+		logger.Errorf("failed to list rpm packages: %v", err)
 		return
 	}
 
-	pids := make([]int32, 0, len(procs))
-	for i := 0; i < len(procs); i++ {
-		pids = append(pids, procs[i].Pid)
+	for _, pkg := range pkgs {
+		if pkg == "" {
+			continue
+		}
+		verify, err := RpmVerify(ctx, pkg)
+		if err != nil {
+			logger.Errorf("failed to verfiy rpm package '%s', err: %v", pkg, err)
+			continue
+		}
+		items = append(items, PackageInfo{
+			Package: pkg,
+			Verify:  verify,
+		})
 	}
-	e <- &Event{dataid: g.config.DataID, data: procs}
+
+	e <- &Event{dataid: g.config.DataID, data: items}
 }

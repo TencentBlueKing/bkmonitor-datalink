@@ -7,36 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package shellhistory
+//go:build rpmpackage || basetask
+// +build rpmpackage basetask
+
+package taskfactory
 
 import (
-	"github.com/elastic/beats/libbeat/common"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/rpmpackage"
 )
 
-type UserHistory struct {
-	User    string `json:"user"`
-	Path    string `json:"path"`
-	History string `json:"history"`
-}
-
-type Event struct {
-	dataid int32
-	data   interface{}
-}
-
-func (e *Event) AsMapStr() common.MapStr {
-	return common.MapStr{
-		"dataid": e.dataid,
-		"data":   e.data,
-	}
-}
-
-func (e *Event) IgnoreCMDBLevel() bool {
-	return true
-}
-
-func (e *Event) GetType() string {
-	return define.ModuleShellHistory
+func init() {
+	SetTaskConfigByName(define.ModuleRpmPackage, func() define.TaskMetaConfig { return new(configs.RpmPackageConfig) })
+	Register(define.ModuleRpmPackage, rpmpackage.New)
 }

@@ -39,6 +39,7 @@ const (
 	ModuleProcSnapshot    = "procsnapshot"
 	ModuleSocketSnapshot  = "socketsnapshot"
 	ModuleShellHistory    = "shellhistory"
+	ModuleRpmPackage      = "rpmpackage"
 )
 
 // Status :

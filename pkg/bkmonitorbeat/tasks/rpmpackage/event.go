@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package shellhistory
+package rpmpackage
 
 import (
 	"github.com/elastic/beats/libbeat/common"
@@ -15,10 +15,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-type UserHistory struct {
-	User    string `json:"user"`
-	Path    string `json:"path"`
-	History string `json:"history"`
+type PackageInfo struct {
+	Package string `json:"package"`
+	Verify  string `json:"verify"`
 }
 
 type Event struct {
@@ -38,5 +37,5 @@ func (e *Event) IgnoreCMDBLevel() bool {
 }
 
 func (e *Event) GetType() string {
-	return define.ModuleShellHistory
+	return define.ModuleRpmPackage
 }

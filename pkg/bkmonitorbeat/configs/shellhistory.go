@@ -13,7 +13,8 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 
 type ShellHistoryConfig struct {
 	BaseTaskParam `config:"_,inline"`
-	LastN         int `config:"lastn"`
+	LastBytes     int64    `config:"last_bytes"`
+	HistoryFiles  []string `config:"history_files"`
 }
 
 func (c *ShellHistoryConfig) GetTaskConfigList() []define.TaskConfig {

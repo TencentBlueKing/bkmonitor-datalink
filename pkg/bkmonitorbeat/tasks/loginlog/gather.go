@@ -37,8 +37,6 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.TaskConfig = taskConfig
 	gather.config = taskConfig.(*configs.LoginLogConfig)
 	gather.Init()
-
-	logger.Info("New a LoginLog Task Instance")
 	return gather
 }
 
@@ -58,7 +56,7 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		}
 		records = append(records, Record{
 			Source: file,
-			Logs:   tailN(logs, g.config.LastN),
+			Logs:   logs,
 		})
 	}
 
@@ -66,11 +64,4 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		DataID:  g.config.DataID,
 		Records: records,
 	}
-}
-
-func tailN(entities []UtmpEntity, n int) []UtmpEntity {
-	if n <= 0 || len(entities) <= n {
-		return entities
-	}
-	return entities[len(entities)-n:]
 }

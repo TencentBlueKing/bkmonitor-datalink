@@ -434,7 +434,7 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 }
 
 // QueryDimension 查询维度数据
-func (s BkdataService) QueryDimension(storage string, rt string, metric string) (*[]string, error) {
+func (s BkdataService) QueryDimension(storage string, rt string, metric string) (*[]map[string]interface{}, error) {
 	bkdataApi, err := api.GetBkdataApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get bkdata api failed")
@@ -448,7 +448,7 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
 	}
 	// parse dimension
-	var dimensions []string
+	var dimensions []map[string]interface{}
 	for _, data := range resp.Data {
 		dimensionInfo, ok := data.([]interface{})
 		if !ok {
@@ -460,7 +460,13 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 			logger.Errorf("parse dimension data error, dimension: %v", dimension)
 			continue
 		}
-		dimensions = append(dimensions, dimension)
+		// NOTE: 如果时间戳不符合预期，则忽略该指标
+		timestamp, ok := dimensionInfo[1].(float64)
+		if !ok {
+			logger.Errorf("parse dimension data error, timestamp: %v", timestamp)
+			continue
+		}
+		dimensions = append(dimensions, map[string]interface{}{dimension: map[string]interface{}{"last_update_time": timestamp}})
 	}
 	return &dimensions, nil
 }

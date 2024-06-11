@@ -96,6 +96,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 		}
 		logger.Infof("metric updated of table_id  [%v]", updatedTableIds)
 	}
+	logger.Info("refresh time series metric success")
 
 	return nil
 }

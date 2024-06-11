@@ -462,7 +462,7 @@ func (c *Client) QueryMetricAndDimension(opts ...define.OperationOption) define.
 		result_table_id | string | 计算平台结果表|required|
 		no_value| bool | 是否返回值 | required|
 	*/
-	path := "/v3/dd/"
+	path := "/v4/dd/"
 	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
 		Name:   "get_dd_metrics_and_dimensions",
 		Method: "GET",

@@ -404,10 +404,10 @@ func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]floa
 
 	var resp bkdata.CommonListResp
 	if _, err = bkdataApi.QueryMetrics().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt}).SetResult(&resp).Request(); err != nil {
-		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
+		return nil, errors.Wrapf(err, "query metrics error by bkdata: %s, table_id: %s", storage, rt)
 	}
 	if err := resp.Err(); err != nil {
-		return nil, errors.Wrapf(err, "query metrics error by storage: %s, table_id: %s", storage, rt)
+		return nil, errors.Wrapf(err, "query metrics error by bkdata: %s, table_id: %s", storage, rt)
 	}
 	// parse metrics
 	metrics := make(map[string]float64)
@@ -442,10 +442,10 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 
 	var resp bkdata.CommonListResp
 	if _, err = bkdataApi.QueryDimension().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
-		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
+		return nil, errors.Wrapf(err, "query dimension error by bkdata: %s, table_id: %s", storage, rt)
 	}
 	if err := resp.Err(); err != nil {
-		return nil, errors.Wrapf(err, "query dimension error by storage: %s, table_id: %s", storage, rt)
+		return nil, errors.Wrapf(err, "query dimension error by bkdata: %s, table_id: %s", storage, rt)
 	}
 	// parse dimension
 	var dimensions []map[string]interface{}
@@ -469,4 +469,57 @@ func (s BkdataService) QueryDimension(storage string, rt string, metric string) 
 		dimensions = append(dimensions, map[string]interface{}{dimension: map[string]interface{}{"last_update_time": timestamp}})
 	}
 	return &dimensions, nil
+}
+
+// QueryMetricAndDimension 查询指标和维度数据
+func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map[string]interface{}, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+	var resp bkdata.CommonMapResp
+	// NOTE: 设置no_value=true，不需要返回维度对应的 value
+	if _, err = bkdataApi.QueryMetrics().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "no_value": "true"}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics and dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics and dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+
+	metrics := resp.Data["metrics"]
+	metricInfo, ok := metrics.([]map[string]interface{})
+	if !ok || len(metricInfo) == 0 {
+		return nil, errors.New("query metrics error, no data")
+	}
+
+	// parse metrics and dimensions
+	var MetricsDimension []map[string]interface{}
+	for _, data := range metricInfo {
+		lastModifyTime := data["update_time"].(float64)
+		dimension := data["dimension"].([]map[string]interface{})
+		tagValueList := make(map[string]interface{})
+		for _, dim := range dimension {
+			// 判断值为 string
+			tag_name, ok := dim["name"].(string)
+			if !ok {
+				logger.Errorf("dimension: %s is not string", dim["name"])
+				continue
+			}
+			// 判断值为 float64
+			tagUpdateTime, ok := dim["update_time"].(float64)
+			if !ok {
+				logger.Errorf("dimension: %s is not string", dim["name"])
+				continue
+			}
+			tagValueList[tag_name] = map[string]interface{}{"last_update_time": tagUpdateTime / 1000}
+		}
+
+		item := map[string]interface{}{
+			"field_name":       data["metric"],
+			"last_modify_time": lastModifyTime / 1000,
+			"tag_value_list":   tagValueList,
+		}
+		MetricsDimension = append(MetricsDimension, item)
+	}
+	return MetricsDimension, nil
 }

@@ -12,7 +12,6 @@ package service
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -62,16 +61,6 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup, goroutineLimit int
 	}
 }
 
-// UpdateMetricsByBkData refresh metrics from bkdata
-func (s *TimeSeriesGroupSvc) UpdateMetricsByBkData() (bool, error) {
-	// 获取 vm rt及metric
-	vmMetrics, err := s.QueryMetricAndDimension()
-	if err != nil {
-		return false, err
-	}
-	return s.UpdateMetrics(*vmMetrics)
-}
-
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
 func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(wlTableIdList []string) (bool, error) {
 	// 如果在白名单中，则通过计算平台获取指标数据
@@ -105,36 +94,12 @@ func (s *TimeSeriesGroupSvc) QueryMetricAndDimension() (vmRtMetrics *[]map[strin
 	// 过滤参数
 	vmStorageType, vmRt := "vm", vmObj.VmResultTableId
 
-	metrics, err := apiservice.Bkdata.QueryMetrics(vmStorageType, vmRt)
-	logger.Infof("metrics from bkdata error: %v, %v", metrics, err)
-	// 过滤维度数据
-	if err != nil || metrics == nil {
-		return nil, errors.Wrapf(err, "query metric error, vmRt: %s", vmRt)
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorageType, vmRt)
+	if err != nil {
+		return nil, err
 	}
 
-	wg := &sync.WaitGroup{}
-	ch := make(chan struct{}, s.GoroutineLimit)
-	wg.Add(len(*metrics))
-	var vmRtMetricsDimension []map[string]interface{}
-	for metric, timestamp := range *metrics {
-		ch <- struct{}{}
-		go func(metric string, timestamp float64, wg *sync.WaitGroup, ch chan struct{}) {
-			defer func() {
-				<-ch
-				wg.Done()
-			}()
-			dimension, err := apiservice.Bkdata.QueryDimension(vmStorageType, vmRt, metric)
-			if err == nil && len(*dimension) > 0 {
-				vmRtMetricsDimension = append(vmRtMetricsDimension, map[string]interface{}{"field_name": metric,
-					"tag_value_list":   *dimension,
-					"last_modify_time": timestamp})
-			}
-			return
-		}(metric, timestamp, wg, ch)
-	}
-	wg.Wait()
-
-	return &vmRtMetricsDimension, nil
+	return &metricAndDimension, nil
 }
 
 // GetRedisData get data from redis

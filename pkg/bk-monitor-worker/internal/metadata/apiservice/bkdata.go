@@ -503,9 +503,14 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 			continue
 		}
 		lastModifyTime := data["update_time"].(float64)
-		dimension := data["dimension"].([]map[string]interface{})
+		dimensions := data["dimensions"].([]interface{})
 		tagValueList := make(map[string]interface{})
-		for _, dim := range dimension {
+		for _, dimInfo := range dimensions {
+			dim, ok := dimInfo.(map[string]interface{})
+			if !ok {
+				logger.Errorf("dimension data not map[string]interface{}, dimInfo: %v", dimInfo)
+				continue
+			}
 			// 判断值为 string
 			tag_name, ok := dim["name"].(string)
 			if !ok {

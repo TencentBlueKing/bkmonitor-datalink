@@ -82,9 +82,9 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList boo
 // RefreshMetric 更新指标
 func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]interface{}, err error) {
 	// NOTE: 现阶段仅支持 vm 存储
-	vmStorageType := "vm"
+	vmStorage := "vm"
 
-	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorageType, vmRt)
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorage, vmRt)
 	if err != nil {
 		return nil, err
 	}

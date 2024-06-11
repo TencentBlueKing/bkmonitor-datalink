@@ -479,7 +479,8 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 	}
 	var resp bkdata.CommonMapResp
 	// NOTE: 设置no_value=true，不需要返回维度对应的 value
-	if _, err = bkdataApi.QueryMetricAndDimension().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "no_value": "true"}).SetResult(&resp).Request(); err != nil {
+	params := map[string]string{"storage": storage, "result_table_id": rt, "no_value": "true"}
+	if _, err = bkdataApi.QueryMetricAndDimension().SetQueryParams(params).SetResult(&resp).Request(); err != nil {
 		return nil, errors.Wrapf(err, "query metrics and dimension error by bkdata: %s, table_id: %s", storage, rt)
 	}
 	if err := resp.Err(); err != nil {
@@ -489,7 +490,7 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 	metrics := resp.Data["metrics"]
 	metricInfo, ok := metrics.([]map[string]interface{})
 	if !ok || len(metricInfo) == 0 {
-		logger.Errorf("query bkdata metrics error, metrics: %v", metricInfo)
+		logger.Errorf("query bkdata metrics error, params: %v, metrics: %v", params, metricInfo)
 		return nil, errors.New("query metrics error, no data")
 	}
 

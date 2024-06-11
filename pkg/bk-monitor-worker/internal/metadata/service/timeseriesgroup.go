@@ -23,7 +23,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	redisStore "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
@@ -57,11 +56,11 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
-func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(wlTableIdList []string) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList bool) (bool, error) {
 	// 如果在白名单中，则通过计算平台获取指标数据
-	if slicex.IsExistItem(wlTableIdList, s.TableID) {
+	if isInRtList {
 		// 获取 vm rt及metric
-		vmMetrics, err := s.QueryMetricAndDimension()
+		vmMetrics, err := s.QueryMetricAndDimension(vmRt)
 		if err != nil {
 			return false, err
 		}
@@ -81,14 +80,9 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(wlTableIdList []string) (bo
 }
 
 // RefreshMetric 更新指标
-func (s *TimeSeriesGroupSvc) QueryMetricAndDimension() (vmRtMetrics *[]map[string]interface{}, err error) {
-	db := mysql.GetDBSession().DB
-	var vmObj storage.AccessVMRecord
-	if err := storage.NewAccessVMRecordQuerySet(db).Select(storage.AccessVMRecordDBSchema.VmResultTableId).ResultTableIdEq(s.TableID).One(&vmObj); err != nil {
-		return nil, err
-	}
-	// 过滤参数
-	vmStorageType, vmRt := "vm", vmObj.VmResultTableId
+func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]interface{}, err error) {
+	// NOTE: 现阶段仅支持 vm 存储
+	vmStorageType := "vm"
 
 	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorageType, vmRt)
 	if err != nil {

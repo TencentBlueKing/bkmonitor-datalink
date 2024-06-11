@@ -489,6 +489,7 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 	metrics := resp.Data["metrics"]
 	metricInfo, ok := metrics.([]map[string]interface{})
 	if !ok || len(metricInfo) == 0 {
+		logger.Errorf("query bkdata metrics error, metrics: %v", metricInfo)
 		return nil, errors.New("query metrics error, no data")
 	}
 

@@ -66,17 +66,16 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList boo
 		}
 		return s.UpdateMetrics(*vmMetrics)
 	}
-	return true, nil
-	// // 获取 redis 中数据，用于后续指标及tag的更新
-	// metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
-	// if err != nil {
-	// 	return false, err
-	// }
-	// if len(metricInfo) == 0 {
-	// 	return false, nil
-	// }
-	// // 记录是否有更新，然后推送redis并发布通知
-	// return s.UpdateMetrics(metricInfo)
+	// 获取 redis 中数据，用于后续指标及tag的更新
+	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
+	if err != nil {
+		return false, err
+	}
+	if len(metricInfo) == 0 {
+		return false, nil
+	}
+	// 记录是否有更新，然后推送redis并发布通知
+	return s.UpdateMetrics(metricInfo)
 }
 
 // RefreshMetric 更新指标

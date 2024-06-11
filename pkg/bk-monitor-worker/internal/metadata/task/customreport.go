@@ -114,9 +114,11 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	}
 	wg.Wait()
 	close(tableIdChan)
+	logger.Info("start to push table id table id: %v", updatedTableIds)
 	// 防止数据没有读完
 	wgReceive.Wait()
 	if len(updatedTableIds) != 0 {
+		logger.Info("start to push table id to redis")
 		pusher := service.NewSpacePusher()
 		if err := pusher.PushTableIdDetail(updatedTableIds, true); err != nil {
 			return errors.Wrapf(err, "metric update to push table id detaild for [%v] failed", updatedTableIds)

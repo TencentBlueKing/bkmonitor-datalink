@@ -527,7 +527,7 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 		}
 
 		item := map[string]interface{}{
-			"field_name":       data["metric"],
+			"field_name":       data["name"],
 			"last_modify_time": lastModifyTime / 1000,
 			"tag_value_list":   tagValueList,
 		}

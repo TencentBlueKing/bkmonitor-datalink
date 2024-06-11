@@ -488,7 +488,7 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 	}
 
 	metrics := resp.Data["metrics"]
-	metricInfo, ok := metrics.([]map[string]interface{})
+	metricInfo, ok := metrics.([]interface{})
 	if !ok || len(metricInfo) == 0 {
 		logger.Errorf("query bkdata metrics error, params: %v, metrics: %v", params, metricInfo)
 		return nil, errors.New("query metrics error, no data")
@@ -496,7 +496,12 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 
 	// parse metrics and dimensions
 	var MetricsDimension []map[string]interface{}
-	for _, data := range metricInfo {
+	for _, dataInfo := range metricInfo {
+		data, ok := dataInfo.(map[string]interface{})
+		if !ok {
+			logger.Errorf("metric data not map[string]interface{}, data: %v", params, metricInfo)
+			continue
+		}
 		lastModifyTime := data["update_time"].(float64)
 		dimension := data["dimension"].([]map[string]interface{})
 		tagValueList := make(map[string]interface{})

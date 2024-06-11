@@ -57,7 +57,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 		"{\"dimensions\":{\"d3\":{\"last_update_time\":1685503141,\"values\":[]},\"d4\":{\"last_update_time\":1685503141,\"values\":[]}}}",
 	}...)
 
-	svc := NewTimeSeriesGroupSvc(&tsm, 0)
+	svc := NewTimeSeriesGroupSvc(&tsm)
 	// 测试新增
 	updated, err := svc.UpdateTimeSeriesMetrics([]string{})
 	assert.NoError(t, err)

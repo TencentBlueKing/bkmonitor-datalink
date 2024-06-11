@@ -35,7 +35,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	logger.Info("start to refresh time series metric")
 	db := mysql.GetDBSession().DB
 	var tsGroupList []customreport.TimeSeriesGroup
-	if err := customreport.NewTimeSeriesGroupQuerySet(db).TableIDEq("2_bkmonitor_time_series_1572978.__default__").IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
+	if err := customreport.NewTimeSeriesGroupQuerySet(db).IsEnableEq(true).IsDeleteEq(false).All(&tsGroupList); err != nil {
 		return errors.Wrap(err, "find ts group record error")
 	}
 	// 获取redis中数据
@@ -72,7 +72,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 
-			svc := service.NewTimeSeriesGroupSvc(&ts, 0)
+			svc := service.NewTimeSeriesGroupSvc(&ts)
 			updated, err := svc.UpdateTimeSeriesMetrics(wlTableIdList)
 			logger.Infof("start to update time series metrics, %v", ts.TableID)
 			if err != nil {

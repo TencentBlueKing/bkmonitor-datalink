@@ -48,16 +48,11 @@ var TSStorageFieldList = []map[string]interface{}{
 // TimeSeriesGroupSvc time series group service
 type TimeSeriesGroupSvc struct {
 	*customreport.TimeSeriesGroup
-	GoroutineLimit int
 }
 
-func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup, goroutineLimit int) TimeSeriesGroupSvc {
-	if goroutineLimit == 0 {
-		goroutineLimit = 100
-	}
+func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc {
 	return TimeSeriesGroupSvc{
 		TimeSeriesGroup: obj,
-		GoroutineLimit:  goroutineLimit,
 	}
 }
 
@@ -72,16 +67,17 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(wlTableIdList []string) (bo
 		}
 		return s.UpdateMetrics(*vmMetrics)
 	}
-	// 获取 redis 中数据，用于后续指标及tag的更新
-	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
-	if err != nil {
-		return false, err
-	}
-	if len(metricInfo) == 0 {
-		return false, nil
-	}
-	// 记录是否有更新，然后推送redis并发布通知
-	return s.UpdateMetrics(metricInfo)
+	return false, nil
+	// // 获取 redis 中数据，用于后续指标及tag的更新
+	// metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
+	// if err != nil {
+	// 	return false, err
+	// }
+	// if len(metricInfo) == 0 {
+	// 	return false, nil
+	// }
+	// // 记录是否有更新，然后推送redis并发布通知
+	// return s.UpdateMetrics(metricInfo)
 }
 
 // RefreshMetric 更新指标
@@ -511,7 +507,7 @@ func (s TimeSeriesGroupSvc) CreateCustomGroup(bkDataId uint, bkBizId int, custom
 			return nil, err
 		}
 	}
-	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup, 0)
+	tsGroupSvc := NewTimeSeriesGroupSvc(&tsGroup)
 	logger.Infof("TimeSeriesGroup [%v] now is created from data_id [%v] by operator [%s]", tsGroupSvc.TimeSeriesGroupID, bkDataId, operator)
 	// 创建一个关联的存储关系
 	for k, v := range TSDefaultStorageConfig {

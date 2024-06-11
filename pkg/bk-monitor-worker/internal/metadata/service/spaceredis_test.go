@@ -105,6 +105,22 @@ func TestSpacePusher_refineEsTableIds(t *testing.T) {
 	assert.ElementsMatch(t, []string{itableName, itableName1}, ids)
 }
 
+func TestDbfieldIsNull(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	var esStorage storage.ESStorage
+	storage.NewESStorageQuerySet(db).
+		Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet).
+		TableIDEq("system.net").One(&esStorage)
+
+	s := &SpacePusher{}
+	t.Run("TestDbfieldIsNull", func(t *testing.T) {
+		_, detailStr, _ := s.composeEsTableIdDetail("system.net", 3, "log", esStorage.IndexSet)
+		assert.Equal(t, `{"storage_id": 3,"db":"system_net_*_read","measurement": "__default__"}`, detailStr)
+	})
+}
+
 func TestSpacePusher_GetBizIdBySpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB

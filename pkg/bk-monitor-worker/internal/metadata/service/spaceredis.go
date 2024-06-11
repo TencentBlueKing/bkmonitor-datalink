@@ -555,7 +555,7 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_id":  storageClusterId,
 		"db":          tableIdDb,
-		"measurement": models.DefaultMeasurement,
+		"measurement": models.TSGroupDefaultMeasurement,
 	})
 	return tableId, detailStr, err
 }

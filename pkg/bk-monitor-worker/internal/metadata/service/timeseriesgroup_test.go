@@ -59,7 +59,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 
 	svc := NewTimeSeriesGroupSvc(&tsm)
 	// 测试新增
-	updated, err := svc.UpdateTimeSeriesMetrics([]string{})
+	updated, err := svc.UpdateTimeSeriesMetrics("", false)
 	assert.NoError(t, err)
 	assert.True(t, updated)
 	// metric
@@ -109,7 +109,7 @@ func TestTimeSeriesGroupSvc_UpdateTimeSeriesMetrics(t *testing.T) {
 	assert.NoError(t, err)
 
 	// 测试修改
-	updated, err = svc.UpdateTimeSeriesMetrics([]string{})
+	updated, err = svc.UpdateTimeSeriesMetrics("", false)
 	assert.NoError(t, err)
 	assert.True(t, updated)
 

@@ -64,9 +64,9 @@ func getPeriodicTasks() map[string]PeriodicTask {
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/3 * * * *",
+			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
-			Option:  []task.Option{task.Queue("refresh-ts-metric"), task.Timeout(600 * time.Second)},
+			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",

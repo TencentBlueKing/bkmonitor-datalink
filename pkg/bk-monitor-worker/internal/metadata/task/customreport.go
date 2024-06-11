@@ -86,11 +86,13 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	wg := sync.WaitGroup{}
 	wg.Add(len(tsGroupList))
 	for _, eg := range tsGroupList {
-		ch <- true
 		vmRt, ok := rtMapVmRt[eg.TableID]
 		if !ok {
+			logger.Errorf("can not find vm result table id by monitor table id: %s", eg.TableID)
+			wg.Done()
 			continue
 		}
+		ch <- true
 		// 判断是否在白名单中
 		isInRtList := slicex.IsExistItem(wlTableIdList, eg.TableID)
 		go func(ts customreport.TimeSeriesGroup, tableIdChan chan string, wg *sync.WaitGroup, ch chan bool, vmRt string, isInRtList bool) {
@@ -101,12 +103,11 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 
 			svc := service.NewTimeSeriesGroupSvc(&ts)
 			updated, err := svc.UpdateTimeSeriesMetrics(vmRt, isInRtList)
-			logger.Infof("start to update time series metrics, %v", ts.TableID)
 			if err != nil {
 				logger.Errorf("time_series_group: [%s] try to update metrics from bkdata or redis failed, %v", ts.TableID, err)
 				return
 			}
-			logger.Infof("time_series_group: [%s] metric update from bkdata or redis success", ts.TableID)
+			logger.Infof("time_series_group: [%s] metric update from bkdata or redis success, updated: %v", ts.TableID, updated)
 			if updated {
 				tableIdChan <- svc.TableID
 			}
@@ -114,7 +115,6 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	}
 	wg.Wait()
 	close(tableIdChan)
-	logger.Info("start to push table id table id: %v", updatedTableIds)
 	// 防止数据没有读完
 	wgReceive.Wait()
 	if len(updatedTableIds) != 0 {

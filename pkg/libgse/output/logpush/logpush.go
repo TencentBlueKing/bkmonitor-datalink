@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	dataIDKey = "X-BK-DATA-ID"
+	dataIDKey  = "X-BK-DATA-ID"
+	outputType = "logpush"
 )
 
 func init() {
@@ -79,10 +80,6 @@ type Output struct {
 	ch     chan *Record
 	stop   chan struct{}
 }
-
-const (
-	outputType = "logpush"
-)
 
 func MakeOutput(_ outputs.IndexManager, _ beat.Info, _ outputs.Observer, cfg *common.Config) (outputs.Group, error) {
 	output, err := New(cfg)

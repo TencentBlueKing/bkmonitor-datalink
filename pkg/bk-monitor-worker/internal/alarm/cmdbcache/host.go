@@ -426,7 +426,7 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId 
 		return errors.Wrap(err, "update cmdb host hashmap cache failed")
 	}
 
-	logger.Infof("refresh cmdb host by biz: %d, host count: %d", m.hosts[0].BkBizId, len(m.hosts))
+	logger.Infof("refresh cmdb host by biz: %d, host count: %d", bkBizId, len(m.hosts))
 	return nil
 }
 

@@ -516,6 +516,10 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 		return nil, nil, err
 	}
 
+	if len(bizInstTopoResp.Data) == 0 {
+		return hosts, nil, nil
+	}
+
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
 	_, err = cmdbApi.GetBizInternalModule().SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()

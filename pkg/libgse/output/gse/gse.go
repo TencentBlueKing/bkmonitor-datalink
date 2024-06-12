@@ -316,7 +316,7 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 	// add gseindex
 	var gseIndex uint64
 	if ok, _ := data.HasKey("gseindex"); !ok {
-		gseIndex = getGseIndex(dataid)
+		gseIndex = GetGseIndex(dataid)
 	}
 
 	// add bizid, cloudid, ip
@@ -351,7 +351,7 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 	return data, nil
 }
 
-func getGseIndex(dataid int32) uint64 {
+func GetGseIndex(dataid int32) uint64 {
 	index := uint64(0)
 	gseIndexKey := fmt.Sprintf("gseindex_%s", String(dataid))
 	if indexStr, err := storage.Get(gseIndexKey); nil == err {

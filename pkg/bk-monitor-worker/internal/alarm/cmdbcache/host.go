@@ -301,7 +301,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 刷新topo缓存
 	go func() {
-		err := m.refreshTopoCache(ctx)
+		err := m.refreshTopoCache(ctx, bkBizId)
 		if err != nil {
 			logger.Error("refresh cmdb topo cache failed, err: %v", err)
 		}
@@ -310,7 +310,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 刷新主机信息缓存
 	go func() {
-		err := m.refreshHostCache(ctx)
+		err := m.refreshHostCache(ctx, bkBizId)
 		if err != nil {
 			logger.Error("refresh cmdb host cache failed, err: %v", err)
 		}
@@ -319,7 +319,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 刷新主机AgentID缓存
 	go func() {
-		err := m.refreshHostAgentIDCache(ctx)
+		err := m.refreshHostAgentIDCache(ctx, bkBizId)
 		if err != nil {
 			logger.Error("refresh cmdb host agent id cache failed, err: %v", err)
 		}
@@ -384,7 +384,7 @@ func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // 刷新拓扑缓存
-func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
+func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId int) error {
 	key := m.GetCacheKey(topoCacheKey)
 
 	topoNodes := make(map[string]string)
@@ -402,11 +402,13 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "update cmdb topo hashmap cache failed")
 	}
+
+	logger.Infof("refresh cmdb topo by biz: %d, topo count: %d", bkBizId, len(topoNodes))
 	return nil
 }
 
 // 刷新主机信息缓存
-func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
+func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId int) error {
 	key := m.GetCacheKey(hostCacheKey)
 	hosts := make(map[string]string)
 	for _, host := range m.hosts {
@@ -423,11 +425,13 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "update cmdb host hashmap cache failed")
 	}
+
+	logger.Infof("refresh cmdb host by biz: %d, host count: %d", m.hosts[0].BkBizId, len(m.hosts))
 	return nil
 }
 
 // 刷新主机AgentID缓存
-func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) error {
+func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, bkBizId int) error {
 	key := m.GetCacheKey(hostAgentIDCacheKey)
 
 	agentIDs := make(map[string]string)
@@ -441,6 +445,8 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context) e
 	if err != nil {
 		return errors.Wrap(err, "update hashmap cmdb host agent id cache failed")
 	}
+
+	logger.Infof("refresh cmdb host agent id by biz: %d, agent id count: %d", bkBizId, len(agentIDs))
 	return nil
 }
 

@@ -18,14 +18,16 @@ bk-collector 是一个通用的数据接收和清洗框架，依赖配置进行�
 
 [receiver](./receiver): 接收层负责接收来个多个组件的上报的数据，目前已实现的组件包括：
 
-| 组件 | Http(Traces) | Http(Metrics) | Http(Logs)| Grpc(Traces) | Grpc(Metrics) | Grpc(Logs) |
-| --- |  -- | --- | --- | --- | --- | --- |
-| jaeger | ✅ |  |  |  |  |  |
-| otlp | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| skywalking | ✅ | | | ✅| | |
-| pushgateway(prometheus) | | ✅ (pb+text) | | | | |
-| remotewrite(prometheus)  | | ✅ (pb+text) | | | | |
-| fta | | ✅ | | | | |
+| 组件 | Http(Traces) | Http(Metrics) | Http(Logs)| Http(Profiles) | Grpc(Traces) | Grpc(Metrics) | Grpc(Logs) |
+| --- |  -- | --- | --- |----------------|--------------| --- |------------|
+| jaeger | ✅ |  |  |                |              |  |            |
+| otlp | ✅ | ✅ | ✅ |                | ✅            | ✅ | ✅          |
+| skywalking | ✅ |  ✅    |      |                |              | |            |
+| pushgateway(prometheus) | | ✅ (pb+text) | |                |              | |            |
+| remotewrite(prometheus)  | | ✅ (pb+text) | |                |              | |            |
+| fta | | ✅ | |                |              | |            |
+| logbeat | | | ✅ |                |              | |            |
+| pyroscope | | | |        ✅             |              | |            |
 
 [proxy](./proxy): 接收自定指标和自定义时序数据上报。
 

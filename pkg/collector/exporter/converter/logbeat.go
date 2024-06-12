@@ -10,11 +10,10 @@
 package converter
 
 import (
-	"encoding/json"
-
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 )
 
 type logBeatEvent struct {

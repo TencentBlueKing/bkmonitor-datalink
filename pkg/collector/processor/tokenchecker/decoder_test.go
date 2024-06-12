@@ -166,6 +166,43 @@ func TestProxyTokenDecoder(t *testing.T) {
 	})
 }
 
+func TestLogBeatDecoder(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type: decoderTypeLogBeat,
+		})
+		assert.Equal(t, decoderTypeLogBeat, decoder.Type())
+		assert.False(t, decoder.Skip())
+
+		token, err := decoder.Decode("1001")
+		assert.NoError(t, err)
+		assert.Equal(t, int32(1001), token.LogsDataId)
+		assert.Equal(t, "1001", token.Original)
+	})
+
+	t.Run("Empty", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type: decoderTypeLogBeat,
+		})
+
+		token, err := decoder.Decode("")
+		assert.Equal(t, "reject empty dataid", err.Error())
+		assert.Equal(t, int32(0), token.LogsDataId)
+		assert.Equal(t, "", token.Original)
+	})
+
+	t.Run("Invalid", func(t *testing.T) {
+		decoder := NewTokenDecoder(Config{
+			Type: decoderTypeLogBeat,
+		})
+
+		token, err := decoder.Decode("-1001")
+		assert.Equal(t, "reject invalid dataid: -1001", err.Error())
+		assert.Equal(t, int32(0), token.LogsDataId)
+		assert.Equal(t, "", token.Original)
+	})
+}
+
 func BenchmarkAes256Decoder(b *testing.B) {
 	decoder := newAes256TokenDecoder(aes256TokenDecoderConfig)
 	enc := "Ymtia2JrYmtia2JrYmtia8wN6fmFR+AoSEiL2XaAc4D4OOfEBkj4JFjaiyyPod5+rX6vWlJiypZkcxxwdHzQsw=="

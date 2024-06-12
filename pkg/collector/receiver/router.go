@@ -44,7 +44,7 @@ func RecvHttpRouter() *mux.Router {
 	return serviceMgr.httpRouter
 }
 
-// RecvHttpRoutes 返回已经注册的路由表
+// RecvHttpRoutes 返回 Receiver 注册的路由表
 func RecvHttpRoutes() []define.RouteInfo {
 	var routes []define.RouteInfo
 	for _, v := range serviceMgr.httpRoutes {

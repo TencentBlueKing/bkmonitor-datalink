@@ -177,6 +177,8 @@ bk-collector:
         enabled: true
       fta:
         enabled: true
+      logbeat:
+        enabled: true
 
 
   # =============================== Processor ================================
@@ -468,6 +470,9 @@ bk-collector:
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
+
+    # LogBeat 鉴权
+    - name: "token_checker/logbeat"
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
@@ -1078,6 +1083,11 @@ bk-collector:
           - "token_checker/aes256"
           - "rate_limiter/token_bucket"
 
+    - name: "logbeat_pipeline/common"
+      type: "logbeat"
+      processors:
+        - "token_checker/logbeat"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

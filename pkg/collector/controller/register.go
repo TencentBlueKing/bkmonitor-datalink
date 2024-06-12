@@ -28,6 +28,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/fta"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/jaeger"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/logbeat"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/otlp"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pushgateway"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope"

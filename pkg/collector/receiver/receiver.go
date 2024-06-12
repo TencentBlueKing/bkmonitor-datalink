@@ -156,6 +156,10 @@ func (r *Receiver) ready() {
 			if GetComponentConfig().Fta.Enabled {
 				f()
 			}
+		case define.SourceLogBeat:
+			if GetComponentConfig().LogBeat.Enabled {
+				f()
+			}
 		}
 	}
 }
@@ -209,7 +213,7 @@ func (r *Receiver) starAdminHttpServer() error {
 		return err
 	}
 
-	logger.Infof("register http admin route: %+v", AdminHttpRouter())
+	logger.Infof("register http admin route: %+v", AdminHttpRoutes())
 	return r.adminServer.Serve(l)
 }
 

@@ -26,9 +26,10 @@ import (
 )
 
 const (
-	decoderTypeFixed  = "fixed"
-	decoderTypeAcs256 = "aes256"
-	decoderTypeProxy  = "proxy"
+	decoderTypeFixed   = "fixed"
+	decoderTypeAcs256  = "aes256"
+	decoderTypeProxy   = "proxy"
+	decoderTypeLogBeat = "logbeat"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
@@ -39,6 +40,8 @@ func NewTokenDecoder(c Config) TokenDecoder {
 		return newAes256TokenDecoder(c)
 	case decoderTypeProxy:
 		return newProxyTokenDecoder(c)
+	case decoderTypeLogBeat:
+		return newLogBeatDecoder()
 	}
 
 	// 未指定 token decoder 时使用固定的解析方案（for test）
@@ -291,4 +294,34 @@ func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
 	}
 
 	return token, nil
+}
+
+func newLogBeatDecoder() logBeatDecoder {
+	return logBeatDecoder{}
+}
+
+type logBeatDecoder struct{}
+
+func (d logBeatDecoder) Type() string {
+	return decoderTypeLogBeat
+}
+
+func (d logBeatDecoder) Skip() bool {
+	return false
+}
+
+func (d logBeatDecoder) Decode(s string) (define.Token, error) {
+	logger.Debugf("logbeat token=%v", s)
+	if len(s) <= 0 {
+		return define.Token{}, errors.New("reject empty dataid")
+	}
+
+	i, _ := strconv.Atoi(s)
+	if i <= 0 {
+		return define.Token{}, errors.Errorf("reject invalid dataid: %s", s)
+	}
+	return define.Token{
+		Original:   s,
+		LogsDataId: int32(i),
+	}, nil
 }

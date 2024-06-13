@@ -423,7 +423,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 }
 
 func TestQueryTsWithEs(t *testing.T) {
-	ctx := context.Background()
+	ctx := metadata.InitHashID(context.Background())
 
 	promql.NewEngine(&promql.Params{
 		Timeout:              2 * time.Hour,
@@ -434,10 +434,9 @@ func TestQueryTsWithEs(t *testing.T) {
 
 	spaceUid := "space_uid"
 
-	db := "2_bklog_bkapigateway_esb_container1"
-	measurement := "base"
-	tableID := fmt.Sprintf("%s.%s", db, measurement)
-
+	db := "2_bklog_bkapigateway_esb_container1_*_read"
+	measurement := ""
+	tableID := "2_bklog_bkapigateway_esb_container1.__default__"
 	esTestStorageID := 999
 
 	mock.Init()
@@ -451,7 +450,6 @@ func TestQueryTsWithEs(t *testing.T) {
 		},
 		ir.ResultTableDetailInfo{
 			tableID: &ir.ResultTableDetail{
-				Fields:          nil,
 				MeasurementType: redis.BKTraditionalMeasurement,
 				StorageId:       int64(esTestStorageID),
 				DB:              db,
@@ -481,8 +479,8 @@ func TestQueryTsWithEs(t *testing.T) {
 		MaxRouting: maxRouting,
 	})
 
-	defaultEnd := time.Now()
-	defaultStart := defaultEnd.Add(-1 * time.Hour)
+	defaultStart := time.UnixMilli(1717027200000)
+	defaultEnd := time.UnixMilli(1717027500000)
 
 	for i, c := range map[string]struct {
 		queryTs *structured.QueryTs
@@ -522,12 +520,18 @@ func TestQueryTsWithEs(t *testing.T) {
 						ReferenceName: "a",
 						TimeAggregation: structured.TimeAggregation{
 							Function: "count_over_time",
-							Window:   "1m",
+							Window:   "30s",
 						},
 						AggregateMethodList: structured.AggregateMethodList{
 							{
 								Method:     "sum",
 								Dimensions: []string{"__ext.container_name"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									5,
+								},
 							},
 						},
 					},
@@ -540,6 +544,7 @@ func TestQueryTsWithEs(t *testing.T) {
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
 				Instant:     false,
 				SpaceUid:    spaceUid,
+				Step:        "30s",
 			},
 		},
 	} {
@@ -564,7 +569,7 @@ func TestQueryTsWithEs(t *testing.T) {
 }
 
 func TestQueryReference(t *testing.T) {
-	ctx := context.Background()
+	ctx := metadata.InitHashID(context.Background())
 
 	promql.NewEngine(&promql.Params{
 		Timeout:              2 * time.Hour,
@@ -575,9 +580,9 @@ func TestQueryReference(t *testing.T) {
 
 	spaceUid := "space_uid"
 
-	db := "2_bklog_bkapigateway_esb_container1"
-	measurement := "base"
-	tableID := fmt.Sprintf("%s.%s", db, measurement)
+	db := "2_bklog_bkapigateway_esb_container1_*_read"
+	measurement := ""
+	tableID := "2_bklog_bkapigateway_esb_container1.__default__"
 
 	esTestStorageID := 999
 
@@ -622,8 +627,8 @@ func TestQueryReference(t *testing.T) {
 		MaxRouting: maxRouting,
 	})
 
-	defaultEnd := time.Now()
-	defaultStart := defaultEnd.Add(-1 * time.Hour)
+	defaultStart := time.UnixMilli(1717027200000)
+	defaultEnd := time.UnixMilli(1717027500000)
 
 	for i, c := range map[string]struct {
 		queryTs *structured.QueryTs
@@ -670,6 +675,7 @@ func TestQueryReference(t *testing.T) {
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
 				SpaceUid:    spaceUid,
+				Instant:     true,
 			},
 		},
 		"统计数量": {
@@ -693,6 +699,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -720,7 +727,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
-				Instant:     false,
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -748,7 +755,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
-				Instant:     false,
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -787,7 +794,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
-				Instant:     false,
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -820,7 +827,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a + b",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
-				Instant:     false,
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -842,7 +849,7 @@ func TestQueryReference(t *testing.T) {
 				MetricMerge: "a",
 				Start:       strconv.FormatInt(defaultStart.Unix(), 10),
 				End:         strconv.FormatInt(defaultEnd.Unix(), 10),
-				Instant:     false,
+				Instant:     true,
 				SpaceUid:    spaceUid,
 			},
 		},
@@ -857,6 +864,10 @@ func TestQueryReference(t *testing.T) {
 						AggregateMethodList: structured.AggregateMethodList{
 							{
 								Method: "count",
+							},
+							{
+								Method: "date_histogram",
+								Window: "1m",
 							},
 						},
 					},

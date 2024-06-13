@@ -51,59 +51,8 @@ type Instance struct {
 
 // QueryRange 使用 es 直接查询引擎
 func (i *Instance) QueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	var (
-		err    error
-		matrix = make(promql.Matrix, 0)
-	)
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-range")
-	defer span.End(&err)
-
-	references := metadata.GetQueryReference(ctx)
-
-	if ref, ok := references[referenceName]; ok {
-		for _, ql := range ref.QueryList {
-			var (
-				rets chan *TimeSeriesResult
-				qr   *prompb.QueryResult
-			)
-			rets, err = i.query(ctx, ql, start.UnixMilli(), end.UnixMilli())
-			if err != nil {
-				return nil, err
-			}
-
-			qr, err = i.mergeTimeSeries(rets)
-			if err != nil {
-				return nil, err
-			}
-
-			for _, r := range qr.GetTimeseries() {
-				metric := make(labels.Labels, 0, len(r.GetLabels()))
-				for _, l := range r.GetLabels() {
-					metric = append(metric, labels.Label{
-						Name:  l.GetName(),
-						Value: l.GetValue(),
-					})
-				}
-
-				points := make([]promql.Point, 0, len(r.GetSamples()))
-				for _, p := range r.GetSamples() {
-					points = append(points, promql.Point{
-						T: p.GetTimestamp(),
-						V: p.GetValue(),
-					})
-				}
-
-				matrix = append(matrix, promql.Series{
-					Metric: metric,
-					Points: points,
-				})
-			}
-		}
-
-		return matrix, nil
-	} else {
-		return nil, fmt.Errorf("reference is empty %s", referenceName)
-	}
+	//TODO implement me
+	panic("implement me")
 }
 
 func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
@@ -231,90 +180,6 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 	return nil, nil
 }
 
-func (i *Instance) query(
-	ctx context.Context,
-	query *metadata.Query,
-	start int64,
-	end int64,
-) (chan *TimeSeriesResult, error) {
-	var (
-		err error
-	)
-
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
-	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
-	defer span.End(&err)
-
-	if i.client == nil {
-		return nil, fmt.Errorf("es client is nil")
-	}
-
-	// 不使用分片的模式（优化效果有限，同时会引入计算问题），直接通过 * 号，完成跨天查询
-	//indexOptions, err := i.makeQueryOption(ctx, query, start, end)
-	queryOptions := []*queryOption{
-		{
-			index: query.DB,
-			start: start,
-			end:   end,
-			query: query,
-		},
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	if len(queryOptions) == 0 {
-		return nil, nil
-	}
-
-	rets := make(chan *TimeSeriesResult, len(queryOptions))
-
-	go func() {
-		wg := &sync.WaitGroup{}
-		defer func() {
-			wg.Wait()
-			close(rets)
-		}()
-
-		for _, qo := range queryOptions {
-			wg.Add(1)
-			q := qo
-			err = pool.Submit(func() {
-				defer func() {
-					wg.Done()
-				}()
-
-				if len(query.AggregateMethodList) > 0 {
-					i.queryWithAgg(ctx, q, rets)
-				} else {
-					i.queryWithoutAgg(ctx, q, rets)
-				}
-			})
-		}
-	}()
-
-	user := metadata.GetUser(ctx)
-	span.Set("query-space-uid", user.SpaceUid)
-	span.Set("query-source", user.Source)
-	span.Set("query-username", user.Name)
-	span.Set("query-index-options", queryOptions)
-
-	span.Set("query-storage-id", query.StorageID)
-	span.Set("query-max-size", i.maxSize)
-	span.Set("query-db", query.DB)
-	span.Set("query-measurement", query.Measurement)
-	span.Set("query-measurements", strings.Join(query.Measurements, ","))
-	span.Set("query-field", query.Field)
-	span.Set("query-fields", strings.Join(query.Fields, ","))
-
-	return rets, err
-}
-
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
 	var (
 		err error
@@ -353,30 +218,15 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		source.FetchSourceContext(fetchSource)
 	}
 
-	var (
-		name string
-		agg  elastic.Aggregation
-	)
-
 	// 判断是否有聚合
-	if len(qb.AggregateMethodList) > 0 {
-		// 如果 判断是否走 PromQL 查询
-		if qb.IsNotPromQL {
-			name, agg, err = fact.EsAgg(qb.AggregateMethodList)
-		} else {
-			name, agg, err = fact.PromAgg(qb.TimeAggregation, qb.AggregateMethodList)
+	if len(qb.Aggregates) > 0 {
+		name, agg, aggErr := fact.EsAgg(qb.Aggregates)
+		if aggErr != nil {
+			return nil, aggErr
 		}
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	if name != "" && agg != nil {
 		source.Size(0)
 		source.Aggregation(name, agg)
 	} else {
-		// 非聚合查询需要使用 from 和 size
 		fact.Size(source)
 	}
 
@@ -418,7 +268,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		qb  = qo.query
 		err error
 	)
-	ctx, span := trace.NewSpan(ctx, "without-aggregation")
+	ctx, span := trace.NewSpan(ctx, "query-with-aggregation")
 	defer span.End(&err)
 
 	defer func() {
@@ -446,7 +296,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		return
 	}
 
-	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qb.IsNotPromQL, qo.end)
+	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qo.start)
 	if err != nil {
 		return
 	}
@@ -459,7 +309,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 		qb  = qo.query
 		err error
 	)
-	ctx, span := trace.NewSpan(ctx, "without-aggregation")
+	ctx, span := trace.NewSpan(ctx, "query-without-aggregation")
 	defer span.End(&err)
 
 	defer func() {
@@ -553,63 +403,6 @@ func (i *Instance) indexOption(ctx context.Context, index string) (docCount int6
 	return
 }
 
-func (i *Instance) makeQueryOption(ctx context.Context, query *metadata.Query, start, end int64) (indexQueryOpts []*queryOption, err error) {
-	aliases := make([]string, 0)
-	for ti := start; ti <= end; ti += (time.Hour * 24).Milliseconds() {
-		alias := fmt.Sprintf("%s_%s_read", query.DB, time.UnixMilli(ti).Format("20060102"))
-		aliases = append(aliases, alias)
-	}
-	indexes, err := i.getIndexes(ctx, aliases...)
-	if err != nil {
-		return
-	}
-	if len(indexes) == 0 {
-		err = fmt.Errorf("empty index with tableID %+v", query.TableID)
-		return
-	}
-
-	indexQueryOpts = make([]*queryOption, 0)
-	for _, index := range indexes {
-		var (
-			list      [][2]int64
-			docCount  int64
-			storeSize int64
-		)
-
-		if query.TimeAggregation != nil && query.TimeAggregation.WindowDuration.Milliseconds() > 0 {
-			docCount, storeSize, err = i.indexOption(ctx, index)
-			if err != nil {
-				return
-			}
-			list, err = newRangeSegment(&querySegmentOption{
-				start:     start,
-				end:       end,
-				interval:  query.TimeAggregation.WindowDuration.Milliseconds(),
-				docCount:  docCount,
-				storeSize: storeSize,
-			})
-			if err != nil {
-				err = err
-				return
-			}
-		} else {
-			list = [][2]int64{{start, end}}
-		}
-
-		for _, l := range list {
-			indexQueryOpts = append(indexQueryOpts, &queryOption{
-				index:    index,
-				start:    l[0],
-				end:      l[1],
-				query:    query,
-				timeZone: query.Timezone,
-			})
-		}
-	}
-
-	return
-}
-
 func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryResult, error) {
 	seriesMap := make(map[string]*prompb.TimeSeries)
 
@@ -656,38 +449,59 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 func (i *Instance) QueryRaw(
 	ctx context.Context,
 	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
+	start time.Time,
+	end time.Time,
 ) storage.SeriesSet {
 	var (
-		err   error
-		start int64
-		end   int64
+		err error
 	)
 
-	qp := metadata.GetQueryParams(ctx)
-	// 非时间聚合查询，需要替换使用查询时间，其他的则使用 prom 回传时间
-	if qp.IsReference {
-		start = qp.Start * 1e3
-		end = qp.End * 1e3
-	} else {
-		start = hints.Start
-		end = hints.End
-	}
-
-	if query.TimeAggregation != nil {
-		window := query.TimeAggregation.WindowDuration
-
-		// 是否对齐开始时间
-		if window.Milliseconds() > 0 {
-			start = intMathFloor(start, window.Milliseconds()) * window.Milliseconds()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
 		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
+	defer span.End(&err)
+
+	if i.client == nil {
+		return storage.ErrSeriesSet(fmt.Errorf("es client is nil"))
 	}
 
-	rets, err := i.query(ctx, query, start, end)
-	if err != nil {
-		return storage.ErrSeriesSet(err)
-	}
+	rets := make(chan *TimeSeriesResult, 1)
+
+	go func() {
+		defer func() {
+			close(rets)
+		}()
+
+		qo := &queryOption{
+			index: query.DB,
+			start: start.UnixMilli(),
+			end:   end.UnixMilli(),
+			query: query,
+		}
+		if len(query.Aggregates) > 0 {
+			i.queryWithAgg(ctx, qo, rets)
+		} else {
+			i.queryWithoutAgg(ctx, qo, rets)
+		}
+
+		user := metadata.GetUser(ctx)
+		span.Set("query-space-uid", user.SpaceUid)
+		span.Set("query-source", user.Source)
+		span.Set("query-username", user.Name)
+		span.Set("query-option", qo)
+
+		span.Set("query-storage-id", query.StorageID)
+		span.Set("query-max-size", i.maxSize)
+		span.Set("query-db", query.DB)
+		span.Set("query-measurement", query.Measurement)
+		span.Set("query-measurements", strings.Join(query.Measurements, ","))
+		span.Set("query-field", query.Field)
+		span.Set("query-fields", strings.Join(query.Fields, ","))
+	}()
 
 	qr, err := i.mergeTimeSeries(rets)
 	if err != nil {

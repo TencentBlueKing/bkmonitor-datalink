@@ -107,7 +107,10 @@ func (i Instance) setClient() error {
 	return nil
 }
 
-func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i Instance) QueryRaw(
+	ctx context.Context, query *metadata.Query,
+	start, end time.Time,
+) storage.SeriesSet {
 	var (
 		err error
 	)
@@ -158,8 +161,8 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 		Condition:   query.Condition,
 		SLimit:      slimit,
 		Limit:       limit,
-		Start:       hints.Start * 1e6,
-		End:         hints.End * 1e6,
+		Start:       start.UnixMilli(),
+		End:         end.UnixMilli(),
 	}
 
 	filterRequest, _ := json.Marshal(req)

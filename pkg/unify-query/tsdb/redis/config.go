@@ -13,7 +13,6 @@ import (
 	"github.com/go-gota/gota/dataframe"
 	"github.com/go-gota/gota/series"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
@@ -27,11 +26,11 @@ var QueryAggreToDataframeMapping = map[string]dataframe.AggregationType{
 	structured.SumAggName:    dataframe.Aggregation_SUM,
 	structured.CountAggName:  dataframe.Aggregation_COUNT,
 	// 时间聚合方法
-	metadata.MaxOT:   dataframe.Aggregation_MAX,
-	metadata.MinOT:   dataframe.Aggregation_MIN,
-	metadata.SumOT:   dataframe.Aggregation_SUM,
-	metadata.CountOT: dataframe.Aggregation_COUNT,
-	metadata.AvgOT:   dataframe.Aggregation_MEAN,
+	structured.MaxOT:   dataframe.Aggregation_MAX,
+	structured.MinOT:   dataframe.Aggregation_MIN,
+	structured.SumOT:   dataframe.Aggregation_SUM,
+	structured.CountOT: dataframe.Aggregation_COUNT,
+	structured.AvgOT:   dataframe.Aggregation_MEAN,
 }
 
 // QueryConditionToDataframeComparator Query 结构体与 goDataframe 过滤条件映射关系

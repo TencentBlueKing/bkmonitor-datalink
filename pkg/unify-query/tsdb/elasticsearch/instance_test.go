@@ -12,33 +12,23 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
-	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 func TestInstance_queryReference(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 
 	mock.Init()
-
-	err := os.Setenv("UNIFY-QUERY-CONFIG-FILE-PATH", "")
-	if err != nil {
-		log.Fatalf(ctx, err.Error())
-		return
-	}
-
-	viper.SetDefault("mock.test", "_raw")
-
-	a := viper.GetString("mock.test")
-	fmt.Println(a)
-
 	address := viper.GetString("mock.es.address")
 	username := viper.GetString("mock.es.username")
 	password := viper.GetString("mock.es.password")
@@ -48,6 +38,8 @@ func TestInstance_queryReference(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
 
 	ins, err := NewInstance(ctx, &InstanceOption{
 		Address:    address,
@@ -61,10 +53,10 @@ func TestInstance_queryReference(t *testing.T) {
 		return
 	}
 
-	defaultEnd := time.Now()
-	defaultStart := defaultEnd.Add(-1 * time.Hour)
+	defaultStart := time.UnixMilli(1717027200000)
+	defaultEnd := time.UnixMilli(1717027230000)
 
-	db := "2_bklog_bkapigateway_esb_container1"
+	db := "2_bklog_bkapigateway_esb_container1_*_read"
 	field := "gseIndex"
 
 	for idx, c := range map[string]struct {
@@ -72,15 +64,16 @@ func TestInstance_queryReference(t *testing.T) {
 		start time.Time
 		end   time.Time
 
+		isReference bool
+
 		expected interface{}
 	}{
 		"统计 __ext.io_kubernetes_pod 不为空的文档数量": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       "__ext.io_kubernetes_pod",
-				From:        0,
-				Size:        10,
+				DB:    db,
+				Field: "__ext.io_kubernetes_pod",
+				From:  0,
+				Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
@@ -93,23 +86,21 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				AggregateMethodList: metadata.AggregateMethodList{
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
 					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"统计 __ext.io_kubernetes_pod 不为空的去重文档数量": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       "__ext.io_kubernetes_pod",
-				From:        0,
-				Size:        10,
+				DB:    db,
+				Field: "__ext.io_kubernetes_pod",
+				From:  0,
+				Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
@@ -122,23 +113,21 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				AggregateMethodList: metadata.AggregateMethodList{
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Cardinality,
 					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"获取 10条 不 field 为空的原始数据": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        10,
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
@@ -151,18 +140,16 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"获取 10条 原始数据": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        10,
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
@@ -170,24 +157,20 @@ func TestInstance_queryReference(t *testing.T) {
 			start: defaultStart,
 			end:   defaultEnd,
 		},
-		"使用 promql 计算平均值 avg(avg_over_time(field[1m]))": {
+		"使用 promql 计算平均值 sum(count_over_time(field[1m]))": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        20,
-				TimeAggregation: &metadata.TimeAggregation{
-					Function:       AvgOT,
-					WindowDuration: time.Minute * 1,
-				},
-				AggregateMethodList: metadata.AggregateMethodList{
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  20,
+				Aggregates: metadata.Aggregates{
 					{
-						Name: Avg,
+						Name: Count,
 						Dimensions: []string{
 							"__ext.io_kubernetes_pod",
 							"__ext.container_name",
 						},
+						Window: time.Minute * 2,
 					},
 				},
 			},
@@ -196,29 +179,26 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 		"使用非时间聚合统计数量": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        3,
-				AggregateMethodList: metadata.AggregateMethodList{
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  3,
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
 					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"获取 50 分位值": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        20,
-				AggregateMethodList: metadata.AggregateMethodList{
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  20,
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
 						Args: []interface{}{
@@ -226,45 +206,39 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"获取 50, 90 分支值，同时按 1分钟时间聚合": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        20,
-				AggregateMethodList: metadata.AggregateMethodList{
-					{
-						Name: DateHistogram,
-						Args: []interface{}{
-							"1m",
-						},
-					},
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  20,
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Percentiles,
 						Args: []interface{}{
 							50.0, 90.0,
 						},
 					},
+					{
+						Name:   DateHistogram,
+						Window: time.Minute,
+					},
 				},
-				IsNotPromQL: true,
 			},
 			start: defaultStart,
 			end:   defaultEnd,
 		},
 		"根据 field 字段聚合计算数量，同时根据值排序": {
 			query: &metadata.Query{
-				QueryString: "",
-				DB:          db,
-				Field:       field,
-				From:        0,
-				Size:        10,
-				AggregateMethodList: metadata.AggregateMethodList{
+				DB:    db,
+				Field: field,
+				From:  0,
+				Size:  10,
+				Aggregates: metadata.Aggregates{
 					{
 						Name: Count,
 						Dimensions: []string{
@@ -272,7 +246,6 @@ func TestInstance_queryReference(t *testing.T) {
 						},
 					},
 				},
-				IsNotPromQL: true,
 				Orders: map[string]bool{
 					FieldValue: true,
 				},
@@ -282,55 +255,40 @@ func TestInstance_queryReference(t *testing.T) {
 		},
 	} {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
-			refName := "a"
-			reference := metadata.QueryReference{
-				refName: &metadata.QueryMetric{
-					QueryList: metadata.QueryList{
-						c.query,
-					},
-					ReferenceName: refName,
-				},
-			}
-			err = metadata.SetQueryReference(ctx, reference)
+			var output strings.Builder
+
+			ss := ins.QueryRaw(ctx, c.query, c.start, c.end)
 			if err != nil {
 				log.Fatalf(ctx, err.Error())
 				return
 			}
 
-			matrix, err := ins.QueryRange(ctx, refName, c.start, c.end, 0)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-				return
+			for ss.Next() {
+				series := ss.At()
+				lbs := series.Labels()
+				it := series.Iterator(nil)
+				output.WriteString("series: " + lbs.String() + "\n")
+				for it.Next() == chunkenc.ValFloat {
+					ts, val := it.At()
+					tt := time.UnixMilli(ts)
+
+					output.WriteString("sample: " + fmt.Sprintf("%g %s\n", val, tt.Format("2006-01-02 15:04:05")) + "\n")
+				}
+				if it.Err() != nil {
+					panic(it.Err())
+				}
 			}
 
-			fmt.Printf("is promql: %vs\n", !c.query.IsNotPromQL)
-			left := c.end.Unix() - c.start.Unix()
-			fmt.Printf("range time: %ds\n", left)
+			if ws := ss.Warnings(); len(ws) > 0 {
+				panic(ws)
+			}
 
-			fmt.Println(matrix.String())
+			if ss.Err() != nil {
+				log.Errorf(ctx, ss.Err().Error())
+			}
 
-			//for _, r := range matrix {
-			//	lbs := make([]string, 0)
-			//	for _, lb := range r.Metric {
-			//		lbs = append(lbs, fmt.Sprintf("%s=%s", lb.Name, lb.Value))
-			//	}
-			//
-			//	fmt.Printf("name: %s\n", strings.Join(lbs, ", "))
-			//	fmt.Printf("sample num: %d\n", len(r.String()))
-			//	i := 0
-			//	for {
-			//		if len(r.GetSamples()) > i {
-			//			sample := r.GetSamples()[i]
-			//			fmt.Printf("sample example %d: timestamp: %d, value: %.f\n", i+1, sample.GetTimestamp(), sample.GetValue())
-			//			if i >= 4 {
-			//				break
-			//			}
-			//		} else {
-			//			break
-			//		}
-			//		i++
-			//	}
-			//}
+			fmt.Println("output:")
+			fmt.Println(output.String())
 		})
 	}
 }

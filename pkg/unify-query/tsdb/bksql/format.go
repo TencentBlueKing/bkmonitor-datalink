@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
-	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -38,6 +37,7 @@ const (
 
 var (
 	internalDimension = map[string]struct{}{
+		value:            {},
 		timeStamp:        {},
 		dtEventTimeStamp: {},
 		dtEventTime:      {},
@@ -61,8 +61,6 @@ type QueryFactory struct {
 	groups  []string
 
 	sql strings.Builder
-
-	isPromCount bool
 }
 
 func NewQueryFactory(ctx context.Context, query *metadata.Query) *QueryFactory {
@@ -86,61 +84,17 @@ func (f *QueryFactory) WithRangeTime(start, end time.Time, step time.Duration) *
 	return f
 }
 
-func (f *QueryFactory) IsPromCount() bool {
-	return f.isPromCount
-}
-
 func (f *QueryFactory) ParserQuery() (err error) {
-	if len(f.query.AggregateMethodList) > 0 {
-		var (
-			funcName   string
-			dimensions []string
-			window     time.Duration
-		)
-
-		if f.query.IsNotPromQL {
-			// 非 PromQL 聚合查询
-			if len(f.query.AggregateMethodList) != 1 {
-				err = fmt.Errorf("不支持函数嵌套, %+v", f.query.AggregateMethodList)
-				return
+	if len(f.query.Aggregates) > 0 {
+		for _, agg := range f.query.Aggregates {
+			if agg.Window > 0 {
+				timeField := fmt.Sprintf("(`%s`- (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
+				f.groups = append(f.groups, timeField)
+				f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
 			}
 
-			am := f.query.AggregateMethodList[0]
-			funcName = am.Name
-			dimensions = am.Dimensions
-		} else {
-			if f.query.TimeAggregation != nil {
-				hints := &storage.SelectHints{
-					Start: f.start.UnixMilli(),
-					End:   f.end.UnixMilli(),
-					Step:  f.step.Milliseconds(),
-					Func:  f.query.TimeAggregation.Function,
-					Range: f.query.TimeAggregation.WindowDuration.Milliseconds(),
-				}
-
-				funcName, window, dimensions = f.query.GetDownSampleFunc(hints)
-				if window == 0 {
-					err = fmt.Errorf("聚合周期不能为 0")
-					return
-				}
-
-				if funcName != "" {
-					f.isPromCount = funcName == metadata.COUNT
-					// 兼容函数
-					if funcName == metadata.MEAN {
-						funcName = metadata.AVG
-					}
-
-					timeField := fmt.Sprintf("(`%s`- (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, window.Milliseconds())
-					f.groups = append(f.groups, timeField)
-					f.selects = append(f.selects, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
-				}
-			}
-		}
-
-		if funcName != "" {
-			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", funcName, f.query.Field, value))
-			for _, dim := range dimensions {
+			f.selects = append(f.selects, fmt.Sprintf("%s(`%s`) AS `%s`", agg.Name, f.query.Field, value))
+			for _, dim := range agg.Dimensions {
 				dim = fmt.Sprintf("`%s`", dim)
 				f.groups = append(f.groups, dim)
 				f.selects = append(f.selects, dim)
@@ -256,7 +210,7 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[timeStamp]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
+			vtLong = 0
 		}
 
 		if vtLong == nil {
@@ -313,17 +267,10 @@ func (f *QueryFactory) FormatData(keys []string, list []map[string]interface{}) 
 			}
 		}
 
-		// 拼装 count 信息
-		repNum := 1
-		if f.IsPromCount() {
-			repNum = int(vv)
-		}
-		for j := 0; j < repNum; j++ {
-			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-				Value:     vv,
-				Timestamp: vt,
-			})
-		}
+		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+			Value:     vv,
+			Timestamp: vt,
+		})
 	}
 
 	// 转换结构体

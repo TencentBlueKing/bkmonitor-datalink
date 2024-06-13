@@ -13,11 +13,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -141,6 +143,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
 	var (
+		res any
 		err error
 	)
 
@@ -151,16 +154,31 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	span.Set("query-ts", string(qStr))
 
 	for _, q := range query.QueryList {
-		q.IsNotPromQL = true
-
+		q.IsReference = true
 		if q.TableID == "" {
 			err = fmt.Errorf("tableID is empty")
 			return nil, err
 		}
 	}
 
+	// 判断如果 step 为空，则补充默认 step
+	if query.Step == "" {
+		query.Step = promql.GetDefaultStep().String()
+	}
+
 	queryRef, err := query.ToQueryReference(ctx)
-	start, end, _, _, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
+	startInt, err := strconv.ParseInt(query.Start, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Unix(startInt, 0)
+
+	endInt, err := strconv.ParseInt(query.End, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	end := time.Unix(endInt, 0)
+	step, err := model.ParseDuration(query.Step)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +203,11 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 		Timeout:         SingleflightTimeout,
 	}, lookBackDelta)
 
-	res, err := instance.Query(ctx, query.MetricMerge, end)
+	if query.Instant {
+		res, err = instance.Query(ctx, query.MetricMerge, start)
+	} else {
+		res, err = instance.QueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -194,12 +216,25 @@ func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, 
 	seriesNum := 0
 	pointsNum := 0
 
-	for index, series := range res {
-		// 层级需要转换
-		tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+	switch v := res.(type) {
+	case promPromql.Matrix:
+		for index, series := range v {
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
 
-		seriesNum++
-		pointsNum++
+			seriesNum++
+			pointsNum += len(series.Points)
+		}
+	case promPromql.Vector:
+		for index, series := range v {
+			// 层级需要转换
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+
+			seriesNum++
+			pointsNum++
+		}
+	default:
+		err = fmt.Errorf("data type wrong: %T", v)
+		return nil, err
 	}
 
 	span.Set("resp-series-num", seriesNum)
@@ -246,7 +281,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 	// 是否打开对齐
 	for _, q := range query.QueryList {
-		q.IsNotPromQL = false
+		q.IsReference = false
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
 
@@ -255,6 +290,10 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		if err != nil {
 			return nil, err
 		}
+	}
+	// 判断如果 step 为空，则补充默认 step
+	if query.Step == "" {
+		query.Step = promql.GetDefaultStep().String()
 	}
 
 	queryRef, err := query.ToQueryReference(ctx)
@@ -314,6 +353,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		}, lookBackDelta)
 	}
 
+	// checkTsdbFunction
+
+	// sum(count_over_time(a[1m])) => a
 	promQL, err = query.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return nil, err

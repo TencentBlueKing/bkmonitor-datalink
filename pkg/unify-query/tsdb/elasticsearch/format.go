@@ -40,20 +40,11 @@ const (
 	Max         = "max"
 	Sum         = "sum"
 	Count       = "count"
-	Last        = "last"
-	Mean        = "mean"
 	Avg         = "avg"
 	Cardinality = "cardinality"
 
 	DateHistogram = "date_histogram"
 	Percentiles   = "percentiles"
-
-	MinOT   = "min_over_time"
-	MaxOT   = "max_over_time"
-	SumOT   = "sum_over_time"
-	CountOT = "count_over_time"
-	LastOT  = "last_over_time"
-	AvgOT   = "avg_over_time"
 
 	Nested = "nested"
 	Terms  = "terms"
@@ -65,16 +56,6 @@ const (
 	Integer = "integer"
 	Long    = "long"
 	Date    = "date"
-)
-
-var (
-	AggregationMap = map[string]string{
-		Min + structured.EsNewStep + MinOT:   Min,
-		Max + structured.EsNewStep + MaxOT:   Max,
-		Sum + structured.EsNewStep + SumOT:   Sum,
-		Avg + structured.EsNewStep + AvgOT:   Avg,
-		Sum + structured.EsNewStep + CountOT: Count,
-	}
 )
 
 type TimeSeriesResult struct {
@@ -239,10 +220,9 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL bool, end int64) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, start int64) (map[string]*prompb.TimeSeries, error) {
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
-		isNotPromQL: isNotPromQL,
 		items:       make(items, 0),
 		toEs:        f.toEs,
 		toProm:      f.toProm,
@@ -286,8 +266,8 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, isNotPromQL boo
 			continue
 		}
 
-		if isNotPromQL && im.timestamp == 0 {
-			im.timestamp = end
+		if im.timestamp == 0 {
+			im.timestamp = start
 		}
 
 		timeSeriesMap[seriesKey].Labels = tsLabels
@@ -436,20 +416,24 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 	return
 }
 
-func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) (string, elastic.Aggregation, error) {
-	if len(aggregateMethodList) == 0 {
+func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
 	}
 
-	// todo 遍历聚合函数，转换成 es 可用的函数
-	for _, am := range aggregateMethodList {
+	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
 			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(am.Name)
+
+			if am.Window > 0 && !am.Without {
+				// 增加时间函数
+				f.timeAgg(Timestamp, shortDur(am.Window), am.TimeZone)
+			}
 
 			for idx, dim := range am.Dimensions {
 				dim = f.toEs(dim)
@@ -460,42 +444,6 @@ func (f *FormatFactory) EsAgg(aggregateMethodList metadata.AggregateMethodList) 
 			err := fmt.Errorf("esAgg aggregation is not support with: %+v", am)
 			return "", nil, err
 		}
-	}
-
-	return f.Agg()
-}
-
-func (f *FormatFactory) PromAgg(timeAggregation *metadata.TimeAggregation, aggregateMethodList metadata.AggregateMethodList) (string, elastic.Aggregation, error) {
-	if len(aggregateMethodList) == 0 || timeAggregation == nil {
-		err := errors.New("aggregateMethodList or timeAggregation is empty")
-		return "", nil, err
-	}
-
-	// 如果使用了时间函数需要进行转换, sum(count_over_time) => count
-	if !aggregateMethodList[0].Without && timeAggregation.WindowDuration > 0 {
-		key := aggregateMethodList[0].Name + structured.EsNewStep + timeAggregation.Function
-		if name, ok := AggregationMap[key]; ok {
-			f.valueAgg(FieldValue, name)
-
-			// 判断是否是 nested
-			f.nestedAgg(f.valueKey)
-
-			// 增加时间函数
-			f.timeAgg(Timestamp, shortDur(timeAggregation.WindowDuration), f.timezone)
-
-			// 增加维度聚合函数
-			for idx, dim := range aggregateMethodList[0].Dimensions {
-				dim = f.toEs(dim)
-				f.termAgg(dim, idx == 0)
-				f.nestedAgg(dim)
-			}
-		} else {
-			err := fmt.Errorf("promAgg aggregation is not support with: %s", key)
-			return "", nil, err
-		}
-	} else {
-		err := fmt.Errorf("aggregation is not supoort without or window is zero: %+v", aggregateMethodList)
-		return "", nil, err
 	}
 
 	return f.Agg()

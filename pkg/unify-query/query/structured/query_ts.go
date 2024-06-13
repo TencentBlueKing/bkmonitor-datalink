@@ -184,9 +184,9 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 		return nil, err
 	}
 	queryCM := &metadata.QueryClusterMetric{
-		MetricName:          qry.FieldName,
-		AggregateMethodList: qry.AggregateMethodList.ToQry(),
-		Conditions:          queryConditions,
+		MetricName: qry.FieldName,
+		Aggregates: qry.AggregateMethodList.ToQry(qry.Timezone),
+		Conditions: queryConditions,
 	}
 	if qry.TimeAggregation.Function != "" {
 		wDuration, err := qry.TimeAggregation.Window.ToTime()
@@ -314,8 +314,8 @@ type Query struct {
 	// QueryString es 专用关键字查询
 	QueryString string `json:"query_string"`
 
-	// IsNotPromQL 是否使用 PromQL 查询
-	IsNotPromQL bool `json:"-" swaggerignore:"true"`
+	// IsReference 是否使用 PromQL 查询
+	IsReference bool `json:"-" swaggerignore:"true"`
 }
 
 func (q *Query) ToRouter() (*Route, error) {
@@ -325,6 +325,59 @@ func (q *Query) ToRouter() (*Route, error) {
 	}
 	router.db, router.measurement = q.TableID.Split()
 	return router, nil
+}
+
+func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
+	aggs = make(metadata.Aggregates, 0)
+
+	// 非时间聚合函数使用透传的方式
+	if q.IsReference {
+		aggs = q.AggregateMethodList.ToQry(q.Timezone)
+		return
+	}
+
+	// PromQL 聚合方式需要找到 TimeAggregation 共同判断
+	if q.TimeAggregation.Function == "" {
+		return
+	}
+
+	// 只支持第一层级的将采样，所以时间聚合函数一定要在指标之后
+	if q.TimeAggregation.NodeIndex > 2 {
+		return
+	}
+
+	if len(q.AggregateMethodList) < 1 {
+		return
+	}
+
+	am := q.AggregateMethodList[0]
+	// 将采样不支持 without
+	if am.Without {
+		return
+	}
+
+	window, err := model.ParseDuration(string(q.TimeAggregation.Window))
+	if err != nil {
+		return
+	}
+
+	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
+		agg := metadata.Aggregate{
+			Name:       name,
+			Dimensions: am.Dimensions,
+			Without:    am.Without,
+			Window:     time.Duration(window),
+			TimeZone:   q.Timezone,
+			Args:       am.VArgsList,
+		}
+		aggs = append(aggs, agg)
+
+		// 清理原结构体
+		q.TimeAggregation = TimeAggregation{}
+		q.AggregateMethodList = q.AggregateMethodList[1:]
+	}
+
+	return
 }
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
@@ -344,6 +397,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		MetricName:    metricName,
 	}
 
+	// 判断是否需要使用聚合查询
+	aggregates, err := q.Aggregates()
+	if err != nil {
+		return nil, err
+	}
+
 	// 判断是否查询非路由 tsdb
 	if q.DataSource != "" {
 		metadata.GetQueryParams(ctx).SetDataSource(q.DataSource)
@@ -356,18 +415,18 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			}
 
 			qry := &metadata.Query{
-				StorageID:           consul.BkSqlStorageType,
-				DB:                  string(q.TableID),
-				Measurement:         string(q.TableID),
-				Field:               q.FieldName,
-				AggregateMethodList: q.AggregateMethodList.ToQry(),
-				BkSqlCondition:      allConditions.BkSql(),
+				StorageID:      consul.BkSqlStorageType,
+				DB:             string(q.TableID),
+				Measurement:    string(q.TableID),
+				Field:          q.FieldName,
+				Aggregates:     aggregates,
+				BkSqlCondition: allConditions.BkSql(),
 			}
 
 			span.Set("query-storage-id", qry.StorageID)
 			span.Set("query-measurement", qry.Measurement)
 			span.Set("query-field", qry.Field)
-			span.Set("query-aggr-method-list", fmt.Sprintf("%+v", qry.AggregateMethodList))
+			span.Set("query-aggr-method-list", fmt.Sprintf("%+v", qry.Aggregates))
 			span.Set("query-bk-sql-condition", qry.BkSqlCondition)
 
 			queryMetric.QueryList = []*metadata.Query{qry}
@@ -424,6 +483,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
 		query.Size = q.Limit
 		query.From = q.From
+		query.Aggregates = aggregates
 
 		if err != nil {
 			return nil, err
@@ -618,22 +678,6 @@ func (q *Query) BuildMetadataQuery(
 		query.IsHasOr = true
 	}
 
-	query.AggregateMethodList = make([]metadata.AggrMethod, 0, len(q.AggregateMethodList))
-	for _, aggr := range q.AggregateMethodList {
-		var window time.Duration
-		if aggr.Window != "" {
-			window, _ = time.ParseDuration(string(aggr.Window))
-		}
-		query.AggregateMethodList = append(query.AggregateMethodList, metadata.AggrMethod{
-			Name:       aggr.Method,
-			Dimensions: aggr.Dimensions,
-			Without:    aggr.Without,
-			Args:       aggr.VArgsList,
-			Window:     window,
-			TimeZone:   q.Timezone,
-		})
-	}
-
 	query.IsSingleMetric = tsDB.IsSplit()
 
 	// 通过过期时间判断是否读取归档模块
@@ -669,7 +713,6 @@ func (q *Query) BuildMetadataQuery(
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
-	query.IsNotPromQL = q.IsNotPromQL
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
@@ -688,16 +731,7 @@ func (q *Query) BuildMetadataQuery(
 		}
 		query.AllConditions[i] = conds
 	}
-	if q.TimeAggregation.Window != "" {
-		windowDuration, err := q.TimeAggregation.Window.ToTime()
-		if err != nil {
-			return nil, err
-		}
-		query.TimeAggregation = &metadata.TimeAggregation{
-			Function:       q.TimeAggregation.Function,
-			WindowDuration: windowDuration,
-		}
-	}
+
 	query.Orders = make(metadata.Orders)
 	for _, o := range q.OrderBy {
 		if len(o) == 0 {
@@ -778,15 +812,12 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	}
 
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
-		step = promql.GetDefaultStep()
-		if q.Step != "" {
-			dTmp, err = model.ParseDuration(q.Step)
-			if err != nil {
-				log.Errorf(ctx, "parse step err->[%s]", err)
-				return nil, err
-			}
-			step = time.Duration(dTmp)
+		dTmp, err = model.ParseDuration(q.Step)
+		if err != nil {
+			log.Errorf(ctx, "parse step err->[%s]", err)
+			return nil, err
 		}
+		step = time.Duration(dTmp)
 		// 控制偏移，promQL 只支持毫秒级别数据
 		originalOffset = -step + time.Millisecond
 	}

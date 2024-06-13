@@ -152,7 +152,32 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
 				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
 
-				setCh <- query.instance.QueryRaw(ctx, query.qry, hints, matchers...)
+				var (
+					start int64
+					end   int64
+				)
+				qp := metadata.GetQueryParams(ctx)
+				if qp.IsReference {
+					start = qp.Start * 1e3
+					end = qp.End * 1e3
+				} else {
+					start = hints.Start
+					end = hints.End
+
+					if len(query.qry.Aggregates) == 1 {
+						agg := query.qry.Aggregates[0]
+
+						// 如果使用时间聚合计算，是否对齐开始时间
+						if agg.Window.Milliseconds() > 0 {
+							start = intMathFloor(start, agg.Window.Milliseconds()) * agg.Window.Milliseconds()
+						}
+					}
+				}
+
+				startTime := time.UnixMilli(start)
+				endTime := time.UnixMilli(end)
+
+				setCh <- query.instance.QueryRaw(ctx, query.qry, startTime, endTime)
 				return
 
 			} else {

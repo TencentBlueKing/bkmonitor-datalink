@@ -202,7 +202,7 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(field string, isCount bool, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(start time.Time, field string, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -235,7 +235,7 @@ func (i *Instance) formatData(field string, isCount bool, keys []string, list []
 
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[timeStamp]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
+			vtLong = start.UnixMilli()
 		}
 
 		if vtLong == nil {
@@ -251,8 +251,8 @@ func (i *Instance) formatData(field string, isCount bool, keys []string, list []
 		}
 
 		// 获取值
-		if vvDouble, ok = d[field]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", field)
+		if vvDouble, ok = d[value]; !ok {
+			return res, fmt.Errorf("dimension %s is emtpy", value)
 		}
 
 		if vvDouble == nil {
@@ -264,22 +264,22 @@ func (i *Instance) formatData(field string, isCount bool, keys []string, list []
 		case float64:
 			vv = vvDouble.(float64)
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
+			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
 		}
 
 		var buf strings.Builder
 		lbl := make([]prompb.Label, 0, len(dimensions))
 		// 获取维度信息
 		for _, dimName := range dimensions {
-			value, err := getValue(dimName, d)
+			val, err := getValue(dimName, d)
 			if err != nil {
 				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
 			}
 
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, value))
+			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
 			lbl = append(lbl, prompb.Label{
 				Name:  dimName,
-				Value: value,
+				Value: val,
 			})
 		}
 
@@ -292,17 +292,10 @@ func (i *Instance) formatData(field string, isCount bool, keys []string, list []
 			}
 		}
 
-		// 拼装 count 信息
-		repNum := 1
-		if isCount {
-			repNum = int(vv)
-		}
-		for j := 0; j < repNum; j++ {
-			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-				Value:     vv,
-				Timestamp: vt,
-			})
-		}
+		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+			Value:     vv,
+			Timestamp: vt,
+		})
 	}
 
 	// 转换结构体
@@ -315,69 +308,73 @@ func (i *Instance) formatData(field string, isCount bool, keys []string, list []
 }
 
 // bkSql 构建查询语句
-func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) (string, bool) {
+func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end time.Time) (string, error) {
 	var (
-		sql string
+		selectList = make([]string, 0)
+		groupList  = make([]string, 0)
+		orderList  = make([]string, 0)
 
-		aggField    string
-		measurement string
-
-		groupList []string
-		where     string
-
-		isCount bool
+		sqlBuilder strings.Builder
+		err        error
 	)
 
-	measurement = query.Measurement
+	ctx, span := trace.NewSpan(ctx, "bksql-make-sqlBuilder")
+	defer span.End(&err)
+
 	maxLimit := i.Limit + i.Tolerance
 	limit := query.Size
 	if limit == 0 || limit > maxLimit {
 		limit = maxLimit
 	}
 
-	// 判断是否需要提前聚合
-	newFuncName, window, dims := query.GetDownSampleFunc(hints)
-	if newFuncName != "" {
-		isCount = newFuncName == metadata.COUNT
-		// 兼容函数
-		if newFuncName == metadata.MEAN {
-			newFuncName = metadata.AVG
+	if len(query.Aggregates) > 1 {
+		return "", fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
+	}
+
+	if len(query.Aggregates) == 1 {
+		agg := query.Aggregates[0]
+		if len(agg.Dimensions) > 0 {
+			for _, dim := range agg.Dimensions {
+				newDim := dim
+				if newDim != "*" {
+					newDim = fmt.Sprintf("`%s`", newDim)
+				}
+				groupList = append(groupList, newDim)
+				selectList = append(selectList, newDim)
+			}
 		}
 
-		// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
-		groupList = make([]string, 0, len(dims)+1)
-		for _, dim := range dims {
-			dim = fmt.Sprintf("`%s`", dim)
-			groupList = append(groupList, dim)
-		}
-
-		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
-		groupList = append(groupList, timeField)
-
-		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
-		if len(dims) > 0 {
-			aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
+		selectList = append(selectList, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), query.Field, value))
+		if agg.Window > 0 && !agg.Without {
+			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
+			groupList = append(groupList, timeField)
+			selectList = append(selectList, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+			orderList = append(orderList, fmt.Sprintf("`%s` ASC", timeStamp))
 		}
 	} else {
-		aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
+		selectList = append(selectList, "*")
+		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", query.Field, value))
+		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", dtEventTimeStamp, timeStamp))
 	}
 
-	where = fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, hints.Start, dtEventTimeStamp, hints.End)
-	// 拼接过滤条件
+	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
+	sqlBuilder.WriteString("FROM `" + query.DB + "` ")
+	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
 	if query.BkSqlCondition != "" {
-		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
+		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")
 	}
-
-	sql = fmt.Sprintf(`SELECT %s FROM %s WHERE %s`, aggField, measurement, where)
 	if len(groupList) > 0 {
-		sql = fmt.Sprintf(`%s GROUP BY %s`, sql, strings.Join(groupList, ", "))
+		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
 	}
-	sql = fmt.Sprintf("%s ORDER BY `%s` ASC", sql, timeStamp)
+	if len(orderList) > 0 {
+		sqlBuilder.WriteString(" ORDER BY " + strings.Join(orderList, ", "))
+	}
 	if limit > 0 {
-		sql = fmt.Sprintf(`%s LIMIT %d`, sql, limit)
+		sqlBuilder.WriteString(fmt.Sprintf(" LIMIT %d", limit))
 	}
 
-	return sql, isCount
+	return sqlBuilder.String(), nil
 }
 
 func (i *Instance) query(
@@ -423,19 +420,19 @@ func (i *Instance) query(
 		return nil, err
 	}
 
-	qr, err := i.formatData(query.Field, fact.IsPromCount(), data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
 	return qr, err
 }
 
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
 	defer span.End(&err)
 
-	if hints.Start > hints.End || hints.Start == 0 {
-		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %d, end: %d ", hints.Start, hints.End))
+	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
+		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %s, end: %s ", start, end))
 	}
 
 	if i.Limit > 0 {
@@ -446,7 +443,11 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *s
 		}
 	}
 
-	sql, isCount := i.bkSql(ctx, query, hints, matchers...)
+	sql, err := i.bkSql(ctx, query, start, end)
+	if err != nil {
+		return storage.ErrSeriesSet(err)
+	}
+
 	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
@@ -459,11 +460,11 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *s
 	span.Set("data-total-records", data.TotalRecords)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
-	if data.TotalRecords > i.Limit {
+	if i.Limit > 0 && data.TotalRecords > i.Limit {
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.Limit))
 	}
 
-	qr, err := i.formatData(query.Field, isCount, data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

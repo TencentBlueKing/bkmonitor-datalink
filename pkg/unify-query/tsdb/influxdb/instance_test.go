@@ -11,90 +11,103 @@ package influxdb
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/storage"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
-func TestInstance_QueryRaw(t *testing.T) {
-	ctx := context.Background()
-	mock.SetRedisClient(ctx, "test")
-	mockData := `{"results":[{"statement_id":0,"series":[{"name":"cpu_summary","columns":["_time","_value"],"values":[["2023-02-22T16:04:00Z",20.468538578157883],["2023-02-22T16:05:00Z",20.25296970605787],["2023-02-22T16:06:00Z",19.9283445874921],["2023-02-22T16:07:00Z",19.612237758778733],["2023-02-22T16:08:00Z",20.187296617920314]],"partial":true}],"partial":true}]}
-`
-	mockCurl := curl.NewMockCurl(
-		map[string]string{
-			`http://127.0.0.1:80/query?db=db&q=select+%22field%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+%22measurement%22+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`:                             mockData,
-			`http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000++tz%28%27Asia%2FShanghai%27%29`: mockData,
-			`http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_aa_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`:                            mockData,
-			`http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_bb_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`:                            mockData,
-		},
-		log.DefaultLogger,
-	)
+func TestInstance_MakeSQL(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+
+	db := "_internal"
+	measurement := "database"
+	field := "numSeries"
 
 	testCases := map[string]struct {
 		query    *metadata.Query
+		err      error
 		expected string
 	}{
 		"test query without timezone": {
+			query:    &metadata.Query{},
+			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10`,
+		},
+		"test query with offset": {
 			query: &metadata.Query{
-				DB:           "db",
-				Measurement:  "measurement",
-				Measurements: []string{"measurement"},
-				Field:        "field",
-				Fields:       []string{"field"},
+				OffsetInfo: metadata.OffSetInfo{
+					Limit:  100,
+					SLimit: 50,
+				},
 			},
-			expected: `http://127.0.0.1:80/query?db=db&q=select+%22field%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+%22measurement%22+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`,
+			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 SLIMIT 50`,
 		},
 		"test query with timezone": {
 			query: &metadata.Query{
-				DB:           "db",
-				Measurement:  "transfer_uptime",
-				Measurements: []string{"transfer_uptime"},
-				Field:        "value",
-				Fields:       []string{"value"},
-				Timezone:     "Asia/Shanghai",
+				Timezone: "Asia/Shanghai",
 			},
-			expected: `http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000++tz%28%27Asia%2FShanghai%27%29`,
+			expected: `SELECT "numSeries" AS _value, "time" AS _time, *::tag FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 LIMIT 10 TZ('Asia/Shanghai')`,
 		},
-		"test query with two fields": {
+		"test query aggregation": {
 			query: &metadata.Query{
-				DB:           "db",
-				Measurement:  "transfer_.*_uptime",
-				Measurements: []string{"transfer_aa_uptime", "transfer_bb_uptime"},
-				Field:        "value",
-				Fields:       []string{"value"},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   "count",
+						Window: time.Minute * 5,
+						Dimensions: []string{
+							"database",
+						},
+					},
+				},
 			},
-			expected: `http://127.0.0.1:80/query?db=db&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+transfer_bb_uptime+where+time+%3E+1693454553000000000+and+time+%3C+1693454853000000000+`,
+			expected: `SELECT count("numSeries") AS _value, "time" AS _time FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 GROUP BY "database", time(5m0s) LIMIT 10`,
+		},
+		"test aggregation query reference": {
+			query: &metadata.Query{
+				Aggregates: metadata.Aggregates{
+					{
+						Name: "count",
+						Dimensions: []string{
+							"database",
+						},
+					},
+				},
+			},
+			expected: `SELECT count("numSeries") AS _value, "time" AS _time FROM "database" WHERE time > 1718175000000000000 and time < 1718175600000000000 GROUP BY "database" LIMIT 10`,
 		},
 	}
-	hints := &storage.SelectHints{
-		Start: 1693454553000,
-		End:   1693454853000,
-		Step:  60,
-	}
+	start := time.UnixMilli(1718175000000)
+	end := time.UnixMilli(1718175600000)
 	option := Options{
-		Host:    "127.0.0.1",
-		Port:    80,
-		Timeout: time.Hour,
-		Curl:    mockCurl,
+		Host:     "127.0.0.1",
+		Port:     80,
+		Timeout:  time.Hour,
+		MaxLimit: 1e1,
 	}
 
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			ctx, _ = context.WithCancel(ctx)
+			ctx = metadata.InitHashID(ctx)
 			instance := NewInstance(ctx, option)
-			seriesSet := instance.QueryRaw(ctx, c.query, hints, nil)
-			fmt.Printf("Content: %v", seriesSet)
-			//todo: 此处需要补充一个对 seriesSet 的断言
-			assert.Equal(t, c.expected, mockCurl.Url)
+			if c.query.DB == "" {
+				c.query.DB = db
+			}
+			if c.query.Measurement == "" {
+				c.query.Measurement = measurement
+			}
+			if c.query.Field == "" {
+				c.query.Field = field
+			}
+			sql, err := instance.makeSQL(ctx, c.query, start, end)
+			if c.err != nil {
+				assert.Equal(t, c.err, err)
+			} else {
+				assert.Equal(t, c.expected, sql)
+			}
 		})
 	}
 }

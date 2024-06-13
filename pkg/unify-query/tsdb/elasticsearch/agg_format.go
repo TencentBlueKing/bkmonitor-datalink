@@ -38,8 +38,6 @@ type aggFormat struct {
 
 	aggInfoList aggInfoList
 
-	isNotPromQL bool
-
 	toEs   func(k string) string
 	toProm func(k string) string
 
@@ -172,15 +170,8 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			case Count:
 				if valueMetric, ok := data.ValueCount(info.Name); ok {
 					// 计算数量需要造数据
-					repNum := 1
-					if !a.isNotPromQL {
-						repNum = int(*valueMetric.Value)
-					}
-
-					for j := 0; j < repNum; j++ {
-						a.item.value = *valueMetric.Value
-						a.reset()
-					}
+					a.item.value = *valueMetric.Value
+					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}

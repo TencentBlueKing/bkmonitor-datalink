@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/stretchr/testify/assert"
 
@@ -35,67 +34,55 @@ func TestInstance_QueryRaw(t *testing.T) {
 		IntervalTime: 3e2 * time.Millisecond,
 		Timeout:      3e1 * time.Second,
 		Client:       cli,
+		Limit:        1e4,
 		Tolerance:    5,
 	}
 	end := time.Now()
+	start := end.Add(time.Minute * -5)
+
+	db := "132_lol_new_login_queue_login_1min"
+	field := "login_rate"
 
 	for idx, c := range []struct {
-		query *metadata.Query
-		hints *storage.SelectHints
+		query    *metadata.Query
+		expected string
 	}{
 		{
 			query: &metadata.Query{
-				Measurement:    "132_hander_opmon_avg",
-				Field:          "value",
-				BkSqlCondition: "instance = '5744'",
-			},
-			hints: &storage.SelectHints{
-				Start: end.Add(time.Minute * -5).UnixMilli(),
-				End:   end.UnixMilli(),
+				BkSqlCondition: "namespace = 'gz100' OR namespace = 'bgp2\\-new'",
+				OffsetInfo:     metadata.OffSetInfo{Limit: 10},
 			},
 		},
 		{
 			query: &metadata.Query{
-				Measurement:    "132_hander_opmon_avg",
-				Field:          "value",
-				BkSqlCondition: "instance = '5744' OR instance = '11211'",
-				AggregateMethodList: []metadata.AggrMethod{
+				Aggregates: metadata.Aggregates{
 					{
-						Name:       "avg",
-						Dimensions: []string{"instance", "application"},
+						Name:       "count",
+						Dimensions: []string{"namespace"},
 					},
 				},
-			},
-			hints: &storage.SelectHints{
-				Start: end.Add(time.Minute * -30).UnixMilli(),
-				End:   end.UnixMilli(),
-				Step:  600000,
-				Func:  "avg_over_time",
-				Range: 600000,
 			},
 		},
 		{
 			query: &metadata.Query{
-				Measurement: "101068_ymzx_online",
-				Field:       "gseindex",
-				AggregateMethodList: []metadata.AggrMethod{
+				Aggregates: metadata.Aggregates{
 					{
-						Name: "avg",
+						Name:   "count",
+						Window: time.Minute,
 					},
 				},
-			},
-			hints: &storage.SelectHints{
-				Start: end.Add(time.Minute * -30).UnixMilli(),
-				End:   end.UnixMilli(),
-				Step:  120000,
-				Func:  "avg_over_time",
-				Range: 10000,
 			},
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", idx), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			ss := ins.QueryRaw(ctx, c.query, c.hints)
+			if c.query.DB == "" {
+				c.query.DB = db
+			}
+			if c.query.Field == "" {
+				c.query.Field = field
+			}
+			ss := ins.QueryRaw(ctx, c.query, start, end)
 			for ss.Next() {
 				series := ss.At()
 				lbs := series.Labels()
@@ -127,72 +114,56 @@ func TestInstance_QueryRaw(t *testing.T) {
 func TestInstance_bkSql(t *testing.T) {
 	mock.Init()
 
+	start := time.UnixMilli(1718189940000)
+	end := time.UnixMilli(1718193555000)
+
 	testCases := []struct {
 		query *metadata.Query
-		hints *storage.SelectHints
-		sql   string
+
+		expected string
 	}{
 		{
 			query: &metadata.Query{
-				Measurement:    "132_hander_opmon_avg",
-				Field:          "value",
-				BkSqlCondition: "instance = '5744' OR instance = '11211'",
-				AggregateMethodList: []metadata.AggrMethod{
+				DB:             "132_lol_new_login_queue_login_1min",
+				Field:          "login_rate",
+				BkSqlCondition: "namespace REGEXP '^(bgp2\\-new|gz100)$'",
+				Aggregates: metadata.Aggregates{
 					{
-						Name:       "sum",
-						Dimensions: []string{"instance", "application"},
+						Name:       "count",
+						Dimensions: []string{"namespace"},
+						Window:     time.Second * 15,
 					},
 				},
 			},
-			hints: &storage.SelectHints{
-				Start: 1701092460000,
-				End:   1701096060000,
-				Step:  120000,
-				Func:  "count_over_time",
-				Range: 60000,
-			},
-			sql: "SELECT COUNT(`value`) AS `value`, MAX(dtEventTimeStamp) AS `time`, instance, application FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 AND (instance = '5744' OR instance = '11211') GROUP BY instance, application, FROM_UNIXTIME((dtEventTimestamp - (dtEventTimestamp % 60000)) / 1000, \"%Y%m%d%H%i%s\") ORDER BY dtEventTimeStamp ASC LIMIT 200000",
+			expected: "SELECT COUNT(`login_rate`) AS `_value_`, MAX((`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000))) AS `_timestamp_` FROM `132_lol_new_login_queue_login_1min` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 AND (namespace REGEXP '^(bgp2\\-new|gz100)$') GROUP BY `namespace`, (`dtEventTimeStamp` - (`dtEventTimeStamp` % 15000)) ORDER BY `_timestamp_` ASC LIMIT 200005",
 		},
 		{
 			query: &metadata.Query{
-				Measurement: "132_hander_opmon_avg",
-				Field:       "value",
-				AggregateMethodList: []metadata.AggrMethod{
+				DB:    "132_hander_opmon_avg",
+				Field: "value",
+				Aggregates: metadata.Aggregates{
 					{
 						Name: "sum",
 					},
 				},
 			},
-			hints: &storage.SelectHints{
-				Start: 1701092460000,
-				End:   1701096060000,
-				Step:  120000,
-				Func:  "count_over_time",
-				Range: 15000,
-			},
-			sql: "SELECT COUNT(`value`) AS `value`, MAX(dtEventTimeStamp) AS `time` FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 GROUP BY FROM_UNIXTIME((dtEventTimestamp - (dtEventTimestamp % 15000)) / 1000, \"%Y%m%d%H%i%s\") ORDER BY dtEventTimeStamp ASC LIMIT 200000",
+
+			expected: "SELECT SUM(`value`) AS `_value_` FROM `132_hander_opmon_avg` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 ORDER BY `_timestamp_` ASC LIMIT 200005",
 		},
 		{
 			query: &metadata.Query{
-				Measurement:         "100133_ieod_logsearch4_errorlog_p.doris",
-				Field:               "",
-				AggregateMethodList: []metadata.AggrMethod{},
-				Size:                5,
+				DB:    "100133_ieod_logsearch4_errorlog_p.doris",
+				Field: "value",
+				Size:  5,
 			},
-			hints: &storage.SelectHints{
-				Start: 1701092460000,
-				End:   1701096060000,
-				Step:  120000,
-				Func:  "",
-				Range: 0,
-			},
-			sql: "SELECT *, dtEventTimeStamp AS `_timestamp_` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE dtEventTimeStamp >= 1701092460000 AND dtEventTimeStamp < 1701096060000 ORDER BY `_timestamp_` ASC LIMIT 5",
+
+			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p.doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 ORDER BY `_timestamp_` ASC LIMIT 5",
 		},
 		{
 			query: &metadata.Query{
-				Measurement: "100133_ieod_logsearch4_errorlog_p.doris",
-				Field:       "gseIndex",
-				AggregateMethodList: []metadata.AggrMethod{
+				DB:    "100133_ieod_logsearch4_errorlog_p.doris",
+				Field: "gseIndex",
+				Aggregates: metadata.Aggregates{
 					{
 						Name: "count",
 						Dimensions: []string{
@@ -200,29 +171,26 @@ func TestInstance_bkSql(t *testing.T) {
 						},
 					},
 				},
-				IsNotPromQL: true,
-				Size:        5,
+				Size: 5,
 			},
-			hints: &storage.SelectHints{
-				Start: 1701092460000,
-				End:   1701096060000,
-				Step:  120000,
-				Func:  "",
-				Range: 0,
-			},
-			sql: "SELECT count(`gseIndex`), dtEventTimeStamp AS `_timestamp_` FROM 100133_ieod_logsearch4_errorlog_p.doris WHERE `dtEventTimeStamp` >= 1701092460000 AND `dtEventTimeStamp` < 1701096060000 GROUP BY `ip` ORDER BY `_timestamp_` ASC LIMIT 5",
+
+			expected: "SELECT COUNT(`gseIndex`) AS `_value_` FROM `100133_ieod_logsearch4_errorlog_p.doris` WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` < 1718193555000 GROUP BY `ip` ORDER BY `_timestamp_` ASC LIMIT 5",
 		},
 	}
 
 	ins := Instance{
-		Limit: 2e5,
+		Limit:     2e5,
+		Tolerance: 5,
 	}
 
 	for i, c := range testCases {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
-			sql, _ := ins.bkSql(ctx, c.query, c.hints)
-			assert.Equal(t, sql, c.sql)
+			sql, err := ins.bkSql(ctx, c.query, start, end)
+			assert.Nil(t, err)
+			if err == nil {
+				assert.Equal(t, c.expected, sql)
+			}
 		})
 	}
 }

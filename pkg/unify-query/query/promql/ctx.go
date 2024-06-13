@@ -123,16 +123,6 @@ func tsDBToMetadataQuery(ctx context.Context, metricName string, queryInfo *Quer
 			return nil, err
 		}
 
-		// 增加聚合方法
-		query.AggregateMethodList = make([]metadata.AggrMethod, len(queryInfo.AggregateMethodList))
-		for i, aggr := range queryInfo.AggregateMethodList {
-			query.AggregateMethodList[i] = metadata.AggrMethod{
-				Name:       aggr.Name,
-				Dimensions: aggr.Dimensions,
-				Without:    aggr.Without,
-			}
-		}
-
 		// 如果有额外condition，则录入where语句中
 		if len(queryInfo.Conditions) != 0 {
 			whereList.Append(AndOperator, NewTextWhere(MakeOrExpression(queryInfo.Conditions)))
@@ -269,9 +259,9 @@ func queryInfoMetadataQuery(ctx context.Context, metricName string, queryInfo *Q
 		}
 
 		// 增加聚合方法
-		query.AggregateMethodList = make([]metadata.AggrMethod, len(queryInfo.AggregateMethodList))
+		query.Aggregates = make(metadata.Aggregates, len(queryInfo.AggregateMethodList))
 		for j, aggr := range queryInfo.AggregateMethodList {
-			query.AggregateMethodList[j] = metadata.AggrMethod{
+			query.Aggregates[j] = metadata.Aggregate{
 				Name:       aggr.Name,
 				Dimensions: aggr.Dimensions,
 				Without:    aggr.Without,

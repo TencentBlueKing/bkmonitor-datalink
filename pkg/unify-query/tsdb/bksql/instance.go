@@ -359,7 +359,7 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
-	sqlBuilder.WriteString("FROM `" + query.DB + "` ")
+	sqlBuilder.WriteString("FROM " + query.DB + " ")
 	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
 	if query.BkSqlCondition != "" {
 		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")

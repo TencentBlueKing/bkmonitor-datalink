@@ -22,6 +22,10 @@ var (
 	MetadataMetricDimensionKeyPrefix string
 	// MetadataMetricDimensionMaxMetricFetchStep config of metadata.refreshMetric task
 	MetadataMetricDimensionMaxMetricFetchStep int
+	// MetadataMetricDimensionByBkData refresh metric dimension by bkdata
+	MetadataMetricDimensionByBkData bool
+	// MetadataTableIdListForBkDataTsMetrics refresh metadata table_id dimension by bkdata
+	BkDataTableIdListRedisPath string
 
 	// BcsEnableBcsGray  是否启用BCS集群灰度模式
 	BcsEnableBcsGray bool
@@ -119,6 +123,8 @@ func initMetadataVariables() {
 	MetadataMetricDimensionMetricKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricKeyPrefix", "bkmonitor:metrics_")
 	MetadataMetricDimensionKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricDimensionKeyPrefix", "bkmonitor:metric_dimensions_")
 	MetadataMetricDimensionMaxMetricFetchStep = GetValue("taskConfig.metadata.metricDimension.maxMetricsFetchStep", 500)
+	MetadataMetricDimensionByBkData = GetValue("taskConfig.metadata.metricDimension.metadataMetricDimensionByBkData", false)
+	BkDataTableIdListRedisPath = GetValue("taskConfig.metadata.metricDimension.BkDataTableIdListRedisPath", "metadata:query_metric:table_id_list")
 
 	BcsEnableBcsGray = GetValue("taskConfig.metadata.bcs.enableBcsGray", false)
 	BcsGrayClusterIdList = GetValue("taskConfig.metadata.bcs.grayClusterIdList", []string{})

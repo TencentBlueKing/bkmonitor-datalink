@@ -74,7 +74,6 @@ func TestMetricDataIDMatcher(t *testing.T) {
 		}, true)
 		assert.NoError(t, err)
 		assert.Equal(t, 1003, dataID.Spec.DataID)
-
 	})
 
 	t.Run("namespace 精确匹配", func(t *testing.T) {

@@ -9,6 +9,8 @@
 
 package esb
 
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
+
 // CommonArgs :
 type CommonArgs struct {
 	AppCode           string `url:"bk_app_code,omitempty" json:"bk_app_code,omitempty"`
@@ -16,6 +18,11 @@ type CommonArgs struct {
 	BKToken           string `url:"bk_token,omitempty" json:"bk_token,omitempty"`
 	UserName          string `url:"bk_username,omitempty" json:"bk_username,omitempty"`
 	BkSupplierAccount string `url:"bk_supplier_account,omitempty" json:"bk_supplier_account,omitempty"`
+}
+
+func (c CommonArgs) JSON() string {
+	b, _ := json.Marshal(c)
+	return string(b)
 }
 
 // APIResponse :

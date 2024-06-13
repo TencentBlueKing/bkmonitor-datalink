@@ -1038,6 +1038,8 @@ var ESStorageDBSchema = struct {
 	IndexSettings     ESStorageDBSchemaField
 	MappingSettings   ESStorageDBSchemaField
 	StorageClusterID  ESStorageDBSchemaField
+	SourceType        ESStorageDBSchemaField
+	IndexSet      	  ESStorageDBSchemaField
 }{
 
 	TableID:           ESStorageDBSchemaField("table_id"),
@@ -1051,6 +1053,8 @@ var ESStorageDBSchema = struct {
 	IndexSettings:     ESStorageDBSchemaField("index_settings"),
 	MappingSettings:   ESStorageDBSchemaField("mapping_settings"),
 	StorageClusterID:  ESStorageDBSchemaField("storage_cluster_id"),
+	SourceType:        ESStorageDBSchemaField("source_type"),
+	IndexSet:          ESStorageDBSchemaField("index_set"),
 }
 
 // Update updates ESStorage fields by primary key

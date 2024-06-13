@@ -405,3 +405,67 @@ func (c *Client) RestartDataFlow(opts ...define.OperationOption) define.Operatio
 		Path:   path,
 	}, opts...)
 }
+
+// QueryMetrics for bkdata resource query_metrics
+func (c *Client) QueryMetrics(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		storage | string | 存储类型 | required
+		result_table_id | string | 计算平台结果表 | required
+	*/
+	path := "/v3/dd/metrics/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_dd_metrics",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// QueryDimension for bkdata resource query_dimension
+func (c *Client) QueryDimension(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		storage | string | 存储类型 | required
+		result_table_id | string | 计算平台结果表|
+		metric| string | 指标名称 | required
+	*/
+	path := "/v3/dd/dimensions/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_dd_dimensions",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// QueryDimensionValue for bkdata resource query
+func (c *Client) QueryDimensionValue(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		storage | string | 存储类型 | required
+		result_table_id | string | 计算平台结果表|
+		metric| string | 指标名称 | required
+		dimension| string | 维度名称 | required
+	*/
+	path := "/v3/dd/values/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_dd_values",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}
+
+// QueryMetricAndDimension for bkdata resource query_metric_and_dimension
+func (c *Client) QueryMetricAndDimension(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		storage | string | 存储类型 | required
+		result_table_id | string | 计算平台结果表|required|
+		no_value| bool | 是否返回值 | required|
+	*/
+	path := "/v4/dd/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_dd_metrics_and_dimensions",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}

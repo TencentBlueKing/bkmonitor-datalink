@@ -48,6 +48,9 @@ type Payload interface {
 	// Meta info
 	Meta() PayloadMeta
 
+	SetETLRecord(*ETLRecord)
+	GetETLRecord() *ETLRecord
+
 	// SetTime sets the time received
 	SetTime(t time.Time)
 	// GetTime gets the time received

@@ -11,6 +11,7 @@ package task
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -125,6 +126,12 @@ func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClu
 		bcsClusterInfo.ApiKeyContent = apiKeyContent
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.ApiKeyContent)
 	}
+	bizIdInt, _ := strconv.Atoi(cluster.BkBizId)
+	if bcsClusterInfo.BkBizId != bizIdInt {
+		bcsClusterInfo.BkBizId = bizIdInt
+		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.BkBizId)
+	}
+
 	// 进行更新操作
 	if len(updateFields) != 0 {
 		bcsClusterInfo.LastModifyTime = time.Now()

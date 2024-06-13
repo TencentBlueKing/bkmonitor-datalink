@@ -51,7 +51,9 @@ type ESStorage struct {
 	TimeZone          int8                         `json:"time_zone" gorm:"column:time_zone"`
 	IndexSettings     string                       `json:"index_settings" gorm:"index_settings"`
 	MappingSettings   string                       `json:"mapping_settings" gorm:"mapping_settings"`
-	StorageClusterID  uint                         `json:"storage_cluster_id" gorm:"autoUpdateTime"`
+	StorageClusterID  uint                         `json:"storage_cluster_id" gorm:"storage_cluster_id"`
+	SourceType        string                       `json:"source_type" gorm:"column:source_type"`
+	IndexSet          string                       `json:"index_set" gorm:"column:index_set"`
 	esClient          *elasticsearch.Elasticsearch `gorm:"-"`
 }
 

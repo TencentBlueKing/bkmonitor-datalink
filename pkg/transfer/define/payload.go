@@ -32,6 +32,8 @@ type BasePayload struct {
 	Data []byte
 	t    time.Time
 	flag PayloadFlag
+
+	r *ETLRecord
 }
 
 func (p BasePayload) copy() *BasePayload {
@@ -107,6 +109,14 @@ func (p *BasePayload) SetFlag(f PayloadFlag) {
 
 func (p *BasePayload) Flag() PayloadFlag {
 	return p.flag
+}
+
+func (p *BasePayload) SetETLRecord(r *ETLRecord) {
+	p.r = r
+}
+
+func (p *BasePayload) GetETLRecord() *ETLRecord {
+	return p.r
 }
 
 // NewBasePayloadFrom :

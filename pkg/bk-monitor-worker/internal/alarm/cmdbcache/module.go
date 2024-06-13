@@ -122,6 +122,9 @@ func (m *ModuleCacheManager) Type() string {
 func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	// 请求模块信息
 	moduleList, err := getModuleListByBizID(ctx, bizID)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get module list by biz: %d", bizID)
+	}
 
 	moduleCacheData := make(map[string]string)
 	templateToModules := make(map[string][]string)

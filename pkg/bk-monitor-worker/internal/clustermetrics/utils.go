@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
@@ -32,4 +33,13 @@ func InitTestConfig() {
 	fmt.Println("Current config file path:", configFilePath)
 	config.FilePath = configFilePath
 	config.InitConfig()
+}
+
+func GetGoroutineLimit(taskName string) int {
+	limit, exist := config.GoroutineLimit[taskName]
+	if !exist {
+		return 10
+	}
+	res, _ := strconv.Atoi(limit)
+	return res
 }

@@ -139,23 +139,43 @@ type FormatFactory struct {
 	from     int
 	size     int
 	timezone string
+
+	start int64
+	end   int64
 }
 
-func NewFormatFactory(ctx context.Context, valueKey string, mapping map[string]any, orders map[string]bool, from, size int, timezone string, toEs, toProm func(string) string) *FormatFactory {
+func NewFormatFactory(ctx context.Context) *FormatFactory {
 	f := &FormatFactory{
 		ctx:         ctx,
 		mapping:     make(map[string]string),
 		aggInfoList: make(aggInfoList, 0),
-		orders:      orders,
-		from:        from,
-		size:        size,
-		timezone:    timezone,
-
-		toEs:     toEs,
-		toProm:   toProm,
-		valueKey: toEs(valueKey),
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithQuery(valueKey string, start, end int64, timezone string, from, size int) *FormatFactory {
+	f.valueKey = valueKey
+	f.start = start
+	f.end = end
+	f.timezone = timezone
+	f.from = from
+	f.size = size
+	return f
+}
+
+func (f *FormatFactory) WithTransform(toEs, toProm func(string) string) *FormatFactory {
+	f.toEs = toEs
+	f.toProm = toProm
+	return f
+}
+
+func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
+	f.orders = orders
+	return f
+}
+
+func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
 	mapProperties("", mapping, f.mapping)
 	return f
 }
@@ -220,7 +240,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, start int64) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
 		items:       make(items, 0),
@@ -228,8 +248,8 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, start int64) (m
 		toProm:      f.toProm,
 	}
 
-	af.start()
-	defer af.close()
+	af.get()
+	defer af.put()
 
 	err := af.ts(len(f.aggInfoList), data)
 	if err != nil {
@@ -267,7 +287,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, start int64) (m
 		}
 
 		if im.timestamp == 0 {
-			im.timestamp = start
+			im.timestamp = f.start
 		}
 
 		timeSeriesMap[seriesKey].Labels = tsLabels
@@ -385,7 +405,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			curName := info.Name
 			curAgg := elastic.NewDateHistogramAggregation().
 				Field(Timestamp).FixedInterval(info.Window).TimeZone(info.Timezone).
-				MinDocCount(0)
+				MinDocCount(0).ExtendedBounds(f.start, f.end)
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
 			}

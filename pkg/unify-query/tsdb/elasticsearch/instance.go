@@ -262,10 +262,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	return res, nil
 }
 
-func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) {
+func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
 	var (
 		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
-		qb  = qo.query
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "query-with-aggregation")
@@ -276,37 +275,21 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, rets chan<
 		rets <- ret
 	}()
 
-	mapping, err := i.getMapping(ctx, qo.index)
+	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
 
-	// size 如果为 0，则去 maxSize
-	var size int
-	if qb.Size > 0 {
-		size = qb.Size
-	} else {
-		size = i.maxSize
-	}
-
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone, i.toEs, i.toProm)
-
-	sr, err := i.esQuery(ctx, qo, formatFactory)
-	if err != nil {
-		return
-	}
-
-	ret.TimeSeriesMap, err = formatFactory.AggDataFormat(sr.Aggregations, qo.start)
+	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations)
 	if err != nil {
 		return
 	}
 	return
 }
 
-func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets chan<- *TimeSeriesResult) {
+func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, fact *FormatFactory, rets chan<- *TimeSeriesResult) {
 	var (
 		ret = TimeSeriesResultPool.Get().(*TimeSeriesResult)
-		qb  = qo.query
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "query-without-aggregation")
@@ -317,21 +300,7 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 		rets <- ret
 	}()
 
-	mapping, err := i.getMapping(ctx, qo.index)
-	if err != nil {
-		return
-	}
-
-	var size int
-	if qb.Size > 0 {
-		size = qb.Size
-	} else {
-		size = i.maxSize
-	}
-
-	formatFactory := NewFormatFactory(ctx, qb.Field, mapping, qb.Orders, qb.From, size, qb.Timezone, i.toEs, i.toProm)
-
-	sr, err := i.esQuery(ctx, qo, formatFactory)
+	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
@@ -342,15 +311,15 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, rets ch
 		if err = json.Unmarshal(d.Source, &data); err != nil {
 			return
 		}
-		formatFactory.SetData(data)
+		fact.SetData(data)
 
-		lbs, vErr := formatFactory.Labels()
+		lbs, vErr := fact.Labels()
 		if vErr != nil {
 			err = vErr
 			return
 		}
 
-		sample, vErr := formatFactory.Sample()
+		sample, vErr := fact.Sample()
 		if vErr != nil {
 			err = vErr
 			return
@@ -482,10 +451,31 @@ func (i *Instance) QueryRaw(
 			end:   end.UnixMilli(),
 			query: query,
 		}
-		if len(query.Aggregates) > 0 {
-			i.queryWithAgg(ctx, qo, rets)
+
+		mapping, err1 := i.getMapping(ctx, qo.index)
+		if err1 != nil {
+			rets <- &TimeSeriesResult{
+				Error: err1,
+			}
+			return
+		}
+		var size int
+		if query.Size > 0 || query.Size > i.maxSize {
+			size = query.Size
 		} else {
-			i.queryWithoutAgg(ctx, qo, rets)
+			size = i.maxSize
+		}
+
+		fact := NewFormatFactory(ctx).
+			WithQuery(i.toEs(query.Field), qo.start, qo.end, query.Timezone, query.From, size).
+			WithMapping(mapping).
+			WithOrders(query.Orders).
+			WithTransform(i.toEs, i.toProm)
+
+		if len(query.Aggregates) > 0 {
+			i.queryWithAgg(ctx, qo, fact, rets)
+		} else {
+			i.queryWithoutAgg(ctx, qo, fact, rets)
 		}
 
 		user := metadata.GetUser(ctx)

@@ -44,14 +44,17 @@ type aggFormat struct {
 	dims  []string
 	item  item
 	items items
+
+	start int64
+	end   int64
 }
 
-func (a *aggFormat) start() {
+func (a *aggFormat) get() {
 	a.items = itemsPool.Get().(items)
 	a.items = make(items, 0)
 }
 
-func (a *aggFormat) close() {
+func (a *aggFormat) put() {
 	a.items = nil
 	itemsPool.Put(a.items)
 }

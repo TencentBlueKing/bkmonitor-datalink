@@ -328,7 +328,7 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 	}
 
 	if len(query.Aggregates) > 1 {
-		return "", fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
+		return "", fmt.Errorf("bksql 不支持多函数聚合查询, %+v", query.Aggregates)
 	}
 
 	if len(query.Aggregates) == 1 {

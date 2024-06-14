@@ -49,14 +49,23 @@ func (s *JMESPathSuite) TestGetField() {
 	s.Equal(map[string]interface{}{"category": "database"}, actual)
 }
 
-//func (s *JMESPathSuite) TestQueryCatalog() {
-//	compiled, err := utils.CompileJMESPathCustom("query_catalog(ip, 'cmdb', 'ip', 'host_id')")
-//	s.NoError(err)
-//	data := map[string]interface{} {"ip": "127.0.0.1"}
-//	actual, err := compiled.Search(data)
-//	s.NoError(err)
-//	s.Equal(map[string]interface{} {"category": "database"}, actual)
-//}
+func (s *JMESPathSuite) TestToJSON() {
+	compiled, err := utils.CompileJMESPathCustom("to_json('{\"name\": \"test\"}')")
+	s.NoError(err)
+	data := map[string]interface{}{}
+	actual, err := compiled.Search(data)
+	s.NoError(err)
+	s.Equal(map[string]interface{}{"name": "test"}, actual)
+}
+
+func (s *JMESPathSuite) TestZip() {
+	compiled, err := utils.CompileJMESPathCustom("zip(['a', 'b'], ['1', '2'])")
+	s.NoError(err)
+	data := map[string]interface{}{}
+	actual, err := compiled.Search(data)
+	s.NoError(err)
+	s.Equal(map[string]interface{}{"a": "1", "b": "2"}, actual)
+}
 
 // JMESPathSuite :
 func TestJMESPathSuite(t *testing.T) {

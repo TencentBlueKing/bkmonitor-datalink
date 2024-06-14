@@ -671,9 +671,8 @@ func TestAggregations(t *testing.T) {
 					Function: "count_over_time",
 					Window:   "1m",
 				},
-				Step:        "1m",
-				Timezone:    "Asia/ShangHai",
-				IsNotPromQL: false,
+				Step:     "1m",
+				Timezone: "Asia/ShangHai",
 			},
 			aggs: md.Aggregates{
 				{

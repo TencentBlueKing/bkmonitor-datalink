@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -214,7 +215,7 @@ func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
 	)
 }
 
-func (f *FormatFactory) nestedField(field string) string {
+func (f *FormatFactory) NestedField(field string) string {
 	lbs := strings.Split(field, structured.EsOldStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
 		checkKey := strings.Join(lbs[0:i], structured.EsOldStep)
@@ -228,7 +229,7 @@ func (f *FormatFactory) nestedField(field string) string {
 }
 
 func (f *FormatFactory) nestedAgg(key string) {
-	nf := f.nestedField(key)
+	nf := f.NestedField(key)
 	if nf != "" {
 		f.aggInfoList = append(
 			f.aggInfoList, NestedAgg{
@@ -448,7 +449,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(am.Name)
+			f.nestedAgg(f.valueKey)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
@@ -565,7 +566,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 			}
 
 			var nq elastic.Query
-			nf := f.nestedField(con.DimensionName)
+			nf := f.NestedField(con.DimensionName)
 			if nf != "" {
 				nq = elastic.NewNestedQuery(nf, q)
 			} else {
@@ -659,6 +660,9 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			value = fmt.Sprintf("%.f", d)
 		case int64, int32, int:
 			value = fmt.Sprintf("%d", d)
+		case []interface{}:
+			o, _ := json.Marshal(d)
+			value = fmt.Sprintf("%s", o)
 		default:
 			err = fmt.Errorf("dimensions key type is error: %T, %v", d, d)
 			return

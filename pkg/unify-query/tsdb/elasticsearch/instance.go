@@ -199,6 +199,16 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
+	// 注入 querystring
+	if qb.QueryString != "" {
+		qs := NewQueryString(qb.QueryString, fact.NestedField)
+		q, qsErr := qs.Parser()
+		if qsErr != nil {
+			return nil, qsErr
+		}
+		filterQueries = append(filterQueries, q)
+	}
+
 	source := elastic.NewSearchSource()
 	source.Sort(Timestamp, true)
 	order := fact.Order()

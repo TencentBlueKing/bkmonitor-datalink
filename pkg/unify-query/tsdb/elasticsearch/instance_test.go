@@ -68,6 +68,57 @@ func TestInstance_queryReference(t *testing.T) {
 
 		expected interface{}
 	}{
+		"nested query + query string 测试": {
+			query: &metadata.Query{
+				DB:    "2_bklog_nested_field_test_*_read",
+				Field: "fields.field_name",
+				From:  0,
+				Size:  10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "fields.field_name",
+							Operator:      "eq",
+							Value:         []string{"bk-dev-4"},
+						},
+					},
+				},
+				QueryString: "fields.field_name: bk-dev-3",
+			},
+			start: time.UnixMilli(1717482000000),
+			end:   time.UnixMilli(1717482160000),
+		},
+		"nested aggregate + query 测试": {
+			query: &metadata.Query{
+				DB:    "2_bklog_nested_field_test_*_read",
+				Field: "fields.field_name",
+				From:  0,
+				Size:  10,
+				Orders: metadata.Orders{
+					FieldTime: false,
+				},
+				AllConditions: metadata.AllConditions{
+					{
+						{
+							DimensionName: "fields.field_name",
+							Operator:      "eq",
+							Value:         []string{"bk-dev-3"},
+						},
+					},
+				},
+				Aggregates: metadata.Aggregates{
+					{
+						Name:   Count,
+						Window: time.Minute,
+					},
+				},
+			},
+			start: time.UnixMilli(1717482000000),
+			end:   time.UnixMilli(1717482160000),
+		},
 		"统计 __ext.io_kubernetes_pod 不为空的文档数量": {
 			query: &metadata.Query{
 				DB:    db,

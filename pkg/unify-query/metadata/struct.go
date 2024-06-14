@@ -101,6 +101,7 @@ type Query struct {
 	SegmentedEnable bool // 是否开启分段查询
 
 	// Es 查询扩展
+	QueryString   string
 	DataSource    string
 	AllConditions AllConditions
 	Source        []string

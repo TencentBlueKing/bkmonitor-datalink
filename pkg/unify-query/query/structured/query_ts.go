@@ -462,23 +462,11 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		return nil, err
 	}
 
-	// 支持 queryString 参数
-	qs := NewQueryString(q.QueryString)
-	err = qs.Parser()
-	if err != nil {
-		return nil, err
-	}
-	qsConditions, err := qs.Conditions.AnalysisConditions()
-	if err != nil {
-		return nil, err
-	}
-
 	queryConditions, err := q.Conditions.AnalysisConditions()
 	if err != nil {
 		return nil, err
 	}
 
-	allConditions := MergeConditionField(queryConditions, qsConditions)
 	queryMetric.QueryList = make([]*metadata.Query, 0, len(tsDBs))
 
 	queryLabelsMatcher, _, _ := q.Conditions.ToProm()
@@ -490,7 +478,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	span.Set("tsdb-num", len(tsDBs))
 
 	for _, tsDB := range tsDBs {
-		query, err := q.BuildMetadataQuery(ctx, tsDB, allConditions, queryLabelsMatcher)
+		query, err := q.BuildMetadataQuery(ctx, tsDB, queryConditions, queryLabelsMatcher)
 		query.Size = q.Limit
 		query.From = q.From
 		query.Aggregates = aggregates
@@ -728,6 +716,7 @@ func (q *Query) BuildMetadataQuery(
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
 
 	// 写入 ES 所需内容
+	query.QueryString = q.QueryString
 	query.DataSource = q.DataSource
 	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {

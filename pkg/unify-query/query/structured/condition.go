@@ -39,6 +39,20 @@ type Conditions struct {
 	ConditionList []string `json:"condition_list,omitempty" example:"and"`
 }
 
+// InsertCondition 从数组顶端写入
+func (c *Conditions) InsertCondition(s string) {
+	cls := make([]string, len(c.ConditionList)+1)
+	cls = append([]string{s}, c.ConditionList...)
+	c.ConditionList = cls
+}
+
+// InsertField 从数组顶端写入
+func (c *Conditions) InsertField(field ConditionField) {
+	cfs := make([]ConditionField, len(c.FieldList)+1)
+	cfs = append([]ConditionField{field}, c.FieldList...)
+	c.FieldList = cfs
+}
+
 // AnalysisConditions
 func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 

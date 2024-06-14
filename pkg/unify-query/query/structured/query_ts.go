@@ -361,6 +361,16 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		return
 	}
 
+	step, err := model.ParseDuration(q.Step)
+	if err != nil {
+		return
+	}
+
+	// 如果 step < window 则不进行降采样聚合处理,因为计算出来的数据不准确
+	if step < window {
+		return
+	}
+
 	if name, ok := domSampledFunc[am.Method+q.TimeAggregation.Function]; ok {
 		agg := metadata.Aggregate{
 			Name:       name,

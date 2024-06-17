@@ -10,12 +10,13 @@
 package utils
 
 import (
-	"encoding/json"
 	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/jmespath/go-jmespath"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 )
 
 var CustomJPFunctions = []*jmespath.FunctionEntry{
@@ -140,7 +141,11 @@ var jpfZip = &jmespath.FunctionEntry{
 
 		result := make(map[string]interface{})
 		for i, key := range keys {
-			result[key.(string)] = values[i]
+			keyStr, ok := key.(string)
+			if !ok {
+				return nil, nil
+			}
+			result[keyStr] = values[i]
 		}
 		return result, nil
 	},

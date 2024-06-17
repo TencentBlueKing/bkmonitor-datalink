@@ -12,6 +12,7 @@ package socketsanpshot
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -45,6 +46,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.running.Store(true)
 	defer g.running.Store(false)
 
+	now := time.Now()
 	procs, err := procsnapshot.AllProcsMetaWithCache(g.config.Period)
 	if err != nil {
 		logger.Errorf("faile to get all procs meta: %v", err)
@@ -60,5 +62,5 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		logger.Errorf("faile to get procs sockets: %v", err)
 		return
 	}
-	e <- &Event{dataid: g.config.DataID, data: sockets}
+	e <- &Event{dataid: g.config.DataID, data: sockets, utcTime: now}
 }

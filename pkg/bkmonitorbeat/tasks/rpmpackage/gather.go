@@ -45,6 +45,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.running.Store(true)
 	defer g.running.Store(false)
 
+	now := time.Now()
 	var items []PackageInfo
 	pkgs, err := RpmList(ctx)
 	if err != nil {
@@ -56,7 +57,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		if pkg == "" {
 			continue
 		}
-		time.Sleep(time.Millisecond * 20) // 打散 CPU
+		time.Sleep(time.Millisecond * 250) // 打散 CPU
 		verify, err := RpmVerify(ctx, pkg)
 		if err != nil {
 			logger.Errorf("failed to verfiy rpm package '%s', err: %v", pkg, err)
@@ -68,5 +69,5 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		})
 	}
 
-	e <- &Event{dataid: g.config.DataID, data: items}
+	e <- &Event{dataid: g.config.DataID, data: items, utcTime: now}
 }

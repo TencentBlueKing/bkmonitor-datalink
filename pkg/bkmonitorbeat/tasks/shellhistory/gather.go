@@ -13,6 +13,7 @@ import (
 	"context"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -46,6 +47,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.running.Store(true)
 	defer g.running.Store(false)
 
+	now := time.Now()
 	entities, err := parse()
 	if err != nil {
 		logger.Errorf("failed to parse paaswd details, err: %v", err)
@@ -70,5 +72,5 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 	}
 
-	e <- &Event{dataid: g.config.DataID, data: items}
+	e <- &Event{dataid: g.config.DataID, data: items, utcTime: now}
 }

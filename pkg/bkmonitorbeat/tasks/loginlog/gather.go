@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -42,6 +43,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 
 func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	var records []Record
+	now := time.Now()
 	for _, file := range logPaths {
 		b, err := os.ReadFile(file)
 		if err != nil {
@@ -61,7 +63,8 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	}
 
 	e <- &Event{
-		DataID:  g.config.DataID,
-		Records: records,
+		dataid:  g.config.DataID,
+		records: records,
+		utcTime: now,
 	}
 }

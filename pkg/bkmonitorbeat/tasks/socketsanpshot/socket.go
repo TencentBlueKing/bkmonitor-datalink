@@ -47,7 +47,7 @@ type ProcSocket struct {
 	Protocol string `json:"protocol"`
 	State    string `json:"state"`
 	Saddr    string `json:"saddr"`
-	Sport    uint32 `json:"uint16"`
+	Sport    uint32 `json:"sport"`
 	Daddr    string `json:"daddr"`
 	Dport    uint32 `json:"dport"`
 	Family   string `json:"family"`

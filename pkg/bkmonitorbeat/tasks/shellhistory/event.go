@@ -10,6 +10,8 @@
 package shellhistory
 
 import (
+	"time"
+
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -22,14 +24,16 @@ type UserHistory struct {
 }
 
 type Event struct {
-	dataid int32
-	data   interface{}
+	dataid  int32
+	data    interface{}
+	utcTime time.Time
 }
 
 func (e *Event) AsMapStr() common.MapStr {
 	return common.MapStr{
-		"dataid": e.dataid,
-		"data":   e.data,
+		"dataid":  e.dataid,
+		"data":    e.data,
+		"utctime": e.utcTime.Format("2006-01-02 15:04:05"),
 	}
 }
 

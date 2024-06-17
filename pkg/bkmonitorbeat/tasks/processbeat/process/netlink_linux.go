@@ -49,13 +49,6 @@ const (
 	udpConn uint8 = iota + 7
 )
 
-type StateType uint8
-
-const (
-	StateListen      StateType = 0
-	StateListenEstab StateType = 1
-)
-
 // tcpStatesMap tcp state map
 var tcpStatesMap = map[uint8]string{
 	tcpEstablished: "ESTABLISHED",

@@ -37,6 +37,13 @@ const (
 	DetectorNetlink = "netlink"
 )
 
+type StateType uint8
+
+const (
+	StateListen      StateType = 0
+	StateListenEstab StateType = 1
+)
+
 type PidSockets struct {
 	TCP  map[int32][]FileSocket
 	UDP  map[int32][]FileSocket

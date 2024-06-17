@@ -42,6 +42,10 @@ const (
 	ModuleRpmPackage      = "rpmpackage"
 )
 
+const (
+	UTCTimeFormat = "2006-01-02 15:04:05"
+)
+
 // Status :
 type Status int
 

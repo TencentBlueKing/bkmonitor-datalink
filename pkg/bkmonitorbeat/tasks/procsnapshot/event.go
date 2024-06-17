@@ -27,7 +27,7 @@ func (e *Event) AsMapStr() common.MapStr {
 	return common.MapStr{
 		"dataid":  e.dataid,
 		"data":    e.data,
-		"utctime": e.utcTime.Format("2006-01-02 15:04:05"),
+		"utctime": e.utcTime.Format(define.UTCTimeFormat),
 	}
 }
 

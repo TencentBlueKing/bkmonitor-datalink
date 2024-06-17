@@ -59,7 +59,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		for _, hf := range g.config.HistoryFiles {
 			p := filepath.Join(entity.Home, hf)
 			b, err := utils.ReadFileTail(p, g.config.LastBytes)
-			if err != nil {
+			if err != nil && entity.User != "root" {
 				logger.Warnf("failed to read file '%s', err: %v", p, err)
 				continue
 			}

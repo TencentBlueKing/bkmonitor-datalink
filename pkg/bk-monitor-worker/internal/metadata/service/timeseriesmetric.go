@@ -17,6 +17,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
@@ -187,6 +188,11 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			isNeedUpdate = true
 			tsm.LastModifyTime = lastTime
 		}
+		// NOTE: 仅当时间变更超过有效期阈值时，才进行更新
+		if lastTime.Sub(tsm.LastModifyTime).Hours() >= float64(config.GlobalTimeSeriesMetricExpiredSeconds/3600) {
+			updated = true
+		}
+
 		// 如果 tag 不一致，则进行更新
 		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
@@ -220,9 +226,6 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 				}
 			}
 			logger.Infof("updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
-		}
-		if isNeedUpdate {
-			updated = true
 		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除

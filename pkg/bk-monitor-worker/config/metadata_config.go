@@ -148,7 +148,7 @@ func initMetadataVariables() {
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)
 	PingServerDataid = GetValue("taskConfig.metadata.pingserver.dataid", uint(1100005), viper.GetUint)
 
-	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
+	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))

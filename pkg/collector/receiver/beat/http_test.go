@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package logbeat
+package beat
 
 import (
 	"bytes"
@@ -26,11 +26,13 @@ import (
 )
 
 const (
-	localUrl = "http://localhost:4318/v1/logbeat"
+	localUrl = "http://localhost:4318/v1/beat"
 )
 
 func TestReady(t *testing.T) {
-	assert.NotPanics(t, Ready)
+	assert.NotPanics(t, func() {
+		Ready(receiver.ComponentConfig{})
+	})
 }
 
 func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {
@@ -56,7 +58,7 @@ func TestHttpRequest(t *testing.T) {
 		assert.Equal(t, int64(0), n.Load())
 	})
 
-	t.Run("logbeat precheck failed", func(t *testing.T) {
+	t.Run("beat precheck failed", func(t *testing.T) {
 		buf := bytes.NewBufferString(`{"foo":"bar"}`)
 		req := httptest.NewRequest(http.MethodPut, localUrl, buf)
 
@@ -67,7 +69,7 @@ func TestHttpRequest(t *testing.T) {
 		assert.Equal(t, int64(0), n.Load())
 	})
 
-	t.Run("logbeat success", func(t *testing.T) {
+	t.Run("beat success", func(t *testing.T) {
 		buf := bytes.NewBufferString(`{"foo":"bar"}`)
 		req := httptest.NewRequest(http.MethodPut, localUrl, buf)
 

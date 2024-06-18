@@ -194,7 +194,7 @@ bk-collector:
         enabled: true
       fta:
         enabled: true
-      logbeat:
+      beat:
         enabled: true
 
   processor:
@@ -271,7 +271,7 @@ bk-collector:
     - name: "token_checker/aes256"
 
     # TokenChecker: 权限校验处理器
-    - name: "token_checker/logbeat"
+    - name: "token_checker/beat"
 
     # ServiceDiscover: 服务发现处理器
     - name: "service_discover/common"
@@ -1802,10 +1802,10 @@ bk-collector:
         - "pprof_translator/common"
         - "sampler/drop_profiles"
 
-    - name: "logbeat_pipeline/common"
-      type: "logbeat"
+    - name: "beat_pipeline/common"
+      type: "beat"
       processors:
-        - "token_checker/logbeat"
+        - "token_checker/beat"
         - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================

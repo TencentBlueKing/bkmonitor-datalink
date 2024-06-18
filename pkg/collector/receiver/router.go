@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type Ready func()
+type Ready func(config ComponentConfig)
 
 var componentsReady = map[string]Ready{}
 

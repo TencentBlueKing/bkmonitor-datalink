@@ -24,9 +24,9 @@ bk-collector 是一个通用的数据接收和清洗框架，依赖配置进行�
 | otlp | ✅ | ✅ | ✅ |                | ✅            | ✅ | ✅          |
 | skywalking | ✅ |  ✅    |      |                |              | |            |
 | pushgateway(prometheus) | | ✅ (pb+text) | |                |              | |            |
-| remotewrite(prometheus)  | | ✅ (pb+text) | |                |              | |            |
+| remotewrite(prometheus) | | ✅ (pb+text) | |                |              | |            |
 | fta | | ✅ | |                |              | |            |
-| logbeat | | | ✅ |                |              | |            |
+| beat | | | ✅ |                |              | |            |
 | pyroscope | | | |        ✅             |              | |            |
 
 [proxy](./proxy): 接收自定指标和自定义时序数据上报。

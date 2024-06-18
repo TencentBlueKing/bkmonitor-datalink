@@ -26,7 +26,7 @@ type ComponentConfig struct {
 	Skywalking  ComponentCommon `config:"skywalking"`
 	Pyroscope   ComponentCommon `config:"pyroscope"`
 	Fta         ComponentCommon `config:"fta"`
-	LogBeat     ComponentCommon `config:"logbeat"`
+	Beat        ComponentCommon `config:"beat"`
 }
 
 type ComponentCommon struct {

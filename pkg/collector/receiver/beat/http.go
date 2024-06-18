@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package logbeat
+package beat
 
 import (
 	"bytes"
@@ -23,24 +23,27 @@ import (
 )
 
 const (
-	routeV1LogBeat = "/v1/logbeat"
+	routeV1Beat = "/v1/beat"
 )
 
 func init() {
-	receiver.RegisterReadyFunc(define.SourceLogBeat, Ready)
+	receiver.RegisterReadyFunc(define.SourceBeat, Ready)
 }
 
-func Ready() {
-	receiver.RegisterRecvHttpRoute(define.SourceLogBeat, []receiver.RouteWithFunc{
+func Ready(config receiver.ComponentConfig) {
+	if !config.Beat.Enabled {
+		return
+	}
+	receiver.RegisterRecvHttpRoute(define.SourceBeat, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
-			RelativePath: routeV1LogBeat,
+			RelativePath: routeV1Beat,
 			HandlerFunc:  httpSvc.Export,
 		},
 	})
 }
 
-var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceLogBeat)
+var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceBeat)
 
 type HttpService struct {
 	receiver.Publisher
@@ -57,7 +60,7 @@ func (s HttpService) Export(w http.ResponseWriter, req *http.Request) {
 	buf := &bytes.Buffer{}
 	_, err := io.Copy(buf, req.Body)
 	if err != nil {
-		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordLogBeat)
+		metricMonitor.IncInternalErrorCounter(define.RequestHttp, define.RecordBeat)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, nil)
 		logger.Errorf("failed to read body content, ip=%v, error: %s", ip, err)
 		return
@@ -69,20 +72,20 @@ func (s HttpService) Export(w http.ResponseWriter, req *http.Request) {
 	r := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
-		RecordType:    define.RecordLogBeat,
-		Data:          &define.LogBeatData{Data: buf.Bytes()},
+		RecordType:    define.RecordBeat,
+		Data:          &define.BeatData{Data: buf.Bytes()},
 		Token:         define.Token{Original: req.Header.Get(define.KeyDataID)},
 	}
 
 	code, processorName, err := s.Validate(r)
 	if err != nil {
-		logger.Warnf("run pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", define.RecordLogBeat.S(), code, ip, err)
+		logger.Warnf("run pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", define.RecordBeat.S(), code, ip, err)
 		receiver.WriteErrResponse(w, define.ContentTypeJson, int(code), err)
-		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordLogBeat, processorName, r.Token.Original, code)
+		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordBeat, processorName, r.Token.Original, code)
 		return
 	}
 
 	s.Publish(r)
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordLogBeat, buf.Len(), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordBeat, buf.Len(), start)
 	receiver.WriteResponse(w, define.ContentTypeText, http.StatusOK, nil)
 }

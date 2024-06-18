@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	URL = "http://localhost:4318/v1/logbeat"
+	URL = "http://localhost:4318/v1/beat"
 
-	content = `
+	logContent = `
 {
     "gseindex": 3,
     "items": [
@@ -45,10 +45,78 @@ const (
     },
     "filename": "/your/path/app.log"
 }`
+
+	metricContent = `
+{
+    "@timestamp": "2019-02-06T07:21:56.241Z",
+    "bkmonitorbeat": {
+        "address": [
+            "127.0.0.1"
+        ],
+        "hostname": "zk-2",
+        "name": "zk-2",
+        "version": "6.0.12"
+    },
+    "bizid": 0,
+    "cloudid": 0,
+    "dataid": 2011,
+    "gseindex": 207499,
+    "ip": "127.0.0.1",
+    "metricset": {
+        "host": "127.0.0.1:9272",
+        "module": "prometheus",
+        "name": "collector",
+        "rtt": 211344
+    },
+    "prometheus": {
+        "collector": {
+            "metrics": [
+                {
+                    "key": "consul_net_node_latency_p75",
+                    "labels": {
+                        "consul_datacenter": "dc"
+                    },
+                    "value": 5.124331
+                },
+                {
+                    "key": "consul_net_node_latency_median",
+                    "labels": {
+                        "consul_datacenter": "dc"
+                    },
+                    "value": 4.409470
+                },
+                {
+                    "key": "consul_net_node_latency_min",
+                    "labels": {
+                        "consul_datacenter": "dc"
+                    },
+                    "value": 0.335530
+                },
+                {
+                    "key": "consul_net_node_latency_median",
+                    "labels": {
+                        "consul_datacenter": "dc"
+                    },
+                    "value": 4.131547
+                }
+            ],
+            "namespace": "consul_exporter"
+        }
+    },
+    "type": "metricsets"
+}
+`
 )
 
-func doRequest() {
-	request, _ := http.NewRequest(http.MethodPost, URL, bytes.NewBufferString(content))
+func doRequest(n int) {
+	buf := &bytes.Buffer{}
+	if n%2 == 0 {
+		buf.WriteString(logContent)
+	} else {
+		buf.WriteString(metricContent)
+	}
+
+	request, _ := http.NewRequest(http.MethodPost, URL, buf)
 	request.Header.Set("X-BK-DATA-ID", "1001")
 
 	response, err := http.DefaultClient.Do(request)
@@ -73,13 +141,15 @@ func main() {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
+	n := 0
 	for {
 		select {
 		case <-c:
 			return
 
 		case <-ticker.C:
-			doRequest()
+			n++
+			doRequest(n)
 		}
 	}
 }

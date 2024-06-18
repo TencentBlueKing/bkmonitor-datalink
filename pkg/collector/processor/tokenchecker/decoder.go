@@ -26,10 +26,10 @@ import (
 )
 
 const (
-	decoderTypeFixed   = "fixed"
-	decoderTypeAcs256  = "aes256"
-	decoderTypeProxy   = "proxy"
-	decoderTypeLogBeat = "logbeat"
+	decoderTypeFixed  = "fixed"
+	decoderTypeAcs256 = "aes256"
+	decoderTypeProxy  = "proxy"
+	decoderTypeBeat   = "beat"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
@@ -40,8 +40,8 @@ func NewTokenDecoder(c Config) TokenDecoder {
 		return newAes256TokenDecoder(c)
 	case decoderTypeProxy:
 		return newProxyTokenDecoder(c)
-	case decoderTypeLogBeat:
-		return newLogBeatDecoder()
+	case decoderTypeBeat:
+		return newBeatDecoder()
 	}
 
 	// 未指定 token decoder 时使用固定的解析方案（for test）
@@ -296,22 +296,22 @@ func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
 	return token, nil
 }
 
-func newLogBeatDecoder() logBeatDecoder {
-	return logBeatDecoder{}
+func newBeatDecoder() beatDecoder {
+	return beatDecoder{}
 }
 
-type logBeatDecoder struct{}
+type beatDecoder struct{}
 
-func (d logBeatDecoder) Type() string {
-	return decoderTypeLogBeat
+func (d beatDecoder) Type() string {
+	return decoderTypeBeat
 }
 
-func (d logBeatDecoder) Skip() bool {
+func (d beatDecoder) Skip() bool {
 	return false
 }
 
-func (d logBeatDecoder) Decode(s string) (define.Token, error) {
-	logger.Debugf("logbeat token=%v", s)
+func (d beatDecoder) Decode(s string) (define.Token, error) {
+	logger.Debugf("beat dataid=%s", s)
 	if len(s) <= 0 {
 		return define.Token{}, errors.New("reject empty dataid")
 	}
@@ -322,6 +322,6 @@ func (d logBeatDecoder) Decode(s string) (define.Token, error) {
 	}
 	return define.Token{
 		Original:   s,
-		LogsDataId: int32(i),
+		BeatDataId: int32(i),
 	}, nil
 }

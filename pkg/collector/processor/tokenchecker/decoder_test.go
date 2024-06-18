@@ -166,39 +166,39 @@ func TestProxyTokenDecoder(t *testing.T) {
 	})
 }
 
-func TestLogBeatDecoder(t *testing.T) {
+func TestBeatDecoder(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		decoder := NewTokenDecoder(Config{
-			Type: decoderTypeLogBeat,
+			Type: decoderTypeBeat,
 		})
-		assert.Equal(t, decoderTypeLogBeat, decoder.Type())
+		assert.Equal(t, decoderTypeBeat, decoder.Type())
 		assert.False(t, decoder.Skip())
 
 		token, err := decoder.Decode("1001")
 		assert.NoError(t, err)
-		assert.Equal(t, int32(1001), token.LogsDataId)
+		assert.Equal(t, int32(1001), token.BeatDataId)
 		assert.Equal(t, "1001", token.Original)
 	})
 
 	t.Run("Empty", func(t *testing.T) {
 		decoder := NewTokenDecoder(Config{
-			Type: decoderTypeLogBeat,
+			Type: decoderTypeBeat,
 		})
 
 		token, err := decoder.Decode("")
 		assert.Equal(t, "reject empty dataid", err.Error())
-		assert.Equal(t, int32(0), token.LogsDataId)
+		assert.Equal(t, int32(0), token.BeatDataId)
 		assert.Equal(t, "", token.Original)
 	})
 
 	t.Run("Invalid", func(t *testing.T) {
 		decoder := NewTokenDecoder(Config{
-			Type: decoderTypeLogBeat,
+			Type: decoderTypeBeat,
 		})
 
 		token, err := decoder.Decode("-1001")
 		assert.Equal(t, "reject invalid dataid: -1001", err.Error())
-		assert.Equal(t, int32(0), token.LogsDataId)
+		assert.Equal(t, int32(0), token.BeatDataId)
 		assert.Equal(t, "", token.Original)
 	})
 }

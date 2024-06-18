@@ -18,17 +18,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestLogBeat(t *testing.T) {
+func TestBeat(t *testing.T) {
 	record := define.Record{
-		RecordType: define.RecordLogBeat,
-		Data:       &define.LogBeatData{Data: []byte(`{"foo":"bar"}`)},
+		RecordType: define.RecordBeat,
+		Data:       &define.BeatData{Data: []byte(`{"foo":"bar"}`)},
 	}
 
 	events := make([]define.Event, 0)
 	gather := func(evts ...define.Event) {
 		for i := 0; i < len(evts); i++ {
 			evt := evts[i]
-			assert.Equal(t, define.RecordLogBeat, evt.RecordType())
+			assert.Equal(t, define.RecordBeat, evt.RecordType())
 			events = append(events, evt)
 		}
 	}

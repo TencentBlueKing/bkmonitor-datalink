@@ -16,32 +16,32 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/json"
 )
 
-type logBeatEvent struct {
+type beatEvent struct {
 	define.CommonEvent
 }
 
-func (e logBeatEvent) RecordType() define.RecordType {
-	return define.RecordLogBeat
+func (e beatEvent) RecordType() define.RecordType {
+	return define.RecordBeat
 }
 
-var LogBeatConverter EventConverter = logBeatConverter{}
+var BeatConverter EventConverter = beatConverter{}
 
-type logBeatConverter struct{}
+type beatConverter struct{}
 
-func (c logBeatConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
-	return logBeatEvent{define.NewCommonEvent(token, dataId, data)}
+func (c beatConverter) ToEvent(token define.Token, dataId int32, data common.MapStr) define.Event {
+	return beatEvent{define.NewCommonEvent(token, dataId, data)}
 }
 
-func (c logBeatConverter) ToDataID(record *define.Record) int32 {
+func (c beatConverter) ToDataID(record *define.Record) int32 {
 	return record.Token.LogsDataId
 }
 
-func (c logBeatConverter) Convert(record *define.Record, f define.GatherFunc) {
+func (c beatConverter) Convert(record *define.Record, f define.GatherFunc) {
 	dataID := c.ToDataID(record)
-	data := record.Data.(*define.LogBeatData)
+	data := record.Data.(*define.BeatData)
 	dst := make(map[string]interface{})
 	if err := json.Unmarshal(data.Data, &dst); err != nil {
-		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordLogBeat, dataID)
+		DefaultMetricMonitor.IncConverterFailedCounter(define.RecordBeat, dataID)
 		return
 	}
 

@@ -23,7 +23,7 @@ import (
 func TestRegister(t *testing.T) {
 	RegisterRecvGrpcRoute(nil)
 	RegisterRecvHttpRoute("x", nil)
-	RegisterReadyFunc("x", func() {})
+	RegisterReadyFunc("x", func(_ ComponentConfig) {})
 }
 
 func TestRoute(t *testing.T) {

@@ -122,41 +122,10 @@ func New(conf *confengine.Config) (*Receiver, error) {
 }
 
 func (r *Receiver) ready() {
+	config := GetComponentConfig()
 	for k, f := range componentsReady {
-		switch k {
-		case define.SourceJaeger:
-			if GetComponentConfig().Jaeger.Enabled {
-				f()
-			}
-		case define.SourceOtlp:
-			if GetComponentConfig().Otlp.Enabled {
-				f()
-			}
-		case define.SourcePushGateway:
-			if GetComponentConfig().PushGateway.Enabled {
-				f()
-			}
-		case define.SourceRemoteWrite:
-			if GetComponentConfig().RemoteWrite.Enabled {
-				f()
-			}
-		case define.SourceZipkin:
-			if GetComponentConfig().Zipkin.Enabled {
-				f()
-			}
-		case define.SourceSkywalking:
-			if GetComponentConfig().Skywalking.Enabled {
-				f()
-			}
-		case define.SourcePyroscope:
-			if GetComponentConfig().Pyroscope.Enabled {
-				f()
-			}
-		case define.SourceFta:
-			if GetComponentConfig().Fta.Enabled {
-				f()
-			}
-		}
+		f(config)
+		logger.Infof("register '%s' component", k)
 	}
 }
 
@@ -209,7 +178,7 @@ func (r *Receiver) starAdminHttpServer() error {
 		return err
 	}
 
-	logger.Infof("register http admin route: %+v", AdminHttpRouter())
+	logger.Infof("register http admin route: %+v", AdminHttpRoutes())
 	return r.adminServer.Serve(l)
 }
 

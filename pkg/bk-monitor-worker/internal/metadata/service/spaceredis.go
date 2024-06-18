@@ -191,26 +191,18 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 	// 如果标签存在，则按照标签进行过滤
 	dlRtsMap := make(map[string][]string)
 	var err error
+	// 1. 如果标签存在，则按照标签更新路由
+	// 2. 如果结果表存在，则按照结果表更新路由
+	// 3. 如果都不存在，则更新所有标签路由
 	if len(dataLabelList) != 0 {
 		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabelList)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error, %s", err)
 			return err
 		}
-	} else {
-		tableIds, err := s.refineTableIds(tableIdList)
-		tableEsIds, err := s.refineEsTableIds(tableIdList)
-		tableIds = append(tableIds, tableEsIds...)
-		if err != nil {
-			return err
-		}
-		// 当结果表为空时，直接结束
-		if len(tableIds) == 0 {
-			logger.Infof("PushDataLabelTableIds end, tableId is empty")
-			return errors.New("tableId is empty")
-		}
+	} else if len(tableIdList) != 0 {
 		// 这里需要注意，因为是指定标签下所有更新，所以通过结果表查询到标签，再通过标签查询其下的所有结果表
-		dataLabels, err := s.getDataLabelByTableId(tableIds)
+		dataLabels, err := s.getDataLabelByTableId(tableIdList)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds end, get data label by table id error, %s", err)
 			return err
@@ -218,6 +210,12 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabels)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error, %s", err)
+			return err
+		}
+	} else {
+		dlRtsMap, err = s.getAllDataLabelTableId()
+		if err != nil {
+			logger.Errorf("get all data label and table id map error, %s", err)
 			return err
 		}
 	}
@@ -238,20 +236,23 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 				}
 			}
 		}
+	} else {
+		logger.Info("data label and table id map is empty, skip push redis data_label_to_result_table")
 	}
+
 	logger.Infof("push redis data_label_to_result_table")
 	return nil
 }
 
 func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (map[string][]string, error) {
-	db := mysql.GetDBSession().DB
-	var rts []resulttable.ResultTable
 	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
+	db := mysql.GetDBSession().DB
+	var rts []resulttable.ResultTable
 	for _, chunkDataLabels := range slicex.ChunkSlice(dataLabelList, 0) {
 		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().DataLabelIn(chunkDataLabels...).All(&tempList); err != nil {
+		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).DataLabelIn(chunkDataLabels...).All(&tempList); err != nil {
 			logger.Errorf("get table id by data label error, %s", err)
 			continue
 		}
@@ -272,11 +273,11 @@ func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (map[string]
 }
 
 func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, error) {
+	if len(tableIdList) == 0 {
+		return nil, errors.Errorf("table id is null")
+	}
 	db := mysql.GetDBSession().DB
 	var dataLabels []resulttable.ResultTable
-	if len(tableIdList) == 0 {
-		return nil, errors.New("table id is null")
-	}
 	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
 		var tempList []resulttable.ResultTable
 		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().TableIdIn(chunkTableIds...).All(&tempList); err != nil {
@@ -293,6 +294,29 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, erro
 		dataLabelList = append(dataLabelList, *dl.DataLabel)
 	}
 	return dataLabelList, nil
+}
+
+// 获取所有标签和结果表的映射关系
+func (s SpacePusher) getAllDataLabelTableId() (map[string][]string, error) {
+	// 获取所有可用的结果表
+	db := mysql.GetDBSession().DB
+	var rtList []resulttable.ResultTable
+	// 过滤为结果表可用，标签不为空和null的数据记录
+	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
+		logger.Errorf("get all data label and table id map error, %s", err)
+		return nil, err
+	}
+	// 获取结果表
+	dataLableTableIdMap := make(map[string][]string)
+	for _, rt := range rtList {
+		_, ok := dataLableTableIdMap[*rt.DataLabel]
+		if !ok {
+			dataLableTableIdMap[*rt.DataLabel] = []string{rt.TableId}
+		} else {
+			dataLableTableIdMap[*rt.DataLabel] = append(dataLableTableIdMap[*rt.DataLabel], rt.TableId)
+		}
+	}
+	return dataLableTableIdMap, nil
 }
 
 // 提取写入到influxdb或vm的结果表数据
@@ -458,10 +482,6 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 		}
 	}
 
-	// 追加es结果表详细信息
-	if err = s.PushEsTableIdDetail(tableIdList, isPublish); err != nil {
-		return err
-	}
 	logger.Info("push redis result_table_detail")
 	return nil
 

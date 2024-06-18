@@ -499,3 +499,34 @@ func TestGetDataLabelByTableId(t *testing.T) {
 		})
 	}
 }
+
+func TestGetAllDataLabelTableId(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	// not data_label
+	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+	// with data_label
+	dataLabel := "data_label_value"
+	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	dataLabel1 := "data_label_value1"
+	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	data, err := NewSpacePusher().getAllDataLabelTableId()
+	assert.NoError(t, err)
+
+	dataLabelSet := mapset.NewSet[string]()
+	for dataLabel, _ := range data {
+		dataLabelSet.Add(dataLabel)
+	}
+	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
+
+	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+}

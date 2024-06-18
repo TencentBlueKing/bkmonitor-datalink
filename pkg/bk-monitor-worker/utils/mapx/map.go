@@ -48,3 +48,11 @@ func GetValWithDefault[T constraints.Ordered, K any](m map[T]K, key T, val K) K 
 	}
 	return val
 }
+
+// SetDefault set the default value, if key not found, set the default value
+func SetDefault(m *map[string]interface{}, key string, val interface{}) {
+	_, ok := (*m)[key]
+	if !ok {
+		(*m)[key] = val
+	}
+}

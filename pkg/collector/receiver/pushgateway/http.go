@@ -47,7 +47,10 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourcePushGateway, Ready)
 }
 
-func Ready() {
+func Ready(config receiver.ComponentConfig) {
+	if !config.PushGateway.Enabled {
+		return
+	}
 	receiver.RegisterRecvHttpRoute(define.SourcePushGateway, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

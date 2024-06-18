@@ -194,6 +194,8 @@ bk-collector:
         enabled: true
       fta:
         enabled: true
+      beat:
+        enabled: true
 
   processor:
     # ApdexCalculator: 健康度状态计算器
@@ -267,6 +269,9 @@ bk-collector:
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"
+
+    # TokenChecker: 权限校验处理器
+    - name: "token_checker/beat"
 
     # ServiceDiscover: 服务发现处理器
     - name: "service_discover/common"
@@ -1796,6 +1801,12 @@ bk-collector:
         - "token_checker/aes256"
         - "pprof_translator/common"
         - "sampler/drop_profiles"
+
+    - name: "beat_pipeline/common"
+      type: "beat"
+      processors:
+        - "token_checker/beat"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

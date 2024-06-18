@@ -38,8 +38,10 @@ const (
 	SourceZipkin      = "zipkin"
 	SourceProxy       = "proxy"
 	SourceSkywalking  = "skywalking"
+	SourceBeat        = "beat"
 
 	KeyToken    = "X-BK-TOKEN"
+	KeyDataID   = "X-BK-DATA-ID"
 	KeyTenantID = "X-Tps-TenantID"
 
 	basicAuthUsername = "bkmonitor"
@@ -63,6 +65,7 @@ const (
 	RecordRemoteWrite    RecordType = "remotewrite"
 	RecordProxy          RecordType = "proxy"
 	RecordPingserver     RecordType = "pingserver"
+	RecordBeat           RecordType = "beat"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
@@ -93,6 +96,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordProfiles
 	case RecordFta.S():
 		t = RecordFta
+	case RecordBeat.S():
+		t = RecordBeat
 	default:
 		t = RecordUndefined
 	}
@@ -152,6 +157,10 @@ type ProxyData struct {
 	Version     string      `json:"version"`
 	Data        interface{} `json:"data"`
 	Type        string      // 标识为 ProxyMetric 或者 ProxyEvent
+}
+
+type BeatData struct {
+	Data []byte
 }
 
 const (
@@ -231,6 +240,7 @@ type Token struct {
 	ProfilesDataId int32
 	LogsDataId     int32
 	ProxyDataId    int32
+	BeatDataId     int32
 	BizId          int32
 	AppName        string
 }
@@ -251,6 +261,8 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 		return t.ProfilesDataId
 	case RecordProxy:
 		return t.ProxyDataId
+	case RecordBeat:
+		return t.BeatDataId
 	}
 	return -1
 }

@@ -312,7 +312,7 @@ func initVariables() {
 	StorageMysqlDbName = GetValue("store.mysql.dbName", "")
 	StorageMysqlCharset = GetValue("store.mysql.charset", "utf8")
 	StorageMysqlMaxIdleConnections = GetValue("store.mysql.maxIdleConnections", 10)
-	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
+	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 120)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
 	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.esRetainInvalidAlias", false)

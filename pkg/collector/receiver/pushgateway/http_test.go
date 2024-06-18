@@ -27,7 +27,9 @@ import (
 )
 
 func TestReady(t *testing.T) {
-	assert.NotPanics(t, Ready)
+	assert.NotPanics(t, func() {
+		Ready(receiver.ComponentConfig{})
+	})
 }
 
 func TestSplitLabels(t *testing.T) {

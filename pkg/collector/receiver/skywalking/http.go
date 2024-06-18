@@ -52,7 +52,10 @@ func init() {
 
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourceSkywalking)
 
-func Ready() {
+func Ready(config receiver.ComponentConfig) {
+	if !config.Skywalking.Enabled {
+		return
+	}
 	receiver.RegisterRecvHttpRoute(define.SourceSkywalking, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

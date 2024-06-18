@@ -18,45 +18,18 @@ import (
 )
 
 type ComponentConfig struct {
-	Jaeger      ComponentJaeger      `config:"jaeger"`
-	Otlp        ComponentOtlp        `config:"otlp"`
-	PushGateway ComponentPushGateway `config:"pushgateway"`
-	RemoteWrite ComponentRemoteWrite `config:"remotewrite"`
-	Zipkin      ComponentZipkin      `config:"zipkin"`
-	Skywalking  ComponentSkywalking  `config:"skywalking"`
-	Pyroscope   ComponentPyroscope   `config:"pyroscope"`
-	Fta         ComponentFta         `config:"fta"`
+	Jaeger      ComponentCommon `config:"jaeger"`
+	Otlp        ComponentCommon `config:"otlp"`
+	PushGateway ComponentCommon `config:"pushgateway"`
+	RemoteWrite ComponentCommon `config:"remotewrite"`
+	Zipkin      ComponentCommon `config:"zipkin"`
+	Skywalking  ComponentCommon `config:"skywalking"`
+	Pyroscope   ComponentCommon `config:"pyroscope"`
+	Fta         ComponentCommon `config:"fta"`
+	Beat        ComponentCommon `config:"beat"`
 }
 
-type ComponentJaeger struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentOtlp struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentPushGateway struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentRemoteWrite struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentZipkin struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentSkywalking struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentPyroscope struct {
-	Enabled bool `config:"enabled"`
-}
-
-type ComponentFta struct {
+type ComponentCommon struct {
 	Enabled bool `config:"enabled"`
 }
 

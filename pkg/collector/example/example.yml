@@ -473,6 +473,8 @@ bk-collector:
 
     # Beat 鉴权
     - name: "token_checker/beat"
+      config:
+        type: "beat"
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"

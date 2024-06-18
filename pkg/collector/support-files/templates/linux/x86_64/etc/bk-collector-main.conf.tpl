@@ -272,6 +272,8 @@ bk-collector:
 
     # TokenChecker: 权限校验处理器
     - name: "token_checker/beat"
+      config:
+        type: "beat"
 
     # ServiceDiscover: 服务发现处理器
     - name: "service_discover/common"

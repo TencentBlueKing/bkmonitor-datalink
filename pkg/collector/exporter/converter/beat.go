@@ -33,7 +33,7 @@ func (c beatConverter) ToEvent(token define.Token, dataId int32, data common.Map
 }
 
 func (c beatConverter) ToDataID(record *define.Record) int32 {
-	return record.Token.LogsDataId
+	return record.Token.BeatDataId
 }
 
 func (c beatConverter) Convert(record *define.Record, f define.GatherFunc) {

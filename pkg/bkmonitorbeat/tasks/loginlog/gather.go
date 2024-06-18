@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -42,6 +43,10 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
+	if utils.IsWindowsOS() {
+		return
+	}
+
 	var records []Record
 	now := time.Now()
 	for _, file := range logPaths {

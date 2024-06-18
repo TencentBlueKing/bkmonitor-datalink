@@ -39,6 +39,10 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	if utils.IsWindowsOS() {
+		return
+	}
+
 	if g.running.Load() {
 		logger.Info("ShellHistory task has running, will skip")
 		return

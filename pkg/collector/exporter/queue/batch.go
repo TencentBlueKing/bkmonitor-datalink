@@ -159,8 +159,8 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 		case define.RecordProxy:
 			bq.out <- NewProxyMapStr(dc.dataID, data)
 
-		// pingserver/fta 数据不做聚合
-		case define.RecordPingserver, define.RecordFta:
+		// 数据不做聚合
+		case define.RecordPingserver, define.RecordFta, define.RecordBeat:
 			for _, item := range data {
 				bq.out <- item
 			}

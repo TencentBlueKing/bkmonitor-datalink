@@ -444,6 +444,8 @@ func (c *Output) GetDataID(dataID interface{}) int32 {
 		return int32(reflect.ValueOf(dataID).Int())
 	case uint, uint8, uint16, uint32, uint64:
 		return int32(reflect.ValueOf(dataID).Uint())
+	case float64, float32:
+		return int32(reflect.ValueOf(dataID).Float())
 	case string:
 		dataid, err := strconv.ParseInt(dataID.(string), 10, 32)
 		if err != nil {

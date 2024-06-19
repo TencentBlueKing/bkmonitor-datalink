@@ -132,7 +132,7 @@ func TestAccumulatorGcOk(t *testing.T) {
 			exceeded := accumulator.Exceeded()
 			assert.Equal(t, 0, exceeded[1001])
 			assert.Equal(t, 0, exceeded[1002])
-			time.Sleep(time.Second) // 超过 gcInterval
+			time.Sleep(time.Second * 2) // 超过 gcInterval
 		}
 	}
 

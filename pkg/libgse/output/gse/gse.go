@@ -315,8 +315,10 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 
 	// add gseindex
 	var gseIndex uint64
+	var overwriteIndex bool
 	if ok, _ := data.HasKey("gseindex"); !ok {
 		gseIndex = GetGseIndex(dataid)
+		overwriteIndex = true
 	}
 
 	// add bizid, cloudid, ip
@@ -332,10 +334,12 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 		if _, ok := data["bk_biz_id"]; !ok {
 			data["bk_biz_id"] = info.BKBizID
 		}
+		if overwriteIndex {
+			data["gseindex"] = gseIndex
+		}
 		data["cloudid"] = info.Cloudid
 		data["ip"] = info.IP
 		data["hostname"] = info.Hostname
-		data["gseindex"] = gseIndex
 		data["bk_agent_id"] = info.BKAgentID
 		data["bk_host_id"] = info.HostID
 	} else {

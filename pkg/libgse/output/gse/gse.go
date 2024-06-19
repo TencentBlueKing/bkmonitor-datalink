@@ -346,7 +346,9 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 		data["_bizid_"] = info.Bizid
 		data["_cloudid_"] = info.Cloudid
 		data["_server_"] = info.IP
-		data["_gseindex_"] = gseIndex
+		if overwriteIndex {
+			data["_gseindex_"] = gseIndex
+		}
 		data["_agentid_"] = info.BKAgentID
 		data["_hostid_"] = info.HostID
 		data.Delete("time")

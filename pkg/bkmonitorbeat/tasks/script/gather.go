@@ -77,6 +77,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	logger.Debugf("run command line %s success", fmtCommand)
 
 	aggreRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
+	if formatErr == define.ErrNoScriptOutput {
+		e <- tasks.NewGatherUpEvent(g, define.BeatScriptPromNoOutputErr)
+		logger.Error(formatErr)
+		return
+	}
 
 	gConfig, ok := g.GlobalConfig.(*configs.Config)
 	if ok && gConfig.KeepOneDimension {

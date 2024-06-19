@@ -67,6 +67,7 @@ const (
 
 	BeatScriptRunOuterError        = 2301 // 脚本运行报错
 	BeatScriptPromFormatOuterError = 2302 // 脚本打印的 Prom 数据格式异常
+	BeatScriptPromNoOutputErr      = 2303 // 脚本没有输出内容
 
 	BeaterProcPIDFileNotFountOuterError = 2401 // PID文件不存在
 	BeaterProcStateReadOuterError       = 2402 // 单个进程状态信息读取失败
@@ -124,6 +125,7 @@ var BeatErrorCodeNameMap = map[BeatErrorCode]string{
 
 	BeatScriptRunOuterError:        "脚本运行报错",
 	BeatScriptPromFormatOuterError: "脚本打印的 Prom 数据格式异常",
+	BeatScriptPromNoOutputErr:      "脚本没有输出内容",
 
 	BeaterProcPIDFileNotFountOuterError: "PID文件不存在",
 	BeaterProcStateReadOuterError:       "单个进程状态信息读取失败",
@@ -248,4 +250,7 @@ var (
 
 	// metricbeat errors
 	ErrorNoTask = errors.New("no task found")
+
+	// script errors
+	ErrNoScriptOutput = errors.New("script no output")
 )

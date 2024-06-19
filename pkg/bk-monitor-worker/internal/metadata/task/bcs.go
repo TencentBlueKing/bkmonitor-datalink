@@ -11,6 +11,7 @@ package task
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -112,26 +113,25 @@ func createBcsCluster(cluster service.BcsClusterInfo) error {
 }
 
 func updateBcsCluster(cluster service.BcsClusterInfo, bcsClusterInfo *bcs.BCSClusterInfo) error {
-	// 状态发生变化需要更新
-	var runningStatus = "RUNNING"
+	// NOTE: 集群状态通过接口直接获取并存储
 	var updateFields []bcs.BCSClusterInfoDBSchemaField
-	// 仅记录到 running 和 deleted 状态的集群数据，其中，非 running 的都设置为 deleted
-	if cluster.Status == runningStatus {
-		if bcsClusterInfo.Status != models.BcsClusterStatusRunning {
-			bcsClusterInfo.Status = models.BcsClusterStatusRunning
-			updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.Status)
-		}
-	} else if bcsClusterInfo.Status == models.BcsClusterStatusRunning {
-		// 非 running 的都设置为 deleted
-		bcsClusterInfo.Status = models.BcsClusterStatusDeleted
+	if cluster.Status != bcsClusterInfo.Status {
+		bcsClusterInfo.Status = cluster.Status
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.Status)
 	}
+
 	// 如果 BCS Token 变了需要刷新
 	apiKeyContent := cfg.BkApiBcsApiGatewayToken
 	if bcsClusterInfo.ApiKeyContent != apiKeyContent {
 		bcsClusterInfo.ApiKeyContent = apiKeyContent
 		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.ApiKeyContent)
 	}
+	bizIdInt, _ := strconv.Atoi(cluster.BkBizId)
+	if bcsClusterInfo.BkBizId != bizIdInt {
+		bcsClusterInfo.BkBizId = bizIdInt
+		updateFields = append(updateFields, bcs.BCSClusterInfoDBSchema.BkBizId)
+	}
+
 	// 进行更新操作
 	if len(updateFields) != 0 {
 		bcsClusterInfo.LastModifyTime = time.Now()
@@ -168,7 +168,8 @@ func RefreshBcsMonitorInfo(ctx context.Context, t *t.Task) error {
 	}()
 
 	var bcsClusterInfoList []bcs.BCSClusterInfo
-	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).StatusEq(models.BcsClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
+	// NOTE: 仅当集群状态为正常时，才会下发 data_id 资源
+	if err := bcs.NewBCSClusterInfoQuerySet(mysql.GetDBSession().DB).StatusIn(models.BcsClusterStatusRunning, models.BcsRawClusterStatusRunning).All(&bcsClusterInfoList); err != nil {
 		return err
 	}
 

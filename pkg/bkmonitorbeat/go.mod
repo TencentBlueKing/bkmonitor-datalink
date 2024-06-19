@@ -6,7 +6,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/cespare/xxhash v1.1.0
-	github.com/cespare/xxhash/v2 v2.1.2
+	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/elastic/go-ucfg v0.7.0
 	github.com/elastic/gosigar v0.11.0
@@ -71,7 +71,7 @@ require (
 	github.com/godbus/dbus/v5 v5.0.3 // indirect
 	github.com/gofrs/uuid v4.3.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/protobuf v1.5.2 // indirect
+	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.1 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect

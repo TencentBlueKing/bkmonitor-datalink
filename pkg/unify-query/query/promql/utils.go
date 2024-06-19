@@ -351,7 +351,7 @@ func makeInfluxdbQuery(
 		span.Set("query-end-str", endStr)
 		span.Set("query-offset-str", offsetStr)
 
-		aggr, grouping, dimensions := getDownSampleFunc(query.AggregateMethodList, hints, queries.IsCount)
+		aggr, grouping, dimensions := getDownSampleFunc(query.Aggregates, hints, queries.IsCount)
 
 		opt := SegmentedOpt{
 			Start:    hints.Start,
@@ -510,7 +510,7 @@ func generateSQL(
 
 // getDownSampleFunc
 func getDownSampleFunc(
-	methods []metadata.AggrMethod, hints *storage.SelectHints, isCount bool,
+	methods metadata.Aggregates, hints *storage.SelectHints, isCount bool,
 ) (string, time.Duration, []string) {
 	var (
 		dims   []string

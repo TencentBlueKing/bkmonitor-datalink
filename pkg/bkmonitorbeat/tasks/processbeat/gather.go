@@ -114,6 +114,17 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 			logger.Errorf("failed to get proc port detailed: %v", err)
 			return
 		}
+
+		maxNolisten := g.config.MaxNoListenPorts
+		if maxNolisten <= 0 {
+			maxNolisten = 100 // 默认不允许超过 100 个无监听端口
+		}
+		for i := 0; i < len(ports.Processes); i++ {
+			if len(ports.Processes[i].NonListen) > maxNolisten {
+				ports.Processes[i].NonListen = []uint16{0} // 特殊标记
+			}
+		}
+
 		e <- processEvent{
 			DataID: g.config.PortDataId,
 			Data:   ports,

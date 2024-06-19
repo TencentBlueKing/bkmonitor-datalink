@@ -95,7 +95,12 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 	batches := 0
 	total := 0
 	// 按批组装
+	var drain bool
 	for event := range metricsChan {
+		if drain {
+			// 排空 channel
+			continue
+		}
 		eventList = append(eventList, event)
 		// 达到批次数量
 		if len(eventList) >= batchsize {
@@ -117,8 +122,8 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 			// 清空当前批次
 			eventList = make([]common.MapStr, 0, batchsize)
 			if batches >= maxBatches {
-				logger.Warnf("metric batches reached max batches:%d, will not report more data in this task", maxBatches)
-				break
+				logger.Errorf("metric batches reached max batches:%d, will not report more data in this task", maxBatches)
+				drain = true // 如果已经超过了最大批次 则需要丢弃接下来的其他数据
 			}
 		}
 	}

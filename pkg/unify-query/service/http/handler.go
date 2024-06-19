@@ -13,11 +13,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -139,6 +141,115 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
+func queryReference(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+	var (
+		res any
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "query-reference")
+	defer span.End(&err)
+
+	qStr, _ := json.Marshal(query)
+	span.Set("query-ts", string(qStr))
+
+	for _, q := range query.QueryList {
+		q.IsReference = true
+		if q.TableID == "" {
+			err = fmt.Errorf("tableID is empty")
+			return nil, err
+		}
+	}
+
+	// 判断如果 step 为空，则补充默认 step
+	if query.Step == "" {
+		query.Step = promql.GetDefaultStep().String()
+	}
+
+	queryRef, err := query.ToQueryReference(ctx)
+	startInt, err := strconv.ParseInt(query.Start, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	start := time.Unix(startInt, 0)
+
+	endInt, err := strconv.ParseInt(query.End, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	end := time.Unix(endInt, 0)
+	step, err := model.ParseDuration(query.Step)
+	if err != nil {
+		return nil, err
+	}
+
+	// es 需要使用自己的查询时间范围
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
+	err = metadata.SetQueryReference(ctx, queryRef)
+	if err != nil {
+		return nil, err
+	}
+
+	var lookBackDelta time.Duration
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	instance := prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+		QueryMaxRouting: QueryMaxRouting,
+		Timeout:         SingleflightTimeout,
+	}, lookBackDelta)
+
+	if query.Instant {
+		res, err = instance.Query(ctx, query.MetricMerge, start)
+	} else {
+		res, err = instance.QueryRange(ctx, query.MetricMerge, start, end, time.Duration(step))
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	tables := promql.NewTables()
+	seriesNum := 0
+	pointsNum := 0
+
+	switch v := res.(type) {
+	case promPromql.Matrix:
+		for index, series := range v {
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
+
+			seriesNum++
+			pointsNum += len(series.Points)
+		}
+	case promPromql.Vector:
+		for index, series := range v {
+			// 层级需要转换
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
+
+			seriesNum++
+			pointsNum++
+		}
+	default:
+		err = fmt.Errorf("data type wrong: %T", v)
+		return nil, err
+	}
+
+	span.Set("resp-series-num", seriesNum)
+	span.Set("resp-points-num", pointsNum)
+
+	resp := NewPromData(query.ResultColumns)
+	err = resp.Fill(tables)
+	if err != nil {
+		return nil, err
+	}
+
+	resp.Status = metadata.GetStatus(ctx)
+	return resp, err
+}
+
 func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error) {
 	var (
 		err error
@@ -170,6 +281,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 
 	// 是否打开对齐
 	for _, q := range query.QueryList {
+		q.IsReference = false
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
 
@@ -179,8 +291,12 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			return nil, err
 		}
 	}
+	// 判断如果 step 为空，则补充默认 step
+	if query.Step == "" {
+		query.Step = promql.GetDefaultStep().String()
+	}
 
-	queryReference, err := query.ToQueryReference(ctx)
+	queryRef, err := query.ToQueryReference(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -191,14 +307,11 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	query.Timezone = timezone
 
-	// 写入查询缓存
-	metadata.SetQueryParams(ctx, &metadata.QueryParams{
-		Start: start.Unix(),
-		End:   end.Unix(),
-	})
+	// 写入查询时间到全局缓存
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
 	// 判断是否是直查
-	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
+	ok, vmExpand, err := queryRef.CheckVmQuery(ctx)
 	if err != nil {
 		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
 	}
@@ -225,7 +338,7 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			return nil, err
 		}
 	} else {
-		err = metadata.SetQueryReference(ctx, queryReference)
+		err = metadata.SetQueryReference(ctx, queryRef)
 
 		if err != nil {
 			return nil, err
@@ -240,6 +353,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		}, lookBackDelta)
 	}
 
+	// checkTsdbFunction
+
+	// sum(count_over_time(a[1m])) => a
 	promQL, err = query.ToPromExpr(ctx, promExprOpt)
 	if err != nil {
 		return nil, err
@@ -268,14 +384,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series))
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
 
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series))
+			// 层级需要转换
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
 
 			seriesNum++
 			pointsNum++
@@ -708,6 +825,69 @@ func HandlerQueryPromQL(c *gin.Context) {
 	resp.success(ctx, res)
 }
 
+// HandlerQueryReference
+// @Summary  query monitor by reference
+// @ID       query_ts
+// @Produce  json
+// @Param    traceparent            header    string                        false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                        false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
+// @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
+// @Param    data                  	body      structured.QueryTs  			true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/reference [post]
+func HandlerQueryReference(c *gin.Context) {
+	var (
+		ctx = c.Request.Context()
+
+		resp = &response{
+			c: c,
+		}
+		user = metadata.GetUser(ctx)
+		err  error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "handler-query-reference")
+	defer span.End(&err)
+
+	span.Set("request-url", c.Request.URL.String())
+	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
+
+	span.Set("query-source", user.Key)
+	span.Set("query-space-uid", user.SpaceUid)
+
+	// 解析请求 body
+	query := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(query)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		resp.failed(ctx, err)
+		return
+	}
+
+	// metadata 中的 spaceUid 是从 header 头信息中获取
+	if user.SpaceUid != "" {
+		query.SpaceUid = user.SpaceUid
+	}
+
+	queryStr, _ := json.Marshal(query)
+	span.Set("query-body", string(queryStr))
+	span.Set("query-body-size", len(queryStr))
+
+	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
+
+	res, err := queryReference(ctx, query)
+
+	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
+	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	resp.success(ctx, res)
+}
+
 // HandleInfluxDBPrint  打印 InfluxDB 路由信息
 func HandleInfluxDBPrint(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -789,13 +969,13 @@ func QueryTsClusterMetrics(ctx context.Context, query *structured.QueryTs) (inte
 	switch v := res.(type) {
 	case promPromql.Matrix:
 		for index, series := range v {
-			tables.Add(promql.NewTable(index, series))
+			tables.Add(promql.NewTable(index, series, structured.QueryRawFormat(ctx)))
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
 	case promPromql.Vector:
 		for index, series := range v {
-			tables.Add(promql.NewTableWithSample(index, series))
+			tables.Add(promql.NewTableWithSample(index, series, structured.QueryRawFormat(ctx)))
 			seriesNum++
 			pointsNum++
 		}

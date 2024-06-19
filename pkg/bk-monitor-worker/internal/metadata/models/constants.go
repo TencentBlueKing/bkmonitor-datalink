@@ -94,6 +94,12 @@ const (
 	ESAliasExpiredDelayDays = 1 // ES别名延迟过期时间
 )
 
+const (
+	EsSourceTypeLOG    = "log"
+	EsSourceTypeBKDATA = "bkdata"
+	EsSourceTypeES     = "es"
+)
+
 // Influxdb Redis Keys
 const (
 	InfluxdbKeyPrefix             = "bkmonitorv3:influxdb" // 前缀
@@ -106,8 +112,11 @@ const (
 
 // bcs cluster
 const (
+	// 兼容状态
 	BcsClusterStatusRunning         = "running"                   // 集群状态running
+	BcsRawClusterStatusRunning      = "RUNNING"                   // 集群状态RUNNING
 	BcsClusterStatusDeleted         = "deleted"                   // 集群状态deleted
+	BcsRawClusterStatusDeleted      = "DELETED"                   // 集群状态RUNNING
 	BcsDataTypeK8sMetric            = "k8s_metric"                // bcs metric类型数据
 	BcsDataTypeK8sEvent             = "k8s_event"                 // bcs event类型数据
 	BcsDataTypeCustomMetric         = "custom_metric"             // bcs custom_event类型数据

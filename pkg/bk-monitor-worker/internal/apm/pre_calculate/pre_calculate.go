@@ -38,12 +38,14 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithDistributiveWindowConfig(
 			window.DistributiveWindowSubSize(config.DistributiveWindowSubSize),
 			window.DistributiveWindowWatchExpiredInterval(config.DistributiveWindowWatchExpireInterval),
-			window.ConcurrentProcessCount(),
-			window.ConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
+			window.DistributiveWindowConcurrentProcessCount(config.DistributiveWindowHandleEventConcurrentCount),
+			window.DistributiveWindowConcurrentExpirationMaximum(config.DistributiveWindowConcurrentExpirationMaximum),
+			window.DistributiveWindowMappingMaxSpanCount(config.DistributiveWindowSubWindowMappingMaxSpanCount),
 		).
 		WithProcessorConfig(
 			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),
 			window.TraceEsQueryRate(config.TraceEsQueryRate),
+			window.MetricSampleRate(config.RelationMetricSampleRate),
 		).
 		WithStorageConfig(
 			storage.WorkerCount(config.StorageWorkerCount),

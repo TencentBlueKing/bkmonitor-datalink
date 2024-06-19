@@ -32,12 +32,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/elasticsearch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -54,15 +54,9 @@ func GetMetricValue(metricType io_prometheus_client.MetricType, metric *io_prome
 	return 0
 }
 
-//type collectTaskInfo struct {
-//	ClusterInfo storage.ClusterInfo
-//	Timestamp   int64
-//}
-
-// collectAndReportMetrics 采集&上报ES集群指标
-func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
+// CollectAndReportMetrics 采集&上报ES集群指标
+func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	logger.Infof("start to collect es cluster metrics, es cluster name [%s].", c.ClusterName)
-	start := time.Now()
 	// 从custom option中获取集群业务id
 	var bkBizID float64
 	var customOption map[string]interface{}
@@ -98,8 +92,7 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 
 	// 注册es指标收集器
 	collectorLogger := log.NewNopLogger()
-	registry := prometheus.NewRegistry()
-	exporter, err := collector.NewElasticsearchCollector(
+	exporterCollector, err := collector.NewElasticsearchCollector(
 		collectorLogger,
 		[]string{},
 		collector.WithElasticsearchURL(esURL),
@@ -108,90 +101,113 @@ func collectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 	if err != nil {
 		return errors.WithMessage(err, "failed to create elasticsearch collector")
 	}
-	registry.MustRegister(exporter)
-	registry.MustRegister(collector.NewIndices(collectorLogger, httpClient, esURL, true, true))
-	registry.MustRegister(collector.NewShards(collectorLogger, httpClient, esURL))
-	// todo: 补充状态维度
-	registry.MustRegister(collector.NewClusterHealth(collectorLogger, httpClient, esURL))
-	registry.MustRegister(collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local"))
-	metricFamilies, err := registry.Gather()
-	if err != nil {
-		return errors.WithMessage(err, "collect es cluster metrics failed")
+	indicesCollector := collector.NewIndices(collectorLogger, httpClient, esURL, true, true)
+	shardsCollector := collector.NewShards(collectorLogger, httpClient, esURL)
+	clusterHeathCollector := collector.NewClusterHealth(collectorLogger, httpClient, esURL)
+	nodesCollector := collector.NewNodes(collectorLogger, httpClient, esURL, true, "_local")
+
+	esCollectors := map[string]prometheus.Collector{
+		"exporter":       exporterCollector,
+		"indices":        indicesCollector,
+		"shards":         shardsCollector,
+		"cluster_health": clusterHeathCollector,
+		"nodes":          nodesCollector,
 	}
+	defer func() {
+		close(*indicesCollector.ClusterLabelUpdates())
+		close(*shardsCollector.ClusterLabelUpdates())
+	}()
 
-	esMetrics := make([]*clustermetrics.EsMetric, 0)
+	for metricType, esCollector := range esCollectors {
+		start := time.Now()
+		registry := prometheus.NewRegistry()
+		registry.MustRegister(esCollector)
+		metricFamilies, err := registry.Gather()
+		registry.Unregister(esCollector)
 
-	for _, mf := range metricFamilies {
-		// 处理指标数据
-		metricType := mf.GetType()
-		metricName := mf.GetName()
-		for _, metric := range mf.GetMetric() {
-			// 填充指标值
-			m := make(map[string]float64)
-			m[metricName] = GetMetricValue(metricType, metric)
-			d := make(map[string]interface{})
-
-			// 填充指标维度
-			for _, label := range metric.GetLabel() {
-				d[label.GetName()] = label.GetValue()
-			}
-
-			// 填充默认维度
-			d["bk_biz_id"] = bkBizID
-			d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
-			d["cluster_name"] = c.ClusterName
-			if index, ok := d["index"].(string); ok {
-				bizMatch := targetBizRe.FindStringSubmatch(index)
-				if len(bizMatch) > 0 {
-					if bizMatch[1] == "_space" {
-						d["target_biz_id"] = "-" + bizMatch[2]
-					} else {
-						d["target_biz_id"] = bizMatch[2]
-					}
-				}
-				rtMatch := rtRe.FindStringSubmatch(index)
-				if len(rtMatch) > 1 {
-					d["table_id"] = rtMatch[1]
-				}
-				logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
-					d["table_id"])
-			}
-
-			esm := &clustermetrics.EsMetric{
-				Metrics:   m,
-				Target:    cfg.ESClusterMetricTarget,
-				Timestamp: timestamp,
-				Dimension: d,
-			}
-			esMetrics = append(esMetrics, esm)
+		if err != nil {
+			return errors.WithMessagef(err, "collect es %s metrics failed", metricType)
 		}
-	}
 
-	logger.Infof("process es cluster metrics success [%s], all metric count: %v, current timestamp: %v ",
-		c.ClusterName, len(esMetrics), timestamp)
+		esMetrics := make([]*clustermetrics.EsMetric, 0)
 
-	customReportData := clustermetrics.CustomReportData{
-		DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
-	jsonData, err := jsonx.Marshal(customReportData)
-	if err != nil {
-		return errors.WithMessage(err, "custom report data json marshal failed")
-	}
+		for _, mf := range metricFamilies {
+			// 处理指标数据
+			metricType := mf.GetType()
+			metricName := mf.GetName()
+			for _, metric := range mf.GetMetric() {
+				// 填充指标值
+				m := make(map[string]float64)
+				m[metricName] = GetMetricValue(metricType, metric)
+				d := make(map[string]interface{})
 
-	u, err := url.Parse(cfg.ESClusterMetricReportUrl)
-	if err != nil {
-		return errors.WithMessage(err, "parse es cluster metric report url failed")
-	}
+				// 填充指标维度
+				for _, label := range metric.GetLabel() {
+					d[label.GetName()] = label.GetValue()
+				}
 
-	customReportUrl := u.String()
-	req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return errors.WithMessage(err, "report es metrics failed")
+				// 填充默认维度
+				d["bk_biz_id"] = bkBizID
+				d["cluster_id"] = strconv.Itoa(int(c.ClusterID))
+				d["cluster_name"] = c.ClusterName
+				if index, ok := d["index"].(string); ok {
+					bizMatch := targetBizRe.FindStringSubmatch(index)
+					if len(bizMatch) > 0 {
+						if bizMatch[1] == "_space" {
+							d["target_biz_id"] = "-" + bizMatch[2]
+						} else {
+							d["target_biz_id"] = bizMatch[2]
+						}
+					}
+					rtMatch := rtRe.FindStringSubmatch(index)
+					if len(rtMatch) > 1 {
+						d["table_id"] = rtMatch[1]
+					}
+					logger.Debugf("index: %s, target_biz_id: %s, table_id: %s", index, d["target_biz_id"],
+						d["table_id"])
+				}
+
+				esm := &clustermetrics.EsMetric{
+					Metrics:   m,
+					Target:    cfg.ESClusterMetricTarget,
+					Timestamp: timestamp,
+					Dimension: d,
+				}
+				esMetrics = append(esMetrics, esm)
+			}
+		}
+
+		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",
+			metricType, c.ClusterName, len(esMetrics), timestamp)
+
+		customReportData := clustermetrics.CustomReportData{
+			DataId: cfg.ESClusterMetricReportDataId, AccessToken: cfg.ESClusterMetricReportAccessToken, Data: esMetrics}
+		jsonData, err := jsonx.Marshal(customReportData)
+		if err != nil {
+			return errors.WithMessage(err, "custom report data json marshal failed")
+		}
+
+		u, err := url.Parse(cfg.ESClusterMetricReportUrl)
+		if err != nil {
+			return errors.WithMessage(err, "parse es cluster metric report url failed")
+		}
+
+		customReportUrl := u.String()
+		_ = func() error {
+			req, _ := http.NewRequest("POST", customReportUrl, bytes.NewBuffer(jsonData))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return errors.WithMessage(err, "report es metrics failed")
+			}
+			defer resp.Body.Close()
+
+			return nil
+		}()
+
+		elapsed := time.Since(start)
+		logger.Infof("report es %s metrics success [%s], task execution time：%s", metricType, c.ClusterName, elapsed)
 	}
-	defer resp.Body.Close()
-	elapsed := time.Since(start)
-	logger.Infof("report es metrics success [%s], task execution time：%s", c.ClusterName, elapsed)
 
 	return nil
 }
@@ -205,11 +221,16 @@ var httpClient = &http.Client{
 	},
 }
 
+type CollectESTaskParams struct {
+	ClusterInfo storage.ClusterInfo `json:"cluster_info"`
+	Timestamp   int64               `json:"timestamp"`
+}
+
 var targetBizRe = regexp.MustCompile(`v2(_space)?_(\d+)_`)
 
 var rtRe = regexp.MustCompile(`^v2_(.*)_.*?_.*$`)
 
-func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
+func ReportESClusterMetrics(ctx context.Context, currentTask *t.Task) error {
 	logger.Infof("start report es cluster metrics task.")
 	timestamp := time.Now().Truncate(time.Minute).UnixMilli()
 	// 1. 从metadata db中获取所有ES类型集群信息
@@ -224,10 +245,33 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 		return nil
 	}
 
+	blacklist := cfg.ESClusterMetricReportBlackList
+	blacklistMap := make(map[uint]bool)
+	for _, cluster := range blacklist {
+		clusterID := uint(cluster)
+		blacklistMap[clusterID] = true
+	}
+
+	// 创建一个新的列表，用于存储不在黑名单中的集群
+	var filteredClusterInfoList []storage.ClusterInfo
+	for _, cluster := range esClusterInfoList {
+		// 检查集群是否在黑名单中
+		if _, found := blacklistMap[cluster.ClusterID]; !found {
+			filteredClusterInfoList = append(filteredClusterInfoList, cluster)
+		}
+	}
+	esClusterInfoList = filteredClusterInfoList
+
 	// 2. 遍历存储获取集群信息
 	wg := &sync.WaitGroup{}
-	ch := make(chan struct{}, task.GetGoroutineLimit("report_es"))
+	ch := make(chan struct{}, clustermetrics.GetGoroutineLimit("report_es"))
 	wg.Add(len(esClusterInfoList))
+
+	client, err := worker.GetClient()
+	if err != nil {
+		logger.Errorf("get client error, %v", err)
+	}
+
 	for _, clusterInfo := range esClusterInfoList {
 		ch <- struct{}{}
 		go func(c storage.ClusterInfo, wg *sync.WaitGroup, ch chan struct{}) {
@@ -236,10 +280,13 @@ func ReportESClusterMetrics(ctx context.Context, t *t.Task) error {
 				wg.Done()
 			}()
 			// 3. 采集并上报集群指标
-			if err := collectAndReportMetrics(c, timestamp); err != nil {
-				logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
-			} else {
-				logger.Infof("es_cluster_info: [%v] name [%s] collect and report metrics success", c.ClusterID, c.ClusterName)
+			payload, err := jsonx.Marshal(CollectESTaskParams{ClusterInfo: c, Timestamp: timestamp})
+			if _, err = client.Enqueue(&t.Task{
+				Kind:    "async:collect_es_task",
+				Payload: payload,
+				Options: []t.Option{t.Queue("log-search")},
+			}); err != nil {
+				logger.Errorf("es_cluster_info: [%v] name [%s] try to enqueue collect task failed, %v", c.ClusterID, c.ClusterName, err)
 			}
 		}(clusterInfo, wg, ch)
 	}

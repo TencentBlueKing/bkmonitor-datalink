@@ -43,17 +43,15 @@ type Gather struct {
 	bufferBuilder tasks.BufferBuilder
 }
 
-func (g *Gather) newEvent(taskConf *configs.TCPTaskConfig, startAt time.Time, taskHost string) *tasks.SimpleEvent {
+func (g *Gather) newEvent(taskConf *configs.TCPTaskConfig, taskHost string) *tasks.SimpleEvent {
 	event := tasks.NewSimpleEvent(g)
-	event.StartAt = startAt
+	event.StartAt = time.Now()
 	event.TargetHost = taskHost
 	event.TargetPort = taskConf.TargetPort
 	return event
 }
 
-func (g *Gather) checkTargetHost(
-	ctx context.Context, taskConf *configs.TCPTaskConfig, targetHost string, startAt time.Time,
-) define.BeatErrorCode {
+func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskConfig, targetHost string, event *tasks.SimpleEvent) define.BeatErrorCode {
 	// 连接
 	address := net.JoinHostPort(targetHost, strconv.Itoa(taskConf.TargetPort))
 	conn, err := NewConn(ctx, taskConf, address) // for mock
@@ -66,6 +64,7 @@ func (g *Gather) checkTargetHost(
 	}
 
 	defer func() {
+		event.EndAt = time.Now() // tcp 三次握手后统计耗时 挥手不计入耗时内
 		err := conn.Close()
 		if err != nil {
 			logger.Warnf("%v: close conn error: %v", taskConf.TaskID, err)
@@ -80,7 +79,7 @@ func (g *Gather) checkTargetHost(
 	}
 	// 设置超时
 	logger.Debugf("%v: set deadline: %v", taskConf.TaskID, taskConf.Timeout)
-	err = conn.SetDeadline(startAt.Add(taskConf.Timeout))
+	err = conn.SetDeadline(event.StartAt.Add(taskConf.Timeout))
 	if err != nil {
 		logger.Warnf("%v: set deadline error: %v", taskConf.TaskID, err)
 		return define.BeatErrCodeRequestDeadLineError
@@ -133,10 +132,6 @@ func (g *Gather) checkTargetHost(
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	var (
-		startAt = time.Now()
-	)
-
 	hosts := make([]string, 0)
 	resultMap := make(map[string][]string)
 	taskConf := g.TaskConfig.(*configs.TCPTaskConfig)
@@ -159,7 +154,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	hostsInfo := tasks.GetHostsInfo(ctx, hosts, taskConf.DNSCheckMode, taskConf.TargetIPType, configs.Tcp)
 	for _, h := range hostsInfo {
 		if h.Errno != define.BeatErrCodeOK {
-			event := g.newEvent(taskConf, startAt, h.Host)
+			event := g.newEvent(taskConf, h.Host)
 			event.Fail(h.Errno)
 			e <- event
 		} else {
@@ -182,7 +177,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			wg.Add(1)
 			go func(tHost, host string) {
 				// 初始化事件
-				event := g.newEvent(taskConf, startAt, tHost)
+				event := g.newEvent(taskConf, tHost)
 				event.ResolvedIP = host
 
 				defer func() {
@@ -191,7 +186,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 					e <- event
 				}()
 				// 检查单个目标
-				code := g.checkTargetHost(ctx, taskConf, host, startAt)
+				code := g.checkTargetHost(ctx, taskConf, host, event)
 				if code == define.BeatErrCodeOK {
 					event.SuccessOrTimeout()
 				} else {

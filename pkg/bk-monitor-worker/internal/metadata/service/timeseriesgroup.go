@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -55,7 +56,16 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
-func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList bool) (bool, error) {
+	// 如果在白名单中，则通过计算平台获取指标数据
+	if isInRtList {
+		// 获取 vm rt及metric
+		vmMetrics, err := s.QueryMetricAndDimension(vmRt)
+		if err != nil {
+			return false, err
+		}
+		return s.UpdateMetrics(*vmMetrics)
+	}
 	// 获取 redis 中数据，用于后续指标及tag的更新
 	metricInfo, err := s.GetRedisData(cfg.GlobalFetchTimeSeriesMetricIntervalSeconds)
 	if err != nil {
@@ -66,6 +76,19 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics() (bool, error) {
 	}
 	// 记录是否有更新，然后推送redis并发布通知
 	return s.UpdateMetrics(metricInfo)
+}
+
+// RefreshMetric 更新指标
+func (s *TimeSeriesGroupSvc) QueryMetricAndDimension(vmRt string) (vmRtMetrics *[]map[string]interface{}, err error) {
+	// NOTE: 现阶段仅支持 vm 存储
+	vmStorage := "vm"
+
+	metricAndDimension, err := apiservice.Bkdata.QueryMetricAndDimension(vmStorage, vmRt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metricAndDimension, nil
 }
 
 // GetRedisData get data from redis

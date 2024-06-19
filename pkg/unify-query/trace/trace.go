@@ -74,7 +74,7 @@ func (s *Span) Set(key string, value interface{}) {
 	case []string:
 		attr = attribute.StringSlice(key, value.([]string))
 	default:
-		attr = attribute.String(key, fmt.Sprintf("%v", value))
+		attr = attribute.String(key, fmt.Sprintf("%+v", value))
 	}
 
 	s.span.SetAttributes(attr)

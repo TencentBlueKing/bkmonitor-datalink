@@ -10,6 +10,8 @@
 package prometheus
 
 import (
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -17,4 +19,6 @@ import (
 type Query struct {
 	instance tsdb.Instance
 	qry      *metadata.Query
+	start    time.Time
+	end      time.Time
 }

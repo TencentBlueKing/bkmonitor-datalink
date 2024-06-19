@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
 
@@ -33,7 +34,7 @@ type CombinedQueryParams struct {
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge MetricMerge `json:"metric_merge" example:"a"`
 
-	// OrderBy 弃用字段
+	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
 	OrderBy OrderBy `json:"order_by" swaggerignore:"true"`
 	// ResultColumns 指定保留返回字段值
 	ResultColumns []string `json:"result_columns" swaggerignore:"true"`
@@ -69,6 +70,39 @@ var dataSourceMap = map[string]struct{}{
 	BkData:         {},
 	BkLog:          {},
 	BkApm:          {},
+}
+
+const (
+	EsOldStep = "."
+	EsNewStep = "___"
+)
+
+func PromQueryFormat(ctx context.Context) func(k string) string {
+	qp := metadata.GetQueryParams(ctx)
+	return func(k string) string {
+		if len(qp.DataSource) == 1 {
+			switch qp.DataSource[BkLog] {
+			case struct{}{}:
+				vs := strings.Split(k, EsOldStep)
+				k = strings.Join(vs, EsNewStep)
+			}
+		}
+		return k
+	}
+}
+
+func QueryRawFormat(ctx context.Context) func(k string) string {
+	qp := metadata.GetQueryParams(ctx)
+	return func(k string) string {
+		if len(qp.DataSource) == 1 {
+			switch qp.DataSource[BkLog] {
+			case struct{}{}:
+				vs := strings.Split(k, EsNewStep)
+				k = strings.Join(vs, EsOldStep)
+			}
+		}
+		return k
+	}
 }
 
 // ToProm 结构化数据 -> promql -> 判断查询

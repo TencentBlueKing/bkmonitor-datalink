@@ -10,17 +10,6 @@
 package bksql
 
 const (
-	dtEventTimeStamp = "dtEventTimeStamp"
-	dtEventTime      = "dtEventTime"
-	localTime        = "localTime"
-	startTime        = "_startTime_"
-	endTime          = "_endTime_"
-	theDate          = "thedate"
-
-	timeStamp = "_timestamp_"
-)
-
-const (
 	QueryAsync = "query_async"
 	QuerySync  = "query_sync"
 
@@ -33,29 +22,16 @@ const (
 	RUNNING  = "running"
 	FINISHED = "finished"
 
-	ContentType = "Content-Type"
-)
-
-var (
-	internalDimension = map[string]struct{}{
-		timeStamp:        {},
-		dtEventTimeStamp: {},
-		dtEventTime:      {},
-		localTime:        {},
-		startTime:        {},
-		endTime:          {},
-		theDate:          {},
-	}
+	ContentType   = "Content-Type"
+	Authorization = "X-Bkapi-Authorization"
 )
 
 type Params struct {
 	SQL                        string `json:"sql"`
 	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
-	BkUsername                 string `json:"bk_username"`
 	BkAppCode                  string `json:"bk_app_code"`
 	PreferStorage              string `json:"prefer_storage"`
 	BkdataDataToken            string `json:"bkdata_data_token"`
-	BkAppSecret                string `json:"bk_app_secret"`
 }
 
 type Result struct {

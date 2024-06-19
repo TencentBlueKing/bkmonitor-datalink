@@ -34,7 +34,8 @@ const (
 	BkUserName    = "admin"
 	PreferStorage = "vm"
 
-	ContentType = "Content-Type"
+	ContentType   = "Content-Type"
+	Authorization = "X-Bkapi-Authorization"
 
 	APISeries      = "series"
 	APILabelNames  = "labels"
@@ -73,6 +74,21 @@ type Instance struct {
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) authorization() string {
+	auth := fmt.Sprintf(
+		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
+		BkUserName,
+		i.Code,
+		i.Secret,
+	)
+	return auth
+}
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
 	if !resp.Result {
@@ -283,16 +299,6 @@ func (i *Instance) GetInstanceType() string {
 	return consul.VictoriaMetricsStorageType
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
-	ctx context.Context,
-	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
-) storage.SeriesSet {
-	return nil
-}
-
 // vmQuery
 func (i *Instance) vmQuery(
 	ctx context.Context, sql string, data interface{}, span *trace.Span,
@@ -309,11 +315,9 @@ func (i *Instance) vmQuery(
 	params := &Params{
 		SQL:                        sql,
 		BkdataAuthenticationMethod: i.AuthenticationMethod,
-		BkUsername:                 BkUserName,
 		BkAppCode:                  i.Code,
 		PreferStorage:              PreferStorage,
 		BkdataDataToken:            i.Token,
-		BkAppSecret:                i.Secret,
 	}
 	body, err := json.Marshal(params)
 	if err != nil {
@@ -341,7 +345,8 @@ func (i *Instance) vmQuery(
 			UrlPath: address,
 			Body:    body,
 			Headers: map[string]string{
-				ContentType: i.ContentType,
+				ContentType:   i.ContentType,
+				Authorization: i.authorization(),
 			},
 		},
 		data,

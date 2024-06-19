@@ -12,7 +12,10 @@ package periodic
 import (
 	"context"
 	"sync"
+	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	cmInfluxdbTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/influxdb"
 	metadataTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/task"
@@ -26,40 +29,44 @@ type PeriodicTask struct {
 	Cron    string
 	Handler processor.HandlerFunc
 	Payload []byte
+	Option  []task.Option
 }
 
-var (
-	refreshTsMetric             = "periodic:metadata:refresh_ts_metric"
-	refreshEventDimension       = "periodic:metadata:refresh_event_dimension"
-	refreshEsStorage            = "periodic:metadata:refresh_es_storage"
-	refreshInfluxdbRoute        = "periodic:metadata:refresh_influxdb_route"
-	refreshDatasource           = "periodic:metadata:refresh_datasource"
-	DiscoverBcsClusters         = "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
-	RefreshBcsMonitorInfo       = "periodic:metadata:refresh_bcs_monitor_info"
-	RefreshDefaultRp            = "periodic:metadata:refresh_default_rp"
-	RefreshBkccSpaceName        = "periodic:metadata:refresh_bkcc_space_name"
-	RefreshKafkaTopicInfo       = "periodic:metadata:refresh_kafka_topic_info"
-	CleanExpiredRestore         = "periodic:metadata:clean_expired_restore"
-	RefreshESRestore            = "periodic:metadata:refresh_es_restore"
-	RefreshBcsMetricsLabel      = "periodic:metadata:refresh_bcs_metrics_label"
-	SyncBkccSpaceDataSource     = "periodic:metadata:sync_bkcc_space_data_source"
-	RefreshBkccSpace            = "periodic:metadata:refresh_bkcc_space"
-	RefreshClusterResource      = "periodic:metadata:refresh_cluster_resource"
-	RefreshBcsProjectBiz        = "periodic:metadata:refresh_bcs_project_biz"
-	AutoDeployProxy             = "periodic:metadata:auto_deploy_proxy"
-	SyncBcsSpace                = "periodic:metadata:sync_bcs_space"
-	RefreshBkciSpaceName        = "periodic:metadata:refresh_bkci_space_name"
-	RefreshCustomReport2Nodeman = "periodic:metadata:refresh_custom_report_2_node_man"
-	RefreshPingServer2Nodeman   = "periodic:metadata:refresh_ping_server_2_node_man"
+// NOTE: 周期任务添加 peyload 的动态支持
+// NOTE: 后续增加针对不同的任务，使用不同的调度器
+func getPeriodicTasks() map[string]PeriodicTask {
+	refreshTsMetric := "periodic:metadata:refresh_ts_metric"
+	refreshEventDimension := "periodic:metadata:refresh_event_dimension"
+	refreshEsStorage := "periodic:metadata:refresh_es_storage"
+	refreshInfluxdbRoute := "periodic:metadata:refresh_influxdb_route"
+	refreshDatasource := "periodic:metadata:refresh_datasource"
+	DiscoverBcsClusters := "periodic:metadata:discover_bcs_clusters" // todo 涉及bkmonitor模型，暂时不启用
+	RefreshBcsMonitorInfo := "periodic:metadata:refresh_bcs_monitor_info"
+	RefreshDefaultRp := "periodic:metadata:refresh_default_rp"
+	RefreshBkccSpaceName := "periodic:metadata:refresh_bkcc_space_name"
+	RefreshKafkaTopicInfo := "periodic:metadata:refresh_kafka_topic_info"
+	CleanExpiredRestore := "periodic:metadata:clean_expired_restore"
+	RefreshESRestore := "periodic:metadata:refresh_es_restore"
+	RefreshBcsMetricsLabel := "periodic:metadata:refresh_bcs_metrics_label"
+	SyncBkccSpaceDataSource := "periodic:metadata:sync_bkcc_space_data_source"
+	RefreshBkccSpace := "periodic:metadata:refresh_bkcc_space"
+	RefreshClusterResource := "periodic:metadata:refresh_cluster_resource"
+	RefreshBcsProjectBiz := "periodic:metadata:refresh_bcs_project_biz"
+	AutoDeployProxy := "periodic:metadata:auto_deploy_proxy"
+	SyncBcsSpace := "periodic:metadata:sync_bcs_space"
+	RefreshBkciSpaceName := "periodic:metadata:refresh_bkci_space_name"
+	RefreshCustomReport2Nodeman := "periodic:metadata:refresh_custom_report_2_node_man"
+	RefreshPingServer2Nodeman := "periodic:metadata:refresh_ping_server_2_node_man"
 
-	ReportInfluxdbClusterMetrics  = "periodic:cluster_metrics:report_influxdb"
-	PushAndPublishSpaceRouterInfo = "periodic:cluster_metrics:push_and_publish_space_router_info"
-	ReportESClusterMetrics        = "periodic:cluster_metrics:report_es"
+	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
+	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
+	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
 
-	periodicTasksDefine = map[string]PeriodicTask{
+	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/3 * * * *",
+			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
+			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
@@ -149,16 +156,17 @@ var (
 			Cron:    "*/1 * * * *",
 			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
 		},
-		// PushAndPublishSpaceRouterInfo: {
-		// 	Cron:    "*/30 * * * *",
-		// 	Handler: metadataTask.PushAndPublishSpaceRouterInfo,
-		// },
+		PushAndPublishSpaceRouterInfo: {
+			Cron:    "*/30 * * * *",
+			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
+			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(300 * time.Second)},
 		},
 	}
-)
+}
 
 var (
 	initPeriodicTaskOnce sync.Once
@@ -168,7 +176,7 @@ func GetPeriodicTaskMapping() map[string]PeriodicTask {
 	initPeriodicTaskOnce.Do(func() {
 		// TODO Synchronize scheduled tasks from redis
 	})
-	return periodicTasksDefine
+	return getPeriodicTasks()
 }
 
 type PeriodicTaskScheduler struct {
@@ -182,8 +190,20 @@ type PeriodicTaskScheduler struct {
 
 func (p *PeriodicTaskScheduler) Run() {
 	for taskName, config := range p.fullTaskMapping {
-		opts := []task.Option{
-			task.TaskID(taskName),
+		opts := config.Option
+		// 添加 task id
+		opts = append(opts, task.TaskID(taskName))
+		// NOTE: 现阶段所有任务设置默认全局唯一
+		uniqueTTLExist := false
+		for _, opt := range opts {
+			if opt.Type() == task.UniqueOpt {
+				uniqueTTLExist = true
+				break
+			}
+		}
+		// 如果不存在配置，则添加
+		if uniqueTTLExist == false {
+			opts = append(opts, task.Unique(common.DefaultUniqueTTL))
 		}
 
 		taskInstance := task.NewTask(taskName, config.Payload, opts...)

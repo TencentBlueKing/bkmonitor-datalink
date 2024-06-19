@@ -44,6 +44,8 @@ const (
 	DefaultHealthCheckInterval = 15 * time.Second
 	// DefaultDelayedTaskCheckInterval 默认延迟任务检测间隔
 	DefaultDelayedTaskCheckInterval = 5 * time.Second
+	// DefaultUniqueTTL 默认唯一任务的 TTL
+	DefaultUniqueTTL = 10 * time.Second
 )
 
 var (

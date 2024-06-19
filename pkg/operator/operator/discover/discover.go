@@ -16,6 +16,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -120,29 +121,31 @@ func EncodeBase64(s string) string {
 }
 
 type BaseParams struct {
-	Client                 kubernetes.Interface
-	RelabelRule            string
-	RelabelIndex           string
-	Name                   string
-	KubeConfig             string
-	Namespaces             []string
-	Path                   string
-	Scheme                 string
-	ProxyURL               string
-	Period                 string
-	Timeout                string
-	ForwardLocalhost       bool
-	DisableCustomTimestamp bool
-	DataID                 *bkv1beta1.DataID
-	Relabels               []*relabel.Config
-	BasicAuth              *promv1.BasicAuth
-	TLSConfig              *promv1.TLSConfig
-	BearerTokenFile        string
-	BearerTokenSecret      *corev1.SecretKeySelector
-	ExtraLabels            map[string]string
-	System                 bool
-	UrlValues              url.Values
-	MetricRelabelConfigs   []yaml.MapSlice
+	Client                  kubernetes.Interface
+	RelabelRule             string
+	RelabelIndex            string
+	Name                    string
+	KubeConfig              string
+	Namespaces              []string
+	Path                    string
+	Scheme                  string
+	ProxyURL                string
+	Period                  string
+	Timeout                 string
+	ForwardLocalhost        bool
+	DisableCustomTimestamp  bool
+	DataID                  *bkv1beta1.DataID
+	Relabels                []*relabel.Config
+	BasicAuth               *promv1.BasicAuth
+	TLSConfig               *promv1.TLSConfig
+	BearerTokenFile         string
+	BearerTokenSecret       *corev1.SecretKeySelector
+	ExtraLabels             map[string]string
+	System                  bool
+	UrlValues               url.Values
+	MetricRelabelConfigs    []yaml.MapSlice
+	AnnotationMatchSelector map[string]string
+	AnnotationDropSelector  map[string]string
 }
 
 type BaseDiscover struct {
@@ -520,8 +523,31 @@ func metaFromSource(s string) (string, string, error) {
 	return parts[1], parts[2], nil
 }
 
+func matchSelector(labels []labels.Label, selector map[string]string) bool {
+	var count int
+	for k, v := range selector {
+		re, err := regexp.Compile(v)
+		if err != nil {
+			logger.Errorf("failed to compile expr '%s', err: %v", v, err)
+			continue
+		}
+		for _, lbs := range labels {
+			if lbs.Name == k {
+				if !re.MatchString(lbs.Value) {
+					return false
+				}
+				count++
+				break
+			}
+		}
+	}
+	return count == len(selector)
+}
+
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
 func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
+	d.mm.IncHandledTgCounter()
+
 	namespace, _, err := metaFromSource(targetGroup.Source)
 	if err != nil {
 		logger.Errorf("failed to parse source: %v", err)
@@ -545,6 +571,22 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 					Name:  string(ln),
 					Value: string(lv),
 				})
+			}
+		}
+
+		// annotations 白名单过滤
+		if len(d.AnnotationMatchSelector) > 0 {
+			if !matchSelector(lbls, d.AnnotationMatchSelector) {
+				logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
+				continue
+			}
+		}
+
+		// annotations 黑名单过滤
+		if len(d.AnnotationDropSelector) > 0 {
+			if matchSelector(lbls, d.AnnotationDropSelector) {
+				logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)
+				continue
 			}
 		}
 

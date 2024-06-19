@@ -189,6 +189,11 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}
 
+	// 推送结果表别名路由
+	if err := pusher.PushDataLabelTableIds(nil, nil, true); err != nil {
+		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)
+	}
+
 	// 获取所有可用的结果表
 	var tableIdList []string
 	var rtList []resulttable.ResultTable
@@ -201,16 +206,12 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		tableIdList = append(tableIdList, rt.TableId)
 	}
 
-	// 推送结果表别名路由
-	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
-		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push data label error: %s", err)
-	}
 	// 推送结果表详情路由
 	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}
 
-	if err := pusher.PushEsTableIdDetail([]string{}, true); err!= nil {
+	if err := pusher.PushEsTableIdDetail([]string{}, true); err != nil {
 		return err
 	}
 

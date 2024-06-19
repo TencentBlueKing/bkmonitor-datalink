@@ -11,6 +11,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -26,8 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	boom "github.com/tylertreat/BoomFilters"
 	"github.com/wcharczuk/go-chart/v2"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
 // TestExists test bloom-filter
@@ -49,7 +48,7 @@ func TestExists(t *testing.T) {
 }
 
 func TestKeyHash(t *testing.T) {
-	h, err := highwayhash.New([]byte(core.HashSecret))
+	h, err := highwayhash.New([]byte("test"))
 	if err != nil {
 		panic(err)
 	}
@@ -192,7 +191,7 @@ func exportChart(x, y []float64, duration time.Duration, title string) {
 }
 
 func startBenchmark(count, magnitude int, title string, options BloomOptions) {
-	bloomFilter, _ := newLayersCapDecreaseBloomClient(options)
+	bloomFilter, _ := newLayersCapDecreaseBloomClient(context.TODO(), options)
 	xValues, yValues, duration := readAndWrite(bloomFilter, count, magnitude)
 	exportChart(xValues, yValues, duration, title)
 }

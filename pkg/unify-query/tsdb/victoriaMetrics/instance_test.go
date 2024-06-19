@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
@@ -37,16 +38,24 @@ const (
 	ParseTime = "2006-01-02 15:04:05"
 )
 
+var (
+	once     sync.Once
+	instance tsdb.Instance
+)
+
+var (
+	end   = time.Now()
+	start = end.Add(-10 * time.Minute)
+	step  = time.Minute
+
+	rts = []string{"100147_vm_100768_bkmonitor_time_series_560915"}
+)
+
 func mockData(ctx context.Context) {
 	metadata.SetExpand(ctx, &metadata.VmExpand{
 		ResultTableList: []string{"vm1"},
 	})
 }
-
-var (
-	once     sync.Once
-	instance tsdb.Instance
-)
 
 func query(ctx context.Context, promql string, rts []string, data map[string]float64) error {
 	if len(rts) > 0 {
@@ -170,30 +179,33 @@ func TestPromQL(t *testing.T) {
 }
 
 func TestRealQueryRange(t *testing.T) {
-	log.InitTestLogger()
+	mock.Init()
 
 	ctx := context.Background()
 	a := "a"
 	timeout := time.Minute
-	end := time.Now()
-	start := end.Add(time.Minute * -10)
-	step := time.Minute
-
-	fmt.Println(start, step)
 
 	flag := `{"vm-query-or":{"variations":{"vm":true,"influxdb":false},"defaultRule":{"percentage":{"vm":100,"influxdb":0}}}}`
 	featureFlag.MockFeatureFlag(ctx, flag)
 
+	ctx = metadata.InitHashID(ctx)
+	address := viper.GetString("mock.victoria_metrics.address")
+	uriPath := viper.GetString("mock.victoria_metrics.uri_path")
+	code := viper.GetString("mock.victoria_metrics.code")
+	secret := viper.GetString("mock.victoria_metrics.secret")
+	token := viper.GetString("mock.victoria_metrics.token")
+	method := viper.GetString("mock.victoria_metrics.authentication_method")
+
 	ins := &Instance{
 		Ctx:                  ctx,
-		Address:              "http://127.0.0.1",
-		UriPath:              "api/bk-base/prod/v3/queryengine/query_sync",
-		Code:                 "bk_monitorv3",
-		Secret:               "",
-		AuthenticationMethod: "user",
+		Address:              address,
+		UriPath:              uriPath,
+		Code:                 code,
+		Secret:               secret,
+		AuthenticationMethod: method,
 		Timeout:              timeout,
 		ContentType:          "application/json",
-		Token:                "token",
+		Token:                token,
 
 		Curl: &curl.HttpCurl{Log: log.DefaultLogger},
 
@@ -206,14 +218,14 @@ func TestRealQueryRange(t *testing.T) {
 		e *metadata.VmExpand
 	}{
 		"test_1": {
-			q: `count(a) by (ip, api)`,
+			q: `count(a)`,
 			e: &metadata.VmExpand{
 				ResultTableList: []string{
-					"2_vm_pushgateway_unify_query_metrics",
+					"100147_bcs_custom_metric_result_table_40708",
 				},
 				// condition 需要进行二次转义
 				MetricFilterCondition: map[string]string{
-					a: `ip=~"30\\.171\\.181\\.60", api!="/metrics"`,
+					a: `__name__="envoy_listener_manager_worker_0_dispatcher_poll_delay_us_bucket_value", result_table_id="100147_bcs_custom_metric_result_table_40708"`,
 				},
 			},
 		},
@@ -232,16 +244,67 @@ func TestRealQueryRange(t *testing.T) {
 }
 
 func TestInstance_Query_Url(t *testing.T) {
-	log.InitTestLogger()
+	mock.Init()
 
 	mockCurl := curl.NewMockCurl(map[string]string{
-		`http://127.0.0.1/api/query?query=count%28container_cpu_system_seconds_total_value%29&step=60&time=1669600800`:                                                          `{"status":"success","isPartial":false,"data":{"resultType":"vector","result":[{"metric":{},"value":[1669600800,"31949"]}]}}`,
-		`http://127.0.0.1/api/query?query=count+by+%28__bk_db__%2C+bk_biz_id%2C+bcs_cluster_id%29+%28container_cpu_system_seconds_total_value%7B%7D%29&step=60&time=1669600800`: `{"status":"success","isPartial":false,"data":{"resultType":"vector","result":[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"value":[1669600800,"31949"]}]}}`,
-		`http://127.0.0.1/api/query?query=sum%28111gggggggggggggggg11&step=60&time=1669600800`:                                                                                  `{"status":"error","errorType":"422","error":"error when executing query=\"sum(111gggggggggggggggg11\" for (time=1669600800000, step=60000): argList: unexpected token \"gggggggggggggggg11\"; want \",\", \")\"; unparsed data: \"gggggggggggggggg11\""}`,
-		`http://127.0.0.1/api/query?query=top%28sum%28kube_pod_container_resource_limits_value%29%29&step=60&time=1669600800`:                                                   `{"status":"error","errorType":"422","error":"unknown func \"top\""}`,
+		`http://127.0.0.1/api/{"sql":"{\"influx_compatible\":false,\"use_native_or\":false,\"api_type\":\"query\",\"cluster_name\":\"\",\"api_params\":{\"query\":\"count(container_cpu_system_seconds_total_value)\",\"time\":1669600800,\"timeout\":0},\"result_table_list\":[\"vm1\"],\"metric_filter_condition\":null}","bkdata_authentication_method":"","bk_app_code":"","prefer_storage":"vm","bkdata_data_token":""}`: `{
+    "result": true,
+    "message": "成功",
+    "code": "00",
+    "data": {
+        "list": [
+            {
+                "status": "success",
+                "isPartial": false,
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {
+                            "metric": {},
+                            "value": [
+                                1716522171,
+                                "169.52247191011236"
+                            ]
+                        }
+                    ]
+                },
+                "stats": {
+                    "seriesFetched": "40"
+                }
+            }
+        ],
+        "select_fields_order": [],
+        "sql": "count(container_cpu_system_seconds_total_value)",
+        "total_record_size": 1704,
+        "device": "vm"
+    }
+}`,
+		`http://127.0.0.1/api/{"sql":"{\"influx_compatible\":false,\"use_native_or\":false,\"api_type\":\"query\",\"cluster_name\":\"\",\"api_params\":{\"query\":\"count by (__bk_db__, bk_biz_id, bcs_cluster_id) (container_cpu_system_seconds_total_value{})\",\"time\":1669600800,\"timeout\":0},\"result_table_list\":[\"vm1\"],\"metric_filter_condition\":null}","bkdata_authentication_method":"","bk_app_code":"","prefer_storage":"vm","bkdata_data_token":""}`: `{
+"result": true,
+    "message": "成功",
+    "code": "00",
+    "data": {
+        "list": [
+            {"status":"success","isPartial":false,"data":{"resultType":"vector","result":[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"value":[1669600800,"31949"]}]}}
+        ],
+        "select_fields_order": [],
+        "sql": "count(container_cpu_system_seconds_total_value)",
+        "total_record_size": 1704,
+        "device": "vm"
+	}
+}`,
+		`http://127.0.0.1/api/{"sql":"{\"influx_compatible\":false,\"use_native_or\":false,\"api_type\":\"query\",\"cluster_name\":\"\",\"api_params\":{\"query\":\"sum(111gggggggggggggggg11\",\"time\":1669600800,\"timeout\":0},\"result_table_list\":[\"vm1\"],\"metric_filter_condition\":null}","bkdata_authentication_method":"","bk_app_code":"","prefer_storage":"vm","bkdata_data_token":""}`: `{
+    "result": false,
+    "message": "BKPromqlApi 接口调用异常",
+    "code": "1532618",
+    "data": null,
+    "errors": {
+        "error": "Failed to convert promql with influx filter"
+    }
+}`,
 	}, log.DefaultLogger)
 
-	ctx := context.Background()
+	ctx := metadata.InitHashID(context.Background())
 	ins := &Instance{
 		Ctx:     ctx,
 		Address: "http://127.0.0.1/api",
@@ -258,19 +321,15 @@ func TestInstance_Query_Url(t *testing.T) {
 	}{
 		"count": {
 			promql:   `count(container_cpu_system_seconds_total_value)`,
-			expected: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1669600800,"31949"]}]}}`,
+			expected: `[{"metric":{},"value":[1716522171,"169.52247191011236"]}]`,
 		},
 		"count rate metric": {
 			promql:   `count by (__bk_db__, bk_biz_id, bcs_cluster_id) (container_cpu_system_seconds_total_value{})`,
-			expected: `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"value":[1669600800,"31949"]}]}}`,
+			expected: `[{"metric":{"__bk_db__":"mydb","bcs_cluster_id":"BCS-K8S-40949","bk_biz_id":"930"},"value":[1669600800,"31949"]}]`,
 		},
 		"error metric 1": {
 			promql: `sum(111gggggggggggggggg11`,
-			err:    errors.New(`error when executing query="sum(111gggggggggggggggg11" for (time=1669600800000, step=60000): argList: unexpected token "gggggggggggggggg11"; want ",", ")"; unparsed data: "gggggggggggggggg11"`),
-		},
-		"error metric 2": {
-			promql: `top(sum(kube_pod_container_resource_limits_value))`,
-			err:    errors.New(`unknown func "top"`),
+			err:    errors.New(`BKPromqlApi 接口调用异常, Failed to convert promql with influx filter, `),
 		},
 	}
 
@@ -370,14 +429,6 @@ func mockInstance(ctx context.Context) {
 		Curl:                 &curl.HttpCurl{Log: log.DefaultLogger},
 	}
 }
-
-var (
-	end   = time.Now()
-	start = end.Add(-10 * time.Minute)
-	step  = time.Minute
-
-	rts = []string{"100147_vm_100768_bkmonitor_time_series_560915"}
-)
 
 func TestInstance_QueryRange(t *testing.T) {
 	ctx := context.Background()

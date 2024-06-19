@@ -237,6 +237,7 @@ var (
 	ESClusterMetricReportUrl         string
 	ESClusterMetricReportDataId      int
 	ESClusterMetricReportAccessToken string
+	ESClusterMetricReportBlackList   []int
 )
 
 func initVariables() {
@@ -311,7 +312,7 @@ func initVariables() {
 	StorageMysqlDbName = GetValue("store.mysql.dbName", "")
 	StorageMysqlCharset = GetValue("store.mysql.charset", "utf8")
 	StorageMysqlMaxIdleConnections = GetValue("store.mysql.maxIdleConnections", 10)
-	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
+	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 120)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
 	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.esRetainInvalidAlias", false)
@@ -401,6 +402,7 @@ func initVariables() {
 	ESClusterMetricReportUrl = GetValue("taskConfig.logSearch.metric.reportUrl", "")
 	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
 	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
+	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
 }
 
 var (

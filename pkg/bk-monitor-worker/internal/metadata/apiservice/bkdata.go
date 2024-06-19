@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var Bkdata BkdataService
@@ -392,4 +393,145 @@ func (s BkdataService) RestartDataFlow(flowId int, consumingMode, clusterGroup s
 		return nil, errors.Wrapf(err, "RestartDataFlow for flow_id [%d] with params [%s] failed", flowId, paramStr)
 	}
 	return resp.Data, nil
+}
+
+// QueryMetrics 查询指标数据
+func (s BkdataService) QueryMetrics(storage string, rt string) (*map[string]float64, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp bkdata.CommonListResp
+	if _, err = bkdataApi.QueryMetrics().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	// parse metrics
+	metrics := make(map[string]float64)
+	for _, data := range resp.Data {
+		metricInfo, ok := data.([]interface{})
+		if !ok {
+			logger.Errorf("parse metrics data error, metric_info: %v", metricInfo)
+			continue
+		}
+		metric, ok := metricInfo[0].(string)
+		if !ok {
+			logger.Errorf("parse metrics data error, metric: %v", metric)
+			continue
+		}
+		// NOTE: 如果时间戳不符合预期，则忽略该指标
+		timestamp, ok := metricInfo[1].(float64)
+		if !ok {
+			logger.Errorf("parse metrics data error, timestamp: %v", timestamp)
+			continue
+		}
+		metrics[metric] = timestamp
+	}
+	return &metrics, nil
+}
+
+// QueryDimension 查询维度数据
+func (s BkdataService) QueryDimension(storage string, rt string, metric string) (*[]map[string]interface{}, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+
+	var resp bkdata.CommonListResp
+	if _, err = bkdataApi.QueryDimension().SetQueryParams(map[string]string{"storage": storage, "result_table_id": rt, "metric": metric}).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	// parse dimension
+	var dimensions []map[string]interface{}
+	for _, data := range resp.Data {
+		dimensionInfo, ok := data.([]interface{})
+		if !ok {
+			logger.Errorf("parse dimension data error, dimension_info: %v", dimensionInfo)
+			continue
+		}
+		dimension, ok := dimensionInfo[0].(string)
+		if !ok {
+			logger.Errorf("parse dimension data error, dimension: %v", dimension)
+			continue
+		}
+		// NOTE: 如果时间戳不符合预期，则忽略该指标
+		timestamp, ok := dimensionInfo[1].(float64)
+		if !ok {
+			logger.Errorf("parse dimension data error, timestamp: %v", timestamp)
+			continue
+		}
+		dimensions = append(dimensions, map[string]interface{}{dimension: map[string]interface{}{"last_update_time": timestamp}})
+	}
+	return &dimensions, nil
+}
+
+// QueryMetricAndDimension 查询指标和维度数据
+func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map[string]interface{}, error) {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return nil, errors.Wrap(err, "get bkdata api failed")
+	}
+	var resp bkdata.CommonMapResp
+	// NOTE: 设置no_value=true，不需要返回维度对应的 value
+	params := map[string]string{"storage": storage, "result_table_id": rt, "no_value": "true"}
+	if _, err = bkdataApi.QueryMetricAndDimension().SetQueryParams(params).SetResult(&resp).Request(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics and dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, errors.Wrapf(err, "query metrics and dimension error by bkdata: %s, table_id: %s", storage, rt)
+	}
+
+	metrics := resp.Data["metrics"]
+	metricInfo, ok := metrics.([]interface{})
+	if !ok || len(metricInfo) == 0 {
+		logger.Errorf("query bkdata metrics error, params: %v, metrics: %v", params, metricInfo)
+		return nil, errors.New("query metrics error, no data")
+	}
+
+	// parse metrics and dimensions
+	var MetricsDimension []map[string]interface{}
+	for _, dataInfo := range metricInfo {
+		data, ok := dataInfo.(map[string]interface{})
+		if !ok {
+			logger.Errorf("metric data not map[string]interface{}, data: %v", params, metricInfo)
+			continue
+		}
+		lastModifyTime := data["update_time"].(float64)
+		dimensions := data["dimensions"].([]interface{})
+		tagValueList := make(map[string]interface{})
+		for _, dimInfo := range dimensions {
+			dim, ok := dimInfo.(map[string]interface{})
+			if !ok {
+				logger.Errorf("dimension data not map[string]interface{}, dimInfo: %v", dimInfo)
+				continue
+			}
+			// 判断值为 string
+			tag_name, ok := dim["name"].(string)
+			if !ok {
+				logger.Errorf("dimension: %s is not string", dim["name"])
+				continue
+			}
+			// 判断值为 float64
+			tagUpdateTime, ok := dim["update_time"].(float64)
+			if !ok {
+				logger.Errorf("dimension: %s is not string", dim["name"])
+				continue
+			}
+			tagValueList[tag_name] = map[string]interface{}{"last_update_time": tagUpdateTime / 1000}
+		}
+
+		item := map[string]interface{}{
+			"field_name":       data["name"],
+			"last_modify_time": lastModifyTime / 1000,
+			"tag_value_list":   tagValueList,
+		}
+		MetricsDimension = append(MetricsDimension, item)
+	}
+	return MetricsDimension, nil
 }

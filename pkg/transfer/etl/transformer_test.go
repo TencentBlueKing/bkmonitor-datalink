@@ -171,7 +171,7 @@ func (s *TransformBySeparatorSuite) TestUsage() {
 		result      map[string]interface{}
 	}{
 		{
-			`1,2`,
+			`1,  2`,
 			etl.TransformMapBySeparator(",", []string{"x", "y"}),
 			map[string]interface{}{
 				"x": "1",

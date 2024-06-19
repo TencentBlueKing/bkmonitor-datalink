@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
@@ -493,7 +494,12 @@ func TestMakeQuery(t *testing.T) {
 					referenceNameLabelMatcher[q.ReferenceName] = matchers
 				}
 
-				promQL, err := queryTs.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+				promExprOpt := &structured.PromExprOption{
+					ReferenceNameMetric:       referenceNameMetric,
+					ReferenceNameLabelMatcher: referenceNameLabelMatcher,
+				}
+
+				promQL, err := queryTs.ToPromExpr(ctx, promExprOpt)
 				assert.Nil(t, err)
 
 				assert.Equal(t, c.promQL, promQL.String())

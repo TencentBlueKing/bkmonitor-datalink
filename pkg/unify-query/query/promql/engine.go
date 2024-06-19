@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/prometheus/promql"
 	prom "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -37,7 +36,7 @@ type MetricInfo struct {
 	Measurement string
 }
 
-var GlobalEngine *promql.Engine
+var GlobalEngine *prom.Engine
 
 // NewEngine
 func NewEngine(params *Params) {
@@ -79,7 +78,7 @@ func GetDefaultStep() time.Duration {
 func Query(ctx context.Context, q string, now time.Time) (*Tables, error) {
 
 	querier := &InfluxDBStorage{}
-	opt := &promql.QueryOpts{}
+	opt := &prom.QueryOpts{}
 	query, err := GlobalEngine.NewInstantQuery(querier, opt, q, now)
 	if err != nil {
 		return nil, err
@@ -93,7 +92,7 @@ func Query(ctx context.Context, q string, now time.Time) (*Tables, error) {
 
 	tables := NewTables()
 	for index, sample := range vector {
-		tables.Add(NewTableWithSample(index, sample))
+		tables.Add(NewTableWithSample(index, sample, nil))
 	}
 
 	return tables, nil
@@ -116,7 +115,7 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 
 	endTime := end.Add(-1 * time.Millisecond)
 
-	opt := &promql.QueryOpts{}
+	opt := &prom.QueryOpts{}
 	query, err := GlobalEngine.NewRangeQuery(querier, opt, q, start, endTime, interval)
 	if err != nil {
 		return nil, err
@@ -145,7 +144,7 @@ func QueryRange(ctx context.Context, q string, start, end time.Time, interval ti
 
 	tables := NewTables()
 	for index, series := range matrix {
-		tables.Add(NewTable(index, series))
+		tables.Add(NewTable(index, series, nil))
 	}
 
 	// 计算分析时间

@@ -75,6 +75,11 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i *Instance) authorization() string {
 	auth := fmt.Sprintf(
 		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
@@ -292,16 +297,6 @@ func (i *Instance) seriesFormat(ctx context.Context, resp *VmSeriesResponse, spa
 // GetInstanceType 获取实例类型
 func (i *Instance) GetInstanceType() string {
 	return consul.VictoriaMetricsStorageType
-}
-
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
-	ctx context.Context,
-	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
-) storage.SeriesSet {
-	return nil
 }
 
 // vmQuery

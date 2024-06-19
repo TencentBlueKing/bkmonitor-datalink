@@ -38,6 +38,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -320,7 +321,7 @@ func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
 		resultLimit = limit
 	}
 	if limit == 0 || limit > i.maxLimit {
-		if i.maxSLimit > 0 {
+		if i.maxLimit > 0 {
 			resultLimit = i.maxLimit + i.tolerance
 		}
 	}
@@ -337,22 +338,82 @@ func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
 	return int64(resultLimit), int64(resultSLimit)
 }
 
-func (i *Instance) downSampleCheck(
-	ctx context.Context,
-	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
-) bool {
-	newFuncName, _, _ := query.GetDownSampleFunc(hints)
-	return newFuncName != ""
+func (i *Instance) makeSQL(
+	ctx context.Context, query *metadata.Query, start, end time.Time,
+) (string, error) {
+	var (
+		selectList = make([]string, 0)
+		groupList  = make([]string, 0)
+
+		sqlBuilder strings.Builder
+		err        error
+	)
+	ctx, span := trace.NewSpan(ctx, "influxdb-make-sqlBuilder")
+	defer span.End(&err)
+
+	if len(query.Aggregates) > 1 {
+		return "", fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
+	}
+
+	if len(query.Aggregates) == 1 {
+		agg := query.Aggregates[0]
+		if len(agg.Dimensions) > 0 {
+			for _, dim := range agg.Dimensions {
+				group := dim
+				if group != "*" {
+					group = fmt.Sprintf(`"%s"`, group)
+				}
+				groupList = append(groupList, group)
+			}
+		}
+
+		if agg.Window > 0 && !agg.Without {
+			groupList = append(groupList, "time("+agg.Window.String()+")")
+		}
+
+		// avg => mean
+		if agg.Name == structured.AVG {
+			agg.Name = structured.MEAN
+		}
+
+		selectList = append(selectList, fmt.Sprintf(`%s("%s") AS %s`, agg.Name, query.Field, influxdb.ResultColumnName))
+	} else {
+		selectList = append(selectList, fmt.Sprintf(`"%s" AS %s`, query.Field, influxdb.ResultColumnName))
+		selectList = append(selectList, "*::tag")
+	}
+	selectList = append(selectList, fmt.Sprintf(`"time" AS %s`, influxdb.TimeColumnName))
+
+	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
+	sqlBuilder.WriteString("FROM " + influxql.QuoteIdent(query.Measurement) + " ")
+	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano()))
+	if query.Condition != "" {
+		sqlBuilder.WriteString(" AND (" + query.Condition + ")")
+	}
+	if len(groupList) > 0 {
+		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
+	}
+
+	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	if limit > 0 {
+		sqlBuilder.WriteString(fmt.Sprintf(` LIMIT %d`, limit))
+	}
+	if slimit > 0 {
+		sqlBuilder.WriteString(fmt.Sprintf(` SLIMIT %d`, slimit))
+	}
+	if query.Timezone != "" {
+		sqlBuilder.WriteString(fmt.Sprintf(` TZ('%s')`, query.Timezone))
+	}
+
+	return sqlBuilder.String(), nil
 }
 
 func (i *Instance) query(
 	ctx context.Context,
 	query *metadata.Query,
-	hints *storage.SelectHints,
+	start time.Time,
+	end time.Time,
 	withFieldTag bool,
-	matchers ...*labels.Matcher,
 ) (*prompb.QueryResult, error) {
 	var (
 		cancel context.CancelFunc
@@ -361,15 +422,6 @@ func (i *Instance) query(
 
 		seriesNum = 0
 		pointNum  = 0
-
-		isCount   bool
-		sLimitStr string
-		limitStr  string
-		timezone  string
-
-		withTag     = ",*::tag"
-		aggField    string
-		groupingStr string
 
 		expandTag []prompb.Label
 		err       error
@@ -386,70 +438,24 @@ func (i *Instance) query(
 	if withFieldTag {
 		bkTaskIndex = bkTaskIndex + "_" + query.Field
 	}
-	newFuncName, window, dims := query.GetDownSampleFunc(hints)
-	if newFuncName != "" {
-		groupList := make([]string, 0, len(dims)+1)
-		if len(dims) > 0 {
-			for _, dim := range dims {
-				group := dim
-				if group != "*" {
-					group = fmt.Sprintf(`"%s"`, group)
-				}
-				groupList = append(groupList, group)
-			}
-		}
 
-		if window > 0 {
-			groupList = append(groupList, "time("+window.String()+")")
-		}
-		if len(groupList) > 0 {
-			groupingStr = " group by " + strings.Join(groupList, ", ")
-		}
+	if len(query.Aggregates) > 1 {
+		return nil, fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
+	}
 
-		isCount = newFuncName == metadata.COUNT
-		withTag = ""
-		aggField = fmt.Sprintf(`%s("%s")`, newFuncName, query.Field)
-
+	if len(query.Aggregates) == 1 || withFieldTag {
 		expandTag = []prompb.Label{
 			{
 				Name:  BKTaskIndex,
 				Value: bkTaskIndex,
 			},
 		}
-	} else {
-		aggField = fmt.Sprintf(`"%s"`, query.Field)
-		if withFieldTag {
-			expandTag = []prompb.Label{
-				{
-					Name:  BKTaskIndex,
-					Value: bkTaskIndex,
-				},
-			}
-		}
 	}
 
-	where := fmt.Sprintf("time > %d and time < %d", hints.Start*1e6, hints.End*1e6)
-	if query.Condition != "" {
-		where = fmt.Sprintf("%s and %s", where, query.Condition)
+	sql, err := i.makeSQL(ctx, query, start, end)
+	if err != nil {
+		return nil, err
 	}
-
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
-
-	if limit > 0 {
-		sLimitStr = fmt.Sprintf(` slimit %d`, slimit)
-	}
-	if slimit > 0 {
-		limitStr = fmt.Sprintf(` limit %d`, limit)
-	}
-	if query.Timezone != "" {
-		timezone = fmt.Sprintf(` tz('%s')`, query.Timezone)
-	}
-
-	sql := fmt.Sprintf(
-		"select %s as %s, time as %s%s from %s where %s %s%s%s%s",
-		aggField, influxdb.ResultColumnName, influxdb.TimeColumnName, withTag, influxql.QuoteIdent(query.Measurement),
-		where, groupingStr, limitStr, sLimitStr, timezone,
-	)
 
 	values := &url.Values{}
 	values.Set("db", query.DB)
@@ -482,12 +488,6 @@ func (i *Instance) query(
 	span.Set("query-measurement", query.Measurement)
 	span.Set("query-field", query.Field)
 	span.Set("query-url-path", urlPath)
-	span.Set("query-where", where)
-
-	log.Debugf(ctx,
-		"influxdb query: %s, where: %s",
-		urlPath, where,
-	)
 
 	dec, err := decoder.GetDecoder(i.contentType)
 	if err != nil {
@@ -559,20 +559,14 @@ func (i *Instance) query(
 
 		samples := make([]prompb.Sample, 0, len(s.Values))
 		for _, sv := range s.Values {
-			t, v, err := i.getRawData(s.Columns, sv)
-			if err != nil {
+			t, v, rawErr := i.getRawData(s.Columns, sv)
+			if rawErr != nil {
 				continue
 			}
-			repNum := 1
-			if isCount {
-				repNum = int(v)
-			}
-			for j := 0; j < repNum; j++ {
-				samples = append(samples, prompb.Sample{
-					Value:     v,
-					Timestamp: t.UnixMilli(),
-				})
-			}
+			samples = append(samples, prompb.Sample{
+				Value:     v,
+				Timestamp: t.UnixMilli(),
+			})
 		}
 
 		result.Timeseries = append(result.Timeseries, &prompb.TimeSeries{
@@ -664,8 +658,8 @@ func (i *Instance) grpcStream(
 func (i *Instance) QueryRaw(
 	ctx context.Context,
 	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
+	start time.Time,
+	end time.Time,
 ) storage.SeriesSet {
 	var (
 		err error
@@ -674,7 +668,7 @@ func (i *Instance) QueryRaw(
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
 
-	where := fmt.Sprintf("time > %d and time < %d", hints.Start*1e6, hints.End*1e6)
+	where := fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
 	if query.Condition != "" {
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}
@@ -711,25 +705,25 @@ func (i *Instance) QueryRaw(
 		for _, field := range query.Fields {
 			var set storage.SeriesSet
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
-			if !i.downSampleCheck(ctx, query, hints) && i.protocol == influxdb.GRPC {
+			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
 			} else {
 				// 复制 Query 对象，简化 field、measure 取值，传入查询方法
-				query := &metadata.Query{
-					TableID:             query.TableID,
-					RetentionPolicy:     query.RetentionPolicy,
-					DB:                  query.DB,
-					Measurement:         measurement,
-					Field:               field,
-					Timezone:            query.Timezone,
-					IsHasOr:             query.IsHasOr,
-					AggregateMethodList: query.AggregateMethodList,
-					Condition:           query.Condition,
-					Filters:             query.Filters,
-					OffsetInfo:          query.OffsetInfo,
-					SegmentedEnable:     query.SegmentedEnable,
+				mq := &metadata.Query{
+					TableID:         query.TableID,
+					RetentionPolicy: query.RetentionPolicy,
+					DB:              query.DB,
+					Measurement:     measurement,
+					Field:           field,
+					Timezone:        query.Timezone,
+					IsHasOr:         query.IsHasOr,
+					Aggregates:      query.Aggregates,
+					Condition:       query.Condition,
+					Filters:         query.Filters,
+					OffsetInfo:      query.OffsetInfo,
+					SegmentedEnable: query.SegmentedEnable,
 				}
-				res, err := i.query(ctx, query, hints, multiFieldsFlag, matchers...)
+				res, err := i.query(ctx, mq, start, end, multiFieldsFlag)
 				if err != nil {
 					log.Errorf(ctx, err.Error())
 					continue

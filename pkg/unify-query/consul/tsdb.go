@@ -16,9 +16,10 @@ const (
 	PrometheusStorageType      = "prometheus"
 	OfflineDataArchive         = "offline_data_archive"
 	RedisStorageType           = "redis"
+	ElasticsearchStorageType   = "elasticsearch"
 )
 
-var typeList = []string{VictoriaMetricsStorageType, InfluxDBStorageType}
+var typeList = []string{InfluxDBStorageType, ElasticsearchStorageType}
 
 // GetTsDBStorageInfo 获取 tsDB 存储实例
 func GetTsDBStorageInfo() (map[string]*Storage, error) {

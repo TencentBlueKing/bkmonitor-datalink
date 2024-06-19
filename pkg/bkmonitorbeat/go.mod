@@ -35,7 +35,7 @@ require (
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/yumaojun03/dmidecode v0.1.4
 	github.com/yusufpapurcu/wmi v1.2.3
-	golang.org/x/sync v0.0.0-20220601150217-0de741cfad7f
+	golang.org/x/sync v0.7.0
 	golang.org/x/sys v0.19.0
 	golang.org/x/text v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -74,7 +74,7 @@ require (
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.1 // indirect
-	github.com/google/go-cmp v0.5.9 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/grafana/regexp v0.0.0-20220304095617-2e8d9baf4ac2 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
 	github.com/jcmturner/gofork v1.0.0 // indirect

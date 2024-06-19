@@ -40,6 +40,9 @@ config_templates:
             disable_resource_limit:
               title: disable_resource_limit
               type: string
+            enable_audit_tasks:
+              title: enable_audit_tasks
+              type: string
   - plugin_version: "*"
     name: bkmonitorbeat_prometheus.conf
     version: 1

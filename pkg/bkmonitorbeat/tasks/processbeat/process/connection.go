@@ -37,6 +37,13 @@ const (
 	DetectorNetlink = "netlink"
 )
 
+type StateType uint8
+
+const (
+	StateListen      StateType = 0
+	StateListenEstab StateType = 1
+)
+
 type PidSockets struct {
 	TCP  map[int32][]FileSocket
 	UDP  map[int32][]FileSocket
@@ -92,8 +99,9 @@ func (s *PortStat) sortPorts() {
 }
 
 type ConnDetector interface {
-	Get(pids []int32) (PidSockets, error)
 	Type() string
+	Get(pids []int32) (PidSockets, error)
+	GetState(pids []int32, state StateType) (PidSockets, error)
 }
 
 type StdDetector struct{}
@@ -112,17 +120,27 @@ func (d StdDetector) Type() string {
 	return DetectorStd
 }
 
-func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}) (PidSockets, error) {
+func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}, status []string) (PidSockets, error) {
 	pidSockets := NewPidSockets()
 	tcp, err := net.Connections("tcp")
 	if err != nil {
 		return pidSockets, err
 	}
 
+	matchStatus := func(s string, status []string) bool {
+		for i := 0; i < len(status); i++ {
+			if status[i] == s {
+				return true
+			}
+		}
+		return false
+	}
+
 	for _, conn := range tcp {
-		if conn.Status != "LISTEN" {
+		if !matchStatus(conn.Status, status) {
 			continue
 		}
+
 		if _, ok := pidSet[conn.Pid]; !ok {
 			logger.Debugf("pid %d listening tcp %+v, but skip", conn.Pid, conn.Laddr)
 			continue
@@ -131,12 +149,14 @@ func (d StdDetector) getTcpConnections(pidSet map[int32]struct{}) (PidSockets, e
 		logger.Debugf("pid %d listening tcp %+v", conn.Pid, conn.Laddr)
 		for _, listenIP := range tasks.GetListeningIPs(conn.Laddr.IP) {
 			s := FileSocket{
-				Status:    conn.Status,
-				Type:      int(conn.Type),
-				Pid:       conn.Pid,
-				Family:    conn.Family,
-				ConnLaddr: listenIP,
-				ConnLport: conn.Laddr.Port,
+				Status: conn.Status,
+				Type:   int(conn.Type),
+				Pid:    conn.Pid,
+				Family: conn.Family,
+				Saddr:  listenIP,
+				Sport:  conn.Laddr.Port,
+				Daddr:  conn.Raddr.IP,
+				Dport:  conn.Raddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {
@@ -168,12 +188,14 @@ func (d StdDetector) getUdpConnections(pidSet map[int32]struct{}) (PidSockets, e
 		logger.Debugf("pid %d listening udp %+v", conn.Pid, conn.Laddr)
 		for _, listenIP := range tasks.GetListeningIPs(conn.Laddr.IP) {
 			s := FileSocket{
-				Status:    conn.Status,
-				Type:      int(conn.Type),
-				Pid:       conn.Pid,
-				Family:    conn.Family,
-				ConnLaddr: listenIP,
-				ConnLport: conn.Laddr.Port,
+				Status: conn.Status,
+				Type:   int(conn.Type),
+				Pid:    conn.Pid,
+				Family: conn.Family,
+				Saddr:  listenIP,
+				Sport:  conn.Laddr.Port,
+				Daddr:  conn.Raddr.IP,
+				Dport:  conn.Raddr.Port,
 			}
 
 			if s.Family == syscall.AF_INET6 && IsIpv6(listenIP) {
@@ -231,14 +253,26 @@ func (d StdDetector) mergePidSockets(items ...PidSockets) PidSockets {
 }
 
 func (d StdDetector) Get(pids []int32) (PidSockets, error) {
+	return d.GetState(pids, StateListen)
+}
+
+func (d StdDetector) GetState(pids []int32, state StateType) (PidSockets, error) {
 	dst := NewPidSockets()
 	set := make(map[int32]struct{})
 	for _, pid := range pids {
 		set[pid] = struct{}{}
 	}
 
+	var status []string
+	switch state {
+	case StateListenEstab:
+		status = []string{"LISTEN", "ESTABLISHED"}
+	default:
+		status = []string{"LISTEN"} // 默认为 listen
+	}
+
 	logger.Debug("std detector round1")
-	tcp1, err := d.getTcpConnections(set)
+	tcp1, err := d.getTcpConnections(set, status)
 	if err != nil {
 		return dst, err
 	}
@@ -250,7 +284,7 @@ func (d StdDetector) Get(pids []int32) (PidSockets, error) {
 	time.Sleep(time.Second * 5) // TODO(mando): 考虑改成可配置
 
 	logger.Debug("std detector round2")
-	tcp2, err := d.getTcpConnections(set)
+	tcp2, err := d.getTcpConnections(set, status)
 	if err != nil {
 		return dst, err
 	}
@@ -363,7 +397,7 @@ func calcPortStat(conf configs.ProcessbeatPortConfig, sockets []FileSocket, pidc
 	socketSet := make(map[string]struct{})
 	portSet := make(map[uint32]struct{})
 	for _, socket := range sockets {
-		portSet[socket.ConnLport] = struct{}{}
+		portSet[socket.Sport] = struct{}{}
 		socketSet[socket.Listen()] = struct{}{}
 	}
 
@@ -423,7 +457,7 @@ func calcPortStat(conf configs.ProcessbeatPortConfig, sockets []FileSocket, pidc
 		}
 
 		for _, socket := range sockets {
-			if _, ok := notaccuratelisten[uint16(socket.ConnLport)]; !ok {
+			if _, ok := notaccuratelisten[uint16(socket.Sport)]; !ok {
 				continue
 			}
 			ps.NotAccurateListen = append(ps.NotAccurateListen, socket.Listen())

@@ -250,6 +250,45 @@ EOF
 
 EOF
 fi
+  if [ "$system" = "linux" ]; then
+        cat <<EOF >> "$path"
+{%- if extra_vars is defined and extra_vars.enable_audit_tasks is defined and extra_vars.enable_audit_tasks == "true" %}
+  # 登录日志采集
+  loginlog_task:
+    dataid: 1100021
+    task_id: 110
+    period: 10m
+
+  # shellhistory 采集
+  shellhistory_task:
+    task_id: 111
+    dataid: 1100020
+    period: 10m
+    last_bytes: 1048576 # 1MB
+    history_files:
+    - ".bash_history"
+
+  # 进程快照采集
+  procsnapshot_task:
+    task_id: 112
+    dataid: 1100018
+    period: 1m
+
+  # 网络快照采集
+  socketsnapshot_task:
+    task_id: 113
+    dataid: 1100019
+    period: 1m
+    detector: netlink
+
+  # rpmpackge 数据采集
+  rpmpackage_task:
+    task_id: 114
+    dataid: 1100022
+    period: 1h
+{%- endif %}
+EOF
+fi
   cat <<EOF >> "$path"
   #### tcp_task child config #####
   # tcp任务全局设置

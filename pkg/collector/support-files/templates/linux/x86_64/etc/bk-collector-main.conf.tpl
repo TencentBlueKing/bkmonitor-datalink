@@ -194,6 +194,8 @@ bk-collector:
         enabled: true
       fta:
         enabled: true
+      beat:
+        enabled: true
 
   processor:
     # ApdexCalculator: 健康度状态计算器
@@ -268,6 +270,11 @@ bk-collector:
     # TokenChecker: 权限校验处理器
     - name: "token_checker/aes256"
 
+    # TokenChecker: 权限校验处理器
+    - name: "token_checker/beat"
+      config:
+        type: "beat"
+
     # ServiceDiscover: 服务发现处理器
     - name: "service_discover/common"
 
@@ -279,6 +286,9 @@ bk-collector:
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
+
+    # DbFilter: db 处理器
+    - name: "db_filter/common"
 
     # PprofTranslator: pprof 协议转换器
     - name: "pprof_translator/common"
@@ -1728,6 +1738,7 @@ bk-collector:
         - "sampler/drop_traces"
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
+        - "db_filter/common"
         - "service_discover/common"
         - "apdex_calculator/standard"
         - "traces_deriver/delta"
@@ -1792,6 +1803,12 @@ bk-collector:
         - "token_checker/aes256"
         - "pprof_translator/common"
         - "sampler/drop_profiles"
+
+    - name: "beat_pipeline/common"
+      type: "beat"
+      processors:
+        - "token_checker/beat"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

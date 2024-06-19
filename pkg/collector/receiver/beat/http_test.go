@@ -7,40 +7,32 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package remotewrite
+package beat
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
 )
 
 const (
-	localPromWriteURL = "http://localhost/prometheus/write"
+	localUrl = "http://localhost:4318/v1/beat"
 )
 
 func TestReady(t *testing.T) {
 	assert.NotPanics(t, func() {
 		Ready(receiver.ComponentConfig{})
 	})
-}
-
-func readContent() []byte {
-	content, err := os.ReadFile("../../example/fixtures/remotewrite.bytes")
-	if err != nil {
-		panic(err)
-	}
-	return content
 }
 
 func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic.Int64) {
@@ -55,35 +47,35 @@ func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic
 }
 
 func TestHttpRequest(t *testing.T) {
-	t.Run("invalid body", func(t *testing.T) {
-		buf := bytes.NewBufferString("{-}")
-		req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
+	t.Run("read failed", func(t *testing.T) {
+		buf := testkits.NewBrokenReader()
+		req := httptest.NewRequest(http.MethodPut, localUrl, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
-		svc.Write(rw, req)
-		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		svc.Export(rw, req)
+		assert.Equal(t, rw.Code, http.StatusInternalServerError)
 		assert.Equal(t, int64(0), n.Load())
 	})
 
-	t.Run("precheck failed", func(t *testing.T) {
-		buf := bytes.NewBuffer(readContent())
-		req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
+	t.Run("beat precheck failed", func(t *testing.T) {
+		buf := bytes.NewBufferString(`{"foo":"bar"}`)
+		req := httptest.NewRequest(http.MethodPut, localUrl, buf)
 
-		svc, n := newSvc(define.StatusBadRequest, "", errors.New("MUST ERROR"))
+		svc, n := newSvc(define.StatusCodeUnauthorized, "", errors.New("MUST ERROR"))
 		rw := httptest.NewRecorder()
-		svc.Write(rw, req)
-		assert.Equal(t, rw.Code, http.StatusBadRequest)
+		svc.Export(rw, req)
+		assert.Equal(t, rw.Code, http.StatusUnauthorized)
 		assert.Equal(t, int64(0), n.Load())
 	})
 
-	t.Run("report success", func(t *testing.T) {
-		buf := bytes.NewBuffer(readContent())
-		req := httptest.NewRequest(http.MethodPut, localPromWriteURL, buf)
+	t.Run("beat success", func(t *testing.T) {
+		buf := bytes.NewBufferString(`{"foo":"bar"}`)
+		req := httptest.NewRequest(http.MethodPut, localUrl, buf)
 
 		svc, n := newSvc(define.StatusCodeOK, "", nil)
 		rw := httptest.NewRecorder()
-		svc.Write(rw, req)
+		svc.Export(rw, req)
 		assert.Equal(t, rw.Code, http.StatusOK)
 		assert.Equal(t, int64(1), n.Load())
 	})

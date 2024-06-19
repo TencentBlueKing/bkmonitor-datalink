@@ -44,7 +44,10 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceOtlp, Ready)
 }
 
-func Ready() {
+func Ready(config receiver.ComponentConfig) {
+	if !config.Otlp.Enabled {
+		return
+	}
 	receiver.RegisterRecvHttpRoute(define.SourceOtlp, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

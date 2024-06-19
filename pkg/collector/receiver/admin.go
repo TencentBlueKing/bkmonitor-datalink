@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"runtime/debug"
+	"sort"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -55,9 +56,22 @@ func init() {
 	registerAdminHttpGetRoute(pprofSource, "/debug/pprof/{other}", pprof.Index)
 }
 
-// AdminHttpRouter 返回 Receiver mux.Router
+// AdminHttpRouter 返回 Admin mux.Router
 func AdminHttpRouter() *mux.Router {
 	return adminMgr.httpRouter
+}
+
+// AdminHttpRoutes 返回 Admin 注册的路由表
+func AdminHttpRoutes() []define.RouteInfo {
+	var routes []define.RouteInfo
+	for _, v := range adminMgr.httpRoutes {
+		routes = append(routes, v)
+	}
+
+	sort.Slice(routes, func(i, j int) bool {
+		return routes[i].ID() < routes[j].ID()
+	})
+	return routes
 }
 
 var adminMgr = &serviceManager{

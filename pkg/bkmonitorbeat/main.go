@@ -108,6 +108,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// debug 模式下允许设置最大运行时间 避免调试程序长时间运行
+	maxExecTime, _ := config.String("max_execution_time", -1)
+	if len(maxExecTime) > 0 {
+		d, err := time.ParseDuration(maxExecTime)
+		if err == nil {
+			go func() {
+				time.Sleep(d)
+				fmt.Printf("exit program beacuse of max_exection_time=%s\n", maxExecTime)
+				os.Exit(1)
+			}()
+		}
+	}
+
 	// 日志配置
 	logCfgContent, err := beat.GetRawConfig().Child("logging", -1)
 	if err != nil {

@@ -271,8 +271,8 @@ type Query struct {
 	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法
 	TimeAggregation TimeAggregation `json:"time_aggregation"`
-	// IgnoreTimeAggregation 生成 PromQL 的时候是否忽略时间聚合函数
-	IgnoreTimeAggregation bool `json:"ignore_time_aggregation"`
+	// IsDomSampled 是否命中降采样算法
+	IsDomSampled bool `json:"is_dom_sampled"`
 	// ReferenceName 别名，用于表达式计算
 	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
@@ -385,8 +385,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		}
 		aggs = append(aggs, agg)
 
-		// 生成 PromQL 的时候忽略时间聚合
-		q.IgnoreTimeAggregation = true
+		// 是否命中降采样计算
+		q.IsDomSampled = true
 	}
 
 	return
@@ -792,7 +792,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		// 忽略时间聚合函数开关
 		if promExprOpt.IgnoreTimeAggregationEnable {
 			// 是否需要忽略时间聚合函数
-			if q.IgnoreTimeAggregation {
+			if q.IsDomSampled {
 				if q.AggregateMethodList != nil {
 					q.TimeAggregation = TimeAggregation{}
 					q.AggregateMethodList = q.AggregateMethodList[1:]

@@ -652,6 +652,41 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			ok:     true,
 			promql: `sum by (ip) (increase(a[1m]))`,
 		},
+		"vm 聚合查询验证 - 3": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip", "service"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									5,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     true,
+			promql: `topk(5, sum by (ip, service) (sum_over_time(a[1m])))`,
+		},
 		"非 vm 聚合查询验证 - 1": {
 			source: "username:other",
 			ts: &QueryTs{
@@ -709,6 +744,41 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 			},
 			ok:     false,
 			promql: `sum by (ip) (increase(a[1m]))`,
+		},
+		"非 vm 聚合查询验证 - 3": {
+			source: "username:other",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     false,
+			promql: `topk(1, a)`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

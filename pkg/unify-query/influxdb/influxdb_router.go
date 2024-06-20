@@ -133,10 +133,7 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 		// 重试 pingCount 次数
 		var read bool
 		for i := 0; i < pingCount; i++ {
-			if v.Protocol == GRPC {
-				continue
-			}
-			addr := fmt.Sprintf("%s://%s:%d/ping", v.Protocol, v.DomainName, v.Port)
+			addr := fmt.Sprintf("http://%s:%d/ping", v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
 				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)

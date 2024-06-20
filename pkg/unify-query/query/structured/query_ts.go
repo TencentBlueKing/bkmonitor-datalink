@@ -207,9 +207,10 @@ func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClus
 }
 
 type PromExprOption struct {
-	ReferenceNameMetric       map[string]string
-	ReferenceNameLabelMatcher map[string][]*labels.Matcher
-	FunctionReplace           map[string]string
+	ReferenceNameMetric         map[string]string
+	ReferenceNameLabelMatcher   map[string][]*labels.Matcher
+	FunctionReplace             map[string]string
+	IgnoreTimeAggregationEnable bool
 }
 
 func (q *QueryTs) ToPromExpr(
@@ -270,6 +271,8 @@ type Query struct {
 	AggregateMethodList AggregateMethodList `json:"function"`
 	// TimeAggregation 时间聚合方法
 	TimeAggregation TimeAggregation `json:"time_aggregation"`
+	// IsDomSampled 是否命中降采样算法
+	IsDomSampled bool `json:"is_dom_sampled"`
 	// ReferenceName 别名，用于表达式计算
 	ReferenceName string `json:"reference_name,omitempty" example:"a"`
 	// Dimensions promQL 使用维度
@@ -382,9 +385,8 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 		}
 		aggs = append(aggs, agg)
 
-		// 清理原结构体
-		q.TimeAggregation = TimeAggregation{}
-		q.AggregateMethodList = q.AggregateMethodList[1:]
+		// 是否命中降采样计算
+		q.IsDomSampled = true
 	}
 
 	return
@@ -787,6 +789,17 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	// 判断是否使用别名作为指标
 	metric = q.ReferenceName
 	if promExprOpt != nil {
+		// 忽略时间聚合函数开关
+		if promExprOpt.IgnoreTimeAggregationEnable {
+			// 是否需要忽略时间聚合函数
+			if q.IsDomSampled {
+				if q.AggregateMethodList != nil {
+					q.TimeAggregation = TimeAggregation{}
+					q.AggregateMethodList = q.AggregateMethodList[1:]
+				}
+			}
+		}
+
 		// 替换指标名
 		if m, ok := promExprOpt.ReferenceNameMetric[q.ReferenceName]; ok {
 			metric = m

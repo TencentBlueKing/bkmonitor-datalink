@@ -324,11 +324,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		//	"delta":    "delta_prometheus",
 		//	"changes":  "changes_prometheus",
 		//}
-
-		if err != nil {
-			return nil, err
-		}
-
+		//if err != nil {
+		//	return nil, err
+		//}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetInstance(ctx, &metadata.Query{
 			StorageID: consul.VictoriaMetricsStorageType,
@@ -338,6 +336,9 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			return nil, err
 		}
 	} else {
+		// 非直查开启忽略时间聚合函数判断
+		promExprOpt.IgnoreTimeAggregationEnable = true
+
 		err = metadata.SetQueryReference(ctx, queryRef)
 
 		if err != nil {

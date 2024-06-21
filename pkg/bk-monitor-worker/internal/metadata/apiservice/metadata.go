@@ -15,7 +15,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkmonitor"
 )
 
 var Metadata MetadataService
@@ -23,17 +23,17 @@ var Metadata MetadataService
 type MetadataService struct{}
 
 // CustomTimeSeriesDetail 获取自定义ts信息
-func (MetadataService) CustomTimeSeriesDetail(bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*metadata.CustomTimeSeriesDetailData, error) {
+func (MetadataService) CustomTimeSeriesDetail(bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*bkmonitor.CustomTimeSeriesDetailData, error) {
 	params := map[string]string{
 		"bk_biz_id":            strconv.Itoa(bkBizId),
 		"time_series_group_id": strconv.Itoa(int(timeSeriesGroupId)),
 		"model_only":           strconv.FormatBool(modelOnly),
 	}
-	api, err := api.GetMetadataApi()
+	api, err := api.GetMonitorApi()
 	if err != nil {
 		return nil, errors.Wrap(err, "get metadata api failed")
 	}
-	var result metadata.CustomTimeSeriesDetailResp
+	var result bkmonitor.CustomTimeSeriesDetailResp
 	_, err = api.CustomTimeSeriesDetail().SetQueryParams(params).SetResult(&result).Request()
 	if err != nil {
 		return nil, errors.Wrapf(err, "CustomTimeSeriesDetail with bk_biz_id [%v] time_series_group_id [%v] modelOnly [%v] failed", bkBizId, timeSeriesGroupId, modelOnly)

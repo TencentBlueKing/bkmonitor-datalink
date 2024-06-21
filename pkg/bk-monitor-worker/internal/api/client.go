@@ -25,9 +25,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bcsstorage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkdata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	apiDefine "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -41,7 +41,7 @@ var (
 	muForCmdbApi           sync.Mutex
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
-	muForMetadataApi       sync.Mutex
+	muForMonitorApi        sync.Mutex
 )
 
 var (
@@ -53,7 +53,7 @@ var (
 	cmdbApi           *cmdb.Client
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
-	metadataApi       *metadata.Client
+	monitorApi        *bkmonitor.Client
 )
 
 // GetGseApi 获取GseApi客户端
@@ -249,12 +249,12 @@ func GetBkdataApi() (*bkdata.Client, error) {
 	return bkdataApi, nil
 }
 
-// GetMetadataApi 获取metadataApi客户端
-func GetMetadataApi() (*metadata.Client, error) {
-	muForMetadataApi.Lock()
-	defer muForMetadataApi.Unlock()
-	if metadataApi != nil {
-		return metadataApi, nil
+// GetMonitorApi 获取 bk_monitor 客户端
+func GetMonitorApi() (*bkmonitor.Client, error) {
+	muForMonitorApi.Lock()
+	defer muForMonitorApi.Unlock()
+	if monitorApi != nil {
+		return monitorApi, nil
 	}
 	config := bkapi.ClientConfig{
 		Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
@@ -265,11 +265,11 @@ func GetMetadataApi() (*metadata.Client, error) {
 	}
 
 	var err error
-	metadataApi, err = metadata.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	monitorApi, err = bkmonitor.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
 	if err != nil {
 		return nil, err
 	}
-	return metadataApi, nil
+	return monitorApi, nil
 }
 
 // HeaderProvider provide request header.

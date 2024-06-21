@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package bkmonitor
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
@@ -39,4 +39,22 @@ type CustomTimeSeriesDetailData struct {
 	AccessToken       string                     `json:"access_token"`
 	MetricJson        []map[string][]interface{} `json:"metric_json"`
 	Target            []interface{}              `json:"target"`
+}
+
+// CreateApplicationHubResp apm_api接口[CreateApplicationHub]返回数据
+type CreateApplicationHubResp struct {
+	define.ApiCommonRespMeta
+	Data ApplicationHubDetail `json:"data"`
+}
+
+type ApplicationHubDetail struct {
+	BkBizId        int    `json:"bk_biz_id"`
+	AppName        string `json:"app_name"`
+	BcsClusterId   string `json:"bcs_cluster_id"`
+	CustomReportId int    `json:"custom_report_id"`
+	MetricDataId   int    `json:"metric_data_id"`
+	TraceDataId    int    `json:"trace_data_id"`
+	ProfileDataId  int    `json:"profile_data_id"`
+	LogDataId      int    `json:"log_data_id"`
+	Token          string `json:"token"`
 }

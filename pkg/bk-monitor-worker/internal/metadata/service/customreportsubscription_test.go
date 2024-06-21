@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkmonitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -59,18 +59,18 @@ func TestCustomReportSubscriptionSvc_getProtocol(t *testing.T) {
 	assert.NoError(t, tsJ.Create(db))
 	assert.NoError(t, tsP.Create(db))
 
-	patchA := gomonkey.ApplyFunc(apiservice.MetadataService.CustomTimeSeriesDetail, func(s apiservice.MetadataService, bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*metadata.CustomTimeSeriesDetailData, error) {
+	patchA := gomonkey.ApplyFunc(apiservice.MetadataService.CustomTimeSeriesDetail, func(s apiservice.MetadataService, bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*bkmonitor.CustomTimeSeriesDetailData, error) {
 		if bkBizId == tsJ.BkBizID && timeSeriesGroupId == tsJ.TimeSeriesGroupID {
-			return &metadata.CustomTimeSeriesDetailData{
+			return &bkmonitor.CustomTimeSeriesDetailData{
 				Protocol: "json",
 			}, nil
 		}
 		if bkBizId == tsP.BkBizID && timeSeriesGroupId == tsP.TimeSeriesGroupID {
-			return &metadata.CustomTimeSeriesDetailData{
+			return &bkmonitor.CustomTimeSeriesDetailData{
 				Protocol: "prometheus",
 			}, nil
 		}
-		return &metadata.CustomTimeSeriesDetailData{}, nil
+		return &bkmonitor.CustomTimeSeriesDetailData{}, nil
 	})
 	defer patchA.Reset()
 
@@ -143,13 +143,13 @@ func TestCustomReportSubscriptionSvc_GetCustomConfig(t *testing.T) {
 	assert.NoError(t, dsEg.Create(db))
 	assert.NoError(t, dsTs.Create(db))
 
-	patchA := gomonkey.ApplyFunc(apiservice.MetadataService.CustomTimeSeriesDetail, func(s apiservice.MetadataService, bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*metadata.CustomTimeSeriesDetailData, error) {
+	patchA := gomonkey.ApplyFunc(apiservice.MetadataService.CustomTimeSeriesDetail, func(s apiservice.MetadataService, bkBizId int, timeSeriesGroupId uint, modelOnly bool) (*bkmonitor.CustomTimeSeriesDetailData, error) {
 		if bkBizId == ts.BkBizID && timeSeriesGroupId == ts.TimeSeriesGroupID {
-			return &metadata.CustomTimeSeriesDetailData{
+			return &bkmonitor.CustomTimeSeriesDetailData{
 				Protocol: "prometheus",
 			}, nil
 		}
-		return &metadata.CustomTimeSeriesDetailData{}, nil
+		return &bkmonitor.CustomTimeSeriesDetailData{}, nil
 	})
 	defer patchA.Reset()
 

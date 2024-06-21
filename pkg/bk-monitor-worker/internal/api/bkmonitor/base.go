@@ -7,34 +7,24 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package metadata
+package bkmonitor
 
 import (
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 )
 
-// Client for metadata
+// Client for bk_monitor
 type Client struct {
 	define.BkApiClient
 }
 
-// New metadata client
+// New bk_monitor client
 func New(configProvider define.ClientConfigProvider, opts ...define.BkApiClientOption) (*Client, error) {
-	client, err := bkapi.NewBkApiClient("metadata_v3", configProvider, opts...)
+	client, err := bkapi.NewBkApiClient("bkmonitorv3", configProvider, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Client{BkApiClient: client}, nil
-}
-
-// CustomTimeSeriesDetail for metadata resource custom_time_series_detail
-func (c *Client) CustomTimeSeriesDetail(opts ...define.OperationOption) define.Operation {
-	path := "custom_time_series_detail"
-	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
-		Name:   "custom_time_series_detail",
-		Method: "GET",
-		Path:   path,
-	}, opts...)
 }

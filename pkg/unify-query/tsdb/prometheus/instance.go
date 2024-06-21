@@ -31,17 +31,20 @@ type Instance struct {
 	ctx          context.Context
 	instanceType string
 
+	lookBackDelta time.Duration
+
 	queryStorage storage.Queryable
 
 	engine *promql.Engine
 }
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable) *Instance {
+func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storage.Queryable, lookBackDelta time.Duration) *Instance {
 	return &Instance{
-		ctx:          ctx,
-		engine:       engine,
-		queryStorage: queryStorage,
+		ctx:           ctx,
+		engine:        engine,
+		queryStorage:  queryStorage,
+		lookBackDelta: lookBackDelta,
 	}
 }
 
@@ -86,7 +89,10 @@ func (i *Instance) QueryRange(
 	trace.InsertStringIntoSpan("query-start", start.String(), span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
 	trace.InsertStringIntoSpan("query-step", step.String(), span)
-	opt := &promql.QueryOpts{}
+	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
+	opt := &promql.QueryOpts{
+		LookbackDelta: i.lookBackDelta,
+	}
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -114,10 +120,47 @@ func (i *Instance) QueryRange(
 
 // Query instant 查询
 func (i *Instance) Query(
-	ctx context.Context, promql string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
-	return nil, nil
+	ctx context.Context, qs string,
+	end time.Time,
+) (promql.Vector, error) {
+	var (
+		span oleltrace.Span
+		err  error
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "prometheus-query-range")
+	if span != nil {
+		defer span.End()
+	}
+
+	trace.InsertStringIntoSpan("query-promql", qs, span)
+	trace.InsertStringIntoSpan("query-end", end.String(), span)
+	opt := &promql.QueryOpts{
+		LookbackDelta: i.lookBackDelta,
+	}
+	trace.InsertStringIntoSpan("query-opts-look-back-delta", i.lookBackDelta.String(), span)
+	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+	result := query.Exec(ctx)
+	if result.Err != nil {
+		log.Errorf(ctx, result.Err.Error())
+		return nil, result.Err
+	}
+	for _, err = range result.Warnings {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	vector, err := result.Vector()
+	if err != nil {
+		log.Errorf(ctx, err.Error())
+		return nil, err
+	}
+
+	return vector, nil
 }
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {

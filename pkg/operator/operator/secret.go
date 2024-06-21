@@ -37,6 +37,10 @@ var (
 	statefulsetAlarmer = kits.NewAlarmer(resyncPeriod)
 )
 
+func Slowdown() {
+	time.Sleep(time.Millisecond * 10)
+}
+
 func EqualMap(a, b map[string]struct{}) bool {
 	if len(a) != len(b) {
 		return false
@@ -192,6 +196,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 
 	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
 	for node, configs := range nodeMap {
+		Slowdown()
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
@@ -254,9 +259,31 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		}
 	}
 
+	onSuccess := true
 	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
+
+	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{})
+	if err != nil {
+		logger.Errorf("failed to list secret, error: %v", err)
+		onSuccess = false
+	}
+
+	// 记录已经存在的 secrets
+	existSecrets := make(map[string]struct{})
+	for _, secret := range secrets.Items {
+		existSecrets[secret.Name] = struct{}{}
+	}
+	logger.Infof("list %d secrets from %s namespace", len(existSecrets), ConfMonitorNamespace)
+
 	for _, node := range removed {
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
+		// 避免 list 失败导致操作数据不一致
+		if _, ok := existSecrets[secretName]; !ok && onSuccess {
+			continue
+		}
+
+		// 只删除已经存在的 secret 同时放缓请求速率
+		Slowdown()
 		logger.Infof("remove secret: [%v]", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
@@ -316,6 +343,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
 	for idx, configs := range groups {
+		Slowdown()
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
@@ -387,6 +415,7 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 	// 如果最新状态中存在 但下一轮的状态中不存在的话 则删除 secrets
 	for prev := range prevState {
 		if !nextState[prev] {
+			Slowdown()
 			logger.Infof("remove secret: [%v]", prev)
 			if err := secretClient.Delete(c.ctx, prev, metav1.DeleteOptions{}); err != nil {
 				if !errors.IsNotFound(err) {

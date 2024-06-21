@@ -73,7 +73,13 @@ func NewConfigHandler(config Config) *ConfigHandler {
 		conf := config.Operations[i]
 		// accumulator 类型单独处理
 		switch conf.Type {
-		case accumulator.TypeDelta, accumulator.TypeCount, accumulator.TypeMin, accumulator.TypeMax, accumulator.TypeSum, accumulator.TypeBucket:
+		case accumulator.TypeDelta,
+			accumulator.TypeDeltaDuration,
+			accumulator.TypeCount,
+			accumulator.TypeMin,
+			accumulator.TypeMax,
+			accumulator.TypeSum,
+			accumulator.TypeBucket:
 			if conf.MetricName != "" {
 				gcInterval, _ := time.ParseDuration(conf.GcInterval)
 				publishInterval, _ := time.ParseDuration(conf.PublishInterval)

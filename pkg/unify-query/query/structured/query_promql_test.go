@@ -11,9 +11,9 @@ package structured
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -126,8 +126,17 @@ func TestQueryPromQLExpr(t *testing.T) {
 			ts, err := sp.QueryTs()
 			assert.Nil(t, err)
 			if ts != nil {
-				fmt.Println(c.q)
-				result, err := ts.ToPromExpr(context.TODO(), false, true)
+				referenceNameMetric := make(map[string]string, len(ts.QueryList))
+				referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(ts.QueryList))
+
+				for _, q := range ts.QueryList {
+					router, _ := q.ToRouter()
+					referenceNameMetric[q.ReferenceName] = router.RealMetricName()
+					labelsMatcher, _, _ := q.Conditions.ToProm()
+					referenceNameLabelMatcher[q.ReferenceName] = labelsMatcher
+				}
+
+				result, err := ts.ToPromExpr(context.TODO(), referenceNameMetric, referenceNameLabelMatcher)
 				assert.Nil(t, err)
 				assert.Equal(t, c.r, result.String())
 			}

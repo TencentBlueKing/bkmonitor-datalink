@@ -26,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -49,11 +48,9 @@ func HandleTSQueryRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(ctx, "read ts request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -74,12 +71,10 @@ func HandleTSQueryRequest(c *gin.Context) {
 	respData, err := handleTSQuery(ctx, string(queryStmt), false, bizIDs, spaceUid)
 	if err != nil {
 		log.Warnf(ctx, "handle ts request failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusSuccess)
 	c.JSON(200, respData)
 }
 
@@ -95,11 +90,9 @@ func HandleTSExemplarRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -117,12 +110,10 @@ func HandleTSExemplarRequest(c *gin.Context) {
 	respData, err := handleTSExemplarQuery(ctx, string(queryStmt), bizIDs, spaceUid)
 	if err != nil {
 		log.Errorf(context.TODO(), "handle ts request failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusSuccess)
 	c.JSON(200, respData)
 }
 
@@ -364,11 +355,9 @@ func HandleTsQueryStructToPromQLRequest(c *gin.Context) {
 		defer span.End()
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 	queryStmt, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Errorf(context.TODO(), "read ts request body failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
@@ -378,12 +367,10 @@ func HandleTsQueryStructToPromQLRequest(c *gin.Context) {
 	_, stmt, _, err := handleTsQueryParams(ctx, string(queryStmt), true, nil, "")
 	if err != nil {
 		log.Errorf(context.TODO(), "handle ts params failed for->[%s]", err)
-		metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusFailed)
 		c.JSON(400, ErrResponse{Err: err.Error()})
 		return
 	}
 
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusSuccess)
 	c.JSON(200, gin.H{"promql": stmt})
 }
 

@@ -75,7 +75,70 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func (i *Instance) dataFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Matrix, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Vector, error) {
+	if !resp.Result {
+		return nil, fmt.Errorf(
+			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		)
+	}
+	if resp.Code != OK {
+		return nil, fmt.Errorf(
+			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
+		)
+	}
+	if len(resp.Data.List) > 0 {
+		data := resp.Data.List[0].Data
+		seriesNum := 0
+
+		vector := make(promql.Vector, 0, len(data.Result))
+		for _, series := range data.Result {
+			metricIndex := 0
+			metric := make(labels.Labels, len(series.Metric))
+			for name, value := range series.Metric {
+				metric[metricIndex] = labels.Label{
+					Name:  name,
+					Value: value,
+				}
+				metricIndex++
+			}
+
+			var point promql.Point
+			if data.ResultType != VectorType {
+				continue
+			}
+
+			nt, nv, err := series.Value.Point()
+			if err != nil {
+				log.Errorf(ctx, err.Error())
+				continue
+			}
+			point.T = nt
+			point.V = nv
+			vector = append(vector, promql.Sample{
+				Metric: metric,
+				Point:  point,
+			})
+
+			seriesNum++
+		}
+
+		trace.InsertIntIntoSpan("resp-series-num", seriesNum, span)
+		return vector, nil
+	}
+
+	prefix := "vm-data"
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-list-num", prefix), len(resp.Data.List), span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-cluster", prefix), resp.Data.Cluster, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL, span)
+	trace.InsertStringIntoSpan(fmt.Sprintf("%s-device", prefix), resp.Data.Device, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime, span)
+	trace.InsertIntIntoSpan(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords, span)
+	trace.InsertStringSliceIntoSpan(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds, span)
+
+	return nil, nil
+}
+
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span oleltrace.Span) (promql.Matrix, error) {
 	if !resp.Result {
 		return nil, fmt.Errorf(
 			"%s, %s, %s", resp.Message, resp.Errors.Error, resp.Errors.QueryId,
@@ -334,9 +397,20 @@ func (i *Instance) QueryRange(
 			End:   end.Unix(),
 			Step:  int64(step.Seconds()),
 		},
-		MetricFilterCondition: vmExpand.MetricFilterCondition,
-		MetricAliasMapping:    vmExpand.MetricAliasMapping,
-		ResultTableGroup:      vmExpand.ResultTableGroup,
+	}
+
+	// or 语法查询特性开关
+	if metadata.GetVMQueryOrFeatureFlag(ctx) {
+		paramsQueryRange.MetricFilterCondition = vmExpand.MetricFilterCondition
+		paramsQueryRange.MetricAliasMapping = vmExpand.MetricAliasMapping
+		paramsQueryRange.ResultTableGroup = vmExpand.ResultTableGroup
+	} else {
+		// 拼接 result table 和 metric
+		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
+		if err != nil {
+			return nil, err
+		}
+		paramsQueryRange.ResultTableGroup = metricResultTableGroup
 	}
 
 	sql, err := json.Marshal(paramsQueryRange)
@@ -349,17 +423,17 @@ func (i *Instance) QueryRange(
 		return nil, err
 	}
 
-	return i.dataFormat(ctx, vmResp, span)
+	return i.matrixFormat(ctx, vmResp, span)
 }
 
 // Query instant 查询
 func (i *Instance) Query(
 	ctx context.Context, promqlStr string,
-	end time.Time, step time.Duration,
-) (promql.Matrix, error) {
+	end time.Time,
+) (promql.Vector, error) {
 	var (
-		span      oleltrace.Span
-		vmRtGroup map[string][]string
+		span     oleltrace.Span
+		vmExpand *metadata.VmExpand
 
 		vmResp = &VmResponse{}
 		err    error
@@ -374,24 +448,18 @@ func (i *Instance) Query(
 	if expand != nil {
 		v, ok := expand.(*metadata.VmExpand)
 		if ok {
-			vmRtGroup = v.ResultTableGroup
+			vmExpand = v
 		}
 	}
 
 	trace.InsertStringIntoSpan("query-promql", promqlStr, span)
 	trace.InsertStringIntoSpan("query-end", end.String(), span)
-	trace.InsertStringIntoSpan("query-step", step.String(), span)
 
-	if len(vmRtGroup) == 0 {
-		return promql.Matrix{}, nil
+	if vmExpand == nil || len(vmExpand.ResultTableGroup) == 0 || len(vmExpand.MetricAliasMapping) == 0 {
+		return promql.Vector{}, nil
 	}
 
-	metrics := make([]string, 0, len(vmRtGroup))
-	for m, rts := range vmRtGroup {
-		metrics = append(metrics, m)
-		trace.InsertStringSliceIntoSpan(fmt.Sprintf("vm-rt-%s", m), rts, span)
-	}
-	trace.InsertStringSliceIntoSpan("query-metrics", metrics, span)
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 
 	paramsQuery := &ParamsQuery{
 		InfluxCompatible: i.InfluxCompatible,
@@ -405,7 +473,20 @@ func (i *Instance) Query(
 			Time:    end.Unix(),
 			Timeout: int64(i.Timeout.Seconds()),
 		},
-		ResultTableGroup: vmRtGroup,
+	}
+
+	// or 语法查询特性开关
+	if metadata.GetVMQueryOrFeatureFlag(ctx) {
+		paramsQuery.MetricFilterCondition = vmExpand.MetricFilterCondition
+		paramsQuery.MetricAliasMapping = vmExpand.MetricAliasMapping
+		paramsQuery.ResultTableGroup = vmExpand.ResultTableGroup
+	} else {
+		// 拼接 result table 和 metric
+		metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
+		if err != nil {
+			return nil, err
+		}
+		paramsQuery.ResultTableGroup = metricResultTableGroup
 	}
 
 	sql, err := json.Marshal(paramsQuery)
@@ -418,10 +499,10 @@ func (i *Instance) Query(
 		return nil, err
 	}
 
-	return i.dataFormat(ctx, vmResp, span)
+	return i.vectorFormat(ctx, vmResp, span)
 }
 
-func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
+func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		span     oleltrace.Span
 		vmExpand *metadata.VmExpand
@@ -454,6 +535,13 @@ func (i *Instance) metric(ctx context.Context, name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//referenceName := ""
+	//for _, m := range matchers {
+	//	if m.Name == labels.MetricName {
+	//		referenceName = m.Value
+	//	}
+	//}
 
 	paramsQuery := &ParamsLabelValues{
 		InfluxCompatible: i.InfluxCompatible,
@@ -501,25 +589,13 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		}
 	}
 
-	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
-	trace.InsertStringIntoSpan("query-start", start.String(), span)
-	trace.InsertStringIntoSpan("query-end", end.String(), span)
-
 	if vmExpand == nil {
 		return nil, nil
 	}
 
-	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
-
-	metricName := ""
-	labelMatchers := make([]*labels.Matcher, 0, len(matchers)-1)
-	for _, m := range matchers {
-		if m.Name == labels.MetricName {
-			metricName = m.Value
-		} else {
-			labelMatchers = append(labelMatchers, m)
-		}
-	}
+	trace.InsertStringIntoSpan("query-matchers", fmt.Sprintf("%+v", matchers), span)
+	trace.InsertStringIntoSpan("query-start", start.String(), span)
+	trace.InsertStringIntoSpan("query-end", end.String(), span)
 
 	// 拼接 result table 和 metric
 	metricResultTableGroup, err := vmExpand.MetricResultTableGroup()
@@ -527,8 +603,29 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 		return nil, err
 	}
 
+	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
+
+	referenceName := ""
+	metricName := ""
+	labelMatchers := make([]*labels.Matcher, 0, 1)
+	for _, m := range matchers {
+		if m.Name == labels.MetricName {
+			referenceName = m.Value
+		}
+	}
+
+	if referenceName == "" {
+		return nil, fmt.Errorf("reference name is empty: %v", matchers)
+	}
+	if v, ok := vmExpand.LabelsMatcher[referenceName]; ok {
+		labelMatchers = v
+	}
+	if v, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
+		metricName = v
+	}
+
 	if metricName == "" {
-		return nil, fmt.Errorf("wrong metric name: %+v", matchers)
+		return nil, fmt.Errorf("wrong metric name: %v", vmExpand)
 	}
 
 	vector := &parser.VectorSelector{
@@ -580,7 +677,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	}
 
 	if name == labels.MetricName {
-		return i.metric(ctx, name)
+		return i.metric(ctx, name, matchers...)
 	}
 
 	expand := metadata.GetExpand(ctx)
@@ -608,18 +705,27 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, err
 	}
 
+	referenceName := ""
 	metricName := ""
-	labelMatchers := make([]*labels.Matcher, 0, len(matchers)-1)
+	labelMatchers := make([]*labels.Matcher, 0, 1)
 	for _, m := range matchers {
 		if m.Name == labels.MetricName {
-			metricName = m.Value
-		} else {
-			labelMatchers = append(labelMatchers, m)
+			referenceName = m.Value
 		}
 	}
 
+	if referenceName == "" {
+		return nil, fmt.Errorf("reference name is empty: %v", matchers)
+	}
+	if v, ok := vmExpand.LabelsMatcher[referenceName]; ok {
+		labelMatchers = v
+	}
+	if v, ok := vmExpand.MetricAliasMapping[referenceName]; ok {
+		metricName = v
+	}
+
 	if metricName == "" {
-		return nil, fmt.Errorf("wrong metric name: %+v", matchers)
+		return nil, fmt.Errorf("wrong metric name: %v", vmExpand)
 	}
 
 	vector := &parser.VectorSelector{

@@ -143,18 +143,41 @@ func TestCoreFileCollectorGetCoreFilePath(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	c := &CoreFileCollector{}
-	corePath, err := c.getCoreFilePath()
-	assert.Equal(t, corePath, "/data/corefile")
-	assert.Equal(t, c.pattern, "core_%e_%t.%p")
 
-	c2 := &CoreFileCollector{
-		coreFilePattern: "/data/corefile2/core_%e\n",
+	testCases := []struct {
+		name          string
+		inputPattern  string
+		resultPath    string
+		resultPattern string
+	}{
+		{
+			name:          "FileMode",
+			inputPattern:  "",
+			resultPath:    "/data/corefile",
+			resultPattern: "core_%e_%t.%p",
+		},
+		{
+			name:          "ConfigWithNoNewline",
+			inputPattern:  "/data/corefile2/core_%e",
+			resultPath:    "/data/corefile2",
+			resultPattern: "core_%e",
+		},
+		{
+			name:          "ConfigWithOneNewline",
+			inputPattern:  "/data/corefile2/core_%e\n",
+			resultPath:    "/data/corefile2",
+			resultPattern: "core_%e",
+		},
 	}
-	corePath2, err := c2.getCoreFilePath()
-	assert.Equal(t, corePath2, "/data/corefile2")
-	assert.Equal(t, c2.pattern, "core_%e")
 
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &CoreFileCollector{coreFilePattern: tt.inputPattern}
+			corePath, _ := c.getCoreFilePath()
+			assert.Equal(t, corePath, tt.resultPath)
+			assert.Equal(t, c.pattern, tt.resultPattern)
+		})
+	}
 }
 
 func TestCoreFileCollector_fillDimension(t *testing.T) {

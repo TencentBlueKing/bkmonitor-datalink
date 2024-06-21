@@ -25,13 +25,23 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/prometheus"
 )
 
+// HandlerFieldKeys
+// @Summary  query monitor by promql
+// @ID       ts-query-request-promql
+// @Produce  json
+// @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
+// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
+// @Success  200                   	{object}  PromData
+// @Failure  400                   	{object}  ErrResponse
+// @Router   /query/ts/promql [post]
 func HandlerFieldKeys(c *gin.Context) {
 	handlerInfo(c, infos.FieldKeys)
 }
@@ -53,9 +63,7 @@ func HandlerLabelValues(c *gin.Context) {
 		key  = infos.TagValues
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionLabelValues,
-			actionType: string(key),
+			c: c,
 		}
 		span oleltrace.Span
 
@@ -128,9 +136,7 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionInfo,
-			actionType: string(key),
+			c: c,
 		}
 		span oleltrace.Span
 	)
@@ -144,7 +150,6 @@ func handlerInfo(c *gin.Context, key infos.InfoType) {
 	json.NewDecoder(c.Request.Body).Decode(params)
 	data, err := queryInfo(ctx, key, params)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -177,14 +182,15 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 	if err != nil {
 		return nil, err
 	}
-	// 查询语法转化为 promql
-	for i, cond := range params.Conditions.FieldList {
-		params.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
-	}
-	labelMatchers, _, err := params.Conditions.ToProm()
+
+	labelMatchers := make([]*labels.Matcher, 0, 1)
+	match, err := labels.NewMatcher(
+		labels.MatchEqual, labels.MetricName, prometheus.ReferenceName,
+	)
 	if err != nil {
 		return nil, err
 	}
+	labelMatchers = append(labelMatchers, match)
 
 	switch key {
 	case infos.FieldKeys:
@@ -224,13 +230,6 @@ func queryInfo(ctx context.Context, key infos.InfoType, params *infos.Params) (i
 			End:   end * 1e3,
 			Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
 		}
-		match, err := labels.NewMatcher(
-			labels.MatchEqual, labels.MetricName, prometheus.ReferenceName,
-		)
-		if err != nil {
-			return nil, err
-		}
-		labelMatchers = append(labelMatchers, match)
 
 		set := q.Select(true, hints, labelMatchers...)
 		if set.Err() != nil {

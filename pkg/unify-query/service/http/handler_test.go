@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -33,7 +34,29 @@ import (
 )
 
 // mockData comment lint rebel
-func mockData(ctx context.Context) *curl.TestCurl {
+func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
+	featureFlag.MockFeatureFlag(ctx, `{
+    	"vm-query-or": {
+    		"variations": {
+    			"true": true,
+    			"false": false
+    		},
+    		"targeting": [{
+    			"query": "name in [\"vm-query-or\"]",
+    			"percentage": {
+    				"true": 100,
+    				"false": 0
+    			}
+    		}],
+    		"defaultRule": {
+    			"percentage": {
+    				"true": 0,
+    				"false": 100
+    			}
+    		}
+    	}
+    }`)
+
 	promql.NewEngine(&promql.Params{
 		Timeout:              2 * time.Hour,
 		MaxSamples:           500000,
@@ -41,9 +64,76 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		EnableNegativeOffset: true,
 	})
 
-	metadata.GetQueryRouter().MockSpaceUid("vm-query")
+	metadata.GetQueryRouter().MockSpaceUid("vm-query", consul.VictoriaMetricsStorageType)
 
-	mock.SetSpaceAndProxyMockData(ctx, "vm-query", &redis.TsDB{
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.VictoriaMetricsStorageType, &redis.TsDB{
+		Type:            consul.VictoriaMetricsStorageType,
+		TableID:         "a.b_2",
+		Field:           []string{redis.BkSplitMeasurement},
+		MeasurementType: redis.BkSplitMeasurement,
+		Filters: []redis.Filter{
+			{
+				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+			},
+		},
+	}, &ir.Proxy{
+		StorageID:   consul.VictoriaMetricsStorageType,
+		Db:          redis.BkSplitMeasurement,
+		Measurement: redis.BkSplitMeasurement,
+		VmRt:        consul.VictoriaMetricsStorageType,
+	})
+
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.VictoriaMetricsStorageType, &redis.TsDB{
+		Type:            consul.VictoriaMetricsStorageType,
+		TableID:         "a.b_1",
+		Field:           []string{redis.BkSplitMeasurement},
+		MeasurementType: redis.BkSplitMeasurement,
+		Filters: []redis.Filter{
+			{
+				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+			},
+		},
+	}, &ir.Proxy{
+		StorageID:   consul.VictoriaMetricsStorageType,
+		Db:          redis.BkSplitMeasurement,
+		Measurement: redis.BkSplitMeasurement,
+		VmRt:        consul.VictoriaMetricsStorageType,
+	})
+
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, consul.InfluxDBStorageType, &redis.TsDB{
+		Type:            consul.InfluxDBStorageType,
+		TableID:         "a.b",
+		Field:           []string{redis.BkSplitMeasurement},
+		MeasurementType: redis.BkSplitMeasurement,
+		Filters: []redis.Filter{
+			{
+				redis.BkSplitMeasurement: redis.BkSplitMeasurement,
+			},
+		},
+	}, &ir.Proxy{
+		StorageID:   consul.InfluxDBStorageType,
+		Db:          redis.BkSplitMeasurement,
+		Measurement: redis.BkSplitMeasurement,
+	})
+
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
+		TableID:         "table_id.__default__",
+		Field:           []string{"metric"},
+		MeasurementType: redis.BkSplitMeasurement,
+		Filters: []redis.Filter{
+			{
+				"bcs_cluster_id": "cls",
+				"namespace":      "",
+			},
+		},
+	}, &ir.Proxy{
+		StorageID:   consul.VictoriaMetricsStorageType,
+		Db:          "table_id",
+		Measurement: "__default__",
+		VmRt:        "vm_rt",
+	})
+
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
 		TableID:         "100147_bcs_prom_computation_result_table_25428.__default__",
 		Field:           []string{"container_cpu_usage_seconds_total"},
 		MeasurementType: redis.BkSplitMeasurement,
@@ -64,7 +154,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		VmRt:        "100147_bcs_prom_computation_result_table_25428",
 	})
 
-	mock.SetSpaceAndProxyMockData(ctx, "vm-query", &redis.TsDB{
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "vm-query", &redis.TsDB{
 		TableID:         "100147_bcs_prom_computation_result_table_25429.__default__",
 		Field:           []string{"container_cpu_usage_seconds_total"},
 		MeasurementType: redis.BkSplitMeasurement,
@@ -81,7 +171,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 		VmRt:        "100147_bcs_prom_computation_result_table_25429",
 	})
 
-	mock.SetSpaceAndProxyMockData(ctx, "bkcc__100147", &redis.TsDB{
+	mock.SetSpaceAndProxyMockData(ctx, path, bucket, "bkcc__100147", &redis.TsDB{
 		TableID:         "custom_report_aggate.base",
 		Field:           []string{"bkmonitor_action_notice_api_call_count_total"},
 		MeasurementType: redis.BkSplitMeasurement,
@@ -152,6 +242,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 `,
 		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=custom_report_aggate&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+bkmonitor_action_notice_api_call_count_total+where+time+%3E+1692584759999000000+and+time+%3C+1692585659999000000+and+%28notice_way%3D%27weixin%27+and+status%3D%27failed%27%29++limit+100000000+slimit+100000000`: `{"results":[{"statement_id":0,"series":[{"name":"bkmonitor_action_notice_api_call_count_total","columns":["_time","_value","job","notice_way","status","target"],"values":[["2023-08-21T02:26:34.603Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:27:33.198Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:28:32.629Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:29:36.848Z",14568,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:35.819Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:32:55.496Z",14569,"SLI","weixin","failed","unknown"],["2023-08-21T02:33:39.496Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:34:43.517Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:37:35.203Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:38:32.111Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:39:32.135Z",14570,"SLI","weixin","failed","unknown"],["2023-08-21T02:40:40.788Z",14570,"SLI","weixin","failed","unknown"]]}]}]}
 `,
+		`victoria_metric/api`: `{"result": true, "code":"00", "data":{}}`,
 	}, log.OtLogger)
 
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
@@ -188,7 +279,7 @@ func mockData(ctx context.Context) *curl.TestCurl {
 func TestQueryTs(t *testing.T) {
 	ctx := context.Background()
 	log.InitTestLogger()
-	mockData(ctx)
+	mockData(ctx, "hander_test", "handler_test")
 
 	testCases := map[string]struct {
 		query  string
@@ -318,7 +409,7 @@ func TestQueryTs(t *testing.T) {
 func TestQueryExemplar(t *testing.T) {
 	ctx := context.Background()
 	log.InitTestLogger()
-	mockData(ctx)
+	mockData(ctx, "hander_test", "handler_test")
 
 	body := []byte(`{"space_uid":"bkcc__7","query_list":[{"data_source":"","table_id":"pushgateway_bkmonitor_unify_query.group2_cmdb_level","field_name":"unify_query_request_count_total","field_list":["bk_trace_id","bk_span_id","bk_trace_value","bk_trace_timestamp"],"function":null,"time_aggregation":{"function":"","window":"","position":0,"vargs_list":null},"reference_name":"","dimensions":null,"limit":0,"timestamp":null,"start_or_end":0,"vector_offset":0,"offset":"","offset_forward":false,"slimit":0,"soffset":0,"conditions":{"field_list":[{"field_name":"bk_obj_id","value":["module"],"op":"contains"},{"field_name":"ip","value":["127.0.0.2"],"op":"contains"},{"field_name":"bk_inst_id","value":["14261"],"op":"contains"},{"field_name":"bk_biz_id","value":["7"],"op":"contains"}],"condition_list":["and","and","and"]},"keep_columns":null}],"metric_merge":"","result_columns":null,"start_time":"1682149980","end_time":"1682154605","step":"","down_sample_range":"1m"}`)
 
@@ -336,9 +427,10 @@ func TestQueryExemplar(t *testing.T) {
 
 func TestVmQueryParams(t *testing.T) {
 	ctx := context.Background()
-	mockCurl := mockData(ctx)
+	mockCurl := mockData(ctx, "hander_test", "handler_test")
 
 	testCases := []struct {
+		username string
 		spaceUid string
 		query    string
 		promql   string
@@ -346,11 +438,37 @@ func TestVmQueryParams(t *testing.T) {
 		end      string
 		step     string
 		params   string
+		error    error
 	}{
 		{
+			username: "vm-query",
+			spaceUid: consul.VictoriaMetricsStorageType,
+			query:    `{"query_list":[{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["BCS-K8S-25426"],"op":"req"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-25427"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and", "and"]}},{"field_name":"bk_split_measurement","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
+			params:   ``,
+		},
+		{
+			username: "vm-query-or",
 			spaceUid: "vm-query",
 			query:    `{"query_list":[{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["BCS-K8S-25426"],"op":"req"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-25427"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["or", "and"]}},{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
 			params:   `{"influx_compatible":true,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(a[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"a":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"],"b":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"]},"metric_filter_condition":{"a":"((bcs_cluster_id=~\"BCS-K8S-25426\" or (bcs_cluster_id=~\"BCS-K8S-25427\" and bk_biz_id=\"100801\")) and (bcs_cluster_id=\"BCS-K8S-25428\" or bcs_cluster_id=\"BCS-K8S-25430\")) or ((bcs_cluster_id=~\"BCS-K8S-25426\" or (bcs_cluster_id=~\"BCS-K8S-25427\" and bk_biz_id=\"100801\")) and bcs_cluster_id=\"BCS-K8S-25429\")","b":"((bcs_cluster_id=\"BCS-K8S-25428\" or bcs_cluster_id=\"BCS-K8S-25430\")) or (bcs_cluster_id=\"BCS-K8S-25429\")"},"metric_alias_mapping":{"a":"container_cpu_usage_seconds_total_value","b":"container_cpu_usage_seconds_total_value"}}`,
+		},
+		{
+			username: "vm-query",
+			spaceUid: "vm-query",
+			query:    `{"query_list":[{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["BCS-K8S-25426"],"op":"req"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-25427"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["or", "and"]}},{"field_name":"container_cpu_usage_seconds_total","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
+			error:    fmt.Errorf(`vm query is not support or query`),
+		},
+		{
+			username: "vm-query",
+			spaceUid: "vm-query",
+			query:    `{"query_list":[{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"bcs_cluster_id","value":["BCS-K8S-25426"],"op":"req"},{"field_name":"bcs_cluster_id","value":["BCS-K8S-25427"],"op":"req"},{"field_name":"bk_biz_id","value":["100801"],"op":"eq"}],"condition_list":["and","and"]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
+			params:   `{"influx_compatible":true,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(metric_value{bcs_cluster_id=\"cls\",bcs_cluster_id=~\"BCS-K8S-25426\",bcs_cluster_id=~\"BCS-K8S-25427\",bk_biz_id=\"100801\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(metric_value{bcs_cluster_id=\"cls\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"metric_value":["vm_rt"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
+		},
+		{
+			username: "vm-query",
+			spaceUid: "vm-query",
+			query:    `{"query_list":[{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"namespace","value":["ns"],"op":"contains"}],"condition_list":[]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
+			params:   `{"influx_compatible":true,"api_type":"query_range","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time(metric_value{bcs_cluster_id=\"cls\",namespace=\"ns\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(metric_value{bcs_cluster_id=\"cls\"}[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_group":{"metric_value":["vm_rt"]},"metric_filter_condition":null,"metric_alias_mapping":null}`,
 		},
 	}
 
@@ -361,7 +479,7 @@ func TestVmQueryParams(t *testing.T) {
 				err   error
 			)
 			ctx, _ = context.WithCancel(ctx)
-			metadata.SetUser(ctx, "username:test", c.spaceUid)
+			metadata.SetUser(ctx, fmt.Sprintf("username:%s", c.username), c.spaceUid)
 			if c.promql != "" {
 				var queryPromQL *structured.QueryPromQL
 				err = json.Unmarshal([]byte(c.promql), &queryPromQL)
@@ -377,15 +495,21 @@ func TestVmQueryParams(t *testing.T) {
 			assert.Nil(t, err)
 			if err == nil {
 				_, err = queryTs(ctx, query)
-				if len(mockCurl.Params) == 0 {
-					assert.Nil(t, err)
+				if c.error != nil {
+					assert.Contains(t, err.Error(), c.error.Error())
+				} else {
+					if len(mockCurl.Params) == 0 {
+						assert.Nil(t, err)
+					}
+					var vmParams *victoriaMetrics.Params
+					if mockCurl.Params != nil {
+						err = json.Unmarshal(mockCurl.Params, &vmParams)
+						assert.Nil(t, err)
+					}
+					if vmParams != nil {
+						assert.Equal(t, c.params, vmParams.SQL)
+					}
 				}
-				var vmParams *victoriaMetrics.Params
-				if mockCurl.Params != nil {
-					err = json.Unmarshal(mockCurl.Params, &vmParams)
-					assert.Nil(t, err)
-				}
-				assert.Equal(t, c.params, vmParams.SQL)
 			}
 		})
 	}

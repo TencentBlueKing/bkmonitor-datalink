@@ -18,19 +18,18 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 type response struct {
 	c *gin.Context
-
-	actionType string
-	action     string
 }
 
 func (r *response) failed(ctx context.Context, err error) {
 	log.Errorf(ctx, err.Error())
-	metric.RequestCountInc(ctx, r.action, r.actionType, metric.StatusFailed)
+	user := metadata.GetUser(ctx)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusFailed, user.SpaceUid)
 	r.c.JSON(http.StatusBadRequest, ErrResponse{
 		Err: err.Error(),
 	})
@@ -38,6 +37,7 @@ func (r *response) failed(ctx context.Context, err error) {
 
 func (r *response) success(ctx context.Context, data interface{}) {
 	log.Infof(ctx, "query data size is %s", fmt.Sprint(unsafe.Sizeof(data)))
-	metric.RequestCountInc(ctx, r.action, r.actionType, metric.StatusSuccess)
+	user := metadata.GetUser(ctx)
+	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid)
 	r.c.JSON(http.StatusOK, data)
 }

@@ -87,7 +87,8 @@ const (
 	// PipelineConfigOptLogSeparatorRegexp : 日志正则提取清洗专用，提取字段
 	PipelineConfigOptLogSeparatorRegexp = "separator_regexp"
 	PipelineConfigOptionIsLogData       = "is_log_data"
-
+	// PipelineConfigOptionRetainExtraJson : JSON清洗时, 未定义字段将会归到ext里
+	PipelineConfigOptionRetainExtraJson = "retain_extra_json"
 	// PipelineConfigOptEnableDimensionCmdbLevel : 开启层级组功能
 	PipelineConfigOptEnableDimensionCmdbLevel = "enable_dimension_cmdb_level"
 	// ResultTableListConfigOptMetricSplitLevel  : 描述需要拆解的层级内容

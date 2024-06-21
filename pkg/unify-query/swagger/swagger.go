@@ -33,7 +33,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "username:shamcleren",
+                        "default": "username:goodman",
                         "description": "来源",
                         "name": "Bk-Query-Source",
                         "in": "header"
@@ -88,7 +88,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "username:shamcleren",
+                        "default": "username:goodman",
                         "description": "来源",
                         "name": "Bk-Query-Source",
                         "in": "header"
@@ -143,7 +143,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "default": "username:shamcleren",
+                        "default": "username:goodman",
                         "description": "来源",
                         "name": "Bk-Query-Source",
                         "in": "header"

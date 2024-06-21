@@ -13,10 +13,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 	oleltrace "go.opentelemetry.io/otel/trace"
@@ -62,7 +64,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		return nil, err
 	}
 
-	start, end, _, err := structured.ToTime(query.Start, query.End, query.Step)
+	start, end, _, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -87,6 +89,8 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 			return nil, err
 		}
 		for _, qry := range queryMetric.QueryList {
+			qry.Timezone = timezone
+
 			instance := prometheus.GetInstance(ctx, qry)
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
@@ -147,9 +151,13 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		instance tsdb.Instance
 		ok       bool
 
-		res interface{}
+		res any
 
 		user = metadata.GetUser(ctx)
+
+		lookBackDelta time.Duration
+
+		promQL parser.Expr
 	)
 
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "query-ts")
@@ -172,20 +180,29 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		q.AlignInfluxdbResult = AlignInfluxdbResult
 	}
 
+	if query.LookBackDelta != "" {
+		lookBackDelta, err = time.ParseDuration(query.LookBackDelta)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	queryReference, err := query.ToQueryReference(ctx)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
-	start, end, step, err := structured.ToTime(query.Start, query.End, query.Step)
+	start, end, step, timezone, err := structured.ToTime(query.Start, query.End, query.Step, query.Timezone)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
+	query.Timezone = timezone
 
 	qrStr, _ := json.Marshal(queryReference)
 	trace.InsertStringIntoSpan("query-reference", string(qrStr), span)
+
+	referenceNameMetric := make(map[string]string, len(query.QueryList))
+	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
 
 	// 判断是否是直查
 	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
@@ -194,8 +211,11 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	}
 	if ok {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
 			return nil, err
+		}
+		if !metadata.GetVMQueryOrFeatureFlag(ctx) {
+			referenceNameMetric = vmExpand.MetricAliasMapping
+			referenceNameLabelMatcher = vmExpand.LabelsMatcher
 		}
 
 		metadata.SetExpand(ctx, vmExpand)
@@ -204,7 +224,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		})
 		if instance == nil {
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)
-			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 
@@ -219,7 +238,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		err = metadata.SetQueryReference(ctx, queryReference)
 
 		if err != nil {
-			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 
@@ -229,21 +247,23 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         SingleflightTimeout,
-		})
+		}, lookBackDelta)
+	}
+
+	promQL, err = query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
+	if err != nil {
+		return nil, err
 	}
 
 	trace.InsertStringIntoSpan("vm-expand", fmt.Sprintf("%+v", vmExpand), span)
 	trace.InsertStringIntoSpan("storage-type", instance.GetInstanceType(), span)
 
-	promQL, err := query.ToPromExpr(ctx, true, false)
-	if err != nil {
-		log.Errorf(ctx, err.Error())
-		return nil, err
+	if query.Instant {
+		res, err = instance.Query(ctx, promQL.String(), end)
+	} else {
+		res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
 	}
-
-	res, err = instance.QueryRange(ctx, promQL.String(), start, end, step)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -264,9 +284,15 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 			seriesNum++
 			pointsNum += len(series.Points)
 		}
+	case promPromql.Vector:
+		for index, series := range v {
+			tables.Add(promql.NewTableWithSample(index, series))
+
+			seriesNum++
+			pointsNum++
+		}
 	default:
 		err = fmt.Errorf("data type wrong: %T", v)
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -276,7 +302,6 @@ func queryTs(ctx context.Context, query *structured.QueryTs) (interface{}, error
 	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
@@ -303,14 +328,25 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 	}
 
 	// 是否打开对齐
+	referenceNameMetric := make(map[string]string, len(query.QueryList))
+	referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(query.QueryList))
+
 	for _, q := range query.QueryList {
 		// 保留查询条件
-		for i, cond := range q.Conditions.FieldList {
-			q.Conditions.FieldList[i] = *(cond.ContainsToPromReg())
+		matcher, _, err := q.Conditions.ToProm()
+		if err != nil {
+			return nil, err
 		}
+		referenceNameLabelMatcher[q.ReferenceName] = matcher
+
+		router, err := q.ToRouter()
+		if err != nil {
+			return nil, err
+		}
+		referenceNameMetric[q.ReferenceName] = router.RealMetricName()
 	}
 
-	promQL, err := query.ToPromExpr(ctx, false, true)
+	promQL, err := query.ToPromExpr(ctx, referenceNameMetric, referenceNameLabelMatcher)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
@@ -348,6 +384,8 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 	query.End = queryPromQL.End
 	query.Step = queryPromQL.Step
 	query.Timezone = queryPromQL.Timezone
+	query.LookBackDelta = queryPromQL.LookBackDelta
+	query.Instant = queryPromQL.Instant
 
 	// 补充业务ID
 	if len(queryPromQL.BKBizIDs) > 0 {
@@ -387,7 +425,7 @@ func promQLToStruct(ctx context.Context, queryPromQL *structured.QueryPromQL) (*
 // @ID       promql-to-struct
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
 // @Success  200                   	{object}  PromData
@@ -397,9 +435,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionConvert,
-			actionType: metric.TypePromql,
+			c: c,
 		}
 		span oleltrace.Span
 	)
@@ -409,7 +445,6 @@ func HandlerPromQLToStruct(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypePromql, metric.StatusReceived)
 
 	// 解析请求 body
 	promql := &structured.QueryPromQL{}
@@ -422,7 +457,6 @@ func HandlerPromQLToStruct(c *gin.Context) {
 
 	query, err := promQLToStruct(ctx, promql)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -435,7 +469,7 @@ func HandlerPromQLToStruct(c *gin.Context) {
 // @ID       struct-to-promql
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryTs  			  true   "json data"
 // @Success  200                   	{object}  PromData
@@ -445,9 +479,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 	var (
 		ctx  = c.Request.Context()
 		resp = &response{
-			c:          c,
-			action:     metric.ActionConvert,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		span oleltrace.Span
 	)
@@ -457,7 +489,6 @@ func HandlerStructToPromQL(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-	metric.RequestCountInc(ctx, metric.ActionConvert, metric.TypeTS, metric.StatusReceived)
 
 	// 解析请求 body
 	query := &structured.QueryTs{}
@@ -482,7 +513,7 @@ func HandlerStructToPromQL(c *gin.Context) {
 // @ID       ts-query-exemplar-request
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                   body      structured.QueryTs  			  true   "json data"
 // @Success  200                    {object}  PromData
@@ -493,9 +524,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -504,8 +533,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
 	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
@@ -532,7 +559,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 
 	res, err := queryExemplar(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -546,7 +572,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @ID       ts-query-request
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryTs  			  true   "json data"
 // @Success  200                   	{object}  PromData
@@ -557,9 +583,7 @@ func HandlerQueryTs(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypeTS,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -568,8 +592,6 @@ func HandlerQueryTs(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypeTS, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("request-url", c.Request.URL.String(), span)
 	trace.InsertStringIntoSpan("request-header", fmt.Sprintf("%+v", c.Request.Header), span)
@@ -597,7 +619,6 @@ func HandlerQueryTs(c *gin.Context) {
 
 	res, err := queryTs(ctx, query)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
 		resp.failed(ctx, err)
 		return
 	}
@@ -612,7 +633,7 @@ func HandlerQueryTs(c *gin.Context) {
 // @ID       ts-query-request-promql
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:shamcleren)
+// @Param    Bk-Query-Source   		header    string                          false  "来源" default(username:goodman)
 // @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
 // @Param    data                  	body      structured.QueryPromQL  		  true   "json data"
 // @Success  200                   	{object}  PromData
@@ -623,9 +644,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 		ctx  = c.Request.Context()
 		span oleltrace.Span
 		resp = &response{
-			c:          c,
-			action:     metric.ActionQuery,
-			actionType: metric.TypePromql,
+			c: c,
 		}
 		user = metadata.GetUser(ctx)
 	)
@@ -634,8 +653,6 @@ func HandlerQueryPromQL(c *gin.Context) {
 	if span != nil {
 		defer span.End()
 	}
-
-	metric.RequestCountInc(ctx, metric.ActionQuery, metric.TypePromql, metric.StatusReceived)
 
 	trace.InsertStringIntoSpan("headers", fmt.Sprintf("%+v", c.Request.Header), span)
 	trace.InsertStringIntoSpan("query-source", user.Key, span)

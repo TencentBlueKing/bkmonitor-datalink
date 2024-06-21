@@ -66,7 +66,9 @@ type Query struct {
 	Field           string // 存储 Field
 	Timezone        string // 存储 Timezone
 
-	IsHasOr bool // 标记是否有 or 条件
+	// 用于 promql 查询
+	LabelsMatcher []*labels.Matcher
+	IsHasOr       bool // 标记是否有 or 条件
 
 	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
 
@@ -103,11 +105,34 @@ type Queries struct {
 	directlyResultTable   map[string][]string
 }
 
-func (qRef QueryReference) GetDruidQueryFeatureFlag(ctx context.Context) bool {
+func GetDruidQueryFeatureFlag(ctx context.Context) bool {
 	return true
 }
 
-func (qRef QueryReference) GetVMQueryFeatureFlag(ctx context.Context) bool {
+func GetVMQueryOrFeatureFlag(ctx context.Context) bool {
+	var (
+		span oleltrace.Span
+		user = GetUser(ctx)
+	)
+
+	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query-or-feature-flag")
+	if span != nil {
+		defer span.End()
+	}
+
+	ffUser := featureFlag.FFUser(span.SpanContext().TraceID().String(), map[string]interface{}{
+		"name":     user.Name,
+		"source":   user.Source,
+		"spaceUid": user.SpaceUid,
+	})
+
+	status := featureFlag.BoolVariation(ctx, ffUser, "vm-query-or", false)
+	trace.InsertStringIntoSpan("vm-query-or-feature-flag", fmt.Sprintf("%v:%v", ffUser.GetCustom(), status), span)
+
+	return status
+}
+
+func GetVMQueryFeatureFlag(ctx context.Context) bool {
 	var (
 		span oleltrace.Span
 		user = GetUser(ctx)
@@ -140,7 +165,7 @@ func (qRef QueryReference) GetVMQueryFeatureFlag(ctx context.Context) bool {
 // CheckDruidCheck 判断是否是查询 druid 数据
 func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 	// 判断是否打开 druid-query 特性开关
-	if !qRef.GetDruidQueryFeatureFlag(ctx) {
+	if !GetDruidQueryFeatureFlag(ctx) {
 		return false
 	}
 
@@ -204,6 +229,7 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			MetricAliasMapping:    make(map[string]string),
 			MetricFilterCondition: make(map[string]string),
 			ResultTableGroup:      make(map[string][]string),
+			LabelsMatcher:         make(map[string][]*labels.Matcher),
 		}
 	)
 	ctx, span = trace.IntoContext(ctx, trace.TracerName, "check-vm-query")
@@ -211,13 +237,16 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 		defer span.End()
 	}
 
-	vmQueryFeatureFlag := qRef.GetVMQueryFeatureFlag(ctx)
+	// 特性开关 vm or 语法查询
+	vmQueryOrFeatureFlag := GetVMQueryOrFeatureFlag(ctx)
+	vmQueryFeatureFlag := GetVMQueryFeatureFlag(ctx)
 
 	// 未开启 vm-query 特性开关，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag {
 		return ok, vmExpand, err
 	}
 
+	isOrQuery := false
 	for referenceName, reference := range qRef {
 		if 0 < len(reference.QueryList) {
 			var (
@@ -227,7 +256,8 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			trace.InsertIntIntoSpan(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList), span)
 
-			vmConditions := make([]string, 0, len(reference.QueryList))
+			vmConditions := make(map[string]struct{})
+
 			for _, query := range reference.QueryList {
 				// 获取 vm 的指标名
 				metricName = fmt.Sprintf("%s_%s", query.Measurement, query.Field)
@@ -237,21 +267,42 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 					return ok, vmExpand, err
 				}
 
-				vmConditions = append(vmConditions, query.VmCondition)
-
-				// 获取 vm 对应的 rt 列表
+				// 开启 vm rt 才进行 vm 查询
 				if query.VmRt != "" {
+					if query.IsHasOr {
+						isOrQuery = query.IsHasOr
+					}
+
+					if query.VmCondition != "" {
+						vmConditions[query.VmCondition] = struct{}{}
+					}
+
+					// labels matcher 不支持 or 语法，所以只取一个
+					if len(query.LabelsMatcher) > 0 {
+						vmExpand.LabelsMatcher[referenceName] = query.LabelsMatcher
+					}
+
+					// 获取 vm 对应的 rt 列表
 					vmRts[query.VmRt] = struct{}{}
 				}
 			}
 
 			metricFilterCondition := ""
 			if len(vmConditions) > 0 {
-				metricFilterCondition = fmt.Sprintf(`(%s)`, strings.Join(vmConditions, `) or (`))
+				vmc := make([]string, 0, len(vmConditions))
+				for k := range vmConditions {
+					vmc = append(vmc, k)
+				}
+
+				metricFilterCondition = fmt.Sprintf(`(%s)`, strings.Join(vmc, `) or (`))
+				if len(vmConditions) > 1 {
+					isOrQuery = true
+				}
 			}
 
 			vmExpand.MetricFilterCondition[referenceName] = metricFilterCondition
 			vmExpand.MetricAliasMapping[referenceName] = metricName
+
 			if len(vmRts) == 0 {
 				err = fmt.Errorf("vm query result table is empty %s", metricName)
 				break
@@ -265,6 +316,14 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			}
 
 			sort.Strings(vmExpand.ResultTableGroup[referenceName])
+		}
+	}
+
+	trace.InsertStringIntoSpan("vm-query-or", fmt.Sprintf("%v", isOrQuery), span)
+
+	if !vmQueryOrFeatureFlag {
+		if isOrQuery {
+			err = fmt.Errorf("vm query is not support or query: %+v", vmExpand.MetricFilterCondition)
 		}
 	}
 

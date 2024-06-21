@@ -19,7 +19,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type metricsEvent struct {
@@ -77,15 +76,12 @@ type otMetricMapper struct {
 }
 
 func (p otMetricMapper) AsMapStr() common.MapStr {
-	ms := common.MapStr{
+	return common.MapStr{
 		"metrics":   map[string]float64{p.Metric: p.Value},
 		"target":    define.Identity(),
 		"timestamp": p.Time.UnixMilli(),
 		"dimension": p.Dimensions,
 	}
-
-	logger.Debugf("convert opentelemetry metrics: %+v", ms)
-	return ms
 }
 
 func (c metricsConverter) Extract(dataId int32, pdMetric pmetric.Metric, rsAttrs pcommon.Map) []common.MapStr {

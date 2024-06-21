@@ -165,7 +165,7 @@ func (i Instance) QueryRange(ctx context.Context, promql string, start, end time
 	panic("implement me")
 }
 
-func (i Instance) Query(ctx context.Context, promql string, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i Instance) Query(ctx context.Context, promql string, end time.Time) (promql.Vector, error) {
 	panic("implement me")
 }
 

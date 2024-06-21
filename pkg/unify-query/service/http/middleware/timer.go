@@ -65,15 +65,23 @@ func Timer(p *Params) gin.HandlerFunc {
 			span       oleltrace.Span
 			start      = time.Now()
 			instanceIP = singleGetInstance()
+			source     = c.Request.Header.Get(metadata.BkQuerySourceHeader)
+			spaceUid   = c.Request.Header.Get(metadata.SpaceUIDHeader)
 		)
 		ctx, span = trace.IntoContext(ctx, trace.TracerName, "http-api")
+
+		// 把用户名注入到 metadata 中
+		metadata.SetUser(ctx, source, spaceUid)
+
+		metric.APIRequestInc(ctx, c.Request.URL.Path, metric.StatusReceived, spaceUid)
 
 		if span != nil {
 			defer func() {
 				trace.InsertStringIntoSpan("instance-ip", instanceIP, span)
 
 				sub := time.Since(start)
-				metric.RequestSecond(ctx, sub, c.Request.URL.Path)
+				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
+
 				// 记录慢查询
 				if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {
 					log.Errorf(ctx,
@@ -90,14 +98,10 @@ func Timer(p *Params) gin.HandlerFunc {
 					trace.InsertStringIntoSpan("http-api-status-code", status.Code, span)
 					trace.InsertStringIntoSpan("http-api-status-message", status.Message, span)
 				}
+
 				span.End()
 			}()
 		}
-
-		// 把用户名注入到 metadata 中
-		source := c.Request.Header.Get(metadata.BkQuerySourceHeader)
-		spaceUid := c.Request.Header.Get(metadata.SpaceUIDHeader)
-		metadata.SetUser(ctx, source, spaceUid)
 
 		c.Next()
 	}

@@ -114,6 +114,10 @@ func (aif *AgentInfoFetcher) Fetch() (gse.AgentInfo, error) {
 		if i != 0 {
 			info.Cloudid = int32(i)
 		}
+		if info.IP == "" {
+			// 如果 agent 中没有 IP 信息，则从主机身份文件中获取
+			info.IP = w.GetHostInnerIp()
+		}
 		logger.Debugf("fetch agent info from host watcher: %+v", info)
 	}
 	logger.Debugf("fetch agent info: %+v", info)

@@ -277,7 +277,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 				}()
 				err := cacheManager.RefreshByBiz(ctx, bizId)
 				if err != nil {
-					errChan <- errors.Wrapf(err, "refresh host and topo cache by biz failed, biz: %d", bizId)
+					errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 				}
 			}(biz.BkBizId)
 		}
@@ -301,7 +301,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 				}()
 				err := cacheManager.CleanByBiz(ctx, bizId)
 				if err != nil {
-					errChan <- errors.Wrapf(err, "clean host and topo cache by biz failed, biz: %d", bizId)
+					errChan <- errors.Wrapf(err, "clean %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 				}
 			}(biz.BkBizId)
 		}
@@ -317,13 +317,13 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	// 刷新全局缓存
 	err := cacheManager.RefreshGlobal(ctx)
 	if err != nil {
-		return errors.Wrap(err, "refresh global host and topo cache failed")
+		return errors.Wrapf(err, "refresh global %s cache failed", cacheManager.Type())
 	}
 
 	// 清理全局缓存
 	err = cacheManager.CleanGlobal(ctx)
 	if err != nil {
-		return errors.Wrap(err, "clean global host and topo cache failed")
+		return errors.Wrapf(err, "clean global %s cache failed", cacheManager.Type())
 	}
 
 	return nil

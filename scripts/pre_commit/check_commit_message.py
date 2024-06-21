@@ -17,20 +17,16 @@ specific language governing permissions and limitations under the License.
 import sys
 
 ALLOWED_COMMIT_MSG_PREFIX = [
-    ("feature", "新特性"),
-    ("bugfix", "线上功能 bug"),
-    ("minor", "不重要的修改（换行，拼写错误等）"),
-    ("optimize", "功能优化"),
-    ("sprintfix", "未上线代码修改（功能模块未上线部分 bug）"),
-    ("refactor", "功能重构"),
-    ("test", "增加测试代码"),
-    ("docs", "编写文档"),
-    ("merge", "分支合并及冲突解决"),
-    ("remove", "删除无用代码"),
-    ("cleanup", "代码清理"),
-    ("upgrade", "版本更新"),
+    ("feat", "A new feature. Correlates with MINOR in SemVer"),
+    ("fix", "A bug fix. Correlates with PATCH in SemVer"),
+    ("docs", "Documentation only changes"),
+    ("style", "Changes that do not affect the meaning of the code"),
+    ("refactor", "A code change that neither fixes a bug nor adds a feature"),
+    ("perf", "A code change that improves performance"),
+    ("test", "Adding missing or correcting existing tests"),
+    ("chore", "Changes to the build process or auxiliary tools and libraries such as documentation generation"),
+    ("merge", "Merge branch and fix conflicts"),
 ]
-
 
 def get_commit_message():
     args = sys.argv

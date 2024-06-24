@@ -10,6 +10,7 @@
 package logger
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +75,9 @@ const (
 type Options struct {
 	// Stdout sets the writer as stdout if it is true.
 	Stdout bool `yaml:"stdout"`
+
+	// DevNull sets the writer as /dev/null if it is true.
+	DevNull bool `yaml:"devnull"`
 
 	// logger ouput format, Valid values are "json", "console" and "logfmt", default is logfmt
 	Format string `yaml:"format"`
@@ -275,9 +279,12 @@ func New(opt Options) Logger {
 	}
 
 	var w zapcore.WriteSyncer
-	if opt.Stdout {
+	switch {
+	case opt.Stdout:
 		w = zapcore.AddSync(os.Stdout)
-	} else {
+	case opt.DevNull:
+		w = zapcore.AddSync(io.Discard)
+	default:
 		// 初始化日志目录
 		if err := os.MkdirAll(filepath.Dir(opt.Filename), os.ModePerm); err != nil {
 			panic(err)

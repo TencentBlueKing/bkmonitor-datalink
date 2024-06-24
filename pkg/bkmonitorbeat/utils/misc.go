@@ -70,6 +70,6 @@ func PidStoreFile() string {
 	return pidstore
 }
 
-func IsWindowsOS() bool {
-	return runtime.GOOS == "windows"
+func IsLinuxOS() bool {
+	return runtime.GOOS == "linux"
 }

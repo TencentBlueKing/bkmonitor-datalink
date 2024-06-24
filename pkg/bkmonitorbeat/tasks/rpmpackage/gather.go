@@ -11,6 +11,10 @@ package rpmpackage
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -38,7 +42,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	if utils.IsWindowsOS() {
+	if !utils.IsLinuxOS() {
 		return
 	}
 
@@ -52,25 +56,37 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	now := time.Now()
 	var items []PackageInfo
-	pkgs, err := RpmList(ctx)
+
+	executable, err := os.Executable()
 	if err != nil {
-		logger.Errorf("failed to list rpm packages: %v", err)
+		logger.Errorf("failed to get executable: %v", err)
 		return
 	}
 
-	for _, pkg := range pkgs {
-		if pkg == "" {
-			continue
-		}
-		time.Sleep(time.Millisecond * 250) // 打散 CPU
-		verify, err := RpmVerify(ctx, pkg)
-		if err != nil {
-			logger.Errorf("failed to verfiy rpm package '%s', err: %v", pkg, err)
-			continue
-		}
+	args := []string{
+		"-verify-rpm",
+		"-cgroup-block-write-bytes",
+		fmt.Sprintf("%d", g.config.BlockWriteBytes),
+		"-cgroup-block-read-bytes",
+		fmt.Sprintf("%d", g.config.BlockReadBytes),
+	}
+
+	cmd := exec.CommandContext(ctx, executable, args...)
+	b, err := cmd.Output()
+	if err != nil {
+		logger.Errorf("faield to exec verify-rpm command: %v", err)
+		return
+	}
+	var ret []utils.RpmResult
+	if err := json.Unmarshal(b, &ret); err != nil {
+		logger.Errorf("failed to unmarshal rpm-result: %v", err)
+		return
+	}
+
+	for _, item := range ret {
 		items = append(items, PackageInfo{
-			Package: pkg,
-			Verify:  verify,
+			Package: item.Package,
+			Verify:  item.Verify,
 		})
 	}
 

@@ -14,7 +14,9 @@ import (
 )
 
 type RpmPackageConfig struct {
-	BaseTaskParam `config:"_,inline"`
+	BaseTaskParam   `config:"_,inline"`
+	BlockWriteBytes int `config:"block_write_bytes"`
+	BlockReadBytes  int `config:"block_read_bytes"`
 }
 
 func (c *RpmPackageConfig) GetTaskConfigList() []define.TaskConfig {

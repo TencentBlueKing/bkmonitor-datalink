@@ -39,7 +39,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	if utils.IsWindowsOS() {
+	if !utils.IsLinuxOS() {
 		return
 	}
 
@@ -61,6 +61,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	var items []UserHistory
 	for _, entity := range entities {
 		for _, hf := range g.config.HistoryFiles {
+			time.Sleep(time.Millisecond * 100)
 			p := filepath.Join(entity.Home, hf)
 			b, err := utils.ReadFileTail(p, g.config.LastBytes)
 			if err != nil && entity.User != "root" {

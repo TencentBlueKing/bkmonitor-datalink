@@ -286,6 +286,8 @@ fi
     task_id: 114
     dataid: 1100022
     period: 1h
+    block_write_bytes: 8388608
+    block_read_bytes: 8388608
 {%- endif %}
 EOF
 fi

@@ -43,7 +43,7 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 }
 
 func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
-	if utils.IsWindowsOS() {
+	if !utils.IsLinuxOS() {
 		return
 	}
 

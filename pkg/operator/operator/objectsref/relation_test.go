@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,4 +66,89 @@ usage{cpu="2"} 1
 `
 		assert.Equal(t, expected, string(lines))
 	})
+}
+
+func TestGetPodRelations(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	containers := []string{"test-container-1", "test-container-2"}
+	pod := "test-pod-1"
+	namespace := "test-ns-1"
+	node := "test-node-1"
+
+	podObject := Object{
+		ID: ObjectID{
+			Name:      pod,
+			Namespace: namespace,
+		},
+		NodeName:   node,
+		Containers: containers,
+	}
+
+	objectsController := &ObjectsController{
+		ctx:    ctx,
+		cancel: cancel,
+		podObjs: &Objects{
+			kind: kindPod,
+			objs: map[string]Object{
+				podObject.ID.String(): podObject,
+			},
+		},
+	}
+
+	metrics := objectsController.GetPodRelations()
+
+	expectedMetrics := []RelationMetric{
+		{
+			Name: relationNodePod,
+			Labels: []RelationLabel{
+				{
+					Name: "namespace", Value: namespace,
+				},
+				{
+					Name: "pod", Value: pod,
+				},
+				{
+					Name: "node", Value: node,
+				},
+			},
+		},
+		{
+			Name: relationContainerPod,
+			Labels: []RelationLabel{
+				{
+					Name: "namespace", Value: namespace,
+				},
+				{
+					Name: "pod", Value: pod,
+				},
+				{
+					Name: "node", Value: node,
+				},
+				{
+					Name: "container", Value: containers[0],
+				},
+			},
+		},
+		{
+			Name: relationContainerPod,
+			Labels: []RelationLabel{
+				{
+					Name: "namespace", Value: namespace,
+				},
+				{
+					Name: "pod", Value: pod,
+				},
+				{
+					Name: "node", Value: node,
+				},
+				{
+					Name: "container", Value: containers[1],
+				},
+			},
+		},
+	}
+
+	assert.Equal(t, expectedMetrics, metrics)
 }

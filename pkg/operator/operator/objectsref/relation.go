@@ -24,10 +24,12 @@ const (
 	relationDaemonsetPod         = "daemonset_with_pod_relation"
 	relationDeploymentReplicaset = "deployment_with_replicaset_relation"
 
-	relationPodService     = "pod_with_service_relation"
-	relationAddressService = "address_with_service_relation"
-	relationDomainService  = "domain_with_service_relation"
-	relationIngressService = "ingress_with_service_relation"
+	relationContainerPod = "container_with_pod_relation"
+
+	relationPodService        = "pod_with_service_relation"
+	relationK8sAddressService = "k8s_address_with_service_relation"
+	relationDomainService     = "domain_with_service_relation"
+	relationIngressService    = "ingress_with_service_relation"
 )
 
 type RelationMetric struct {
@@ -77,7 +79,7 @@ func (oc *ObjectsController) GetServieRelations() []RelationMetric {
 
 			for _, addr := range svc.externalIPs {
 				metrics = append(metrics, RelationMetric{
-					Name: relationAddressService,
+					Name: relationK8sAddressService,
 					Labels: []RelationLabel{
 						{Name: "namespace", Value: svc.namespace},
 						{Name: "service", Value: svc.name},
@@ -117,7 +119,7 @@ func (oc *ObjectsController) GetServieRelations() []RelationMetric {
 				} else {
 					for _, addr := range eps.addresses {
 						metrics = append(metrics, RelationMetric{
-							Name: relationAddressService,
+							Name: relationK8sAddressService,
 							Labels: []RelationLabel{
 								{Name: "namespace", Value: svc.namespace},
 								{Name: "service", Value: svc.name},
@@ -130,7 +132,7 @@ func (oc *ObjectsController) GetServieRelations() []RelationMetric {
 			case string(corev1.ServiceTypeLoadBalancer):
 				for _, addr := range svc.loadBalancerIPs {
 					metrics = append(metrics, RelationMetric{
-						Name: relationAddressService,
+						Name: relationK8sAddressService,
 						Labels: []RelationLabel{
 							{Name: "namespace", Value: svc.namespace},
 							{Name: "service", Value: svc.name},
@@ -189,6 +191,19 @@ func (oc *ObjectsController) GetPodRelations() []RelationMetric {
 				{Name: "node", Value: pod.NodeName},
 			},
 		})
+
+		// 遍历 containers
+		for _, container := range pod.Containers {
+			metrics = append(metrics, RelationMetric{
+				Name: relationContainerPod,
+				Labels: []RelationLabel{
+					{Name: "namespace", Value: pod.ID.Namespace},
+					{Name: "pod", Value: pod.ID.Name},
+					{Name: "node", Value: pod.NodeName},
+					{Name: "container", Value: container},
+				},
+			})
+		}
 
 		labels := []RelationLabel{
 			{Name: "namespace", Value: pod.ID.Namespace},

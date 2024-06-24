@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build linux
+
 package utils
 
 import (
@@ -16,13 +18,6 @@ import (
 	"github.com/containerd/cgroups"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
-
-type SpecBlockIO struct {
-	Major      int64
-	Minor      int64
-	WriteBytes uint64
-	ReadBytes  uint64
-}
 
 func SetLinuxCGroup(name string, blockIO SpecBlockIO) error {
 	resource := &specs.LinuxResources{

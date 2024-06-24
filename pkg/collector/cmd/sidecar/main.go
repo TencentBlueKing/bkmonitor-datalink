@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,8 @@ import (
 	"os/signal"
 
 	"gopkg.in/yaml.v2"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/sidecar"
 )
 
 var (
@@ -26,7 +29,7 @@ var (
 )
 
 func main() {
-	path := flag.String("config", "./sliwebhook.yaml", "configuration filepath")
+	path := flag.String("config", "./sidecar.yaml", "configuration filepath")
 	v := flag.Bool("version", false, "display version")
 	flag.Parse()
 
@@ -44,9 +47,14 @@ func main() {
 	}
 	fmt.Printf("load config: %+v\n", config)
 
-	server := NewServer(config)
-	if err := server.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "start server failed: %v", err)
+	app, err := sidecar.New(context.Background(), config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create sidecar failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err = app.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "run sidecar failed: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -56,13 +64,13 @@ func main() {
 	for {
 		select {
 		case <-c:
-			server.Close()
+			app.Stop()
 			return
 		}
 	}
 }
 
-func loadConfig(path string) (*Config, error) {
+func loadConfig(path string) (*sidecar.Config, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -73,7 +81,7 @@ func loadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	var config Config
+	var config sidecar.Config
 	if err := yaml.Unmarshal(b, &config); err != nil {
 		return nil, err
 	}

@@ -160,9 +160,9 @@ rate(v range-vector) 函数可以直接计算区间向量 v 在时间窗口内�
 rate(http_requests_total[5m])
  
 结果：
-{code="200",handler="label_values",instance="120.77.65.193:9090",job="prometheus",method="get"} 0
-{code="200",handler="query_range",instance="120.77.65.193:9090",job="prometheus",method="get"}  0
-{code="200",handler="prometheus",instance="120.77.65.193:9090",job="prometheus",method="get"}   0.2
+{code="200",handler="label_values",instance="127.0.0.1:9090",job="prometheus",method="get"} 0
+{code="200",handler="query_range",instance="127.0.0.1:9090",job="prometheus",method="get"}  0
+{code="200",handler="prometheus",instance="127.0.0.1:9090",job="prometheus",method="get"}   0.2
 ...
 ```
 

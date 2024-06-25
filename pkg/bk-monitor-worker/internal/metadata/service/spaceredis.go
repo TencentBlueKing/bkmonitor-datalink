@@ -1055,11 +1055,12 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		values = make(map[string]map[string]interface{})
 	}
 	// 追加 bcs 集群结果表
-	// bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
-	// if err != nil {
-	// 	logger.Errorf("compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
-	// }
-	// s.composeValue(&values, &bcsValues)
+	bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
+	logger.Errorf("bcs values %v", bcsValues)
+	if err != nil {
+		logger.Errorf("compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	}
+	s.composeValue(&values, &bcsValues)
 
 	// 追加 bkci 空间级别的结果表
 	bkciLevelValues, err := s.composeBkciLevelTableIds(spaceType, spaceId)

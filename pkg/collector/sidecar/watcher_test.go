@@ -126,10 +126,10 @@ func TestWatcher(t *testing.T) {
 	}
 
 	for _, id := range accepted {
-		w.handleDataIDAdd(id)
+		w.HandleDataIDAdd(id)
 	}
 	for _, id := range rejected {
-		w.handleDataIDDelete(id)
+		w.HandleDataIDDelete(id)
 	}
 
 	t.Run("upsert", func(t *testing.T) {

@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -48,8 +49,6 @@ type Sidecar struct {
 	cancel  context.CancelFunc
 	watcher *Watcher
 	config  *Config
-
-	prevPrivilegedConfig privilegedConfig
 }
 
 func New(ctx context.Context, config *Config) (*Sidecar, error) {
@@ -80,6 +79,8 @@ func New(ctx context.Context, config *Config) (*Sidecar, error) {
 		config:  config,
 	}, nil
 }
+
+const privilegedFile = "privileged.conf"
 
 const templatePrivileged = `
 type: "privileged"
@@ -116,13 +117,9 @@ func (s *Sidecar) Start() error {
 			return nil
 
 		case <-ticker.C:
-			ok, err := s.updatePrivilegedConfigFile()
+			err := s.updatePrivilegedConfigFile()
 			if err != nil {
 				logger.Errorf("failed to update privileged config: %v", err)
-				continue
-			}
-			if !ok {
-				logger.Debug("nothing config changed, skipped")
 				continue
 			}
 
@@ -157,39 +154,43 @@ func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
 	return config
 }
 
-func (s *Sidecar) updatePrivilegedConfigFile() (bool, error) {
-	config := s.getPrivilegedConfig()
+func (s *Sidecar) updatePrivilegedConfigFile() error {
+	path := filepath.Join(s.config.ConfigPath, privilegedFile)
+	currConfig := s.getPrivilegedConfig()
 
-	// 避免无意义的更新
-	if config == s.prevPrivilegedConfig {
-		return false, nil
-	}
-	path := filepath.Join(s.config.ConfigPath, "privileged.conf")
-
-	// 如果 dataid 被删除则需要把配置文件删除
+	// 如果 dataid 被删除则且配置文件存在需要把配置文件删除
 	var empty privilegedConfig
-	if config == empty {
-		_ = os.Remove(path)
-		return false, nil
+	if currConfig == empty {
+		if utils.PathExist(path) {
+			logger.Infof("remove privileged config file (%s)", path)
+			return os.Remove(path)
+		}
+		return nil
 	}
 
-	s.prevPrivilegedConfig = config
+	// 生成新配置文件内容
 	tmpl, err := template.New("Privileged").Parse(templatePrivileged)
 	if err != nil {
-		return true, err
+		return err
 	}
-
 	buf := &bytes.Buffer{}
-	if err := tmpl.Execute(buf, config); err != nil {
-		return true, err
+	if err := tmpl.Execute(buf, currConfig); err != nil {
+		return err
 	}
 
+	// 判断是否需要更新配置文件
+	b, _ := os.ReadFile(path)
+	if bytes.Equal(b, buf.Bytes()) {
+		return nil
+	}
+
+	logger.Infof("create or update privileged config file (%s)", path)
 	f, err := os.Create(path)
 	if err != nil {
-		return true, err
+		return err
 	}
 	_, err = f.Write(buf.Bytes())
-	return true, err
+	return err
 }
 
 func (s *Sidecar) sendReloadSignal() error {

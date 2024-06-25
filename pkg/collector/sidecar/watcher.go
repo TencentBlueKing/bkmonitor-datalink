@@ -69,9 +69,9 @@ func newWatcher(ctx context.Context, client bkversioned.Interface) *Watcher {
 func (w *Watcher) Start() error {
 	w.informer.AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
-			AddFunc:    w.handleDataIDAdd,
-			DeleteFunc: w.handleDataIDDelete,
-			UpdateFunc: w.handleDataIDUpdate,
+			AddFunc:    w.HandleDataIDAdd,
+			DeleteFunc: w.HandleDataIDDelete,
+			UpdateFunc: w.HandleDataIDUpdate,
 		},
 	)
 	go w.informer.Run(w.ctx.Done())
@@ -103,9 +103,6 @@ func (w *Watcher) DataIDs() []IDSpec {
 }
 
 func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
-	w.mut.Lock()
-	defer w.mut.Unlock()
-
 	// 只处理 collector 用途且 privileged scope 的 dataid
 	usage := dataID.Labels[keyUsage]
 	if !strings.HasPrefix(usage, usagePrefix) {
@@ -145,9 +142,6 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 }
 
 func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
-	w.mut.Lock()
-	defer w.mut.Unlock()
-
 	uid := fmt.Sprintf("%s/%d", dataID.Labels[keyTokenRef], dataID.Spec.DataID)
 
 	v, ok := w.dataids[uid]
@@ -157,25 +151,54 @@ func (w *Watcher) deleteDataID(dataID *bkv1beta1.DataID) {
 	delete(w.dataids, uid)
 }
 
-func (w *Watcher) handleDataIDAdd(obj interface{}) {
+func (w *Watcher) HandleDataIDAdd(obj interface{}) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Error(newDataIDTypeError(obj))
 		return
 	}
 	w.upsertDataID(dataID)
 }
 
-func (w *Watcher) handleDataIDDelete(obj interface{}) {
+func (w *Watcher) HandleDataIDDelete(obj interface{}) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
-		logger.Errorf("unexpected DataID type, got %T", obj)
+		logger.Error(newDataIDTypeError(obj))
 		return
 	}
 	w.deleteDataID(dataID)
 }
 
-func (w *Watcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
-	w.handleDataIDDelete(oldObj) // 辞旧
-	w.handleDataIDAdd(newObj)    // 迎新
+func (w *Watcher) HandleDataIDUpdate(oldObj interface{}, newObj interface{}) {
+	w.mut.Lock()
+	defer w.mut.Unlock()
+
+	prevDataID, ok := oldObj.(*bkv1beta1.DataID)
+	if !ok {
+		logger.Error(newDataIDTypeError(oldObj))
+		return
+	}
+	currDataID, ok := oldObj.(*bkv1beta1.DataID)
+	if !ok {
+		logger.Error(newDataIDTypeError(newObj))
+		return
+	}
+
+	if prevDataID.ResourceVersion == currDataID.ResourceVersion {
+		logger.Debug("dataid nothing changed, skipped")
+		return
+	}
+
+	w.deleteDataID(prevDataID) // 辞旧
+	w.upsertDataID(currDataID) // 迎新
+}
+
+func newDataIDTypeError(obj interface{}) error {
+	return fmt.Errorf("unexpected DataID type, got %T", obj)
 }

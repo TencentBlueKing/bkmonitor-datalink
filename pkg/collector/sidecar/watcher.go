@@ -184,7 +184,7 @@ func (w *Watcher) HandleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 		logger.Error(newDataIDTypeError(oldObj))
 		return
 	}
-	currDataID, ok := oldObj.(*bkv1beta1.DataID)
+	currDataID, ok := newObj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Error(newDataIDTypeError(newObj))
 		return

@@ -157,3 +157,29 @@ func RefreshRouterVersion(ctx context.Context, path string) error {
 func IsBuildInDataId(bkDataId uint) bool {
 	return (1000 <= bkDataId && bkDataId <= 1020) || (1100000 <= bkDataId && bkDataId <= 1199999)
 }
+
+type BaseModelWithTime struct {
+	Creator  string    `gorm:"column:creator" json:"creator"`
+	CreateAt time.Time `gorm:"column:create_at" json:"create_at"`
+	Updater  string    `gorm:"column:updater" json:"updater"`
+	UpdateAt time.Time `gorm:"column:update_at" json:"update_at"`
+}
+
+// BeforeCreate 新建前时间字段设置为当前时间
+func (b *BaseModelWithTime) BeforeCreate(tx *gorm.DB) error {
+	b.CreateAt = time.Now()
+	b.UpdateAt = time.Now()
+	if b.Creator == "" {
+		b.Creator = SystemUser
+	}
+	if b.Updater == "" {
+		b.Updater = SystemUser
+	}
+	return nil
+}
+
+// BeforeUpdate 保存前最后修改时间字段设置为当前时间
+func (b *BaseModelWithTime) BeforeUpdate(tx *gorm.DB) error {
+	b.UpdateAt = time.Now()
+	return nil
+}

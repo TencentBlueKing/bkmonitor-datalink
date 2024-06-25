@@ -146,7 +146,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
 		}
 	}()
-	// 设置栈为4G
+	// 设置栈为5G
 	debug.SetMaxStack(5 * 1024 * 1024 * 1024)
 
 	db := mysql.GetDBSession().DB
@@ -157,12 +157,12 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
-	gorotineCount := GetGoroutineLimit("push_and_publish_space_router_info")
+	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
 	var spaceUidList []string
 	wg := &sync.WaitGroup{}
-	ch := make(chan struct{}, gorotineCount)
+	ch := make(chan struct{}, goroutineCount)
 	wg.Add(len(spaceList))
 	// 处理空间路由数据
 	for _, sp := range spaceList {

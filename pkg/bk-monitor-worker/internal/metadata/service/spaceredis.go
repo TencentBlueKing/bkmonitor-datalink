@@ -39,7 +39,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const cachedClusterDataIdKey = "bmw_cached_cluster_data_id_list"
+const (
+	CachedClusterDataIdKey = "bmw_cached_cluster_data_id_list"
+	CachedSpaceBizIdKey    = "bmw_cached_space_biz_id"
+)
 
 // SpaceRedisSvc 空间Redis service
 type SpaceRedisSvc struct {
@@ -1000,26 +1003,25 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 	if errRecordRule != nil {
 		logger.Errorf("compose record rule table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errRecordRule)
 	}
-
-	// 追加es空间路由表
-	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
-	if errEs != nil {
-		logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEs)
-	}
-	if errMetric != nil && errEs != nil && errRecordRule != nil {
-		return errors.Wrapf(errEs, "compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
-
-	}
 	if recordRuleValues != nil && len(*recordRuleValues) != 0 {
 		for tid, value := range *recordRuleValues {
 			(*values)[tid] = value
 		}
 	}
-	if esValues != nil && len(*esValues) != 0 {
-		for tid, value := range *esValues {
-			(*values)[tid] = value
-		}
-	}
+	// 追加es空间路由表
+	// esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
+	// if errEs != nil {
+	// 	logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEs)
+	// }
+	// if errMetric != nil && errEs != nil && errRecordRule != nil {
+	// 	return errors.Wrapf(errEs, "compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
+
+	// }
+	// if esValues != nil && len(*esValues) != 0 {
+	// 	for tid, value := range *esValues {
+	// 		(*values)[tid] = value
+	// 	}
+	// }
 
 	if len(*values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -1109,15 +1111,15 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		}
 	}
 	// 追加es空间结果表
-	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
-	if err != nil {
-		logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
-	}
-	if esValues != nil && len(*esValues) != 0 {
-		for tid, value := range *esValues {
-			(*values)[tid] = value
-		}
-	}
+	// esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	// if err != nil {
+	// 	logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	// }
+	// if esValues != nil && len(*esValues) != 0 {
+	// 	for tid, value := range *esValues {
+	// 		(*values)[tid] = value
+	// 	}
+	// }
 	// 推送数据
 	if len(*values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -1167,10 +1169,12 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		}
 	}
 	// 追加es空间路由表
-	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
-	for tid, value := range *esValues {
-		(*values)[tid] = value
-	}
+	// esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	// if esValues != nil && len(*esValues) != 0 {
+	// 	for tid, value := range *esValues {
+	// 		(*values)[tid] = value
+	// 	}
+	// }
 	allTypeTableIdValues, err := s.composeAllTypeTableIds(spaceType, spaceId)
 	if err == nil {
 		for tid, value := range *allTypeTableIdValues {
@@ -1213,7 +1217,7 @@ func (s SpacePusher) composeRecordRuleTableIds(spaceType, spaceId string) (*map[
 
 func (s SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (*map[string]map[string]interface{}, error) {
 	logger.Infof("start to push es table_id, space_type [%s], space_id [%s]", spaceType, spaceId)
-	bizId, err := s.GetBizIdBySpace(spaceType, spaceId)
+	bizId, err := s.getBizIdBySpace(spaceType, spaceId)
 	if err != nil {
 		return nil, err
 	}
@@ -1230,6 +1234,34 @@ func (s SpacePusher) ComposeEsTableIds(spaceType, spaceId string) (*map[string]m
 	return dataValuesPtr, nil
 }
 
+// GetBizIdBySpace 获取空间对应的业务，因为创建后一般不会变动，增加缓存，减少对 db 的影响
+func (s SpacePusher) getBizIdBySpace(spaceType, spaceId string) (int, error) {
+	cache, cacheErr := memcache.GetMemCache()
+	ok := false
+	var data interface{}
+	dataMap := make(map[string]int)
+	if cacheErr == nil {
+		data, ok = cache.Get(CachedSpaceBizIdKey)
+		if ok {
+			dataMap, ok = data.(map[string]int)
+			if ok {
+				bizId, ok := dataMap[fmt.Sprintf("%s__%s", spaceType, spaceId)]
+				if ok {
+					return bizId, nil
+				}
+			}
+		}
+	}
+	// 赋值
+	bizId, err := s.GetBizIdBySpace(spaceType, spaceId)
+	if err == nil && cacheErr == nil {
+		dataMap[fmt.Sprintf("%s__%s", spaceType, spaceId)] = bizId
+		cache.PutWithTTL(CachedSpaceBizIdKey, dataMap, 0, 24*time.Hour)
+	}
+	return bizId, err
+}
+
+// getBizIdBySpace get biz id by space
 func (s SpacePusher) GetBizIdBySpace(spaceType, spaceId string) (int, error) {
 	db := mysql.GetDBSession().DB
 	var spaceObj space.Space
@@ -1821,7 +1853,7 @@ func (s SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
 	ok := false
 	var data interface{}
 	if cacheErr == nil {
-		data, ok = cache.Get(cachedClusterDataIdKey)
+		data, ok = cache.Get(CachedClusterDataIdKey)
 		if ok {
 			return data.([]uint), nil
 		}
@@ -1839,7 +1871,7 @@ func (s SpacePusher) getCachedClusterDataIdList() ([]uint, error) {
 
 	// 把数据添加到缓存中, 设置超时时间为60min
 	if cacheErr == nil {
-		cache.PutWithTTL(cachedClusterDataIdKey, clusterDataIdList, 0, 60*time.Minute)
+		cache.PutWithTTL(CachedClusterDataIdKey, clusterDataIdList, 0, 60*time.Minute)
 	}
 	return clusterDataIdList, nil
 }

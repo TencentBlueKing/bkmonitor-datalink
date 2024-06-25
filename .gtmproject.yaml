@@ -17,3 +17,15 @@ project:
   scopes: []
   reviewers: []
 
+scopes:
+  - unifyquery
+  - transfer
+  - bkmonitorworker
+  - influxdbproxy
+  - influxdb
+  - metadata
+  - bkmontiorbeat
+  - collector
+  - operator
+  - sliwebhook
+  - apiserve

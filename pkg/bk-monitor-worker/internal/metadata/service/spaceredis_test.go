@@ -193,7 +193,7 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
 			datavalues, _ := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
-			assert.Equal(t, tt.want, *datavalues)
+			assert.Equal(t, tt.want, datavalues)
 		})
 	}
 }
@@ -375,9 +375,9 @@ func TestSpaceRedisSvc_composeAllTypeTableIds(t *testing.T) {
 
 	data, err := NewSpacePusher().composeAllTypeTableIds(spaceType, spaceId)
 	assert.NoError(t, err)
-	assert.Equal(t, len(*data), 2)
+	assert.Equal(t, len(data), 2)
 	// 比对数据
-	for _, val := range *data {
+	for _, val := range data {
 		filter := val["filters"]
 		mapFilter := filter.([]map[string]interface{})
 		assert.Equal(t, len(mapFilter), 1)
@@ -406,10 +406,10 @@ func TestSpaceRedisSvc_composeBcsSpaceBizTableIds(t *testing.T) {
 
 	data, err := NewSpacePusher().composeBcsSpaceBizTableIds(spaceType, spaceId)
 	assert.NoError(t, err)
-	assert.NotContains(t, *data, tableIdTwo)
+	assert.NotContains(t, data, tableIdTwo)
 	for _, tid := range []string{tableIdOne, tableIdThree} {
-		assert.Contains(t, *data, tid)
-		val := (*data)[tid]["filters"]
+		assert.Contains(t, data, tid)
+		val := data[tid]["filters"]
 		d := val.([]map[string]interface{})
 		bk_biz_id := d[0]["bk_biz_id"].(string)
 		assert.Equal(t, resourceId, bk_biz_id)
@@ -431,7 +431,7 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	cache, err := memcache.GetMemCache()
 	cache.Wait()
 	assert.NoError(t, err)
-	dataList, ok := cache.Get(cachedClusterDataIdKey)
+	dataList, ok := cache.Get(CachedClusterDataIdKey)
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }

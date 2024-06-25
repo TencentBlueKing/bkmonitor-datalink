@@ -1571,6 +1571,7 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 		}
 		return nil, err
 	}
+	logger.Errorf("here1 %v", dataValues)
 	var resList []map[string]interface{}
 	if err := jsonx.UnmarshalString(sr.DimensionValues, &resList); err != nil {
 		return nil, errors.Wrap(err, "unmarshal space resource dimension failed")
@@ -1579,6 +1580,7 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 	if len(resList) == 0 {
 		return dataValues, nil
 	}
+	logger.Errorf("here2 %v", resList)
 	// 获取集群的数据, 格式: {cluster_id: {"bcs_cluster_id": xxx, "namespace": xxx}}
 	clusterInfoMap := make(map[string]interface{})
 	var clusterIdList []string
@@ -1603,15 +1605,19 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 				nsDataList = append(nsDataList, map[string]interface{}{"bcs_cluster_id": clusterId, "namespace": ns})
 			}
 			clusterInfoMap[clusterId] = nsDataList
+			clusterIdList = append(clusterIdList, clusterId)
 		} else if clusterType == models.BcsClusterTypeSingle {
 			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterInfoMap, "namespace": nil}}
+			clusterIdList = append(clusterIdList, clusterId)
 		}
-		clusterIdList = append(clusterIdList, clusterId)
 	}
+	logger.Errorf("here3 %v", clusterIdList)
+	logger.Errorf("here4 %v", clusterInfoMap)
 	dataIdClusterIdMap, err := s.getClusterDataIds(clusterIdList, nil)
 	if err != nil {
 		return nil, err
 	}
+	logger.Errorf("here5 %v", dataIdClusterIdMap)
 	if len(dataIdClusterIdMap) == 0 {
 		logger.Errorf("space [%s__%s] not found cluster", spaceType, spaceId)
 		return dataValues, nil
@@ -1625,18 +1631,20 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 	if err != nil {
 		return nil, err
 	}
+	logger.Errorf("here6 %v", tableIdDataIdMap)
 	for tid, dataId := range tableIdDataIdMap {
 		clusterId, ok := dataIdClusterIdMap[dataId]
 		if !ok {
 			continue
 		}
 		// 获取对应的集群及命名空间信息
-		filter := clusterInfoMap[clusterId]
-		if filter == nil {
+		filter, ok := clusterInfoMap[clusterId]
+		if !ok {
 			filter = make([]interface{}, 0)
 		}
 		dataValues[tid] = map[string]interface{}{"filter": filter}
 	}
+	logger.Errorf("here7 %v", dataValues)
 	return dataValues, nil
 }
 

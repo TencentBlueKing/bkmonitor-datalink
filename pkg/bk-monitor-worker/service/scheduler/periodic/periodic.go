@@ -157,7 +157,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Handler: cmInfluxdbTask.ReportInfluxdbClusterMetric,
 		},
 		PushAndPublishSpaceRouterInfo: {
-			Cron:    "*/10 * * * *",
+			Cron:    "*/30 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
 			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},

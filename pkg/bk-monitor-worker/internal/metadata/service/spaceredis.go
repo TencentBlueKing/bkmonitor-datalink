@@ -407,7 +407,7 @@ func (s SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 
 // PushTableIdDetail 推送结果表的详细信息
 func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) error {
-	logger.Infof("start to push table_id detail data, table_id_list [%v]", tableIdList)
+	logger.Infof("start to push table_id detail data, table_id_list")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
 	if err != nil {
 		return err
@@ -1055,11 +1055,11 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		values = make(map[string]map[string]interface{})
 	}
 	// 追加 bcs 集群结果表
-	bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
-	if err != nil {
-		logger.Errorf("compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
-	}
-	s.composeValue(&values, &bcsValues)
+	// bcsValues, err := s.composeBcsSpaceClusterTableIds(spaceType, spaceId)
+	// if err != nil {
+	// 	logger.Errorf("compose bcs space cluster table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	// }
+	// s.composeValue(&values, &bcsValues)
 
 	// 追加 bkci 空间级别的结果表
 	bkciLevelValues, err := s.composeBkciLevelTableIds(spaceType, spaceId)
@@ -1591,7 +1591,10 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 		if !ok {
 			clusterType = models.BcsClusterTypeSingle
 		}
-		namespaceList, _ := resOptions.GetStringSlice("namespace")
+		namespaceList, nsOk := resOptions.GetStringSlice("namespace")
+		if !nsOk {
+			namespaceList = []string{}
+		}
 
 		if clusterType == models.BcsClusterTypeShared && len(namespaceList) != 0 {
 			var nsDataList []map[string]interface{}

@@ -161,14 +161,14 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	// 存放结果表数据
 	var spaceUidList []string
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, gorotineCount)
+	ch := make(chan struct{}, gorotineCount)
 	wg.Add(len(spaceList))
 	// 处理空间路由数据
 	for _, sp := range spaceList {
 		// 组装空间 uid
 		spaceUidList = append(spaceUidList, sp.SpaceUid())
-		ch <- true
-		go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(sp space.Space, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()

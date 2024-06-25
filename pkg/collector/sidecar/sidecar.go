@@ -120,11 +120,6 @@ func (s *Sidecar) Start() error {
 			err := s.updatePrivilegedConfigFile()
 			if err != nil {
 				logger.Errorf("failed to update privileged config: %v", err)
-				continue
-			}
-
-			if err := s.sendReloadSignal(); err != nil {
-				logger.Errorf("reload failed, err: %v", err)
 			}
 		}
 	}
@@ -190,7 +185,12 @@ func (s *Sidecar) updatePrivilegedConfigFile() error {
 		return err
 	}
 	_, err = f.Write(buf.Bytes())
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 最后一步通知 collector reload
+	return s.sendReloadSignal()
 }
 
 func (s *Sidecar) sendReloadSignal() error {

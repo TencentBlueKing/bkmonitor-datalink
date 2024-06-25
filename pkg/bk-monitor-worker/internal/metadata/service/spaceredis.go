@@ -1126,7 +1126,7 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(*values)
 		if err != nil {
-			logger.Errorf("jsonx.MarshalString failed, space_type [%s], value: %v", *values)
+			logger.Errorf("jsonx.MarshalString failed, space_type [%s]", redisKey)
 			return errors.Wrapf(err, "push bkci space [%s] marshal valued failed", redisKey)
 		}
 		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {

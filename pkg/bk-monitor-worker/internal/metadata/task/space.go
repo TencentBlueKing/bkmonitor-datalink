@@ -146,7 +146,8 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
 		}
 	}()
-	debug.SetMaxStack(2 * 1024 * 1024 * 1024)
+	// 设置栈为4G
+	debug.SetMaxStack(5 * 1024 * 1024 * 1024)
 
 	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息

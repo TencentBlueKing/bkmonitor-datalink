@@ -11,7 +11,6 @@ package task
 
 import (
 	"context"
-	"runtime/debug"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -146,8 +145,6 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 			logger.Errorf("PushAndPublishSpaceRouterInfo Runtime panic caught: %v", err)
 		}
 	}()
-	// 设置栈为5G
-	debug.SetMaxStack(5 * 1024 * 1024 * 1024)
 
 	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息

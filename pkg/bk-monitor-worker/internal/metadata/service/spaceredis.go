@@ -1009,19 +1009,19 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 		}
 	}
 	// 追加es空间路由表
-	// esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
-	// if errEs != nil {
-	// 	logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEs)
-	// }
-	// if errMetric != nil && errEs != nil && errRecordRule != nil {
-	// 	return errors.Wrapf(errEs, "compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
+	esValues, errEs := s.ComposeEsTableIds(spaceType, spaceId)
+	if errEs != nil {
+		logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errEs)
+	}
+	if errMetric != nil && errEs != nil && errRecordRule != nil {
+		return errors.Wrapf(errEs, "compose space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, errMetric)
 
-	// }
-	// if esValues != nil && len(*esValues) != 0 {
-	// 	for tid, value := range *esValues {
-	// 		(*values)[tid] = value
-	// 	}
-	// }
+	}
+	if esValues != nil && len(*esValues) != 0 {
+		for tid, value := range *esValues {
+			(*values)[tid] = value
+		}
+	}
 
 	if len(*values) != 0 {
 		client := redis.GetStorageRedisInstance()
@@ -1111,22 +1111,23 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		}
 	}
 	// 追加es空间结果表
-	// esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
-	// if err != nil {
-	// 	logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
-	// }
-	// if esValues != nil && len(*esValues) != 0 {
-	// 	for tid, value := range *esValues {
-	// 		(*values)[tid] = value
-	// 	}
-	// }
+	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	if err != nil {
+		logger.Errorf("compose es space table_id data failed, space_type [%s], space_id [%s], err: %s", spaceType, spaceId, err)
+	}
+	if esValues != nil && len(*esValues) != 0 {
+		for tid, value := range *esValues {
+			(*values)[tid] = value
+		}
+	}
 	// 推送数据
 	if len(*values) != 0 {
 		client := redis.GetStorageRedisInstance()
 		redisKey := fmt.Sprintf("%s__%s", spaceType, spaceId)
 		valuesStr, err := jsonx.MarshalString(*values)
 		if err != nil {
-			return errors.Wrapf(err, "push bkci space [%s] marshal valued [%v] failed", redisKey, *values)
+			logger.Errorf("jsonx.MarshalString failed, space_type [%s], value: %v", *values)
+			return errors.Wrapf(err, "push bkci space [%s] marshal valued failed", redisKey)
 		}
 		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
@@ -1169,12 +1170,12 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		}
 	}
 	// 追加es空间路由表
-	// esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
-	// if esValues != nil && len(*esValues) != 0 {
-	// 	for tid, value := range *esValues {
-	// 		(*values)[tid] = value
-	// 	}
-	// }
+	esValues, err := s.ComposeEsTableIds(spaceType, spaceId)
+	if esValues != nil && len(*esValues) != 0 {
+		for tid, value := range *esValues {
+			(*values)[tid] = value
+		}
+	}
 	allTypeTableIdValues, err := s.composeAllTypeTableIds(spaceType, spaceId)
 	if err == nil {
 		for tid, value := range *allTypeTableIdValues {

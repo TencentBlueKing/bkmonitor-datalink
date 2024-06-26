@@ -318,11 +318,10 @@ func (s SpacePusher) getAllDataLabelTableId() (map[string][]string, error) {
 	// 获取结果表
 	dataLabelTableIdMap := make(map[string][]string)
 	for _, rt := range rtList {
-		_, ok := dataLabelTableIdMap[*rt.DataLabel]
-		if !ok {
-			dataLabelTableIdMap[*rt.DataLabel] = []string{rt.TableId}
+		if rts, ok := dataLabelTableIdMap[*rt.DataLabel]; ok {
+			dataLabelTableIdMap[*rt.DataLabel] = append(rts, rt.TableId)
 		} else {
-			dataLabelTableIdMap[*rt.DataLabel] = append(dataLabelTableIdMap[*rt.DataLabel], rt.TableId)
+			dataLabelTableIdMap[*rt.DataLabel] = []string{rt.TableId}
 		}
 	}
 	return dataLabelTableIdMap, nil

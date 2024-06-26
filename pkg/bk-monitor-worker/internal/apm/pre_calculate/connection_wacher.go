@@ -22,6 +22,7 @@ import (
 // Connection 测试类 用于监听文件变化来启动一个应用的预计算
 type Connection struct {
 	DataId           string `yaml:"dataId"`
+	Token            string `yaml:"token"`
 	BkBizId          string `yaml:"bkBizId"`
 	BkBizName        string `yaml:"bkBizName"`
 	AppId            string `yaml:"appId"`
@@ -93,6 +94,7 @@ func (p *Precalculate) StartByConnection(conn Connection, _ ...PrecalculateOptio
 	center := core.GetMetadataCenter()
 	center.AddDataIdAndInfo(
 		conn.DataId,
+		conn.Token,
 		core.DataIdInfo{
 			BaseInfo: core.BaseInfo{
 				BkBizId:   conn.BkBizId,

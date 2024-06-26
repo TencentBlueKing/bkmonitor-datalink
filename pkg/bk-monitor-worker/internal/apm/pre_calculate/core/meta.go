@@ -14,12 +14,14 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-// MetadataCenter The configuration center uses dataId as the key and stores basic information,
+// MetadataCenter The configuration center uses DataId as the key and stores basic information,
 // including app_name, bk_biz_name, app_id, etc...
 type MetadataCenter struct {
 	mapping *sync.Map
@@ -37,9 +39,11 @@ type ConsulInfo struct {
 	SaveEsInfo  TraceEsConfig    `json:"save_es_info"`
 }
 
-// DataIdInfo global dataId info in pre-calculate
+// DataIdInfo global DataId info in pre-calculate
 type DataIdInfo struct {
-	dataId string
+	// DataId of trace datasource
+	DataId string
+	Token  string
 
 	BaseInfo BaseInfo
 
@@ -92,21 +96,22 @@ func CreateMetadataCenter() error {
 }
 
 // AddDataIdAndInfo manually specify the configuration of dataid for testing
-func (c *MetadataCenter) AddDataIdAndInfo(dataId string, info DataIdInfo) {
-	info.dataId = dataId
+func (c *MetadataCenter) AddDataIdAndInfo(dataId, token string, info DataIdInfo) {
+	info.DataId = dataId
+	info.Token = token
 	c.mapping.Store(dataId, info)
 }
 
-// AddDataId get the configuration of this dataId from consul.
+// AddDataId get the configuration of this DataId from consul.
 // If this configuration does not exist in consul, ignored.
 func (c *MetadataCenter) AddDataId(dataId string) error {
-	info := DataIdInfo{dataId: dataId}
+	info := DataIdInfo{DataId: dataId}
 	if err := c.fillInfo(dataId, &info); err != nil {
 		return err
 	}
 
 	c.mapping.Store(dataId, info)
-	logger.Infof("get dataId info successfully, dataId: %s, info: %+v", dataId, info)
+	logger.Infof("get DataId info successfully, DataId: %s, info: %+v", dataId, info)
 	return nil
 }
 
@@ -146,28 +151,50 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	return nil
 }
 
-// GetKafkaConfig get kafka config of dataId
+// CheckUpdate check the info whether updated
+func (c *MetadataCenter) CheckUpdate(dataId string) bool {
+	info := DataIdInfo{DataId: dataId}
+	if err := c.fillInfo(dataId, &info); err != nil {
+		logger.Warnf("Check DataId updated failed, error: %s", err)
+		return false
+	}
+	v, exist := c.mapping.Load(dataId)
+	if !exist {
+		logger.Warnf("Check DataId updated but not found in mapping!")
+		return true
+	}
+
+	return !cmp.Equal(v, info)
+}
+
+// GetKafkaConfig get kafka config of DataId
 func (c *MetadataCenter) GetKafkaConfig(dataId string) TraceKafkaConfig {
 	v, _ := c.mapping.Load(dataId)
 	return v.(DataIdInfo).TraceKafka
 }
 
-// GetTraceEsConfig get trace es config of dataId
+// GetTraceEsConfig get trace es config of DataId
 func (c *MetadataCenter) GetTraceEsConfig(dataId string) TraceEsConfig {
 	v, _ := c.mapping.Load(dataId)
 	return v.(DataIdInfo).TraceEs
 }
 
-// GetSaveEsConfig get save es config of dataId
+// GetSaveEsConfig get save es config of DataId
 func (c *MetadataCenter) GetSaveEsConfig(dataId string) TraceEsConfig {
 	v, _ := c.mapping.Load(dataId)
 	return v.(DataIdInfo).SaveEs
 }
 
-// GetBaseInfo get biz info of dataId
+// GetBaseInfo get biz info of DataId
 func (c *MetadataCenter) GetBaseInfo(dataId string) BaseInfo {
 	v, _ := c.mapping.Load(dataId)
 	return v.(DataIdInfo).BaseInfo
+}
+
+// GetToken of DataId
+func (c *MetadataCenter) GetToken(dataId string) string {
+	v, _ := c.mapping.Load(dataId)
+	return v.(DataIdInfo).Token
 }
 
 // GetMetadataCenter return a global metadata provider

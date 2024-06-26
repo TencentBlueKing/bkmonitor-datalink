@@ -50,11 +50,11 @@ var (
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
 	// If this is enabled, the query frequency of elasticsearch is reduced.
 	EnabledTraceInfoCache int
+	// EnabledTraceMetricsReport enabled report metric
+	EnabledTraceMetricsReport bool
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
-	// RelationMetricSampleRate rate of metric
-	RelationMetricSampleRate int
 	// StorageSaveRequestBufferSize Number of storage chan
 	StorageSaveRequestBufferSize int
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
@@ -100,12 +100,13 @@ var (
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
 	SemaphoreReportInterval time.Duration
 
-	// PromRemoteWriteEnabled Whether to enabled prometheus remote write
-	PromRemoteWriteEnabled bool
+	// MetricsInMemDuration duration of metrics in memory
+	MetricsInMemDuration time.Duration
 	// PromRemoteWriteUrl remote write target url
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
+
 	// HashSecret secret for hash
 	HashSecret string
 )
@@ -126,9 +127,9 @@ func initApmVariables() {
 	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
+	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", false)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
-	RelationMetricSampleRate = GetValue("taskConfig.apmPreCalculate.processor.relationMetricSampleRate", 100, viper.GetInt)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)
 	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
@@ -149,10 +150,9 @@ func initApmVariables() {
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
 	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
-
-	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
-	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
-	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
+	MetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metricsReport.memoryDuration", 10*time.Minute, viper.GetDuration)
+	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsReport.prometheus.url", "")
+	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsReport.prometheus.headers", map[string]string{}, viper.GetStringMapString)
 
 	HashSecret = GetValue("taskConfig.apmPreCalculate.hashSecret", "")
 }

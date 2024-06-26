@@ -11,13 +11,9 @@ package window
 
 import (
 	"fmt"
-	"time"
 
-	"github.com/prometheus/prometheus/prompb"
 	"golang.org/x/exp/slices"
-	"golang.org/x/time/rate"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -28,28 +24,91 @@ type MetricProcessor struct {
 	appName string
 	appId   string
 	dataId  string
-
-	rateLimiter *rate.Limiter
 }
 
-func (m *MetricProcessor) process(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
-	if config.PromRemoteWriteEnabled && m.rateLimiter.Allow() {
-		parentChildMetricCount := m.findParentChildMetric(receiver, fullTreeGraph)
-		metrics.RecordApmRelationMetricFindCount(m.dataId, metrics.RelationMetricSystem, parentChildMetricCount)
+func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
+	m.findSpanMetric(receiver, fullTreeGraph)
+	m.findParentChildMetric(receiver, fullTreeGraph)
+}
+
+func (m *MetricProcessor) sendToSave(labels []string, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
+	if len(labels) > 0 {
+		for k, v := range metricCount {
+			metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
+		}
+
+		receiver <- storage.SaveRequest{
+			Target: storage.Prometheus,
+			Data:   storage.PrometheusStorageData{Value: labels},
+		}
 	}
 }
 
-// findParentChildMetric find the metrics which contains c-s relation
-// include: system <-> system / system <-> service / service <-> service
+func (m *MetricProcessor) findSpanMetric(
+	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
+) {
+	var labels []string
+	metricCount := make(map[string]int)
+
+	for _, span := range fullTreeGraph.StandardSpans() {
+
+		// apm_service_with_apm_service_instance_relation
+		serviceInstanceRelationName := "apm_service_with_apm_service_instance_relation"
+		serviceInstanceRelationLabelKey := fmt.Sprintf(
+			"%s=%s,%s=%s,%s=%s,%s=%s",
+			"__name__", serviceInstanceRelationName,
+			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
+			"apm_application_name", m.appName,
+			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
+		)
+		if !slices.Contains(labels, serviceInstanceRelationLabelKey) {
+			labels = append(labels, serviceInstanceRelationLabelKey)
+			metricCount[serviceInstanceRelationName]++
+		}
+
+		// apm_service_instance_with_k8s_address_relation
+		serviceK8sRelationName := "apm_service_instance_with_k8s_address_relation"
+		serviceK8sRelationLabelKey := fmt.Sprintf(
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
+			"__name__", serviceK8sRelationName,
+			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
+			"apm_application_name", m.appName,
+			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
+			"address", span.GetFieldValue(core.K8sPodIp),
+			"bcs_cluster_id", span.GetFieldValue(core.K8sBcsClusterId),
+		)
+		if !slices.Contains(labels, serviceK8sRelationLabelKey) {
+			labels = append(labels, serviceK8sRelationLabelKey)
+			metricCount[serviceK8sRelationName]++
+		}
+
+		// apm_service_instance_with_system_relation
+		serviceSystemRelationName := "apm_service_instance_with_system_relation"
+		serviceSystemRelationLabelKey := fmt.Sprintf(
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
+			"__name__", serviceSystemRelationName,
+			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
+			"apm_application_name", m.appName,
+			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
+			"bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField),
+		)
+		if !slices.Contains(labels, serviceSystemRelationLabelKey) {
+			labels = append(labels, serviceSystemRelationLabelKey)
+			metricCount[serviceSystemRelationName]++
+		}
+	}
+
+	m.sendToSave(labels, metricCount, receiver)
+}
+
+// findParentChildMetric find the metrics from spans
 func (m *MetricProcessor) findParentChildMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
-) int {
+) {
 
-	count := 0
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	var existParis []string
+	var labels []string
+	metricCount := make(map[string]int)
 
-	var series []prompb.TimeSeries
 	for _, pair := range fullTreeGraph.FindParentChildPairs() {
 
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
@@ -59,102 +118,76 @@ func (m *MetricProcessor) findParentChildMetric(
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
-			pairStr := fmt.Sprintf("%s%s", cService, sService)
-			if !slices.Contains(existParis, pairStr) {
-				series = append(series, prompb.TimeSeries{
-					Labels: []prompb.Label{
-						{Name: "__name__", Value: "service_to_service_flow"},
-						{Name: "bk_biz_id", Value: m.bkBizId},
-						{Name: "app_name", Value: m.appName},
-						{Name: "app_id", Value: m.appId},
-						{Name: "data_id", Value: m.dataId},
-						{Name: "from_service_name", Value: cService},
-						{Name: "to_service_name", Value: sService},
-					},
-					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-				})
-				existParis = append(existParis, pairStr)
+			name := "apm_service_to_apm_service_flow"
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
+				"__name__", name,
+				"from_apm_service_name", cService,
+				"from_apm_application_name", m.appName,
+				"to_apm_service_name", sService,
+				"to_apm_application_name", m.appName,
+			)
+			if !slices.Contains(labels, labelKey) {
+				labels = append(labels, labelKey)
+				metricCount[name]++
 			}
 		}
 		if parentIp != "" {
 			// ----> Find system -> service relation
-			pairStr := fmt.Sprintf("%s%s", parentIp, sService)
-			if !slices.Contains(existParis, pairStr) {
-				series = append(series, prompb.TimeSeries{
-					Labels: []prompb.Label{
-						{Name: "__name__", Value: "system_to_service_flow"},
-						{Name: "bk_biz_id", Value: m.bkBizId},
-						{Name: "app_name", Value: m.appName},
-						{Name: "app_id", Value: m.appId},
-						{Name: "data_id", Value: m.dataId},
-						{Name: "from_bk_target_ip", Value: parentIp},
-						{Name: "to_service_name", Value: sService},
-					},
-					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-				})
-				existParis = append(existParis, pairStr)
+			name := "system_to_apm_service_flow"
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s,%s=%s",
+				"__name__", name,
+				"from_bk_target_ip", parentIp,
+				"to_apm_service_name", sService,
+				"to_apm_application_name", m.appName,
+			)
+			if !slices.Contains(labels, labelKey) {
+				labels = append(labels, labelKey)
+				metricCount[name]++
 			}
 		}
 		if childIp != "" {
 			// ----> Find service -> system relation
-			pairStr := fmt.Sprintf("%s%s", cService, childIp)
-			if !slices.Contains(existParis, pairStr) {
-				series = append(series, prompb.TimeSeries{
-					Labels: []prompb.Label{
-						{Name: "__name__", Value: "service_to_system_flow"},
-						{Name: "bk_biz_id", Value: m.bkBizId},
-						{Name: "app_name", Value: m.appName},
-						{Name: "app_id", Value: m.appId},
-						{Name: "data_id", Value: m.dataId},
-						{Name: "from_service_name", Value: cService},
-						{Name: "to_bk_target_ip", Value: childIp},
-					},
-					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-				})
-				existParis = append(existParis, pairStr)
+			name := "apm_service_to_system_flow"
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s,%s=%s",
+				"__name__", name,
+				"from_apm_service_name", cService,
+				"from_apm_application_name", m.appName,
+				"to_bk_target_ip", childIp,
+			)
+			if !slices.Contains(labels, labelKey) {
+				labels = append(labels, labelKey)
+				metricCount[name]++
 			}
 		}
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
-			pairStr := fmt.Sprintf("%s%s", parentIp, childIp)
-			if !slices.Contains(existParis, pairStr) {
-				series = append(series, prompb.TimeSeries{
-					Labels: []prompb.Label{
-						{Name: "__name__", Value: "system_to_system_flow"},
-						{Name: "bk_biz_id", Value: m.bkBizId},
-						{Name: "app_name", Value: m.appName},
-						{Name: "app_id", Value: m.appId},
-						{Name: "data_id", Value: m.dataId},
-						{Name: "from_bk_target_ip", Value: parentIp},
-						{Name: "to_ip", Value: childIp},
-					},
-					Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-				})
-				existParis = append(existParis, pairStr)
+			name := "system_to_system_flow"
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s",
+				"__name__", name,
+				"from_bk_target_ip", parentIp,
+				"to_bk_target_ip", childIp,
+			)
+			if !slices.Contains(labels, labelKey) {
+				labels = append(labels, labelKey)
+				metricCount[name]++
 			}
 		}
-
-		count += len(series)
 	}
 
-	if len(series) > 0 {
-		receiver <- storage.SaveRequest{
-			Target: storage.Prometheus,
-			Data:   storage.PrometheusStorageData{Value: series},
-		}
-	}
-
-	return count
+	m.sendToSave(labels, metricCount, receiver)
 }
 
-func newMetricProcessor(dataId string, sampleRate int) MetricProcessor {
-	logger.Infof("[RelationMetric] create metric processor, dataId: %s rateLimit: %d", dataId, sampleRate)
+func newMetricProcessor(dataId string) MetricProcessor {
+	logger.Infof("[RelationMetric] create metric processor, dataId: %s", dataId)
 	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
 	return MetricProcessor{
-		dataId:      dataId,
-		rateLimiter: rate.NewLimiter(rate.Limit(sampleRate), sampleRate*2),
-		bkBizId:     baseInfo.BkBizId,
-		appName:     baseInfo.AppName,
-		appId:       baseInfo.AppId,
+		dataId:  dataId,
+		bkBizId: baseInfo.BkBizId,
+		appName: baseInfo.AppName,
+		appId:   baseInfo.AppId,
 	}
 }

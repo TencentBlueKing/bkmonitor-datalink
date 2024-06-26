@@ -231,7 +231,6 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
 			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
 		}
-		logger.Errorf("data label redis data: %v", dlRtsMap)
 		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
@@ -250,7 +249,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 		logger.Info("data label and table id map is empty, skip push redis data_label_to_result_table")
 	}
 
-	logger.Infof("push redis data_label_to_result_table")
+	logger.Infof("push redis data_label_to_result_table successfully")
 	return nil
 }
 

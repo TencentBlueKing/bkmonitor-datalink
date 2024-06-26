@@ -529,4 +529,6 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
 
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+
+	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
 }

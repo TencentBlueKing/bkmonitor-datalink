@@ -469,3 +469,21 @@ func (c *Client) QueryMetricAndDimension(opts ...define.OperationOption) define.
 		Path:   path,
 	}, opts...)
 }
+
+// QueryResultTables for bkdata resource query_result_tables
+func (c *Client) QueryResultTables(opts ...define.OperationOption) define.Operation {
+	/*
+		@params
+		related | []string | 查询条件, 默认related=["fields","storages"]
+		bk_biz_id | int | 业务ID
+		genereage_type | string | 默认user
+		page | int | 当前页
+		page_size | int | 默认5000,最大5000
+	*/
+	path := "/v3/meta/result_tables/"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "get_meta_result_tables",
+		Method: "GET",
+		Path:   path,
+	}, opts...)
+}

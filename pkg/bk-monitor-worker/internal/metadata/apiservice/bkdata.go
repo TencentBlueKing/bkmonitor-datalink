@@ -10,7 +10,16 @@
 package apiservice
 
 import (
+	"encoding/json"
+	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	gormbulk "github.com/t-tiger/gorm-bulk-insert"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -534,4 +543,207 @@ func (s BkdataService) QueryMetricAndDimension(storage string, rt string) ([]map
 		MetricsDimension = append(MetricsDimension, item)
 	}
 	return MetricsDimension, nil
+}
+
+// SyncBkBaseResultTables 同步bkbase结果表
+func (s BkdataService) SyncBkBaseResultTables(bkBizId, page, pageSize *int) error {
+	bkdataApi, err := api.GetBkdataApi()
+	if err != nil {
+		return errors.Wrap(err, "get bkdata api failed")
+	}
+
+	// 查询条件
+	params := make(map[string]string)
+	if bkBizId != nil {
+		params["bk_biz_id"] = strconv.Itoa(*bkBizId)
+	}
+	if page != nil {
+		params["page"] = strconv.Itoa(*page)
+	}
+	if pageSize != nil {
+		params["page_size"] = strconv.Itoa(*pageSize)
+	}
+	params["genereage_type"] = "user"
+	params["related"] = "fields"
+	params["is_query"] = strconv.Itoa(1)
+
+	// 访问bkbase接口获取数据
+	bkApiAppCodeSecret, _ := json.Marshal(map[string]string{"bk_app_code": config.BkApiAppCode, "bk_app_secret": config.BkApiAppSecret})
+	var resp bkdata.CommonListResp
+	if _, err = bkdataApi.QueryResultTables().SetHeaders(map[string]string{"X-Bkapi-Authorization": string(bkApiAppCodeSecret)}).
+		SetQueryParams(params).SetResult(&resp).Request(); err != nil {
+		return errors.Wrapf(err, "query bkbase resulttables error by bkbizid: %v", bkBizId)
+	}
+	if err := resp.Err(); err != nil {
+		return errors.Wrapf(err, "query bkbase resulttables error by bkbizid: %v", bkBizId)
+	}
+
+	var (
+		resultTables       = make([]interface{}, 0)
+		resultTableFields  = make([]interface{}, 0)
+		mysqlStorages      = make([]interface{}, 0)
+		hdfsStorages       = make([]interface{}, 0)
+		tspiderStorages    = make([]interface{}, 0)
+		postgresqlStorages = make([]interface{}, 0)
+		redisStorages      = make([]interface{}, 0)
+		oracleStorages     = make([]interface{}, 0)
+		dorisStorages      = make([]interface{}, 0)
+	)
+	for _, data := range resp.Data {
+		tableInfo, ok := data.(map[string]interface{})
+		if !ok {
+			logger.Errorf("parse result table data error, result_table_info: %v", tableInfo)
+			continue
+		}
+
+		// 获取结果表内容
+		tableId := fmt.Sprintf("bkbase_%s.__default__", tableInfo["result_table_id"].(string))
+		rt := s.GetBkBaseResultTables(tableId, tableInfo)
+		resultTables = append(resultTables, rt)
+
+		// 获取结果表字段内容
+		fields := tableInfo["fields"].([]interface{})
+		rtf := s.GetBkBaseResultTableFields(tableId, fields)
+		for _, field := range rtf {
+			resultTableFields = append(resultTableFields, field)
+		}
+
+		// 获取每个tableId的存储类型存放于存储类型表
+		storages := tableInfo["query_storages_arr"].([]interface{})
+		for _, ste := range storages {
+			switch ste.(string) {
+			case models.StorageTypeMySQL:
+				mysqlStorages = append(mysqlStorages, storage.MysqlStorage{TableID: tableId, StorageClusterID: models.MySQLStorageClusterId})
+			case models.StorageTypeHdfs:
+				hdfsStorages = append(hdfsStorages, storage.HdfsStorage{TableID: tableId, StorageClusterID: models.HdfsStorageClusterId})
+			case models.StorageTypeTspider:
+				tspiderStorages = append(tspiderStorages, storage.TsPiDerStorage{TableID: tableId, StorageClusterID: models.TspiderStorageClusterId})
+			case models.StorageTypePostgresql:
+				postgresqlStorages = append(postgresqlStorages, storage.PostgresqlStorage{TableID: tableId, StorageClusterID: models.PostgresqlStorageClusterId})
+			case models.StorageTypeRedis:
+				redisStorages = append(redisStorages, storage.RedisStorage{TableID: tableId, StorageClusterID: models.RedisStorageClusterId})
+			case models.StorageTypeOracle:
+				oracleStorages = append(oracleStorages, storage.OracleStorage{TableID: tableId, StorageClusterID: models.OracleStorageClusterId})
+			case models.StorageTypeDoris:
+				dorisStorages = append(dorisStorages, storage.DorisStorage{TableID: tableId, StorageClusterID: models.DorisStorageClusterId})
+			}
+		}
+	}
+
+	// 将结果表, 结果字段表, 存储关联表插入db
+	db := mysql.GetDBSession().DB
+	tx := db.Begin()
+	if err := gormbulk.BulkInsert(tx, resultTables, len(resultTables)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert result table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, resultTableFields, len(resultTableFields)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert result table field  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, mysqlStorages, len(mysqlStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert mysql storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, tspiderStorages, len(tspiderStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert tspider storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, postgresqlStorages, len(postgresqlStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert postgresql storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, redisStorages, len(redisStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert redis storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, oracleStorages, len(oracleStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert oracle storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, dorisStorages, len(dorisStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert doris storages table  error, error: %s", err)
+	}
+	if err := gormbulk.BulkInsert(tx, hdfsStorages, len(hdfsStorages)); err != nil {
+		tx.Rollback()
+		logger.Errorf("insert hdfs storages table  error, error: %s", err)
+	}
+	tx.Commit()
+	return nil
+}
+
+func (s BkdataService) GetBkBaseResultTables(tableId string, tableInfo map[string]interface{}) resulttable.ResultTable {
+	tableNameZh := tableInfo["result_table_name"].(string)
+	operator := tableInfo["created_by"].(string)
+	bkBizId := tableInfo["bk_biz_id"].(float64)
+	storages := tableInfo["query_storages_arr"].([]interface{})
+	storageList := make([]string, 0)
+	// 保存数据存储类型
+	for _, sto := range storages {
+		switch sto {
+		case models.StorageTypeMySQL:
+			storageList = append(storageList, models.StorageTypeMySQL)
+		case models.StorageTypeHdfs:
+			storageList = append(storageList, models.StorageTypeHdfs)
+		case models.StorageTypePostgresql:
+			storageList = append(storageList, models.StorageTypePostgresql)
+		case models.StorageTypeTspider:
+			storageList = append(storageList, models.StorageTypeTspider)
+		case models.StorageTypeRedis:
+			storageList = append(storageList, models.StorageTypeRedis)
+		case models.StorageTypeOracle:
+			storageList = append(storageList, models.StorageTypeOracle)
+		case models.StorageTypeDoris:
+			storageList = append(storageList, models.StorageTypeDoris)
+		}
+	}
+	storageStr := strings.Join(storageList, ",")
+	defaultStorage := storages[0].(string)
+	rt := resulttable.ResultTable{
+		TableId:            tableId,
+		TableNameZh:        tableNameZh,
+		IsCustomTable:      false,
+		SchemaType:         models.ResultTableSchemaTypeFree,
+		DefaultStorage:     defaultStorage,
+		Creator:            operator,
+		CreateTime:         time.Now(),
+		LastModifyUser:     operator,
+		LastModifyTime:     time.Now(),
+		BkBizId:            int(bkBizId),
+		IsDeleted:          false,
+		Label:              models.StorageTypeBkbase,
+		IsEnable:           true,
+		DataLabel:          nil,
+		StorageClusterType: &storageStr,
+	}
+	return rt
+}
+
+func (s BkdataService) GetBkBaseResultTableFields(tableId string, fields []interface{}) []resulttable.ResultTableField {
+	// 创建逻辑结果表字段内容
+	var resultTableFields []resulttable.ResultTableField
+	for _, data := range fields {
+		field, ok := data.(map[string]interface{})
+		if !ok {
+			logger.Errorf("parse result table field data error, field_info: %v", field)
+			continue
+		}
+		description, _ := field["description"].(string)
+		aliasName, _ := field["field_alias"].(string)
+		rtf := resulttable.ResultTableField{
+			TableID:        tableId,
+			FieldName:      field["field_name"].(string),
+			FieldType:      field["field_type"].(string),
+			Description:    description,
+			Creator:        field["created_by"].(string),
+			CreateTime:     time.Now(),
+			LastModifyUser: field["updated_by"].(string),
+			LastModifyTime: time.Now(),
+			AliasName:      aliasName,
+			IsDisabled:     false,
+		}
+		resultTableFields = append(resultTableFields, rtf)
+	}
+	return resultTableFields
 }

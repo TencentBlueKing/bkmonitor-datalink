@@ -208,7 +208,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 推送结果表详情路由
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}
 

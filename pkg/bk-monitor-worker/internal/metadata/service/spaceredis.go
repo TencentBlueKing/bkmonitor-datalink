@@ -106,7 +106,7 @@ func (s SpaceRedisSvc) PushAndPublishSpaceRouter(spaceType, spaceId string, tabl
 	if err := pusher.PushDataLabelTableIds(nil, tableIdList, true); err != nil {
 		return err
 	}
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
 		return err
 	}
 	logger.Infof("push and publish space_type: %s, space_id: %s router successfully", spaceType, spaceId)
@@ -226,12 +226,17 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 
 	if len(dlRtsMap) != 0 {
 		client := redis.GetStorageRedisInstance()
+		// TODO: 待旁路没有问题，可以移除的逻辑
+		key := cfg.DataLabelToResultTableKey
+		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+		}
 		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
 				return err
 			}
-			if err := client.HSetWithCompare(cfg.DataLabelToResultTableKey, dl, rtsStr); err != nil {
+			if err := client.HSetWithCompare(key, dl, rtsStr); err != nil {
 				return err
 			}
 			if isPublish {
@@ -403,7 +408,7 @@ func (s SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 }
 
 // PushTableIdDetail 推送结果表的详细信息
-func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) error {
+func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, useByPass bool) error {
 	logger.Infof("start to push table_id detail data, table_id_list")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
 	if err != nil {
@@ -453,6 +458,11 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 	}
 
 	client := redis.GetStorageRedisInstance()
+	// 推送数据
+	rtDetailKey := cfg.ResultTableDetailKey
+	if useByPass && !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+		rtDetailKey = fmt.Sprintf("%s%s", rtDetailKey, cfg.BypassSuffixPath)
+	}
 	for tableId, detail := range tableIdDetail {
 		var ok bool
 		// fields
@@ -475,8 +485,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool) err
 			return err
 		}
 
-		// 推送数据
-		if err := client.HSetWithCompare(cfg.ResultTableDetailKey, tableId, detailStr); err != nil {
+		if err := client.HSetWithCompare(rtDetailKey, tableId, detailStr); err != nil {
 			return err
 		}
 		if isPublish {
@@ -1031,7 +1040,12 @@ func (s SpacePusher) pushBkccSpaceTableIds(spaceType, spaceId string, options *o
 		if err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		// TODO: 待旁路没有问题，可以移除的逻辑
+		key := cfg.SpaceToResultTableKey
+		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+		}
+		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkcc space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -1105,7 +1119,12 @@ func (s SpacePusher) pushBkciSpaceTableIds(spaceType, spaceId string) error {
 		if err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] marshal valued failed", redisKey)
 		}
-		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		// TODO: 待旁路没有问题，可以移除的逻辑
+		key := cfg.SpaceToResultTableKey
+		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+		}
+		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bkci space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}
@@ -1156,7 +1175,12 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		if err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] marshal valued [%v] failed", redisKey, values)
 		}
-		if err := client.HSetWithCompare(cfg.SpaceToResultTableKey, redisKey, valuesStr); err != nil {
+		// TODO: 待旁路没有问题，可以移除的逻辑
+		key := cfg.SpaceToResultTableKey
+		if !slicex.IsExistItem(cfg.SkipBypassTasks, "push_and_publish_space_router_info") {
+			key = fmt.Sprintf("%s%s", key, cfg.BypassSuffixPath)
+		}
+		if err := client.HSetWithCompare(key, redisKey, valuesStr); err != nil {
 			return errors.Wrapf(err, "push bksaas space [%s] value [%v] failed", redisKey, valuesStr)
 
 		}

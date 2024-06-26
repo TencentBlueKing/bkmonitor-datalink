@@ -523,7 +523,7 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	assert.NoError(t, err)
 
 	dataLabelSet := mapset.NewSet[string]()
-	for dataLabel, _ := range *data {
+	for dataLabel, _ := range data {
 		dataLabelSet.Add(dataLabel)
 	}
 	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")

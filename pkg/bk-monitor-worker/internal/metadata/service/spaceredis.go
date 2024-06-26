@@ -194,13 +194,12 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 
 	// 如果标签存在，则按照标签进行过滤
 	dlRtsMap := make(map[string][]string)
-	dlRtsMapPtr := &dlRtsMap
 	var err error
 	// 1. 如果标签存在，则按照标签更新路由
 	// 2. 如果结果表存在，则按照结果表更新路由
 	// 3. 如果都不存在，则更新所有标签路由
 	if len(dataLabelList) != 0 {
-		dlRtsMapPtr, err = s.getDataLabelTableIdMap(dataLabelList)
+		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabelList)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error, %s", err)
 			return err
@@ -212,22 +211,22 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 			logger.Errorf("PushDataLabelTableIds end, get data label by table id error, %s", err)
 			return err
 		}
-		dlRtsMapPtr, err = s.getDataLabelTableIdMap(*dataLabels)
+		dlRtsMap, err = s.getDataLabelTableIdMap(dataLabels)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error, %s", err)
 			return err
 		}
 	} else {
-		dlRtsMapPtr, err = s.getAllDataLabelTableId()
+		dlRtsMap, err = s.getAllDataLabelTableId()
 		if err != nil {
 			logger.Errorf("get all data label and table id map error, %s", err)
 			return err
 		}
 	}
 
-	if len(*dlRtsMapPtr) != 0 {
+	if len(dlRtsMap) != 0 {
 		client := redis.GetStorageRedisInstance()
-		for dl, rts := range *dlRtsMapPtr {
+		for dl, rts := range dlRtsMap {
 			rtsStr, err := jsonx.MarshalString(rts)
 			if err != nil {
 				return err
@@ -249,7 +248,7 @@ func (s SpacePusher) PushDataLabelTableIds(dataLabelList, tableIdList []string, 
 	return nil
 }
 
-func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (*map[string][]string, error) {
+func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (map[string][]string, error) {
 	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
@@ -267,18 +266,17 @@ func (s SpacePusher) getDataLabelTableIdMap(dataLabelList []string) (*map[string
 		return nil, errors.Errorf("not found table id by data label, data labels: %v", dataLabelList)
 	}
 	dlRtsMap := make(map[string][]string)
-	dlRtsMapPtr := &dlRtsMap
 	for _, rt := range rts {
 		if rts, ok := dlRtsMap[*rt.DataLabel]; ok {
-			(*dlRtsMapPtr)[*rt.DataLabel] = append(rts, rt.TableId)
+			dlRtsMap[*rt.DataLabel] = append(rts, rt.TableId)
 		} else {
-			(*dlRtsMapPtr)[*rt.DataLabel] = []string{rt.TableId}
+			dlRtsMap[*rt.DataLabel] = []string{rt.TableId}
 		}
 	}
-	return dlRtsMapPtr, nil
+	return dlRtsMap, nil
 }
 
-func (s SpacePusher) getDataLabelByTableId(tableIdList []string) (*[]string, error) {
+func (s SpacePusher) getDataLabelByTableId(tableIdList []string) ([]string, error) {
 	if len(tableIdList) == 0 {
 		return nil, errors.Errorf("table id is null")
 	}
@@ -295,15 +293,15 @@ func (s SpacePusher) getDataLabelByTableId(tableIdList []string) (*[]string, err
 	if len(dataLabels) == 0 {
 		return nil, errors.Errorf("not found table id by data label, data labels: %v", tableIdList)
 	}
-	var dataLabelList *[]string
+	var dataLabelList []string
 	for _, dl := range dataLabels {
-		*dataLabelList = append((*dataLabelList), *dl.DataLabel)
+		dataLabelList = append(dataLabelList, *dl.DataLabel)
 	}
 	return dataLabelList, nil
 }
 
 // 获取所有标签和结果表的映射关系
-func (s SpacePusher) getAllDataLabelTableId() (*map[string][]string, error) {
+func (s SpacePusher) getAllDataLabelTableId() (map[string][]string, error) {
 	// 获取所有可用的结果表
 	db := mysql.GetDBSession().DB
 	var rtList []resulttable.ResultTable
@@ -314,16 +312,15 @@ func (s SpacePusher) getAllDataLabelTableId() (*map[string][]string, error) {
 	}
 	// 获取结果表
 	dataLabelTableIdMap := make(map[string][]string)
-	dataLabelTableIdMapPtr := &dataLabelTableIdMap
 	for _, rt := range rtList {
-		_, ok := (*dataLabelTableIdMapPtr)[*rt.DataLabel]
+		_, ok := dataLabelTableIdMap[*rt.DataLabel]
 		if !ok {
-			(*dataLabelTableIdMapPtr)[*rt.DataLabel] = []string{rt.TableId}
+			dataLabelTableIdMap[*rt.DataLabel] = []string{rt.TableId}
 		} else {
-			(*dataLabelTableIdMapPtr)[*rt.DataLabel] = append((*dataLabelTableIdMapPtr)[*rt.DataLabel], rt.TableId)
+			dataLabelTableIdMap[*rt.DataLabel] = append(dataLabelTableIdMap[*rt.DataLabel], rt.TableId)
 		}
 	}
-	return dataLabelTableIdMapPtr, nil
+	return dataLabelTableIdMap, nil
 }
 
 // 提取写入到influxdb或vm的结果表数据

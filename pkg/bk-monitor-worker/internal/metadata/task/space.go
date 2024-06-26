@@ -146,6 +146,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
+	logger.Info("start push and publish space router task")
 	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息
 	var spaceList []space.Space

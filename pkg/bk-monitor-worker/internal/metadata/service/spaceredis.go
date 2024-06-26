@@ -1566,11 +1566,11 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 			continue
 		}
 		// 获取对应的集群及命名空间信息
-		filter := clusterInfoMap[clusterId]
-		if filter == nil {
-			filter = make([]interface{}, 0)
+		filters := clusterInfoMap[clusterId]
+		if filters == nil {
+			filters = make([]interface{}, 0)
 		}
-		dataValues[tid] = map[string]interface{}{"filter": filter}
+		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 	return dataValues, nil
 
@@ -1654,11 +1654,11 @@ func (s SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) (
 			continue
 		}
 		// 获取对应的集群及命名空间信息
-		filter, ok := clusterInfoMap[clusterId]
+		filters, ok := clusterInfoMap[clusterId]
 		if !ok {
-			filter = make([]interface{}, 0)
+			filters = make([]interface{}, 0)
 		}
-		dataValues[tid] = map[string]interface{}{"filter": filter}
+		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
 	return dataValues, nil
 }

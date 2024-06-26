@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	metadataMetrics "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
@@ -466,9 +467,15 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, use
 		var ok bool
 		// fields
 		detail["fields"], ok = tableIdFields[tableId]
+		metricNum := 0
 		if !ok {
 			detail["fields"] = []string{}
+		} else {
+			metricNum = len(tableIdFields[tableId])
 		}
+		// 添加结果表的指标数量
+		metadataMetrics.RtMetricNum(tableId, float64(metricNum))
+
 		// data_label
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {

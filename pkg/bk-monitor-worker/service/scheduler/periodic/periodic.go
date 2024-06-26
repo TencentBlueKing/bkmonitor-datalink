@@ -159,6 +159,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		PushAndPublishSpaceRouterInfo: {
 			Cron:    "*/30 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",

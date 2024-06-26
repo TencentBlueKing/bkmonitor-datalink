@@ -431,7 +431,7 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	cache, err := memcache.GetMemCache()
 	cache.Wait()
 	assert.NoError(t, err)
-	dataList, ok := cache.Get(cachedClusterDataIdKey)
+	dataList, ok := cache.Get(CachedClusterDataIdKey)
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
@@ -529,4 +529,6 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
 
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+
+	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
 }

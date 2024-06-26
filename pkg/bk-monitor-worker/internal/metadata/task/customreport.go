@@ -120,7 +120,7 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 	if len(updatedTableIds) != 0 {
 		logger.Info("start to push table id to redis")
 		pusher := service.NewSpacePusher()
-		if err := pusher.PushTableIdDetail(updatedTableIds, true); err != nil {
+		if err := pusher.PushTableIdDetail(updatedTableIds, true, false); err != nil {
 			return errors.Wrapf(err, "metric update to push table id detaild for [%v] failed", updatedTableIds)
 		}
 		logger.Infof("metric updated of table_id  [%v]", updatedTableIds)

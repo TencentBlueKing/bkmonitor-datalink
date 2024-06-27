@@ -70,6 +70,15 @@ var (
 		},
 		[]string{"table", "operation"},
 	)
+	// rt metric 数量统计
+	rtMetricNum = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metadataTaskNamespace,
+			Name:      "rt_metric_num",
+			Help:      "rt metric number",
+		},
+		[]string{"table_id"},
+	)
 )
 
 // ConsulPutCount consul put count
@@ -132,6 +141,16 @@ func MysqlCount(tableName, operation string, count float64) {
 	metric.Add(count)
 }
 
+// RtMetricNum rt metric count
+func RtMetricNum(tableId string, num float64) {
+	metric, err := rtMetricNum.GetMetricWithLabelValues(tableId)
+	if err != nil {
+		logger.Errorf("prom get rt metric num metric failed: %s", err)
+		return
+	}
+	metric.Set(num)
+}
+
 func init() {
 	// register the metrics
 	Registry.MustRegister(
@@ -140,5 +159,6 @@ func init() {
 		esCount,
 		redisCount,
 		mysqlCount,
+		rtMetricNum,
 	)
 }

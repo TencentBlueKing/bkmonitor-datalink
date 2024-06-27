@@ -667,7 +667,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	}
 	vmTableMap := make(map[string]map[string]interface{})
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId]}
+		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
 	}
 
 	// 获取proxy关联的集群信息

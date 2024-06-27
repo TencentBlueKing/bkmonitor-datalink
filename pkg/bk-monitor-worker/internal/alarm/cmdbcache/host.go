@@ -292,7 +292,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	m.hostIpMapLock.Unlock()
 
 	wg := sync.WaitGroup{}
-	wg.Add(3)
+	wg.Add(4)
 
 	// 刷新topo缓存
 	go func() {
@@ -317,6 +317,15 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		err := m.refreshHostAgentIDCache(ctx, bkBizId, hosts)
 		if err != nil {
 			logger.Error("refresh cmdb host agent id cache failed, err: %v", err)
+		}
+		wg.Done()
+	}()
+
+	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	go func() {
+		err = GetRelationMetricsBuilder().BuildMetrics(hosts)
+		if err != nil {
+			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
 		wg.Done()
 	}()

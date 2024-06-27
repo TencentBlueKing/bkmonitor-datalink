@@ -1823,7 +1823,7 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	}
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
-		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": rt.TableId}}}
+		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 	}
 
 	// 添加P4主机数据相关

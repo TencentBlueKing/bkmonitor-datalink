@@ -608,7 +608,7 @@ type InfluxdbTableData struct {
 
 // 获取influxdb 和 vm的结果表
 func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[string]map[string]interface{}, error) {
-	logger.Infof("start to push table_id detail data, table_id_list [%v]", tableIdList)
+	logger.Debugf("start to push table_id detail data, table_id_list", tableIdList)
 	db := mysql.GetDBSession().DB
 
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -1526,6 +1526,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 	// 获取集群的数据, 格式: {cluster_id: {"bcs_cluster_id": xxx, "namespace": xxx}}
 	clusterInfoMap := make(map[string]interface{})
 	var clusterIdList []string
+	logger.Infof("found data reource, space_type: %s, space_id: %s, res_list: %v", spaceType, spaceId, resList)
 	for _, res := range resList {
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
@@ -1549,7 +1550,10 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}
+	logger.Infof("found cluster info, cluster_info_map: %v", clusterInfoMap)
+	logger.Infof("found cluster id list %v", clusterIdList)
 	dataIdClusterIdMap, err := s.getClusterDataIds(clusterIdList, tableIdList)
+	logger.Infof("data id cluster id map %v", dataIdClusterIdMap)
 	if err != nil {
 		return nil, err
 	}
@@ -1563,6 +1567,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 	}
 	// 获取结果表及数据源
 	tableIdDataIdMap, err := s.getResultTablesByDataIds(dataIdList, nil)
+	logger.Infof("table id data id map %v", tableIdDataIdMap)
 	if err != nil {
 		return nil, err
 	}

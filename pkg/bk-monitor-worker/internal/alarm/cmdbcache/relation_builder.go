@@ -11,20 +11,27 @@ package cmdbcache
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
-	lock    sync.RWMutex
-	metrics map[string]struct{}
+	ctx         context.Context
+	metricsLock sync.RWMutex
+	metrics     map[int]map[string]struct{}
+
+	expiration time.Time
 }
 
 var (
-	defaultRelationMetricsBuilder = &RelationMetricsBuilder{}
+	defaultRelationMetricsBuilder = &RelationMetricsBuilder{
+		metrics: make(map[int]map[string]struct{}),
+	}
 )
 
 func GetRelationMetricsBuilder() *RelationMetricsBuilder {
@@ -44,9 +51,31 @@ func (b *RelationMetricsBuilder) toString(v interface{}) string {
 	return val
 }
 
+// WithContext 写入 context 用于管理上下文
+func (b *RelationMetricsBuilder) WithContext(ctx context.Context) {
+	b.ctx = ctx
+}
+
+// Renew 指标过期时间续期
+func (b *RelationMetricsBuilder) Renew() {
+	b.expiration = time.Now().Add(time.Minute * 10)
+}
+
+// CheckMetrics 检查指标是否正常提供服务
+func (b *RelationMetricsBuilder) CheckMetrics() {
+	if b.expiration.Unix() < time.Now().Unix() {
+		b.metricsLock.Lock()
+		b.metrics = map[int]map[string]struct{}{}
+		b.metricsLock.Unlock()
+	}
+}
+
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
-func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
+func (b *RelationMetricsBuilder) BuildMetrics(bkBizID int, hosts []*AlarmHostInfo) error {
 	if len(hosts) == 0 {
+		b.metricsLock.Lock()
+		b.metrics[bkBizID] = nil
+		b.metricsLock.Unlock()
 		return nil
 	}
 
@@ -54,6 +83,13 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 	for _, host := range hosts {
 		if host.BkHostId == 0 {
 			continue
+		}
+
+		if len(host.TopoLinks) == 0 {
+			// 如果没有 topo 数据，至少需要增加一条路径，用于存放 system、agent、business 等信息
+			host.TopoLinks = map[string][]map[string]interface{}{
+				"": nil,
+			}
 		}
 
 		for _, topoLinks := range host.TopoLinks {
@@ -70,7 +106,7 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 				})
 			}
 
-			// 加入 agent 节点
+			// 加入 agent 节点,TODO: 讨论一下 ID 的问题
 			nodes = append(nodes, Node{
 				Name: RelationAgentNode,
 				Labels: map[string]string{
@@ -84,6 +120,9 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 				if key == "" {
 					continue
 				}
+				if key == "biz" {
+					continue
+				}
 
 				nodes = append(nodes, Node{
 					Name: key,
@@ -94,12 +133,14 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 			}
 
 			// 加入业务节点
-			nodes = append(nodes, Node{
-				Name: RelationBusinessNode,
-				Labels: map[string]string{
-					"biz_id": b.toString(host.BkBizId),
-				},
-			})
+			if len(topoLinks) > 0 {
+				nodes = append(nodes, Node{
+					Name: RelationBusinessNode,
+					Labels: map[string]string{
+						"biz_id": b.toString(host.BkBizId),
+					},
+				})
+			}
 
 			// 转换成指标加载到内存
 			for _, rm := range nodes.toRelationMetrics() {
@@ -112,9 +153,9 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 			putRelationNodes(nodes)
 		}
 	}
-	b.lock.Lock()
-	b.metrics = localMetrics
-	b.lock.Unlock()
+	b.metricsLock.Lock()
+	b.metrics[bkBizID] = localMetrics
+	b.metricsLock.Unlock()
 
 	return nil
 }
@@ -122,25 +163,31 @@ func (b *RelationMetricsBuilder) BuildMetrics(hosts []*AlarmHostInfo) error {
 // String 以 string 格式获取所有指标数据
 func (b *RelationMetricsBuilder) String() string {
 	var buf bytes.Buffer
-	b.lock.RLock()
-	defer b.lock.RUnlock()
+	b.metricsLock.RLock()
+	defer b.metricsLock.RUnlock()
 
-	for line := range b.metrics {
-		buf.WriteString(line)
+	for bkBizID, metrics := range b.metrics {
+		buf.WriteString(fmt.Sprintf("# bk_biz_id %d", bkBizID))
 		buf.WriteString("\n")
+		for metric := range metrics {
+			buf.WriteString(metric)
+			buf.WriteString("\n")
+		}
 	}
 	return buf.String()
 }
 
 // SortString 以 string 格式排序之后获取所有指标数据
 func (b *RelationMetricsBuilder) SortString() string {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
+	b.metricsLock.RLock()
+	defer b.metricsLock.RUnlock()
 
-	metrics := make([]string, 0, len(b.metrics))
-	for line := range b.metrics {
-		metrics = append(metrics, line)
+	metricsArray := make([]string, 0)
+	for _, metrics := range b.metrics {
+		for metric := range metrics {
+			metricsArray = append(metricsArray, metric)
+		}
 	}
-	sort.Strings(metrics)
-	return strings.Join(metrics, "\n")
+	sort.Strings(metricsArray)
+	return strings.Join(metricsArray, "\n")
 }

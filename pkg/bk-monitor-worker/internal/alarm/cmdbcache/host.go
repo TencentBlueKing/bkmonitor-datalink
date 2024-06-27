@@ -323,7 +323,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
 	go func() {
-		err = GetRelationMetricsBuilder().BuildMetrics(hosts)
+		err = GetRelationMetricsBuilder().BuildMetrics(bkBizId, hosts)
 		if err != nil {
 			logger.Error("refresh relation metrics failed, err: %v", err)
 		}

@@ -363,6 +363,9 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 			continue
 		}
 
+		// cmdb 事件存活情况下，需要给 relationMetric 续期
+		GetRelationMetricsBuilder().Renew()
+
 		logger.Infof("get cmdb resource(%s) watch event: %d", resourceType, len(events))
 
 		// 重置

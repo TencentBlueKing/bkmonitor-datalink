@@ -17,14 +17,137 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
+func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+
+	for name, c := range map[string]struct {
+		bkBizIDHosts []struct {
+			bkBizID int
+			hosts   []*AlarmHostInfo
+		}
+		expected string
+	}{
+		"test build metrics with same bkbizID": {
+			bkBizIDHosts: []struct {
+				bkBizID int
+				hosts   []*AlarmHostInfo
+			}{
+				{
+					bkBizID: 2,
+					hosts: []*AlarmHostInfo{
+						{
+							BkHostId:      1001,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.1",
+							BkCloudId:     3,
+						},
+						{
+							BkHostId:      1002,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.2",
+							BkCloudId:     3,
+						},
+						{
+							BkHostId:      1003,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.3",
+							BkCloudId:     3,
+						},
+					},
+				},
+				{
+					bkBizID: 2,
+					hosts: []*AlarmHostInfo{
+						{
+							BkHostId:      1001,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.1",
+							BkCloudId:     3,
+						},
+					},
+				},
+				{
+					bkBizID: 3,
+					hosts: []*AlarmHostInfo{
+						{
+							BkHostId:      31001,
+							BkBizId:       3,
+							BkHostInnerip: "127.1.0.1",
+							BkCloudId:     3,
+						},
+					},
+				},
+			},
+			expected: `agent_with_system_relation{agent_id="1001",bk_cloud_id="3",bk_target_ip="127.0.0.1"} 1
+agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.0.1"} 1`,
+		},
+		"test build metrics with diff bkbizID": {
+			bkBizIDHosts: []struct {
+				bkBizID int
+				hosts   []*AlarmHostInfo
+			}{
+				{
+					bkBizID: 2,
+					hosts: []*AlarmHostInfo{
+						{
+							BkHostId:      1001,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.1",
+							BkCloudId:     3,
+						},
+						{
+							BkHostId:      1002,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.2",
+							BkCloudId:     3,
+						},
+						{
+							BkHostId:      1003,
+							BkBizId:       2,
+							BkHostInnerip: "127.0.0.3",
+							BkCloudId:     3,
+						},
+					},
+				},
+				{
+					bkBizID: 3,
+					hosts: []*AlarmHostInfo{
+						{
+							BkHostId:      31001,
+							BkBizId:       3,
+							BkHostInnerip: "127.1.0.1",
+							BkCloudId:     3,
+						},
+					},
+				},
+			},
+			expected: `agent_with_system_relation{agent_id="1001",bk_cloud_id="3",bk_target_ip="127.0.0.1"} 1
+agent_with_system_relation{agent_id="1002",bk_cloud_id="3",bk_target_ip="127.0.0.2"} 1
+agent_with_system_relation{agent_id="1003",bk_cloud_id="3",bk_target_ip="127.0.0.3"} 1
+agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.0.1"} 1`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, bh := range c.bkBizIDHosts {
+				_ = GetRelationMetricsBuilder().BuildMetrics(bh.bkBizID, bh.hosts)
+			}
+
+			metrics := GetRelationMetricsBuilder().SortString()
+			assert.Equal(t, c.expected, metrics)
+		})
+	}
+}
+
 func TestBuildMetrics(t *testing.T) {
 	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
 
 	for name, c := range map[string]struct {
+		bkBizID  int
 		hosts    []*AlarmHostInfo
 		expected string
 	}{
 		"test build metrics": {
+			bkBizID: 2,
 			hosts: []*AlarmHostInfo{
 				{
 					BkHostId:      1001,
@@ -32,24 +155,32 @@ func TestBuildMetrics(t *testing.T) {
 					BkHostInnerip: "127.0.0.1",
 					BkCloudId:     3,
 					TopoLinks: map[string][]map[string]interface{}{
-						"module_2001": {
+						"module|2001": {
 							{
 								"bk_obj_id":  "module",
-								"bk_inst_id": "2001",
+								"bk_inst_id": 2001,
 							},
 							{
 								"bk_obj_id":  "set",
-								"bk_inst_id": "3001",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
 							},
 						},
-						"module_2002": {
+						"module|2002": {
 							{
 								"bk_obj_id":  "module",
-								"bk_inst_id": "2002",
+								"bk_inst_id": 2002,
 							},
 							{
 								"bk_obj_id":  "set",
-								"bk_inst_id": "3002",
+								"bk_inst_id": 3002,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
 							},
 						},
 					},
@@ -63,11 +194,15 @@ func TestBuildMetrics(t *testing.T) {
 						"module_2001": {
 							{
 								"bk_obj_id":  "module",
-								"bk_inst_id": "2001",
+								"bk_inst_id": 2001,
 							},
 							{
 								"bk_obj_id":  "set",
-								"bk_inst_id": "3001",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
 							},
 						},
 					},
@@ -81,11 +216,15 @@ func TestBuildMetrics(t *testing.T) {
 						"module_2003": {
 							{
 								"bk_obj_id":  "module",
-								"bk_inst_id": "2003",
+								"bk_inst_id": 2003,
 							},
 							{
 								"bk_obj_id":  "set",
-								"bk_inst_id": "3001",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
 							},
 						},
 					},
@@ -106,7 +245,7 @@ module_with_set_relation{module_id="2003",set_id="3001"} 1`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_ = GetRelationMetricsBuilder().BuildMetrics(c.hosts)
+			_ = GetRelationMetricsBuilder().BuildMetrics(c.bkBizID, c.hosts)
 			assert.Equal(t, c.expected, GetRelationMetricsBuilder().SortString())
 		})
 

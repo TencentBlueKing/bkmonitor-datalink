@@ -1526,18 +1526,22 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 	// 获取集群的数据, 格式: {cluster_id: {"bcs_cluster_id": xxx, "namespace": xxx}}
 	clusterInfoMap := make(map[string]interface{})
 	var clusterIdList []string
-	logger.Infof("found data reource, space_type: %s, space_id: %s, res_list: %v", spaceType, spaceId, resList)
 	for _, res := range resList {
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
 		if !ok {
-			return nil, errors.Errorf("parse space resource dimension values failed, %v", res)
+			logger.Errorf("parse space resource dimension values failed, %v", res)
+			continue
 		}
 		clusterType, ok := resOptions.GetString("cluster_type")
 		if !ok {
 			clusterType = models.BcsClusterTypeSingle
 		}
-		namespaceList, _ := resOptions.GetStringSlice("namespace")
+		namespaceList, ok := resOptions.GetInterfaceSliceWithString("namespace")
+		if !ok {
+			logger.Errorf("parse space resource dimension values failed, %v", res)
+			continue
+		}
 
 		if clusterType == models.BcsClusterTypeShared && len(namespaceList) != 0 {
 			var nsDataList []map[string]interface{}
@@ -1550,10 +1554,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}
-	logger.Infof("found cluster info, cluster_info_map: %v", clusterInfoMap)
-	logger.Infof("found cluster id list %v", clusterIdList)
 	dataIdClusterIdMap, err := s.getClusterDataIds(clusterIdList, tableIdList)
-	logger.Infof("data id cluster id map %v", dataIdClusterIdMap)
 	if err != nil {
 		return nil, err
 	}
@@ -1567,7 +1568,6 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 	}
 	// 获取结果表及数据源
 	tableIdDataIdMap, err := s.getResultTablesByDataIds(dataIdList, nil)
-	logger.Infof("table id data id map %v", tableIdDataIdMap)
 	if err != nil {
 		return nil, err
 	}

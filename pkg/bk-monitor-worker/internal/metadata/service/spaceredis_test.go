@@ -557,10 +557,10 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 
 	// 添加数据源和结果表关系
 	dsRtObj := resulttable.DataSourceResultTable{BkDataId: 100001, TableId: "demo.test"}
-	db.Delete(dsRtObj, dsRtObj.TableId)
+	db.Delete(dsRtObj, "table_id=?", dsRtObj.TableId)
 	assert.NoError(t, dsRtObj.Create(db))
 	dsRtObj1 := resulttable.DataSourceResultTable{BkDataId: 100002, TableId: "demo.test1"}
-	db.Delete(dsRtObj1, dsRtObj1.TableId)
+	db.Delete(dsRtObj1, "table_id=?", dsRtObj1.TableId)
 	assert.NoError(t, dsRtObj1.Create(db))
 
 	spaceType, spaceId := "bksaas", "demo"

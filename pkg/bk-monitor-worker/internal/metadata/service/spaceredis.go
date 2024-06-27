@@ -1545,7 +1545,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 			}
 			clusterInfoMap[clusterId] = nsDataList
 		} else if clusterType == models.BcsClusterTypeSingle {
-			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterInfoMap, "namespace": nil}}
+			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterId, "namespace": nil}}
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}

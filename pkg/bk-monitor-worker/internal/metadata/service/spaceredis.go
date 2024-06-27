@@ -1148,7 +1148,7 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		logger.Errorf("pushBksaasSpaceTableIds error, compose bksaas space: [%s__%s] error: %s", spaceType, spaceId, err)
 	}
 	logger.Infof("pushBksaasSpaceTableIds values: %v", values)
-	if values != nil {
+	if values == nil {
 		values = make(map[string]map[string]interface{})
 	}
 	bksaasOtherValues, errOther := s.composeBksaasOtherTableIds(spaceType, spaceId, tableIdList)
@@ -1555,8 +1555,6 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}
-	logger.Infof("cluster_info_map: %v", clusterInfoMap)
-	logger.Infof("cluster_id_list: %v", clusterIdList)
 	dataIdClusterIdMap, err := s.getClusterDataIds(clusterIdList, tableIdList)
 	if err != nil {
 		return nil, err
@@ -1565,18 +1563,15 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		logger.Errorf("space [%s__%s] not found cluster", spaceType, spaceId)
 		return dataValues, nil
 	}
-	logger.Infof("dataIdClusterIdMap: %v", dataIdClusterIdMap)
 	var dataIdList []uint
 	for dataId := range dataIdClusterIdMap {
 		dataIdList = append(dataIdList, dataId)
 	}
-	logger.Infof("dataIdList: %v", dataIdList)
 	// 获取结果表及数据源
 	tableIdDataIdMap, err := s.getResultTablesByDataIds(dataIdList, nil)
 	if err != nil {
 		return nil, err
 	}
-	logger.Infof("tableIdDataIdMap: %v", tableIdDataIdMap)
 	for tid, dataId := range tableIdDataIdMap {
 		clusterId, ok := dataIdClusterIdMap[dataId]
 		if !ok {
@@ -1589,7 +1584,6 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		}
 		dataValues[tid] = map[string]interface{}{"filters": filters}
 	}
-	logger.Infof("data_values: %v", dataValues)
 	return dataValues, nil
 
 }

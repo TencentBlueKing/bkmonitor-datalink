@@ -94,14 +94,16 @@ const (
 	StorageTypeDoris      = "doris"
 )
 
+type StorageClusterId int
+
 const (
-	RedisStorageClusterId      = 7
-	HdfsStorageClusterId       = 6
-	PostgresqlStorageClusterId = 5
-	TspiderStorageClusterId    = 3
-	OracleStorageClusterId     = 8
-	DorisStorageClusterId      = 9
-	MySQLStorageClusterId      = 4
+	TspiderStorageClusterId StorageClusterId = iota + 3
+	MySQLStorageClusterId
+	PostgresqlStorageClusterId
+	HdfsStorageClusterId
+	RedisStorageClusterId
+	OracleStorageClusterId
+	DorisStorageClusterId
 )
 
 const (

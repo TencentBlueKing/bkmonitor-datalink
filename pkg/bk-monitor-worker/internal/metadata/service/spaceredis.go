@@ -409,7 +409,7 @@ func (s SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 
 // PushTableIdDetail 推送结果表的详细信息
 func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, useByPass bool) error {
-	logger.Infof("start to push table_id detail data, table_id_list")
+	logger.Infof("start to push table_id detail data")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
 	if err != nil {
 		return err
@@ -608,7 +608,7 @@ type InfluxdbTableData struct {
 
 // 获取influxdb 和 vm的结果表
 func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[string]map[string]interface{}, error) {
-	logger.Infof("start to push table_id detail data, table_id_list [%v]", tableIdList)
+	logger.Debugf("start to push table_id detail data, table_id_list", tableIdList)
 	db := mysql.GetDBSession().DB
 
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -667,7 +667,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	}
 	vmTableMap := make(map[string]map[string]interface{})
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId]}
+		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
 	}
 
 	// 获取proxy关联的集群信息
@@ -1147,7 +1147,8 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		// 仅记录，不返回
 		logger.Errorf("pushBksaasSpaceTableIds error, compose bksaas space: [%s__%s] error: %s", spaceType, spaceId, err)
 	}
-	if values != nil {
+	logger.Infof("pushBksaasSpaceTableIds values: %v", values)
+	if values == nil {
 		values = make(map[string]map[string]interface{})
 	}
 	bksaasOtherValues, errOther := s.composeBksaasOtherTableIds(spaceType, spaceId, tableIdList)
@@ -1530,13 +1531,18 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
 		if !ok {
-			return nil, errors.Errorf("parse space resource dimension values failed, %v", res)
+			logger.Errorf("parse space resource cluster values failed, %v", res)
+			continue
 		}
 		clusterType, ok := resOptions.GetString("cluster_type")
 		if !ok {
 			clusterType = models.BcsClusterTypeSingle
 		}
-		namespaceList, _ := resOptions.GetStringSlice("namespace")
+		namespaceList, ok := resOptions.GetInterfaceSliceWithString("namespace")
+		if !ok {
+			logger.Errorf("parse space resource dimension values failed, %v", res)
+			continue
+		}
 
 		if clusterType == models.BcsClusterTypeShared && len(namespaceList) != 0 {
 			var nsDataList []map[string]interface{}
@@ -1545,7 +1551,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 			}
 			clusterInfoMap[clusterId] = nsDataList
 		} else if clusterType == models.BcsClusterTypeSingle {
-			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterInfoMap, "namespace": nil}}
+			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterId, "namespace": nil}}
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}
@@ -1823,7 +1829,7 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	}
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
-		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": rt.TableId}}}
+		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 	}
 
 	// 添加P4主机数据相关

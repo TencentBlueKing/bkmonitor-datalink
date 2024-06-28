@@ -138,12 +138,12 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 				if s := p.fetcher.FetchMethod(span, pk); s == "" {
 					continue
 				}
-				// 2）判断是否有match key
+				// 2）判断是否有 matchKey
 				mkey := rule.MethodValue()
 				if mkey == "" {
 					continue
 				}
-				// 3) 判断match value 是否为空
+				// 3) 判断 matchValue 是否为空
 				val := p.fetcher.FetchMethod(span, mkey)
 				if val == "" {
 					continue

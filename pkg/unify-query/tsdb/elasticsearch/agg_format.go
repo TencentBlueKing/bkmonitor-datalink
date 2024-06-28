@@ -12,6 +12,7 @@ package elasticsearch
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	elastic "github.com/olivere/elastic/v7"
@@ -59,8 +60,8 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
+	value = strings.Trim(value, `"`)
 	name = a.toProm(name)
-
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {
 		newLb[k] = v

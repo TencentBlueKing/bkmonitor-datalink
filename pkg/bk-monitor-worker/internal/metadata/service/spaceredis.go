@@ -1925,3 +1925,134 @@ func (s SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[stri
 
 	return dataValues, nil
 }
+
+// SpaceRedisClearer 清理空间路由缓存
+type SpaceRedisClearer struct {
+	redisClient *redis.Instance
+	dbClient    *gorm.DB
+}
+
+// NewSpaceRedisClearer 创建 SpaceRedisClearer 对象
+func NewSpaceRedisClearer() *SpaceRedisClearer {
+	return &SpaceRedisClearer{
+		redisClient: redis.GetStorageRedisInstance(),
+		dbClient:    mysql.GetDBSession().DB,
+	}
+}
+
+// ClearSpaceToRt 清理空间路由缓存
+func (s *SpaceRedisClearer) ClearSpaceToRt() {
+	logger.Info("start to clear space to rt router")
+	// 获取redis中所有的空间Uid
+	fields, err := s.redisClient.HKeys(cfg.SpaceToResultTableKey)
+	if err != nil {
+		logger.Errorf("clear space to rt router, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的空间
+	var spaceList []space.Space
+	if err := space.NewSpaceQuerySet(s.dbClient).Select(space.SpaceDBSchema.SpaceTypeId, space.SpaceDBSchema.SpaceId).All(&spaceList); err != nil {
+		logger.Errorf("clear space to rt router, get space list error, %s", err)
+		return
+	}
+	var spaceUidList []string
+	for _, spaceObj := range spaceList {
+		spaceUidList = append(spaceUidList, fmt.Sprintf("%s__%s", spaceObj.SpaceTypeId, spaceObj.SpaceId))
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	spaceUidSet := slicex.StringList2Set(spaceUidList)
+	diff := fieldSet.Difference(spaceUidSet)
+	// r如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("space to rt router, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteSpaceUidList := slicex.StringSet2List(diff)
+	logger.Info("start to delete space to rt router, space_uid_list: %v", needDeleteSpaceUidList)
+	if err := s.redisClient.HDel(cfg.SpaceToResultTableKey, needDeleteSpaceUidList...); err != nil {
+		logger.Errorf("clear space to rt router, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear space to rt router success")
+}
+
+// ClearDataLabelToRt 清理数据标签路由缓存
+func (s *SpaceRedisClearer) ClearDataLabelToRt() {
+	logger.Info("start to clear data label to rt router")
+	// 获取redis中对应的fields
+	fields, err := s.redisClient.HKeys(cfg.DataLabelToResultTableKey)
+	if err != nil {
+		logger.Errorf("clear data label to rt router, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的数据标签
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		logger.Errorf("clear data label to rt router, get data label list error, %s", err)
+		return
+	}
+	var datalabelList []string
+	for _, rt := range rtList {
+		datalabelList = append(datalabelList, *rt.DataLabel)
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	dataLabelSet := slicex.StringList2Set(datalabelList)
+	diff := fieldSet.Difference(dataLabelSet)
+	// 如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("data label to rt router, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteDataLabelList := slicex.StringSet2List(diff)
+	logger.Info("start to delete data label to rt router, data_label_list: %v", needDeleteDataLabelList)
+	if err := s.redisClient.HDel(cfg.DataLabelToResultTableKey, needDeleteDataLabelList...); err != nil {
+		logger.Errorf("clear data label to rt router, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear data label to rt router success")
+}
+
+// ClearRtDetail 清理结果表详情
+func (s *SpaceRedisClearer) ClearRtDetail() {
+	logger.Info("start to clear rt detail")
+	// 获取redis中所有的rt_id
+	fields, err := s.redisClient.HKeys(cfg.ResultTableDetailKey)
+	if err != nil {
+		logger.Errorf("clear rt detail, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的rt_id
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.TableId).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		logger.Errorf("clear rt detail, get rt list error, %s", err)
+		return
+	}
+	var rtIdList []string
+	for _, rt := range rtList {
+		rtIdList = append(rtIdList, rt.TableId)
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	rtIdSet := slicex.StringList2Set(rtIdList)
+	diff := fieldSet.Difference(rtIdSet)
+	// 如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("rt detail, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteRtIdList := slicex.StringSet2List(diff)
+	logger.Info("start to delete rt detail, rt_id_list: %v", needDeleteRtIdList)
+	if err := s.redisClient.HDel(cfg.ResultTableDetailKey, needDeleteRtIdList...); err != nil {
+		logger.Errorf("clear rt detail, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear rt detail success")
+}

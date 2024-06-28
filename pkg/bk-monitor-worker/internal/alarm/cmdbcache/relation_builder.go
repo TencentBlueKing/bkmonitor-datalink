@@ -20,12 +20,12 @@ import (
 type RelationMetricsBuilder struct {
 	ctx         context.Context
 	metricsLock sync.RWMutex
-	metrics     map[string]Nodes
+	metrics     map[int]map[int]Nodes
 }
 
 var (
 	defaultRelationMetricsBuilder = &RelationMetricsBuilder{
-		metrics: make(map[string]Nodes),
+		metrics: make(map[int]map[int]Nodes),
 	}
 )
 
@@ -53,29 +53,32 @@ func (b *RelationMetricsBuilder) WithContext(ctx context.Context) {
 
 // ClearAllMetrics 清理全部指标
 func (b *RelationMetricsBuilder) ClearAllMetrics() {
-	b.metrics = make(map[string]Nodes)
+	b.metrics = make(map[int]map[int]Nodes)
 }
 
 // ClearMetricsWithHostID 清理 host 指标
-func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hostIDs ...string) {
+func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hosts ...*AlarmHostInfo) {
 	b.metricsLock.Lock()
 	defer b.metricsLock.Unlock()
 
-	for _, hostID := range hostIDs {
-		if _, ok := b.metrics[hostID]; ok {
-			delete(b.metrics, hostID)
+	for _, host := range hosts {
+		if hostMap, ok := b.metrics[host.BkBizId]; ok {
+			if _, ok = hostMap[host.BkHostId]; ok {
+				delete(hostMap, host.BkHostId)
+			}
 		}
 	}
+
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
-func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, hosts []*AlarmHostInfo) error {
+func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, hosts []*AlarmHostInfo) error {
+	nodeMap := make(map[int]Nodes)
 	for _, host := range hosts {
 		if host.BkHostId == 0 {
 			continue
 		}
 
-		hostID := b.toString(host.BkHostId)
 		if len(host.TopoLinks) == 0 {
 			// 如果没有 topo 数据，至少需要增加一条路径，用于存放 system、agent、business 等信息
 			host.TopoLinks = map[string][]map[string]interface{}{
@@ -101,7 +104,7 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, hosts []*AlarmH
 			nodes = append(nodes, Node{
 				Name: RelationHostNode,
 				Labels: map[string]string{
-					"host_id": hostID,
+					"host_id": b.toString(host.BkHostId),
 				},
 			})
 
@@ -133,11 +136,13 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, hosts []*AlarmH
 				})
 			}
 
-			b.metricsLock.Lock()
-			b.metrics[hostID] = nodes
-			b.metricsLock.Unlock()
+			nodeMap[host.BkHostId] = nodes
 		}
 	}
+
+	b.metricsLock.Lock()
+	b.metrics[bkBizID] = nodeMap
+	b.metricsLock.Unlock()
 
 	return nil
 }
@@ -148,11 +153,14 @@ func (b *RelationMetricsBuilder) String() string {
 	b.metricsLock.RLock()
 	defer b.metricsLock.RUnlock()
 
-	for _, nodes := range b.metrics {
-		for _, relationMetric := range nodes.toRelationMetrics() {
-			buf.WriteString(relationMetric.String())
-			buf.WriteString("\n")
+	for _, nodeMap := range b.metrics {
+		for _, nodes := range nodeMap {
+			for _, relationMetric := range nodes.toRelationMetrics() {
+				buf.WriteString(relationMetric.String())
+				buf.WriteString("\n")
+			}
 		}
 	}
+
 	return buf.String()
 }

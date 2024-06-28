@@ -52,9 +52,13 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
-	pids := make([]int32, 0, len(procs))
+	ret := make([]ProcMeta, 0)
 	for i := 0; i < len(procs); i++ {
-		pids = append(pids, procs[i].Pid)
+		p := procs[i]
+		if p.Cmd == "" {
+			continue
+		}
+		ret = append(ret, p)
 	}
-	e <- &Event{dataid: g.config.DataID, data: procs, utcTime: now}
+	e <- &Event{dataid: g.config.DataID, data: ret, utcTime: now}
 }

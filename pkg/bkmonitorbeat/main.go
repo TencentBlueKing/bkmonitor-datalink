@@ -49,6 +49,8 @@ var (
 	verifyRpm             = flag.Bool("verify-rpm", false, "If present, display the rpm packages verify result")
 	cgroupBlockWriteBytes = flag.Int("cgroup-block-write-bytes", 0, "set root devices block io write bytes")
 	cgroupBlockReadBytes  = flag.Int("cgroup-block-read-bytes", 0, "set root devices block io read bytes")
+	cgroupBlockWriteIOps  = flag.Int("cgroup-block-write-iops", 0, "set root devices block io write iops")
+	cgroupBlockReadIOps   = flag.Int("cgroup-block-read-iops", 0, "set root devices block io read iops")
 )
 
 func registerValidators() {
@@ -114,6 +116,8 @@ func main() {
 			Minor:      minor,
 			WriteBytes: uint64(*cgroupBlockWriteBytes),
 			ReadBytes:  uint64(*cgroupBlockReadBytes),
+			WriteIOps:  uint64(*cgroupBlockWriteIOps),
+			ReadIOps:   uint64(*cgroupBlockReadIOps),
 		})
 		if err != nil {
 			fmt.Println("failed to set block cgroup:", err)

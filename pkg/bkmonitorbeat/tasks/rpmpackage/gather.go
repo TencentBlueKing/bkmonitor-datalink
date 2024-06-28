@@ -69,6 +69,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		fmt.Sprintf("%d", g.config.BlockWriteBytes),
 		"-cgroup-block-read-bytes",
 		fmt.Sprintf("%d", g.config.BlockReadBytes),
+		"-cgroup-block-write-iops",
+		fmt.Sprintf("%d", g.config.BlockWriteIOps),
+		"-cgroup-block-read-iops",
+		fmt.Sprintf("%d", g.config.BlockReadIOps),
 	}
 
 	cmd := exec.CommandContext(ctx, executable, args...)

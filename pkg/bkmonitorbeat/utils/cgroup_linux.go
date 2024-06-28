@@ -27,10 +27,11 @@ func SetLinuxCGroup(name string, blockIO SpecBlockIO) error {
 	if blockIO.Major == 0 && blockIO.Minor == 0 {
 		return errors.New("empty block major/minor")
 	}
-	if blockIO.ReadBytes <= 0 && blockIO.WriteBytes <= 0 {
-		return errors.New("empty block readbytes/writebytes")
+	if blockIO.ReadBytes <= 0 && blockIO.WriteBytes <= 0 && blockIO.ReadIOps <= 0 && blockIO.WriteIOps <= 0 {
+		return errors.New("empty block read/write limits")
 	}
 
+	// 读大小
 	if blockIO.ReadBytes > 0 {
 		rio := specs.LinuxThrottleDevice{}
 		rio.Major = blockIO.Major
@@ -38,12 +39,29 @@ func SetLinuxCGroup(name string, blockIO SpecBlockIO) error {
 		rio.Rate = blockIO.ReadBytes
 		resource.BlockIO.ThrottleReadBpsDevice = append(resource.BlockIO.ThrottleReadBpsDevice, rio)
 	}
-	if blockIO.ReadBytes > 0 {
+	// 写大小
+	if blockIO.WriteBytes > 0 {
 		wio := specs.LinuxThrottleDevice{}
 		wio.Major = blockIO.Major
 		wio.Minor = blockIO.Minor
 		wio.Rate = blockIO.WriteBytes
 		resource.BlockIO.ThrottleWriteBpsDevice = append(resource.BlockIO.ThrottleWriteBpsDevice, wio)
+	}
+	// 读频率
+	if blockIO.ReadIOps > 0 {
+		rio := specs.LinuxThrottleDevice{}
+		rio.Major = blockIO.Major
+		rio.Minor = blockIO.Minor
+		rio.Rate = blockIO.ReadIOps
+		resource.BlockIO.ThrottleReadIOPSDevice = append(resource.BlockIO.ThrottleReadIOPSDevice, rio)
+	}
+	// 写频率
+	if blockIO.WriteIOps > 0 {
+		wio := specs.LinuxThrottleDevice{}
+		wio.Major = blockIO.Major
+		wio.Minor = blockIO.Minor
+		wio.Rate = blockIO.WriteIOps
+		resource.BlockIO.ThrottleWriteIOPSDevice = append(resource.BlockIO.ThrottleWriteIOPSDevice, wio)
 	}
 
 	// 静态路径

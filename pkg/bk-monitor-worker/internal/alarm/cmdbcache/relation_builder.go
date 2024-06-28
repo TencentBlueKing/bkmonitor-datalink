@@ -47,8 +47,9 @@ func (b *RelationMetricsBuilder) toString(v interface{}) string {
 }
 
 // WithContext 写入 context 用于管理上下文
-func (b *RelationMetricsBuilder) WithContext(ctx context.Context) {
+func (b *RelationMetricsBuilder) WithContext(ctx context.Context) *RelationMetricsBuilder {
 	b.ctx = ctx
+	return b
 }
 
 // ClearAllMetrics 清理全部指标

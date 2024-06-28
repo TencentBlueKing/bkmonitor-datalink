@@ -13,29 +13,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 )
 
 const (
-	RelationAgentNode    = "agent"
+	RelationHostNode     = "host"
 	RelationSystemNode   = "system"
 	RelationBusinessNode = "business"
 )
-
-var relationNodesPool = sync.Pool{
-	New: func() any {
-		return Nodes{}
-	},
-}
-
-func getRelationNodes() Nodes {
-	return relationNodesPool.Get().(Nodes)
-}
-
-func putRelationNodes(nodes Nodes) {
-	nodes = nodes[:0]
-	relationNodesPool.Put(nodes)
-}
 
 type Nodes []Node
 

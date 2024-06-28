@@ -10,6 +10,9 @@
 package cmdbcache
 
 import (
+	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,18 +25,15 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 
 	for name, c := range map[string]struct {
 		bkBizIDHosts []struct {
-			bkBizID int
-			hosts   []*AlarmHostInfo
+			hosts []*AlarmHostInfo
 		}
 		expected string
 	}{
 		"test build metrics with same bkbizID": {
 			bkBizIDHosts: []struct {
-				bkBizID int
-				hosts   []*AlarmHostInfo
+				hosts []*AlarmHostInfo
 			}{
 				{
-					bkBizID: 2,
 					hosts: []*AlarmHostInfo{
 						{
 							BkHostId:      1001,
@@ -56,18 +56,16 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 					},
 				},
 				{
-					bkBizID: 2,
 					hosts: []*AlarmHostInfo{
 						{
 							BkHostId:      1001,
 							BkBizId:       2,
-							BkHostInnerip: "127.0.0.1",
+							BkHostInnerip: "127.0.0.4",
 							BkCloudId:     3,
 						},
 					},
 				},
 				{
-					bkBizID: 3,
 					hosts: []*AlarmHostInfo{
 						{
 							BkHostId:      31001,
@@ -78,16 +76,16 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 					},
 				},
 			},
-			expected: `agent_with_system_relation{agent_id="1001",bk_cloud_id="3",bk_target_ip="127.0.0.1"} 1
-agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.0.1"} 1`,
+			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.4",host_id="1001"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001"} 1`,
 		},
 		"test build metrics with diff bkbizID": {
 			bkBizIDHosts: []struct {
-				bkBizID int
-				hosts   []*AlarmHostInfo
+				hosts []*AlarmHostInfo
 			}{
 				{
-					bkBizID: 2,
 					hosts: []*AlarmHostInfo{
 						{
 							BkHostId:      1001,
@@ -110,7 +108,6 @@ agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.
 					},
 				},
 				{
-					bkBizID: 3,
 					hosts: []*AlarmHostInfo{
 						{
 							BkHostId:      31001,
@@ -121,19 +118,20 @@ agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.
 					},
 				},
 			},
-			expected: `agent_with_system_relation{agent_id="1001",bk_cloud_id="3",bk_target_ip="127.0.0.1"} 1
-agent_with_system_relation{agent_id="1002",bk_cloud_id="3",bk_target_ip="127.0.0.2"} 1
-agent_with_system_relation{agent_id="1003",bk_cloud_id="3",bk_target_ip="127.0.0.3"} 1
-agent_with_system_relation{agent_id="31001",bk_cloud_id="3",bk_target_ip="127.1.0.1"} 1`,
+			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001"} 1`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			for _, bh := range c.bkBizIDHosts {
-				_ = GetRelationMetricsBuilder().BuildMetrics(bh.bkBizID, bh.hosts)
+				_ = GetRelationMetricsBuilder().BuildMetrics(context.Background(), bh.hosts)
 			}
 
-			metrics := GetRelationMetricsBuilder().SortString()
-			assert.Equal(t, c.expected, metrics)
+			metrics := strings.Split(strings.Trim(GetRelationMetricsBuilder().String(), "\n"), "\n")
+			sort.Strings(metrics)
+			assert.Equal(t, c.expected, strings.Join(metrics, "\n"))
 		})
 	}
 }
@@ -142,12 +140,11 @@ func TestBuildMetrics(t *testing.T) {
 	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
 
 	for name, c := range map[string]struct {
-		bkBizID  int
-		hosts    []*AlarmHostInfo
-		expected string
+		hosts      []*AlarmHostInfo
+		clearHosts []string
+		expected   string
 	}{
 		"test build metrics": {
-			bkBizID: 2,
 			hosts: []*AlarmHostInfo{
 				{
 					BkHostId:      1001,
@@ -230,23 +227,116 @@ func TestBuildMetrics(t *testing.T) {
 					},
 				},
 			},
-			expected: `agent_with_module_relation{agent_id="1001",module_id="2001"} 1
-agent_with_module_relation{agent_id="1001",module_id="2002"} 1
-agent_with_module_relation{agent_id="1002",module_id="2001"} 1
-agent_with_module_relation{agent_id="1003",module_id="2003"} 1
-agent_with_system_relation{agent_id="1001",bk_cloud_id="3",bk_target_ip="127.0.0.1"} 1
-agent_with_system_relation{agent_id="1002",bk_cloud_id="3",bk_target_ip="127.0.0.2"} 1
-agent_with_system_relation{agent_id="1003",bk_cloud_id="3",bk_target_ip="127.0.0.3"} 1
+			expected: `business_with_set_relation{biz_id="2",set_id="3001"} 1
 business_with_set_relation{biz_id="2",set_id="3001"} 1
 business_with_set_relation{biz_id="2",set_id="3002"} 1
+host_with_module_relation{host_id="1001",module_id="2002"} 1
+host_with_module_relation{host_id="1002",module_id="2001"} 1
+host_with_module_relation{host_id="1003",module_id="2003"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
 module_with_set_relation{module_id="2001",set_id="3001"} 1
 module_with_set_relation{module_id="2002",set_id="3002"} 1
 module_with_set_relation{module_id="2003",set_id="3001"} 1`,
 		},
+		"test build and clear metrics": {
+			hosts: []*AlarmHostInfo{
+				{
+					BkHostId:      1001,
+					BkBizId:       2,
+					BkHostInnerip: "127.0.0.1",
+					BkCloudId:     3,
+					TopoLinks: map[string][]map[string]interface{}{
+						"module|2001": {
+							{
+								"bk_obj_id":  "module",
+								"bk_inst_id": 2001,
+							},
+							{
+								"bk_obj_id":  "set",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
+							},
+						},
+						"module|2002": {
+							{
+								"bk_obj_id":  "module",
+								"bk_inst_id": 2002,
+							},
+							{
+								"bk_obj_id":  "set",
+								"bk_inst_id": 3002,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
+							},
+						},
+					},
+				},
+				{
+					BkHostId:      1002,
+					BkBizId:       2,
+					BkHostInnerip: "127.0.0.2",
+					BkCloudId:     3,
+					TopoLinks: map[string][]map[string]interface{}{
+						"module_2001": {
+							{
+								"bk_obj_id":  "module",
+								"bk_inst_id": 2001,
+							},
+							{
+								"bk_obj_id":  "set",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
+							},
+						},
+					},
+				},
+				{
+					BkHostId:      1003,
+					BkBizId:       2,
+					BkHostInnerip: "127.0.0.3",
+					BkCloudId:     3,
+					TopoLinks: map[string][]map[string]interface{}{
+						"module_2003": {
+							{
+								"bk_obj_id":  "module",
+								"bk_inst_id": 2003,
+							},
+							{
+								"bk_obj_id":  "set",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
+							},
+						},
+					},
+				},
+			},
+			clearHosts: []string{"1001", "1002"},
+			expected: `business_with_set_relation{biz_id="2",set_id="3001"} 1
+host_with_module_relation{host_id="1003",module_id="2003"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
+module_with_set_relation{module_id="2003",set_id="3001"} 1`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_ = GetRelationMetricsBuilder().BuildMetrics(c.bkBizID, c.hosts)
-			assert.Equal(t, c.expected, GetRelationMetricsBuilder().SortString())
+			_ = GetRelationMetricsBuilder().BuildMetrics(context.Background(), c.hosts)
+			GetRelationMetricsBuilder().ClearMetricsWithHostID(c.clearHosts...)
+
+			metrics := strings.Split(strings.Trim(GetRelationMetricsBuilder().String(), "\n"), "\n")
+			sort.Strings(metrics)
+			assert.Equal(t, c.expected, strings.Join(metrics, "\n"))
 		})
 
 	}

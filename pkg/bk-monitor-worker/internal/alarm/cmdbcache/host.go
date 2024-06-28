@@ -323,7 +323,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 
 	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
 	go func() {
-		err = GetRelationMetricsBuilder().BuildMetrics(bkBizId, hosts)
+		err = GetRelationMetricsBuilder().BuildMetrics(ctx, hosts)
 		if err != nil {
 			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
@@ -612,6 +612,8 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			}
 		}
 		if len(hostKeys) > 0 {
+			GetRelationMetricsBuilder().ClearMetricsWithHostID(hostKeys...)
+
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()
 			if err != nil {
 				logger.Errorf("hdel failed, key: %s, err: %v", m.GetCacheKey(hostCacheKey), err)

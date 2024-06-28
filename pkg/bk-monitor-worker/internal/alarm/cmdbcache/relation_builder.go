@@ -13,24 +13,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 	"sync"
-	"time"
 )
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
 	ctx         context.Context
 	metricsLock sync.RWMutex
-	metrics     map[int]map[string]struct{}
-
-	expiration time.Time
+	metrics     map[string]Nodes
 }
 
 var (
 	defaultRelationMetricsBuilder = &RelationMetricsBuilder{
-		metrics: make(map[int]map[string]struct{}),
+		metrics: make(map[string]Nodes),
 	}
 )
 
@@ -46,7 +41,7 @@ func (b *RelationMetricsBuilder) toString(v interface{}) string {
 	case string:
 		val = v.(string)
 	default:
-		val = fmt.Sprintf("%+v", v)
+		val = fmt.Sprintf("%v", v)
 	}
 	return val
 }
@@ -56,35 +51,31 @@ func (b *RelationMetricsBuilder) WithContext(ctx context.Context) {
 	b.ctx = ctx
 }
 
-// Renew 指标过期时间续期
-func (b *RelationMetricsBuilder) Renew() {
-	b.expiration = time.Now().Add(time.Minute * 10)
+// ClearAllMetrics 清理全部指标
+func (b *RelationMetricsBuilder) ClearAllMetrics() {
+	b.metrics = make(map[string]Nodes)
 }
 
-// CheckMetrics 检查指标是否正常提供服务
-func (b *RelationMetricsBuilder) CheckMetrics() {
-	if b.expiration.Unix() < time.Now().Unix() {
-		b.metricsLock.Lock()
-		b.metrics = map[int]map[string]struct{}{}
-		b.metricsLock.Unlock()
+// ClearMetricsWithHostID 清理 host 指标
+func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hostIDs ...string) {
+	b.metricsLock.Lock()
+	defer b.metricsLock.Unlock()
+
+	for _, hostID := range hostIDs {
+		if _, ok := b.metrics[hostID]; ok {
+			delete(b.metrics, hostID)
+		}
 	}
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
-func (b *RelationMetricsBuilder) BuildMetrics(bkBizID int, hosts []*AlarmHostInfo) error {
-	if len(hosts) == 0 {
-		b.metricsLock.Lock()
-		b.metrics[bkBizID] = nil
-		b.metricsLock.Unlock()
-		return nil
-	}
-
-	localMetrics := make(map[string]struct{})
+func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, hosts []*AlarmHostInfo) error {
 	for _, host := range hosts {
 		if host.BkHostId == 0 {
 			continue
 		}
 
+		hostID := b.toString(host.BkHostId)
 		if len(host.TopoLinks) == 0 {
 			// 如果没有 topo 数据，至少需要增加一条路径，用于存放 system、agent、business 等信息
 			host.TopoLinks = map[string][]map[string]interface{}{
@@ -93,7 +84,7 @@ func (b *RelationMetricsBuilder) BuildMetrics(bkBizID int, hosts []*AlarmHostInf
 		}
 
 		for _, topoLinks := range host.TopoLinks {
-			nodes := getRelationNodes()
+			nodes := make(Nodes, 0)
 
 			// 加入 system 节点
 			if host.BkHostInnerip != "" {
@@ -106,11 +97,11 @@ func (b *RelationMetricsBuilder) BuildMetrics(bkBizID int, hosts []*AlarmHostInf
 				})
 			}
 
-			// 加入 agent 节点,TODO: 讨论一下 ID 的问题
+			// 加入 host 节点
 			nodes = append(nodes, Node{
-				Name: RelationAgentNode,
+				Name: RelationHostNode,
 				Labels: map[string]string{
-					"agent_id": b.toString(host.BkHostId),
+					"host_id": hostID,
 				},
 			})
 
@@ -142,20 +133,11 @@ func (b *RelationMetricsBuilder) BuildMetrics(bkBizID int, hosts []*AlarmHostInf
 				})
 			}
 
-			// 转换成指标加载到内存
-			for _, rm := range nodes.toRelationMetrics() {
-				key := rm.String()
-				if _, ok := localMetrics[key]; !ok {
-					localMetrics[key] = struct{}{}
-				}
-			}
-
-			putRelationNodes(nodes)
+			b.metricsLock.Lock()
+			b.metrics[hostID] = nodes
+			b.metricsLock.Unlock()
 		}
 	}
-	b.metricsLock.Lock()
-	b.metrics[bkBizID] = localMetrics
-	b.metricsLock.Unlock()
 
 	return nil
 }
@@ -166,28 +148,11 @@ func (b *RelationMetricsBuilder) String() string {
 	b.metricsLock.RLock()
 	defer b.metricsLock.RUnlock()
 
-	for bkBizID, metrics := range b.metrics {
-		buf.WriteString(fmt.Sprintf("# bk_biz_id %d", bkBizID))
-		buf.WriteString("\n")
-		for metric := range metrics {
-			buf.WriteString(metric)
+	for _, nodes := range b.metrics {
+		for _, relationMetric := range nodes.toRelationMetrics() {
+			buf.WriteString(relationMetric.String())
 			buf.WriteString("\n")
 		}
 	}
 	return buf.String()
-}
-
-// SortString 以 string 格式排序之后获取所有指标数据
-func (b *RelationMetricsBuilder) SortString() string {
-	b.metricsLock.RLock()
-	defer b.metricsLock.RUnlock()
-
-	metricsArray := make([]string, 0)
-	for _, metrics := range b.metrics {
-		for metric := range metrics {
-			metricsArray = append(metricsArray, metric)
-		}
-	}
-	sort.Strings(metricsArray)
-	return strings.Join(metricsArray, "\n")
 }

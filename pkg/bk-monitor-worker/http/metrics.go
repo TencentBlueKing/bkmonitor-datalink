@@ -39,8 +39,6 @@ func NewProfHttpService() *gin.Engine {
 }
 
 func relationHandler(c *gin.Context) {
-	// 先进行清理过期的指标
-	cmdbcache.GetRelationMetricsBuilder().CheckMetrics()
 	relationMetrics := cmdbcache.GetRelationMetricsBuilder().String()
 
 	c.String(http.StatusOK, relationMetrics)

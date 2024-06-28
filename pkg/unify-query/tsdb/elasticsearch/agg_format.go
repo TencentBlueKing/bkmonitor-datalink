@@ -62,6 +62,7 @@ func (a *aggFormat) put() {
 func (a *aggFormat) addLabel(name, value string) {
 	value = strings.Trim(value, `"`)
 	name = a.toProm(name)
+
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {
 		newLb[k] = v

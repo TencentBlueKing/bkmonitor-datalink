@@ -21,6 +21,7 @@ import (
 const (
 	MatchTypeAuto   = "auto"
 	MatchTypeManual = "manual"
+	MatchTypeRegex  = "regex"
 )
 
 type Config struct {
@@ -47,7 +48,7 @@ func (c *Config) Setup() {
 		}
 	}
 
-	// manual 优先于 auto
+	// 优先级
 	sort.Slice(c.Rules, func(i, j int) bool {
 		return c.Rules[i].Type > c.Rules[j].Type
 	})
@@ -77,6 +78,7 @@ type MatchConfig struct {
 type MatchGroup struct {
 	Source      string `config:"source" mapstructure:"source"`
 	Destination string `config:"destination" mapstructure:"destination"`
+	ConstVal    string `config:"const_val" mapstructure:"const_val"`
 }
 
 type RuleParam struct {
@@ -111,11 +113,22 @@ func (r *Rule) ResourceValue() string {
 	return ""
 }
 
+func (r *Rule) MethodValue() string {
+	df, key := processor.DecodeDimensionFrom(r.MatchKey)
+	if df == processor.DimensionFromMethod {
+		return key
+	}
+	return ""
+}
+
 func (r *Rule) Match(val string) (map[string]string, bool, string) {
 	switch r.MatchType {
 	case MatchTypeManual:
 		mappings, matched := r.ManualMatched(val)
 		return mappings, matched, MatchTypeManual
+	case MatchTypeRegex:
+		mappings, matched := r.RegexMatched(val)
+		return mappings, matched, MatchTypeRegex
 	default:
 		mappings, matched := r.AutoMatched(val)
 		return mappings, matched, MatchTypeAuto
@@ -189,6 +202,31 @@ func (r *Rule) AutoMatched(val string) (map[string]string, bool) {
 	for k, v := range groups {
 		if mappingKey, ok := r.mappings[k]; ok {
 			m[mappingKey] = v
+		}
+	}
+	return m, true
+}
+
+func (r *Rule) RegexMatched(val string) (map[string]string, bool) {
+	if r.re == nil {
+		return nil, false
+	}
+
+	match := r.re.FindStringSubmatch(val)
+	regexGroups := make(map[string]string)
+	for i, name := range r.re.SubexpNames() {
+		if i != 0 && name != "" && len(match) > i {
+			regexGroups[name] = match[i]
+		}
+	}
+	m := make(map[string]string)
+	for _, group := range r.MatchGroups {
+		if group.ConstVal != "" {
+			m[group.Destination] = group.ConstVal
+			continue
+		}
+		if val, ok := regexGroups[group.Source]; ok {
+			m[group.Destination] = val
 		}
 	}
 	return m, true

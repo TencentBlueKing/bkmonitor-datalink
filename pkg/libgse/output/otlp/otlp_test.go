@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkcollector
+package otlp
 
 import (
 	"encoding/json"
@@ -65,7 +65,7 @@ func TestNewOutput(t *testing.T) {
 	result, err := NewOutput(testConfig)
 	_ = ln.Close()
 	assert.Equal(t, "123", result.bkDataToken)
-	assert.Equal(t, "bkcollector", result.String())
+	assert.Equal(t, "otlp", result.String())
 	assert.Equal(t, nil, err)
 }
 

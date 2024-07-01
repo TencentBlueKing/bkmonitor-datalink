@@ -49,11 +49,11 @@ processor:
                 value: "mando"
             host:
               value: "https://doc.weixin.qq.com"
-              operator: eq
+              operator: eq  
             path:
               value: "/api/v1/users"
               operator: nq
-  
+
         - service: "None"
           type: "http"
           match_type: "auto"
@@ -67,6 +67,18 @@ processor:
               destination: "span_name"
           rule:
             regex: "https://(?P<peer_service>[^/]+)/(?P<span_name>\\w+)/.+"
+
+        - service: "None"
+          type: "http"
+          match_type: "regex"
+          predicate_key: "span_name"
+          kind: "SPAN_KIND_SERVER"
+          match_key: "span_name"
+          match_groups:
+            - const_val: "GET:/benchmark/{uuid}"
+              destination: "span_name"
+          rule:
+            regex: "GET:/benchmark/(?P<uuid>[^/]+)"
 `
 	mainConf := processor.MustLoadConfigs(content)[0].Config
 
@@ -171,11 +183,30 @@ processor:
 			},
 			re: regexp.MustCompile(`https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+`),
 		},
+		{
+			Type:         "http",
+			Kind:         "SPAN_KIND_SERVER",
+			Service:      "None",
+			MatchType:    "regex",
+			MatchKey:     "span_name",
+			PredicateKey: "span_name",
+			MatchConfig: MatchConfig{
+				Regex: `GET:/benchmark/(?P<uuid>[^/]+)`,
+			},
+			MatchGroups: []MatchGroup{
+				{
+					ConstVal:    "GET:/benchmark/{uuid}",
+					Destination: "span_name",
+				},
+			},
+			re: regexp.MustCompile(`GET:/benchmark/(?P<uuid>[^/]+)`),
+		},
 	}
 
 	ch := NewConfigHandler(c)
 	assert.Equal(t, rules[0], ch.Get("SPAN_KIND_CLIENT")[0])
 	assert.Equal(t, rules[1], ch.Get("SPAN_KIND_CLIENT")[1])
+	assert.Equal(t, rules[2], ch.Get("SPAN_KIND_SERVER")[0])
 
 	assert.Equal(t, define.ProcessorServiceDiscover, factory.Name())
 	assert.False(t, factory.IsDerived())
@@ -335,5 +366,95 @@ processor:
 	data = record.Data.(ptrace.Traces)
 	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
 		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "doc.weixin.qq.com")
+	})
+}
+
+func TestTracesRegexMatched(t *testing.T) {
+	content := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "None"
+          type: "http"
+          match_type: "regex"
+          predicate_key: "attributes.http.method"
+          kind: "SPAN_KIND_SERVER"
+          match_key: "attributes.http.url"
+          match_groups:
+            - const_val: "GET:/benchmark/{uuid}"
+              destination: "span_name"
+            - source: "peer_service"
+              destination: "peer.service"
+          rule:
+            regex: http://(?P<peer_service>[^/]+)/benchmark/(?P<uuid>[^/]+)
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	traces := generator.NewTracesGenerator(define.TracesOptions{
+		GeneratorOptions: define.GeneratorOptions{
+			Attributes: map[string]string{
+				"http.method": "GET",
+				"http.url":    "http://example:19100/benchmark/015017af-85fb-4c45-9460-9e10f45b88a5",
+			},
+		},
+		SpanCount: 1,
+		SpanKind:  int(ptrace.SpanKindServer),
+	})
+	data := traces.Generate()
+
+	record := &define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err := factory.Process(record)
+	assert.NoError(t, err)
+
+	data = record.Data.(ptrace.Traces)
+	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "example:19100")
+		assert.Equal(t, "GET:/benchmark/{uuid}", span.Name())
+	})
+}
+
+func TestTracesRegexMatchedWithSpanName(t *testing.T) {
+	content := `
+processor:
+  - name: "service_discover/common"
+    config:
+      rules:
+        - service: "None"
+          type: "http"
+          match_type: "regex"
+          predicate_key: "span_name"
+          kind: "SPAN_KIND_CLIENT"
+          match_key: "span_name"
+          match_groups:
+            - source: "peer_service"
+              destination: "peer.service"
+          rule:
+            regex: (?P<peer_service>.+)
+`
+	factory := processor.MustCreateFactory(content, NewFactory)
+
+	traces := generator.NewTracesGenerator(define.TracesOptions{
+		GeneratorOptions: define.GeneratorOptions{
+			Attributes: map[string]string{},
+		},
+		SpanCount: 1,
+		SpanKind:  int(ptrace.SpanKindClient),
+	})
+	data := traces.Generate()
+
+	record := &define.Record{
+		RecordType: define.RecordTraces,
+		Data:       data,
+	}
+	_, err := factory.Process(record)
+	assert.NoError(t, err)
+
+	data = record.Data.(ptrace.Traces)
+	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", span.Name())
 	})
 }

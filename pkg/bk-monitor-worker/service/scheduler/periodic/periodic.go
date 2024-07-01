@@ -64,8 +64,9 @@ func getPeriodicTasks() map[string]PeriodicTask {
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/3 * * * *",
+			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
+			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
@@ -158,6 +159,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		PushAndPublishSpaceRouterInfo: {
 			Cron:    "*/30 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",

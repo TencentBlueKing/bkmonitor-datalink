@@ -504,12 +504,12 @@ loop:
 			for i := 0; i < task.StageCount(); i++ {
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				stage := task.StageAt(i)
-				logger.Debugf("process original stage: %s, recordType: %+v", stage, task.Record().RecordType)
+				logger.Debugf("process original stage: %s, recordType: %s", stage, rtype)
 				derivedRecord, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
 				if err == define.ErrSkipEmptyRecord {
 					token := task.Record().Token
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
-					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", task.Record().RecordType, stage, token, err)
+					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					goto loop
 				}
 				if err == define.ErrEndOfPipeline {
@@ -534,7 +534,7 @@ loop:
 
 			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
-			logger.Debugf("original handle record: %+v, token: %+v", task.Record().RecordType, token)
+			logger.Debugf("original handle recordType: %s, token: %+v", rtype, token)
 
 			// no processors
 			if task.StageCount() == 0 {
@@ -568,11 +568,11 @@ loop:
 				// 任务执行应该事务的 一旦中间某一环执行失败那就整体失败
 				// 无需再关注是否为 derived 类型
 				stage := task.StageAt(i)
-				logger.Debugf("process derived stage: %s, recordType: %+v", stage, task.Record().RecordType)
+				logger.Debugf("process derived stage: %s, recordType: %+v", stage, rtype)
 				_, err := c.pipelineMgr.GetProcessor(stage).Process(task.Record())
 				if err == define.ErrSkipEmptyRecord {
 					token := task.Record().Token
-					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", task.Record().RecordType, stage, token, err)
+					logger.Warnf("skip empty record '%s' at stage: %v, token: %+v, err: %v", rtype, stage, token, err)
 					DefaultMetricMonitor.IncSkippedCounter(task.PipelineName(), rtype, token.GetDataID(rtype), stage, token.Original)
 					goto loop
 				}
@@ -592,7 +592,7 @@ loop:
 
 			t0 := time.Now()
 			exporter.PublishRecord(task.Record())
-			logger.Debugf("derived handle record: %+v, token: %+v", task.Record().RecordType, token)
+			logger.Debugf("derived handle recordType: %s, token: %+v", rtype, token)
 
 			// no processors
 			if task.StageCount() == 0 {

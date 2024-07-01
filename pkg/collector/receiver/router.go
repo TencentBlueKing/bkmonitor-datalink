@@ -20,7 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-type Ready func()
+type Ready func(config ComponentConfig)
 
 var componentsReady = map[string]Ready{}
 
@@ -44,7 +44,7 @@ func RecvHttpRouter() *mux.Router {
 	return serviceMgr.httpRouter
 }
 
-// RecvHttpRoutes 返回已经注册的路由表
+// RecvHttpRoutes 返回 Receiver 注册的路由表
 func RecvHttpRoutes() []define.RouteInfo {
 	var routes []define.RouteInfo
 	for _, v := range serviceMgr.httpRoutes {

@@ -28,11 +28,16 @@ const (
 	UUID = "query_uuid"
 )
 
-// AggrMethod 聚合方法
-type AggrMethod struct {
+// Aggregate 聚合方法
+type Aggregate struct {
 	Name       string
 	Dimensions []string
 	Without    bool
+
+	Window   time.Duration
+	TimeZone string
+
+	Args []interface{}
 }
 
 // OffSetInfo Offset的信息存储，供promql查询转换为influxdb查询语句时使用
@@ -42,6 +47,8 @@ type OffSetInfo struct {
 	SOffSet int
 	SLimit  int
 }
+
+type Aggregates []Aggregate
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
@@ -76,7 +83,7 @@ type Query struct {
 	// 用于 promql 查询
 	IsHasOr bool // 标记是否有 or 条件
 
-	AggregateMethodList []AggrMethod // 聚合方法列表，从内到外排序
+	Aggregates Aggregates // 聚合方法列表，从内到外排序
 
 	Condition string // 过滤条件
 
@@ -92,7 +99,20 @@ type Query struct {
 	OffsetInfo OffSetInfo // limit等偏移量配置
 
 	SegmentedEnable bool // 是否开启分段查询
+
+	// Es 查询扩展
+	QueryString   string
+	DataSource    string
+	AllConditions AllConditions
+	Source        []string
+	From          int
+	Size          int
+	Orders        Orders
 }
+
+type Orders map[string]bool
+
+type AllConditions [][]ConditionField
 
 type QueryList []*Query
 
@@ -121,13 +141,15 @@ type TimeAggregation struct {
 	Function string
 	// Window 聚合周期
 	WindowDuration time.Duration
+
+	Without bool
 }
 
 type QueryClusterMetric struct {
-	MetricName          string
-	AggregateMethodList []AggrMethod       // 聚合方法列表，从内到外排序
-	Conditions          [][]ConditionField // 用户请求的完整过滤条件，来源 structured 定义
-	TimeAggregation     TimeAggregation
+	MetricName      string
+	Aggregates      Aggregates         // 聚合方法列表，从内到外排序
+	Conditions      [][]ConditionField // 用户请求的完整过滤条件，来源 structured 定义
+	TimeAggregation TimeAggregation
 }
 
 type QueryReference map[string]*QueryMetric
@@ -244,7 +266,7 @@ func (qRef QueryReference) CheckDruidCheck(ctx context.Context) bool {
 				}
 
 				if !druidCheckStatus {
-					for _, amList := range query.AggregateMethodList {
+					for _, amList := range query.Aggregates {
 						for _, amDimension := range amList.Dimensions {
 							if _, ok := druidDimsStatus[amDimension]; ok {
 								druidCheckStatus = true

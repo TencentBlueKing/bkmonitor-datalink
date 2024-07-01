@@ -238,6 +238,9 @@ var (
 	ESClusterMetricReportDataId      int
 	ESClusterMetricReportAccessToken string
 	ESClusterMetricReportBlackList   []int
+
+	// BigResourceTaskQueueName 占用大资源的队列名称
+	BigResourceTaskQueueName string
 )
 
 func initVariables() {
@@ -312,7 +315,7 @@ func initVariables() {
 	StorageMysqlDbName = GetValue("store.mysql.dbName", "")
 	StorageMysqlCharset = GetValue("store.mysql.charset", "utf8")
 	StorageMysqlMaxIdleConnections = GetValue("store.mysql.maxIdleConnections", 10)
-	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
+	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 120)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
 	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.esRetainInvalidAlias", false)
@@ -403,6 +406,8 @@ func initVariables() {
 	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
 	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
 	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
+
+	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
 var (

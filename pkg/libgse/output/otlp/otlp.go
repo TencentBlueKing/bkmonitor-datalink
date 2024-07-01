@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkcollector
+package otlp
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/publisher"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -36,10 +38,10 @@ type Output struct {
 }
 
 func init() {
-	outputs.RegisterType("bkcollector", MakeBkCollector)
+	outputs.RegisterType("otlp", MakeOutput)
 }
 
-func MakeBkCollector(_ outputs.IndexManager, beat beat.Info, observer outputs.Observer, cfg *common.Config) (outputs.Group, error) {
+func MakeOutput(_ outputs.IndexManager, _ beat.Info, _ outputs.Observer, cfg *common.Config) (outputs.Group, error) {
 	c := defaultConfig
 	err := cfg.Unpack(&c)
 	if err != nil {
@@ -68,7 +70,7 @@ func (c *Output) Publish(batch publisher.Batch) error {
 }
 
 func (c *Output) String() string {
-	return "bkcollector"
+	return "otlp"
 }
 
 func (c *Output) Close() error {
@@ -79,7 +81,6 @@ func NewExporter(GrpcHost string) (*otlptrace.Exporter, error) {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithInsecure(),
 		otlptracegrpc.WithEndpoint(GrpcHost),
-
 		otlptracegrpc.WithReconnectionPeriod(50 * time.Millisecond),
 	}
 	client := otlptracegrpc.NewClient(opts...)
@@ -102,10 +103,9 @@ func NewOutput(c Config) (*Output, error) {
 }
 
 func pushData(c *Output, snapshots []tracesdk.ReadOnlySpan) error {
-
 	err := c.exporter.ExportSpans(context.Background(), snapshots)
 	if err != nil {
-		logp.Err("push data err : %v", err)
+		logp.Err("push data err: %v", err)
 		return err
 	}
 	return nil

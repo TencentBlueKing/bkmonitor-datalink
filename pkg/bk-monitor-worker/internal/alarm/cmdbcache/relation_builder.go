@@ -33,7 +33,7 @@ func GetRelationMetricsBuilder() *RelationMetricsBuilder {
 	return defaultRelationMetricsBuilder
 }
 
-func (b *RelationMetricsBuilder) toString(v interface{}) string {
+func (b *RelationMetricsBuilder) toString(v any) string {
 	var val string
 	switch v.(type) {
 	case int:
@@ -82,7 +82,7 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 
 		if len(host.TopoLinks) == 0 {
 			// 如果没有 topo 数据，至少需要增加一条路径，用于存放 system、agent、business 等信息
-			host.TopoLinks = map[string][]map[string]interface{}{
+			host.TopoLinks = map[string][]map[string]any{
 				"": nil,
 			}
 		}

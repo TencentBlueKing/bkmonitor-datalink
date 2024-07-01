@@ -15,15 +15,15 @@ project:
   default_target_branch: "master"
   # 范围，根据项目的模块或者分工设定，可为空
   scopes:
-  - unifyquery
-  - transfer
-  - bkmonitorworker
-  - influxdbproxy
-  - influxdb
-  - metadata
-  - bkmontiorbeat
-  - collector
-  - operator
-  - sliwebhook
-  - apiserver
-  reviewers: []
+    - unifyquery
+    - bkmonitorworker
+    - bkmontiorbeat
+    - collector
+    - operator
+    - transfer
+    - apiserver
+    - metadata
+    - sliwebhook
+    - influxdbproxy
+    - influxdb
+  reviewers: [ ]

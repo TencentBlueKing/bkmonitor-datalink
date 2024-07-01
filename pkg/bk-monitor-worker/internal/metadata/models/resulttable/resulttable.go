@@ -20,20 +20,21 @@ import (
 // ResultTable result table model
 // gen:qs
 type ResultTable struct {
-	TableId        string    `gorm:"table_id;primary_key" json:"table_id"`
-	TableNameZh    string    `gorm:"table_name_zh;size:128" json:"table_name_zh"`
-	IsCustomTable  bool      `gorm:"is_custom_table" json:"is_custom_table"`
-	SchemaType     string    `gorm:"schema_type;size:64" json:"schema_type"`
-	DefaultStorage string    `gorm:"default_storage" json:"default_storage"`
-	Creator        string    `gorm:"creator;size:32" json:"creator"`
-	CreateTime     time.Time `gorm:"create_time;" json:"create_time"`
-	LastModifyUser string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
-	LastModifyTime time.Time `gorm:"last_modify_time" json:"last_modify_time"`
-	BkBizId        int       `gorm:"bk_biz_id" json:"bk_biz_id"`
-	IsDeleted      bool      `gorm:"is_deleted" json:"is_deleted"`
-	Label          string    `gorm:"label;size:128" json:"label"`
-	IsEnable       bool      `gorm:"is_enable" json:"is_enable"`
-	DataLabel      *string   `gorm:"data_label;size:128" json:"data_label"`
+	TableId            string    `gorm:"table_id;primary_key" json:"table_id"`
+	TableNameZh        string    `gorm:"table_name_zh;size:128" json:"table_name_zh"`
+	IsCustomTable      bool      `gorm:"is_custom_table" json:"is_custom_table"`
+	SchemaType         string    `gorm:"schema_type;size:64" json:"schema_type"`
+	DefaultStorage     string    `gorm:"default_storage" json:"default_storage"`
+	Creator            string    `gorm:"creator;size:32" json:"creator"`
+	CreateTime         time.Time `gorm:"create_time;" json:"create_time"`
+	LastModifyUser     string    `gorm:"last_modify_user;size:32" json:"last_modify_user"`
+	LastModifyTime     time.Time `gorm:"last_modify_time" json:"last_modify_time"`
+	BkBizId            int       `gorm:"bk_biz_id" json:"bk_biz_id"`
+	IsDeleted          bool      `gorm:"is_deleted" json:"is_deleted"`
+	Label              string    `gorm:"label;size:128" json:"label"`
+	IsEnable           bool      `gorm:"is_enable" json:"is_enable"`
+	DataLabel          *string   `gorm:"data_label;size:128" json:"data_label"`
+	StorageClusterType *string   `gorm:"storage_cluster_type;size:128" json:"storage_cluster_type"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

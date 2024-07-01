@@ -93,3 +93,14 @@ type UpdateDataFlowNodeParams struct {
 	DataFlowNodeParams
 	NodeId int `json:"node_id"`
 }
+
+type SyncBkBaseDataParams struct {
+	BkBizID  *int `json:"bk_biz_id"`
+	Page     *int `json:"page"`
+	PageSize *int `json:"page_size"`
+}
+
+type BkApiParams struct {
+	BkAppCode   string `json:"bk_app_code"`
+	BkAppSecret string `json:"bk_app_secret"`
+}

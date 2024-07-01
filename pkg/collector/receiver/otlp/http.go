@@ -123,7 +123,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	if err != nil {
 		metricMonitor.IncInternalErrorCounter(define.RequestHttp, rtype)
 		receiver.WriteResponse(w, define.ContentTypeJson, http.StatusInternalServerError, nil)
-		logger.Errorf("failed to read body content, ip=%v, error: %s", ip, err)
+		logger.Errorf("failed to read body content, rtype=%s, ip=%v, error: %s", rtype.S(), ip, err)
 		return
 	}
 	defer func() {
@@ -135,7 +135,7 @@ func (s HttpService) httpExport(w http.ResponseWriter, req *http.Request, rtype 
 	if err != nil {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, rtype)
 		writeError(w, rh, err, http.StatusBadRequest)
-		logger.Warnf("failed to unmarshal body, ip=%v, error: %s", ip, err)
+		logger.Warnf("failed to unmarshal body, rtype=%s, ip=%v, error: %s", rtype.S(), ip, err)
 		return
 	}
 

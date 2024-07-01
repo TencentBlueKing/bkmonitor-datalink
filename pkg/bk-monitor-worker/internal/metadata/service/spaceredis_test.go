@@ -431,7 +431,7 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	cache, err := memcache.GetMemCache()
 	cache.Wait()
 	assert.NoError(t, err)
-	dataList, ok := cache.Get(cachedClusterDataIdKey)
+	dataList, ok := cache.Get(CachedClusterDataIdKey)
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
@@ -529,4 +529,42 @@ func TestGetAllDataLabelTableId(t *testing.T) {
 	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
 
 	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+
+	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
+}
+
+func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	sr := "demo"
+	srObj := space.SpaceResource{SpaceTypeId: "bksaas", SpaceId: "demo", ResourceType: "bksaas", ResourceId: &sr, DimensionValues: `[{"cluster_id": "BCS-K8S-00000", "namespace": ["bkapp-demo-stage", "bkapp-demo-prod"], "cluster_type":"shared"}]`}
+	db.Delete(srObj)
+	assert.NoError(t, srObj.Create(db))
+
+	// 添加集群信息
+	clusterObj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
+	db.Delete(clusterObj)
+	assert.NoError(t, clusterObj.Create(db))
+
+	// 添加结果表
+	rtObj := resulttable.ResultTable{TableId: "demo.test", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj)
+	assert.NoError(t, rtObj.Create(db))
+	rtObj1 := resulttable.ResultTable{TableId: "demo.test1", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj1)
+	assert.NoError(t, rtObj1.Create(db))
+
+	// 添加数据源和结果表关系
+	dsRtObj := resulttable.DataSourceResultTable{BkDataId: 100001, TableId: "demo.test"}
+	db.Delete(dsRtObj, "table_id=?", dsRtObj.TableId)
+	assert.NoError(t, dsRtObj.Create(db))
+	dsRtObj1 := resulttable.DataSourceResultTable{BkDataId: 100002, TableId: "demo.test1"}
+	db.Delete(dsRtObj1, "table_id=?", dsRtObj1.TableId)
+	assert.NoError(t, dsRtObj1.Create(db))
+
+	spaceType, spaceId := "bksaas", "demo"
+	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(data))
 }

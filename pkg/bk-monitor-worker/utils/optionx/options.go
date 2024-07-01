@@ -92,6 +92,18 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 	return value, ok
 }
 
+func (o *Options) GetInterfaceSliceWithString(key string) ([]string, bool) {
+	value, ok := o.params[key].([]interface{})
+	if !ok {
+		return nil, false
+	}
+	var data []string
+	for _, val := range value {
+		data = append(data, val.(string))
+	}
+	return data, true
+}
+
 func (o *Options) GetStringMap(key string) (map[string]interface{}, bool) {
 	value, ok := o.params[key].(map[string]interface{})
 	return value, ok

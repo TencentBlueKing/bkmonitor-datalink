@@ -60,9 +60,9 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
+	value = strings.Trim(value, `"`)
 	name = a.toProm(name)
 
-	value = strings.Trim(value, `""`)
 	newLb := make(map[string]string)
 	for k, v := range a.item.labels {
 		newLb[k] = v
@@ -101,13 +101,8 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 				for _, bucket := range bucketRangeItems.Buckets {
 					// 每一个 name 都是一个新的层级，需要把 name 暂存在 a.timeSeries 里面
 					if value, ok := bucket.Aggregations["key"]; ok {
-						vs, err := value.MarshalJSON()
-						if err != nil {
-							return err
-						}
-
-						a.addLabel(info.Name, string(vs))
-						if err = a.ts(idx, bucket.Aggregations); err != nil {
+						a.addLabel(info.Name, string(value))
+						if err := a.ts(idx, bucket.Aggregations); err != nil {
 							return err
 						}
 					}

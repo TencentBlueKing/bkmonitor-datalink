@@ -146,6 +146,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
+	logger.Info("start push and publish space router task")
 	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息
 	var spaceList []space.Space
@@ -154,19 +155,19 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
-	gorotineCount := GetGoroutineLimit("push_and_publish_space_router_info")
+	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
 	var spaceUidList []string
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, gorotineCount)
+	ch := make(chan struct{}, goroutineCount)
 	wg.Add(len(spaceList))
 	// 处理空间路由数据
 	for _, sp := range spaceList {
 		// 组装空间 uid
 		spaceUidList = append(spaceUidList, sp.SpaceUid())
-		ch <- true
-		go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(sp space.Space, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -207,7 +208,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 推送结果表详情路由
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}
 

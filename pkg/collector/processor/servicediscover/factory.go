@@ -133,6 +133,30 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 
 				p.matcher.Match(span, mappings)
 				break loop
+			case processor.DimensionFromMethod:
+				// 1) 先判断是否有 predicateKey
+				if s := p.fetcher.FetchMethod(span, pk); s == "" {
+					continue
+				}
+				// 2）判断是否有 matchKey
+				mkey := rule.MethodValue()
+				if mkey == "" {
+					continue
+				}
+				// 3) 判断 matchValue 是否为空
+				val := p.fetcher.FetchMethod(span, mkey)
+				if val == "" {
+					continue
+				}
+
+				mappings, matched, matchType := rule.Match(val)
+				logger.Debugf("matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+				if !matched {
+					continue
+				}
+
+				p.matcher.Match(span, mappings)
+				break loop
 			}
 		}
 	})

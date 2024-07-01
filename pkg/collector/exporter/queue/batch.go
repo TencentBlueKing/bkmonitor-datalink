@@ -152,7 +152,7 @@ func (bq *BatchQueue) compact(dc DataIDChan) {
 		switch dc.rtype {
 		case define.RecordTraces, define.RecordLogs:
 			bq.out <- NewEventsMapStr(dc.dataID, data)
-		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite:
+		case define.RecordMetrics, define.RecordPushGateway, define.RecordRemoteWrite, define.RecordTars:
 			bq.out <- NewMetricsMapStr(dc.dataID, data)
 		case define.RecordProfiles:
 			bq.out <- NewProfilesMapStr(dc.dataID, data)

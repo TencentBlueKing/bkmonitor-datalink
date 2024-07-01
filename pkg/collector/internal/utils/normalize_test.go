@@ -34,6 +34,22 @@ func TestNormalize(t *testing.T) {
 			Input:  "foo.bar..",
 			Output: "foo_bar",
 		},
+		{
+			Input:  "TestApp.HelloGo.HelloGoObjAdapter.connectRate",
+			Output: "TestApp_HelloGo_HelloGoObjAdapter_connectRate",
+		},
+		{
+			Input:  "TestApp.HelloGo.exception_single_log_more_than_3M",
+			Output: "TestApp_HelloGo_exception_single_log_more_than_3M",
+		},
+		{
+			Input:  "TestApp.HelloGo.asyncqueue0",
+			Output: "TestApp_HelloGo_asyncqueue0",
+		},
+		{
+			Input:  "Exception-Log",
+			Output: "Exception_Log",
+		},
 	}
 
 	for _, c := range cases {

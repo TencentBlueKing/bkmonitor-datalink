@@ -27,6 +27,7 @@ type ComponentConfig struct {
 	Pyroscope   ComponentCommon `config:"pyroscope"`
 	Fta         ComponentCommon `config:"fta"`
 	Beat        ComponentCommon `config:"beat"`
+	Tars        ComponentCommon `config:"tars"`
 }
 
 type ComponentCommon struct {
@@ -37,6 +38,7 @@ type Config struct {
 	RecvServer  HttpServerConfig `config:"http_server"`
 	AdminServer HttpServerConfig `config:"admin_server"`
 	GrpcServer  GrpcServerConfig `config:"grpc_server"`
+	TarsServer  TarsServerConfig `config:"tars_server"`
 	Components  ComponentConfig  `config:"components"`
 }
 
@@ -52,6 +54,12 @@ type GrpcServerConfig struct {
 	Endpoint    string   `config:"endpoint"`
 	Middlewares []string `config:"middlewares"`
 	Transport   string   `config:"transport"`
+}
+
+type TarsServerConfig struct {
+	Enabled   bool   `config:"enabled"`
+	Endpoint  string `config:"endpoint"`
+	Transport string `config:"transport"`
 }
 
 type SkywalkingConfig struct {

@@ -177,6 +177,18 @@ bk-collector:
       middlewares:
         - "maxbytes"
 
+    # Tars Server Config
+    tars_server:
+      # 是否启动 Tars 服务
+      # default: false
+      enabled: false
+      # 传输协议，目前支持 tcp
+      # default: ""
+      transport: "tcp"
+      # 服务监听端点
+      # default: ""
+      endpoint: ":4319"
+
     components:
       jaeger:
         enabled: true
@@ -196,6 +208,8 @@ bk-collector:
         enabled: true
       beat:
         enabled: true
+      tars:
+        enabled: false
 
   processor:
     # ApdexCalculator: 健康度状态计算器
@@ -1808,6 +1822,12 @@ bk-collector:
       type: "beat"
       processors:
         - "token_checker/beat"
+        - "rate_limiter/token_bucket"
+
+    - name: "tars_pipeline/common"
+      type: "tars"
+      processors:
+        - "token_checker/aes256"
         - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================

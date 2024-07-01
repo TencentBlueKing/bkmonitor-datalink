@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/TarsCloud/TarsGo/tars/util/current"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"google.golang.org/grpc/peer"
 )
@@ -35,6 +36,13 @@ func ParseRequestIP(source string) string {
 func GetGrpcIpFromContext(ctx context.Context) string {
 	if p, ok := peer.FromContext(ctx); ok {
 		return ParseRequestIP(p.Addr.String())
+	}
+	return ""
+}
+
+func GetTarsIpFromContext(ctx context.Context) string {
+	if ip, ok := current.GetClientIPFromContext(ctx); ok {
+		return ip
 	}
 	return ""
 }

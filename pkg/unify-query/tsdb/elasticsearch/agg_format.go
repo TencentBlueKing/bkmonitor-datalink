@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -60,7 +61,6 @@ func (a *aggFormat) put() {
 }
 
 func (a *aggFormat) addLabel(name, value string) {
-	value = strings.Trim(value, `"`)
 	name = a.toProm(name)
 
 	newLb := make(map[string]string)
@@ -101,7 +101,12 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 				for _, bucket := range bucketRangeItems.Buckets {
 					// 每一个 name 都是一个新的层级，需要把 name 暂存在 a.timeSeries 里面
 					if value, ok := bucket.Aggregations["key"]; ok {
-						a.addLabel(info.Name, string(value))
+						dec := json.NewDecoder(strings.NewReader(string(value)))
+						var val string
+						if err := dec.Decode(&val); err != nil {
+							return err
+						}
+						a.addLabel(info.Name, val)
 						if err := a.ts(idx, bucket.Aggregations); err != nil {
 							return err
 						}

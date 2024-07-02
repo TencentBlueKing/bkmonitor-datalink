@@ -249,3 +249,18 @@ func (r *Instance) SAdd(key string, field ...interface{}) error {
 	}
 	return nil
 }
+
+// HKeys get all field of hash set
+func (r *Instance) HKeys(key string) ([]string, error) {
+	fields, err := r.Client.HKeys(r.ctx, key).Result()
+	if err != nil {
+		logger.Debugf("hkeys error, key: %s, err: %s", key, err)
+		return nil, err
+	}
+	return fields, nil
+}
+
+// HDel delete hash set
+func (r *Instance) HDel(key string, fields ...string) error {
+	return r.Client.HDel(r.ctx, key, fields...).Err()
+}

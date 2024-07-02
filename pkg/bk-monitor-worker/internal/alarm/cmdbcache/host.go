@@ -292,7 +292,7 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 	m.hostIpMapLock.Unlock()
 
 	wg := sync.WaitGroup{}
-	wg.Add(3)
+	wg.Add(4)
 
 	// 刷新topo缓存
 	go func() {
@@ -317,6 +317,15 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 		err := m.refreshHostAgentIDCache(ctx, bkBizId, hosts)
 		if err != nil {
 			logger.Error("refresh cmdb host agent id cache failed, err: %v", err)
+		}
+		wg.Done()
+	}()
+
+	// 处理完所有主机信息之后，根据 hosts 生成 relation 指标
+	go func() {
+		err = GetRelationMetricsBuilder().BuildMetrics(ctx, bkBizId, hosts)
+		if err != nil {
+			logger.Error("refresh relation metrics failed, err: %v", err)
 		}
 		wg.Done()
 	}()
@@ -603,6 +612,25 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 			}
 		}
 		if len(hostKeys) > 0 {
+			// 清理 relationMetrics 里的缓存数据
+			result := m.RedisClient.HMGet(ctx, m.GetCacheKey(hostCacheKey), hostKeys...)
+			clearNodes := make([]*AlarmHostInfo, 0)
+			for _, value := range result.Val() {
+				// 如果找不到对应的缓存，不需要更新
+				if value == nil {
+					continue
+				}
+
+				var host *AlarmHostInfo
+				err := json.Unmarshal([]byte(value.(string)), &host)
+				if err != nil {
+					continue
+				}
+				clearNodes = append(clearNodes, host)
+			}
+			GetRelationMetricsBuilder().ClearMetricsWithHostID(clearNodes...)
+
+			// 记录需要更新的业务ID
 			err := client.HDel(ctx, m.GetCacheKey(hostCacheKey), hostKeys...).Err()
 			if err != nil {
 				logger.Errorf("hdel failed, key: %s, err: %v", m.GetCacheKey(hostCacheKey), err)

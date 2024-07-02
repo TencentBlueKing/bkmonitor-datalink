@@ -289,6 +289,11 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 	}, nil
 }
 
+// Close 关闭操作
+func (h *CmdbEventHandler) Close() {
+	GetRelationMetricsBuilder().ClearAllMetrics()
+}
+
 // getBkEvents 获取全部资源变更事件
 func (h *CmdbEventHandler) getBkEvents(ctx context.Context, resourceType CmdbResourceType) ([]cmdb.ResourceWatchEvent, error) {
 	// 获取资源变更事件
@@ -528,6 +533,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
+					handler.Close()
 					return
 				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
 				}

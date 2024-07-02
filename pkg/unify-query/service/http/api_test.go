@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/infos"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
@@ -177,8 +178,10 @@ func TestQueryInfo(t *testing.T) {
 
 	for n, c := range tcs {
 		t.Run(n, func(t *testing.T) {
-			ctx, _ = context.WithCancel(ctx)
+			ctx = metadata.InitHashID(ctx)
 			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "skip")
+
+			log.Infof(ctx, "going")
 
 			_, err := queryInfo(ctx, c.key, c.params)
 			if c.err != nil {

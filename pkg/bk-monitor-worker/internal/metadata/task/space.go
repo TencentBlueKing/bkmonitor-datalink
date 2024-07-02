@@ -219,3 +219,19 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	logger.Infof("push and publish space router successfully")
 	return nil
 }
+
+// ClearDeprecatedRedisKey 清理过期的 redis key field
+// redis key:
+// - bkmonitorv3:spaces:space_to_result_table
+// - bkmonitorv3:spaces:data_label_to_result_table
+// - bkmonitorv3:spaces:result_table_detail
+func ClearDeprecatedRedisKey(ctx context.Context, t *t.Task) error {
+	logger.Info("start clear deprecated redis key field task")
+	// 清理对应的key
+	clearer := service.NewSpaceRedisClearer()
+	clearer.ClearSpaceToRt()
+	clearer.ClearDataLabelToRt()
+	clearer.ClearRtDetail()
+
+	return nil
+}

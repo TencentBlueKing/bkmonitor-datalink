@@ -551,7 +551,7 @@ func TestQueryTsWithEs(t *testing.T) {
 		t.Run(fmt.Sprintf("%s", i), func(t *testing.T) {
 			metadata.SetUser(ctx, "username:test", spaceUid, "true")
 
-			res, err := queryTs(ctx, c.queryTs)
+			res, err := queryTsWithPromEngine(ctx, c.queryTs)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 				return
@@ -883,7 +883,7 @@ func TestQueryReference(t *testing.T) {
 		t.Run(fmt.Sprintf("%s", i), func(t *testing.T) {
 			metadata.SetUser(ctx, "username:test", spaceUid, "true")
 
-			data, err := queryReference(ctx, c.queryTs)
+			data, err := queryReferenceWithPromEngine(ctx, c.queryTs)
 			if err != nil {
 				log.Errorf(ctx, err.Error())
 				return
@@ -1129,7 +1129,7 @@ func TestQueryTs(t *testing.T) {
 			err := json.Unmarshal(body, query)
 			assert.Nil(t, err)
 
-			res, err := queryTs(ctx, query)
+			res, err := queryTsWithPromEngine(ctx, query)
 			assert.Nil(t, err)
 			out, err := json.Marshal(res)
 			assert.Nil(t, err)
@@ -1242,7 +1242,7 @@ func TestVmQueryParams(t *testing.T) {
 			query.SpaceUid = c.spaceUid
 			assert.Nil(t, err)
 			if err == nil {
-				_, err = queryTs(ctx, query)
+				_, err = queryTsWithPromEngine(ctx, query)
 				if c.error != nil {
 					assert.Contains(t, err.Error(), c.error.Error())
 				} else {

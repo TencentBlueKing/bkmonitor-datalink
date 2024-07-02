@@ -317,7 +317,7 @@ type Query struct {
 	// QueryString es 专用关键字查询
 	QueryString string `json:"query_string"`
 
-	// IsReference 是否使用 PromQL 查询
+	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
 }
 

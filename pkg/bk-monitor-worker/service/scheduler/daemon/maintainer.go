@@ -216,7 +216,7 @@ func (r *RunMaintainer) listenRunningState(
 				define, _ := r.methodOperatorMapping[rB.TaskBinding.Kind]
 				go define.Start(rB.baseCtx, rB.errorReceiveChan, rB.SerializerTask.Payload)
 				logger.Infof(
-					"[RETRY] Task: %s retry performed.\nParams: \n-----\n%s\n-----\n",
+					"\n!!![RETRY]!!! Task: %s retry performed.\n-----\nParams: %s\n-----\n",
 					taskUniId, rB.SerializerTask.Payload,
 				)
 				if retryTicker != nil {

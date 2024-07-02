@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
@@ -257,7 +259,7 @@ func (p *Precalculate) launch(
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
 	go runInstance.startRecordSemaphoreAcquired()
-
+	go runInstance.watchConsulConfigUpdate(errorReceiveChan)
 	apmLogger.Infof("dataId: %s launch successfully", startInfo.DataId)
 }
 
@@ -340,9 +342,9 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.EsIndexName(saveEsConfig.IndexName),
 			),
 			storage.PrometheusWriterConfig(
-				storage.PrometheusWriterEnabled(config.PromRemoteWriteEnabled),
 				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+				storage.PrometheusWriterReportInterval(config.MetricsInMemDuration),
 			),
 		}, p.config.storageConfig...,
 		)...,
@@ -395,4 +397,26 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 			return
 		}
 	}
+}
+
+// watchConsulConfigUpdate if the config of dataId in consul is updated, will be reload daemon task.
+func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
+	ticker := time.NewTicker(10 * time.Minute)
+
+	for {
+		select {
+		case <-ticker.C:
+			isUpdated := core.GetMetadataCenter().CheckUpdate(p.startInfo.DataId)
+			if isUpdated {
+				apmLogger.Infof("[ConsulConfigWatcher] dataId: %s config updated, will be reload!", p.startInfo.DataId)
+				errorReceiveChan <- errors.New("reload for config update")
+				return
+			}
+		case <-p.ctx.Done():
+			apmLogger.Infof("[ConsulConfigWatcher] dataId: %s consul config update checker exit", p.startInfo.DataId)
+			ticker.Stop()
+			return
+		}
+	}
+
 }

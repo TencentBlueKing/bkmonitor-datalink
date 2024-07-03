@@ -22,7 +22,6 @@ import (
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
-	"github.com/prometheus/prometheus/tsdb/chunkenc"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -205,6 +204,7 @@ func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*Prom
 	seriesNum := 0
 	pointsNum := 0
 
+	i := 0
 	for seriesSet.Next() {
 		series := seriesSet.At()
 		lbs := series.Labels()
@@ -215,8 +215,7 @@ func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*Prom
 		}
 
 		var t = new(promql.Table)
-		t.Headers = []string{"_time", "_value"}
-		t.Types = []string{"float", "float"}
+		t.Name = fmt.Sprintf("%d", i)
 		t.GroupKeys = make([]string, 0, len(lbs))
 		t.GroupValues = make([]string, 0, len(lbs))
 		for _, lb := range lbs {
@@ -229,15 +228,6 @@ func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*Prom
 		}
 
 		seriesNum++
-
-		t.Data = make([][]interface{}, 0)
-		for it.Next() == chunkenc.ValFloat {
-			ts, val := it.At()
-			t.Data = append(t.Data, []interface{}{ts, val})
-
-			pointsNum++
-		}
-
 		tables.Add(t)
 	}
 

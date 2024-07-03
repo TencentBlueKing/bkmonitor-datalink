@@ -7,19 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package log
 
-const (
-	// PathPrefix is the prefix of all API paths
-	PathPrefix = "/api-server"
-	// LogLevelPath is the path of log level API
-	LogLevelPath = "/log-level"
-	// MetricPath is the path of metric API
-	MetricsPath = "/metrics"
-	// CollectPath is the path of collect API
-	CollectPrefixPath = "/v1/collect"
-	// PluginCollectPrefixPath is the path of plugin collector API
-	PluginCollectPrefixPath = "/plugin"
-	// PluginCollectWatchPath plugin collect watch
-	PluginCollectWatchPath = "/watch/:channel"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/response"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+// SetLogLevel 动态设置日志级别
+func SetLogLevel(c *gin.Context) {
+	logLevel := c.Query("level")
+	if logLevel == "" {
+		response.NewParamsErrorResponse(c, "level is required")
+		return
+	}
+	// NOTE: 管理员使用，忽略具体值的校验
+	logger.SetLoggerLevel(logLevel)
+	response.NewSuccessResponse(c, nil)
+}

@@ -7,19 +7,16 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package store
 
-const (
-	// PathPrefix is the prefix of all API paths
-	PathPrefix = "/api-server"
-	// LogLevelPath is the path of log level API
-	LogLevelPath = "/log-level"
-	// MetricPath is the path of metric API
-	MetricsPath = "/metrics"
-	// CollectPath is the path of collect API
-	CollectPrefixPath = "/v1/collect"
-	// PluginCollectPrefixPath is the path of plugin collector API
-	PluginCollectPrefixPath = "/plugin"
-	// PluginCollectWatchPath plugin collect watch
-	PluginCollectWatchPath = "/watch/:channel"
+import (
+	"time"
 )
+
+type Store interface {
+	Open() error                                         // 创建一个连接
+	Put(key, val string, expiration time.Duration) error // 写入数据
+	Get(key string) ([]byte, error)                      // 通过 key 获取数据
+	Delete(key string) error                             // 删除 key
+	Close() error                                        // 关闭连接
+}

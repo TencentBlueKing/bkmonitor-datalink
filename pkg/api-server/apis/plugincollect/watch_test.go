@@ -7,19 +7,31 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package plugincollect_test
 
-const (
-	// PathPrefix is the prefix of all API paths
-	PathPrefix = "/api-server"
-	// LogLevelPath is the path of log level API
-	LogLevelPath = "/log-level"
-	// MetricPath is the path of metric API
-	MetricsPath = "/metrics"
-	// CollectPath is the path of collect API
-	CollectPrefixPath = "/v1/collect"
-	// PluginCollectPrefixPath is the path of plugin collector API
-	PluginCollectPrefixPath = "/plugin"
-	// PluginCollectWatchPath plugin collect watch
-	PluginCollectWatchPath = "/watch/:channel"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/plugincollect"
 )
+
+func TestWatchNotFound(t *testing.T) {
+	r := gin.Default()
+
+	r.GET("/hello/:channel", plugincollect.Watch)
+
+	req, err := http.NewRequest("GET", "/hello", nil)
+	if err != nil {
+		t.Fatalf("Failed to create hello request: %v", err)
+	}
+	// 创建一个记录器
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}

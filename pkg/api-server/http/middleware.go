@@ -15,7 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/response"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/metrics"
 )
 
@@ -47,11 +47,12 @@ func ResponseMiddleware() gin.HandlerFunc {
 				c.JSON(http.StatusInternalServerError, nil)
 			}
 		}()
+
 		// 执行正常的请求处理逻辑
 		c.Next()
 
 		// 获取响应数据
-		responseData := c.Keys["response"].(*apis.ApiResponse)
+		responseData := c.Keys["response"].(*response.ApiResponse)
 		// 设置响应头
 		c.Header("Content-Type", "application/json; charset=utf-8")
 		// 发送响应

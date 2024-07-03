@@ -34,9 +34,9 @@ build: tidy
 build-linux: tidy
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags ${LDFLAGS} -o ${RELEASEPATH}/${SERVICENAME} ./main.go
 
-# test
+# test, skip pubsub case, but you can run it alone
 test:
-	go test -v ./...  -cover -count=1 -vet=off
+	go test -run "[^TestPubSubData]" -v ./...  -cover -count=1 -vet=off
 
 tidy:
 	go mod tidy

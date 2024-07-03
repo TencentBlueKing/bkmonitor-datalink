@@ -7,19 +7,32 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package watch
 
-const (
-	// PathPrefix is the prefix of all API paths
-	PathPrefix = "/api-server"
-	// LogLevelPath is the path of log level API
-	LogLevelPath = "/log-level"
-	// MetricPath is the path of metric API
-	MetricsPath = "/metrics"
-	// CollectPath is the path of collect API
-	CollectPrefixPath = "/v1/collect"
-	// PluginCollectPrefixPath is the path of plugin collector API
-	PluginCollectPrefixPath = "/plugin"
-	// PluginCollectWatchPath plugin collect watch
-	PluginCollectWatchPath = "/watch/:channel"
+import (
+	"sync"
+
+	redis "github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/store/redis"
+	goRedis "github.com/go-redis/redis/v8"
 )
+
+type Watcher struct {
+	redisClient *redis.Instance
+
+	wg sync.WaitGroup
+	mu sync.RWMutex
+
+	channelKey string // 监听的key
+}
+
+func NewWatcher(channelKey string) *Watcher {
+	return &Watcher{
+		channelKey:  channelKey,
+		redisClient: redis.GetInstance(),
+	}
+}
+
+// Watch 监听 channel 变化
+func (w *Watcher) Watch() *goRedis.PubSub {
+	return w.redisClient.Subscribe(w.channelKey)
+}

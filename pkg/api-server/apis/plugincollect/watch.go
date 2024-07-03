@@ -7,22 +7,35 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package apis
+package plugincollect
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/response"
+	redisWatch "github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/watch"
 )
 
-// SetLogLevel 动态设置日志级别
-func SetLogLevel(c *gin.Context) {
-	logLevel := c.Query("level")
-	if logLevel == "" {
-		NewParamsErrorResponse(c, "level is required")
-		return
+func Watch(c *gin.Context) {
+	channel := c.Param("channel")
+
+	watcher := redisWatch.NewWatcher(channel)
+	sub := watcher.Watch()
+	defer sub.Close()
+
+	for {
+		select {
+		case msg := <-sub.Channel():
+			c.String(http.StatusOK, "watch channel: %s\n", msg.Payload)
+			if w, ok := c.Writer.(http.Flusher); ok {
+				w.Flush()
+			} else {
+				return
+			}
+		case <-c.Request.Context().Done():
+			response.NewSuccessResponse(c, nil)
+		}
 	}
-	// NOTE: 管理员使用，忽略具体值的校验
-	logger.SetLoggerLevel(logLevel)
-	NewSuccessResponse(c, nil)
 }

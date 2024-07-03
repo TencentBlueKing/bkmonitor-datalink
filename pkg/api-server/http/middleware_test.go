@@ -17,7 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/response"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/utils/jsonx"
 )
 
@@ -27,7 +27,7 @@ func TestResponseMiddleware(t *testing.T) {
 	r.Use(ResponseMiddleware())
 	message := "Hello, World!"
 	r.GET("/hello", func(c *gin.Context) {
-		apis.NewResponse(c, 200, true, 0, message, nil)
+		response.NewResponse(c, 200, true, 0, message, nil)
 	})
 
 	req, err := http.NewRequest("GET", "/hello", nil)
@@ -40,7 +40,7 @@ func TestResponseMiddleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp apis.RespFields
+	var resp response.RespFields
 	jsonx.Unmarshal(w.Body.Bytes(), &resp)
 
 	assert.Equal(t, message, resp.Message)

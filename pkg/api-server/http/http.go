@@ -15,7 +15,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/apis/plugincollect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/api-server/metrics"
 )
@@ -32,6 +33,8 @@ func NewHTTPService() *gin.Engine {
 
 	// 注册路由
 	addApiRouter(router)
+	// 注册插件采集路由
+	addCollectRouter(router)
 
 	return svr
 }
@@ -41,7 +44,14 @@ func addApiRouter(router *gin.RouterGroup) {
 	// 查询指标
 	router.GET(MetricsPath, prometheusHandler())
 	// 动态设置日志级别
-	router.PUT(LogLevelPath, apis.SetLogLevel)
+	router.PUT(LogLevelPath, log.SetLogLevel)
+}
+
+// addCollectRouter add collect api router
+func addCollectRouter(router *gin.RouterGroup) {
+	router = router.Group(CollectPrefixPath).Group(PluginCollectPrefixPath)
+	// watch
+	router.GET(PluginCollectWatchPath, plugincollect.Watch)
 }
 
 // newProfHttpService new a pprof service

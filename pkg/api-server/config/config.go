@@ -11,6 +11,7 @@ package config
 
 import (
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
@@ -29,6 +30,23 @@ type HttpConfig struct {
 	Port int    `yaml:"port"`
 }
 
+type StoreConfig struct {
+	Redis RedisConfig `yaml:"redis"`
+}
+
+type RedisConfig struct {
+	Mode             string        `yaml:"mode"`
+	MasterName       string        `yaml:"master_name"`
+	Address          []string      `yaml:"address"`
+	SentinelPassword string        `yaml:"sentinel_password"`
+	Host             string        `yaml:"host"`
+	Port             int           `yaml:"port"`
+	Password         string        `yaml:"password"`
+	Database         int           `yaml:"database"`
+	DialTimeout      time.Duration `yaml:"dial_timeout"`
+	ReadTimeout      time.Duration `yaml:"read_timeout"`
+}
+
 // LogConfig log config
 type LogConfig struct {
 	EnableStdout bool   `yaml:"enable_stdout"`
@@ -41,8 +59,9 @@ type LogConfig struct {
 
 // ConfigInfo api server config
 type ConfigInfo struct {
-	Http HttpConfig `yaml:"http"`
-	Log  LogConfig  `yaml:"log"`
+	Http  HttpConfig  `yaml:"http"`
+	Log   LogConfig   `yaml:"log"`
+	Store StoreConfig `yaml:"store"`
 }
 
 var Config ConfigInfo

@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 )
 
 func TestSpacePusher_getMeasurementType(t *testing.T) {
@@ -567,4 +568,93 @@ func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
 	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(data))
+}
+
+func TestClearSpaceToRt(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	spaceType, spaceId1, spaceId2, spaceId3 := "bkcc", "1", "2", "3"
+	obj1 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId1, SpaceName: spaceId1}
+	obj2 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId2, SpaceName: spaceId2}
+	obj3 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId3, SpaceName: spaceId3}
+	db.Delete(obj1, "space_id=?", obj1.SpaceId)
+	db.Delete(obj2, "space_id=?", obj2.SpaceId)
+	db.Delete(obj3, "space_id=?", obj3.SpaceId)
+	assert.NoError(t, obj1.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "bkcc__1", "bkcc__2", "bkcc__4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearSpaceToRt()
+
+	assert.Equal(t, 2, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"bkcc__1", "bkcc__2"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestClearDataLabelToRt(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: false, IsEnable: true, DataLabel: &rtDl2}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "data_label1", "data_label2", "data_label4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearDataLabelToRt()
+
+	assert.Equal(t, 2, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"data_label1", "data_label2"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestClearRtDetail(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false, DataLabel: &rtDl2}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "demo.test1", "demo.test2", "demo.test4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearRtDetail()
+
+	assert.Equal(t, 1, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
 }

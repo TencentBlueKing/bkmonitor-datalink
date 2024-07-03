@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -461,7 +462,8 @@ func InitConfig() {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
-		logger.Fatalf("read config file: %s error: %s", FilePath, err)
+		pwd, _ := os.Getwd()
+		logger.Fatalf("read config file: %s in %s error: %s", FilePath, pwd, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)

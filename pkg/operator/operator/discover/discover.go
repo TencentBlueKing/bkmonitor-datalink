@@ -124,6 +124,7 @@ type BaseParams struct {
 	Client                  kubernetes.Interface
 	RelabelRule             string
 	RelabelIndex            string
+	NormalizeMetricName     bool
 	Name                    string
 	KubeConfig              string
 	Namespaces              []string
@@ -408,6 +409,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.TaskType = taskType
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
+	metricTarget.NormalizeMetricName = d.NormalizeMetricName
 
 	return metricTarget, nil
 }

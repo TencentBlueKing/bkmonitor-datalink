@@ -246,7 +246,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 
 			dataStr, err := json.Marshal(data)
 			if err != nil {
-				logging.Infof("fta alert data: %s", string(dataStr))
+				logging.Errorf("fta alert data: %s", string(dataStr))
 			}
 
 			// 获取匹配的配置

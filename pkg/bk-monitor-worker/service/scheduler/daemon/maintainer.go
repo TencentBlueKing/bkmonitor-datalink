@@ -229,15 +229,22 @@ func (r *RunMaintainer) listenRunningState(
 			logger.Infof("[RetryListen] receive root context done singal, stopped and return")
 			retryTicker.Stop()
 			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
-			rB := v.(*runningBinding)
-			rB.baseCtxCancel()
+			rB, ok := v.(*runningBinding)
+			if ok {
+				rB.baseCtxCancel()
+				rB.stateCheckerCancel()
+				logger.Warnf("[RetryListen] runningBinding still in mapping! canceled")
+			}
 			return
 		case <-lifeline.Done():
 			logger.Infof("[RetryListen] receive lifeline context done singal, stopped and return")
 			retryTicker.Stop()
 			v, _ := r.runningInstance.LoadAndDelete(taskUniId)
-			rB := v.(*runningBinding)
-			rB.baseCtxCancel()
+			rB, ok := v.(*runningBinding)
+			if ok {
+				rB.baseCtxCancel()
+				logger.Warnf("[RetryListen] runningBinding still in mapping! canceled")
+			}
 			return
 		}
 	}

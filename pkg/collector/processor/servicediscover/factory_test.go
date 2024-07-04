@@ -394,9 +394,24 @@ processor:
 	testCases := []struct {
 		name    string
 		httpUrl string
+		attrs   map[string]string
 	}{
-		{"MatchSuccess", "http://example:19100/benchmark/2024"},
-		{"MatchFailed", "http://example:19100/benchmark-1/2024"},
+		{
+			name:    "Success",
+			httpUrl: "http://example:19100/benchmark/2024",
+			attrs: map[string]string{
+				"http.route":   "GET:/benchmark/{uuid}",
+				"peer.service": "example:19100",
+			},
+		},
+		{
+			name:    "Failed",
+			httpUrl: "http://example:19100/benchmark-1/2024",
+			attrs: map[string]string{
+				"http.route":   "",
+				"peer.service": "",
+			},
+		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,19 +436,12 @@ processor:
 
 			data = record.Data.(ptrace.Traces)
 			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-				if tc.name == "MatchSuccess" {
-					testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "http.route", "GET:/benchmark/{uuid}")
-					testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "example:19100")
-				}
-				if tc.name == "MatchFailed" {
-					testkits.AssertAttrsNotFound(t, span.Attributes(), "http.route")
-					testkits.AssertAttrsNotFound(t, span.Attributes(), "peer.service")
+				for k, v := range tc.attrs {
+					testkits.AssertAttrsStringVal(t, span.Attributes(), k, v)
 				}
 			})
 		})
-
 	}
-
 }
 
 func TestTracesRegexMatchedWithSpanName(t *testing.T) {

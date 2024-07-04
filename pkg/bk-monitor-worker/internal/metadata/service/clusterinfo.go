@@ -39,7 +39,7 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 		Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
 		Username: k.Username,
 	}
-	if k.Username != "" && k.Password != "" {
+	if k.ClusterType == models.StorageTypeKafka && k.Username != "" && k.Password != "" {
 		auth.SaslMechanisms = common.KafkaSaslMechanism
 		auth.SecurityProtocol = common.KafkaSaslProtocol
 	}

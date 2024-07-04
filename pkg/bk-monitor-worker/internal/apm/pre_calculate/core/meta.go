@@ -30,6 +30,7 @@ type MetadataCenter struct {
 
 // ConsulInfo info of consul
 type ConsulInfo struct {
+	Token       string           `json:"token"`
 	BkBizId     int              `json:"bk_biz_id"`
 	BkBizName   any              `json:"bk_biz_name"`
 	AppId       int              `json:"app_id"`
@@ -139,6 +140,7 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 		bizName = apmInfo.BkBizName.(string)
 	}
 
+	info.Token = apmInfo.Token
 	info.BaseInfo = BaseInfo{
 		BkBizId:   strconv.Itoa(apmInfo.BkBizId),
 		BkBizName: bizName,

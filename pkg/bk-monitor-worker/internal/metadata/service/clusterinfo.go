@@ -16,6 +16,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
@@ -34,6 +35,14 @@ func NewClusterInfoSvc(obj *storage.ClusterInfo) ClusterInfoSvc {
 
 // ConsulConfig 获取集群的consul配置信息
 func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
+	auth := AuthInfo{
+		Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
+		Username: k.Username,
+	}
+	if k.ClusterType == models.StorageTypeKafka && k.Username != "" && k.Password != "" {
+		auth.SaslMechanisms = common.KafkaSaslMechanism
+		auth.SecurityProtocol = common.KafkaSaslProtocol
+	}
 	return ClusterInfoConsulConfig{
 		ClusterConfig: ClusterConfig{
 			DomainName:                   k.DomainName,
@@ -61,10 +70,7 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 			IsDefaultCluster:             k.IsDefaultCluster,
 		},
 		ClusterType: k.ClusterType,
-		AuthInfo: AuthInfo{
-			Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
-			Username: k.Username,
-		},
+		AuthInfo:    auth,
 	}
 }
 
@@ -103,8 +109,10 @@ type ClusterInfoConsulConfig struct {
 
 // AuthInfo 集群登陆信息
 type AuthInfo struct {
-	Password string `json:"password"`
-	Username string `json:"username"`
+	Password         string `json:"password"`
+	Username         string `json:"username"`
+	SaslMechanisms   string `json:"sasl_mechanisms,omitempty"`
+	SecurityProtocol string `json:"security_protocol,omitempty"`
 }
 
 // ClusterConfig 集群配置信息

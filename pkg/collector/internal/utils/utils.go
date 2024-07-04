@@ -13,6 +13,7 @@ import (
 	"context"
 	"math"
 	"net"
+	"os"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -60,4 +61,12 @@ func CalcSpanDuration(span ptrace.Span) float64 {
 		return 0 // 特殊处理 避免出现超大值
 	}
 	return float64(span.EndTimestamp() - span.StartTimestamp())
+}
+
+func PathExist(path string) bool {
+	_, err := os.Stat(path)
+	if err != nil && os.IsNotExist(err) {
+		return false
+	}
+	return true
 }

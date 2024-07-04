@@ -237,7 +237,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 	)
 
 	mock.SetRedisClient(ctx, "")
-	mock.SetSpaceTsDbMockData(ctx, "", "", ir.SpaceInfo{
+	mock.SetSpaceTsDbMockData(ctx, "demo", "vm-query", ir.SpaceInfo{
 		"vm-query": ir.Space{
 			"system.cpu_detail": &ir.SpaceResultTable{
 				TableId: "system.cpu_detail",
@@ -338,6 +338,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 		ok     bool
 		expand *md.VmExpand
 		ref    md.QueryReference
+		promql string
 	}{
 		"vm 查询开启 + 多 tableID 都开启单指标单表 = 查询 VM": {
 			source: "username:my_bro",
@@ -593,6 +594,192 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				},
 			},
 		},
+		"vm 聚合查询验证 - 1": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "count_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     true,
+			promql: `sum by (ip) (count_over_time(a[1m]))`,
+		},
+		"vm 聚合查询验证 - 2": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "increase",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     true,
+			promql: `sum by (ip) (increase(a[1m]))`,
+		},
+		"vm 聚合查询验证 - 3": {
+			source: "username:my_bro",
+			ts: &QueryTs{
+				SpaceUid: "vm-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip", "service"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									5,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     true,
+			promql: `topk(5, sum by (ip, service) (sum_over_time(a[1m])))`,
+		},
+		"非 vm 聚合查询验证 - 1": {
+			source: "username:other",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "count_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     false,
+			promql: `a`,
+		},
+		"非 vm 聚合查询验证 - 2": {
+			source: "username:other",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "increase",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     false,
+			promql: `sum by (ip) (increase(a[1m]))`,
+		},
+		"非 vm 聚合查询验证 - 3": {
+			source: "username:other",
+			ts: &QueryTs{
+				SpaceUid: "influxdb-query",
+				QueryList: []*Query{
+					{
+						TableID:       "system.cpu_detail",
+						FieldName:     "usage",
+						ReferenceName: "a",
+						TimeAggregation: TimeAggregation{
+							Function: "sum_over_time",
+							Window:   "1m",
+						},
+						AggregateMethodList: AggregateMethodList{
+							{
+								Method:     "sum",
+								Dimensions: []string{"ip"},
+							},
+							{
+								Method: "topk",
+								VArgsList: []interface{}{
+									1,
+								},
+							},
+						},
+					},
+				},
+				MetricMerge: "a",
+				Start:       "1718865258",
+				End:         "1718868858",
+				Step:        "1m",
+			},
+			ok:     false,
+			promql: `topk(1, a)`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var (
@@ -610,15 +797,30 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 				assert.Nil(t, err)
 				if err == nil {
 					assert.Equal(t, tc.ok, ok)
-					assert.Equal(t, tc.expand, vmExpand)
+
+					if tc.expand != nil {
+						assert.Equal(t, tc.expand, vmExpand)
+					}
+
+					if tc.promql != "" {
+						promExprOpt := &PromExprOption{
+							IgnoreTimeAggregationEnable: !ok,
+						}
+
+						promql, _ := tc.ts.ToPromExpr(ctx, promExprOpt)
+						assert.Equal(t, tc.promql, promql.String())
+					}
 				}
 
 				for refName, v := range ref {
 					for idx := range v.QueryList {
-						assert.Equal(t, tc.ref[refName].QueryList[idx].Measurement, v.QueryList[idx].Measurement)
-						assert.Equal(t, tc.ref[refName].QueryList[idx].Field, v.QueryList[idx].Field)
-						assert.Equal(t, tc.ref[refName].QueryList[idx].IsSingleMetric, v.QueryList[idx].IsSingleMetric)
-						assert.Equal(t, tc.ref[refName].QueryList[idx].VmCondition, v.QueryList[idx].VmCondition)
+						if tcRef, refOk := tc.ref[refName]; refOk {
+							assert.Equal(t, tcRef.QueryList[idx].Measurement, v.QueryList[idx].Measurement)
+							assert.Equal(t, tcRef.QueryList[idx].Field, v.QueryList[idx].Field)
+							assert.Equal(t, tcRef.QueryList[idx].IsSingleMetric, v.QueryList[idx].IsSingleMetric)
+							assert.Equal(t, tcRef.QueryList[idx].VmCondition, v.QueryList[idx].VmCondition)
+						}
+
 					}
 				}
 			}

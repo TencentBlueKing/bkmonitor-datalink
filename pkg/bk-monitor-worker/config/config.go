@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -238,6 +239,9 @@ var (
 	ESClusterMetricReportDataId      int
 	ESClusterMetricReportAccessToken string
 	ESClusterMetricReportBlackList   []int
+
+	// BigResourceTaskQueueName 占用大资源的队列名称
+	BigResourceTaskQueueName string
 )
 
 func initVariables() {
@@ -403,6 +407,8 @@ func initVariables() {
 	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
 	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
 	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
+
+	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
 var (
@@ -456,7 +462,8 @@ func InitConfig() {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
-		logger.Fatalf("read config file: %s error: %s", FilePath, err)
+		pwd, _ := os.Getwd()
+		logger.Fatalf("read config file: %s in %s error: %s", FilePath, pwd, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)

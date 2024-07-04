@@ -56,6 +56,7 @@ type MetricTarget struct {
 	Meta                   define.MonitorMeta
 	RelabelRule            string
 	RelabelIndex           string
+	NormalizeMetricName    bool
 	Address                string
 	NodeName               string
 	Scheme                 string
@@ -149,6 +150,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 		module = append(module, *remoteRelabel)
 	}
 	module = append(module, yaml.MapItem{Key: "disable_custom_timestamp", Value: t.DisableCustomTimestamp})
+	module = append(module, yaml.MapItem{Key: "normalize_metric_name", Value: t.NormalizeMetricName})
 
 	address := t.Address
 	if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {

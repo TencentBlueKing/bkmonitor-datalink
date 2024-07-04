@@ -38,7 +38,7 @@ func main() {
 
 	config, err := beat.InitWithPublishConfig(appName, version, pubConfig, settings)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to init beat config: %v", err)
+		fmt.Fprintf(os.Stderr, "failed to init beat config: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -48,12 +48,12 @@ func main() {
 		Time:    buildTime,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create new beat: %v", err)
+		fmt.Fprintf(os.Stderr, "failed to create new beat: %v\n", err)
 		os.Exit(1)
 	}
 
 	if err := collector.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start collector %v", err)
+		fmt.Fprintf(os.Stderr, "failed to start collector %v\n", err)
 		os.Exit(1)
 	}
 	defer utils.HandleCrash()
@@ -71,13 +71,13 @@ func main() {
 		case <-timer.C:
 			if conf := beat.GetConfig(); conf != nil {
 				if err := collector.Reload(confengine.New(conf)); err != nil {
-					fmt.Fprint(os.Stderr, "failed to reload controller")
+					fmt.Fprintln(os.Stderr, "failed to reload controller")
 				}
 			}
 
 		case <-beat.Done: // 结束信号
 			if err := collector.Stop(); err != nil {
-				fmt.Fprint(os.Stderr, "failed to stop controller")
+				fmt.Fprintln(os.Stderr, "failed to stop controller")
 			}
 			return
 		}

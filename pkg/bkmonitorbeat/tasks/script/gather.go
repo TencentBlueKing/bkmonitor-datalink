@@ -70,13 +70,22 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	out, err := ExecCmdLine(cmdCtx, fmtCommand, taskConf.UserEnvs)
 	if err != nil {
 		logger.Errorf("execCmd [%s] failed:%s, failed content:%s", fmtCommand, err.Error(), out)
-		e <- tasks.NewGatherUpEvent(g, define.BeatScriptRunOuterError)
+		if err == utils.ErrScriptTimeout {
+			e <- tasks.NewGatherUpEvent(g, define.BeatScriptTimeoutErr)
+		} else {
+			e <- tasks.NewGatherUpEvent(g, define.BeatScriptRunOuterError)
+		}
 		return
 	}
 	logger.Infof("task-take: %v", time.Since(t0))
 	logger.Debugf("run command line %s success", fmtCommand)
 
 	aggreRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
+	if formatErr == define.ErrNoScriptOutput {
+		e <- tasks.NewGatherUpEvent(g, define.BeatScriptNoOutputErr)
+		logger.Error(formatErr)
+		return
+	}
 
 	gConfig, ok := g.GlobalConfig.(*configs.Config)
 	if ok && gConfig.KeepOneDimension {

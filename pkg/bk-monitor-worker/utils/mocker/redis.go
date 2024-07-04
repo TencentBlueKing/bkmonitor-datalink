@@ -11,10 +11,13 @@ package mocker
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	goRedis "github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 )
 
 type RedisClientMocker struct {
@@ -22,6 +25,7 @@ type RedisClientMocker struct {
 	ZRangeByScoreWithScoresValue []goRedis.Z
 	HMGetValue                   []interface{}
 	SetMap                       map[string]mapset.Set[string]
+	HKeysValue                   []string
 	goRedis.UniversalClient
 }
 
@@ -90,4 +94,19 @@ func (r *RedisClientMocker) Publish(ctx context.Context, channel string, message
 
 func (r *RedisClientMocker) Close() error {
 	return nil
+}
+
+func (r *RedisClientMocker) HKeys(ctx context.Context, key string) *goRedis.StringSliceCmd {
+	c := goRedis.NewStringSliceCmd(ctx)
+	c.SetVal(r.HKeysValue)
+	return c
+}
+
+func (r *RedisClientMocker) HDel(ctx context.Context, key string, fields ...string) *goRedis.IntCmd {
+	c := goRedis.NewIntCmd(ctx)
+	fmt.Println(fields)
+	for _, key := range fields {
+		r.HKeysValue = slicex.RemoveItem(r.HKeysValue, key)
+	}
+	return c
 }

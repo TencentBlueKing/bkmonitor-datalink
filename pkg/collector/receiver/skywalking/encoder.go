@@ -131,7 +131,7 @@ func EncodeTraces(segment *agentv3.SegmentObject, token string, extraAttrs map[s
 }
 
 // swTransformIP 转化 serviceInstanceId 中的 ip 字段插入 attribute 中
-// serviceInstanceId 样例 70d59292f06b4245b50654f7bba0604e@10.10.25.163
+// serviceInstanceId 样例 70d59292f06b4245b50654f7bba0604e@127.0.0.1
 func swTransformIP(instanceId string, attrs pcommon.Map) {
 	s := strings.Split(instanceId, "@")
 	// 如果裁剪出则插入字段，否则不做任何操作

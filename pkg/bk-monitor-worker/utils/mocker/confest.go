@@ -29,6 +29,7 @@ func RedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
 		HMGetValue:                   []interface{}{},
 		SetMap:                       map[string]mapset.Set[string]{},
+		HKeysValue:                   []string{},
 	}
 	patch := gomonkey.ApplyFunc(redis.GetInstance, func() *redis.Instance {
 		return &redis.Instance{
@@ -43,6 +44,7 @@ func DependenceRedisMocker() (*RedisClientMocker, *gomonkey.Patches) {
 		ZRangeByScoreWithScoresValue: []goRedis.Z{},
 		HMGetValue:                   []interface{}{},
 		SetMap:                       map[string]mapset.Set[string]{},
+		HKeysValue:                   []string{},
 	}
 	patch := gomonkey.ApplyFunc(dependentredis.GetCacheRedisInstance, func() *dependentredis.Instance {
 		return &dependentredis.Instance{

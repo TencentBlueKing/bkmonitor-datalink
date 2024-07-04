@@ -32,7 +32,8 @@ test:
 build:
 	cd $(RELEASE_PATH) && ls -lh && rm -rf *
 	./control.sh package linux amd64 x86_64 $(VERSION) $(RELEASE_PATH)
-	cd $(RELEASE_PATH) && ls -lh && tar -zcvf bk-collector-$(VERSION).tgz --remove-files -C . *
+	cd $(RELEASE_PATH) && ls -lh && tar -zcvf bk-collector-$(VERSION).tgz --remove-files -C . * && cp bk-collector-$(VERSION).tgz bk-collector.tgz
+	./control.sh sidecar $(VERSION) $(RELEASE_PATH) && ls -lh $(RELEASE_PATH)
 
 .PHONY: mod
 mod:
@@ -47,11 +48,11 @@ bin:
 	-X main.version=$(VERSION) \
 	-X main.buildTime=$(shell date -u '+%Y-%m-%d_%I:%M:%S%p') \
 	-X main.gitHash=$(shell git rev-parse HEAD)" \
-	-o $(BIN) .
+	-o $(BIN) ./cmd/collector
 
 .PHONY: dev
 dev:
-	$(GO) run . -c ./example/example.yml
+	$(GO) run ./cmd/collector -c ./example/example.yml
 
 .PHONY: install
 install:

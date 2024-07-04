@@ -146,6 +146,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 
+	logger.Info("start push and publish space router task")
 	db := mysql.GetDBSession().DB
 	// 获取到所有的空间信息
 	var spaceList []space.Space
@@ -154,19 +155,19 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 		return err
 	}
 
-	gorotineCount := GetGoroutineLimit("push_and_publish_space_router_info")
+	goroutineCount := GetGoroutineLimit("push_and_publish_space_router_info")
 	pusher := service.NewSpacePusher()
 	// 存放结果表数据
 	var spaceUidList []string
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, gorotineCount)
+	ch := make(chan struct{}, goroutineCount)
 	wg.Add(len(spaceList))
 	// 处理空间路由数据
 	for _, sp := range spaceList {
 		// 组装空间 uid
 		spaceUidList = append(spaceUidList, sp.SpaceUid())
-		ch <- true
-		go func(sp space.Space, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(sp space.Space, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -207,7 +208,7 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 推送结果表详情路由
-	if err := pusher.PushTableIdDetail(tableIdList, true); err != nil {
+	if err := pusher.PushTableIdDetail(tableIdList, true, true); err != nil {
 		logger.Errorf("PushAndPublishSpaceRouterInfo task error, push table detail error: %s")
 	}
 
@@ -216,5 +217,21 @@ func PushAndPublishSpaceRouterInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	logger.Infof("push and publish space router successfully")
+	return nil
+}
+
+// ClearDeprecatedRedisKey 清理过期的 redis key field
+// redis key:
+// - bkmonitorv3:spaces:space_to_result_table
+// - bkmonitorv3:spaces:data_label_to_result_table
+// - bkmonitorv3:spaces:result_table_detail
+func ClearDeprecatedRedisKey(ctx context.Context, t *t.Task) error {
+	logger.Info("start clear deprecated redis key field task")
+	// 清理对应的key
+	clearer := service.NewSpaceRedisClearer()
+	clearer.ClearSpaceToRt()
+	clearer.ClearDataLabelToRt()
+	clearer.ClearRtDetail()
+
 	return nil
 }

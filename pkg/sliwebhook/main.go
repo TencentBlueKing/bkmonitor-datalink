@@ -39,7 +39,7 @@ func main() {
 
 	config, err := loadConfig(*path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load config: %+v\n", config)
+		fmt.Fprintf(os.Stderr, "load config failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("load config: %+v\n", config)

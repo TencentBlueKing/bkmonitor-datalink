@@ -124,6 +124,8 @@ worker:
 taskConfig:
   # common: 任务通用配置
   common:
+    queues:
+      bigResource: big-resource
     goroutineLimit:
       your_taskName: 10
     bkapi:

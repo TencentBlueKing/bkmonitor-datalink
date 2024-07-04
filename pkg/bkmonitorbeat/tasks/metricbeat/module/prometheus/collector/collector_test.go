@@ -31,14 +31,15 @@ func TestGetEventFromPromEvent(t *testing.T) {
 	}
 
 	mb := &MetricSet{
-		deltaKeys:        deltaKeys,
-		lastDeltaMetrics: lastDeltaMetrics,
+		deltaKeys:           deltaKeys,
+		lastDeltaMetrics:    lastDeltaMetrics,
+		normalizeMetricName: true,
 	}
 
 	lines1 := `
 metric1{label1="value1"} 10
 metric2{label1="value2"} 11
-metric3{label1="value3"} 12
+metric3:foo:bar{label1="value3"} 12
 `
 	ch := mb.getEventsFromReader(io.NopCloser(bytes.NewBufferString(lines1)), func() {}, true)
 	expected := []common.MapStr{
@@ -55,16 +56,16 @@ metric3{label1="value3"} 12
 			},
 		},
 		{
-			"key": "metric3",
+			"key": "metric3_foo_bar",
 			"labels": common.MapStr{
 				"label1": "value3",
 			},
 			"value": float64(12),
 		},
 		{
-			"key": "bkm_gather_up",
+			"key": "bkm_metricbeat_endpoint_up",
 			"labels": common.MapStr{
-				"bkm_up_code": "0",
+				"code": "0",
 			},
 			"value": float64(1),
 		},
@@ -109,9 +110,9 @@ metric4label1"value3"} 22
 			"value": float64(22),
 		},
 		{
-			"key": "bkm_gather_up",
+			"key": "bkm_metricbeat_endpoint_up",
 			"labels": common.MapStr{
-				"bkm_up_code": "2502",
+				"code": "2502",
 			},
 			"value": float64(1),
 		},
@@ -129,7 +130,6 @@ metric4label1"value3"} 22
 	failedMetric := newFailReader(define.BeatMetricBeatConnOuterError)
 	ch = mb.getEventsFromReader(failedMetric, func() {}, false)
 	for msg := range ch {
-		fmt.Printf("aaa: %v", msg)
+		fmt.Printf("msg: %v", msg)
 	}
-
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/etl"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	template "github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/template/etl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
@@ -241,6 +242,11 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 				data = etl.ContainerToMap(result.(etl.Container))
 			default:
 				return errors.Errorf("%s data type %T not supported", name, result)
+			}
+
+			dataStr, err := json.Marshal(data)
+			if err != nil {
+				logging.Errorf("fta alert data: %s", string(dataStr))
 			}
 
 			// 获取匹配的配置

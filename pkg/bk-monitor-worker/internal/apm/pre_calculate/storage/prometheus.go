@@ -221,6 +221,12 @@ func (m *MetricDimensionsHandler) Close() {
 
 func NewMetricDimensionHandler(ctx context.Context, dataId string, config PrometheusWriterOptions) *MetricDimensionsHandler {
 
+	token := core.GetMetadataCenter().GetToken(dataId)
+	logger.Infof(
+		"[MetricDimension] create metric dimension, prometheus host: %s , headers: %s , dataId(%s) -> token: %s",
+		config.url, config.headers, dataId, token,
+	)
+
 	h := &MetricDimensionsHandler{
 		ttl:        config.ttl,
 		promClient: newPrometheusWriterClient(dataId, core.GetMetadataCenter().GetToken(dataId), config.url, config.headers),

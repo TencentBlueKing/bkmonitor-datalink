@@ -477,7 +477,10 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 	}
 
 	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.traceEsQueryRate)), opts.traceEsQueryRate)
-	logger.Infof("create es query limiter, dataId: %s rate: %d", dataId, opts.traceEsQueryRate)
+	logger.Infof(
+		"[NewProcessor] es query limiter, dataId: %s rate: %d metricReport: %t",
+		dataId, opts.traceEsQueryRate, opts.metricReportEnabled,
+	)
 
 	return Processor{
 		dataId:              dataId,

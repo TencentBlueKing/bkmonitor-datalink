@@ -81,8 +81,8 @@ func TestBuildMetricsWithMultiBkBizID(t *testing.T) {
 					},
 				},
 			},
-			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.4",host_id="1001"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001"} 1`,
+			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.4",host_id="1001",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001",bk_biz_id="3"} 1`,
 		},
 		"test build metrics with diff bkbizID": {
 			bkBizIDHosts: []struct {
@@ -124,10 +124,10 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 					},
 				},
 			},
-			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001"} 1`,
+			expected: `host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="31001",bk_biz_id="3"} 1`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -213,6 +213,28 @@ func TestBuildMetrics(t *testing.T) {
 					},
 				},
 				{
+					BkHostId:      1004,
+					BkBizId:       2,
+					BkHostInnerip: "127.0.0.4",
+					BkCloudId:     3,
+					TopoLinks: map[string][]map[string]interface{}{
+						"module_2001": {
+							{
+								"bk_obj_id":  "module",
+								"bk_inst_id": 2001,
+							},
+							{
+								"bk_obj_id":  "set",
+								"bk_inst_id": 3001,
+							},
+							{
+								"bk_obj_id":  "biz",
+								"bk_inst_id": 2,
+							},
+						},
+					},
+				},
+				{
 					BkHostId:      1003,
 					BkBizId:       2,
 					BkHostInnerip: "127.0.0.3",
@@ -235,18 +257,19 @@ func TestBuildMetrics(t *testing.T) {
 					},
 				},
 			},
-			expected: `business_with_set_relation{biz_id="2",set_id="3001"} 1
-business_with_set_relation{biz_id="2",set_id="3001"} 1
-business_with_set_relation{biz_id="2",set_id="3002"} 1
-host_with_module_relation{host_id="1001",module_id="2002"} 1
-host_with_module_relation{host_id="1002",module_id="2001"} 1
-host_with_module_relation{host_id="1003",module_id="2003"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
-module_with_set_relation{module_id="2001",set_id="3001"} 1
-module_with_set_relation{module_id="2002",set_id="3002"} 1
-module_with_set_relation{module_id="2003",set_id="3001"} 1`,
+			expected: `business_with_set_relation{biz_id="2",set_id="3001",bk_biz_id="2"} 1
+business_with_set_relation{biz_id="2",set_id="3002",bk_biz_id="2"} 1
+host_with_module_relation{host_id="1001",module_id="2002",bk_biz_id="2"} 1
+host_with_module_relation{host_id="1002",module_id="2001",bk_biz_id="2"} 1
+host_with_module_relation{host_id="1003",module_id="2003",bk_biz_id="2"} 1
+host_with_module_relation{host_id="1004",module_id="2001",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.1",host_id="1001",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.2",host_id="1002",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.4",host_id="1004",bk_biz_id="2"} 1
+module_with_set_relation{module_id="2001",set_id="3001",bk_biz_id="2"} 1
+module_with_set_relation{module_id="2002",set_id="3002",bk_biz_id="2"} 1
+module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 		},
 		"test build and clear metrics": {
 			bkBizID: 2,
@@ -342,10 +365,10 @@ module_with_set_relation{module_id="2003",set_id="3001"} 1`,
 					BkHostId: 1002,
 				},
 			},
-			expected: `business_with_set_relation{biz_id="2",set_id="3001"} 1
-host_with_module_relation{host_id="1003",module_id="2003"} 1
-host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003"} 1
-module_with_set_relation{module_id="2003",set_id="3001"} 1`,
+			expected: `business_with_set_relation{biz_id="2",set_id="3001",bk_biz_id="2"} 1
+host_with_module_relation{host_id="1003",module_id="2003",bk_biz_id="2"} 1
+host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.0.0.3",host_id="1003",bk_biz_id="2"} 1
+module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -354,7 +377,9 @@ module_with_set_relation{module_id="2003",set_id="3001"} 1`,
 
 			metrics := strings.Split(strings.Trim(GetRelationMetricsBuilder().String(), "\n"), "\n")
 			sort.Strings(metrics)
-			assert.Equal(t, c.expected, strings.Join(metrics, "\n"))
+
+			actual := strings.Join(metrics, "\n")
+			assert.Equal(t, c.expected, actual)
 		})
 
 	}

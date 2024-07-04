@@ -154,13 +154,18 @@ func (b *RelationMetricsBuilder) String() string {
 	b.metricsLock.RLock()
 	defer b.metricsLock.RUnlock()
 
-	for _, nodeMap := range b.metrics {
+	metricsMap := make(map[string]struct{})
+	for bkBizID, nodeMap := range b.metrics {
 		for _, nodes := range nodeMap {
 			for _, relationMetric := range nodes.toRelationMetrics() {
-				buf.WriteString(relationMetric.String())
-				buf.WriteString("\n")
+				metricsMap[relationMetric.String(bkBizID)] = struct{}{}
 			}
 		}
+	}
+
+	for metric := range metricsMap {
+		buf.WriteString(metric)
+		buf.WriteString("\n")
 	}
 
 	return buf.String()

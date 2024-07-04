@@ -383,7 +383,7 @@ processor:
           match_key: "attributes.http.url"
           match_groups:
             - const_val: "GET:/benchmark/{uuid}"
-              destination: "span_name"
+              destination: "http.route"
             - source: "peer_service"
               destination: "peer.service"
           rule:
@@ -391,30 +391,49 @@ processor:
 `
 	factory := processor.MustCreateFactory(content, NewFactory)
 
-	traces := generator.NewTracesGenerator(define.TracesOptions{
-		GeneratorOptions: define.GeneratorOptions{
-			Attributes: map[string]string{
-				"http.method": "GET",
-				"http.url":    "http://example:19100/benchmark/015017af-85fb-4c45-9460-9e10f45b88a5",
-			},
-		},
-		SpanCount: 1,
-		SpanKind:  int(ptrace.SpanKindServer),
-	})
-	data := traces.Generate()
-
-	record := &define.Record{
-		RecordType: define.RecordTraces,
-		Data:       data,
+	testCases := []struct {
+		name    string
+		httpUrl string
+	}{
+		{"MatchSuccess", "http://example:19100/benchmark/2024"},
+		{"MatchFailed", "http://example:19100/benchmark-1/2024"},
 	}
-	_, err := factory.Process(record)
-	assert.NoError(t, err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			traces := generator.NewTracesGenerator(define.TracesOptions{
+				GeneratorOptions: define.GeneratorOptions{
+					Attributes: map[string]string{
+						"http.method": "GET",
+						"http.url":    tc.httpUrl,
+					},
+				},
+				SpanCount: 1,
+				SpanKind:  int(ptrace.SpanKindServer),
+			})
+			data := traces.Generate()
 
-	data = record.Data.(ptrace.Traces)
-	foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
-		testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "example:19100")
-		assert.Equal(t, "GET:/benchmark/{uuid}", span.Name())
-	})
+			record := &define.Record{
+				RecordType: define.RecordTraces,
+				Data:       data,
+			}
+			_, err := factory.Process(record)
+			assert.NoError(t, err)
+
+			data = record.Data.(ptrace.Traces)
+			foreach.Spans(data.ResourceSpans(), func(span ptrace.Span) {
+				if tc.name == "MatchSuccess" {
+					testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "http.route", "GET:/benchmark/{uuid}")
+					testkits.AssertAttrsFoundStringVal(t, span.Attributes(), "peer.service", "example:19100")
+				}
+				if tc.name == "MatchFailed" {
+					testkits.AssertAttrsNotFound(t, span.Attributes(), "http.route")
+					testkits.AssertAttrsNotFound(t, span.Attributes(), "peer.service")
+				}
+			})
+		})
+
+	}
+
 }
 
 func TestTracesRegexMatchedWithSpanName(t *testing.T) {

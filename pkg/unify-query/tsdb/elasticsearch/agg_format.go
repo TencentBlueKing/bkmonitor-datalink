@@ -104,7 +104,8 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 						dec := json.NewDecoder(strings.NewReader(string(value)))
 						var val string
 						if err := dec.Decode(&val); err != nil {
-							return err
+							// 兼容无需 json 转义的类型，直接转换为字符串
+							val = string(value)
 						}
 						a.addLabel(info.Name, val)
 						if err := a.ts(idx, bucket.Aggregations); err != nil {

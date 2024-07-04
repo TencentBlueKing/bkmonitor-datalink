@@ -9,7 +9,10 @@
 
 package cmdbcache
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+)
 
 type RelationLabel struct {
 	Name  string
@@ -21,10 +24,15 @@ type RelationMetric struct {
 	Labels []RelationLabel
 }
 
-func (m RelationMetric) String() string {
+func (m RelationMetric) String(bkBizID int) string {
 	var buf bytes.Buffer
 	buf.WriteString(m.Name)
 	buf.WriteString(`{`)
+
+	m.Labels = append(m.Labels, RelationLabel{
+		Name:  "bk_biz_id",
+		Value: fmt.Sprintf("%d", bkBizID),
+	})
 
 	var n int
 	for _, label := range m.Labels {

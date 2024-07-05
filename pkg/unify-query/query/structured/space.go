@@ -293,7 +293,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	}
 
 	if len(tsDBs) == 0 {
-		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s", opt.SpaceUid, opt.FieldName)
+		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s, isSkipField: %v", opt.TableID, opt.FieldName, opt.IsSkipField)
 		return nil, nil
 	}
 

@@ -203,7 +203,7 @@ func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerI
 
 func (s *SpaceFilter) GetSpaceRtInfo(tableID string) *routerInfluxdb.SpaceResultTable {
 	if s.space == nil {
-		return nil
+		return &routerInfluxdb.SpaceResultTable{}
 	}
 	v, _ := s.space[tableID]
 	return v
@@ -282,9 +282,6 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	for _, tID := range tableIDs {
 		spaceRt := s.GetSpaceRtInfo(tID)
-		if spaceRt == nil {
-			continue
-		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
 		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {

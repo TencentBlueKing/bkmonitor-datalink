@@ -245,7 +245,7 @@ func NewAlertFTAProcessor(ctx context.Context, name string) (*template.RecordPro
 			}
 
 			dataStr, err := json.Marshal(data)
-			if err != nil {
+			if err == nil {
 				logging.Errorf("fta alert data: %s", string(dataStr))
 			}
 

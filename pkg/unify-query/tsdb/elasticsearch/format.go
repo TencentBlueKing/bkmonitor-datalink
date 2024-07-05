@@ -289,11 +289,6 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 			}
 		}
 
-		// 移除空算的点
-		if tsLabels == nil && im.timestamp == 0 && im.value == 0 {
-			continue
-		}
-
 		if im.timestamp == 0 {
 			im.timestamp = f.start
 		}

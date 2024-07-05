@@ -160,6 +160,10 @@ func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*Prom
 			err = fmt.Errorf("tableID is empty")
 			return nil, err
 		}
+
+		if q.Limit == 0 {
+			q.Limit = TSQueryRawMAXLimit
+		}
 	}
 
 	// 判断如果 step 为空，则补充默认 step

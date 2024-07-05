@@ -70,3 +70,8 @@ const (
 	// 承载任务模块
 	WorkerModuleName = "worker"
 )
+
+const (
+	KafkaSaslProtocol  = "SASL_PLAINTEXT"
+	KafkaSaslMechanism = "SCRAM-SHA-512"
+)

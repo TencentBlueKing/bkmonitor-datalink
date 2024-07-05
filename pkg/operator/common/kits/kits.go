@@ -29,3 +29,7 @@ func CheckIfSystemResource(items map[string]string) bool {
 func CheckIfForwardLocalhost(items map[string]string) bool {
 	return stringToBool(items, "forwardLocalhost")
 }
+
+func CheckIfNormalizeMetricName(items map[string]string) bool {
+	return stringToBool(items, "normalizeMetricName")
+}

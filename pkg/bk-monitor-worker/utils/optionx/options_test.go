@@ -486,6 +486,40 @@ func TestOptions_GetStringSlice(t *testing.T) {
 	}
 }
 
+func TestOptions_GetInterfaceSliceWithString(t *testing.T) {
+	type fields struct {
+		params map[string]interface{}
+	}
+	type args struct {
+		key string
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		want   []string
+		want1  bool
+	}{
+		{name: "nil", fields: fields{params: map[string]interface{}{"a": nil}}, args: args{key: "a"}, want: nil, want1: false},
+		{name: "right", fields: fields{params: map[string]interface{}{"a": []interface{}{"1"}}}, args: args{key: "a"}, want: []string{"1"}, want1: true},
+		{name: "other", fields: fields{params: map[string]interface{}{"a": "true"}}, args: args{key: "a"}, want: nil, want1: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			o := Options{
+				params: tt.fields.params,
+			}
+			got, got1 := o.GetInterfaceSliceWithString(tt.args.key)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetStringSlice() got = %v, want %v", got, tt.want)
+			}
+			if got1 != tt.want1 {
+				t.Errorf("GetStringSlice() got1 = %v, want %v", got1, tt.want1)
+			}
+		})
+	}
+}
+
 func TestOptions_GetTime(t *testing.T) {
 	tm := time.Now()
 	type fields struct {

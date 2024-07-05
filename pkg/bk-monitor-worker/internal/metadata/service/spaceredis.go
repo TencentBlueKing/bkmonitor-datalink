@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
+	metadataMetrics "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/memcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
@@ -408,7 +409,7 @@ func (s SpacePusher) refineEsTableIds(tableIdList []string) ([]string, error) {
 
 // PushTableIdDetail 推送结果表的详细信息
 func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, useByPass bool) error {
-	logger.Infof("start to push table_id detail data, table_id_list")
+	logger.Infof("start to push table_id detail data")
 	tableIdDetail, err := s.getTableInfoForInfluxdbAndVm(tableIdList)
 	if err != nil {
 		return err
@@ -466,9 +467,15 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, use
 		var ok bool
 		// fields
 		detail["fields"], ok = tableIdFields[tableId]
+		metricNum := 0
 		if !ok {
 			detail["fields"] = []string{}
+		} else {
+			metricNum = len(tableIdFields[tableId])
 		}
+		// 添加结果表的指标数量
+		metadataMetrics.RtMetricNum(tableId, float64(metricNum))
+
 		// data_label
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {
@@ -601,7 +608,7 @@ type InfluxdbTableData struct {
 
 // 获取influxdb 和 vm的结果表
 func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[string]map[string]interface{}, error) {
-	logger.Infof("start to push table_id detail data, table_id_list [%v]", tableIdList)
+	logger.Debugf("start to push table_id detail data, table_id_list", tableIdList)
 	db := mysql.GetDBSession().DB
 
 	var influxdbStorageList []storage.InfluxdbStorage
@@ -660,7 +667,7 @@ func (s SpacePusher) getTableInfoForInfluxdbAndVm(tableIdList []string) (map[str
 	}
 	vmTableMap := make(map[string]map[string]interface{})
 	for _, record := range vmRecordList {
-		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId]}
+		vmTableMap[record.ResultTableId] = map[string]interface{}{"vm_rt": record.VmResultTableId, "storage_name": vmClusterIdNameMap[record.VmClusterId], "storage_id": record.VmClusterId}
 	}
 
 	// 获取proxy关联的集群信息
@@ -1140,7 +1147,8 @@ func (s SpacePusher) pushBksaasSpaceTableIds(spaceType, spaceId string, tableIdL
 		// 仅记录，不返回
 		logger.Errorf("pushBksaasSpaceTableIds error, compose bksaas space: [%s__%s] error: %s", spaceType, spaceId, err)
 	}
-	if values != nil {
+	logger.Infof("pushBksaasSpaceTableIds values: %v", values)
+	if values == nil {
 		values = make(map[string]map[string]interface{})
 	}
 	bksaasOtherValues, errOther := s.composeBksaasOtherTableIds(spaceType, spaceId, tableIdList)
@@ -1523,13 +1531,18 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 		resOptions := optionx.NewOptions(res)
 		clusterId, ok := resOptions.GetString("cluster_id")
 		if !ok {
-			return nil, errors.Errorf("parse space resource dimension values failed, %v", res)
+			logger.Errorf("parse space resource cluster values failed, %v", res)
+			continue
 		}
 		clusterType, ok := resOptions.GetString("cluster_type")
 		if !ok {
 			clusterType = models.BcsClusterTypeSingle
 		}
-		namespaceList, _ := resOptions.GetStringSlice("namespace")
+		namespaceList, ok := resOptions.GetInterfaceSliceWithString("namespace")
+		if !ok {
+			logger.Errorf("parse space resource dimension values failed, %v", res)
+			continue
+		}
 
 		if clusterType == models.BcsClusterTypeShared && len(namespaceList) != 0 {
 			var nsDataList []map[string]interface{}
@@ -1538,7 +1551,7 @@ func (s SpacePusher) composeBksaasSpaceClusterTableIds(spaceType, spaceId string
 			}
 			clusterInfoMap[clusterId] = nsDataList
 		} else if clusterType == models.BcsClusterTypeSingle {
-			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterInfoMap, "namespace": nil}}
+			clusterInfoMap[clusterId] = []map[string]interface{}{{"bcs_cluster_id": clusterId, "namespace": nil}}
 		}
 		clusterIdList = append(clusterIdList, clusterId)
 	}
@@ -1816,7 +1829,7 @@ func (s SpacePusher) composeBkciCrossTableIds(spaceType, spaceId string) (map[st
 	}
 	dataValues := make(map[string]map[string]interface{})
 	for _, rt := range rtList {
-		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": rt.TableId}}}
+		dataValues[rt.TableId] = map[string]interface{}{"filters": []map[string]interface{}{{"projectId": spaceId}}}
 	}
 
 	// 添加P4主机数据相关
@@ -1911,4 +1924,135 @@ func (s SpacePusher) composeAllTypeTableIds(spaceType, spaceId string) (map[stri
 	}
 
 	return dataValues, nil
+}
+
+// SpaceRedisClearer 清理空间路由缓存
+type SpaceRedisClearer struct {
+	redisClient *redis.Instance
+	dbClient    *gorm.DB
+}
+
+// NewSpaceRedisClearer 创建 SpaceRedisClearer 对象
+func NewSpaceRedisClearer() *SpaceRedisClearer {
+	return &SpaceRedisClearer{
+		redisClient: redis.GetStorageRedisInstance(),
+		dbClient:    mysql.GetDBSession().DB,
+	}
+}
+
+// ClearSpaceToRt 清理空间路由缓存
+func (s *SpaceRedisClearer) ClearSpaceToRt() {
+	logger.Info("start to clear space to rt router")
+	// 获取redis中所有的空间Uid
+	fields, err := s.redisClient.HKeys(cfg.SpaceToResultTableKey)
+	if err != nil {
+		logger.Errorf("clear space to rt router, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的空间
+	var spaceList []space.Space
+	if err := space.NewSpaceQuerySet(s.dbClient).Select(space.SpaceDBSchema.SpaceTypeId, space.SpaceDBSchema.SpaceId).All(&spaceList); err != nil {
+		logger.Errorf("clear space to rt router, get space list error, %s", err)
+		return
+	}
+	var spaceUidList []string
+	for _, spaceObj := range spaceList {
+		spaceUidList = append(spaceUidList, fmt.Sprintf("%s__%s", spaceObj.SpaceTypeId, spaceObj.SpaceId))
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	spaceUidSet := slicex.StringList2Set(spaceUidList)
+	diff := fieldSet.Difference(spaceUidSet)
+	// r如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("space to rt router, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteSpaceUidList := slicex.StringSet2List(diff)
+	logger.Info("start to delete space to rt router, space_uid_list: %v", needDeleteSpaceUidList)
+	if err := s.redisClient.HDel(cfg.SpaceToResultTableKey, needDeleteSpaceUidList...); err != nil {
+		logger.Errorf("clear space to rt router, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear space to rt router success")
+}
+
+// ClearDataLabelToRt 清理数据标签路由缓存
+func (s *SpaceRedisClearer) ClearDataLabelToRt() {
+	logger.Info("start to clear data label to rt router")
+	// 获取redis中对应的fields
+	fields, err := s.redisClient.HKeys(cfg.DataLabelToResultTableKey)
+	if err != nil {
+		logger.Errorf("clear data label to rt router, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的数据标签
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.DataLabel).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		logger.Errorf("clear data label to rt router, get data label list error, %s", err)
+		return
+	}
+	var datalabelList []string
+	for _, rt := range rtList {
+		datalabelList = append(datalabelList, *rt.DataLabel)
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	dataLabelSet := slicex.StringList2Set(datalabelList)
+	diff := fieldSet.Difference(dataLabelSet)
+	// 如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("data label to rt router, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteDataLabelList := slicex.StringSet2List(diff)
+	logger.Info("start to delete data label to rt router, data_label_list: %v", needDeleteDataLabelList)
+	if err := s.redisClient.HDel(cfg.DataLabelToResultTableKey, needDeleteDataLabelList...); err != nil {
+		logger.Errorf("clear data label to rt router, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear data label to rt router success")
+}
+
+// ClearRtDetail 清理结果表详情
+func (s *SpaceRedisClearer) ClearRtDetail() {
+	logger.Info("start to clear rt detail")
+	// 获取redis中所有的rt_id
+	fields, err := s.redisClient.HKeys(cfg.ResultTableDetailKey)
+	if err != nil {
+		logger.Errorf("clear rt detail, get redis key error, %s", err)
+		return
+	}
+	// 获取真实存在的rt_id
+	var rtList []resulttable.ResultTable
+	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.TableId).IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+		logger.Errorf("clear rt detail, get rt list error, %s", err)
+		return
+	}
+	var rtIdList []string
+	for _, rt := range rtList {
+		rtIdList = append(rtIdList, rt.TableId)
+	}
+	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
+	fieldSet := slicex.StringList2Set(fields)
+	rtIdSet := slicex.StringList2Set(rtIdList)
+	diff := fieldSet.Difference(rtIdSet)
+	// 如果长度相同，则直接返回
+	if diff.Cardinality() == 0 {
+		logger.Info("rt detail, redis key is equal db records")
+		return
+	}
+	// 批量删除
+	needDeleteRtIdList := slicex.StringSet2List(diff)
+	logger.Info("start to delete rt detail, rt_id_list: %v", needDeleteRtIdList)
+	if err := s.redisClient.HDel(cfg.ResultTableDetailKey, needDeleteRtIdList...); err != nil {
+		logger.Errorf("clear rt detail, delete redis key error, %s", err)
+		return
+	}
+
+	logger.Info("clear rt detail success")
 }

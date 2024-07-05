@@ -7,29 +7,45 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package http
+package cmdbcache
 
 import (
-	"github.com/gin-gonic/gin"
+	"bytes"
+	"fmt"
 )
 
-// NewHTTPService new a http service
-func NewHTTPService() *gin.Engine {
-	svr := NewProfHttpService()
-	addMetricMiddleware(svr)
+type RelationLabel struct {
+	Name  string
+	Value string
+}
 
-	// 路由配置
-	bmwRouter := svr.Group(RouterPrefix)
-	taskRouter := bmwRouter.Group(TaskRouterPrefix)
-	{
-		taskRouter.GET("", ListTask)
-		taskRouter.POST("", CreateTask)
-		taskRouter.DELETE("", RemoveTask)
-		taskRouter.DELETE(DeleteAllTaskPath, RemoveAllTask)
-		taskRouter.POST(DaemonTaskReloadPath, ReloadDaemonTask)
+type RelationMetric struct {
+	Name   string
+	Labels []RelationLabel
+}
+
+func (m RelationMetric) String(bkBizID int) string {
+	var buf bytes.Buffer
+	buf.WriteString(m.Name)
+	buf.WriteString(`{`)
+
+	m.Labels = append(m.Labels, RelationLabel{
+		Name:  "bk_biz_id",
+		Value: fmt.Sprintf("%d", bkBizID),
+	})
+
+	var n int
+	for _, label := range m.Labels {
+		if n > 0 {
+			buf.WriteString(`,`)
+		}
+		n++
+		buf.WriteString(label.Name)
+		buf.WriteString(`="`)
+		buf.WriteString(label.Value)
+		buf.WriteString(`"`)
 	}
-	// 动态设置日志级别
-	bmwRouter.POST(SetLogLevelPath, SetLogLevel)
 
-	return svr
+	buf.WriteString("} 1")
+	return buf.String()
 }

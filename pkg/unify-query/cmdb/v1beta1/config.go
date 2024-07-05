@@ -73,38 +73,58 @@ var configData = &Config{
 				"namespace",
 				"deamonset",
 			},
-		}, {
+		},
+		{
 			Name: "statefulset",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
 				"statefulset",
 			},
-		}, {
+		},
+		{
 			Name: "service",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
 				"service",
 			},
-		}, {
+		},
+		{
 			Name: "ingress",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"namespace",
 				"ingress",
 			},
-		}, {
-			Name: "address",
+		},
+		{
+			Name: "k8s_address",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"address",
 			},
-		}, {
+		},
+		{
 			Name: "domain",
 			Index: cmdb.Index{
 				"bcs_cluster_id",
 				"domain",
+			},
+		},
+		{
+			Name: "apm_service",
+			Index: cmdb.Index{
+				"apm_application_name",
+				"apm_service_name",
+				"apm_service_instance_name",
+			},
+		},
+		{
+			Name: "apm_service_instance",
+			Index: cmdb.Index{
+				"apm_application_name",
+				"apm_service_name",
 			},
 		},
 	},
@@ -161,12 +181,27 @@ var configData = &Config{
 		//},
 		{
 			Resources: []cmdb.Resource{
-				"address", "service",
+				"k8s_address", "service",
 			},
 		},
 		{
 			Resources: []cmdb.Resource{
 				"domain", "service",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"apm_service_instance", "k8s_address",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"apm_service_instance", "system",
+			},
+		},
+		{
+			Resources: []cmdb.Resource{
+				"apm_service", "apm_service_instance",
 			},
 		},
 	},

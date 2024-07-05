@@ -43,22 +43,15 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	}
 
 	var space routerInfluxdb.Space
-	// 判断是否跳过空间限制
-	if opt.IsSkipSpace {
-		tableID := string(opt.TableID)
-		space = map[string]*routerInfluxdb.SpaceResultTable{
-			tableID: {
-				TableId: tableID,
-			},
-		}
-	} else {
-		space = router.GetSpace(ctx, opt.SpaceUid)
-	}
+	space = router.GetSpace(ctx, opt.SpaceUid)
 
-	if space == nil {
-		msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
-		metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
-		log.Warnf(ctx, msg)
+	// 只有未跳过空间的时候进行异常判定
+	if !opt.IsSkipSpace {
+		if space == nil {
+			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
+			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
+			log.Warnf(ctx, msg)
+		}
 	}
 
 	return &SpaceFilter{
@@ -235,9 +228,11 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
 	tsDBs := make([]*query.TsDBV2, 0)
-	// 当空间为空时，无需进行下一步的检索
-	if s.space == nil {
-		return tsDBs, nil
+	// 当空间为空时，同时未跳过空间判断时，无需进行下一步的检索
+	if !opt.IsSkipSpace {
+		if s.space == nil {
+			return tsDBs, nil
+		}
 	}
 
 	// 判断 tableID 使用几段式

@@ -54,6 +54,7 @@ const (
 	TsDBPrintHandlePathConfigPath             = "http.path.tsdb_print"
 	FeatureFlagHandlePathConfigPath           = "http.path.feature_flag_path"
 	ESHandlePathConfigPath                    = "http.path.es"
+	TSQueryRawMAXLimitConfigPath              = "http.query.raw.max_limit"
 
 	CheckQueryTsConfigPath     = "http.path.check_query_ts"
 	CheckQueryPromQLConfigPath = "http.path.check_query_promql"
@@ -91,4 +92,6 @@ var (
 
 	ClusterMetricQueryPrefix  string
 	ClusterMetricQueryTimeout time.Duration
+
+	TSQueryRawMAXLimit int
 )

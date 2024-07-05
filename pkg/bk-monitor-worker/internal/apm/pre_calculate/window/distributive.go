@@ -356,7 +356,7 @@ loop:
 
 func (d *distributiveSubWindow) add(span StandardSpan) {
 	if err := d.sem.Acquire(d.ctx, 1); err != nil {
-		logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
+		d.logger.Errorf("DataId: %s subWindow[%d] acquire semphore failed, error: %s, skip span", d.dataId, d.id, err)
 		return
 	}
 

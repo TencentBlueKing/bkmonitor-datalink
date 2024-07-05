@@ -664,6 +664,11 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	for _, k := range lbl {
 		var value string
 		d := f.data[k]
+
+		if d == nil {
+			continue
+		}
+
 		switch d.(type) {
 		case string:
 			value = fmt.Sprintf("%s", d)

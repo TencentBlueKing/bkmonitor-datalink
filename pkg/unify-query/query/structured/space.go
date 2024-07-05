@@ -220,6 +220,14 @@ func (s *SpaceFilter) GetSpaceRtIDs() []string {
 }
 
 func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
+	var routerMessage string
+	defer func() {
+		if routerMessage != "" {
+			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
+		}
+		log.Warnf(s.ctx, routerMessage)
+	}()
+
 	if opt == nil {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
@@ -254,10 +262,20 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		if tIDs != nil {
 			tableIDs = tIDs
 		}
+
+		if len(tableIDs) == 0 {
+			routerMessage = fmt.Sprintf("data_label router is empty with data_label: %s", db)
+			return nil, nil
+		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
 		isK8s = true
 		tableIDs = s.GetSpaceRtIDs()
+
+		if len(tableIDs) == 0 {
+			routerMessage = fmt.Sprintf("space is empty with spaceUid: %s", opt.SpaceUid)
+			return nil, nil
+		}
 	}
 
 	isK8sFeatureFlag := metadata.GetIsK8sFeatureFlag(s.ctx)
@@ -275,16 +293,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	}
 
 	if len(tsDBs) == 0 {
-		msg := fmt.Sprintf(
-			"tableID router is not exists, in spaceID: %s, tableID: %s, field: %s, isSkipSpace: %v, isSkipField: %v",
-			s.spaceUid, opt.TableID, opt.FieldName, opt.IsSkipSpace, opt.IsSkipField,
-		)
-		// 当不存在前置异常，则需要在此处进行结论性记录
-		if metadata.GetStatus(s.ctx) == nil {
-			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
-		}
-		log.Warnf(s.ctx, msg)
+		routerMessage = fmt.Sprintf("tableID with field is empty with tableID: %s, field: %s", opt.SpaceUid, opt.FieldName)
+		return nil, nil
 	}
+
 	return tsDBs, nil
 }
 

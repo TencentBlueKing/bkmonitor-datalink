@@ -117,7 +117,6 @@ var configData = &Config{
 			Index: cmdb.Index{
 				"apm_application_name",
 				"apm_service_name",
-				"apm_service_instance_name",
 			},
 		},
 		{
@@ -125,6 +124,7 @@ var configData = &Config{
 			Index: cmdb.Index{
 				"apm_application_name",
 				"apm_service_name",
+				"apm_service_instance_name",
 			},
 		},
 	},

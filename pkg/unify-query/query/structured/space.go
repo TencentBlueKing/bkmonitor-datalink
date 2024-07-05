@@ -281,8 +281,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	if len(tsDBs) == 0 {
 		msg := fmt.Sprintf(
-			"spaceUid: %s and tableID: %s and fieldName: %s is not exists",
-			s.spaceUid, opt.TableID, opt.FieldName,
+			"tableID router is not exists, in spaceID: %s, tableID: %s, field: %s, isSkipSpace: %v, isSkipField: %v",
+			s.spaceUid, opt.TableID, opt.FieldName, opt.IsSkipSpace, opt.IsSkipField,
 		)
 		// 当不存在前置异常，则需要在此处进行结论性记录
 		if metadata.GetStatus(s.ctx) == nil {

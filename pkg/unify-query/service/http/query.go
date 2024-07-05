@@ -141,11 +141,15 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
 	var (
-		err error
+		err  error
+		resp = NewPromData(query.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-raw")
-	defer span.End(&err)
+	defer func() {
+		resp.Status = metadata.GetStatus(ctx)
+		span.End(&err)
+	}()
 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
@@ -234,24 +238,26 @@ func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*Prom
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
-	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
 	}
 
-	resp.Status = metadata.GetStatus(ctx)
 	return resp, err
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
 	var (
-		res any
-		err error
+		res  any
+		err  error
+		resp = NewPromData(query.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-reference")
-	defer span.End(&err)
+	defer func() {
+		resp.Status = metadata.GetStatus(ctx)
+		span.End(&err)
+	}()
 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
@@ -343,13 +349,11 @@ func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
-	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
 	}
 
-	resp.Status = metadata.GetStatus(ctx)
 	return resp, err
 }
 
@@ -367,10 +371,15 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		promQL parser.Expr
 
 		promExprOpt = &structured.PromExprOption{}
+
+		resp = NewPromData(query.ResultColumns)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "query-ts")
-	defer span.End(&err)
+	defer func() {
+		resp.Status = metadata.GetStatus(ctx)
+		span.End(&err)
+	}()
 
 	qStr, _ := json.Marshal(query)
 	span.Set("query-ts", string(qStr))
@@ -509,7 +518,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	span.Set("resp-series-num", seriesNum)
 	span.Set("resp-points-num", pointsNum)
 
-	resp := NewPromData(query.ResultColumns)
 	err = resp.Fill(tables)
 	if err != nil {
 		return nil, err
@@ -533,7 +541,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		}
 	}
 
-	resp.Status = metadata.GetStatus(ctx)
 	return resp, err
 }
 

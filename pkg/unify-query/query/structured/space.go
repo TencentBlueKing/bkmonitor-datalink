@@ -203,7 +203,9 @@ func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerI
 
 func (s *SpaceFilter) GetSpaceRtInfo(tableID string) *routerInfluxdb.SpaceResultTable {
 	if s.space == nil {
-		return &routerInfluxdb.SpaceResultTable{}
+		return &routerInfluxdb.SpaceResultTable{
+			Filters: make([]map[string]string, 0),
+		}
 	}
 	v, _ := s.space[tableID]
 	return v

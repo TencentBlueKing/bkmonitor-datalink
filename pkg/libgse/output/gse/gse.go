@@ -315,8 +315,10 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 
 	// add gseindex
 	var gseIndex uint64
+	var overwriteIndex bool
 	if ok, _ := data.HasKey("gseindex"); !ok {
-		gseIndex = getGseIndex(dataid)
+		gseIndex = GetGseIndex(dataid)
+		overwriteIndex = true
 	}
 
 	// add bizid, cloudid, ip
@@ -332,17 +334,21 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 		if _, ok := data["bk_biz_id"]; !ok {
 			data["bk_biz_id"] = info.BKBizID
 		}
+		if overwriteIndex {
+			data["gseindex"] = gseIndex
+		}
 		data["cloudid"] = info.Cloudid
 		data["ip"] = info.IP
 		data["hostname"] = info.Hostname
-		data["gseindex"] = gseIndex
 		data["bk_agent_id"] = info.BKAgentID
 		data["bk_host_id"] = info.HostID
 	} else {
 		data["_bizid_"] = info.Bizid
 		data["_cloudid_"] = info.Cloudid
 		data["_server_"] = info.IP
-		data["_gseindex_"] = gseIndex
+		if overwriteIndex {
+			data["_gseindex_"] = gseIndex
+		}
 		data["_agentid_"] = info.BKAgentID
 		data["_hostid_"] = info.HostID
 		data.Delete("time")
@@ -351,7 +357,7 @@ func (c *Output) AddEventAttachInfo(dataid int32, data common.MapStr) (common.Ma
 	return data, nil
 }
 
-func getGseIndex(dataid int32) uint64 {
+func GetGseIndex(dataid int32) uint64 {
 	index := uint64(0)
 	gseIndexKey := fmt.Sprintf("gseindex_%s", String(dataid))
 	if indexStr, err := storage.Get(gseIndexKey); nil == err {
@@ -444,6 +450,8 @@ func (c *Output) GetDataID(dataID interface{}) int32 {
 		return int32(reflect.ValueOf(dataID).Int())
 	case uint, uint8, uint16, uint32, uint64:
 		return int32(reflect.ValueOf(dataID).Uint())
+	case float64, float32:
+		return int32(reflect.ValueOf(dataID).Float())
 	case string:
 		dataid, err := strconv.ParseInt(dataID.(string), 10, 32)
 		if err != nil {

@@ -164,10 +164,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	}
 
 	// 写入查询缓存
-	metadata.SetQueryParams(ctx, &metadata.QueryParams{
-		Start: start.Unix(),
-		End:   end.Unix(),
-	})
+	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix())
 
 	// 判断是否查询 vm
 	ok, vmExpand, err := qr.CheckVmQuery(ctx)

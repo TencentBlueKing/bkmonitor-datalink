@@ -26,13 +26,13 @@ import (
 // Profile 命令行工具，用来解析导出的 Pprof 格式、Jfr 格式的 Profile 数据
 
 func main() {
-	dataFilePath := flag.String("data", "", "data file, e.g. cortex-dev-01__kafka-0__cpu__0.jfr.gz")
-	labelsFilePath := flag.String("labels", "", "labels file, e.g. dump1.labels.pb.gz")
+	dataFile := flag.String("data", "", "data file, e.g. cortex-dev-01__kafka-0__cpu__0.jfr.gz")
+	labelsFile := flag.String("labels", "", "labels file, e.g. dump1.labels.pb.gz")
 	inputFormat := flag.String("type", "", "input format, e.g. jfr")
 
 	flag.Parse()
 
-	if *dataFilePath == "" {
+	if *dataFile == "" {
 		panic("data file is required")
 	}
 	if *inputFormat == "" {
@@ -48,13 +48,13 @@ func main() {
 
 	switch *inputFormat {
 	case define.FormatJFR:
-		data, err := jfr.ReadGzipFile(*dataFilePath)
+		data, err := jfr.ReadGzipFile(*dataFile)
 		if err != nil {
-			panic(err)
+			log.Fatalf("read data file failed: %v", err)
 		}
-		labelsBytes, err := jfr.ReadGzipFile(*labelsFilePath)
+		labelsBytes, err := jfr.ReadGzipFile(*labelsFile)
 		if err != nil {
-			panic(err)
+			log.Fatalf("read labels file failed: %v", err)
 		}
 
 		translator := &jfr.Translator{}
@@ -64,14 +64,18 @@ func main() {
 				Data:     define.ProfileJfrFormatOrigin{Jfr: data, Labels: labelsBytes},
 			},
 		)
+		if err != nil {
+			log.Fatalf("translate failed, err: %v", err)
+		}
+
 		log.Printf("%d profiles converted.\n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
 
 	case define.FormatPprof:
-		data, err := os.ReadFile(*dataFilePath)
+		data, err := os.ReadFile(*dataFile)
 		if err != nil {
-			panic(err)
+			log.Fatalf("read data file failed: %v", err)
 		}
 
 		translator := &pproftranslator.DefaultTranslator{}
@@ -81,6 +85,10 @@ func main() {
 				Data:     define.ProfilePprofFormatOrigin(data),
 			},
 		)
+		if err != nil {
+			log.Fatalf("translate failed, err: %v", err)
+		}
+
 		log.Printf("%d profiles converted.\n", len(profiles.Profiles))
 		prettyPrintProfiles(profiles.Profiles)
 		writeProfilesToFile(profiles.Profiles)
@@ -106,7 +114,6 @@ func writeProfilesToFile(profiles []*profile.Profile) {
 		if err := p.WriteUncompressed(&protoBuf); err != nil {
 			panic(err)
 		}
-
 		data = append(data, protoBuf.Bytes()...)
 	}
 

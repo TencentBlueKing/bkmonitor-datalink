@@ -15,7 +15,7 @@ import (
 
 // SetExpand
 func SetExpand(ctx context.Context, expand *VmExpand) {
-	md.set(ctx, MessageKey, expand)
+	md.set(ctx, ExpandKey, expand)
 }
 
 // GetExpand
@@ -23,7 +23,7 @@ func GetExpand(ctx context.Context) *VmExpand {
 	var (
 		v *VmExpand
 	)
-	r, ok := md.get(ctx, MessageKey)
+	r, ok := md.get(ctx, ExpandKey)
 	if ok {
 		if v, ok = r.(*VmExpand); ok {
 			return v

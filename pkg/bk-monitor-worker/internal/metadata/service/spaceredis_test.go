@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/optionx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 )
 
 func TestSpacePusher_getMeasurementType(t *testing.T) {
@@ -82,6 +83,144 @@ func TestSpacePusher_refineTableIds(t *testing.T) {
 
 	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable, vmTableName})
 	assert.ElementsMatch(t, []string{itableName, itableName1, vmTableName}, ids)
+}
+
+func TestSpacePusher_refineEsTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+	itableName := "i_table_test.dbname"
+	iTable := storage.ESStorage{TableID: itableName, SourceType: models.EsSourceTypeLOG}
+	db.Delete(&iTable)
+	err := iTable.Create(db)
+	assert.NoError(t, err)
+
+	itableName1 := "i_table_test1.dbname1"
+	iTable1 := storage.ESStorage{TableID: itableName1, SourceType: models.EsSourceTypeBKDATA}
+	db.Delete(&iTable1)
+	err = iTable1.Create(db)
+	assert.NoError(t, err)
+
+	notExistTable := "not_exist_rt"
+
+	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable})
+	assert.ElementsMatch(t, []string{itableName, itableName1}, ids)
+}
+
+func TestDbfieldIsNull(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	var esStorage storage.ESStorage
+	storage.NewESStorageQuerySet(db).
+		Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet).
+		TableIDEq("system.net").One(&esStorage)
+
+	s := &SpacePusher{}
+	t.Run("TestDbfieldIsNull", func(t *testing.T) {
+		_, detailStr, _ := s.composeEsTableIdDetail("system.net", 3, "log", esStorage.IndexSet)
+		assert.Equal(t, `{"storage_id": 3,"db":"system_net_*_read","measurement": "__default__"}`, detailStr)
+	})
+}
+
+func TestSpacePusher_GetBizIdBySpace(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	obj := space.Space{Id: 1, SpaceTypeId: "bkcc", SpaceId: "2"}
+	obj2 := space.Space{Id: 5, SpaceTypeId: "bkci", SpaceId: "test"}
+	obj3 := space.Space{Id: 6, SpaceTypeId: "bksaas", SpaceId: "test2"}
+
+	db.Delete(obj)
+	db.Delete(obj2)
+	db.Delete(obj3)
+
+	assert.NoError(t, obj.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+
+	tests := []struct {
+		spaceType string
+		spaceId   string
+		want      int
+	}{
+		{spaceType: "bkcc", spaceId: "3", want: 0}, // 数据库无该记录
+		{spaceType: "bkcc", spaceId: "2", want: 2},
+		{spaceType: "bkci", spaceId: "test", want: -5},
+		{spaceType: "bksaas", spaceId: "test2", want: -6},
+	}
+
+	s := &SpacePusher{}
+	for _, tt := range tests {
+		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
+			bId, _ := s.GetBizIdBySpace(tt.spaceType, tt.spaceId)
+			assert.Equal(t, tt.want, bId)
+		})
+	}
+}
+
+func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
+	t.Run("TestSpacePusher_GetBizIdBySpace", TestSpacePusher_GetBizIdBySpace)
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	obj := resulttable.ResultTable{TableId: "apache.net", BkBizId: 2, DefaultStorage: models.StorageTypeES, IsDeleted: false, IsEnable: true}
+	obj2 := resulttable.ResultTable{TableId: "system.mem", BkBizId: -5, DefaultStorage: models.StorageTypeES, IsDeleted: false, IsEnable: true}
+	obj3 := resulttable.ResultTable{TableId: "system.net", BkBizId: 2, DefaultStorage: models.StorageTypeES, IsDeleted: false, IsEnable: true}
+	obj4 := resulttable.ResultTable{TableId: "system.io", BkBizId: -6, DefaultStorage: models.StorageTypeES, IsDeleted: false, IsEnable: true}
+
+	db.Delete(obj)
+	db.Delete(obj2)
+	db.Delete(obj3)
+	db.Delete(obj4)
+
+	assert.NoError(t, obj.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+	assert.NoError(t, obj4.Create(db))
+
+	tests := []struct {
+		spaceType string
+		spaceId   string
+		want      map[string]map[string]interface{}
+	}{
+		{spaceType: "bkcc", spaceId: "3", want: nil}, // 数据库无该记录
+		{spaceType: "bkcc", spaceId: "2", want: map[string]map[string]interface{}{"apache.net": {"filters": []interface{}{}}, // bizId=2
+			"system.net": {"filters": []interface{}{}}}},
+		{spaceType: "bkci", spaceId: "test", want: map[string]map[string]interface{}{"system.mem": {"filters": []interface{}{}}}},   // bizId=-5
+		{spaceType: "bksaas", spaceId: "test2", want: map[string]map[string]interface{}{"system.io": {"filters": []interface{}{}}}}, // bizId=-6
+	}
+
+	s := &SpacePusher{}
+	for _, tt := range tests {
+		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
+			datavalues, _ := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
+			assert.Equal(t, tt.want, datavalues)
+		})
+	}
+}
+
+func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
+	tests := []struct {
+		tableId          string
+		storageClusterId uint
+		sourceType       string
+		indexSet         string
+		want             string
+	}{
+		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index_1_*_read,index_2_*_read,index_3_*_read","measurement": "__default__"}`},
+		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "", want: `{"storage_id": 3,"db":"apache_net_*_read","measurement": "__default__"}`},
+		{tableId: "apache.net", storageClusterId: 3, sourceType: "bkdata", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1_*,index.2_*,index.3_*","measurement": "__default__"}`},
+		{tableId: "apache.net", storageClusterId: 3, sourceType: "es", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1,index.2,index.3","measurement": "__default__"}`},
+		{tableId: "apache.net", storageClusterId: 3, sourceType: "es1234", indexSet: "index.1,index.2,index.3", want: ""},
+	}
+
+	s := &SpacePusher{}
+	for _, tt := range tests {
+		t.Run(tt.tableId+tt.sourceType, func(t *testing.T) {
+			_, detailStr, _ := s.composeEsTableIdDetail(tt.tableId, tt.storageClusterId, tt.sourceType, tt.indexSet)
+			assert.Equal(t, tt.want, detailStr)
+		})
+	}
 }
 
 func TestSpacePusher_GetSpaceTableIdDataId(t *testing.T) {
@@ -293,13 +432,15 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	cache, err := memcache.GetMemCache()
 	cache.Wait()
 	assert.NoError(t, err)
-	dataList, ok := cache.Get(cachedClusterDataIdKey)
+	dataList, ok := cache.Get(CachedClusterDataIdKey)
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
 
 func TestComposeEsTableIdDetail(t *testing.T) {
 	defaultStorageClusterId := 1
+	sourceType := "es"
+	indexSet := "system"
 	tests := []struct {
 		name            string
 		tableId         string
@@ -310,13 +451,13 @@ func TestComposeEsTableIdDetail(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, uint(defaultStorageClusterId))
+			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, uint(defaultStorageClusterId), sourceType, indexSet)
 			assert.Equal(t, tt.expectedTableId, actualTableId)
 		})
 	}
 
 	// 检验 key
-	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", uint(defaultStorageClusterId))
+	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", uint(defaultStorageClusterId), sourceType, indexSet)
 	var detail map[string]any
 	err := jsonx.UnmarshalString(detailStr, &detail)
 	assert.NoError(t, err)
@@ -358,4 +499,162 @@ func TestGetDataLabelByTableId(t *testing.T) {
 			assert.Equal(t, tt.expectedList, actualList)
 		})
 	}
+}
+
+func TestGetAllDataLabelTableId(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	// not data_label
+	obj := resulttable.ResultTable{TableId: "not_data_label", IsEnable: true, DataLabel: nil}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+	// with data_label
+	dataLabel := "data_label_value"
+	obj = resulttable.ResultTable{TableId: "data_label", IsEnable: true, DataLabel: &dataLabel}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	dataLabel1 := "data_label_value1"
+	obj = resulttable.ResultTable{TableId: "data_label1", IsEnable: true, DataLabel: &dataLabel1}
+	db.Delete(obj)
+	assert.NoError(t, obj.Create(db))
+
+	data, err := NewSpacePusher().getAllDataLabelTableId()
+	assert.NoError(t, err)
+
+	dataLabelSet := mapset.NewSet[string]()
+	for dataLabel, _ := range data {
+		dataLabelSet.Add(dataLabel)
+	}
+	expectedSet := mapset.NewSet("data_label_value", "data_label_value1")
+
+	assert.True(t, expectedSet.IsSubset(dataLabelSet))
+
+	assert.Equal(t, []string{"data_label"}, data["data_label_value"])
+}
+
+func TestComposeBksaasSpaceClusterTableIds(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	sr := "demo"
+	srObj := space.SpaceResource{SpaceTypeId: "bksaas", SpaceId: "demo", ResourceType: "bksaas", ResourceId: &sr, DimensionValues: `[{"cluster_id": "BCS-K8S-00000", "namespace": ["bkapp-demo-stage", "bkapp-demo-prod"], "cluster_type":"shared"}]`}
+	db.Delete(srObj)
+	assert.NoError(t, srObj.Create(db))
+
+	// 添加集群信息
+	clusterObj := bcs.BCSClusterInfo{ClusterID: "BCS-K8S-00000", K8sMetricDataID: 100001, CustomMetricDataID: 100002}
+	db.Delete(clusterObj)
+	assert.NoError(t, clusterObj.Create(db))
+
+	// 添加结果表
+	rtObj := resulttable.ResultTable{TableId: "demo.test", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj)
+	assert.NoError(t, rtObj.Create(db))
+	rtObj1 := resulttable.ResultTable{TableId: "demo.test1", IsDeleted: false, IsEnable: true, DataLabel: nil}
+	db.Delete(rtObj1)
+	assert.NoError(t, rtObj1.Create(db))
+
+	// 添加数据源和结果表关系
+	dsRtObj := resulttable.DataSourceResultTable{BkDataId: 100001, TableId: "demo.test"}
+	db.Delete(dsRtObj, "table_id=?", dsRtObj.TableId)
+	assert.NoError(t, dsRtObj.Create(db))
+	dsRtObj1 := resulttable.DataSourceResultTable{BkDataId: 100002, TableId: "demo.test1"}
+	db.Delete(dsRtObj1, "table_id=?", dsRtObj1.TableId)
+	assert.NoError(t, dsRtObj1.Create(db))
+
+	spaceType, spaceId := "bksaas", "demo"
+	data, err := NewSpacePusher().composeBksaasSpaceClusterTableIds(spaceType, spaceId, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(data))
+}
+
+func TestClearSpaceToRt(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	spaceType, spaceId1, spaceId2, spaceId3 := "bkcc", "1", "2", "3"
+	obj1 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId1, SpaceName: spaceId1}
+	obj2 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId2, SpaceName: spaceId2}
+	obj3 := space.Space{SpaceTypeId: spaceType, SpaceId: spaceId3, SpaceName: spaceId3}
+	db.Delete(obj1, "space_id=?", obj1.SpaceId)
+	db.Delete(obj2, "space_id=?", obj2.SpaceId)
+	db.Delete(obj3, "space_id=?", obj3.SpaceId)
+	assert.NoError(t, obj1.Create(db))
+	assert.NoError(t, obj2.Create(db))
+	assert.NoError(t, obj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "bkcc__1", "bkcc__2", "bkcc__4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearSpaceToRt()
+
+	assert.Equal(t, 2, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"bkcc__1", "bkcc__2"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestClearDataLabelToRt(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: false, IsEnable: true, DataLabel: &rtDl2}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "data_label1", "data_label2", "data_label4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearDataLabelToRt()
+
+	assert.Equal(t, 2, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"data_label1", "data_label2"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestClearRtDetail(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 添加space资源
+	db := mysql.GetDBSession().DB
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtDl1, rtDl2, rtDl3 := "data_label1", "data_label2", "data_label3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true, DataLabel: &rtDl1}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false, DataLabel: &rtDl2}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true, DataLabel: &rtDl3}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+
+	// 初始化redis中数据
+	redisClient, redisPatch := mocker.RedisMocker()
+	defer redisPatch.Reset()
+
+	redisClient.HKeysValue = append(redisClient.HKeysValue, "demo.test1", "demo.test2", "demo.test4")
+
+	// 清理数据
+	clearer := NewSpaceRedisClearer()
+	clearer.ClearRtDetail()
+
+	assert.Equal(t, 1, len(redisClient.HKeysValue))
+	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
 }

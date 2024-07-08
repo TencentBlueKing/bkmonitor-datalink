@@ -47,6 +47,9 @@ type Object struct {
 	// Pod 属性
 	NodeName string
 	Labels   map[string]string
+
+	// Containers
+	Containers []string
 }
 
 // ObjectID 代表 workload 对象标识
@@ -349,14 +352,16 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				logger.Errorf("excepted Pod type, got %T", obj)
 				return
 			}
+
 			objs.Set(Object{
 				ID: ObjectID{
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs: toRefs(pod.OwnerReferences),
-				NodeName:  pod.Spec.NodeName,
-				Labels:    pod.Labels,
+				OwnerRefs:  toRefs(pod.OwnerReferences),
+				NodeName:   pod.Spec.NodeName,
+				Labels:     pod.Labels,
+				Containers: toContainers(pod.Spec.Containers),
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -370,9 +375,10 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs: toRefs(pod.OwnerReferences),
-				NodeName:  pod.Spec.NodeName,
-				Labels:    pod.Labels,
+				OwnerRefs:  toRefs(pod.OwnerReferences),
+				NodeName:   pod.Spec.NodeName,
+				Labels:     pod.Labels,
+				Containers: toContainers(pod.Spec.Containers),
 			})
 		},
 		DeleteFunc: func(obj interface{}) {
@@ -1119,4 +1125,12 @@ func toRefs(refs []metav1.OwnerReference) []OwnerRef {
 		})
 	}
 	return ret
+}
+
+func toContainers(specContainers []corev1.Container) []string {
+	containers := make([]string, 0, len(specContainers))
+	for _, sc := range specContainers {
+		containers = append(containers, sc.Name)
+	}
+	return containers
 }

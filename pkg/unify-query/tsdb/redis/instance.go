@@ -41,7 +41,7 @@ type Instance struct {
 	ClusterMetricPrefix string
 }
 
-func (instance *Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+func (instance *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
@@ -274,15 +274,15 @@ func (instance *Instance) handleDFQuery(
 	}
 
 	// 分组聚合，仅支持一个聚合
-	if len(query.AggregateMethodList) == 1 {
-		aggre := query.AggregateMethodList[0]
+	if len(query.Aggregates) == 1 {
+		aggre := query.Aggregates[0]
 		aggre.Dimensions = append(aggre.Dimensions, ClusterMetricFieldTimeName)
 		df = handleDFTimeRounding(df, step)
 		df = handleDFGroupBy(df, aggre.Dimensions, aggre.Name)
 		if df.Error() != nil {
 			return df
 		}
-	} else if len(query.AggregateMethodList) > 1 {
+	} else if len(query.Aggregates) > 1 {
 		return dataframe.DataFrame{Err: errors.Errorf("Only one aggregate method can be supported.")}
 	}
 	// 按照时间字段进行排序

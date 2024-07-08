@@ -10,6 +10,8 @@
 package loginlog
 
 import (
+	"time"
+
 	"github.com/elastic/beats/libbeat/common"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -21,14 +23,16 @@ type Record struct {
 }
 
 type Event struct {
-	DataID  int32
-	Records []Record
+	dataid  int32
+	records []Record
+	utcTime time.Time
 }
 
 func (e *Event) AsMapStr() common.MapStr {
 	return common.MapStr{
-		"data":   e.Records,
-		"dataid": e.DataID,
+		"data":    e.records,
+		"dataid":  e.dataid,
+		"utctime": e.utcTime.Format(define.UTCTimeFormat),
 	}
 }
 

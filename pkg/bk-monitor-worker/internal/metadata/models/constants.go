@@ -94,6 +94,12 @@ const (
 	ESAliasExpiredDelayDays = 1 // ES别名延迟过期时间
 )
 
+const (
+	EsSourceTypeLOG    = "log"
+	EsSourceTypeBKDATA = "bkdata"
+	EsSourceTypeES     = "es"
+)
+
 // Influxdb Redis Keys
 const (
 	InfluxdbKeyPrefix             = "bkmonitorv3:influxdb" // 前缀

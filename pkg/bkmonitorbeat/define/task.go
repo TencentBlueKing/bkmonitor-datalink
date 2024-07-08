@@ -35,7 +35,16 @@ const (
 	ModuleProcCustom      = "proccustom"
 	ModuleProcSync        = "procsync"
 	ModuleProcStatus      = "procstatus"
+	ModuleProcBin         = "procbin"
 	ModuleLoginLog        = "loginlog"
+	ModuleProcSnapshot    = "procsnapshot"
+	ModuleSocketSnapshot  = "socketsnapshot"
+	ModuleShellHistory    = "shellhistory"
+	ModuleRpmPackage      = "rpmpackage"
+)
+
+const (
+	UTCTimeFormat = "2006-01-02 15:04:05"
 )
 
 // Status :

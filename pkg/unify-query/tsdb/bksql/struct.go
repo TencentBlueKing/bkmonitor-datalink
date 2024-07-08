@@ -10,17 +10,6 @@
 package bksql
 
 const (
-	dtEventTimeStamp = "dtEventTimeStamp"
-	dtEventTime      = "dtEventTime"
-	localTime        = "localTime"
-	startTime        = "_startTime_"
-	endTime          = "_endTime_"
-	theDate          = "thedate"
-
-	timeStamp = "_timestamp_"
-)
-
-const (
 	QueryAsync = "query_async"
 	QuerySync  = "query_sync"
 
@@ -35,18 +24,6 @@ const (
 
 	ContentType   = "Content-Type"
 	Authorization = "X-Bkapi-Authorization"
-)
-
-var (
-	internalDimension = map[string]struct{}{
-		timeStamp:        {},
-		dtEventTimeStamp: {},
-		dtEventTime:      {},
-		localTime:        {},
-		startTime:        {},
-		endTime:          {},
-		theDate:          {},
-	}
 )
 
 type Params struct {

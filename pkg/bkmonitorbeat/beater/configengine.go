@@ -75,14 +75,14 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 	baseConfig := configs.NewConfig()
 	err = cfg.Unpack(baseConfig)
 	if err != nil {
-		return define.ErrUnpackCfgError
+		return fmt.Errorf("%s: %w", define.ErrUnpackCfgError, err)
 	}
 	ce.config = baseConfig
 
 	// 检查全局配置,这一步如果有任何错误，则整个采集器会报错并关闭
 	err = baseConfig.Clean()
 	if err != nil {
-		return fmt.Errorf("%s : %w", define.ErrCleanGlobalFail, err)
+		return fmt.Errorf("%s: %w", define.ErrCleanGlobalFail, err)
 	}
 	// 存储全局配置中的任务
 	ce.globalTasks = baseConfig.GetTaskConfigList()

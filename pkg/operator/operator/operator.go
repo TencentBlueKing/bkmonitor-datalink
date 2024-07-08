@@ -13,6 +13,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,8 +45,11 @@ const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
 
-	relabelRuleKey  = "bkm_relabel_rule"
-	relabelIndexKey = "bkm_relabel_index"
+	annotationRelabelRule  = "relabelRule"
+	annotationRelabelIndex = "relabelIndex"
+
+	annotationMonitorMatchSelector = "monitorMatchSelector"
+	annotationMonitorDropSelector  = "monitorDropSelector"
 )
 
 // Operator 负责部署和调度任务
@@ -485,6 +489,19 @@ func ifHonorTimestamps(b *bool) bool {
 	return *b
 }
 
+func parseSelector(s string) map[string]string {
+	selector := make(map[string]string)
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		kv := strings.Split(strings.TrimSpace(part), "=")
+		if len(kv) != 2 {
+			continue
+		}
+		selector[kv[0]] = kv[1]
+	}
+	return selector
+}
+
 func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceMonitor) []discover.Discover {
 	var (
 		namespaces []string
@@ -547,29 +564,32 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 
 		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
-				Client:                 c.client,
-				RelabelRule:            serviceMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           serviceMonitor.Annotations[relabelIndexKey],
-				Name:                   monitorMeta.ID(),
-				DataID:                 dataID,
-				KubeConfig:             ConfKubeConfig,
-				Namespaces:             namespaces,
-				Relabels:               resultLabels,
-				Path:                   endpoint.Path,
-				Scheme:                 endpoint.Scheme,
-				TLSConfig:              endpoint.TLSConfig.DeepCopy(),
-				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
-				BearerTokenFile:        endpoint.BearerTokenFile,
-				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
-				Period:                 string(endpoint.Interval),
-				ProxyURL:               proxyURL,
-				Timeout:                string(endpoint.ScrapeTimeout),
-				ExtraLabels:            specLabels,
-				ForwardLocalhost:       kits.CheckIfForwardLocalhost(serviceMonitor.Annotations),
-				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                 systemResource,
-				UrlValues:              endpoint.Params,
-				MetricRelabelConfigs:   metricRelabelings,
+				Client:                  c.client,
+				RelabelRule:             serviceMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:            serviceMonitor.Annotations[annotationRelabelIndex],
+				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(serviceMonitor.Annotations),
+				AnnotationMatchSelector: parseSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
+				Name:                    monitorMeta.ID(),
+				DataID:                  dataID,
+				KubeConfig:              ConfKubeConfig,
+				Namespaces:              namespaces,
+				Relabels:                resultLabels,
+				Path:                    endpoint.Path,
+				Scheme:                  endpoint.Scheme,
+				TLSConfig:               endpoint.TLSConfig.DeepCopy(),
+				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
+				BearerTokenFile:         endpoint.BearerTokenFile,
+				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
+				Period:                  string(endpoint.Interval),
+				ProxyURL:                proxyURL,
+				Timeout:                 string(endpoint.ScrapeTimeout),
+				ExtraLabels:             specLabels,
+				ForwardLocalhost:        kits.CheckIfForwardLocalhost(serviceMonitor.Annotations),
+				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                  systemResource,
+				UrlValues:               endpoint.Params,
+				MetricRelabelConfigs:    metricRelabelings,
 			},
 		})
 
@@ -589,6 +609,8 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 	if ConfEnablePromRule {
 		c.promsliController.UpdateServiceMonitor(serviceMonitor)
 	}
+
+	// 新增的 servicemonitor 命中黑名单则流程终止
 	if IfRejectServiceMonitor(serviceMonitor) {
 		logger.Infof("add action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
 		return
@@ -619,17 +641,18 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	if ConfEnablePromRule {
 		c.promsliController.UpdateServiceMonitor(cur)
 	}
-	if IfRejectServiceMonitor(old) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", old)
-		return
-	}
-	if IfRejectServiceMonitor(cur) {
-		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", cur)
-		return
-	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
 		logger.Debugf("serviceMonitor %+v does not change", old)
+		return
+	}
+
+	// 对于更新的 servicemonitor 如果新的 spec 命中黑名单 则需要将原有的 servicemonitor 移除
+	if IfRejectServiceMonitor(cur) {
+		logger.Infof("update action match the blacklist rules, serviceMonitor=%+v", cur)
+		for _, name := range c.getServiceMonitorDiscoversName(cur) {
+			c.deleteDiscoverByName(name)
+		}
 		return
 	}
 
@@ -654,10 +677,6 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 
 	if ConfEnablePromRule {
 		c.promsliController.DeleteServiceMonitor(serviceMonitor)
-	}
-	if IfRejectServiceMonitor(serviceMonitor) {
-		logger.Infof("delete action match the blacklist rules, serviceMonitor=%+v", serviceMonitor)
-		return
 	}
 
 	now := time.Now()
@@ -749,28 +768,31 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		}
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
-				Client:                 c.client,
-				RelabelRule:            podMonitor.Annotations[relabelRuleKey],
-				RelabelIndex:           podMonitor.Annotations[relabelIndexKey],
-				Name:                   monitorMeta.ID(),
-				DataID:                 dataID,
-				KubeConfig:             ConfKubeConfig,
-				Namespaces:             namespaces,
-				Relabels:               resultLabels,
-				Path:                   endpoint.Path,
-				Scheme:                 endpoint.Scheme,
-				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
-				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
-				TLSConfig:              &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
-				Period:                 string(endpoint.Interval),
-				Timeout:                string(endpoint.ScrapeTimeout),
-				ProxyURL:               proxyURL,
-				ExtraLabels:            specLabels,
-				ForwardLocalhost:       kits.CheckIfForwardLocalhost(podMonitor.Annotations),
-				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                 systemResource,
-				UrlValues:              endpoint.Params,
-				MetricRelabelConfigs:   metricRelabelings,
+				Client:                  c.client,
+				RelabelRule:             podMonitor.Annotations[annotationRelabelRule],
+				RelabelIndex:            podMonitor.Annotations[annotationRelabelIndex],
+				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(podMonitor.Annotations),
+				AnnotationMatchSelector: parseSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
+				AnnotationDropSelector:  parseSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
+				Name:                    monitorMeta.ID(),
+				DataID:                  dataID,
+				KubeConfig:              ConfKubeConfig,
+				Namespaces:              namespaces,
+				Relabels:                resultLabels,
+				Path:                    endpoint.Path,
+				Scheme:                  endpoint.Scheme,
+				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
+				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
+				TLSConfig:               &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
+				Period:                  string(endpoint.Interval),
+				Timeout:                 string(endpoint.ScrapeTimeout),
+				ProxyURL:                proxyURL,
+				ExtraLabels:             specLabels,
+				ForwardLocalhost:        kits.CheckIfForwardLocalhost(podMonitor.Annotations),
+				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                  systemResource,
+				UrlValues:               endpoint.Params,
+				MetricRelabelConfigs:    metricRelabelings,
 			},
 			TLSConfig: endpoint.TLSConfig,
 		})
@@ -823,6 +845,8 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
 		return
 	}
+
+	// 新增的 podmonitor 命中黑名单则流程终止
 	if IfRejectPodMonitor(podMonitor) {
 		logger.Infof("add action match the blacklist rules, podMonitor=%+v", podMonitor)
 		return
@@ -844,23 +868,23 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 		logger.Errorf("expected PodMonitor type, got %T", oldObj)
 		return
 	}
-	if IfRejectPodMonitor(old) {
-		logger.Infof("update action match the blacklist rules, podMonitor=%+v", old)
-		return
-	}
-
 	cur, ok := newObj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", newObj)
 		return
 	}
-	if IfRejectPodMonitor(cur) {
-		logger.Infof("update action match the blacklist rules, podMonitor=%+v", cur)
-		return
-	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
 		logger.Debugf("podMonitor %+v does not change", old)
+		return
+	}
+
+	// 对于更新的 podmonitor 如果新的 spec 命中黑名单 则需要将原有的 podmonitor 移除
+	if IfRejectPodMonitor(cur) {
+		logger.Infof("update action match the blacklist rules, podMonitor=%+v", cur)
+		for _, name := range c.getPodMonitorDiscoversName(cur) {
+			c.deleteDiscoverByName(name)
+		}
 		return
 	}
 
@@ -880,10 +904,6 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 	podMonitor, ok := obj.(*promv1.PodMonitor)
 	if !ok {
 		logger.Errorf("expected PodMonitor type, got %T", obj)
-		return
-	}
-	if IfRejectPodMonitor(podMonitor) {
-		logger.Infof("delete action match the blacklist rules, podMonitor=%+v", podMonitor)
 		return
 	}
 

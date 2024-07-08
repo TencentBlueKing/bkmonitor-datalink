@@ -15,22 +15,18 @@ import (
 
 type LoginLogConfig struct {
 	BaseTaskParam `config:"_,inline"`
-	Logs          []string `config:"logs"`
 }
 
 func (c *LoginLogConfig) GetTaskConfigList() []define.TaskConfig {
-	tasks := make([]define.TaskConfig, 0)
-	// 说明没有任务
-	if len(c.Logs) == 0 {
-		return tasks
-	}
-
-	tasks = append(tasks, c)
-	return tasks
+	return []define.TaskConfig{c}
 }
 
 func (c *LoginLogConfig) InitIdent() error {
 	return c.initIdent(c)
+}
+
+func (c *LoginLogConfig) GetIdent() string {
+	return define.ModuleLoginLog
 }
 
 func (c *LoginLogConfig) GetType() string {

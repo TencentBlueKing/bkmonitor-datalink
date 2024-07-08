@@ -10,6 +10,9 @@
 package main
 
 import (
+	"context"
+	"crypto/md5"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -42,6 +45,12 @@ var (
 	reportFlag       = flag.Bool("report", false, "Report event to time series to bkmonitorproxy")
 	fakeproc         = flag.String("fakeproc", "", "Show the real pid of the mapping process info")
 	disableNormalize = flag.Bool("disable-normalize", false, "If present, disable data normalization")
+
+	verifyRpm             = flag.Bool("verify-rpm", false, "If present, display the rpm packages verify result")
+	cgroupBlockWriteBytes = flag.Int("cgroup-block-write-bytes", 0, "set root devices block io write bytes")
+	cgroupBlockReadBytes  = flag.Int("cgroup-block-read-bytes", 0, "set root devices block io read bytes")
+	cgroupBlockWriteIOps  = flag.Int("cgroup-block-write-iops", 0, "set root devices block io write iops")
+	cgroupBlockReadIOps   = flag.Int("cgroup-block-read-iops", 0, "set root devices block io read iops")
 )
 
 func registerValidators() {
@@ -88,6 +97,41 @@ func main() {
 				fmt.Println(pair[1])
 			}
 		}
+		os.Exit(0)
+	}
+
+	if *verifyRpm {
+		logger.SetOptions(logger.Options{DevNull: true})
+		exe, _ := os.Executable()
+		h := fmt.Sprintf("%x", md5.Sum([]byte(exe)))
+
+		major, minor, err := utils.GetRootDevices()
+		if err != nil {
+			fmt.Println("failed to get root devices:", err)
+			os.Exit(1)
+		}
+
+		err = utils.SetLinuxCGroup(fmt.Sprintf("blockio-%s", h), utils.SpecBlockIO{
+			Major:      major,
+			Minor:      minor,
+			WriteBytes: uint64(*cgroupBlockWriteBytes),
+			ReadBytes:  uint64(*cgroupBlockReadBytes),
+			WriteIOps:  uint64(*cgroupBlockWriteIOps),
+			ReadIOps:   uint64(*cgroupBlockReadIOps),
+		})
+		if err != nil {
+			fmt.Println("failed to set block cgroup:", err)
+			os.Exit(1)
+		}
+
+		ret, err := utils.RpmVerify(context.Background())
+		if err != nil {
+			fmt.Println("failed to verify rpm packages:", err)
+			os.Exit(1)
+		}
+
+		b, _ := json.Marshal(ret)
+		fmt.Println(string(b))
 		os.Exit(0)
 	}
 

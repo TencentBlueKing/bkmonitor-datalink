@@ -7,37 +7,34 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package offlineDataArchive
+package procsnapshot
 
 import (
-	"context"
 	"time"
 
-	"golang.org/x/time/rate"
+	"github.com/elastic/beats/libbeat/common"
 
-	remoteRead "github.com/TencentBlueKing/bkmonitor-datalink/pkg/offline-data-archive/service/influxdb/proto"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-var _ tsdb.Instance = (*Instance)(nil)
-
-type Instance struct {
-	Ctx           context.Context
-	Address       string
-	Timeout       time.Duration
-	MaxLimit      int
-	MaxSLimit     int
-	Toleration    int
-	ReadRateLimit float64
-
-	GrpcMaxCallRecvMsgSize int
-	GrpcMaxCallSendMsgSize int
+type Event struct {
+	dataid  int32
+	data    interface{}
+	utcTime time.Time
 }
 
-type StreamSeriesSetOption struct {
-	Span    *trace.Span
-	Stream  remoteRead.QueryTimeSeriesService_RawClient
-	Limiter *rate.Limiter
-	Timeout time.Duration
+func (e *Event) AsMapStr() common.MapStr {
+	return common.MapStr{
+		"dataid":  e.dataid,
+		"data":    e.data,
+		"utctime": e.utcTime.Format(define.UTCTimeFormat),
+	}
+}
+
+func (e *Event) IgnoreCMDBLevel() bool {
+	return true
+}
+
+func (e *Event) GetType() string {
+	return define.ModuleProcSnapshot
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
@@ -257,6 +258,22 @@ func CreateFullCMDBLevelDataFlow(ctx context.Context, t *task.Task) error {
 	svc := service.NewBkDataStorageSvc(&bkdt)
 	if err := svc.FullCMDBNodeInfoToResultTable(); err != nil {
 		return errors.Wrapf(err, "FullCmdbNodeInfoToResultTable for table_id [%s] failed", svc.TableID)
+	}
+	return nil
+}
+
+// CollectESTask 采集es指标任务
+func CollectESTask(ctx context.Context, t *task.Task) error {
+	var params es.CollectESTaskParams
+	if err := jsonx.Unmarshal(t.Payload, &params); err != nil {
+		return errors.Wrapf(err, "parse params for collectAndReportMetricsParams with [%s] error", t.Payload)
+	}
+	c := params.ClusterInfo
+	err := es.CollectAndReportMetrics(c, params.Timestamp)
+	if err != nil {
+		logger.Errorf("es_cluster_info: [%v] name [%s] try to collect and report metrics failed, %v", c.ClusterID, c.ClusterName, err)
+	} else {
+		logger.Infof("es_cluster_info: [%v] name [%s] collect and report metrics success", c.ClusterID, c.ClusterName)
 	}
 	return nil
 }

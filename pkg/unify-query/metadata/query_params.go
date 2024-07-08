@@ -15,14 +15,37 @@ import (
 
 // QueryParams 查询信息
 type QueryParams struct {
+	ctx context.Context
+
 	Start int64
 	End   int64
+
+	DataSource  map[string]struct{}
+	IsReference bool
 }
 
-// SetQueryParams 写入
-func SetQueryParams(ctx context.Context, qp *QueryParams) {
+func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {
+	q.IsReference = isReference
+	q.set()
+	return q
+}
+
+func (q *QueryParams) SetDataSource(ds string) *QueryParams {
+	q.DataSource[ds] = struct{}{}
+	q.set()
+	return q
+}
+
+func (q *QueryParams) SetTime(start, end int64) *QueryParams {
+	q.Start = start
+	q.End = end
+	q.set()
+	return q
+}
+
+func (q *QueryParams) set() {
 	if md != nil {
-		md.set(ctx, QueryParamsKey, qp)
+		md.set(q.ctx, QueryParamsKey, q)
 	}
 }
 
@@ -36,5 +59,8 @@ func GetQueryParams(ctx context.Context) *QueryParams {
 			}
 		}
 	}
-	return &QueryParams{}
+	return &QueryParams{
+		ctx:        ctx,
+		DataSource: make(map[string]struct{}),
+	}
 }

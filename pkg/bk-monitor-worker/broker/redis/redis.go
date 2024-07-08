@@ -160,6 +160,7 @@ redis.call("HSET", KEYS[1],
            "msg", ARGV[1],
            "state", "pending",
            "pending_since", ARGV[3])
+redis.call("EXPIRE", KEYS[1], ARGV[4])
 redis.call("LPUSH", KEYS[2], ARGV[2])
 return 1
 `)
@@ -182,6 +183,7 @@ func (r *RDB) Enqueue(ctx context.Context, msg *task.TaskMessage) error {
 		encoded,
 		msg.ID,
 		r.clock.Now().UnixNano(),
+		msg.Timeout,
 	}
 	n, err := r.runScriptWithErrorCode(ctx, op, enqueueCmd, keys, argv...)
 	if err != nil {
@@ -221,6 +223,7 @@ redis.call("HSET", KEYS[2],
            "state", "pending",
            "pending_since", ARGV[4],
            "unique_key", KEYS[1])
+redis.call("EXPIRE", KEYS[2], ARGV[5])
 redis.call("LPUSH", KEYS[3], ARGV[1])
 return 1
 `)
@@ -246,6 +249,7 @@ func (r *RDB) EnqueueUnique(ctx context.Context, msg *task.TaskMessage, ttl time
 		int(ttl.Seconds()),
 		encoded,
 		r.clock.Now().UnixNano(),
+		msg.Timeout,
 	}
 	n, err := r.runScriptWithErrorCode(ctx, op, enqueueUniqueCmd, keys, argv...)
 	if err != nil {
@@ -777,7 +781,7 @@ redis.call("ZREM", KEYS[3], ARGV[1])
 redis.call("ZADD", KEYS[4], ARGV[3], ARGV[1])
 redis.call("ZREMRANGEBYSCORE", KEYS[4], "-inf", ARGV[4])
 redis.call("ZREMRANGEBYRANK", KEYS[4], 0, -ARGV[5])
-redis.call("HSET", KEYS[1], "msg", ARGV[2], "state", "archived")
+redis.call("DEL", KEYS[1])
 local n = redis.call("INCR", KEYS[5])
 if tonumber(n) == 1 then
 	redis.call("EXPIREAT", KEYS[5], ARGV[6])

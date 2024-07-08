@@ -7,17 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkcollector
+//go:build rpmpackage || basetask
+// +build rpmpackage basetask
 
-type Config struct {
-	GrpcHost       string `config:"otlp_grpc_host"`
-	BkDataToken    string `config:"otlp_bk_data_token"`
-	EventBufferMax int32  `config:"event_buffer_max"`
-	DataType       string `config:"data_type"`
-	OutputType     string `config:"output_type"`
-}
+package taskfactory
 
-var defaultConfig = Config{
-	DataType:   "log_v2",
-	OutputType: "otlp_trace",
+import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/rpmpackage"
+)
+
+func init() {
+	SetTaskConfigByName(define.ModuleRpmPackage, func() define.TaskMetaConfig { return new(configs.RpmPackageConfig) })
+	Register(define.ModuleRpmPackage, rpmpackage.New)
 }

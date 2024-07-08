@@ -10,77 +10,55 @@
 package procsnapshot
 
 import (
+	"context"
+	"sync/atomic"
 	"time"
 
-	shiroups "github.com/shirou/gopsutil/v3/process"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type ProcMeta struct {
-	Pid      int32
-	PPid     int32
-	Name     string
-	Cwd      string
-	Exe      string
-	Cmd      string
-	CmdSlice []string
-	Username string
-	Created  int64
-	Uids     []int32
+type Gather struct {
+	running atomic.Bool
+	config  *configs.ProcSnapshotConfig
+	tasks.BaseTask
 }
 
-const (
-	socketPerformanceThreshold = 1000
-	socketPerformanceSleep     = 10
-)
+func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
+	gather := &Gather{}
+	gather.GlobalConfig = globalConfig
+	gather.TaskConfig = taskConfig
+	gather.config = taskConfig.(*configs.ProcSnapshotConfig)
 
-func allProcsMeta() ([]ProcMeta, error) {
-	var ret []ProcMeta
-	pids, err := shiroups.Pids()
-	if err != nil {
-		return ret, err
+	gather.Init()
+	return gather
+}
+
+func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	if g.running.Load() {
+		logger.Info("ProcSnapshot task has running, will skip")
+		return
 	}
 
-	for idx, pid := range pids {
-		if (idx+1)%socketPerformanceThreshold == 0 {
-			time.Sleep(time.Millisecond * socketPerformanceSleep)
-		}
+	g.running.Store(true)
+	defer g.running.Store(false)
 
-		stat, err := getProcMeta(pid)
-		if err != nil {
-			logger.Warnf("get process meta data failed, pid: %d, err: %v", pid, err)
+	now := time.Now()
+	procs, err := AllProcsMetaWithCache(g.config.Period)
+	if err != nil {
+		logger.Errorf("faile to get all procs meta: %v", err)
+		return
+	}
+
+	ret := make([]ProcMeta, 0)
+	for i := 0; i < len(procs); i++ {
+		p := procs[i]
+		if p.Cmd == "" {
 			continue
 		}
-		ret = append(ret, stat)
+		ret = append(ret, p)
 	}
-
-	return ret, nil
+	e <- &Event{dataid: g.config.DataID, data: ret, utcTime: now}
 }
-
-func getProcMeta(pid int32) (ProcMeta, error) {
-	var meta ProcMeta
-	proc, err := shiroups.NewProcess(pid)
-	if err != nil {
-		return meta, err
-	}
-
-	meta.Pid = pid
-	meta.PPid, _ = proc.Ppid()
-	meta.Username, _ = proc.Username()
-	meta.Name, _ = proc.Name()
-	meta.Cmd, _ = proc.Cmdline()
-	meta.CmdSlice, _ = proc.CmdlineSlice()
-	meta.Exe, _ = proc.Exe()
-	meta.Cwd, _ = proc.Cwd()
-	meta.Created, _ = proc.CreateTime()
-	meta.Uids, _ = proc.Uids()
-	return meta, nil
-}
-
-//func allProcsInodes() {
-//	//for _, pid := range
-//	process.GetProcInodes("/proc", 1)
-//
-//	process.NetlinkDetector{}.Get(allpids)
-//}

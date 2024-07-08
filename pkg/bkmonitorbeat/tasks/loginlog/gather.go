@@ -10,12 +10,15 @@
 package loginlog
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -24,28 +27,36 @@ type Gather struct {
 	tasks.BaseTask
 }
 
+var logPaths = []string{
+	"/var/log/wtmp",
+	"/var/run/utmp",
+	"/var/log/btmp",
+}
+
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
 	gather.config = taskConfig.(*configs.LoginLogConfig)
 	gather.Init()
-
-	logger.Info("New a LoginLog Task Instance")
 	return gather
 }
 
 func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
+	if !utils.IsLinuxOS() {
+		return
+	}
+
 	var records []Record
-	for _, file := range g.config.Logs {
-		f, err := os.Open(file)
+	now := time.Now()
+	for _, file := range logPaths {
+		b, err := os.ReadFile(file)
 		if err != nil {
 			logger.Errorf("failed to read login logs, file=%s, err: %v", file, err)
 			continue
 		}
-		defer f.Close()
 
-		logs, err := Unpack(f)
+		logs, err := Unpack(bytes.NewBuffer(b))
 		if err != nil {
 			logger.Errorf("failed to unpack login logs, file=%s, err: %v", file, err)
 			continue
@@ -57,7 +68,8 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	}
 
 	e <- &Event{
-		DataID:  g.config.DataID,
-		Records: records,
+		dataid:  g.config.DataID,
+		records: records,
+		utcTime: now,
 	}
 }

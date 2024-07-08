@@ -12,6 +12,7 @@ package periodic
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -60,11 +61,13 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
+	ClearDeprecatedRedisKey := "periodic:metadata:clear_deprecated_redis_key"
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
-			Cron:    "*/3 * * * *",
+			Cron:    "*/5 * * * *",
 			Handler: metadataTask.RefreshTimeSeriesMetric,
+			Option:  []task.Option{task.Timeout(600 * time.Second)},
 		},
 		refreshEventDimension: {
 			Cron:    "*/3 * * * *",
@@ -157,11 +160,16 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		PushAndPublishSpaceRouterInfo: {
 			Cron:    "*/30 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
-			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName)},
+			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(300 * time.Second)},
+		},
+		ClearDeprecatedRedisKey: {
+			Cron:    "0 0 */14 * *",
+			Handler: metadataTask.ClearDeprecatedRedisKey,
 		},
 	}
 }

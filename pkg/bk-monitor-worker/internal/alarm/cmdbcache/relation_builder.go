@@ -24,10 +24,14 @@ type RelationMetricsBuilder struct {
 }
 
 var (
-	defaultRelationMetricsBuilder = &RelationMetricsBuilder{
+	defaultRelationMetricsBuilder = NewRelationMetricsBuilder()
+)
+
+func NewRelationMetricsBuilder() *RelationMetricsBuilder {
+	return &RelationMetricsBuilder{
 		metrics: make(map[int]map[int]Nodes),
 	}
-)
+}
 
 func GetRelationMetricsBuilder() *RelationMetricsBuilder {
 	return defaultRelationMetricsBuilder

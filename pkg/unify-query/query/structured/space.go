@@ -224,8 +224,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	defer func() {
 		if routerMessage != "" {
 			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
+			log.Warnf(s.ctx, routerMessage)
 		}
-		log.Warnf(s.ctx, routerMessage)
 	}()
 
 	if opt == nil {

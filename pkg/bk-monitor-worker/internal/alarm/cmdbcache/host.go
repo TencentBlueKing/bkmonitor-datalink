@@ -456,10 +456,7 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
 func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "get cmdb api client failed")
-	}
+	cmdbApi := getCmdbApi()
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()

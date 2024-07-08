@@ -82,10 +82,7 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 	}
 
 	// 创建cmdb api client
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cmdb api client")
-	}
+	cmdbApi := getCmdbApi()
 
 	return &CmdbResourceWatcher{
 		prefix:      prefix,

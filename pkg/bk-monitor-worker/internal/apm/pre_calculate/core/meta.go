@@ -17,6 +17,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -24,11 +25,11 @@ import (
 // MetadataCenter The configuration center uses DataId as the key and stores basic information,
 // including app_name, bk_biz_name, app_id, etc...
 type MetadataCenter struct {
-	mapping *sync.Map
-	consul  consul.Instance
+	Mapping *sync.Map
+	Consul  store.Store
 }
 
-// ConsulInfo info of consul
+// ConsulInfo info of Consul
 type ConsulInfo struct {
 	Token       string           `json:"token"`
 	BkBizId     int              `json:"bk_biz_id"`
@@ -85,42 +86,47 @@ var (
 func CreateMetadataCenter() error {
 	consulClient, err := consul.GetInstance()
 	if err != nil {
-		logger.Errorf("Failed to create consul client. error: %s", err)
+		logger.Errorf("Failed to create Consul client. error: %s", err)
 		return err
 	}
 	centerInstance = &MetadataCenter{
-		mapping: &sync.Map{},
-		consul:  *consulClient,
+		Mapping: &sync.Map{},
+		Consul:  consulClient,
 	}
 	logger.Infof("Create metadata-center successfully")
 	return nil
+}
+
+// InitMetadataCenter only for tests
+func InitMetadataCenter(c *MetadataCenter) {
+	centerInstance = c
 }
 
 // AddDataIdAndInfo manually specify the configuration of dataid for testing
 func (c *MetadataCenter) AddDataIdAndInfo(dataId, token string, info DataIdInfo) {
 	info.DataId = dataId
 	info.Token = token
-	c.mapping.Store(dataId, info)
+	c.Mapping.Store(dataId, info)
 }
 
-// AddDataId get the configuration of this DataId from consul.
-// If this configuration does not exist in consul, ignored.
+// AddDataId get the configuration of this DataId from Consul.
+// If this configuration does not exist in Consul, ignored.
 func (c *MetadataCenter) AddDataId(dataId string) error {
 	info := DataIdInfo{DataId: dataId}
 	if err := c.fillInfo(dataId, &info); err != nil {
 		return err
 	}
 
-	c.mapping.Store(dataId, info)
+	c.Mapping.Store(dataId, info)
 	logger.Infof("get DataId info successfully, DataId: %s, info: %+v", dataId, info)
 	return nil
 }
 
 func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	key := fmt.Sprintf("%s/apm/data_id/%s", config.StorageConsulPathPrefix, dataId)
-	bytesData, err := c.consul.Get(key)
+	bytesData, err := c.Consul.Get(key)
 	if err != nil {
-		return fmt.Errorf("failed to get key: %s from consul. error: %s", key, err)
+		return fmt.Errorf("failed to get key: %s from Consul. error: %s", key, err)
 	}
 	if bytesData == nil {
 		return fmt.Errorf("failed to get value as key: %s maybe not exist", key)
@@ -160,9 +166,9 @@ func (c *MetadataCenter) CheckUpdate(dataId string) bool {
 		logger.Warnf("Check DataId updated failed, error: %s", err)
 		return false
 	}
-	v, exist := c.mapping.Load(dataId)
+	v, exist := c.Mapping.Load(dataId)
 	if !exist {
-		logger.Warnf("Check DataId updated but not found in mapping!")
+		logger.Warnf("Check DataId updated but not found in Mapping!")
 		return true
 	}
 
@@ -171,31 +177,31 @@ func (c *MetadataCenter) CheckUpdate(dataId string) bool {
 
 // GetKafkaConfig get kafka config of DataId
 func (c *MetadataCenter) GetKafkaConfig(dataId string) TraceKafkaConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).TraceKafka
 }
 
 // GetTraceEsConfig get trace es config of DataId
 func (c *MetadataCenter) GetTraceEsConfig(dataId string) TraceEsConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).TraceEs
 }
 
 // GetSaveEsConfig get save es config of DataId
 func (c *MetadataCenter) GetSaveEsConfig(dataId string) TraceEsConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).SaveEs
 }
 
 // GetBaseInfo get biz info of DataId
 func (c *MetadataCenter) GetBaseInfo(dataId string) BaseInfo {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).BaseInfo
 }
 
 // GetToken of DataId
 func (c *MetadataCenter) GetToken(dataId string) string {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).Token
 }
 

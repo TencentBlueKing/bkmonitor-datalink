@@ -67,7 +67,7 @@ const (
 	KindConsumer SpanKind = 5
 )
 
-// SpanKindCategory kind to category mapping
+// SpanKindCategory kind to category Mapping
 type SpanKindCategory string
 
 const (
@@ -134,7 +134,7 @@ func (c *CommonField) DisplayKey() string {
 	}
 }
 
-// Contain whether the field is in mapping
+// Contain whether the field is in Mapping
 func (c *CommonField) Contain(collections map[string]string) bool {
 	_, exist := collections[c.FullKey]
 	return exist
@@ -361,42 +361,14 @@ var StandardFields = []CommonField{
 }
 
 type CategoryPredicate struct {
+	Category     SpanCategory
 	AnyFields    []CommonField
 	OptionFields []CommonField
 }
 
-var CategoryPredicateFieldMapping = map[SpanCategory]CategoryPredicate{
-	CategoryHttp: {
-		AnyFields: []CommonField{
-			HttpHostField,
-			HttpUrlField,
-			NetPeerNameField,
-			PeerServiceField,
-			HttpSchemeField,
-			HttpFlavorField,
-			HttpMethodField,
-			HttpStatusCodeField,
-		},
-	},
-	CategoryRpc: {
-		AnyFields: []CommonField{
-			RpcMethodField,
-			RpcServiceField,
-			RpcSystemField,
-			RpcGrpcStatusCode,
-		},
-	},
-	CategoryDb: {
-		AnyFields: []CommonField{
-			DbNameField,
-			DbOperationField,
-			DbSystemField,
-			DbStatementField,
-			DbTypeField,
-			DbInstanceField,
-		},
-	},
-	CategoryMessaging: {
+var CategoryPredicateFields = []CategoryPredicate{
+	{
+		Category: CategoryMessaging,
 		AnyFields: []CommonField{
 			MessagingDestinationField,
 			MessagingSystemField,
@@ -408,13 +380,47 @@ var CategoryPredicateFieldMapping = map[SpanCategory]CategoryPredicate{
 			MessagingRocketmqKeyField,
 		},
 	},
-	CategoryAsyncBackend: {
+	{
+		Category: CategoryAsyncBackend,
 		AnyFields: []CommonField{
 			MessagingDestinationField,
 			MessagingDestinationKindField,
 			MessagingSystemField,
 			CeleryTaskNameField,
 			CeleryActionField,
+		},
+	},
+	{
+		Category: CategoryDb,
+		AnyFields: []CommonField{
+			DbNameField,
+			DbOperationField,
+			DbSystemField,
+			DbStatementField,
+			DbTypeField,
+			DbInstanceField,
+		},
+	},
+	{
+		Category: CategoryRpc,
+		AnyFields: []CommonField{
+			RpcMethodField,
+			RpcServiceField,
+			RpcSystemField,
+			RpcGrpcStatusCode,
+		},
+	},
+	{
+		Category: CategoryHttp,
+		AnyFields: []CommonField{
+			HttpHostField,
+			HttpUrlField,
+			NetPeerNameField,
+			PeerServiceField,
+			HttpSchemeField,
+			HttpFlavorField,
+			HttpMethodField,
+			HttpStatusCodeField,
 		},
 	},
 }

@@ -27,10 +27,6 @@ import (
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type ProcessTraceMeta struct {
-	Runtime Runtime
-}
-
 type ProcessResult struct {
 	BizId                 string                        `json:"biz_id"`
 	BizName               string                        `json:"biz_name"`
@@ -68,7 +64,7 @@ type Processor struct {
 	config ProcessorOptions
 
 	dataIdBaseInfo      core.BaseInfo
-	proxy               *storage.Proxy
+	proxy               storage.Backend
 	traceEsQueryLimiter *rate.Limiter
 
 	// Metric discover
@@ -368,7 +364,7 @@ func initCategoryStatistics() map[core.SpanCategory]int {
 func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 	var matchCategory core.SpanCategory
 	var isMatch bool
-	for category, predicate := range core.CategoryPredicateFieldMapping {
+	for _, predicate := range core.CategoryPredicateFields {
 		match := true
 
 		if len(predicate.OptionFields) != 0 {
@@ -388,7 +384,7 @@ func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 			return exist
 		}).Any()
 		if match {
-			matchCategory = category
+			matchCategory = predicate.Category
 			isMatch = true
 			// if span contains multiple category fields, the count is not repeated
 			break
@@ -404,7 +400,6 @@ func processCategoryStatistics(collections map[string]string, s map[core.SpanCat
 	if match {
 		s[category]++
 	}
-
 }
 
 func initKindCategoryStatistics() map[core.SpanKindCategory]int {

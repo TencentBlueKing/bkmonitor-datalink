@@ -165,6 +165,14 @@ func SaveReqBufferSize(s int) ProxyOption {
 	}
 }
 
+type Backend interface {
+	Run(errorReceiveChan chan<- error)
+	SaveRequest() chan<- SaveRequest
+	ReceiveSaveRequest(errorReceiveChan chan<- error)
+	Query(queryRequest QueryRequest) (any, error)
+	Exist(req ExistRequest) (bool, error)
+}
+
 // Proxy storage backend proxy.
 type Proxy struct {
 	dataId string

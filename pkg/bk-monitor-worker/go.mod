@@ -26,6 +26,7 @@ require (
 	github.com/go-kit/log v0.2.1
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/gogo/protobuf v1.3.2
+	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4
 	github.com/gomodule/redigo v1.8.9

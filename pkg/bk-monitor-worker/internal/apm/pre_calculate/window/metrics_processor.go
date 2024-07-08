@@ -98,7 +98,7 @@ func (m *MetricProcessor) findSpanMetric(
 		}
 	}
 
-	logger.Infof("[MetricProcessor] found %d span metric keys", len(labels))
+	logger.Debugf("[MetricProcessor] found %d span metric keys", len(labels))
 	m.sendToSave(labels, metricCount, receiver)
 }
 
@@ -179,7 +179,7 @@ func (m *MetricProcessor) findParentChildMetric(
 		}
 	}
 
-	logger.Infof("[MetricProcessor] found %d relation metric keys", len(labels))
+	logger.Debugf("[MetricProcessor] found %d relation metric keys", len(labels))
 	m.sendToSave(labels, metricCount, receiver)
 }
 

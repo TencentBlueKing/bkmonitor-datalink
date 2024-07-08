@@ -12,8 +12,9 @@ package procbin
 import (
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/elastic/beats/libbeat/common"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
 type ProcBin struct {

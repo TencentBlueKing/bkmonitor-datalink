@@ -18,6 +18,9 @@ type LoginLogConfig struct {
 }
 
 func (c *LoginLogConfig) GetTaskConfigList() []define.TaskConfig {
+	if c.DataID == 0 {
+		return []define.TaskConfig{}
+	}
 	return []define.TaskConfig{c}
 }
 

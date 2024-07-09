@@ -595,6 +595,7 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 		"storage_id":  storageClusterId,
 		"db":          tableIdDb,
 		"measurement": models.TSGroupDefaultMeasurement,
+		"source_type": sourceType,
 	})
 	return tableId, detailStr, err
 }

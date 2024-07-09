@@ -208,7 +208,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		if qsErr != nil {
 			return nil, qsErr
 		}
-		filterQueries = append(filterQueries, q)
+		if q != nil {
+			filterQueries = append(filterQueries, q)
+		}
 	}
 
 	source := elastic.NewSearchSource()
@@ -287,9 +289,8 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "query-with-aggregation")
-	defer span.End(&err)
-
 	defer func() {
+		span.End(&err)
 		ret.Error = err
 		rets <- ret
 	}()
@@ -312,9 +313,8 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, fact *F
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "query-without-aggregation")
-	defer span.End(&err)
-
 	defer func() {
+		span.End(&err)
 		ret.Error = err
 		rets <- ret
 	}()

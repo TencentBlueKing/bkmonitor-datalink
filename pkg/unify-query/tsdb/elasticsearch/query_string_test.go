@@ -73,6 +73,10 @@ func TestQsToDsl(t *testing.T) {
 			q:        `log: /data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py`,
 			expected: `{"match_phrase":{"log":{"query":"/data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py"}}}`,
 		},
+		{
+			q:        `"1642903" AND NOT "get_proc_status_v2" AND NOT "list_service_instance_detail" AND NOT "list_hosts_without_biz"`,
+			expected: `{"bool":{"must":[{"query_string":{"query":"1642903"}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"get_proc_status_v2"}}}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"list_service_instance_detail"}}}},{"bool":{"must_not":{"query_string":{"query":"list_hosts_without_biz"}}}}]}}]}}]}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

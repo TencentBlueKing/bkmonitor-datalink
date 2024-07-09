@@ -41,6 +41,13 @@ func registerTSQueryReferenceQueryService(g *gin.Engine) {
 	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
 }
 
+// registerTSQueryRawQueryService: /query/reference
+func registerTSQueryRawQueryService(g *gin.Engine) {
+	servicePath := viper.GetString(TSQueryRawQueryHandlePathConfigPath)
+	g.POST(servicePath, HandlerQueryRaw)
+	log.Infof(context.TODO(), "ts service register in path->[%s]", servicePath)
+}
+
 // registerTSQueryExemplarService: /query/ts/exemplar
 func registerTSQueryExemplarService(g *gin.Engine) {
 	servicePath := viper.GetString(TSQueryExemplarHandlePathConfigPath)

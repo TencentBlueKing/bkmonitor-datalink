@@ -35,6 +35,15 @@ func AssertAttrsFoundStringVal(t *testing.T, attrs pcommon.Map, key, val string)
 	assert.Equal(t, val, v.AsString())
 }
 
+func AssertAttrsStringVal(t *testing.T, attrs pcommon.Map, key, val string) {
+	var s string
+	v, ok := attrs.Get(key)
+	if ok {
+		s = v.AsString()
+	}
+	assert.Equal(t, val, s)
+}
+
 func AssertAttrsFoundIntVal(t *testing.T, attrs pcommon.Map, key string, val int) {
 	v, ok := attrs.Get(key)
 	assert.True(t, ok)

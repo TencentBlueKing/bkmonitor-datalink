@@ -26,13 +26,13 @@ func SetStatus(ctx context.Context, code, message string) {
 			Code:    code,
 			Message: message,
 		}
-		md.set(ctx, MessageKey, status)
+		md.set(ctx, StatusKey, status)
 	}
 }
 
 // GetStatus
 func GetStatus(ctx context.Context) *Status {
-	r, ok := md.get(ctx, MessageKey)
+	r, ok := md.get(ctx, StatusKey)
 	if ok {
 		if v, ok := r.(*Status); ok {
 			return v

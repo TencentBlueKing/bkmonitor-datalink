@@ -41,6 +41,7 @@ type DataSource struct {
 	IsPlatformDataId  bool      `gorm:"column:is_platform_data_id" json:"is_platform_data_id"`
 	SpaceTypeId       string    `gorm:"size:64" json:"space_type_id"`
 	SpaceUid          string    `gorm:"size:256" json:"space_uid"`
+	CreatedFrom       string    `gorm:"size:16" json:"created_from"`
 }
 
 // BeforeCreate 新建前时间字段设置为当前时间

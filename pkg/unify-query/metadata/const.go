@@ -15,7 +15,8 @@ const (
 	SkipSpaceHeader     = "X-Bk-Scope-Skip-Space"
 
 	UserKey               = "user"
-	MessageKey            = "message"
+	StatusKey             = "message"
+	ExpandKey             = "expand"
 	QueriesKey            = "queries"
 	QueryParamsKey        = "query_params"
 	QueryReferenceKey     = "query_reference"

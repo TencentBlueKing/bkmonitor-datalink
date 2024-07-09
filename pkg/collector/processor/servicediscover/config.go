@@ -213,6 +213,10 @@ func (r *Rule) RegexMatched(val string) (map[string]string, bool) {
 	}
 
 	match := r.re.FindStringSubmatch(val)
+	if match == nil {
+		return nil, false
+	}
+
 	regexGroups := make(map[string]string)
 	for i, name := range r.re.SubexpNames() {
 		if i != 0 && name != "" && len(match) > i {

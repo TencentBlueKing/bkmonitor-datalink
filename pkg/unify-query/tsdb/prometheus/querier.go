@@ -41,13 +41,17 @@ type QueryRangeStorage struct {
 }
 
 func (s *QueryRangeStorage) Querier(ctx context.Context, min, max int64) (storage.Querier, error) {
+	return NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout), nil
+}
+
+func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout time.Duration) *Querier {
 	return &Querier{
 		ctx:        ctx,
-		min:        time.Unix(min, 0),
-		max:        time.Unix(max, 0),
-		maxRouting: s.QueryMaxRouting,
-		timeout:    s.Timeout,
-	}, nil
+		min:        min,
+		max:        max,
+		maxRouting: maxRouting,
+		timeout:    timeout,
+	}
 }
 
 type Querier struct {

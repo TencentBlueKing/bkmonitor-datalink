@@ -477,6 +477,7 @@ func (i *Instance) QueryRaw(
 		}
 
 		fact := NewFormatFactory(ctx).
+			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 			WithQuery(i.toEs(query.Field), qo.start, qo.end, query.Timezone, query.From, size).
 			WithMapping(mapping).
 			WithOrders(query.Orders).

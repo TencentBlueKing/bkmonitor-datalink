@@ -323,6 +323,8 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	druidQueryStatus := qRef.CheckDruidCheck(ctx)
 	mustVmQueryStatus := qRef.CheckMustVmQuery(ctx)
 
+	// 判断是否查询
+
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag && !druidQueryStatus && !mustVmQueryStatus {
 		return ok, nil, err

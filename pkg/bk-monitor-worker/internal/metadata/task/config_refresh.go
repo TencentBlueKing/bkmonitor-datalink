@@ -17,6 +17,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -184,7 +185,6 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 
 	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
 
-	time.Sleep(1 * time.Minute)
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
@@ -192,16 +192,17 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		logger.Errorf("query datasourceresulttable record error, %v", err)
 		return err
 	}
+	if len(dataSourceRtList) == 0 {
+		logger.Infof("no data source need update, skip")
+		return nil
+	}
+
 	// 过滤到结果表
 	var rtList []string
 	for _, dsrt := range dataSourceRtList {
 		rtList = append(rtList, dsrt.TableId)
 	}
-	// 如果全部不可用，则直接返回
-	if len(rtList) == 0 {
-		logger.Infof("not enabled result table by data_source_result_table, skip")
-		return nil
-	}
+
 	// 过滤状态为启用的结果表
 	var enabledResultTableList []resulttable.ResultTable
 	// 拆分查询
@@ -226,23 +227,19 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 过滤到可用的数据源
 	var dataIdList []uint
+	// 用作重复数据的移除
+	uniqueMap := make(map[uint]bool)
 	for _, dsrt := range dataSourceRtList {
-		if stringx.StringInSlice(dsrt.TableId, enabledRtList) {
+		// 如果结果表可用，并且数据源ID还没有追加过，则追加数据；否则，跳过
+		if stringx.StringInSlice(dsrt.TableId, enabledRtList) && !uniqueMap[dsrt.BkDataId] {
 			dataIdList = append(dataIdList, dsrt.BkDataId)
+			uniqueMap[dsrt.BkDataId] = true
 		}
 	}
-	// 如果为空，则认为所有数据源不可用
-	if len(dataIdList) == 0 {
-		logger.Warn("not found data source by enabled result table")
-		return nil
-	}
-
-	// 移除重复的数据源
-	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
-	// data id 数量可控，先不拆分
-	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).
+	// data id 数量可控，先不拆分；仅刷新未迁移到计算平台的数据源 ID 及通过 gse 创建的数据源 ID
+	if err := resulttable.NewDataSourceQuerySet(db).CreatedFromEq(common.DataIdFromBkGse).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
 		logger.Errorf("query datasource record error, %v", err)
 		return err
@@ -254,11 +251,11 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	ch := make(chan struct{}, GetGoroutineLimit("refresh_datasource"))
 	wg.Add(len(dataSourceList))
 	for _, dataSource := range dataSourceList {
-		ch <- true
-		go func(ds resulttable.DataSource, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(ds resulttable.DataSource, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()

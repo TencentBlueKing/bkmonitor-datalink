@@ -143,6 +143,8 @@ type FormatFactory struct {
 
 	start int64
 	end   int64
+
+	isReference bool
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -152,6 +154,11 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 		aggInfoList: make(aggInfoList, 0),
 	}
 
+	return f
+}
+
+func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
+	f.isReference = isReference
 	return f
 }
 
@@ -280,11 +287,6 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 			timeSeriesMap[seriesKey] = &prompb.TimeSeries{
 				Samples: make([]prompb.Sample, 0),
 			}
-		}
-
-		// 移除空算的点
-		if tsLabels == nil && im.timestamp == 0 && im.value == 0 {
-			continue
 		}
 
 		if im.timestamp == 0 {
@@ -593,6 +595,12 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 
 		sample = prompb.Sample{}
 	)
+
+	// 如果是非 prom 计算场景，则提前退出
+	if f.isReference {
+		return sample, nil
+	}
+
 	if value, ok = f.data[f.valueKey]; ok {
 		switch value.(type) {
 		case float64:
@@ -634,11 +642,14 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	lbl := make([]string, 0)
 	for k := range f.data {
-		if k == f.valueKey {
-			continue
-		}
-		if k == Timestamp {
-			continue
+		// 只有 promEngine 查询的场景需要跳过该字段
+		if !f.isReference {
+			if k == f.valueKey {
+				continue
+			}
+			if k == Timestamp {
+				continue
+			}
 		}
 
 		lbl = append(lbl, k)
@@ -653,6 +664,11 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	for _, k := range lbl {
 		var value string
 		d := f.data[k]
+
+		if d == nil {
+			continue
+		}
+
 		switch d.(type) {
 		case string:
 			value = fmt.Sprintf("%s", d)

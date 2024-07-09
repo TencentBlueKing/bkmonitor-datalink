@@ -286,6 +286,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	for _, tID := range tableIDs {
 		spaceRt := s.GetSpaceRtInfo(tID)
+		// 如果不跳过空间，则取 space 和 tableIDs 的交集
+		if !opt.IsSkipSpace && spaceRt == nil {
+			continue
+		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
 		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {

@@ -174,6 +174,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 	lastIndex := ""
 	errs := utils.NewMultiErrors()
 	records := make(Records, 0, len(results))
+	uniqIDs := make(map[string]struct{})
 	for _, value := range results {
 		payload := value.(*define.ETLRecord)
 		record, err := b.asRecord(payload)
@@ -190,6 +191,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 			continue
 		}
 
+		uniqIDs[record.GetID()] = struct{}{}
 		logging.Debugf("backend %v ready to flush record %#v to index %s", b, record, index)
 
 		// 处理跨时间间隔
@@ -201,6 +203,11 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 		}
 		lastIndex = index
 		records = append(records, record)
+	}
+
+	// 如果 records 数量与 uniqid 数量不一致 那就有点东西了
+	if len(records) != len(uniqIDs) {
+		logging.Errorf("%s expected %d records, got %d uniqIDs, records: %#v", b, len(records), len(uniqIDs), records)
 	}
 
 	if len(records) > 0 {

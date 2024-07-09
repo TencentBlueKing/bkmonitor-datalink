@@ -248,6 +248,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
+// AggDataFormat 解析 es 的聚合计算
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
 	if data == nil {
 		return nil, nil

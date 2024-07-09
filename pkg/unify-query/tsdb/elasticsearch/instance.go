@@ -208,7 +208,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		if qsErr != nil {
 			return nil, qsErr
 		}
-		filterQueries = append(filterQueries, q)
+		if q != nil {
+			filterQueries = append(filterQueries, q)
+		}
 	}
 
 	source := elastic.NewSearchSource()

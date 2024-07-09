@@ -249,7 +249,10 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
-	timeSeriesMap := make(map[string]*prompb.TimeSeries)
+	if data == nil {
+		return nil, nil
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
@@ -271,6 +274,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 		return nil, err
 	}
 
+	timeSeriesMap := make(map[string]*prompb.TimeSeries)
 	for _, im := range af.items {
 		var (
 			tsLabels          []prompb.Label

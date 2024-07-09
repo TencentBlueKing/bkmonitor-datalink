@@ -664,7 +664,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		return nil
 	}
 
-	needCleanAgentIds := make([]string, 0)
+	needCleanAgentIds := make(map[string]struct{})
 	needUpdateBizIds := make(map[int]struct{})
 	switch resourceType {
 	case "host":
@@ -704,8 +704,8 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 				needUpdateBizIds[host.BkBizId] = struct{}{}
 
 				// 如果有agentId变更，需要清理agentId缓存
-				if ok && agentId != host.BkAgentId {
-					needCleanAgentIds = append(needCleanAgentIds, agentId)
+				if ok && agentId != host.BkAgentId && host.BkAgentId != "" {
+					needCleanAgentIds[host.BkAgentId] = struct{}{}
 				}
 			}
 		}
@@ -767,10 +767,12 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 
 	// 清理agentId缓存
 	if len(needCleanAgentIds) > 0 {
-		key := m.GetCacheKey(hostAgentIDCacheKey)
-		err := m.RedisClient.HDel(ctx, key, needCleanAgentIds...).Err()
-		if err != nil {
-			return errors.Wrapf(err, "hdel failed, key: %s", key)
+		for hostAgentID := range needCleanAgentIds {
+			key := m.GetCacheKey(hostAgentIDCacheKey)
+			err := m.RedisClient.HDel(ctx, key, hostAgentID).Err()
+			if err != nil {
+				return errors.Wrapf(err, "hdel failed, key: %s", key)
+			}
 		}
 	}
 

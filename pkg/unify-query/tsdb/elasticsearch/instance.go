@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -182,8 +183,9 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
 	var (
-		err error
-		qb  = qo.query
+		err  error
+		qb   = qo.query
+		user = metadata.GetUser(ctx)
 	)
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query")
 	defer span.End(&err)
@@ -250,6 +252,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	log.Infof(ctx, "es query index: %s", qo.index)
 	log.Infof(ctx, "es query body: %s", bodyString)
 
+	startAnaylize := time.Now()
 	search := i.client.Search().Index(qo.index).SearchSource(source)
 
 	res, err := search.Do(ctx)
@@ -268,6 +271,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 			return nil, err
 		}
 	}
+
+	queryCost := time.Since(startAnaylize)
+	span.Set("query-cost", queryCost.String())
+	metric.TsDBRequestSecond(
+		ctx, queryCost, user.SpaceUid, consul.ElasticsearchStorageType,
+	)
 
 	return res, nil
 }

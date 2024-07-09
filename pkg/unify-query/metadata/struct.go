@@ -323,7 +323,9 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	druidQueryStatus := qRef.CheckDruidCheck(ctx)
 	mustVmQueryStatus := qRef.CheckMustVmQuery(ctx)
 
-	// 判断是否查询
+	span.Set("vm-query-feature-flag", vmQueryFeatureFlag)
+	span.Set("druid-query-status", druidQueryStatus)
+	span.Set("must-vm-query-status", mustVmQueryStatus)
 
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag && !druidQueryStatus && !mustVmQueryStatus {
@@ -343,10 +345,14 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 
 			for _, query := range reference.QueryList {
 
+				span.Set(fmt.Sprintf("query-%s-is-single-metric", query.TableID), query.IsSingleMetric)
+
 				// 该字段表示为是否查 VM
 				if !query.IsSingleMetric {
 					return ok, nil, err
 				}
+
+				span.Set(fmt.Sprintf("query-%s-vm-rt", query.TableID), query.VmRt)
 
 				// 开启 vm rt 才进行 vm 查询
 				if query.VmRt != "" {

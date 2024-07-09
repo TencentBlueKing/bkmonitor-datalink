@@ -665,27 +665,30 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 	}
 
 	needCleanAgentIds := make(map[string]struct{})
+	needCleanHostKeys := make(map[string]struct{})
 	needUpdateBizIds := make(map[int]struct{})
 	switch resourceType {
 	case "host":
 		key := m.GetCacheKey(hostCacheKey)
 		// 提取需要更新的缓存key
 		for _, event := range events {
-			hostKeys := make([]string, 0)
+			cacheKeys := make([]string, 0)
 
 			ip, ok := event["bk_host_innerip"].(string)
 			bkCloudId, ok := event["bk_cloud_id"].(float64)
+			hostKey := ""
 
 			if ok && ip != "" {
-				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", ip, int(bkCloudId)))
+				hostKey = fmt.Sprintf("%s|%d", ip, int(bkCloudId))
+				cacheKeys = append(cacheKeys, fmt.Sprintf("%s|%d", ip, int(bkCloudId)))
 			}
 
 			bkHostId, ok := event["bk_host_id"].(float64)
 			if ok && bkHostId > 0 {
-				hostKeys = append(hostKeys, strconv.Itoa(int(bkHostId)))
+				cacheKeys = append(cacheKeys, strconv.Itoa(int(bkHostId)))
 			}
 
-			result := m.RedisClient.HMGet(ctx, key, hostKeys...)
+			result := m.RedisClient.HMGet(ctx, key, cacheKeys...)
 			if result.Err() != nil {
 				return errors.Wrapf(result.Err(), "hmget failed, key: %s", key)
 			}
@@ -706,6 +709,14 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 				// 如果有agentId变更，需要清理agentId缓存
 				if ok && agentId != host.BkAgentId && host.BkAgentId != "" {
 					needCleanAgentIds[host.BkAgentId] = struct{}{}
+				}
+
+				// 如果有ip变更，需要清理ip缓存
+				if host.BkHostInnerip != "" {
+					oldHostKey := fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId)
+					if hostKey != oldHostKey {
+						needCleanHostKeys[oldHostKey] = struct{}{}
+					}
 				}
 			}
 		}
@@ -766,13 +777,20 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 	wg.Wait()
 
 	// 清理agentId缓存
-	if len(needCleanAgentIds) > 0 {
-		for hostAgentID := range needCleanAgentIds {
-			key := m.GetCacheKey(hostAgentIDCacheKey)
-			err := m.RedisClient.HDel(ctx, key, hostAgentID).Err()
-			if err != nil {
-				return errors.Wrapf(err, "hdel failed, key: %s", key)
-			}
+	for hostAgentID := range needCleanAgentIds {
+		key := m.GetCacheKey(hostAgentIDCacheKey)
+		err := m.RedisClient.HDel(ctx, key, hostAgentID).Err()
+		if err != nil {
+			return errors.Wrapf(err, "hdel failed, key: %s", key)
+		}
+	}
+
+	// 清理ip缓存
+	for hostKey := range needCleanHostKeys {
+		key := m.GetCacheKey(hostCacheKey)
+		err := m.RedisClient.HDel(ctx, key, hostKey).Err()
+		if err != nil {
+			return errors.Wrapf(err, "hdel failed, key: %s", key)
 		}
 	}
 

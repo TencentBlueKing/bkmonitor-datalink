@@ -127,6 +127,10 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 				}
 
 				for _, bucket := range bucketHistogramItems.Buckets {
+					if bucket == nil {
+						continue
+					}
+
 					// 时间和值也是不同层级，需要暂存在 a.sample 里
 					a.item.timestamp = int64(bucket.Key)
 					if err := a.ts(idx, bucket.Aggregations); err != nil {
@@ -137,42 +141,42 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 		case ValueAgg:
 			switch info.FuncType {
 			case Min:
-				if valueMetric, ok := data.Min(info.Name); ok {
+				if valueMetric, ok := data.Min(info.Name); ok && valueMetric != nil {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Sum:
-				if valueMetric, ok := data.Sum(info.Name); ok {
+				if valueMetric, ok := data.Sum(info.Name); ok && valueMetric != nil {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Avg:
-				if valueMetric, ok := data.Avg(info.Name); ok {
+				if valueMetric, ok := data.Avg(info.Name); ok && valueMetric != nil {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Cardinality:
-				if valueMetric, ok := data.Cardinality(info.Name); ok {
+				if valueMetric, ok := data.Cardinality(info.Name); ok && valueMetric != nil {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Max:
-				if valueMetric, ok := data.Max(info.Name); ok {
+				if valueMetric, ok := data.Max(info.Name); ok && valueMetric != nil {
 					a.item.value = *valueMetric.Value
 					a.reset()
 				} else {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Count:
-				if valueMetric, ok := data.ValueCount(info.Name); ok {
+				if valueMetric, ok := data.ValueCount(info.Name); ok && valueMetric != nil {
 					// 计算数量需要造数据
 					a.item.value = *valueMetric.Value
 					a.reset()
@@ -180,7 +184,7 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					return fmt.Errorf("%s is empty", info.Name)
 				}
 			case Percentiles:
-				if percentMetric, ok := data.Percentiles(info.Name); ok {
+				if percentMetric, ok := data.Percentiles(info.Name); ok && percentMetric != nil {
 					for k, v := range percentMetric.Values {
 						a.addLabel("le", k)
 						a.item.value = v

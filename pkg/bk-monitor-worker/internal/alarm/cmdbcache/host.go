@@ -680,7 +680,7 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 
 			if ok && ip != "" {
 				hostKey = fmt.Sprintf("%s|%d", ip, int(bkCloudId))
-				cacheKeys = append(cacheKeys, fmt.Sprintf("%s|%d", ip, int(bkCloudId)))
+				cacheKeys = append(cacheKeys, hostKey)
 			}
 
 			bkHostId, ok := event["bk_host_id"].(float64)

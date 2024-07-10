@@ -161,7 +161,7 @@ func (b *BulkHandler) flush(ctx context.Context, index string, records Records) 
 		} else {
 			count = len(writeResult.Items)
 			if count != len(records) {
-				logging.Warnf("backend %v write %d documents to elasticsearch with ack %d, please check why data lost, response: %s", b, len(records), count, string(result))
+				logging.MinuteErrorfSampling(b.String()+"/ack", "backend %v write %d documents to elasticsearch with ack %d, please check why data lost, response: %s", b, len(records), count, string(result))
 			}
 		}
 	}
@@ -206,8 +206,13 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 	}
 
 	// 如果 records 数量与 uniqid 数量不一致 那就有点东西了
-	if len(records) != len(uniqIDs) {
-		logging.Errorf("%s expected %d records, got %d uniqIDs, records: %#v", b, len(records), len(uniqIDs), records)
+	if len(records) > len(uniqIDs) {
+		var msg string
+		body, _ := records.AsBody()
+		if body != nil {
+			msg = body.String()
+		}
+		logging.Errorf("%s expected %d records, got %d uniqIDs, records: %s", b, len(records), len(uniqIDs), msg)
 	}
 
 	if len(records) > 0 {

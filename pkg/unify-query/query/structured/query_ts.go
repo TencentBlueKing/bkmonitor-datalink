@@ -256,6 +256,12 @@ func (q *QueryTs) ToPromExpr(
 	return result, nil
 }
 
+type TimeField struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	Unit string `json:"unit,omitempty"`
+}
+
 type Query struct {
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
@@ -263,6 +269,8 @@ type Query struct {
 	TableID TableID `json:"table_id,omitempty" example:"system.cpu_summary"`
 	// FieldName 查询指标
 	FieldName string `json:"field_name,omitempty" example:"usage"`
+	// TimeField 时间字段
+	TimeField TimeField `json:"time_field,omitempty"`
 	// IsRegexp 指标是否使用正则查询
 	IsRegexp bool `json:"is_regexp" example:"false"`
 	// FieldList 仅供 exemplar 查询 trace 指标时使用
@@ -328,6 +336,16 @@ func (q *Query) ToRouter() (*Route, error) {
 	}
 	router.db, router.measurement = q.TableID.Split()
 	return router, nil
+}
+
+func (q *Query) ToTimeField() metadata.TimeField {
+	timeField := metadata.TimeField{
+		Name: q.TimeField.Name,
+		Type: q.TimeField.Type,
+		Unit: q.TimeField.Unit,
+	}
+
+	return timeField
 }
 
 func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
@@ -433,6 +451,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 				Field:          q.FieldName,
 				Aggregates:     aggregates,
 				BkSqlCondition: allConditions.BkSql(),
+				TimeField:      q.ToTimeField(),
 			}
 
 			span.Set("query-storage-id", qry.StorageID)
@@ -713,6 +732,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
+	query.TimeField = q.ToTimeField()
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)

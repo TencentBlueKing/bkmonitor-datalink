@@ -192,6 +192,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	filterQueries := make([]elastic.Query, 0)
 
+	// 过滤条件生成 elastic.query
 	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
 		return nil, err
@@ -199,9 +200,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if query != nil {
 		filterQueries = append(filterQueries, query)
 	}
-	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
-	// 注入 querystring
+	// 查询时间生成 elastic.query
+	filterQueries = append(filterQueries, fact.RangeQuery(qo.start, qo.end))
+
+	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
 		q, qsErr := qs.Parser()
@@ -487,7 +490,7 @@ func (i *Instance) QueryRaw(
 
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-			WithQuery(i.toEs(query.Field), qo.start, qo.end, query.Timezone, query.From, size).
+			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.Timezone, query.From, size).
 			WithMapping(mapping).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)

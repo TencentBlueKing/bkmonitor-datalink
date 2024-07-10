@@ -31,8 +31,7 @@ const (
 	FieldValue = "_value"
 	FieldTime  = "_time"
 
-	Timestamp  = "dtEventTimeStamp"
-	TimeFormat = "epoch_millis"
+	Timestamp = "dtEventTimeStamp"
 
 	Type       = "type"
 	Properties = "properties"
@@ -59,9 +58,42 @@ const (
 	Date    = "date"
 )
 
+const (
+	TimeFieldTypeTime = "time"
+	TimeFieldTypeInt  = "int"
+)
+
+const (
+	Second      = "second"
+	Millisecond = "millisecond"
+	Microsecond = "microsecond"
+	Nanosecond  = "nanosecond"
+
+	EpochSecond       = "epoch_second"
+	EpochMillis       = "epoch_millis"
+	EpochMicroseconds = "epoch_microseconds"
+	EpochNanoseconds  = "epoch_nanoseconds"
+)
+
+var (
+	epochMap = map[string]string{
+		Second:      EpochSecond,
+		Millisecond: EpochMillis,
+		Microsecond: EpochMicroseconds,
+		Nanosecond:  EpochNanoseconds,
+	}
+)
+
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
 	Error         error
+}
+
+func toEpoch(unit string) string {
+	if v, ok := epochMap[unit]; ok {
+		return v
+	}
+	return EpochMillis
 }
 
 func mapData(prefix string, data map[string]any, res map[string]any) {
@@ -126,7 +158,8 @@ type aggInfoList []any
 type FormatFactory struct {
 	ctx context.Context
 
-	valueKey string
+	valueField string
+	timeField  metadata.TimeField
 
 	toEs   func(k string) string
 	toProm func(k string) string
@@ -162,8 +195,9 @@ func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, start, end int64, timezone string, from, size int) *FormatFactory {
-	f.valueKey = valueKey
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, timezone string, from, size int) *FormatFactory {
+	f.valueField = valueKey
+	f.timeField = timeField
 	f.start = start
 	f.end = end
 	f.timezone = timezone
@@ -186,6 +220,27 @@ func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
 func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
 	mapProperties("", mapping, f.mapping)
 	return f
+}
+
+func (f *FormatFactory) RangeQuery(start, end int64) elastic.Query {
+	fieldName := f.timeField.Name
+	fieldUnit := f.timeField.Unit
+	fieldType := f.timeField.Type
+	format := toEpoch(fieldUnit)
+
+	if fieldName != "" {
+		fieldName = Timestamp
+	}
+
+	var query elastic.Query
+	switch fieldType {
+	case TimeFieldTypeInt:
+
+	default:
+		query = elastic.NewRangeQuery(fieldName).Gte(start).Lt(end).Format(format)
+	}
+
+	return query
 }
 
 func (f *FormatFactory) timeAgg(name string, window, timezone string) {
@@ -321,7 +376,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			switch info.FuncType {
 			case Min:
 				curName := FieldValue
-				curAgg := elastic.NewMinAggregation().Field(f.valueKey)
+				curAgg := elastic.NewMinAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -330,7 +385,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Max:
 				curName := FieldValue
-				curAgg := elastic.NewMaxAggregation().Field(f.valueKey)
+				curAgg := elastic.NewMaxAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -339,7 +394,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Avg:
 				curName := FieldValue
-				curAgg := elastic.NewAvgAggregation().Field(f.valueKey)
+				curAgg := elastic.NewAvgAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -348,7 +403,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Sum:
 				curName := FieldValue
-				curAgg := elastic.NewSumAggregation().Field(f.valueKey)
+				curAgg := elastic.NewSumAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -357,7 +412,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Count:
 				curName := FieldValue
-				curAgg := elastic.NewValueCountAggregation().Field(f.valueKey)
+				curAgg := elastic.NewValueCountAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -366,7 +421,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Cardinality:
 				curName := FieldValue
-				curAgg := elastic.NewCardinalityAggregation().Field(f.valueKey)
+				curAgg := elastic.NewCardinalityAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -392,7 +447,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					percents = append(percents, percent)
 				}
 
-				curAgg := elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percents...)
+				curAgg := elastic.NewPercentilesAggregation().Field(f.valueField).Percentiles(percents...)
 				curName := FieldValue
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
@@ -451,7 +506,7 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueKey)
+			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
@@ -480,7 +535,7 @@ func (f *FormatFactory) Order() map[string]bool {
 	order := make(map[string]bool)
 	for name, asc := range f.orders {
 		if name == FieldValue {
-			name = f.valueKey
+			name = f.valueField
 		} else if name == FieldTime {
 			name = Timestamp
 		}
@@ -601,7 +656,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		return sample, nil
 	}
 
-	if value, ok = f.data[f.valueKey]; ok {
+	if value, ok = f.data[f.valueField]; ok {
 		switch value.(type) {
 		case float64:
 			sample.Value = value.(float64)
@@ -615,7 +670,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 				return sample, err
 			}
 		default:
-			return sample, fmt.Errorf("value key %s type is error: %T, %v", f.valueKey, value, value)
+			return sample, fmt.Errorf("value key %s type is error: %T, %v", f.valueField, value, value)
 		}
 	} else {
 		sample.Value = 0
@@ -644,7 +699,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	for k := range f.data {
 		// 只有 promEngine 查询的场景需要跳过该字段
 		if !f.isReference {
-			if k == f.valueKey {
+			if k == f.valueField {
 				continue
 			}
 			if k == Timestamp {

@@ -32,6 +32,12 @@ func (oc *ObjectsController) WorkloadsRelabelConfigsByNodeName(nodeName string) 
 	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
 }
 
+// WorkloadsRelabelConfigsByPodName 根据节点名称和 pod 名称获取 workload relabel 配置
+func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName string) []RelabelConfig {
+	pods := oc.podObjs.GetByNodeName(nodeName)
+	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods, podName))
+}
+
 type WorkloadRef struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
@@ -39,19 +45,36 @@ type WorkloadRef struct {
 	NodeName  string   `json:"nodeName"`
 }
 
-func (oc *ObjectsController) getWorkloadRefs(pods []Object) []WorkloadRef {
+func (oc *ObjectsController) getWorkloadRefs(pods []Object, podNames ...string) []WorkloadRef {
 	refs := make([]WorkloadRef, 0, len(pods))
 	for _, pod := range pods {
 		ownerRef := Lookup(pod.ID, oc.podObjs, oc.objsMap())
 		if ownerRef == nil {
 			continue
 		}
-		refs = append(refs, WorkloadRef{
-			Name:      pod.ID.Name,
-			Namespace: pod.ID.Namespace,
-			Ref:       *ownerRef,
-			NodeName:  pod.NodeName,
-		})
+
+		// 没有 podname 则命中所有
+		if len(podNames) == 0 {
+			refs = append(refs, WorkloadRef{
+				Name:      pod.ID.Name,
+				Namespace: pod.ID.Namespace,
+				Ref:       *ownerRef,
+				NodeName:  pod.NodeName,
+			})
+			continue
+		}
+
+		// 否则只处理匹配到的 podname
+		for _, podName := range podNames {
+			if podName == pod.ID.Name {
+				refs = append(refs, WorkloadRef{
+					Name:      pod.ID.Name,
+					Namespace: pod.ID.Namespace,
+					Ref:       *ownerRef,
+					NodeName:  pod.NodeName,
+				})
+			}
+		}
 	}
 	return refs
 }

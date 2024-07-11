@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -202,7 +201,6 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 
 	items := make(map[string]StatefulSetWorker)
 	for _, pod := range oc.podObjs.GetAll() {
-		logger.Infof("pod.ID.String() = %s", pod.ID.String())
 		if regex.MatchString(pod.ID.String()) {
 			items[pod.PodIP] = StatefulSetWorker{
 				PodIP: pod.PodIP,

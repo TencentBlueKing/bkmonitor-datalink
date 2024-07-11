@@ -179,9 +179,8 @@ func (oc *ObjectsController) GetReplicasetRelations() []RelationMetric {
 }
 
 type StatefulSetWorker struct {
-	PodIP   string
-	PodName string
-	Index   int
+	PodIP string
+	Index int
 }
 
 func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
@@ -204,9 +203,8 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	for _, pod := range oc.podObjs.GetAll() {
 		if regex.MatchString(pod.ID.String()) {
 			items[pod.PodIP] = StatefulSetWorker{
-				PodIP:   pod.PodIP,
-				PodName: pod.ID.Name,
-				Index:   parseIndex(pod.ID.Name),
+				PodIP: pod.PodIP,
+				Index: parseIndex(pod.ID.Name),
 			}
 		}
 	}

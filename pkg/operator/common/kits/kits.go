@@ -35,5 +35,5 @@ func CheckIfNormalizeMetricName(items map[string]string) bool {
 }
 
 func CheckIfAntiAffinity(items map[string]string) bool {
-	return stringToBool(items, "AntiAffinity")
+	return stringToBool(items, "antiAffinity")
 }

@@ -11,7 +11,7 @@ package operator
 
 import (
 	"fmt"
-	"net/url"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -335,11 +335,11 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 	})
 
 	parseHost := func(s string) string {
-		u, err := url.Parse(s)
+		h, _, err := net.SplitHostPort(s)
 		if err != nil {
 			return ""
 		}
-		return u.Host
+		return h
 	}
 
 	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)

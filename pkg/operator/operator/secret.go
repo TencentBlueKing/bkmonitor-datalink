@@ -343,7 +343,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 	}
 
 	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)
-	logger.Infof("found statefulset workers: %#v", workers)
+	logger.Infof("found statefulset workers(%s): %#v", ConfStatefulSetWorkerRegex, workers)
 	antiNodeConfigs := make([]*discover.ChildConfig, 0)
 
 	currTasksCache := make(map[int]map[string]struct{})

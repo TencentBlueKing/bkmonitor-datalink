@@ -380,6 +380,7 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 				OwnerRefs:  toRefs(pod.OwnerReferences),
 				NodeName:   pod.Spec.NodeName,
 				Labels:     pod.Labels,
+				PodIP:      pod.Status.PodIP,
 				Containers: toContainers(pod.Spec.Containers),
 			})
 		},

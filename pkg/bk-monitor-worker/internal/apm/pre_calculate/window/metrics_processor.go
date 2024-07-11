@@ -105,7 +105,6 @@ func (m *MetricProcessor) findSpanMetric(
 		}
 	}
 
-	logger.Debugf("[MetricProcessor] traceId: %s found %d relation metrics add to labels", fullTreeGraph.Nodes[0].TraceId, len(labels))
 	if len(labels) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromRelationMetric, Value: labels}, metricCount, receiver)
 	}
@@ -189,7 +188,6 @@ func (m *MetricProcessor) findParentChildMetric(
 		}
 	}
 
-	logger.Debugf("[MetricProcessor] traceId: %s found %d flor metric add to mapping", fullTreeGraph.Nodes[0].TraceId, len(metricRecordMapping))
 	if len(metricRecordMapping) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: metricRecordMapping}, metricCount, receiver)
 	}

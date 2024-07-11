@@ -212,7 +212,11 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 		if body != nil {
 			msg = body.String()
 		}
-		logging.Errorf("%s expected %d records, got %d uniqIDs, records: %s", b, len(records), len(uniqIDs), msg)
+		logging.Errorf("%s expected %d records, got %d uniqIDs, response: %s", b, len(records), len(uniqIDs), msg)
+		for i := 0; i < len(records); i++ {
+			record := records[i]
+			logging.Errorf("%s expected %d records, got %d uniqIDs, record.id=%s, record=%#v", b, len(records), len(uniqIDs), record.GetID(), record)
+		}
 	}
 
 	if len(records) > 0 {

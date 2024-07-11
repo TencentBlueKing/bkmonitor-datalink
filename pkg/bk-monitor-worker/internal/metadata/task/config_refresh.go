@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -369,9 +370,16 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 	}
 
 	// 组装 kafka 集群信息
-	kafkaClusterInfoMap := make(map[uint]storage.ClusterInfo)
+	kafkaClientInfoMap := make(map[uint]sarama.Client)
+	clusterInfoMap := make(map[uint]storage.ClusterInfo)
 	for _, cluster := range mqClusterList {
-		kafkaClusterInfoMap[cluster.ClusterID] = cluster
+		kafkaClient, err := service.NewClusterInfoSvc(&cluster).GetKafkaClient()
+		if err != nil {
+			logger.Errorf("get kafka cluster client failed, %s", err)
+			continue
+		}
+		kafkaClientInfoMap[cluster.ClusterID] = kafkaClient
+		clusterInfoMap[cluster.ClusterID] = cluster
 	}
 
 	wg := &sync.WaitGroup{}
@@ -386,28 +394,43 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 			continue
 		}
 		// 获取 kafka 集群信息
-		clusterInfo, ok := kafkaClusterInfoMap[clusterId]
+		kafkaClient, ok := kafkaClientInfoMap[clusterId]
 		if !ok {
+			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			kafkaClient = nil
+		}
+		clusterInfo, ok := clusterInfoMap[clusterId]
+		if !ok && kafkaClient == nil {
 			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
 			continue
 		}
 
 		ch <- struct{}{}
-		go func(info storage.KafkaTopicInfo, clusterInfo storage.ClusterInfo, wg *sync.WaitGroup, ch chan struct{}) {
+		go func(info storage.KafkaTopicInfo, clusterInfo storage.ClusterInfo, kafkaClient sarama.Client, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
 			}()
 			svc := service.NewKafkaTopicInfoSvc(&info)
-			if err := svc.RefreshTopicInfo(clusterInfo); err != nil {
+			if err := svc.RefreshTopicInfo(clusterInfo, kafkaClient); err != nil {
 				logger.Errorf("refresh kafka topic info [%v] failed, %v", svc.Topic, err)
 			} else {
 				logger.Infof("refresh kafka topic info [%v] success", svc.Topic)
 			}
-		}(info, clusterInfo, wg, ch)
+		}(info, clusterInfo, kafkaClient, wg, ch)
 
 	}
 	wg.Wait()
+
+	// 关闭kafka client
+	for _, client := range kafkaClientInfoMap {
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			logger.Errorf("close kafka client failed, %s", err)
+		}
+	}
 
 	return nil
 }

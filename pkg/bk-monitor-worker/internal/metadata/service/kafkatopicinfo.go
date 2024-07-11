@@ -12,6 +12,7 @@ package service
 import (
 	"fmt"
 
+	"github.com/IBM/sarama"
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -76,17 +77,20 @@ func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 	return &info, nil
 }
 
-func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo) error {
+func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo, kafkaClient sarama.Client) error {
 	if s.KafkaTopicInfo == nil {
 		return errors.New("KafkaTopicInfo can not be nil")
 	}
 	db := mysql.GetDBSession().DB
-	client, err := NewClusterInfoSvc(&clusterInfo).GetKafkaClient()
-	if err != nil {
-		return errors.Wrapf(err, "get kafka client from cluster [%s] failed", clusterInfo.ClusterName)
+	if kafkaClient == nil {
+		kafkaClient, err := NewClusterInfoSvc(&clusterInfo).GetKafkaClient()
+		if err != nil {
+			return errors.Wrapf(err, "get kafka client from cluster [%s] failed", clusterInfo.ClusterName)
+		}
+		defer kafkaClient.Close()
 	}
-	defer client.Close()
-	partitions, err := client.Partitions(s.Topic)
+
+	partitions, err := kafkaClient.Partitions(s.Topic)
 	if err != nil {
 		return errors.Wrapf(err, "query topic[%s] partitions failed", s.Topic)
 	}

@@ -333,6 +333,8 @@ func (d *distributiveSubWindow) detectNotify() {
 				continue
 			}
 			trace := v.(CollectTrace)
+			// gc
+			trace.Runtime = nil
 			d.eventChan <- Event{CollectTrace: trace, ReleaseCount: int64(trace.Graph.Length())}
 		}
 	}

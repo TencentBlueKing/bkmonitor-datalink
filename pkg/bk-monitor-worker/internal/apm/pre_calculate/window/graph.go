@@ -9,6 +9,8 @@
 
 package window
 
+import "golang.org/x/exp/slices"
+
 type Node struct {
 	StandardSpan
 }
@@ -160,6 +162,26 @@ func (g *DiGraph) FindParentChildPairs() [][2]Node {
 		findPairs(rootNode, rootNode)
 	}
 
+	return res
+}
+
+// FindDirectFilterParentChildPairs Return all pairs of directly connected parent-child nodes
+// whose parent node and child node conform to specific kinds
+// (Not contain span pairs that contain other nodes in the parent-child relationship)
+func (g *DiGraph) FindDirectFilterParentChildPairs(parentKinds, childKinds []int) [][2]Node {
+	var res [][2]Node
+
+	for _, parentNode := range g.Nodes {
+		if slices.Contains(parentKinds, parentNode.Kind) {
+			childNodes := g.Edges[parentNode.SpanId]
+			for _, childNode := range childNodes {
+				if slices.Contains(childKinds, childNode.Kind) {
+					res = append(res, [2]Node{parentNode, childNode})
+				}
+			}
+		}
+
+	}
 	return res
 }
 

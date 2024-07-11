@@ -46,6 +46,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),
 			window.TraceEsQueryRate(config.TraceEsQueryRate),
 			window.TraceMetricsReportEnabled(config.EnabledTraceMetricsReport),
+			window.TraceMetricsLayer4ReportEnabled(config.MetricsProcessLayer4ExportEnabled),
 		).
 		WithStorageConfig(
 			storage.WorkerCount(config.StorageWorkerCount),
@@ -80,6 +81,15 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 				),
 			),
 			storage.SaveReqBufferSize(config.StorageSaveRequestBufferSize),
+			storage.PrometheusWriterConfig(
+				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
+				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+			),
+			storage.MetricsConfig(
+				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
+				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
+				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
+			),
 		).
 		WithMetricReport(
 			EnabledProfileReport(config.ProfileEnabled),

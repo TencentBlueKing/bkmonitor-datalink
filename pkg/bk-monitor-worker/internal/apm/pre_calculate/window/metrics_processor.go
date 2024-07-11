@@ -19,11 +19,20 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 )
 
+const (
+	KindClient   = 3
+	KindProducer = 4
+	KindServer   = 2
+	KindConsumer = 5
+)
+
 type MetricProcessor struct {
 	bkBizId string
 	appName string
 	appId   string
 	dataId  string
+
+	enabledLayer4Report bool
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
@@ -31,16 +40,14 @@ func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTre
 	m.findParentChildMetric(receiver, fullTreeGraph)
 }
 
-func (m *MetricProcessor) sendToSave(labels []string, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
-	if len(labels) > 0 {
-		for k, v := range metricCount {
-			metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
-		}
+func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
+	for k, v := range metricCount {
+		metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
+	}
 
-		receiver <- storage.SaveRequest{
-			Target: storage.Prometheus,
-			Data:   storage.PrometheusStorageData{Value: labels},
-		}
+	receiver <- storage.SaveRequest{
+		Target: storage.Prometheus,
+		Data:   data,
 	}
 }
 
@@ -98,8 +105,10 @@ func (m *MetricProcessor) findSpanMetric(
 		}
 	}
 
-	logger.Debugf("[MetricProcessor] found %d span metric keys", len(labels))
-	m.sendToSave(labels, metricCount, receiver)
+	logger.Debugf("[MetricProcessor] traceId: %s found %d relation metrics add to labels", fullTreeGraph.Nodes[0].TraceId, len(labels))
+	if len(labels) > 0 {
+		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromRelationMetric, Value: labels}, metricCount, receiver)
+	}
 }
 
 // findParentChildMetric find the metrics from spans
@@ -107,89 +116,102 @@ func (m *MetricProcessor) findParentChildMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
 ) {
 
-	var labels []string
+	metricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	metricCount := make(map[string]int)
 
-	for _, pair := range fullTreeGraph.FindParentChildPairs() {
+	for _, pair := range fullTreeGraph.FindDirectFilterParentChildPairs([]int{KindClient, KindProducer}, []int{KindServer, KindConsumer}) {
 
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
-		parentIp := pair[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
-		childIp := pair[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
+		isError := pair[0].IsError() || pair[1].IsError()
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
 			name := "apm_service_to_apm_service_flow"
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
 				"__name__", name,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
+				"error", isError,
 			)
-			if !slices.Contains(labels, labelKey) {
-				labels = append(labels, labelKey)
-				metricCount[name]++
-			}
+			m.addToStats(labelKey, pair, metricRecordMapping)
+			metricCount[name]++
 		}
+
+		if !m.enabledLayer4Report {
+			continue
+		}
+		parentIp := pair[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
+		childIp := pair[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
 		if parentIp != "" {
 			// ----> Find system -> service relation
 			name := "system_to_apm_service_flow"
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
 				"__name__", name,
 				"from_bk_target_ip", parentIp,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
+				"error", isError,
 			)
-			if !slices.Contains(labels, labelKey) {
-				labels = append(labels, labelKey)
-				metricCount[name]++
-			}
+			m.addToStats(labelKey, pair, metricRecordMapping)
+			metricCount[name]++
 		}
 		if childIp != "" {
 			// ----> Find service -> system relation
 			name := "apm_service_to_system_flow"
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
 				"__name__", name,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_bk_target_ip", childIp,
+				"error", isError,
 			)
-			if !slices.Contains(labels, labelKey) {
-				labels = append(labels, labelKey)
-				metricCount[name]++
-			}
+			m.addToStats(labelKey, pair, metricRecordMapping)
+			metricCount[name]++
 		}
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
 			name := "system_to_system_flow"
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s",
+				"%s=%s,%s=%s,%s=%s,%s=%v",
 				"__name__", name,
 				"from_bk_target_ip", parentIp,
 				"to_bk_target_ip", childIp,
+				"error", isError,
 			)
-			if !slices.Contains(labels, labelKey) {
-				labels = append(labels, labelKey)
-				metricCount[name]++
-			}
+			m.addToStats(labelKey, pair, metricRecordMapping)
+			metricCount[name]++
 		}
 	}
 
-	logger.Debugf("[MetricProcessor] found %d relation metric keys", len(labels))
-	m.sendToSave(labels, metricCount, receiver)
+	logger.Debugf("[MetricProcessor] traceId: %s found %d flor metric add to mapping", fullTreeGraph.Nodes[0].TraceId, len(metricRecordMapping))
+	if len(metricRecordMapping) > 0 {
+		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: metricRecordMapping}, metricCount, receiver)
+	}
 }
 
-func newMetricProcessor(dataId string) MetricProcessor {
+func (m *MetricProcessor) addToStats(labelKey string, pair [2]Node, metricRecordMapping map[string]*storage.FlowMetricRecordStats) {
+	c, exist := metricRecordMapping[labelKey]
+	if !exist {
+		metricRecordMapping[labelKey] = &storage.FlowMetricRecordStats{DurationValues: []float64{float64(pair[0].ElapsedTime)}}
+	} else {
+		c.DurationValues = append(c.DurationValues, float64(pair[0].ElapsedTime))
+	}
+}
+
+func newMetricProcessor(dataId string, enabledLayer4Metric bool) MetricProcessor {
 	logger.Infof("[RelationMetric] create metric processor, dataId: %s", dataId)
 	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
 	return MetricProcessor{
-		dataId:  dataId,
-		bkBizId: baseInfo.BkBizId,
-		appName: baseInfo.AppName,
-		appId:   baseInfo.AppId,
+		dataId:              dataId,
+		bkBizId:             baseInfo.BkBizId,
+		appName:             baseInfo.AppName,
+		appId:               baseInfo.AppId,
+		enabledLayer4Report: enabledLayer4Metric,
 	}
 }

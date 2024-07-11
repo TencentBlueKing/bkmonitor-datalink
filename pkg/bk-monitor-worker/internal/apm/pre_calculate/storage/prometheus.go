@@ -14,8 +14,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -28,8 +28,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 )
 
+const (
+	PromRelationMetric = iota
+	PromFlowMetric
+)
+
 type PrometheusStorageData struct {
-	Value []string
+	Kind int
+	// Kind -> Relation Value -> []string
+	// Kind -> Flow Value -> map[string]FlowMetricRecordStats
+	Value any
 }
 
 type PrometheusWriterOption func(options *PrometheusWriterOptions)
@@ -37,7 +45,6 @@ type PrometheusWriterOption func(options *PrometheusWriterOptions)
 type PrometheusWriterOptions struct {
 	url     string
 	headers map[string]string
-	ttl     time.Duration
 }
 
 func PrometheusWriterUrl(u string) PrometheusWriterOption {
@@ -49,12 +56,6 @@ func PrometheusWriterUrl(u string) PrometheusWriterOption {
 func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	return func(options *PrometheusWriterOptions) {
 		options.headers = h
-	}
-}
-
-func PrometheusWriterReportInterval(interval time.Duration) PrometheusWriterOption {
-	return func(options *PrometheusWriterOptions) {
-		options.ttl = interval
 	}
 }
 
@@ -72,6 +73,7 @@ func (p *prometheusWriter) WriteBatch(series []prompb.TimeSeries) error {
 		return nil
 	}
 
+	// TODO 补充指标的元数据信息
 	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: series})
 	if err != nil {
 		return err
@@ -139,74 +141,78 @@ func newPrometheusWriterClient(dataId, token, url string, headers map[string]str
 	}
 }
 
+type MetricConfigOption func(options *MetricConfigOptions)
+
+type MetricConfigOptions struct {
+	relationMetricMemDuration time.Duration
+	flowMetricMemDuration     time.Duration
+	flowMetricBuckets         []float64
+}
+
+func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		options.relationMetricMemDuration = m
+	}
+}
+
+func MetricFlowMemDuration(m time.Duration) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		options.flowMetricMemDuration = m
+	}
+}
+
+func MetricFlowBuckets(b []float64) MetricConfigOption {
+	return func(options *MetricConfigOptions) {
+		res := make([]float64, 0, len(b)+1)
+		for i := 0; i < len(b); i++ {
+			res = append(res, b[i]*1e6)
+		}
+		res = append(res, math.MaxInt)
+		options.flowMetricBuckets = res
+	}
+}
+
 type MetricDimensionsHandler struct {
-	mu         sync.Mutex
-	dimensions map[string]time.Time
-	ttl        time.Duration
-	promClient *prometheusWriter
-
 	ctx context.Context
+	mu  sync.Mutex
+
+	relationMetricDimensions *relationMetricsCollector
+	flowMetricCollector      *flowMetricsCollector
+
+	promClient *prometheusWriter
 }
 
-func (m *MetricDimensionsHandler) AddBatch(labels []string) {
+func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, s := range labels {
-		if _, exist := m.dimensions[s]; !exist {
-			m.dimensions[s] = time.Now()
-		}
+
+	switch data.Kind {
+	case PromRelationMetric:
+		m.relationMetricDimensions.Observe(data.Value)
+	case PromFlowMetric:
+		m.flowMetricCollector.Observe(data.Value)
+	default:
+		logger.Warnf("[MetricDimensionHandler] receive not support kind: %d", data.Kind)
 	}
 }
 
-func (m *MetricDimensionsHandler) cleanUpAndReport() {
+func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	edge := time.Now().Add(-m.ttl)
-	var keys []string
-	for dimensionKey, ts := range m.dimensions {
-		if ts.Before(edge) {
-			keys = append(keys, dimensionKey)
-		}
-	}
-	series := m.convert(keys)
-	for _, k := range keys {
-		delete(m.dimensions, k)
-	}
-	if err := m.promClient.WriteBatch(series); err != nil {
+
+	if err := m.promClient.WriteBatch(c.Collect()); err != nil {
 		logger.Errorf("[TraceMetricsReport] report to %s failed, error: %s", m.promClient.url, err)
 	}
 }
 
-func (m *MetricDimensionsHandler) convert(dimensionKeys []string) []prompb.TimeSeries {
-	var res []prompb.TimeSeries
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	for _, key := range dimensionKeys {
-		pairs := strings.Split(key, ",")
-		var labels []prompb.Label
-		for _, pair := range pairs {
-			composition := strings.Split(pair, "=")
-			if len(composition) == 2 {
-				labels = append(labels, prompb.Label{Name: composition[0], Value: composition[1]})
-			}
-		}
-
-		res = append(res, prompb.TimeSeries{
-			Labels:  labels,
-			Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
-		})
-	}
-
-	return res
-}
-
-func (m *MetricDimensionsHandler) Loop() {
-	ticker := time.NewTicker(m.ttl)
-	logger.Infof("[MetricReport] start loop, listen for traceMetrics, interval: %s", m.ttl)
+func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
+	ticker := time.NewTicker(c.Ttl())
+	logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
 
 	for {
 		select {
 		case <-ticker.C:
-			m.cleanUpAndReport()
+			m.cleanUpAndReport(c)
 		case <-m.ctx.Done():
 			ticker.Stop()
 			logger.Infof("[MetricReport] stop report metrics")
@@ -216,23 +222,31 @@ func (m *MetricDimensionsHandler) Loop() {
 }
 
 func (m *MetricDimensionsHandler) Close() {
-	m.cleanUpAndReport()
+	m.cleanUpAndReport(m.relationMetricDimensions)
+	m.cleanUpAndReport(m.flowMetricCollector)
 }
 
-func NewMetricDimensionHandler(ctx context.Context, dataId string, config PrometheusWriterOptions) *MetricDimensionsHandler {
+func NewMetricDimensionHandler(ctx context.Context, dataId string,
+	config PrometheusWriterOptions,
+	metricsConfig MetricConfigOptions,
+) *MetricDimensionsHandler {
 
 	token := core.GetMetadataCenter().GetToken(dataId)
 	logger.Infof(
-		"[MetricDimension] create metric dimension, prometheus host: %s , headers: %s , dataId(%s) -> token: %s",
+		"[MetricDimension] \ncreate metric handler\n====\n"+
+			"prometheus host: %s \nheaders: %s \ndataId(%s) -> token: %s \n"+
+			"flowMetricDuration: %s flowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
 		config.url, config.headers, dataId, token,
+		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
 	h := &MetricDimensionsHandler{
-		ttl:        config.ttl,
-		promClient: newPrometheusWriterClient(dataId, core.GetMetadataCenter().GetToken(dataId), config.url, config.headers),
-		dimensions: make(map[string]time.Time),
-		ctx:        ctx,
+		promClient:               newPrometheusWriterClient(dataId, core.GetMetadataCenter().GetToken(dataId), config.url, config.headers),
+		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
+		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
+		ctx:                      ctx,
 	}
-	go h.Loop()
+	go h.LoopCollect(h.relationMetricDimensions)
+	go h.LoopCollect(h.flowMetricCollector)
 	return h
 }

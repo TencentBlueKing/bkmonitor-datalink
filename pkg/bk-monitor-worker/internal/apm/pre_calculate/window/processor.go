@@ -435,9 +435,10 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 }
 
 type ProcessorOptions struct {
-	enabledInfoCache    bool
-	traceEsQueryRate    int
-	metricReportEnabled bool
+	enabledInfoCache          bool
+	traceEsQueryRate          int
+	metricReportEnabled       bool
+	metricLayer4ReportEnabled bool
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -465,6 +466,12 @@ func TraceMetricsReportEnabled(e bool) ProcessorOption {
 	}
 }
 
+func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.metricLayer4ReportEnabled = e
+	}
+}
+
 func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
@@ -487,7 +494,7 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId),
+		metricProcessor: newMetricProcessor(dataId, opts.metricLayer4ReportEnabled),
 		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

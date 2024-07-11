@@ -66,6 +66,7 @@ type ProxyOptions struct {
 	saveEsConfig  EsOptions
 
 	prometheusWriterConfig PrometheusWriterOptions
+	metricsConfig          MetricConfigOptions
 
 	// saveReqBufferSize Number of queue capacity that hold SaveRequest
 	saveReqBufferSize int
@@ -155,6 +156,16 @@ func PrometheusWriterConfig(opts ...PrometheusWriterOption) ProxyOption {
 			setter(&writerOpts)
 		}
 		options.prometheusWriterConfig = writerOpts
+	}
+}
+
+func MetricsConfig(opts ...MetricConfigOption) ProxyOption {
+	return func(options *ProxyOptions) {
+		metricOpts := MetricConfigOptions{}
+		for _, setter := range opts {
+			setter(&metricOpts)
+		}
+		options.metricsConfig = metricOpts
 	}
 }
 
@@ -270,7 +281,7 @@ loop:
 			case Prometheus:
 				// Metrics of prometheus is directly handed over to handler (Sending is triggered by handler)
 				item := r.Data.(PrometheusStorageData)
-				p.prometheusMetricsHandler.AddBatch(item.Value)
+				p.prometheusMetricsHandler.Add(item)
 			default:
 				logger.Warnf("An invalid storage SAVE request was received: %s", r.Target)
 			}
@@ -375,7 +386,7 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		saveEs:                   saveEsInstance,
 		cache:                    cache,
 		bloomFilter:              bloomFilter,
-		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.prometheusWriterConfig),
+		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.prometheusWriterConfig, opt.metricsConfig),
 		ctx:                      ctx,
 		saveRequestChan:          make(chan SaveRequest, opt.saveReqBufferSize),
 	}, nil

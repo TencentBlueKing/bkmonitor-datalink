@@ -12,6 +12,7 @@ package config
 import (
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
 
@@ -100,12 +101,18 @@ var (
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
 	SemaphoreReportInterval time.Duration
 
-	// MetricsInMemDuration duration of metrics in memory
-	MetricsInMemDuration time.Duration
 	// PromRemoteWriteUrl remote write target url
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
+	// RelationMetricsInMemDuration duration of relation-metrics in memory
+	RelationMetricsInMemDuration time.Duration
+	// FlowMetricsInMemDuration duration of flow-metrics in memory
+	FlowMetricsInMemDuration time.Duration
+	// MetricsProcessLayer4ExportEnabled enabled layer-4 metrics indicators (include ip. )
+	MetricsProcessLayer4ExportEnabled bool
+	// MetricsDurationBuckets buckets of flow duration metric (unit: s)
+	MetricsDurationBuckets []float64
 
 	// HashSecret secret for hash
 	HashSecret string
@@ -144,15 +151,22 @@ func initApmVariables() {
 	StorageBloomDecreaseDivisor = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.divisor", 2)
 
 	/*
-	   Metric Config
+	   Profile Config
 	*/
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
-	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
-	MetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metricsReport.memoryDuration", 10*time.Minute, viper.GetDuration)
-	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsReport.prometheus.url", "")
-	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsReport.prometheus.headers", map[string]string{}, viper.GetStringMapString)
+	/*
+	   Metric Config
+	*/
+	RelationMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.relationMetric.duration", 10*time.Minute, viper.GetDuration)
+	FlowMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.duration", 1*time.Minute, viper.GetDuration)
+	MetricsDurationBuckets = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.buckets", prometheus.DefBuckets, GetFloatSlice)
+	MetricsProcessLayer4ExportEnabled = GetValue("taskConfig.apmPreCalculate.metrics.enabledLayer4", false)
+
+	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.report.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
+	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.url", "")
+	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.headers", map[string]string{}, viper.GetStringMapString)
 
 	HashSecret = GetValue("taskConfig.apmPreCalculate.hashSecret", "")
 }

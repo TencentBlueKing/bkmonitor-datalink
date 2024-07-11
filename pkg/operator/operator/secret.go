@@ -326,6 +326,8 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		return
 	}
 
+	workers := c.objectsController.GetPods()
+
 	c.reconcileStatefulSetWorker(len(childConfigs))
 
 	// 排序子配置文件

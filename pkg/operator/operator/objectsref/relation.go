@@ -11,6 +11,7 @@ package objectsref
 
 import (
 	"bytes"
+	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -173,6 +174,29 @@ func (oc *ObjectsController) GetReplicasetRelations() []RelationMetric {
 		}
 	}
 	return metrics
+}
+
+type PodNameIP struct {
+	Name string
+	IP   string
+}
+
+func (oc *ObjectsController) GetPods(s string) []PodNameIP {
+	regex, err := regexp.Compile(s)
+	if err != nil {
+		return nil
+	}
+
+	var items []PodNameIP
+	for _, pod := range oc.podObjs.GetAll() {
+		if regex.MatchString(pod.ID.String()) {
+			items = append(items, PodNameIP{
+				Name: pod.ID.Name,
+				IP:   "",
+			})
+		}
+	}
+	return items
 }
 
 func (oc *ObjectsController) GetPodRelations() []RelationMetric {

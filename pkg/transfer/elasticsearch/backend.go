@@ -12,12 +12,11 @@ package elasticsearch
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io"
-	"strconv"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
 	version "github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 
@@ -47,8 +46,7 @@ func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 	for _, key := range b.uniqueField {
 		buf.WriteString(fmt.Sprintf("%#v", values[key]))
 	}
-	n := xxhash.Sum64(buf.Bytes())
-	return strconv.FormatUint(n, 10)
+	return fmt.Sprintf("%x", md5.Sum(buf.Bytes()))
 }
 
 func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {

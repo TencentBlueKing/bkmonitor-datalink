@@ -11,9 +11,7 @@ package procbin
 
 import (
 	"context"
-	"os"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -94,37 +92,4 @@ type StatInfo struct {
 	Change     time.Time
 	IsLargeBin bool
 	IsDeleted  bool
-}
-
-func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
-	info, err := os.Stat(path)
-	if err != nil {
-		return &StatInfo{
-			Path:      path,
-			IsDeleted: true,
-		}
-	}
-
-	var si StatInfo
-	sys, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		si.Path = path
-		si.Size = info.Size()
-		si.Modify = info.ModTime()
-	} else {
-		si.Path = path
-		si.Size = sys.Size
-		si.Uid = sys.Uid
-		si.Modify = time.Unix(0, sys.Mtim.Nano())
-		si.Access = time.Unix(0, sys.Atim.Nano())
-		si.Change = time.Unix(0, sys.Ctim.Nano())
-	}
-
-	if si.Size > maxSize {
-		si.IsLargeBin = true
-		return &si
-	}
-
-	si.MD5 = hashWithCached(pc, path)
-	return &si
 }

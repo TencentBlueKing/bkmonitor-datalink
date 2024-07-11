@@ -10,6 +10,7 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -43,9 +44,7 @@ type BulkHandler struct {
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
-	buf := bufferpool.Get()
-	defer bufferpool.Put(buf)
-
+	buf := &bytes.Buffer{}
 	for _, key := range b.uniqueField {
 		buf.WriteString(conv.String(values[key]))
 	}

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/cstockton/go-conv"
 	version "github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 
@@ -46,7 +45,7 @@ type BulkHandler struct {
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 	buf := &bytes.Buffer{}
 	for _, key := range b.uniqueField {
-		buf.WriteString(conv.String(values[key]))
+		buf.WriteString(fmt.Sprintf("%#v", values[key]))
 	}
 	n := xxhash.Sum64(buf.Bytes())
 	return strconv.FormatUint(n, 10)

@@ -93,6 +93,8 @@ processor:
       metrics_dataid: {{ .MetricsDataID }}
       logs_dataid: {{ .LogsDataID }}
       profiles_dataid: {{ .ProfilesDataID }}
+      biz_id: {{ .BizID }}
+      app_name: {{ .AppName }}
 `
 
 type privilegedConfig struct {
@@ -101,6 +103,8 @@ type privilegedConfig struct {
 	MetricsDataID  int
 	LogsDataID     int
 	ProfilesDataID int
+	BizID          int32
+	AppName        string
 }
 
 func (s *Sidecar) Start() error {
@@ -134,7 +138,17 @@ func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
 
 	var config privilegedConfig
 	for _, id := range ids {
-		config.Token = id.Token
+		if id.Token != "" {
+			config.Token = id.Token
+		}
+
+		if id.BizID != 0 {
+			config.BizID = id.BizID
+		}
+
+		if id.AppName != "" {
+			config.AppName = id.AppName
+		}
 		switch id.Type {
 		case define.RecordTraces.S():
 			config.TracesDataID = id.DataID

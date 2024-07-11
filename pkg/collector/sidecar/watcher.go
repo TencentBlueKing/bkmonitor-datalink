@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,8 @@ const (
 	keyUsage    = "usage"
 	keyTokenRef = "tokenRef"
 	keyScope    = "scope"
+	keyBizID    = "biz_id"
+	keyAppName  = "app_name"
 
 	usagePrefix = "collector"
 )
@@ -41,6 +44,10 @@ type IDSpec struct {
 	Type   string // traces/metrics/logs/profiles (required)
 	Scope  string // privileged/application (required)
 	DataID int
+
+	// option field
+	BizID   int32
+	AppName string
 }
 
 // Watcher 负责监听和处理 DataID 资源
@@ -131,13 +138,26 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 	}
 
 	token := dataID.Labels[keyTokenRef]
-	uid := fmt.Sprintf("%s/%d", token, dataID.Spec.DataID)
-	w.dataids[uid] = IDSpec{
+	idSpec := IDSpec{
 		Token:  token,
 		Type:   parts[1],
 		DataID: dataID.Spec.DataID,
 		Scope:  scope,
 	}
+
+	if bizID, ok := dataID.Labels[keyBizID]; ok {
+		id, err := strconv.ParseInt(bizID, 10, 0)
+		if err == nil {
+			idSpec.BizID = int32(id)
+		}
+	}
+
+	if appName, ok := dataID.Labels[keyAppName]; ok {
+		idSpec.AppName = appName
+	}
+
+	uid := fmt.Sprintf("%s/%d", token, dataID.Spec.DataID)
+	w.dataids[uid] = idSpec
 	logger.Infof("handle dataid: %+v", w.dataids[uid])
 }
 

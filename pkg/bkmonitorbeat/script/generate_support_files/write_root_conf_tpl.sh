@@ -295,7 +295,7 @@ fi
   procbin_task:
     task_id: 115
     dataid: 1100024
-    period: 1m
+    period: 1h
     max_bytes: 10485760
 {%- endif %}
 EOF

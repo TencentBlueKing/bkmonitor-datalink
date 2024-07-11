@@ -59,28 +59,25 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	pcs := make(map[pidCreated]struct{})
 	for i := 0; i < len(procs); i++ {
 		proc := procs[i]
-		// 忽略 1 号进程
-		if proc.Pid == 1 {
+		if proc.Cmd == "" {
 			continue
 		}
 
 		pc := pidCreated{pid: proc.Pid, created: proc.Created}
-		si, err := readStatInfo(pc, proc.Exe, g.config.MaxBytes)
-		if err != nil {
-			continue
-		}
+		si := readStatInfo(pc, proc.Exe, g.config.MaxBytes)
 		pcs[pc] = struct{}{}
 
 		procbins = append(procbins, ProcBin{
-			Pid:      proc.Pid,
-			Uid:      si.Uid,
-			MD5:      si.MD5,
-			Path:     si.Path,
-			Size:     si.Size,
-			LargeBin: si.LargeBin,
-			Modify:   si.Modify.Unix(),
-			Change:   si.Change.Unix(),
-			Access:   si.Access.Unix(),
+			Pid:        proc.Pid,
+			Uid:        si.Uid,
+			MD5:        si.MD5,
+			Path:       si.Path,
+			Size:       si.Size,
+			IsLargeBin: si.IsLargeBin,
+			IsDeleted:  si.IsDeleted,
+			Modify:     si.Modify.Unix(),
+			Change:     si.Change.Unix(),
+			Access:     si.Access.Unix(),
 		})
 	}
 	e <- &Event{dataid: g.config.DataID, data: procbins, utcTime: now}
@@ -88,20 +85,24 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 }
 
 type StatInfo struct {
-	Path     string
-	Size     int64
-	Uid      uint32
-	MD5      string
-	Modify   time.Time
-	Access   time.Time
-	Change   time.Time
-	LargeBin bool
+	Path       string
+	Size       int64
+	Uid        uint32
+	MD5        string
+	Modify     time.Time
+	Access     time.Time
+	Change     time.Time
+	IsLargeBin bool
+	IsDeleted  bool
 }
 
-func readStatInfo(pc pidCreated, path string, maxSize int64) (*StatInfo, error) {
+func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return &StatInfo{
+			Path:      path,
+			IsDeleted: true,
+		}
 	}
 
 	var si StatInfo
@@ -120,10 +121,10 @@ func readStatInfo(pc pidCreated, path string, maxSize int64) (*StatInfo, error) 
 	}
 
 	if si.Size > maxSize {
-		si.LargeBin = true
-		return &si, nil
+		si.IsLargeBin = true
+		return &si
 	}
 
 	si.MD5 = hashWithCached(pc, path)
-	return &si, nil
+	return &si
 }

@@ -18,15 +18,16 @@ import (
 )
 
 type ProcBin struct {
-	Pid      int32  `json:"pid"`
-	Uid      uint32 `json:"uid"`
-	MD5      string `json:"md5"`
-	Path     string `json:"path"`
-	Size     int64  `json:"size"`
-	Modify   int64  `json:"modify"`
-	Change   int64  `json:"change"`
-	Access   int64  `json:"access"`
-	LargeBin bool   `json:"large_bin"`
+	Pid        int32  `json:"pid"`
+	Uid        uint32 `json:"uid"`
+	MD5        string `json:"md5"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	Modify     int64  `json:"modify"`
+	Change     int64  `json:"change"`
+	Access     int64  `json:"access"`
+	IsLargeBin bool   `json:"isLargeBin"`
+	IsDeleted  bool   `json:"isDeleted"`
 }
 
 type Event struct {

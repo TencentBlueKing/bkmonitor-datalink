@@ -75,7 +75,7 @@ func TestKafkaTopicInfoSvc_RefreshTopicInfo(t *testing.T) {
 	gomonkey.ApplyFunc(ClusterInfoSvc.GetKafkaClient, func(svc ClusterInfoSvc) (sarama.Client, error) {
 		return mockerClient, nil
 	})
-	err = NewKafkaTopicInfoSvc(&topicInfo).RefreshTopicInfo()
+	err = NewKafkaTopicInfoSvc(&topicInfo).RefreshTopicInfo(cluster)
 	assert.NoError(t, err)
 	var result storage.KafkaTopicInfo
 	err = storage.NewKafkaTopicInfoQuerySet(db).TopicEq(topicInfo.Topic).One(&result)

@@ -15,7 +15,6 @@ import (
 	"github.com/pkg/errors"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
@@ -77,22 +76,14 @@ func (s KafkaTopicInfoSvc) CreateInfo(bkDataId uint, topic string, partition int
 	return &info, nil
 }
 
-func (s KafkaTopicInfoSvc) RefreshTopicInfo() error {
+func (s KafkaTopicInfoSvc) RefreshTopicInfo(clusterInfo storage.ClusterInfo) error {
 	if s.KafkaTopicInfo == nil {
 		return errors.New("KafkaTopicInfo can not be nil")
 	}
 	db := mysql.GetDBSession().DB
-	var ds resulttable.DataSource
-	if err := resulttable.NewDataSourceQuerySet(db).BkDataIdEq(s.BkDataId).One(&ds); err != nil {
-		return errors.Wrapf(err, "query DataSource for data_id [%v] failed", s.BkDataId)
-	}
-	var cluster storage.ClusterInfo
-	if err := storage.NewClusterInfoQuerySet(db).ClusterIDEq(ds.MqClusterId).One(&cluster); err != nil {
-		return errors.Wrapf(err, "query ClusterInfo for cluster_id [%v] failed", ds.MqClusterId)
-	}
-	client, err := NewClusterInfoSvc(&cluster).GetKafkaClient()
+	client, err := NewClusterInfoSvc(&clusterInfo).GetKafkaClient()
 	if err != nil {
-		return errors.Wrapf(err, "get kafka client from cluster [%s] failed", cluster.ClusterName)
+		return errors.Wrapf(err, "get kafka client from cluster [%s] failed", clusterInfo.ClusterName)
 	}
 	defer client.Close()
 	partitions, err := client.Partitions(s.Topic)
@@ -101,7 +92,13 @@ func (s KafkaTopicInfoSvc) RefreshTopicInfo() error {
 	}
 	partitionLen := len(partitions)
 	if partitionLen == 0 {
-		return errors.Errorf("query topic[%s] partitions len, bug got 0", s.Topic)
+		logger.Infof("query topic[%s] partitions len, bug got 0", s.Topic)
+		return nil
+	}
+	// NOTE: 如果源大于kafka中数据，则忽略
+	if s.Partition >= partitionLen {
+		logger.Infof("kafka topic info partition [%v] is greater than topic partition len [%v]", s.Partition, partitionLen)
+		return nil
 	}
 
 	s.Partition = partitionLen

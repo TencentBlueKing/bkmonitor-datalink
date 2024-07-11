@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
+	utilsKafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/kafka"
 )
 
 // ClusterInfoSvc cluster info service
@@ -82,7 +83,18 @@ func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
 		return nil, errors.Errorf("cluster type is not kafka")
 	}
 	hosts := fmt.Sprintf("%s:%v", k.DomainName, k.Port)
-	client, err := sarama.NewClient([]string{hosts}, sarama.NewConfig())
+	// 针对有用户名和密码的类型，添加认证机制
+	// 组装配置
+	kafkaConfig := sarama.NewConfig()
+	if k.Username != "" && k.Password != "" {
+		kafkaConfig.Net.SASL.Enable = true
+		kafkaConfig.Net.SASL.User = k.Username
+		kafkaConfig.Net.SASL.Password = cipher.GetDBAESCipher().AESDecrypt(k.Password)
+		kafkaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &utilsKafka.XDGSCRAMClient{HashGeneratorFcn: utilsKafka.SHA512} }
+		kafkaConfig.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA512)
+	}
+
+	client, err := sarama.NewClient([]string{hosts}, kafkaConfig)
 	if err != nil {
 		return nil, errors.Wrapf(err, "new kafka client [%s] failed", hosts)
 	}

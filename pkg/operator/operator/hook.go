@@ -51,6 +51,7 @@ const (
 	confStatefulSetMaxReplicasPath     = "operator.statefulset_max_replicas"
 	confStatefulSetMatchRulesPath      = "operator.statefulset_match_rules"
 	confStatefulSetDispatchTypePath    = "operator.statefulset_dispatch_type"
+	confStatefulSetWorkerRegexPath     = "operator.statefulset_worker_regex"
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
 )
@@ -109,6 +110,7 @@ var (
 	ConfStatefulSetMaxReplicas     int
 	ConfStatefulSetMatchRules      []StatefulSetMatchRule
 	ConfStatefulSetDispatchType    string
+	ConfStatefulSetWorkerRegex     string
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
 	ConfHttpPort                   int
 )
@@ -161,6 +163,7 @@ func initConfig() {
 	viper.SetDefault(confStatefulSetReplicasPath, 1)
 	viper.SetDefault(confStatefulSetMaxReplicasPath, 10)
 	viper.SetDefault(confStatefulSetDispatchTypePath, dispatchTypeHash)
+	viper.SetDefault(confStatefulSetWorkerRegexPath, "bkmonitor-operator/bkm-statefulset-worker")
 
 	// 同步端口给到 target
 	viper.SetDefault(confHttpPortPath, 8080)
@@ -197,6 +200,7 @@ func updateConfig() {
 	ConfStatefulSetReplicas = viper.GetInt(confStatefulSetReplicasPath)
 	ConfStatefulSetMaxReplicas = viper.GetInt(confStatefulSetMaxReplicasPath)
 	ConfStatefulSetDispatchType = viper.GetString(confStatefulSetDispatchTypePath)
+	ConfStatefulSetWorkerRegex = viper.GetString(confStatefulSetWorkerRegexPath)
 
 	ConfHttpPort = viper.GetInt(confHttpPortPath)
 	target.ConfServicePort = ConfHttpPort

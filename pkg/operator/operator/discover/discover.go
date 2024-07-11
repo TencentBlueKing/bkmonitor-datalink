@@ -102,7 +102,6 @@ type ChildConfig struct {
 	Mask         string
 	TaskType     string
 	Namespace    string
-	Endpoint     string
 	AntiAffinity bool
 }
 
@@ -644,7 +643,6 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 			Namespace:    metricTarget.Namespace,
 			TaskType:     metricTarget.TaskType,
 			AntiAffinity: d.AntiAffinity,
-			Endpoint:     "",
 		}
 		logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
 		childConfigs = append(childConfigs, childConfig)

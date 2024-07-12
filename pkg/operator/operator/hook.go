@@ -40,7 +40,6 @@ const (
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
-	confDisableMetricsPusherPath       = "operator.disable_metrics_pusher"
 	confKubeletNamespacePath           = "operator.kubelet.namespace"
 	confKubeletNamePath                = "operator.kubelet.name"
 	confKubeletEnablePath              = "operator.kubelet.enable"
@@ -98,7 +97,6 @@ var (
 	ConfEnablePromRule             bool
 	ConfEnableStatefulSetWorker    bool
 	ConfEnableDaemonSetWorker      bool
-	ConfDisableMetricsPusher       bool
 	ConfKubeletNamespace           string
 	ConfKubeletName                string
 	ConfKubeletEnable              bool
@@ -186,7 +184,6 @@ func updateConfig() {
 	ConfKubeletNamespace = viper.GetString(confKubeletNamespacePath)
 	ConfKubeletName = viper.GetString(confKubeletNamePath)
 	ConfKubeletEnable = viper.GetBool(confKubeletEnablePath)
-	ConfDisableMetricsPusher = viper.GetBool(confDisableMetricsPusherPath)
 	ConfMaxNodeSecretRatio = viper.GetFloat64(confMaxNodeSecretRatioPath)
 	ConfTLSConfig = &rest.TLSClientConfig{
 		Insecure: viper.GetBool(confTLSInsecurePath),

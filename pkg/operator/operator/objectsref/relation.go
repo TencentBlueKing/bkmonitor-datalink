@@ -189,6 +189,7 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 		return nil
 	}
 
+	// bkm-statefulset-worker-0 => [0]
 	parseIndex := func(s string) int {
 		parts := strings.Split(s, "-")
 		if len(parts) <= 0 {
@@ -202,6 +203,10 @@ func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
 	items := make(map[string]StatefulSetWorker)
 	for _, pod := range oc.podObjs.GetAll() {
 		if regex.MatchString(pod.ID.String()) {
+			// 确保 podip 已经获取到
+			if pod.PodIP == "" {
+				continue
+			}
 			items[pod.PodIP] = StatefulSetWorker{
 				PodIP: pod.PodIP,
 				Index: parseIndex(pod.ID.Name),

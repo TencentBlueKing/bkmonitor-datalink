@@ -343,7 +343,12 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 	}
 
 	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)
+	indexWorkers := make(map[int]string)
+	for ip, w := range workers {
+		indexWorkers[w.Index] = ip
+	}
 	logger.Infof("found statefulset workers(%s): %+v", ConfStatefulSetWorkerRegex, workers)
+
 	antiNodeConfigs := make([]*discover.ChildConfig, 0)
 
 	currTasksCache := make(map[int]map[string]struct{})
@@ -383,11 +388,12 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		config := antiNodeConfigs[i]
 
 		// 取出 IP 与 host 相同的 worker 并避开
+		// 如果实在只有一个 worker 那也就木有办法了 ┓(-´∀`-)┏
 		h := parseHost(config.Address)
 		w := workers[h]
 		mod := (w.Index + 1) % len(workers)
 		groups[mod] = append(groups[mod], config)
-		logger.Infof("worker match antiaffinity rules, host=%s, worker%d", h, mod)
+		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
 
 		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 		if _, ok := currTasksCache[mod]; !ok {

@@ -391,7 +391,14 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		// 如果实在只有一个 worker 那也就木有办法了 ┓(-´∀`-)┏
 		h := parseHost(config.Address)
 		w := workers[h]
-		mod := (w.Index + 1) % min(len(workers), n)
+		mod := (w.Index + 1) % len(workers)
+
+		// n 为最初确定的 workers 数量
+		// 如果此时已经扩容了新节点 那先临时将其分配到 0 号 worker 上并等待下一个周期修正
+		if mod >= n {
+			mod = 0
+		}
+
 		groups[mod] = append(groups[mod], config)
 		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
 

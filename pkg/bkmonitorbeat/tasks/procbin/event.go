@@ -19,6 +19,7 @@ import (
 
 type ProcBin struct {
 	Pid        int32  `json:"pid"`
+	PPid       int32  `json:"ppid"`
 	Uid        uint32 `json:"uid"`
 	MD5        string `json:"md5"`
 	Path       string `json:"path"`

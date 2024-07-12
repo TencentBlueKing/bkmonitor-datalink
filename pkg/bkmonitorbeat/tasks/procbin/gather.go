@@ -67,6 +67,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 		procbins = append(procbins, ProcBin{
 			Pid:        proc.Pid,
+			PPid:       proc.PPid,
 			Uid:        si.Uid,
 			MD5:        si.MD5,
 			Path:       si.Path,

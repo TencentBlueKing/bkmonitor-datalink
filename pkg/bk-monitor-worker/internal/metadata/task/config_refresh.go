@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -334,32 +335,102 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 	db := mysql.GetDBSession().DB
+	// 获取可用的且来源于 gse 的 data_id
+	var dataIdObjList []resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).CreatedFromEq(common.DataIdFromBkGse).Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.MqClusterId).All(&dataIdObjList); err != nil {
+		return errors.Wrapf(err, "RefreshKafkaTopicInfo query data source error")
+	}
+	// 组装 data_id 和 对应的集群 id
+	var dataIdList, mqClusterIdList []uint
+	dataIdClusterId := make(map[uint]uint)
+	for _, obj := range dataIdObjList {
+		dataIdList = append(dataIdList, obj.BkDataId)
+		mqClusterIdList = append(mqClusterIdList, obj.MqClusterId)
+		dataIdClusterId[obj.BkDataId] = obj.MqClusterId
+	}
+	// 查询对应 kafka topic
 	var kafkaTopicInfoList []storage.KafkaTopicInfo
-	if err := storage.NewKafkaTopicInfoQuerySet(db).All(&kafkaTopicInfoList); err != nil {
-		return errors.Wrapf(err, "query RefreshKafkaTopicInfo failed")
+	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
+		var tempList []storage.KafkaTopicInfo
+		if err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdIn(chunkDataIds...).All(&tempList); err != nil {
+			logger.Errorf("query kafka topic info record error, %s", err)
+			continue
+		}
+		kafkaTopicInfoList = append(kafkaTopicInfoList, tempList...)
+	}
+
+	// 移除重复的集群 ID
+	uniqueClusterIdList := slicex.RemoveDuplicate(&mqClusterIdList)
+
+	// 通过 kafka 集群 ID, 获取集群信息；集群不会太多，直接查询
+	var mqClusterList []storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).ClusterIDIn(uniqueClusterIdList...).All(&mqClusterList); err != nil {
+		logger.Errorf("query cluster info record error, %s", err)
+		return err
+	}
+
+	// 组装 kafka 集群信息
+	kafkaClientInfoMap := make(map[uint]sarama.Client)
+	clusterInfoMap := make(map[uint]storage.ClusterInfo)
+	for _, cluster := range mqClusterList {
+		kafkaClient, err := service.NewClusterInfoSvc(&cluster).GetKafkaClient()
+		if err != nil {
+			logger.Errorf("get kafka cluster client failed, %s", err)
+			continue
+		}
+		kafkaClientInfoMap[cluster.ClusterID] = kafkaClient
+		clusterInfoMap[cluster.ClusterID] = cluster
 	}
 
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	ch := make(chan struct{}, GetGoroutineLimit("refresh_kafka_topic_info"))
 	wg.Add(len(kafkaTopicInfoList))
 	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
 	for _, info := range kafkaTopicInfoList {
-		ch <- true
-		go func(info storage.KafkaTopicInfo, wg *sync.WaitGroup, ch chan bool) {
+		// 获取 cluster id
+		clusterId, ok := dataIdClusterId[info.BkDataId]
+		if !ok {
+			logger.Infof("data_id [%v] not found in data_id_cluster_id map, skip", info.BkDataId)
+			continue
+		}
+		// 获取 kafka 集群信息
+		kafkaClient, ok := kafkaClientInfoMap[clusterId]
+		if !ok {
+			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			kafkaClient = nil
+		}
+		clusterInfo, ok := clusterInfoMap[clusterId]
+		if !ok && kafkaClient == nil {
+			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			continue
+		}
+
+		ch <- struct{}{}
+		go func(info storage.KafkaTopicInfo, clusterInfo storage.ClusterInfo, kafkaClient sarama.Client, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
 			}()
 			svc := service.NewKafkaTopicInfoSvc(&info)
-			if err := svc.RefreshTopicInfo(); err != nil {
+			if err := svc.RefreshTopicInfo(clusterInfo, kafkaClient); err != nil {
 				logger.Errorf("refresh kafka topic info [%v] failed, %v", svc.Topic, err)
 			} else {
 				logger.Infof("refresh kafka topic info [%v] success", svc.Topic)
 			}
-		}(info, wg, ch)
+		}(info, clusterInfo, kafkaClient, wg, ch)
 
 	}
 	wg.Wait()
+
+	// 关闭kafka client
+	for _, client := range kafkaClientInfoMap {
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			logger.Errorf("close kafka client failed, %s", err)
+		}
+	}
 
 	return nil
 }

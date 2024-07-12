@@ -27,6 +27,7 @@ type ProcBin struct {
 	Modify     int64  `json:"modify"`
 	Change     int64  `json:"change"`
 	Access     int64  `json:"access"`
+	RootFsType string `json:"rootFsType"`
 	IsLargeBin bool   `json:"isLargeBin"`
 	IsDeleted  bool   `json:"isDeleted"`
 }

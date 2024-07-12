@@ -15,6 +15,8 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/moby/sys/mountinfo"
 )
 
 func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
@@ -48,4 +50,18 @@ func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
 
 	si.MD5 = hashWithCached(pc, path)
 	return &si
+}
+
+func readRootFsType(pid int32) string {
+	mounts, err := mountinfo.PidMountInfo(int(pid))
+	if err != nil {
+		return ""
+	}
+
+	for _, mount := range mounts {
+		if mount.Mountpoint == "/" {
+			return mount.FSType
+		}
+	}
+	return ""
 }

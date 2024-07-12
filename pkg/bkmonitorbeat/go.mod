@@ -7,6 +7,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/cespare/xxhash v1.1.0
 	github.com/cespare/xxhash/v2 v2.2.0
+	github.com/containerd/cgroups v1.0.1
 	github.com/elastic/beats v7.1.1+incompatible
 	github.com/elastic/go-ucfg v0.7.0
 	github.com/elastic/gosigar v0.11.0
@@ -21,6 +22,8 @@ require (
 	github.com/magiconair/properties v1.8.1
 	github.com/mattn/go-shellwords v1.0.12
 	github.com/mdlayher/netlink v1.4.1
+	github.com/moby/sys/mountinfo v0.7.1
+	github.com/opencontainers/runtime-spec v1.0.2
 	github.com/pkg/errors v0.9.1
 	github.com/prashantv/gostub v1.1.0
 	github.com/prometheus/client_model v0.2.0
@@ -47,7 +50,6 @@ require (
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
-	github.com/containerd/cgroups v1.0.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/digitalocean/go-smbios v0.0.0-20180907143718-390a4f403a8e // indirect
@@ -93,7 +95,6 @@ require (
 	github.com/mitchellh/hashstructure v1.0.0 // indirect
 	github.com/natefinch/npipe v0.0.0-20160621034901-c1b8fa8bdcce // indirect
 	github.com/nightlyone/lockfile v1.0.0 // indirect
-	github.com/opencontainers/runtime-spec v1.0.2 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

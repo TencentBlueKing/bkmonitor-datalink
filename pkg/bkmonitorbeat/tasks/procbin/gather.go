@@ -74,6 +74,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			Size:       si.Size,
 			IsLargeBin: si.IsLargeBin,
 			IsDeleted:  si.IsDeleted,
+			RootFsType: readRootFsType(proc.Pid),
 			Modify:     si.Modify.Unix(),
 			Change:     si.Change.Unix(),
 			Access:     si.Access.Unix(),

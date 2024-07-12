@@ -391,7 +391,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		// 如果实在只有一个 worker 那也就木有办法了 ┓(-´∀`-)┏
 		h := parseHost(config.Address)
 		w := workers[h]
-		mod := (w.Index + 1) % len(workers)
+		mod := (w.Index + 1) % min(len(workers), n)
 		groups[mod] = append(groups[mod], config)
 		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
 

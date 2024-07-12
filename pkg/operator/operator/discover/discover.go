@@ -92,16 +92,17 @@ type Discover interface {
 
 // ChildConfig 子任务配置文件信息
 type ChildConfig struct {
-	Meta      define.MonitorMeta
-	Node      string
-	FileName  string
-	Address   string
-	Data      []byte
-	Scheme    string
-	Path      string
-	Mask      string
-	TaskType  string
-	Namespace string
+	Meta         define.MonitorMeta
+	Node         string
+	FileName     string
+	Address      string
+	Data         []byte
+	Scheme       string
+	Path         string
+	Mask         string
+	TaskType     string
+	Namespace    string
+	AntiAffinity bool
 }
 
 func (c ChildConfig) String() string {
@@ -125,6 +126,7 @@ type BaseParams struct {
 	RelabelRule             string
 	RelabelIndex            string
 	NormalizeMetricName     bool
+	AntiAffinity            bool
 	Name                    string
 	KubeConfig              string
 	Namespaces              []string
@@ -630,16 +632,17 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 		d.mm.IncCreatedChildConfigSuccessCounter()
 		childConfig := &ChildConfig{
-			Node:      metricTarget.NodeName,
-			FileName:  metricTarget.FileName(),
-			Address:   metricTarget.Address,
-			Data:      data,
-			Scheme:    metricTarget.Scheme,
-			Path:      metricTarget.Path,
-			Mask:      metricTarget.Mask,
-			Meta:      metricTarget.Meta,
-			Namespace: metricTarget.Namespace,
-			TaskType:  metricTarget.TaskType,
+			Node:         metricTarget.NodeName,
+			FileName:     metricTarget.FileName(),
+			Address:      metricTarget.Address,
+			Data:         data,
+			Scheme:       metricTarget.Scheme,
+			Path:         metricTarget.Path,
+			Mask:         metricTarget.Mask,
+			Meta:         metricTarget.Meta,
+			Namespace:    metricTarget.Namespace,
+			TaskType:     metricTarget.TaskType,
+			AntiAffinity: d.AntiAffinity,
 		}
 		logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
 		childConfigs = append(childConfigs, childConfig)

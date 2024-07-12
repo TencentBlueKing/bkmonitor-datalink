@@ -40,7 +40,6 @@ const (
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
-	confDisableMetricsPusherPath       = "operator.disable_metrics_pusher"
 	confKubeletNamespacePath           = "operator.kubelet.namespace"
 	confKubeletNamePath                = "operator.kubelet.name"
 	confKubeletEnablePath              = "operator.kubelet.enable"
@@ -51,6 +50,7 @@ const (
 	confStatefulSetMaxReplicasPath     = "operator.statefulset_max_replicas"
 	confStatefulSetMatchRulesPath      = "operator.statefulset_match_rules"
 	confStatefulSetDispatchTypePath    = "operator.statefulset_dispatch_type"
+	confStatefulSetWorkerRegexPath     = "operator.statefulset_worker_regex"
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
 )
@@ -97,7 +97,6 @@ var (
 	ConfEnablePromRule             bool
 	ConfEnableStatefulSetWorker    bool
 	ConfEnableDaemonSetWorker      bool
-	ConfDisableMetricsPusher       bool
 	ConfKubeletNamespace           string
 	ConfKubeletName                string
 	ConfKubeletEnable              bool
@@ -109,6 +108,7 @@ var (
 	ConfStatefulSetMaxReplicas     int
 	ConfStatefulSetMatchRules      []StatefulSetMatchRule
 	ConfStatefulSetDispatchType    string
+	ConfStatefulSetWorkerRegex     string
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
 	ConfHttpPort                   int
 )
@@ -161,6 +161,7 @@ func initConfig() {
 	viper.SetDefault(confStatefulSetReplicasPath, 1)
 	viper.SetDefault(confStatefulSetMaxReplicasPath, 10)
 	viper.SetDefault(confStatefulSetDispatchTypePath, dispatchTypeHash)
+	viper.SetDefault(confStatefulSetWorkerRegexPath, "bkmonitor-operator/bkm-statefulset-worker")
 
 	// 同步端口给到 target
 	viper.SetDefault(confHttpPortPath, 8080)
@@ -183,7 +184,6 @@ func updateConfig() {
 	ConfKubeletNamespace = viper.GetString(confKubeletNamespacePath)
 	ConfKubeletName = viper.GetString(confKubeletNamePath)
 	ConfKubeletEnable = viper.GetBool(confKubeletEnablePath)
-	ConfDisableMetricsPusher = viper.GetBool(confDisableMetricsPusherPath)
 	ConfMaxNodeSecretRatio = viper.GetFloat64(confMaxNodeSecretRatioPath)
 	ConfTLSConfig = &rest.TLSClientConfig{
 		Insecure: viper.GetBool(confTLSInsecurePath),
@@ -197,6 +197,7 @@ func updateConfig() {
 	ConfStatefulSetReplicas = viper.GetInt(confStatefulSetReplicasPath)
 	ConfStatefulSetMaxReplicas = viper.GetInt(confStatefulSetMaxReplicasPath)
 	ConfStatefulSetDispatchType = viper.GetString(confStatefulSetDispatchTypePath)
+	ConfStatefulSetWorkerRegex = viper.GetString(confStatefulSetWorkerRegexPath)
 
 	ConfHttpPort = viper.GetInt(confHttpPortPath)
 	target.ConfServicePort = ConfHttpPort

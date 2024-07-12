@@ -11,6 +11,7 @@ package operator
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -333,6 +334,23 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		return childConfigs[i].FileName < childConfigs[j].FileName
 	})
 
+	parseHost := func(s string) string {
+		h, _, err := net.SplitHostPort(s)
+		if err != nil {
+			return ""
+		}
+		return h
+	}
+
+	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)
+	indexWorkers := make(map[int]string)
+	for ip, w := range workers {
+		indexWorkers[w.Index] = ip
+	}
+	logger.Infof("found statefulset workers(%s): %+v", ConfStatefulSetWorkerRegex, workers)
+
+	antiNodeConfigs := make([]*discover.ChildConfig, 0)
+
 	currTasksCache := make(map[int]map[string]struct{})
 	groups := make([][]*discover.ChildConfig, n)
 	for idx, config := range childConfigs {
@@ -342,10 +360,42 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		} else {
 			mod = int(config.Hash() % uint64(n)) // 默认为 hash 分配
 		}
-		groups[mod] = append(groups[mod], config)
 
+		// 检查是否命中反亲和规则
+		var matchAntiAffinity bool
+		if config.AntiAffinity {
+			h := parseHost(config.Address)
+			if _, ok := workers[h]; ok {
+				antiNodeConfigs = append(antiNodeConfigs, config)
+				matchAntiAffinity = true
+			}
+		}
+		// 命中了则不再继续分配
+		if matchAntiAffinity {
+			continue
+		}
+
+		groups[mod] = append(groups[mod], config)
 		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 
+		if _, ok := currTasksCache[mod]; !ok {
+			currTasksCache[mod] = make(map[string]struct{})
+		}
+		currTasksCache[mod][config.FileName] = struct{}{}
+	}
+
+	for i := 0; i < len(antiNodeConfigs); i++ {
+		config := antiNodeConfigs[i]
+
+		// 取出 IP 与 host 相同的 worker 并避开
+		// 如果实在只有一个 worker 那也就木有办法了 ┓(-´∀`-)┏
+		h := parseHost(config.Address)
+		w := workers[h]
+		mod := (w.Index + 1) % len(workers)
+		groups[mod] = append(groups[mod], config)
+		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
+
+		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 		if _, ok := currTasksCache[mod]; !ok {
 			currTasksCache[mod] = make(map[string]struct{})
 		}

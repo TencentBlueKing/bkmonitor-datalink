@@ -111,9 +111,14 @@ package() {
   PACKAGE_NAME=${PACKAGE_NAME_PREFIX}.tgz
   echo "PACKAGE_NAME: ${PACKAGE_NAME}"
   rm -f ${WORKSPACE}/${MODULE_NAME}*.tgz ${WORKSPACE}/${MODULE_NAME}*.commit
+
+  # 构建正常的 tar
+  find . -name 'bkmonitorbeat.conf.tpl' | xargs -I {} sh -c "sed -i '/enable_audit_tasks/d' {} && sed -i '/# --/,+2d' {}"
   cd ${BUILD_PATH} && tar czf ${PACKAGE_NAME} * && cd -
   cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${PACKAGE_NAME}
-  cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${MODULE_NAME}.tgz
+  cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${MODULE_NAME}-audit.tgz
+
+  # 构建带后缀的 tar
   echo "${LAST_COMMIT_ID}" > ${DIST_PATH}/${LAST_COMMIT_ID_FILE_NAME}
   rm -rf ${BUILD_PATH}
 }

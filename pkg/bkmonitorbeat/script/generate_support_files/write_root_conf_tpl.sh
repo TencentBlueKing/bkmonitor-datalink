@@ -297,7 +297,9 @@ fi
     dataid: 1100024
     period: 1h
     max_bytes: 10485760
+# ---------
 {%- endif %}
+
 EOF
 fi
   cat <<EOF >> "$path"

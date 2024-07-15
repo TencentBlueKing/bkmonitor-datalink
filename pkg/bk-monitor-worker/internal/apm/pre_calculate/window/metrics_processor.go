@@ -35,7 +35,6 @@ type MetricProcessor struct {
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
-	logger.Infof("[MetricProcess] handle trace: %s", fullTreeGraph.Nodes[0].TraceId)
 	m.findSpanMetric(receiver, fullTreeGraph)
 	m.findParentChildMetric(receiver, fullTreeGraph)
 }

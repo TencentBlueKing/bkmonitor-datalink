@@ -52,7 +52,7 @@ func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
 	return &si
 }
 
-func readRootFsType(pid int32) string {
+func readRootMountSource(pid int32) string {
 	mounts, err := mountinfo.PidMountInfo(int(pid))
 	if err != nil {
 		return ""
@@ -60,7 +60,7 @@ func readRootFsType(pid int32) string {
 
 	for _, mount := range mounts {
 		if mount.Mountpoint == "/" {
-			return mount.FSType
+			return mount.Source
 		}
 	}
 	return ""

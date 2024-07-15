@@ -66,18 +66,18 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		pcs[pc] = struct{}{}
 
 		procbins = append(procbins, ProcBin{
-			Pid:        proc.Pid,
-			PPid:       proc.PPid,
-			Uid:        si.Uid,
-			MD5:        si.MD5,
-			Path:       si.Path,
-			Size:       si.Size,
-			IsLargeBin: si.IsLargeBin,
-			IsDeleted:  si.IsDeleted,
-			RootFsType: readRootFsType(proc.Pid),
-			Modify:     si.Modify.Unix(),
-			Change:     si.Change.Unix(),
-			Access:     si.Access.Unix(),
+			Pid:         proc.Pid,
+			PPid:        proc.PPid,
+			Uid:         si.Uid,
+			MD5:         si.MD5,
+			Path:        si.Path,
+			Size:        si.Size,
+			IsLargeBin:  si.IsLargeBin,
+			IsDeleted:   si.IsDeleted,
+			MountSource: readRootMountSource(proc.Pid),
+			Modify:      si.Modify.Unix(),
+			Change:      si.Change.Unix(),
+			Access:      si.Access.Unix(),
 		})
 	}
 	e <- &Event{dataid: g.config.DataID, data: procbins, utcTime: now}

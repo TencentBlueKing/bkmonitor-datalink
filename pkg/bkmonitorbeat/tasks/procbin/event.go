@@ -18,18 +18,18 @@ import (
 )
 
 type ProcBin struct {
-	Pid        int32  `json:"pid"`
-	PPid       int32  `json:"ppid"`
-	Uid        uint32 `json:"uid"`
-	MD5        string `json:"md5"`
-	Path       string `json:"path"`
-	Size       int64  `json:"size"`
-	Modify     int64  `json:"modify"`
-	Change     int64  `json:"change"`
-	Access     int64  `json:"access"`
-	RootFsType string `json:"rootFsType"`
-	IsLargeBin bool   `json:"isLargeBin"`
-	IsDeleted  bool   `json:"isDeleted"`
+	Pid         int32  `json:"pid"`
+	PPid        int32  `json:"ppid"`
+	Uid         uint32 `json:"uid"`
+	MD5         string `json:"md5"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	Modify      int64  `json:"modify"`
+	Change      int64  `json:"change"`
+	Access      int64  `json:"access"`
+	MountSource string `json:"mountSource"`
+	IsLargeBin  bool   `json:"isLargeBin"`
+	IsDeleted   bool   `json:"isDeleted"`
 }
 
 type Event struct {

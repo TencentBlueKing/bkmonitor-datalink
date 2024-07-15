@@ -15,4 +15,4 @@ func readStatInfo(pc pidCreated, path string, maxSize int64) *StatInfo {
 	return &StatInfo{}
 }
 
-func readRootFsType(pid int32) string { return "" }
+func readRootMountSource(pid int32) string { return "" }

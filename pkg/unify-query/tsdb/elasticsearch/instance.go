@@ -202,7 +202,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	// 查询时间生成 elastic.query
-	filterQueries = append(filterQueries, fact.RangeQuery(qo.start, qo.end))
+	filterQueries = append(filterQueries, fact.RangeQuery())
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {

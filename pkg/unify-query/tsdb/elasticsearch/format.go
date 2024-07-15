@@ -222,7 +222,7 @@ func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) RangeQuery(start, end int64) elastic.Query {
+func (f *FormatFactory) RangeQuery() elastic.Query {
 	fieldName := f.timeField.Name
 	fieldUnit := f.timeField.Unit
 	fieldType := f.timeField.Type
@@ -237,7 +237,7 @@ func (f *FormatFactory) RangeQuery(start, end int64) elastic.Query {
 	case TimeFieldTypeInt:
 
 	default:
-		query = elastic.NewRangeQuery(fieldName).Gte(start).Lt(end).Format(format)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(format)
 	}
 
 	return query

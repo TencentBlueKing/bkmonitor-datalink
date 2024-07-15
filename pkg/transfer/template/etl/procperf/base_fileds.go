@@ -57,7 +57,7 @@ func ProcBaseDimensionFieldsValue() []etl.Field {
 		),
 		etl.NewSimpleField(
 			define.RecordHostNameFieldName,
-			etl.ExtractByJMESMultiPath("bkmonitorbeat.hostname", "agent.hostname"), etl.TransformNilString,
+			etl.ExtractByJMESMultiPath("bkmonitorbeat.hostname", "agent.hostname", "hostname"), etl.TransformNilString,
 		),
 	}
 }

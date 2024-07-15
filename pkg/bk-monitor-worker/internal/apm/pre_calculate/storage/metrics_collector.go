@@ -98,8 +98,6 @@ type FlowMetricRecordStats struct {
 }
 
 type flowMetricStats struct {
-	ts time.Time
-
 	FlowDurationMax, FlowDurationMin, FlowDurationSum, FlowDurationCount float64
 	FlowDurationBucket                                                   map[float64]int
 }
@@ -123,7 +121,6 @@ func (c *flowMetricsCollector) Observe(value any) {
 		for _, duration := range v.DurationValues {
 			if _, exist := c.data[dimensionKey]; !exist {
 				c.data[dimensionKey] = &flowMetricStats{
-					ts:                 time.Now(),
 					FlowDurationMax:    math.Inf(-1),
 					FlowDurationMin:    math.Inf(1),
 					FlowDurationBucket: make(map[float64]int),
@@ -153,24 +150,13 @@ func (c *flowMetricsCollector) Collect() prompb.WriteRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	edge := time.Now().Add(-c.ttl)
-	var keys []string
-	for dimensionKey, stats := range c.data {
-		if stats.ts.Before(edge) {
-			logger.Debugf("[FlowMetricsCollector] key: %s expired, timestamp: %s", dimensionKey, stats.ts)
-			keys = append(keys, dimensionKey)
-		}
-	}
-
-	res := c.convert(keys)
-	for _, k := range keys {
-		delete(c.data, k)
-	}
+	res := c.convert()
+	c.data = make(map[string]*flowMetricStats)
 
 	return res
 }
 
-func (c *flowMetricsCollector) convert(dimensionKeys []string) prompb.WriteRequest {
+func (c *flowMetricsCollector) convert() prompb.WriteRequest {
 	logger.Infof("🌟🌟🌟convert start 🌟🌟🌟")
 
 	copyLabels := func(labels []prompb.Label) []prompb.Label {
@@ -182,8 +168,7 @@ func (c *flowMetricsCollector) convert(dimensionKeys []string) prompb.WriteReque
 	var metricsName []string
 
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
-	for _, key := range dimensionKeys {
-		stats := c.data[key]
+	for key, stats := range c.data {
 		name, labels := dimensionKeyToNameAndLabel(key, true)
 		// todo remove test log
 		logger.Infof("[FlowMetricsCollector] fromService: %s toService: %s minValue: %+v", labels[0].Value, labels[2].Value, stats.FlowDurationMin)

@@ -10,9 +10,66 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
+// MetricsName
+const (
+	ApmServiceInstanceRelation = "apm_service_with_apm_service_instance_relation"
+	ApmServiceK8sRelation      = "apm_service_instance_with_k8s_address_relation"
+	ApmServiceSystemRelation   = "apm_service_instance_with_system_relation"
+
+	ApmServiceFlow       = "apm_service_to_apm_service_flow"
+	SystemApmServiceFlow = "system_to_apm_service_flow"
+	ApmServiceSystemFlow = "apm_service_to_system_flow"
+	SystemFlow           = "system_to_system_flow"
+)
+
+var relationMetricsMetadataMapping = map[string]prompb.MetricMetadata{
+	ApmServiceInstanceRelation: {
+		MetricFamilyName: ApmServiceInstanceRelation,
+		Type:             prompb.MetricMetadata_GAUGE,
+		Help:             "APM 服务实例关联指标",
+	},
+	ApmServiceK8sRelation: {
+		MetricFamilyName: ApmServiceK8sRelation,
+		Type:             prompb.MetricMetadata_GAUGE,
+		Help:             "APM 服务与 K8s 关联指标",
+	},
+	ApmServiceSystemRelation: {
+		MetricFamilyName: ApmServiceSystemRelation,
+		Type:             prompb.MetricMetadata_GAUGE,
+		Help:             "APM 服务与主机关联指标",
+	},
+}
+
+var flowMetricsMetadataMapping = map[string]prompb.MetricMetadata{
+	"min": {
+		Type: prompb.MetricMetadata_GAUGE,
+		Help: "聚合周期内耗时最小值",
+		Unit: "microseconds",
+	},
+	"max": {
+		Type: prompb.MetricMetadata_GAUGE,
+		Help: "聚合周期内耗时最大值",
+		Unit: "microseconds",
+	},
+	"sum": {
+		Type: prompb.MetricMetadata_COUNTER,
+		Help: "聚合周期内耗时总和",
+		Unit: "microseconds",
+	},
+	"count": {
+		Type: prompb.MetricMetadata_COUNTER,
+		Help: "聚合周期内耗时总数",
+	},
+	"bucket": {
+		Type: prompb.MetricMetadata_HISTOGRAM,
+		Help: "聚合周期内耗时bucket",
+		Unit: "microseconds",
+	},
+}
+
 type MetricCollector interface {
 	Observe(value any)
-	Collect() []prompb.TimeSeries
+	Collect() prompb.WriteRequest
 	Ttl() time.Duration
 }
 
@@ -92,7 +149,7 @@ func (c *flowMetricsCollector) Observe(value any) {
 	}
 }
 
-func (c *flowMetricsCollector) Collect() []prompb.TimeSeries {
+func (c *flowMetricsCollector) Collect() prompb.WriteRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -113,41 +170,48 @@ func (c *flowMetricsCollector) Collect() []prompb.TimeSeries {
 	return res
 }
 
-func (c *flowMetricsCollector) convert(dimensionKeys []string) []prompb.TimeSeries {
+func (c *flowMetricsCollector) convert(dimensionKeys []string) prompb.WriteRequest {
+	logger.Infof("🌟🌟🌟convert start 🌟🌟🌟")
+
 	copyLabels := func(labels []prompb.Label) []prompb.Label {
 		newLabels := make([]prompb.Label, len(labels))
 		copy(newLabels, labels)
 		return newLabels
 	}
-	var res []prompb.TimeSeries
+	var series []prompb.TimeSeries
+	var metricsName []string
+
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	for _, key := range dimensionKeys {
 		stats := c.data[key]
-		logger.Debugf("[FlowMetricsCollector] key: %s expired, values: %+v", key, stats)
 		name, labels := dimensionKeyToNameAndLabel(key, true)
+		// todo remove test log
+		logger.Infof("[FlowMetricsCollector] fromService: %s toService: %s minValue: %+v", labels[0].Value, labels[2].Value, stats.FlowDurationMin)
 
-		res = append(res, prompb.TimeSeries{
+		metricsName = append(metricsName, name)
+
+		series = append(series, prompb.TimeSeries{
 			Labels:  append(copyLabels(labels), prompb.Label{Name: "__name__", Value: fmt.Sprintf("%s%s", name, "_min")}),
 			Samples: []prompb.Sample{{Value: stats.FlowDurationMin, Timestamp: ts}},
 		})
 
-		res = append(res, prompb.TimeSeries{
+		series = append(series, prompb.TimeSeries{
 			Labels:  append(copyLabels(labels), prompb.Label{Name: "__name__", Value: fmt.Sprintf("%s%s", name, "_max")}),
 			Samples: []prompb.Sample{{Value: stats.FlowDurationMax, Timestamp: ts}},
 		})
 
-		res = append(res, prompb.TimeSeries{
+		series = append(series, prompb.TimeSeries{
 			Labels:  append(copyLabels(labels), prompb.Label{Name: "__name__", Value: fmt.Sprintf("%s%s", name, "_sum")}),
 			Samples: []prompb.Sample{{Value: stats.FlowDurationSum, Timestamp: ts}},
 		})
 
-		res = append(res, prompb.TimeSeries{
+		series = append(series, prompb.TimeSeries{
 			Labels:  append(copyLabels(labels), prompb.Label{Name: "__name__", Value: fmt.Sprintf("%s%s", name, "_count")}),
 			Samples: []prompb.Sample{{Value: stats.FlowDurationCount, Timestamp: ts}},
 		})
 
 		for bucket, count := range stats.FlowDurationBucket {
-			res = append(res, prompb.TimeSeries{
+			series = append(series, prompb.TimeSeries{
 				Labels: append(
 					copyLabels(labels), []prompb.Label{
 						{Name: "__name__", Value: name + "_bucket"},
@@ -158,7 +222,20 @@ func (c *flowMetricsCollector) convert(dimensionKeys []string) []prompb.TimeSeri
 		}
 	}
 
-	return res
+	var infos []prompb.MetricMetadata
+	for _, n := range metricsName {
+		for k, info := range flowMetricsMetadataMapping {
+			infos = append(infos, prompb.MetricMetadata{
+				MetricFamilyName: fmt.Sprintf("%s_%s", n, k),
+				Type:             info.Type,
+				Help:             info.Help,
+				Unit:             info.Unit,
+			})
+		}
+	}
+
+	logger.Infof("🌟🌟🌟convert end 🌟🌟🌟")
+	return prompb.WriteRequest{Timeseries: series, Metadata: infos}
 }
 
 func newFlowMetricCollector(buckets []float64, ttl time.Duration) *flowMetricsCollector {
@@ -189,7 +266,7 @@ func (r *relationMetricsCollector) Observe(value any) {
 	}
 }
 
-func (r *relationMetricsCollector) Collect() []prompb.TimeSeries {
+func (r *relationMetricsCollector) Collect() prompb.WriteRequest {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -208,18 +285,32 @@ func (r *relationMetricsCollector) Collect() []prompb.TimeSeries {
 	return res
 }
 
-func (r *relationMetricsCollector) convert(dimensionKeys []string) []prompb.TimeSeries {
-	var res []prompb.TimeSeries
+func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteRequest {
+	logger.Infof("🌈🌈🌈 convert start 🌈🌈🌈")
+
+	var series []prompb.TimeSeries
+	metricName := make(map[string]int, len(dimensionKeys))
+	var infos []prompb.MetricMetadata
+
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	for _, key := range dimensionKeys {
-		_, labels := dimensionKeyToNameAndLabel(key, false)
-		res = append(res, prompb.TimeSeries{
+		name, labels := dimensionKeyToNameAndLabel(key, false)
+		series = append(series, prompb.TimeSeries{
 			Labels:  labels,
 			Samples: []prompb.Sample{{Value: 1, Timestamp: ts}},
 		})
+		metricName[name]++
 	}
 
-	return res
+	for k := range metricName {
+		metadata, exist := relationMetricsMetadataMapping[k]
+		if exist {
+			infos = append(infos, metadata)
+		}
+	}
+
+	logger.Infof("🌈🌈🌈 convert end 🌈🌈🌈")
+	return prompb.WriteRequest{Timeseries: series, Metadata: infos}
 }
 
 func newRelationMetricCollector(ttl time.Duration) *relationMetricsCollector {

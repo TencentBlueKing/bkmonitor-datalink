@@ -11,7 +11,6 @@ package window
 
 import (
 	"fmt"
-
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -36,6 +35,7 @@ type MetricProcessor struct {
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
+	logger.Infof("[MetricProcess] handle trace: %s", fullTreeGraph.Nodes[0].TraceId)
 	m.findSpanMetric(receiver, fullTreeGraph)
 	m.findParentChildMetric(receiver, fullTreeGraph)
 }
@@ -60,24 +60,22 @@ func (m *MetricProcessor) findSpanMetric(
 	for _, span := range fullTreeGraph.StandardSpans() {
 
 		// apm_service_with_apm_service_instance_relation
-		serviceInstanceRelationName := "apm_service_with_apm_service_instance_relation"
 		serviceInstanceRelationLabelKey := fmt.Sprintf(
 			"%s=%s,%s=%s,%s=%s,%s=%s",
-			"__name__", serviceInstanceRelationName,
+			"__name__", storage.ApmServiceInstanceRelation,
 			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
 			"apm_application_name", m.appName,
 			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
 		)
 		if !slices.Contains(labels, serviceInstanceRelationLabelKey) {
 			labels = append(labels, serviceInstanceRelationLabelKey)
-			metricCount[serviceInstanceRelationName]++
+			metricCount[storage.ApmServiceInstanceRelation]++
 		}
 
 		// apm_service_instance_with_k8s_address_relation
-		serviceK8sRelationName := "apm_service_instance_with_k8s_address_relation"
 		serviceK8sRelationLabelKey := fmt.Sprintf(
 			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
-			"__name__", serviceK8sRelationName,
+			"__name__", storage.ApmServiceK8sRelation,
 			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
 			"apm_application_name", m.appName,
 			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
@@ -86,14 +84,13 @@ func (m *MetricProcessor) findSpanMetric(
 		)
 		if !slices.Contains(labels, serviceK8sRelationLabelKey) {
 			labels = append(labels, serviceK8sRelationLabelKey)
-			metricCount[serviceK8sRelationName]++
+			metricCount[storage.ApmServiceK8sRelation]++
 		}
 
 		// apm_service_instance_with_system_relation
-		serviceSystemRelationName := "apm_service_instance_with_system_relation"
 		serviceSystemRelationLabelKey := fmt.Sprintf(
 			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
-			"__name__", serviceSystemRelationName,
+			"__name__", storage.ApmServiceSystemRelation,
 			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
 			"apm_application_name", m.appName,
 			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
@@ -101,7 +98,7 @@ func (m *MetricProcessor) findSpanMetric(
 		)
 		if !slices.Contains(labels, serviceSystemRelationLabelKey) {
 			labels = append(labels, serviceSystemRelationLabelKey)
-			metricCount[serviceSystemRelationName]++
+			metricCount[storage.ApmServiceSystemRelation]++
 		}
 	}
 
@@ -126,10 +123,9 @@ func (m *MetricProcessor) findParentChildMetric(
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
-			name := "apm_service_to_apm_service_flow"
 			labelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", name,
+				"__name__", storage.ApmServiceFlow,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_apm_service_name", sService,
@@ -137,7 +133,7 @@ func (m *MetricProcessor) findParentChildMetric(
 				"error", isError,
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
-			metricCount[name]++
+			metricCount[storage.ApmServiceFlow]++
 		}
 
 		if !m.enabledLayer4Report {
@@ -147,44 +143,41 @@ func (m *MetricProcessor) findParentChildMetric(
 		childIp := pair[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
 		if parentIp != "" {
 			// ----> Find system -> service relation
-			name := "system_to_apm_service_flow"
 			labelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", name,
+				"__name__", storage.SystemApmServiceFlow,
 				"from_bk_target_ip", parentIp,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
 				"error", isError,
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
-			metricCount[name]++
+			metricCount[storage.SystemApmServiceFlow]++
 		}
 		if childIp != "" {
 			// ----> Find service -> system relation
-			name := "apm_service_to_system_flow"
 			labelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", name,
+				"__name__", storage.ApmServiceSystemFlow,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_bk_target_ip", childIp,
 				"error", isError,
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
-			metricCount[name]++
+			metricCount[storage.ApmServiceSystemFlow]++
 		}
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
-			name := "system_to_system_flow"
 			labelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", name,
+				"__name__", storage.SystemFlow,
 				"from_bk_target_ip", parentIp,
 				"to_bk_target_ip", childIp,
 				"error", isError,
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
-			metricCount[name]++
+			metricCount[storage.SystemFlow]++
 		}
 	}
 

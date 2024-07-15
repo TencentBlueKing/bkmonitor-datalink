@@ -68,13 +68,13 @@ type prometheusWriter struct {
 	isValid bool
 }
 
-func (p *prometheusWriter) WriteBatch(series []prompb.TimeSeries) error {
-	if !p.isValid || len(series) == 0 {
+func (p *prometheusWriter) WriteBatch(writeReq prompb.WriteRequest) error {
+	if !p.isValid || len(writeReq.Timeseries) == 0 {
 		return nil
 	}
 
 	// TODO 补充指标的元数据信息
-	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: series})
+	reqBytes, err := proto.Marshal(&writeReq)
 	if err != nil {
 		return err
 	}
@@ -92,10 +92,10 @@ func (p *prometheusWriter) WriteBatch(series []prompb.TimeSeries) error {
 	}
 
 	metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
-	metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(series))
+	metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
 	resp, err := p.client.Do(req)
 
-	logger.Infof("[RemoteWrite] push %d series", len(series))
+	logger.Infof("[RemoteWrite] push %d series", len(writeReq.Timeseries))
 	if err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)

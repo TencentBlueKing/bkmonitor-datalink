@@ -214,7 +214,9 @@ bkmonitorbeat:
     dataid: 1100024
     period: 1h
     max_bytes: 10485760
+# ---------
 {%- endif %}
+
   #### tcp_task child config #####
   # tcp任务全局设置
   #  tcp_task:

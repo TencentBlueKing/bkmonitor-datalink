@@ -48,6 +48,7 @@ func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 
 	for _, key := range b.uniqueField {
 		buf.WriteString(conv.String(values[key]))
+		buf.WriteString("/")
 	}
 	n := xxhash.Sum64(buf.Bytes())
 	return strconv.FormatUint(n, 10)

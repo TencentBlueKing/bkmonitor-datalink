@@ -208,11 +208,11 @@ func (c AllConditions) BkSql() string {
 			}
 
 			if len(nf.Value) == 1 {
-				conditionString = append(conditionString, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, nf.Value[0]))
+				conditionString = append(conditionString, fmt.Sprintf("`%s` %s '%s'", nf.DimensionName, nf.Operator, nf.Value[0]))
 			} else {
 				var vals []string
 				for _, v := range nf.Value {
-					vals = append(vals, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, v))
+					vals = append(vals, fmt.Sprintf("`%s` %s '%s'", nf.DimensionName, nf.Operator, v))
 				}
 				logical := promql.OrOperator
 				// 如果是不等于，则要用and连接

@@ -468,6 +468,13 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
+
+	podName := r.URL.Query().Get("podName")
+	if len(podName) > 0 {
+		writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName))
+		return
+	}
+
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
 }
 

@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	relabelRuleWorkload = "v1/workload"
-	relabelRuleNode     = "v1/node"
+	relabelV1RuleWorkload = "v1/workload"
+	relabelV2RuleWorkload = "v2/workload"
+	relabelV1RuleNode     = "v1/node"
 )
 
 func IsBuiltinLabels(k string) bool {
@@ -95,7 +96,7 @@ func (t *MetricTarget) FileName() string {
 // RemoteRelabelConfig 返回采集器 workload 工作负载信息
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	switch t.RelabelRule {
-	case relabelRuleWorkload:
+	case relabelV1RuleWorkload:
 		// index >= 0 表示 annotations 中指定了 index label
 		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
 			return nil
@@ -103,6 +104,23 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 		return &yaml.MapItem{
 			Key:   "metric_relabel_remote",
 			Value: fmt.Sprintf("http://%s:%d/workload/node/%s", ConfServiceName, ConfServicePort, t.NodeName),
+		}
+	case relabelV2RuleWorkload:
+		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+			return nil
+		}
+		var podName string
+		for _, label := range t.Labels {
+			if label.Name == "pod_name" {
+				podName = label.Value
+				break
+			}
+		}
+		if len(podName) > 0 {
+			return &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s", ConfServiceName, ConfServicePort, t.NodeName, podName),
+			}
 		}
 	}
 	return nil
@@ -230,7 +248,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_name", Value: t.Meta.Name})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_namespace", Value: t.Meta.Namespace})
 
-	if t.RelabelRule == relabelRuleNode {
+	if t.RelabelRule == relabelV1RuleNode {
 		lbs = append(lbs, yaml.MapItem{Key: "node", Value: t.NodeName})
 	}
 

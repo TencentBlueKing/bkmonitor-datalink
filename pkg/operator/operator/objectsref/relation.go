@@ -11,6 +11,9 @@ package objectsref
 
 import (
 	"bytes"
+	"regexp"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -173,6 +176,44 @@ func (oc *ObjectsController) GetReplicasetRelations() []RelationMetric {
 		}
 	}
 	return metrics
+}
+
+type StatefulSetWorker struct {
+	PodIP string
+	Index int
+}
+
+func (oc *ObjectsController) GetPods(s string) map[string]StatefulSetWorker {
+	regex, err := regexp.Compile(s)
+	if err != nil {
+		return nil
+	}
+
+	// bkm-statefulset-worker-0 => [0]
+	parseIndex := func(s string) int {
+		parts := strings.Split(s, "-")
+		if len(parts) <= 0 {
+			return 0
+		}
+		last := parts[len(parts)-1]
+		index, _ := strconv.ParseInt(last, 10, 64)
+		return int(index)
+	}
+
+	items := make(map[string]StatefulSetWorker)
+	for _, pod := range oc.podObjs.GetAll() {
+		if regex.MatchString(pod.ID.String()) {
+			// 确保 podip 已经获取到
+			if pod.PodIP == "" {
+				continue
+			}
+			items[pod.PodIP] = StatefulSetWorker{
+				PodIP: pod.PodIP,
+				Index: parseIndex(pod.ID.Name),
+			}
+		}
+	}
+	return items
 }
 
 func (oc *ObjectsController) GetPodRelations() []RelationMetric {

@@ -33,3 +33,7 @@ func CheckIfForwardLocalhost(items map[string]string) bool {
 func CheckIfNormalizeMetricName(items map[string]string) bool {
 	return stringToBool(items, "normalizeMetricName")
 }
+
+func CheckIfAntiAffinity(items map[string]string) bool {
+	return stringToBool(items, "antiAffinity")
+}

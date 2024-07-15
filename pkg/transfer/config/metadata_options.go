@@ -65,6 +65,8 @@ const (
 	PipelineConfigOptTimestampPrecision        = "timestamp_precision"
 	PipelineConfigOptTimestampDefaultPrecision = "ms"
 
+	PipelineConfigOptKafkaInitialOffset = "kafka_initial_offset"
+
 	// 时序类
 	// PipelineConfigOptInjectLocalTime :  增加入库时间指标(bool)
 	PipelineConfigOptInjectLocalTime = "inject_local_time"

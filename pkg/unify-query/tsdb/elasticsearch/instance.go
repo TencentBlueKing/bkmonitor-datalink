@@ -217,7 +217,6 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
-	source.Sort(Timestamp, true)
 	order := fact.Order()
 
 	for key, asc := range order {

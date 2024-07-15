@@ -8,6 +8,7 @@
 # an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
+set -e
 
 MODULE_NAME=bkmonitorbeat
 VERSION=${VERSION}
@@ -115,13 +116,13 @@ package() {
   # 构建正常的 tar
   cd ${BUILD_PATH} && tar czf ${PACKAGE_NAME} * && cd -
   cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${PACKAGE_NAME}
-  cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${MODULE_NAME}.tgz
+  cp ${BUILD_PATH}/${PACKAGE_NAME} ${DIST_PATH}/${MODULE_NAME}.tgz && rm ${BUILD_PATH}/${PACKAGE_NAME}
 
   # 构建带后缀的 tar
   find . -name 'bkmonitorbeat.conf.tpl' | xargs -I {} sh -c "sed -i '/enable_audit_tasks/d' {} && sed -i '/# --/,+2d' {}"
   cd ${BUILD_PATH} && tar czf ${PACKAGE_NAME}-audit * && cd -
   cp ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${PACKAGE_NAME}-audit
-  cp ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${MODULE_NAME}-${VER}-audit.tgz
+  cp ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${MODULE_NAME}-${VER}-audit.tgz && rm ${BUILD_PATH}/${PACKAGE_NAME}-audit
 
   echo "${LAST_COMMIT_ID}" > ${DIST_PATH}/${LAST_COMMIT_ID_FILE_NAME}
   rm -rf ${BUILD_PATH}

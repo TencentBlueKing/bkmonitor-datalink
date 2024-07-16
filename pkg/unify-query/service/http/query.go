@@ -470,8 +470,6 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		}, lookBackDelta)
 	}
 
-	// checkTsdbFunction
-
 	// sum(count_over_time(a[1m])) => a
 	promQL, err = query.ToPromExpr(ctx, promExprOpt)
 	if err != nil {

@@ -1217,6 +1217,12 @@ func TestVmQueryParams(t *testing.T) {
 			query:    `{"query_list":[{"field_name":"me.*","is_regexp":true,"function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"sum_over_time","window":"1m0s"},"reference_name":"a","conditions":{"field_list":[{"field_name":"namespace","value":["ns"],"op":"contains"}],"condition_list":[]}},{"field_name":"metric","function":[{"method":"sum","dimensions":["bcs_cluster_id","namespace"]}],"time_aggregation":{"function":"count_over_time","window":"1m0s"},"reference_name":"b"}],"metric_merge":"a / b","start_time":"0","end_time":"600","step":"60s"}`,
 			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"sum by (bcs_cluster_id, namespace) (sum_over_time({__name__=~\"a\"}[1m] offset -59s999ms)) / sum by (bcs_cluster_id, namespace) (count_over_time(b[1m] offset -59s999ms))","start":0,"end":600,"step":60},"result_table_list":["vm_rt"],"metric_filter_condition":{"a":"bcs_cluster_id=\"cls\", namespace=\"ns\", result_table_id=\"vm_rt\", __name__=~\"me.*_value\"","b":"bcs_cluster_id=\"cls\", result_table_id=\"vm_rt\", __name__=\"metric_value\""}}`,
 		},
+		{
+			username: "vm-query",
+			spaceUid: "vm-query",
+			promql:   `{"promql":"max_over_time((increase(container_cpu_usage_seconds_total{}[10m]) \u003e 0)[1h:])","start":"1720765200","end":"1720786800","step":"10m","bk_biz_ids":null,"timezone":"Asia/Shanghai","look_back_delta":"","instant":false}`,
+			params:   `{"influx_compatible":true,"use_native_or":true,"api_type":"query_range","cluster_name":"","api_params":{"query":"max_over_time((increase(a[10m] offset -9m59s999ms) \u003e 0)[1h:])","start":1720765200,"end":1720786800,"step":600},"result_table_list":["100147_bcs_prom_computation_result_table_25428","100147_bcs_prom_computation_result_table_25429"],"metric_filter_condition":{"a":"bcs_cluster_id=\"BCS-K8S-25428\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25430\", result_table_id=\"100147_bcs_prom_computation_result_table_25428\", __name__=\"container_cpu_usage_seconds_total_value\" or bcs_cluster_id=\"BCS-K8S-25429\", result_table_id=\"100147_bcs_prom_computation_result_table_25429\", __name__=\"container_cpu_usage_seconds_total_value\""}}`,
+		},
 	}
 
 	for i, c := range testCases {

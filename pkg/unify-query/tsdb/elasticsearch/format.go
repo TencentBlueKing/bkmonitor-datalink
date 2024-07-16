@@ -33,7 +33,7 @@ const (
 
 	DefaultTimeFieldName = "dtEventTimeStamp"
 	DefaultTimeFieldType = TimeFieldTypeTime
-	DefaultTimeFieldUnit = Second
+	DefaultTimeFieldUnit = Millisecond
 
 	Type       = "type"
 	Properties = "properties"

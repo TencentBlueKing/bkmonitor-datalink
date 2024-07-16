@@ -31,7 +31,9 @@ const (
 	FieldValue = "_value"
 	FieldTime  = "_time"
 
-	Timestamp = "dtEventTimeStamp"
+	DefaultTimeFieldName = "dtEventTimeStamp"
+	DefaultTimeFieldType = TimeFieldTypeTime
+	DefaultTimeFieldUnit = Second
 
 	Type       = "type"
 	Properties = "properties"
@@ -195,12 +197,35 @@ func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, timezone string, from, size int) *FormatFactory {
-	f.valueField = valueKey
-	f.timeField = timeField
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
+	if timeField.Name == "" {
+		timeField.Name = DefaultTimeFieldName
+	}
+	if timeField.Type == "" {
+		timeField.Type = DefaultTimeFieldType
+	}
+	if timeField.Unit == "" {
+		timeField.Unit = DefaultTimeFieldUnit
+	}
+
+	timeField.UnitRate = int64(1)
+	switch timeField.Unit {
+	case Millisecond:
+		timeField.UnitRate = 1e3
+	case Microsecond:
+		timeField.UnitRate = 1e6
+	case Nanosecond:
+		timeField.UnitRate = 1e9
+	default:
+		timeField.UnitRate = 1
+	}
+
+	// 根据时间单位把考试时间和结束实践转换为对应值
 	f.start = start
 	f.end = end
-	f.timezone = timezone
+
+	f.valueField = valueKey
+	f.timeField = timeField
 	f.from = from
 	f.size = size
 	return f
@@ -222,25 +247,19 @@ func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) RangeQuery() elastic.Query {
+func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 	fieldName := f.timeField.Name
-	fieldUnit := f.timeField.Unit
 	fieldType := f.timeField.Type
-	format := toEpoch(fieldUnit)
-
-	if fieldName != "" {
-		fieldName = Timestamp
-	}
+	unitRate := f.timeField.UnitRate
 
 	var query elastic.Query
 	switch fieldType {
 	case TimeFieldTypeInt:
-
-	default:
-		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(format)
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lt(f.end * unitRate)
+	case TimeFieldTypeTime:
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(EpochSecond)
 	}
-
-	return query
+	return query, nil
 }
 
 func (f *FormatFactory) timeAgg(name string, window, timezone string) {
@@ -356,7 +375,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 		}
 
 		if im.timestamp == 0 {
-			im.timestamp = f.start
+			im.timestamp = f.start * 1e3
 		}
 
 		timeSeriesMap[seriesKey].Labels = tsLabels
@@ -472,9 +491,14 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			}
 		case TimeAgg:
 			curName := info.Name
+
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(Timestamp).FixedInterval(info.Window).TimeZone(info.Timezone).
-				MinDocCount(0).ExtendedBounds(f.start, f.end)
+				Field(f.timeField.Name).FixedInterval(info.Window).MinDocCount(0).
+				ExtendedBounds(f.start*f.timeField.UnitRate, f.end*f.timeField.UnitRate)
+			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
+			if f.timeField.Type == TimeFieldTypeTime {
+				curAgg = curAgg.TimeZone(info.Timezone)
+			}
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
 			}
@@ -514,14 +538,14 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
+			f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
 			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(Timestamp, shortDur(am.Window), am.TimeZone)
+				f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -548,7 +572,7 @@ func (f *FormatFactory) Order() map[string]bool {
 		if name == FieldValue {
 			name = f.valueField
 		} else if name == FieldTime {
-			name = Timestamp
+			name = DefaultTimeFieldName
 		}
 
 		if _, ok := f.mapping[name]; ok {
@@ -687,7 +711,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		sample.Value = 0
 	}
 
-	if timestamp, ok = f.data[Timestamp]; ok {
+	if timestamp, ok = f.data[DefaultTimeFieldName]; ok {
 		switch timestamp.(type) {
 		case int64:
 			sample.Timestamp = timestamp.(int64) * 1e3
@@ -699,7 +723,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 			return sample, fmt.Errorf("timestamp key type is error: %T, %v", timestamp, timestamp)
 		}
 	} else {
-		return sample, fmt.Errorf("timestamp is empty %s", Timestamp)
+		return sample, fmt.Errorf("timestamp is empty %s", DefaultTimeFieldName)
 	}
 
 	return sample, nil
@@ -713,7 +737,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			if k == f.valueField {
 				continue
 			}
-			if k == Timestamp {
+			if k == DefaultTimeFieldName {
 				continue
 			}
 		}

@@ -95,7 +95,8 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index    string
+	index string
+	// 单位是 s
 	start    int64
 	end      int64
 	timeZone string
@@ -202,7 +203,11 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	// 查询时间生成 elastic.query
-	filterQueries = append(filterQueries, fact.RangeQuery())
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
 
 	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
@@ -247,6 +252,10 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	}
 
 	body, _ := source.Source()
+	if body == nil {
+		return nil, fmt.Errorf("empty query body")
+	}
+
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
@@ -468,8 +477,8 @@ func (i *Instance) QueryRaw(
 
 		qo := &queryOption{
 			index: query.DB,
-			start: start.UnixMilli(),
-			end:   end.UnixMilli(),
+			start: start.Unix(),
+			end:   end.Unix(),
 			query: query,
 		}
 
@@ -489,7 +498,7 @@ func (i *Instance) QueryRaw(
 
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.Timezone, query.From, size).
+			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMapping(mapping).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)

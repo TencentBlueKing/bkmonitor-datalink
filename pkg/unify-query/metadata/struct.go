@@ -29,9 +29,10 @@ const (
 )
 
 type TimeField struct {
-	Name string
-	Type string
-	Unit string
+	Name     string
+	Type     string
+	Unit     string
+	UnitRate int64
 }
 
 // Aggregate 聚合方法

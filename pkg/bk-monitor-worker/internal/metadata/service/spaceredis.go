@@ -590,7 +590,8 @@ func (s SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]ma
 			tidOption, ok := tidOptionMap[option.TableID]
 
 			var opValue interface{}
-			if err := jsonx.UnmarshalString(option.Value, &opValue); err != nil {
+			opValue, err := option.InterfaceValue()
+			if err != nil {
 				logger.Errorf("unmarshal result table option value error, table_id: %s, option_value: %s, error: %s", option.TableID, option.Value, err)
 				opValue = make(map[string]interface{})
 			}

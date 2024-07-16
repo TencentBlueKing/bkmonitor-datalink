@@ -16,6 +16,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -163,11 +164,12 @@ func MetricFlowMemDuration(m time.Duration) MetricConfigOption {
 
 func MetricFlowBuckets(b []float64) MetricConfigOption {
 	return func(options *MetricConfigOptions) {
+		sort.Float64s(b)
 		res := make([]float64, 0, len(b)+1)
 		for i := 0; i < len(b); i++ {
 			res = append(res, b[i]*1e6)
 		}
-		res = append(res, math.MaxInt)
+		res = append(res, math.MaxFloat64)
 		options.flowMetricBuckets = res
 	}
 }

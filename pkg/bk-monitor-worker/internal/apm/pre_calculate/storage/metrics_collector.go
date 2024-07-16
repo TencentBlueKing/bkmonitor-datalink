@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,51 +22,6 @@ const (
 	ApmServiceSystemFlow = "apm_service_to_system_flow"
 	SystemFlow           = "system_to_system_flow"
 )
-
-var relationMetricsMetadataMapping = map[string]prompb.MetricMetadata{
-	ApmServiceInstanceRelation: {
-		MetricFamilyName: ApmServiceInstanceRelation,
-		Type:             prompb.MetricMetadata_GAUGE,
-		Help:             "APM 服务实例关联指标",
-	},
-	ApmServiceK8sRelation: {
-		MetricFamilyName: ApmServiceK8sRelation,
-		Type:             prompb.MetricMetadata_GAUGE,
-		Help:             "APM 服务与 K8s 关联指标",
-	},
-	ApmServiceSystemRelation: {
-		MetricFamilyName: ApmServiceSystemRelation,
-		Type:             prompb.MetricMetadata_GAUGE,
-		Help:             "APM 服务与主机关联指标",
-	},
-}
-
-var flowMetricsMetadataMapping = map[string]prompb.MetricMetadata{
-	"min": {
-		Type: prompb.MetricMetadata_GAUGE,
-		Help: "聚合周期内耗时最小值",
-		Unit: "microseconds",
-	},
-	"max": {
-		Type: prompb.MetricMetadata_GAUGE,
-		Help: "聚合周期内耗时最大值",
-		Unit: "microseconds",
-	},
-	"sum": {
-		Type: prompb.MetricMetadata_COUNTER,
-		Help: "聚合周期内耗时总和",
-		Unit: "microseconds",
-	},
-	"count": {
-		Type: prompb.MetricMetadata_COUNTER,
-		Help: "聚合周期内耗时总数",
-	},
-	"bucket": {
-		Type: prompb.MetricMetadata_HISTOGRAM,
-		Help: "聚合周期内耗时bucket",
-		Unit: "microseconds",
-	},
-}
 
 type MetricCollector interface {
 	Observe(value any)
@@ -99,7 +55,7 @@ type FlowMetricRecordStats struct {
 
 type flowMetricStats struct {
 	FlowDurationMax, FlowDurationMin, FlowDurationSum, FlowDurationCount float64
-	FlowDurationBucket                                                   map[float64]int
+	FlowDurationBucket                                                   []float64
 }
 
 type flowMetricsCollector struct {
@@ -119,29 +75,33 @@ func (c *flowMetricsCollector) Observe(value any) {
 	mapping := value.(map[string]*FlowMetricRecordStats)
 	for dimensionKey, v := range mapping {
 		for _, duration := range v.DurationValues {
-			if _, exist := c.data[dimensionKey]; !exist {
-				c.data[dimensionKey] = &flowMetricStats{
-					FlowDurationMax:    math.Inf(-1),
-					FlowDurationMin:    math.Inf(1),
-					FlowDurationBucket: make(map[float64]int),
+			s, exist := c.data[dimensionKey]
+			if !exist {
+				s = &flowMetricStats{
+					FlowDurationMax:    math.SmallestNonzeroFloat64,
+					FlowDurationMin:    math.MaxFloat64,
+					FlowDurationBucket: make([]float64, len(c.buckets)),
 				}
 			}
 
-			c.data[dimensionKey].FlowDurationCount++
-			c.data[dimensionKey].FlowDurationSum += duration
+			s.FlowDurationCount++
+			s.FlowDurationSum += duration
 
-			if duration > c.data[dimensionKey].FlowDurationMax {
-				c.data[dimensionKey].FlowDurationMax = duration
+			if s.FlowDurationMax < duration {
+				s.FlowDurationMax = duration
 			}
 
-			if duration < c.data[dimensionKey].FlowDurationMin {
-				c.data[dimensionKey].FlowDurationMin = duration
+			if s.FlowDurationMin > duration {
+				s.FlowDurationMin = duration
 			}
-			for _, bucket := range c.buckets {
-				if duration <= bucket {
-					c.data[dimensionKey].FlowDurationBucket[bucket]++
+
+			for i := 0; i < len(c.buckets); i++ {
+				if c.buckets[i] >= duration {
+					s.FlowDurationBucket[i]++
 				}
 			}
+
+			c.data[dimensionKey] = s
 		}
 	}
 }
@@ -149,10 +109,8 @@ func (c *flowMetricsCollector) Observe(value any) {
 func (c *flowMetricsCollector) Collect() prompb.WriteRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	res := c.convert()
 	c.data = make(map[string]*flowMetricStats)
-
 	return res
 }
 
@@ -195,32 +153,24 @@ func (c *flowMetricsCollector) convert() prompb.WriteRequest {
 			Samples: []prompb.Sample{{Value: stats.FlowDurationCount, Timestamp: ts}},
 		})
 
-		for bucket, count := range stats.FlowDurationBucket {
+		for i := 0; i < len(stats.FlowDurationBucket); i++ {
+			le := strconv.FormatFloat(c.buckets[i], 'f', -1, 64)
+			if c.buckets[i] == math.MaxFloat64 {
+				le = "+Inf"
+			}
 			series = append(series, prompb.TimeSeries{
 				Labels: append(
 					copyLabels(labels), []prompb.Label{
 						{Name: "__name__", Value: name + "_bucket"},
-						{Name: "le", Value: fmt.Sprintf("%f", bucket)},
+						{Name: "le", Value: le},
 					}...),
-				Samples: []prompb.Sample{{Value: float64(count), Timestamp: ts}},
-			})
-		}
-	}
-
-	var infos []prompb.MetricMetadata
-	for _, n := range metricsName {
-		for k, info := range flowMetricsMetadataMapping {
-			infos = append(infos, prompb.MetricMetadata{
-				MetricFamilyName: fmt.Sprintf("%s_%s", n, k),
-				Type:             info.Type,
-				Help:             info.Help,
-				Unit:             info.Unit,
+				Samples: []prompb.Sample{{Value: stats.FlowDurationBucket[i], Timestamp: ts}},
 			})
 		}
 	}
 
 	logger.Infof("🌟🌟🌟convert end 🌟🌟🌟")
-	return prompb.WriteRequest{Timeseries: series, Metadata: infos}
+	return prompb.WriteRequest{Timeseries: series}
 }
 
 func newFlowMetricCollector(buckets []float64, ttl time.Duration) *flowMetricsCollector {
@@ -275,7 +225,6 @@ func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteR
 
 	var series []prompb.TimeSeries
 	metricName := make(map[string]int, len(dimensionKeys))
-	var infos []prompb.MetricMetadata
 
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	for _, key := range dimensionKeys {
@@ -287,15 +236,8 @@ func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteR
 		metricName[name]++
 	}
 
-	for k := range metricName {
-		metadata, exist := relationMetricsMetadataMapping[k]
-		if exist {
-			infos = append(infos, metadata)
-		}
-	}
-
 	logger.Infof("🌈🌈🌈 convert end 🌈🌈🌈")
-	return prompb.WriteRequest{Timeseries: series, Metadata: infos}
+	return prompb.WriteRequest{Timeseries: series}
 }
 
 func newRelationMetricCollector(ttl time.Duration) *relationMetricsCollector {

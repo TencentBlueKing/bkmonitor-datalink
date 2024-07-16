@@ -506,7 +506,7 @@ func (s SpacePusher) PushTableIdDetail(tableIdList []string, isPublish bool, use
 
 }
 
-// ComposeEsTableIdDetail compose the es table id detail
+// PushEsTableIdDetail compose the es table id detail
 func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) error {
 	logger.Infof("start to compose es table id detail data, table_id_list [%v]", tableIdList)
 	db := mysql.GetDBSession().DB
@@ -525,6 +525,14 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 			return err
 		}
 	}
+	// 查询es结果表的 option
+	var tidList []string
+	for _, es := range esStorageList {
+		tidList = append(tidList, es.TableID)
+	}
+	// 组装结果表对应的选项
+	tidOptionMap := s.composeEsTableIdOptions(tidList)
+
 	// 组装数据
 	client := redis.GetStorageRedisInstance()
 	wg := &sync.WaitGroup{}
@@ -532,8 +540,13 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 	ch := make(chan struct{}, 50)
 	wg.Add(len(esStorageList))
 	for _, es := range esStorageList {
+		// 获取 option 数据
+		options, ok := tidOptionMap[es.TableID]
+		if !ok {
+			options = make(map[string]interface{})
+		}
 		ch <- struct{}{}
-		go func(es storage.ESStorage, wg *sync.WaitGroup, ch chan struct{}) {
+		go func(es storage.ESStorage, options map[string]interface{}, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -541,7 +554,7 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 			tableId := es.TableID
 			sourceType := es.SourceType
 			indexSet := es.IndexSet
-			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, es.StorageClusterID, sourceType, indexSet)
+			_tableId, detailStr, err := s.composeEsTableIdDetail(tableId, options, es.StorageClusterID, sourceType, indexSet)
 			if err != nil {
 				logger.Errorf("compose es table id detail error, table_id: %s, error: %s", tableId, err)
 				return
@@ -556,13 +569,45 @@ func (s SpacePusher) PushEsTableIdDetail(tableIdList []string, isPublish bool) e
 					logger.Errorf("publish es table id detail error, table_id: %s, error: %s", tableId, err)
 				}
 			}
-		}(es, wg, ch)
+		}(es, options, wg, ch)
 	}
 	wg.Wait()
 	return nil
 }
 
-func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
+// composeEsTableIdOptions 组装 es
+func (s SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]map[string]interface{} {
+	db := mysql.GetDBSession().DB
+	// 分批获取结果表的option
+	tidOptionMap := make(map[string]map[string]interface{})
+	for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
+		var tempList []resulttable.ResultTableOption
+		if err := resulttable.NewResultTableOptionQuerySet(db).Select(resulttable.ResultTableOptionDBSchema.TableID, resulttable.ResultTableOptionDBSchema.Name, resulttable.ResultTableOptionDBSchema.Value).TableIDIn(chunkTableIdList...).All(&tempList); err != nil {
+			logger.Errorf("query result table option error, error: %s", err)
+			continue
+		}
+		for _, option := range tempList {
+			tidOption, ok := tidOptionMap[option.TableID]
+
+			var opValue interface{}
+			if err := jsonx.UnmarshalString(option.Value, &opValue); err != nil {
+				logger.Errorf("unmarshal result table option value error, table_id: %s, option_value: %s, error: %s", option.TableID, option.Value, err)
+				opValue = make(map[string]interface{})
+			}
+			// 如果已经存在，则追加数据
+			if ok {
+				tidOption[option.Name] = opValue
+				tidOptionMap[option.TableID] = tidOption
+			} else {
+				// 否则，直接赋值
+				tidOptionMap[option.TableID] = map[string]interface{}{option.Name: opValue}
+			}
+		}
+	}
+	return tidOptionMap
+}
+
+func (s SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	var indexList []string
 	var processedList []string
 	tableIdDb := indexSet
@@ -596,6 +641,7 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, storageClusterId uin
 		"db":          tableIdDb,
 		"measurement": models.TSGroupDefaultMeasurement,
 		"source_type": sourceType,
+		"options":     options,
 	})
 	return tableId, detailStr, err
 }

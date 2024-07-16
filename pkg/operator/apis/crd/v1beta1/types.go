@@ -30,10 +30,12 @@ type DataID struct {
 }
 
 type DataIDSpec struct {
-	DataID           int               `json:"dataID,omitempty"`
-	MonitorResource  MonitorResource   `json:"monitorResource,omitempty"`
+	DataID          int               `json:"dataID,omitempty"`
+	MonitorResource MonitorResource   `json:"monitorResource,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+
+	// 以下字段已弃用
 	Report           Report            `json:"report,omitempty"`
-	Labels           map[string]string `json:"labels,omitempty"`
 	MetricReplace    map[string]string `json:"metricReplace,omitempty"`
 	DimensionReplace map[string]string `json:"dimensionReplace,omitempty"`
 }
@@ -41,12 +43,13 @@ type DataIDSpec struct {
 type MonitorResource struct {
 	// 资源所属命名空间
 	NameSpace string `json:"namespace,omitempty"`
-	// 资源所属类型 serviceMonitor podMonitor probe
+	// 资源所属类型 ServiceMonitor/PodMonitor/Probe
 	Kind string `json:"kind,omitempty"`
-	// 资源定义的name
+	// 资源名称
 	Name string `json:"name,omitempty"`
 }
 
+// MatchSplitNamespace namespace 支持使用【|】分割
 func (mr *MonitorResource) MatchSplitNamespace(namespace string) bool {
 	for _, ns := range strings.Split(mr.NameSpace, "|") {
 		if strings.TrimSpace(ns) == namespace {

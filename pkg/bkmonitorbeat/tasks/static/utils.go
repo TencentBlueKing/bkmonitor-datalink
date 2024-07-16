@@ -13,7 +13,9 @@ import (
 	"context"
 	"math/rand"
 	"net"
+	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -266,6 +268,14 @@ var GetSystemStatus = func(ctx context.Context) (*System, error) {
 	}
 
 	bkAgentID := GetBKAgentID()
+
+	// kylin 系统的额外补充逻辑
+	if strings.Contains(strings.ToLower(info.Platform), "kylin") {
+		if pv := getKylinPlatformVersion(); pv != "" {
+			info.PlatformVersion = pv
+		}
+	}
+
 	return &System{
 		HostName:  info.Hostname,
 		SysType:   osSystemType,
@@ -286,4 +296,19 @@ func GetBKAgentID() string {
 var GetRandomDuration = func() time.Duration {
 	randomSecond := rand.Intn(3600)
 	return time.Duration(randomSecond) * time.Second
+}
+
+// getKylinPlatformVersion Kylin 系统对于 PlatformVersion 的额外支持逻辑
+func getKylinPlatformVersion() string {
+	releaseFile := "/etc/system-release"
+	bs, err := os.ReadFile(releaseFile)
+	if err != nil {
+		logger.Warnf("failed to read release file: %v", err)
+		return ""
+	}
+	lines := strings.Split(string(bs), "\n")
+	if len(lines) > 0 && strings.Contains(strings.ToLower(lines[0]), "kylin") {
+		return lines[0]
+	}
+	return ""
 }

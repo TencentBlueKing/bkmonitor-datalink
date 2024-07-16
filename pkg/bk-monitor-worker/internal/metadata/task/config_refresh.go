@@ -391,6 +391,7 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 		clusterId, ok := dataIdClusterId[info.BkDataId]
 		if !ok {
 			logger.Infof("data_id [%v] not found in data_id_cluster_id map, skip", info.BkDataId)
+			wg.Done()
 			continue
 		}
 		// 获取 kafka 集群信息
@@ -402,6 +403,7 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 		clusterInfo, ok := clusterInfoMap[clusterId]
 		if !ok && kafkaClient == nil {
 			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			wg.Done()
 			continue
 		}
 

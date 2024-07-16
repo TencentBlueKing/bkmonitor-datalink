@@ -118,18 +118,18 @@ func (m *MetricProcessor) findParentChildMetric(
 
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
-		isError := pair[0].IsError() || pair[1].IsError()
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
-				"error", isError,
+				"from_span_error", pair[0].IsError(),
+				"to_span_error", pair[1].IsError(),
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
@@ -143,12 +143,13 @@ func (m *MetricProcessor) findParentChildMetric(
 		if parentIp != "" {
 			// ----> Find system -> service relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.SystemApmServiceFlow,
 				"from_bk_target_ip", parentIp,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
-				"error", isError,
+				"from_span_error", pair[0].IsError(),
+				"to_span_error", pair[1].IsError(),
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
 			metricCount[storage.SystemApmServiceFlow]++
@@ -156,12 +157,13 @@ func (m *MetricProcessor) findParentChildMetric(
 		if childIp != "" {
 			// ----> Find service -> system relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceSystemFlow,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"to_bk_target_ip", childIp,
-				"error", isError,
+				"from_span_error", pair[0].IsError(),
+				"to_span_error", pair[1].IsError(),
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
 			metricCount[storage.ApmServiceSystemFlow]++
@@ -169,11 +171,12 @@ func (m *MetricProcessor) findParentChildMetric(
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.SystemFlow,
 				"from_bk_target_ip", parentIp,
 				"to_bk_target_ip", childIp,
-				"error", isError,
+				"from_span_error", pair[0].IsError(),
+				"to_span_error", pair[1].IsError(),
 			)
 			m.addToStats(labelKey, pair, metricRecordMapping)
 			metricCount[storage.SystemFlow]++

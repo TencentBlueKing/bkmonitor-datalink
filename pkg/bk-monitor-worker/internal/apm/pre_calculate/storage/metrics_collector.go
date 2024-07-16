@@ -115,7 +115,6 @@ func (c *flowMetricsCollector) Collect() prompb.WriteRequest {
 }
 
 func (c *flowMetricsCollector) convert() prompb.WriteRequest {
-	logger.Infof("🌟🌟🌟convert start 🌟🌟🌟")
 
 	copyLabels := func(labels []prompb.Label) []prompb.Label {
 		newLabels := make([]prompb.Label, len(labels))
@@ -128,8 +127,6 @@ func (c *flowMetricsCollector) convert() prompb.WriteRequest {
 	ts := time.Now().UnixNano() / int64(time.Millisecond)
 	for key, stats := range c.data {
 		name, labels := dimensionKeyToNameAndLabel(key, true)
-		// todo remove test log
-		logger.Infof("[FlowMetricsCollector] fromService: %s toService: %s minValue: %+v", labels[0].Value, labels[2].Value, stats.FlowDurationMin)
 
 		metricsName = append(metricsName, name)
 
@@ -169,7 +166,6 @@ func (c *flowMetricsCollector) convert() prompb.WriteRequest {
 		}
 	}
 
-	logger.Infof("🌟🌟🌟convert end 🌟🌟🌟")
 	return prompb.WriteRequest{Timeseries: series}
 }
 

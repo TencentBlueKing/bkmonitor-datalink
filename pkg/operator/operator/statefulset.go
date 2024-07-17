@@ -243,5 +243,10 @@ func calcShouldStatefulSetWorker(n int) int {
 		expectedWorkers = 1
 	}
 
+	// 保证 workers 数量不低于 ConfStatefulSetReplicas
+	if ConfStatefulSetReplicas > expectedWorkers {
+		expectedWorkers = ConfStatefulSetReplicas
+	}
+
 	return expectedWorkers
 }

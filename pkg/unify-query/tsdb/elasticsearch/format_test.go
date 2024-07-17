@@ -31,6 +31,14 @@ func TestFormatFactory_RangeQueryAndAggregates(t *testing.T) {
 		aggregates metadata.Aggregates
 		expected   string
 	}{
+		"second date field": {
+			timeField: metadata.TimeField{
+				Name: "time",
+				Type: "date",
+				Unit: Second,
+			},
+			expected: ``,
+		},
 		"second time field": {
 			timeField: metadata.TimeField{
 				Name: "time",

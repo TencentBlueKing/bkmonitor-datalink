@@ -61,7 +61,7 @@ const (
 )
 
 const (
-	TimeFieldTypeTime = "time"
+	TimeFieldTypeTime = "date"
 	TimeFieldTypeInt  = "int"
 )
 
@@ -248,6 +248,7 @@ func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
 }
 
 func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
+	var err error
 	fieldName := f.timeField.Name
 	fieldType := f.timeField.Type
 	unitRate := f.timeField.UnitRate
@@ -258,8 +259,10 @@ func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
 		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lt(f.end * unitRate)
 	case TimeFieldTypeTime:
 		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(EpochSecond)
+	default:
+		err = fmt.Errorf("time field type is error %s", fieldType)
 	}
-	return query, nil
+	return query, err
 }
 
 func (f *FormatFactory) timeAgg(name string, window, timezone string) {

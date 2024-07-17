@@ -155,16 +155,28 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 }
 
 func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
+	defer span.End(&err)
+
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(ctx, fmt.Sprintf("get mapping error: %s", r))
+			err = fmt.Errorf("get mapping error: %s", r)
 		}
+		span.End(&err)
 	}()
+
+	span.Set("alias", alias)
 
 	indexs, err := i.getIndexes(ctx, alias)
 	if err != nil {
 		return nil, err
 	}
+
+	span.Set("indexs", indexs)
 
 	for _, index := range indexs {
 		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
@@ -173,6 +185,9 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 		}
 
 		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
+			span.Set("index", index)
+			span.Set("mapping", mapping)
+
 			return mapping, nil
 		} else {
 			return nil, fmt.Errorf("get mappings error with index: %s", index)

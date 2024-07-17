@@ -62,7 +62,7 @@ const (
 
 const (
 	TimeFieldTypeTime = "date"
-	TimeFieldTypeInt  = "int"
+	TimeFieldTypeInt  = "long"
 )
 
 const (

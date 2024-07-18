@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/metricbeat/mb"
@@ -204,8 +205,31 @@ func (t *BKMetricbeatTool) splitBigMetrics(m common.MapStr, batchsize int, maxBa
 	return ret
 }
 
+func (t *BKMetricbeatTool) waitUntil() {
+	period := int(t.taskConf.Period.Seconds())
+	if period <= 0 {
+		period = 1
+	}
+	now := time.Now().Second()
+	n := period - (now % period)
+	// 超过 1min 的就没有对齐的必要了
+	if n >= 60 || n == period {
+		n = 0
+	}
+
+	// 示例
+	// now: 13, period: 10, wait: 7
+	// now: 13, period: 15, wait: 2
+	// now: 13, period: 30, wait: 17
+	// now: 13, period: 60, wait: 47
+	// now: 13, period: 120, wait: 0
+	time.Sleep(time.Duration(n) * time.Second)
+}
+
 // Run 使用bkmetricbeat原有逻辑执行任务
 func (t *BKMetricbeatTool) Run(ctx context.Context, e chan<- define.Event) error {
+	t.waitUntil() // 采集时刻对齐
+
 	logger.Debug("BKMetricbeatTool is running...")
 	keepOneDimension := false
 	var batchsize int

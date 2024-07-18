@@ -45,24 +45,24 @@ func TestCalcPortStat(t *testing.T) {
 			},
 			sockets: []FileSocket{
 				{
-					Protocol:  ProtocolTCP,
-					ConnLaddr: "127.0.0.1",
-					ConnLport: 100,
+					Protocol: ProtocolTCP,
+					Saddr:    "127.0.0.1",
+					Sport:    100,
 				},
 				{
-					Protocol:  ProtocolTCP,
-					ConnLaddr: "127.0.0.1",
-					ConnLport: 200,
+					Protocol: ProtocolTCP,
+					Saddr:    "127.0.0.1",
+					Sport:    200,
 				},
 				{
-					Protocol:  ProtocolTCP,
-					ConnLaddr: "::", // 存在 [::] 则一定会存在 [0.0.0.0]
-					ConnLport: 300,
+					Protocol: ProtocolTCP,
+					Saddr:    "::", // 存在 [::] 则一定会存在 [0.0.0.0]
+					Sport:    300,
 				},
 				{
-					Protocol:  ProtocolTCP,
-					ConnLaddr: "0.0.0.0",
-					ConnLport: 300,
+					Protocol: ProtocolTCP,
+					Saddr:    "0.0.0.0",
+					Sport:    300,
 				},
 			},
 			pidcnt: 1,
@@ -103,9 +103,9 @@ func TestCalcPortStat(t *testing.T) {
 			},
 			sockets: []FileSocket{
 				{
-					Protocol:  ProtocolTCP6,
-					ConnLaddr: "fe80::5054:ff:fe1e:f927",
-					ConnLport: 300,
+					Protocol: ProtocolTCP6,
+					Saddr:    "fe80::5054:ff:fe1e:f927",
+					Sport:    300,
 				},
 			},
 			pidcnt: 1,
@@ -145,9 +145,9 @@ func TestCalcPortStat(t *testing.T) {
 			},
 			sockets: []FileSocket{
 				{
-					Protocol:  ProtocolUDP6,
-					ConnLaddr: "fe80::5054:ff:fe1e:f928",
-					ConnLport: 300,
+					Protocol: ProtocolUDP6,
+					Saddr:    "fe80::5054:ff:fe1e:f928",
+					Sport:    300,
 				},
 			},
 			pidcnt: 1,
@@ -174,27 +174,27 @@ func TestCalcPortStat(t *testing.T) {
 func TestMergeFileSockets(t *testing.T) {
 	fs1 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    101,
 		},
 	}
 
 	fs2 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 103,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    103,
 		},
 	}
 
@@ -202,19 +202,19 @@ func TestMergeFileSockets(t *testing.T) {
 	ret := detector.mergeFileSockets(fs1, fs2)
 	fs3 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    101,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 103,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    103,
 		},
 	}
 	assert.Equal(t, fs3, ret)
@@ -223,50 +223,50 @@ func TestMergeFileSockets(t *testing.T) {
 func TestMergePidSocket(t *testing.T) {
 	fs1 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    101,
 		},
 	}
 	fs2 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.2",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.2",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.2",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.2",
+			Sport:    101,
 		},
 	}
 	fs3 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.1",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.1",
+			Sport:    101,
 		},
 	}
 	fs4 := []FileSocket{
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.4",
-			ConnLport: 100,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.4",
+			Sport:    100,
 		},
 		{
-			Protocol:  ProtocolTCP,
-			ConnLaddr: "127.0.0.4",
-			ConnLport: 101,
+			Protocol: ProtocolTCP,
+			Saddr:    "127.0.0.4",
+			Sport:    101,
 		},
 	}
 
@@ -286,36 +286,36 @@ func TestMergePidSocket(t *testing.T) {
 	excepted.TCP = map[int32][]FileSocket{
 		1: {
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.1",
-				ConnLport: 100,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.1",
+				Sport:    100,
 			},
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.1",
-				ConnLport: 101,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.1",
+				Sport:    101,
 			},
 		},
 		2: {
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.2",
-				ConnLport: 100,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.2",
+				Sport:    100,
 			},
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.2",
-				ConnLport: 101,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.2",
+				Sport:    101,
 			},
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.4",
-				ConnLport: 100,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.4",
+				Sport:    100,
 			},
 			{
-				Protocol:  ProtocolTCP,
-				ConnLaddr: "127.0.0.4",
-				ConnLport: 101,
+				Protocol: ProtocolTCP,
+				Saddr:    "127.0.0.4",
+				Sport:    101,
 			},
 		},
 	}

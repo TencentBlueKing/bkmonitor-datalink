@@ -23,18 +23,20 @@ import (
 )
 
 type FileSocket struct {
-	Status    string
-	Inode     uint32
-	Type      int
-	Pid       int32
-	Family    uint32
-	ConnLaddr string
-	ConnLport uint32
-	Protocol  string
+	Status   string
+	Inode    uint32
+	Type     int
+	Pid      int32
+	Family   uint32
+	Saddr    string
+	Sport    uint32
+	Daddr    string
+	Dport    uint32
+	Protocol string
 }
 
 func (fs FileSocket) Listen() string {
-	return fmt.Sprintf("%s:%d", fs.ConnLaddr, fs.ConnLport)
+	return fmt.Sprintf("%s:%d", fs.Saddr, fs.Sport)
 }
 
 // socketNetInfo inode -> socket

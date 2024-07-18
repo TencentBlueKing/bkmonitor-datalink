@@ -121,8 +121,7 @@ package() {
   # 构建带后缀的 tar
   find . -name 'bkmonitorbeat.conf.tpl' | xargs -I {} sh -c "sed -i '/enable_audit_tasks/d' {} && sed -i '/# ---------/,+1d' {}"
   cd ${BUILD_PATH} && tar czf ${PACKAGE_NAME}-audit * && cd -
-  cp ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${PACKAGE_NAME}-audit
-  cp ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${MODULE_NAME}-${VER}-audit.tgz && rm ${BUILD_PATH}/${PACKAGE_NAME}-audit
+  mv ${BUILD_PATH}/${PACKAGE_NAME}-audit ${DIST_PATH}/${MODULE_NAME}-${VER}-audit.tgz
 
   echo "${LAST_COMMIT_ID}" > ${DIST_PATH}/${LAST_COMMIT_ID_FILE_NAME}
   rm -rf ${BUILD_PATH}

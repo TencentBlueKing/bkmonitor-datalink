@@ -19,6 +19,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
@@ -320,11 +321,13 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				}
 				skip := false
 				for _, clusterType := range storage.IgnoredStorageClusterTypes {
-					if consulConfig.ClusterType == clusterType {
+					// 如果集群类型为 vm，或者集群类型为 influxdb且结果表在白名单中，则忽略存储
+					if consulConfig.ClusterType == clusterType || (clusterType == models.StorageTypeInfluxdb && slicex.IsExistItem(config.SkipInfluxdbTableIds, rt.TableId)) {
 						skip = true
 						break
 					}
 				}
+
 				if skip {
 					continue
 				}

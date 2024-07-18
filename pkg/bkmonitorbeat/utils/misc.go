@@ -69,3 +69,16 @@ func PidStoreFile() string {
 	}
 	return pidstore
 }
+
+type SpecBlockIO struct {
+	Major      int64
+	Minor      int64
+	WriteBytes uint64
+	ReadBytes  uint64
+	WriteIOps  uint64
+	ReadIOps   uint64
+}
+
+func IsLinuxOS() bool {
+	return runtime.GOOS == "linux"
+}

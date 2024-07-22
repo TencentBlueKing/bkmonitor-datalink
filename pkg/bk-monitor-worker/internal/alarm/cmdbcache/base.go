@@ -42,8 +42,10 @@ const (
 	cmdbApiPageSize = 500
 )
 
-var cmdbApiClient *cmdb.Client
-var cmdbApiClientOnce sync.Once
+var (
+	cmdbApiClient     *cmdb.Client
+	cmdbApiClientOnce sync.Once
+)
 
 // getCmdbApi Get cmdb api client instance with lock
 func getCmdbApi() *cmdb.Client {
@@ -57,7 +59,11 @@ func getCmdbApi() *cmdb.Client {
 		}
 
 		var err error
-		cmdbApiClient, err = cmdb.New(config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider(), OptRateLimitBodyProvider(50, 80, 5))
+		cmdbApiClient, err = cmdb.New(
+			config,
+			bkapi.OptJsonBodyProvider(),
+			OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
+		)
 		if err != nil {
 			panic(err)
 		}

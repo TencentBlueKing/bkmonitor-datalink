@@ -24,44 +24,46 @@ package cmdbcache
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"golang.org/x/time/rate"
 )
 
-// OptRateLimitBodyProvider creates a new RateLimitBodyProvider with default rate limiter.
-func OptRateLimitBodyProvider(qps float64, burst int, timeout int) *RateLimitBodyProvider {
-	return NewRateLimitBodyProvider(qps, burst, timeout)
+// OptRateLimitResultProvider creates a new RateLimitResultProvider with default rate limiter.
+func OptRateLimitResultProvider(qps float64, burst int, timeout int) *RateLimitResultProvider {
+	return NewRateLimitResultProvider(qps, burst, timeout)
 }
 
-// RateLimitBodyProvider is a rate limiter for body provider.
-type RateLimitBodyProvider struct {
+// RateLimitResultProvider is a rate limiter for result provider.
+type RateLimitResultProvider struct {
 	timeout time.Duration
 	limiter *rate.Limiter
 }
 
-// NewRateLimitBodyProvider creates a new RateLimitBodyProvider with rate limiter.
-func NewRateLimitBodyProvider(qps float64, burst int, timeout int) *RateLimitBodyProvider {
-	return &RateLimitBodyProvider{
+// NewRateLimitResultProvider creates a new RateLimitResultProvider with rate limiter.
+func NewRateLimitResultProvider(qps float64, burst int, timeout int) *RateLimitResultProvider {
+	return &RateLimitResultProvider{
 		timeout: time.Duration(timeout) * time.Second,
 		limiter: rate.NewLimiter(rate.Limit(qps), burst),
 	}
 }
 
 // ApplyToClient will add to the operation operations.
-func (r *RateLimitBodyProvider) ApplyToClient(cli define.BkApiClient) error {
+func (r *RateLimitResultProvider) ApplyToClient(cli define.BkApiClient) error {
 	return cli.AddOperationOptions(r)
 }
 
-// ApplyToOperation will set the body provider.
-func (r *RateLimitBodyProvider) ApplyToOperation(op define.Operation) error {
-	op.SetBodyProvider(r)
+// ApplyToOperation will set the result provider.
+func (r *RateLimitResultProvider) ApplyToOperation(op define.Operation) error {
+	op.SetResultProvider(r)
 	return nil
 }
 
-// ProvideBody method provides the request body, and returns the content length.
-func (r *RateLimitBodyProvider) ProvideBody(operation define.Operation, data interface{}) error {
+// ProvideResult method provides the result from response.
+func (r *RateLimitResultProvider) ProvideResult(response *http.Response, result interface{}) error {
 	if r.limiter == nil {
 		return nil
 	}
@@ -73,6 +75,16 @@ func (r *RateLimitBodyProvider) ProvideBody(operation define.Operation, data int
 	// 等待限流
 	if err := r.limiter.Wait(ctx); err != nil {
 		return err
+	}
+
+	// for most unmarshal functions, a nil receiver is not expected.
+	if result == nil {
+		return nil
+	}
+
+	err := json.NewDecoder(response.Body).Decode(result)
+	if err != nil {
+		return define.ErrorWrapf(err, "failed to unmarshal response result")
 	}
 
 	return nil

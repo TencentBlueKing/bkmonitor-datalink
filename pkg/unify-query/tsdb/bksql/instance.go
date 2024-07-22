@@ -307,6 +307,14 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 	return res, nil
 }
 
+func (i *Instance) table(query *metadata.Query) string {
+	table := fmt.Sprintf("`%s`", query.DB)
+	if query.Measurement != "" {
+		table += "." + query.Measurement
+	}
+	return table
+}
+
 // bkSql 构建查询语句
 func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end time.Time) (string, error) {
 	var (
@@ -359,7 +367,7 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
-	sqlBuilder.WriteString("FROM " + query.DB + " ")
+	sqlBuilder.WriteString("FROM " + i.table(query) + " ")
 	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
 	if query.BkSqlCondition != "" {
 		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")

@@ -117,6 +117,8 @@ var (
 	BkdataProjectMaintainer string
 	// BkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
 	BkdataIsAllowAllCmdbLevel bool
+	// 跳过写入influxdb的结果表列表
+	SkipInfluxdbTableIds []string
 )
 
 func initMetadataVariables() {
@@ -172,4 +174,5 @@ func initMetadataVariables() {
 	BkdataFlowClusterGroup = GetValue("taskConfig.metadata.bkdata.flowClusterGroup", "default_inland")
 	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
+	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
 }

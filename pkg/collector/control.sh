@@ -47,6 +47,7 @@ function package() {
   mkdir -p ${dir}/{etc,bin}
 
   # 构建二进制
+  go mod tidy
   GOOS=${goos} GOARCH=${goarch} \
     go build -ldflags " \
   	-s -w \
@@ -65,6 +66,7 @@ function sidecar() {
     local version=${1:-'v0.0.0'}
     local dist=${2:-'./dist'}
     # 构建二进制
+    go mod tidy
     GOOS=linux GOARCH=amd64 \
       go build -ldflags " \
     	-s -w \

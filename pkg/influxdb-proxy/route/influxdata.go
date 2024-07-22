@@ -141,9 +141,11 @@ func (a Tags) Clone() Tags {
 	return others
 }
 
-func (a Tags) Len() int           { return len(a) }
+func (a Tags) Len() int { return len(a) }
+
 func (a Tags) Less(i, j int) bool { return bytes.Compare(a[i].Key, a[j].Key) == -1 }
-func (a Tags) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+
+func (a Tags) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 
 // Equal returns true if a equals other.
 func (a Tags) Equal(other Tags) bool {

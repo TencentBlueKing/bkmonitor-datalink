@@ -24,7 +24,7 @@ import (
 // FrontendSuite :
 type FrontendSuite struct {
 	ConfigSuite
-	newKafkaConfig        func(define.Configuration) (*sarama.Config, error)
+	newKafkaConfig        func(define.Configuration, map[string]interface{}) (*sarama.Config, error)
 	newKafkaConsumerGroup func([]string, string, *sarama.Config) (sarama.ConsumerGroup, error)
 }
 
@@ -72,7 +72,7 @@ func (s *FrontendSuite) TestPull() {
 	}
 
 	cfg := sarama.NewConfig()
-	kafka.NewKafkaConsumerConfig = func(_ define.Configuration) (*sarama.Config, error) {
+	kafka.NewKafkaConsumerConfig = func(_ define.Configuration, _ map[string]interface{}) (*sarama.Config, error) {
 		return cfg, nil
 	}
 

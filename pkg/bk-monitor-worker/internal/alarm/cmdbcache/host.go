@@ -661,51 +661,61 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		return nil
 	}
 
+	needCleanAgentIds := make(map[string]struct{})
+	needCleanHostKeys := make(map[string]struct{})
 	needUpdateBizIds := make(map[int]struct{})
 	switch resourceType {
 	case "host":
 		key := m.GetCacheKey(hostCacheKey)
-
 		// 提取需要更新的缓存key
-		hostKeys := make([]string, 0)
 		for _, event := range events {
+			cacheKeys := make([]string, 0)
+
 			ip, ok := event["bk_host_innerip"].(string)
 			bkCloudId, ok := event["bk_cloud_id"].(float64)
+			hostKey := ""
 
 			if ok && ip != "" {
-				hostKeys = append(hostKeys, fmt.Sprintf("%s|%d", ip, int(bkCloudId)))
+				hostKey = fmt.Sprintf("%s|%d", ip, int(bkCloudId))
+				cacheKeys = append(cacheKeys, hostKey)
 			}
 
 			bkHostId, ok := event["bk_host_id"].(float64)
 			if ok && bkHostId > 0 {
-				hostKeys = append(hostKeys, strconv.Itoa(int(bkHostId)))
-			}
-		}
-
-		if len(hostKeys) == 0 {
-			return nil
-		}
-
-		// 查询主机缓存信息
-		result := m.RedisClient.HMGet(ctx, key, hostKeys...)
-		if result.Err() != nil {
-			return errors.Wrap(result.Err(), "hmget failed")
-		}
-
-		// 记录需要更新的业务ID
-		for _, value := range result.Val() {
-			// 如果找不到对应的缓存，不需要更新
-			if value == nil {
-				continue
+				cacheKeys = append(cacheKeys, strconv.Itoa(int(bkHostId)))
 			}
 
-			var host *AlarmHostInfo
-			err := json.Unmarshal([]byte(value.(string)), &host)
-			if err != nil {
-				continue
+			result := m.RedisClient.HMGet(ctx, key, cacheKeys...)
+			if result.Err() != nil {
+				return errors.Wrapf(result.Err(), "hmget failed, key: %s", key)
 			}
 
-			needUpdateBizIds[host.BkBizId] = struct{}{}
+			agentId, ok := event["bk_agent_id"].(string)
+
+			for _, value := range result.Val() {
+				if value == nil {
+					continue
+				}
+				var host *AlarmHostInfo
+				err := json.Unmarshal([]byte(value.(string)), &host)
+				if err != nil {
+					continue
+				}
+				needUpdateBizIds[host.BkBizId] = struct{}{}
+
+				// 如果有agentId变更，需要清理agentId缓存
+				if ok && agentId != host.BkAgentId && host.BkAgentId != "" {
+					needCleanAgentIds[host.BkAgentId] = struct{}{}
+				}
+
+				// 如果有ip变更，需要清理ip缓存
+				if host.BkHostInnerip != "" {
+					oldHostKey := fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId)
+					if hostKey != oldHostKey {
+						needCleanHostKeys[oldHostKey] = struct{}{}
+					}
+				}
+			}
 		}
 	case "mainline_instance":
 		key := m.GetCacheKey(topoCacheKey)
@@ -724,9 +734,8 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 		}
 		err := m.UpdateHashMapCache(ctx, key, topoNodes)
 		if err != nil {
-			return errors.Wrap(err, "update hashmap cache failed")
+			return errors.Wrapf(err, "update hashmap cache failed, key: %s", key)
 		}
-		return nil
 	case "host_relation":
 		for _, event := range events {
 			bkBizID, ok := event["bk_biz_id"].(float64)
@@ -762,7 +771,36 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 			}
 		}(bizID)
 	}
-
 	wg.Wait()
+
+	// 清理agentId缓存
+	if len(needCleanAgentIds) > 0 {
+		key := m.GetCacheKey(hostAgentIDCacheKey)
+		agentIds := make([]string, 0, len(needCleanAgentIds))
+		for agentId := range needCleanAgentIds {
+			agentIds = append(agentIds, agentId)
+		}
+
+		logger.Infof("clean agent id cache, agent ids: %v", agentIds)
+		err := m.RedisClient.HDel(ctx, key, agentIds...).Err()
+		if err != nil {
+			logger.Errorf("hdel failed, key: %s, err: %v", key, err)
+		}
+	}
+
+	// 清理ip缓存
+	if len(needCleanHostKeys) > 0 {
+		key := m.GetCacheKey(hostCacheKey)
+		hostKeys := make([]string, 0, len(needCleanHostKeys))
+		for hostKey := range needCleanHostKeys {
+			hostKeys = append(hostKeys, hostKey)
+		}
+
+		logger.Infof("clean host cache, host keys: %v", hostKeys)
+		err := m.RedisClient.HDel(ctx, key, hostKeys...).Err()
+		if err != nil {
+			logger.Errorf("hdel failed, key: %s, err: %v", key, err)
+		}
+	}
 	return nil
 }

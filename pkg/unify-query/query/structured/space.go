@@ -110,15 +110,17 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 
 	// 清理 filter 为空的数据
-	filters := make([]query.Filter, 0, len(spaceTable.Filters))
-	for _, f := range spaceTable.Filters {
-		nf := make(map[string]string)
-		for k, v := range f {
-			if v != "" {
-				nf[k] = v
+	filters := make([]query.Filter, 0)
+	if spaceTable != nil {
+		for _, f := range spaceTable.Filters {
+			nf := make(map[string]string)
+			for k, v := range f {
+				if v != "" {
+					nf[k] = v
+				}
 			}
+			filters = append(filters, nf)
 		}
-		filters = append(filters, nf)
 	}
 
 	tsDBs := make([]*query.TsDBV2, 0)
@@ -203,7 +205,9 @@ func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerI
 
 func (s *SpaceFilter) GetSpaceRtInfo(tableID string) *routerInfluxdb.SpaceResultTable {
 	if s.space == nil {
-		return &routerInfluxdb.SpaceResultTable{}
+		return &routerInfluxdb.SpaceResultTable{
+			Filters: make([]map[string]string, 0),
+		}
 	}
 	v, _ := s.space[tableID]
 	return v
@@ -224,8 +228,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	defer func() {
 		if routerMessage != "" {
 			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
+			log.Warnf(s.ctx, routerMessage)
 		}
-		log.Warnf(s.ctx, routerMessage)
 	}()
 
 	if opt == nil {
@@ -282,6 +286,10 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 
 	for _, tID := range tableIDs {
 		spaceRt := s.GetSpaceRtInfo(tID)
+		// 如果不跳过空间，则取 space 和 tableIDs 的交集
+		if !opt.IsSkipSpace && spaceRt == nil {
+			continue
+		}
 		// 指标模糊匹配，可能命中多个私有指标 RT
 		newTsDBs := s.NewTsDBs(spaceRt, fieldNameExp, opt.Conditions, opt.FieldName, tID, isK8s, isK8sFeatureFlag, opt.IsSkipField)
 		for _, newTsDB := range newTsDBs {

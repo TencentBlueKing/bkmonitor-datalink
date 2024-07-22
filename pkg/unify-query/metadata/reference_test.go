@@ -11,6 +11,8 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,6 +25,32 @@ type checkExpected struct {
 	ok           bool
 	vmRtList     []string
 	vmConditions map[string]string
+}
+
+func TestQueryReference(t *testing.T) {
+	ctx := InitHashID(context.Background())
+	err := featureFlag.MockFeatureFlag(ctx, `{"must-vm-query":{"variations":{"Default":true,"true":true,"false":false},"targeting":[],"defaultRule":{"variation":"Default"}}}`)
+	for name, c := range map[string]struct {
+		refString string
+		expected  string
+	}{
+		"default-1": {
+			refString: `{"a":{"QueryList":[{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"","ClusterName":"default","TagsKey":null,"TableID":"datalink_stats.__default__","VmRt":"","IsSingleMetric":true,"RetentionPolicy":"","DB":"datalink_stats","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"","BkSqlCondition":"","VmCondition":"__name__=\"process_start_time_seconds_value\"","VmConditionNum":1,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"","ClusterName":"default","TagsKey":null,"TableID":"exporter_dbm_redis_exporter_murphyy_t.__default__","VmRt":"","IsSingleMetric":true,"RetentionPolicy":"","DB":"exporter_dbm_redis_exporter_murphyy_t","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"bk_biz_id='2'","BkSqlCondition":"","VmCondition":"bk_biz_id=\"2\", __name__=\"process_start_time_seconds_value\"","VmConditionNum":2,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[[{"DimensionName":"bk_biz_id","Value":["2"],"Operator":"contains"}]],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"","ClusterName":"default","TagsKey":null,"TableID":"exporter_diskkimmy.__default__","VmRt":"","IsSingleMetric":true,"RetentionPolicy":"","DB":"exporter_diskkimmy","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"bk_biz_id='2'","BkSqlCondition":"","VmCondition":"bk_biz_id=\"2\", __name__=\"process_start_time_seconds_value\"","VmConditionNum":2,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[[{"DimensionName":"bk_biz_id","Value":["2"],"Operator":"contains"}]],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"vm-default","ClusterName":"default","TagsKey":null,"TableID":"2_bkmonitor_time_series_1572865.__default__","VmRt":"2_bkbase_bcs_custom_metrics","IsSingleMetric":true,"RetentionPolicy":"","DB":"2_bkmonitor_time_series_1572865","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"","BkSqlCondition":"","VmCondition":"result_table_id=\"2_bkbase_bcs_custom_metrics\", __name__=\"process_start_time_seconds_value\"","VmConditionNum":2,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"","ClusterName":"default","TagsKey":null,"TableID":"exporter_dbm_redis_exporter_murphy_test.__default__","VmRt":"","IsSingleMetric":true,"RetentionPolicy":"","DB":"exporter_dbm_redis_exporter_murphy_test","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"bk_biz_id='2'","BkSqlCondition":"","VmCondition":"bk_biz_id=\"2\", __name__=\"process_start_time_seconds_value\"","VmConditionNum":2,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[[{"DimensionName":"bk_biz_id","Value":["2"],"Operator":"contains"}]],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"vm-default","ClusterName":"default","TagsKey":null,"TableID":"2_bkmonitor_time_series_1572864.__default__","VmRt":"2_bcs_prom_computation_result_table","IsSingleMetric":true,"RetentionPolicy":"","DB":"2_bkmonitor_time_series_1572864","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"","BkSqlCondition":"","VmCondition":"result_table_id=\"2_bcs_prom_computation_result_table\", __name__=\"process_start_time_seconds_value\"","VmConditionNum":2,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[],"Source":null,"From":0,"Size":0,"Orders":{}},{"SourceType":"","Password":"","ClusterID":"","StorageType":"","StorageID":"2","StorageName":"","ClusterName":"default","TagsKey":null,"TableID":"2_bkmonitor_time_series_1573177.__default__","VmRt":"","IsSingleMetric":true,"RetentionPolicy":"","DB":"2_bkmonitor_time_series_1573177","Measurement":"process_start_time_seconds","Field":"value","Timezone":"UTC","Fields":["value"],"Measurements":["process_start_time_seconds"],"IsHasOr":false,"Aggregates":[],"Condition":"","BkSqlCondition":"","VmCondition":"__name__=\"process_start_time_seconds_value\"","VmConditionNum":1,"Filters":null,"OffsetInfo":{"OffSet":0,"Limit":0,"SOffSet":0,"SLimit":0},"SegmentedEnable":false,"DataSource":"bkmonitor","AllConditions":[],"Source":null,"From":0,"Size":0,"Orders":{}}],"ReferenceName":"a","MetricName":"process_start_time_seconds","IsCount":false}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var ref QueryReference
+			err = json.Unmarshal([]byte(c.refString), &ref)
+			assert.Nil(t, err)
+
+			ctx = InitHashID(ctx)
+			ok, vmExpand, err := ref.CheckVmQuery(ctx)
+			assert.Nil(t, err)
+
+			fmt.Println(ok)
+			fmt.Println(vmExpand)
+		})
+	}
 }
 
 func TestCheckVmQuery(t *testing.T) {
@@ -78,7 +106,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_net_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_net_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -115,14 +143,14 @@ func TestCheckVmQuery(t *testing.T) {
 				refNameA: &QueryMetric{
 					QueryList: []*Query{
 						{
-							DB:                  "system",
-							Measurement:         "cpu_detail",
-							Field:               "usage",
-							IsSingleMetric:      false,
-							VmRt:                "100147_ieod_system_net_raw",
-							Condition:           "(bk_inst_id='test' and bk_obj_id='demo') or bk_biz_id='test-1'",
-							AggregateMethodList: []AggrMethod{},
-							VmCondition:         `result_table_id="100147_ieod_system_net_raw", __name__="usage_value", bk_inst_id="test", bk_obj_id="demo" or result_table_id="100147_ieod_system_net_raw", __name__="usage_value", bk_biz_id="test-1"`,
+							DB:             "system",
+							Measurement:    "cpu_detail",
+							Field:          "usage",
+							IsSingleMetric: false,
+							VmRt:           "100147_ieod_system_net_raw",
+							Condition:      "(bk_inst_id='test' and bk_obj_id='demo') or bk_biz_id='test-1'",
+							Aggregates:     Aggregates{},
+							VmCondition:    `result_table_id="100147_ieod_system_net_raw", __name__="usage_value", bk_inst_id="test", bk_obj_id="demo" or result_table_id="100147_ieod_system_net_raw", __name__="usage_value", bk_biz_id="test-1"`,
 						},
 					},
 					ReferenceName: refNameA,
@@ -151,7 +179,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_net_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_net_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -193,7 +221,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -211,7 +239,7 @@ func TestCheckVmQuery(t *testing.T) {
 							VmRt:           "100147_ieod_system_summary_raw",
 							Condition:      "bk_obj_id = '1' and bk_inst_id = '2'",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value",bk_obj_id="1", bk_inst_id="2"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name:       "sum",
 									Dimensions: []string{},
@@ -246,7 +274,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -262,7 +290,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -299,7 +327,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -315,7 +343,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -352,7 +380,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -374,7 +402,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -413,7 +441,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -442,7 +470,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -488,7 +516,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "2_vm_system_cpu_detail",
 							VmCondition:    `result_table_id="2_vm_system_cpu_detail", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -517,7 +545,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "2_vm_system_mem",
 							VmCondition:    `result_table_id="2_vm_system_mem", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -563,7 +591,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name:       "sum",
 									Dimensions: []string{},
@@ -582,7 +610,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: false,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name: "sum",
 									Dimensions: []string{
@@ -621,7 +649,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_detail_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_detail_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name:       "sum",
 									Dimensions: []string{},
@@ -640,7 +668,7 @@ func TestCheckVmQuery(t *testing.T) {
 							IsSingleMetric: true,
 							VmRt:           "100147_ieod_system_summary_raw",
 							VmCondition:    `result_table_id="100147_ieod_system_summary_raw", __name__="usage_value"`,
-							AggregateMethodList: []AggrMethod{
+							Aggregates: Aggregates{
 								{
 									Name:       "sum",
 									Dimensions: []string{},

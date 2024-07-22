@@ -44,6 +44,8 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 
 func (s *QueryString) walk(condition parser.Condition) elastic.Query {
 	switch c := condition.(type) {
+	case *parser.NotCondition:
+		return elastic.NewBoolQuery().MustNot(s.walk(c.Condition))
 	case *parser.OrCondition:
 		return elastic.NewBoolQuery().Should(s.walk(c.Left), s.walk(c.Right))
 	case *parser.AndCondition:

@@ -115,10 +115,7 @@ func TestGetMustVmQueryFeatureFlag(t *testing.T) {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithCancel(ctx)
 			defer cancel()
-			SetQueryParams(ctx, &QueryParams{
-				Start: c.Start,
-				End:   c.End,
-			})
+			GetQueryParams(ctx).SetTime(c.Start, c.End)
 
 			actual := GetMustVmQueryFeatureFlag(ctx, c.TableID)
 			assert.Equal(t, c.Expected, actual)

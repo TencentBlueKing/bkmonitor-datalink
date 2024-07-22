@@ -37,7 +37,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -87,9 +86,7 @@ type Operator struct {
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
-
-	pusher        *pusher.MetricsPusher
-	scrapeUpdated time.Time
+	scrapeUpdated        time.Time
 }
 
 func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -98,7 +95,6 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		err      error
 	)
 
-	operator.pusher = pusher.New(ctx, ConfDisableMetricsPusher)
 	operator.buildInfo = buildInfo
 	operator.ctx, operator.cancel = context.WithCancel(ctx)
 	if err = os.Setenv("KUBECONFIG", ConfKubeConfig); err != nil {
@@ -403,7 +399,6 @@ func (c *Operator) Stop() {
 	}
 	c.wg.Wait()
 
-	c.pusher.Stop()
 	c.dw.Stop()
 	c.objectsController.Stop()
 	discover.StopAllSharedDiscovery()
@@ -568,6 +563,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				RelabelRule:             serviceMonitor.Annotations[annotationRelabelRule],
 				RelabelIndex:            serviceMonitor.Annotations[annotationRelabelIndex],
 				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(serviceMonitor.Annotations),
+				AntiAffinity:            kits.CheckIfAntiAffinity(serviceMonitor.Annotations),
 				AnnotationMatchSelector: parseSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
 				AnnotationDropSelector:  parseSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
 				Name:                    monitorMeta.ID(),
@@ -772,6 +768,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				RelabelRule:             podMonitor.Annotations[annotationRelabelRule],
 				RelabelIndex:            podMonitor.Annotations[annotationRelabelIndex],
 				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(podMonitor.Annotations),
+				AntiAffinity:            kits.CheckIfAntiAffinity(podMonitor.Annotations),
 				AnnotationMatchSelector: parseSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
 				AnnotationDropSelector:  parseSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
 				Name:                    monitorMeta.ID(),
@@ -938,13 +935,6 @@ func (c *Operator) handleDataIDNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	info, err := c.dw.GetClusterInfo()
-	if err != nil {
-		logger.Errorf("failed to get cluster info: %v", err)
-	} else {
-		c.pusher.StartOrUpdate(*info, ConfPodName)
-	}
-
 	var count int
 	for {
 		select {
@@ -955,13 +945,6 @@ func (c *Operator) handleDataIDNotify() {
 			start := time.Now()
 			count++
 			c.reloadAllDiscovers()
-
-			info, err := c.dw.GetClusterInfo()
-			if err != nil {
-				logger.Errorf("failed to get cluster info: %v", err)
-			} else {
-				c.pusher.StartOrUpdate(*info, ConfPodName)
-			}
 			logger.Infof("reload discovers, count=%d, take: %v", count, time.Since(start))
 		}
 	}

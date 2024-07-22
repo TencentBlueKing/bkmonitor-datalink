@@ -229,6 +229,20 @@ func handleParenExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []stri
 	return expr, grouping, err
 }
 
+// handlerSubQueryExpr
+func handlerSubQueryExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
+	var (
+		expr *parser.SubqueryExpr
+		err  error
+	)
+	expr = e.(*parser.SubqueryExpr)
+	expr.Expr, _, err = handleExpr(m, expr.Expr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return expr, nil, nil
+}
+
 // handleCall
 func handleCall(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []string, error) {
 	var (
@@ -331,6 +345,8 @@ func handleExpr(m map[string]*PromExpr, expr parser.Expr) (parser.Expr, []string
 		result, group, err = handleNumberLiteral(m, expr)
 	case *parser.MatrixSelector:
 		result, group, err = handleMatrixSelector(m, expr)
+	case *parser.SubqueryExpr:
+		result, group, err = handlerSubQueryExpr(m, expr)
 	default:
 		// 认不出来的直接返回表达式
 		log.Debugf(context.TODO(), "nothing need to transfer for expr->[%s]", expr)

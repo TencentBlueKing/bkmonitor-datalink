@@ -358,12 +358,15 @@ loop:
 			data := netlinkMessage.Data
 			m := (*inetDiagMsg)(unsafe.Pointer(&data[0]))
 			srcIPString, _ := ipHex2String(m.IDiagFamily, m.ID.IdiagSrc)
+			dstIPString, _ := ipHex2String(m.IDiagFamily, m.ID.IdiagDst)
 			filesocket := FileSocket{
-				Status:    stateMap[m.IDiagState],
-				Inode:     m.IDiagInode,
-				Family:    uint32(m.IDiagFamily),
-				ConnLaddr: srcIPString,
-				ConnLport: uint32(m.ID.IdiagSport.Int()),
+				Status: stateMap[m.IDiagState],
+				Inode:  m.IDiagInode,
+				Family: uint32(m.IDiagFamily),
+				Saddr:  srcIPString,
+				Sport:  uint32(m.ID.IdiagSport.Int()),
+				Daddr:  dstIPString,
+				Dport:  uint32(m.ID.IdiagDport.Int()),
 			}
 
 			switch proto {
@@ -423,6 +426,7 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 		if (idx+1)%socketPerformanceThreshold == 0 {
 			time.Sleep(time.Millisecond * socketPerformanceSleep)
 		}
+
 		inodes, err := getProcInodes("/proc", pid)
 		if err != nil {
 			logger.Errorf("failed to get /proc info: %v", err)
@@ -435,12 +439,21 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 }
 
 // getIntersection inode -> sockets
-func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp bool) map[uint32]map[FileSocket]struct{} {
+func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp bool, status []string) map[uint32]map[FileSocket]struct{} {
+	matchStatus := func(s string, status []string) bool {
+		for i := 0; i < len(status); i++ {
+			if status[i] == s {
+				return true
+			}
+		}
+		return false
+	}
+
 	ret := make(map[uint32]map[FileSocket]struct{})
 	for pid, items := range inodes {
 		for _, inode := range items {
 			if v, ok := conn[uint32(inode)]; ok {
-				if tcp && v.Status != "LISTEN" {
+				if tcp && !matchStatus(v.Status, status) {
 					continue
 				}
 				v.Pid = pid
@@ -457,13 +470,13 @@ func getIntersection(conn map[uint32]FileSocket, inodes map[int32][]uint64, tcp 
 }
 
 // getPidSockets fills pid field with socket
-func getPidSockets(sni socketNetInfo, pids []int32) PidSockets {
+func getPidSockets(sni socketNetInfo, pids []int32, status []string) PidSockets {
 	inodes := getConcernPidInodes(pids) // pid -> inodes
 
-	netTcp := getIntersection(sni.TCP, inodes, true)
-	netUdp := getIntersection(sni.UDP, inodes, false)
-	netTcp6 := getIntersection(sni.TCP6, inodes, true)
-	netUdp6 := getIntersection(sni.UDP6, inodes, false)
+	netTcp := getIntersection(sni.TCP, inodes, true, status)
+	netUdp := getIntersection(sni.UDP, inodes, false, status)
+	netTcp6 := getIntersection(sni.TCP6, inodes, true, status)
+	netUdp6 := getIntersection(sni.UDP6, inodes, false, status)
 
 	ret := PidSockets{
 		TCP:  map[int32][]FileSocket{},
@@ -475,13 +488,13 @@ func getPidSockets(sni socketNetInfo, pids []int32) PidSockets {
 	cloneFileSocket := func(fs FileSocket, protocol, ip string) FileSocket {
 		cloned := fs
 		cloned.Protocol = protocol
-		cloned.ConnLaddr = ip
+		cloned.Saddr = ip
 		return cloned
 	}
 
 	for _, sockets := range netTcp {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.TCP[v.Pid] = append(ret.TCP[v.Pid], cloneFileSocket(v, ProtocolTCP, listenIP))
 			}
 		}
@@ -489,7 +502,7 @@ func getPidSockets(sni socketNetInfo, pids []int32) PidSockets {
 
 	for _, sockets := range netUdp {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.UDP[v.Pid] = append(ret.UDP[v.Pid], cloneFileSocket(v, ProtocolUDP, listenIP))
 			}
 		}
@@ -497,7 +510,7 @@ func getPidSockets(sni socketNetInfo, pids []int32) PidSockets {
 
 	for _, sockets := range netTcp6 {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.TCP6[v.Pid] = append(ret.TCP6[v.Pid], cloneFileSocket(v, ProtocolTCP6, listenIP))
 			}
 		}
@@ -505,7 +518,7 @@ func getPidSockets(sni socketNetInfo, pids []int32) PidSockets {
 
 	for _, sockets := range netUdp6 {
 		for v := range sockets {
-			for _, listenIP := range tasks.GetListeningIPs(v.ConnLaddr) {
+			for _, listenIP := range tasks.GetListeningIPs(v.Saddr) {
 				ret.UDP6[v.Pid] = append(ret.UDP6[v.Pid], cloneFileSocket(v, ProtocolUDP6, listenIP))
 			}
 		}
@@ -518,11 +531,15 @@ type NetlinkDetector struct{}
 
 var _ ConnDetector = NetlinkDetector{}
 
-func (NetlinkDetector) Type() string {
+func (d NetlinkDetector) Type() string {
 	return DetectorNetlink
 }
 
-func (NetlinkDetector) Get(pids []int32) (PidSockets, error) {
+func (d NetlinkDetector) Get(pids []int32) (PidSockets, error) {
+	return d.GetState(pids, StateListen)
+}
+
+func (d NetlinkDetector) GetState(pids []int32, state StateType) (PidSockets, error) {
 	type Task struct {
 		proto      uint8
 		family     uint8
@@ -537,17 +554,27 @@ func (NetlinkDetector) Get(pids []int32) (PidSockets, error) {
 		IPv6UDPIndex
 	)
 
+	var status []string
+	var tcpState uint32
+	switch state {
+	case StateListenEstab:
+		tcpState = 1<<tcpInit | 1<<tcpListen | 1<<tcpEstablished
+		status = []string{"LISTEN", "ESTABLISHED"}
+	default:
+		tcpState = 1<<tcpInit | 1<<tcpListen // 默认为 listen
+		status = []string{"LISTEN"}
+	}
+
 	tasks := []*Task{
 		{
 			proto:  syscall.IPPROTO_TCP, // IPv4TCP
 			family: syscall.AF_INET,
-			states: 1<<tcpInit | 1<<tcpListen,
+			states: tcpState,
 		},
-
 		{
 			proto:  syscall.IPPROTO_TCP, // IPv6TCP
 			family: syscall.AF_INET6,
-			states: 1<<tcpInit | 1<<tcpListen,
+			states: tcpState,
 		},
 		{
 			proto:  syscall.IPPROTO_UDP, // IPv4UDP
@@ -594,5 +621,5 @@ func (NetlinkDetector) Get(pids []int32) (PidSockets, error) {
 	cni.UDP6 = tasks[IPv6UDPIndex].fileSocket
 
 	logger.Debugf("netlink get sockets: %+v, pids=%+v", cni, pids)
-	return getPidSockets(cni, pids), nil
+	return getPidSockets(cni, pids, status), nil
 }

@@ -421,15 +421,22 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 		// 如果是 BkSql 查询无需获取 tsdb 路由关系
 		if q.DataSource == BkData {
-			allConditions, err := q.Conditions.AnalysisConditions()
-			if err != nil {
-				return nil, err
+			allConditions, bkDataErr := q.Conditions.AnalysisConditions()
+			if bkDataErr != nil {
+				err = bkDataErr
+				return nil, bkDataErr
+			}
+
+			route, bkDataErr := MakeRouteFromTableID(q.TableID)
+			if bkDataErr != nil {
+				err = bkDataErr
+				return nil, bkDataErr
 			}
 
 			qry := &metadata.Query{
 				StorageID:      consul.BkSqlStorageType,
-				DB:             string(q.TableID),
-				Measurement:    string(q.TableID),
+				DB:             route.DB(),
+				Measurement:    route.Measurement(),
 				Field:          q.FieldName,
 				Aggregates:     aggregates,
 				BkSqlCondition: allConditions.BkSql(),

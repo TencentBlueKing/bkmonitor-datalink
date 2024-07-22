@@ -248,7 +248,18 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
+// AggDataFormat 解析 es 的聚合计算
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
+	if data == nil {
+		return nil, nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
+		}
+	}()
+
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
 		items:       make(items, 0),
@@ -664,6 +675,11 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	for _, k := range lbl {
 		var value string
 		d := f.data[k]
+
+		if d == nil {
+			continue
+		}
+
 		switch d.(type) {
 		case string:
 			value = fmt.Sprintf("%s", d)

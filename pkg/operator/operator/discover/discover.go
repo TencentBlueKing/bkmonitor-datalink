@@ -39,6 +39,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -304,9 +305,6 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.Params = make(url.Values)
 	}
 
-	// 匹配优先级
-	// 1) from labels
-	// 2) from struct
 	if metricTarget.Scheme == "" {
 		metricTarget.Scheme = d.Scheme
 	}
@@ -548,6 +546,95 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	return count == len(selector)
 }
 
+func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) *ChildConfig {
+	lbls := labelspool.Get() // 实际 labels 不会被引用 可以池化
+	defer labelspool.Put(lbls)
+
+	for ln, lv := range tlset {
+		lbls = append(lbls, labels.Label{
+			Name:  string(ln),
+			Value: string(lv),
+		})
+	}
+	for ln, lv := range tglbs {
+		if _, ok := tlset[ln]; !ok {
+			lbls = append(lbls, labels.Label{
+				Name:  string(ln),
+				Value: string(lv),
+			})
+		}
+	}
+
+	// annotations 白名单过滤
+	if len(d.AnnotationMatchSelector) > 0 {
+		if !matchSelector(lbls, d.AnnotationMatchSelector) {
+			logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
+			return nil
+		}
+	}
+
+	// annotations 黑名单过滤
+	if len(d.AnnotationDropSelector) > 0 {
+		if matchSelector(lbls, d.AnnotationDropSelector) {
+			logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)
+			return nil
+		}
+	}
+
+	sort.Sort(lbls)
+	res, orig, err := d.populateLabels(lbls)
+	if err != nil {
+		d.mm.IncCreatedChildConfigFailedCounter()
+		logger.Errorf("failed to populate labels: %v", err)
+		return nil
+	}
+	if len(res) == 0 {
+		return nil
+	}
+
+	logger.Debugf("discover %s populate labels %+v", d.Name(), res)
+	metricTarget, err := d.makeMetricTarget(res, orig, namespace)
+	if err != nil {
+		d.mm.IncCreatedChildConfigFailedCounter()
+		logger.Errorf("failed to make metric target: %v", err)
+		return nil
+	}
+
+	if d.ForwardLocalhost {
+		metricTarget.Address, err = forwardAddress(metricTarget.Address)
+		if err != nil {
+			d.mm.IncCreatedChildConfigFailedCounter()
+			logger.Errorf("failed to forward address: %v, err: %v", metricTarget.Address, err)
+			return nil
+		}
+	}
+
+	metricTarget.DisableCustomTimestamp = d.DisableCustomTimestamp
+	data, err := metricTarget.YamlBytes()
+	if err != nil {
+		d.mm.IncCreatedChildConfigFailedCounter()
+		logger.Errorf("failed to marshal target, err: %s", err)
+		return nil
+	}
+
+	d.mm.IncCreatedChildConfigSuccessCounter()
+	childConfig := &ChildConfig{
+		Node:         metricTarget.NodeName,
+		FileName:     metricTarget.FileName(),
+		Address:      metricTarget.Address,
+		Data:         data,
+		Scheme:       metricTarget.Scheme,
+		Path:         metricTarget.Path,
+		Mask:         metricTarget.Mask,
+		Meta:         metricTarget.Meta,
+		Namespace:    metricTarget.Namespace,
+		TaskType:     metricTarget.TaskType,
+		AntiAffinity: d.AntiAffinity,
+	}
+	logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
+	return childConfig
+}
+
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
 func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	d.mm.IncHandledTgCounter()
@@ -562,89 +649,10 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	childConfigs := make([]*ChildConfig, 0)
 
 	for _, tlset := range targetGroup.Targets {
-		lbls := make(labels.Labels, 0, len(tlset)+len(targetGroup.Labels))
-		for ln, lv := range tlset {
-			lbls = append(lbls, labels.Label{
-				Name:  string(ln),
-				Value: string(lv),
-			})
-		}
-		for ln, lv := range targetGroup.Labels {
-			if _, ok := tlset[ln]; !ok {
-				lbls = append(lbls, labels.Label{
-					Name:  string(ln),
-					Value: string(lv),
-				})
-			}
-		}
-
-		// annotations 白名单过滤
-		if len(d.AnnotationMatchSelector) > 0 {
-			if !matchSelector(lbls, d.AnnotationMatchSelector) {
-				logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
-				continue
-			}
-		}
-
-		// annotations 黑名单过滤
-		if len(d.AnnotationDropSelector) > 0 {
-			if matchSelector(lbls, d.AnnotationDropSelector) {
-				logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)
-				continue
-			}
-		}
-
-		sort.Sort(lbls)
-		res, orig, err := d.populateLabels(lbls)
-		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to populate labels: %v", err)
+		childConfig := d.handleTarget(namespace, tlset, targetGroup.Labels)
+		if childConfig == nil {
 			continue
 		}
-		if len(res) == 0 {
-			continue
-		}
-
-		logger.Debugf("discover %s populate labels %+v", d.Name(), res)
-		metricTarget, err := d.makeMetricTarget(res, orig, namespace)
-		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to make metric target: %v", err)
-			continue
-		}
-
-		if d.ForwardLocalhost {
-			metricTarget.Address, err = forwardAddress(metricTarget.Address)
-			if err != nil {
-				d.mm.IncCreatedChildConfigFailedCounter()
-				logger.Errorf("failed to forward address: %v, err: %v", metricTarget.Address, err)
-				continue
-			}
-		}
-
-		metricTarget.DisableCustomTimestamp = d.DisableCustomTimestamp
-		data, err := metricTarget.YamlBytes()
-		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to marshal target, err: %s", err)
-			continue
-		}
-
-		d.mm.IncCreatedChildConfigSuccessCounter()
-		childConfig := &ChildConfig{
-			Node:         metricTarget.NodeName,
-			FileName:     metricTarget.FileName(),
-			Address:      metricTarget.Address,
-			Data:         data,
-			Scheme:       metricTarget.Scheme,
-			Path:         metricTarget.Path,
-			Mask:         metricTarget.Mask,
-			Meta:         metricTarget.Meta,
-			Namespace:    metricTarget.Namespace,
-			TaskType:     metricTarget.TaskType,
-			AntiAffinity: d.AntiAffinity,
-		}
-		logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
 		childConfigs = append(childConfigs, childConfig)
 	}
 

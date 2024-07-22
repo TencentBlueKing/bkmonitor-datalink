@@ -11,6 +11,7 @@ package procsnapshot
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -52,13 +53,22 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
-	ret := make([]ProcMeta, 0)
-	for i := 0; i < len(procs); i++ {
-		p := procs[i]
-		if p.Cmd == "" {
-			continue
-		}
-		ret = append(ret, p)
+	total := len(procs)
+	if total <= 0 {
+		return
 	}
-	e <- &Event{dataid: g.config.DataID, data: ret, utcTime: now}
+
+	const size = 5000
+	batch := int(math.Ceil(float64(total) / float64(size))) // 向上取整
+	var start, end int
+	for i := 0; i < batch; i++ {
+		end = start + size
+		if end >= total {
+			end = total
+		}
+
+		data := procs[start:end]
+		e <- &Event{dataid: g.config.DataID, data: data, utcTime: now}
+		start = end
+	}
 }

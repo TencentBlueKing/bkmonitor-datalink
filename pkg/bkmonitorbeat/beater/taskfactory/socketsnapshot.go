@@ -15,10 +15,10 @@ package taskfactory
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/socketsanpshot"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/socketsnapshot"
 )
 
 func init() {
 	SetTaskConfigByName(define.ModuleSocketSnapshot, func() define.TaskMetaConfig { return new(configs.SocketSnapshotConfig) })
-	Register(define.ModuleSocketSnapshot, socketsanpshot.New)
+	Register(define.ModuleSocketSnapshot, socketsnapshot.New)
 }

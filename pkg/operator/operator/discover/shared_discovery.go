@@ -36,7 +36,6 @@ var (
 // Activate 初始化全局 sharedDiscovery
 func Activate() {
 	gCtx, gCancel = context.WithCancel(context.Background())
-	gWg = sync.WaitGroup{}
 	sharedDiscoveryMap = map[string]*sharedDiscovery{}
 }
 

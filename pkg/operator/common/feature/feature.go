@@ -28,7 +28,7 @@ const (
 	keyMonitorDropSelector  = "monitorDropSelector"
 )
 
-func stringToBool(m map[string]string, key string) bool {
+func isMapKeyExists(m map[string]string, key string) bool {
 	if value, ok := m[key]; ok {
 		if value == "true" {
 			return true
@@ -52,27 +52,27 @@ func parseSelector(s string) map[string]string {
 
 // IfCommonResource 检查 DataID 是否为 common 类型
 func IfCommonResource(m map[string]string) bool {
-	return stringToBool(m, keyCommonResource)
+	return isMapKeyExists(m, keyCommonResource)
 }
 
 // IfSystemResource 检查 DataID 是否为 system 类型
 func IfSystemResource(m map[string]string) bool {
-	return stringToBool(m, keySystemResource)
+	return isMapKeyExists(m, keySystemResource)
 }
 
 // IfForwardLocalhost 检查采集端点是否需要重定向到 localhost
 func IfForwardLocalhost(m map[string]string) bool {
-	return stringToBool(m, keyForwardLocalhost)
+	return isMapKeyExists(m, keyForwardLocalhost)
 }
 
 // IfNormalizeMetricName 检查是否需要标准化指标名
 func IfNormalizeMetricName(m map[string]string) bool {
-	return stringToBool(m, keyNormalizeMetricName)
+	return isMapKeyExists(m, keyNormalizeMetricName)
 }
 
 // IfAntiAffinity 检查调度时是否需要反节点亲和
 func IfAntiAffinity(m map[string]string) bool {
-	return stringToBool(m, keyAntiAffinity)
+	return isMapKeyExists(m, keyAntiAffinity)
 }
 
 func BkEnv(m map[string]string) string {

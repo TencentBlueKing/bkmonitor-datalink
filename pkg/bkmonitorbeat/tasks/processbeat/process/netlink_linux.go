@@ -429,7 +429,6 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 
 		inodes, err := getProcInodes("/proc", pid)
 		if err != nil {
-			logger.Errorf("failed to get /proc info: %v", err)
 			continue
 		}
 		ret[pid] = inodes

@@ -72,12 +72,16 @@ func AllProcsMeta() ([]ProcMeta, error) {
 			time.Sleep(time.Millisecond * socketPerformanceSleep)
 		}
 
-		stat, err := getProcMeta(pid)
+		meta, err := getProcMeta(pid)
 		if err != nil {
 			logger.Warnf("get process meta data failed, pid: %d, err: %v", pid, err)
 			continue
 		}
-		ret = append(ret, stat)
+		// 采集不到 cmd 的进程忽略
+		if meta.Cmd == "" {
+			continue
+		}
+		ret = append(ret, meta)
 	}
 
 	return ret, nil

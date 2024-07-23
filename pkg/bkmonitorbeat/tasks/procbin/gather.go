@@ -53,14 +53,16 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		return
 	}
 
+	total := len(procs)
+	if total <= 0 {
+		return
+	}
+
+	const size = 5000
 	var procbins []ProcBin
 	pcs := make(map[pidCreated]struct{})
 	for i := 0; i < len(procs); i++ {
 		proc := procs[i]
-		if proc.Cmd == "" {
-			continue
-		}
-
 		pc := pidCreated{pid: proc.Pid, created: proc.Created}
 		si := readStatInfo(pc, proc.Exe, g.config.MaxBytes)
 		pcs[pc] = struct{}{}
@@ -79,8 +81,16 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			Change:      si.Change.Unix(),
 			Access:      si.Access.Unix(),
 		})
+		if len(procbins) >= size {
+			e <- &Event{dataid: g.config.DataID, data: procbins, utcTime: now}
+			procbins = make([]ProcBin, 0) // 重置状态
+		}
 	}
-	e <- &Event{dataid: g.config.DataID, data: procbins, utcTime: now}
+
+	// 确保数据完整发送
+	if len(procbins) > 0 {
+		e <- &Event{dataid: g.config.DataID, data: procbins, utcTime: now}
+	}
 	cleanupCached(pcs)
 }
 

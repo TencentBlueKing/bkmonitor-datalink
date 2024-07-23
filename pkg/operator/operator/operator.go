@@ -886,20 +886,38 @@ func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	timer := time.NewTicker(define.ReSyncPeriod) // 水平触发机制
+	var last int64
+	do := func(trigger string) {
+		now := time.Now()
+		c.mm.IncDispatchedTaskCounter(trigger)
+		c.dispatchTasks()
+		c.mm.ObserveDispatchedTaskDuration(trigger, now)
+		last = now.Unix() // 更新最近一次调度的时间
+	}
+
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 
 		case <-discover.Notify():
-			now := time.Now()
-			c.mm.IncDispatchedTaskCounter()
-			c.dispatchTasks()
-			c.mm.ObserveDispatchedTaskDuration(now)
+			// 1min 内最多只能进行 2 次调度
+			if time.Now().Unix()-last < 30 {
+				timer.Reset(time.Second * 30)
+				continue
+			}
+			do("notify")
 
-		case <-timer.C:
-			c.dispatchTasks()
+		case <-ticker.C: // 兜底检查
+			do("ticker")
+
+		case <-timer.C: // 信号再收敛
+			do("timer")
 		}
 	}
 }

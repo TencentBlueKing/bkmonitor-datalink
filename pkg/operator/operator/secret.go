@@ -528,10 +528,8 @@ func (c *Operator) dispatchTasks() {
 		return
 	}
 
-	now := time.Now()
 	statefulset, daemonset := c.collectChildConfigs()
 	c.createOrUpdateChildSecret(statefulset, daemonset)
-	c.mm.ObserveDispatchedTaskDuration(now)
 }
 
 func newSecret(name string, taskType string) *corev1.Secret {

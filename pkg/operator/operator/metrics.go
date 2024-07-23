@@ -97,21 +97,23 @@ var (
 		[]string{"secret", "action"},
 	)
 
-	dispatchedTaskTotal = promauto.NewCounter(
+	dispatchedTaskTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dispatched_task_total",
 			Help:      "dispatched task total",
 		},
+		[]string{"trigger"},
 	)
 
-	dispatchedTaskDuration = promauto.NewHistogram(
+	dispatchedTaskDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "dispatched_task_duration_seconds",
 			Help:      "dispatched task duration seconds",
 			Buckets:   define.DefObserveDuration,
 		},
+		[]string{"trigger"},
 	)
 
 	secretsExceeded = promauto.NewCounter(
@@ -203,16 +205,16 @@ func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string) {
 	handledSecretFailedTotal.WithLabelValues(name, action).Inc()
 }
 
-func (m *metricMonitor) IncDispatchedTaskCounter() {
-	dispatchedTaskTotal.Inc()
+func (m *metricMonitor) IncDispatchedTaskCounter(trigger string) {
+	dispatchedTaskTotal.WithLabelValues(trigger).Inc()
 }
 
 func (m *metricMonitor) IncSecretsExceededCounter() {
 	secretsExceeded.Inc()
 }
 
-func (m *metricMonitor) ObserveDispatchedTaskDuration(t time.Time) {
-	dispatchedTaskDuration.Observe(time.Since(t).Seconds())
+func (m *metricMonitor) ObserveDispatchedTaskDuration(trigger string, t time.Time) {
+	dispatchedTaskDuration.WithLabelValues(trigger).Observe(time.Since(t).Seconds())
 }
 
 func (m *metricMonitor) IncScaledStatefulSetFailedCounter() {

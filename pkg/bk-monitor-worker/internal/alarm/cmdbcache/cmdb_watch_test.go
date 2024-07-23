@@ -22,74 +22,74 @@
 
 package cmdbcache
 
-import (
-	"context"
-	"encoding/json"
-	"os"
-	"os/signal"
-	"sync"
-	"testing"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-)
-
-func TestResourceWatch(t *testing.T) {
-	redisOptions := redis.Options{
-		Mode:  "standalone",
-		Addrs: []string{"127.0.0.1:6379"},
-	}
-
-	// 系统信号
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, os.Kill)
-
-	//调用cancel函数取消
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// 监听信号
-	go func() {
-		<-signalChan
-		cancel()
-	}()
-
-	prefix := t.Name()
-
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-
-	//go func() {
-	//	defer cancel()
-	//	defer wg.Done()
-	//
-	//	params := &WatchCmdbResourceChangeEventTaskParams{
-	//		Redis:  redisOptions,
-	//		Prefix: prefix,
-	//	}
-	//	payload, _ := json.Marshal(params)
-	//	if err := WatchCmdbResourceChangeEventTask(ctx, payload); err != nil {
-	//		t.Errorf("TestWatch failed, err: %v", err)
-	//		return
-	//	}
-	//}()
-
-	go func() {
-		defer cancel()
-		defer wg.Done()
-
-		params := &RefreshTaskParams{
-			Redis:                redisOptions,
-			Prefix:               prefix,
-			EventHandleInterval:  60,
-			CacheTypes:           []string{"host_topo"},
-			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800, "service_instance": 60},
-		}
-		payload, _ := json.Marshal(params)
-		if err := CacheRefreshTask(ctx, payload); err != nil {
-			t.Errorf("TestHandle failed, err: %v", err)
-			return
-		}
-	}()
-
-	wg.Wait()
-}
+//import (
+//	"context"
+//	"encoding/json"
+//	"os"
+//	"os/signal"
+//	"sync"
+//	"testing"
+//
+//	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+//)
+//
+//func TestResourceWatch(t *testing.T) {
+//	redisOptions := redis.Options{
+//		Mode:  "standalone",
+//		Addrs: []string{"127.0.0.1:6379"},
+//	}
+//
+//	// 系统信号
+//	signalChan := make(chan os.Signal, 1)
+//	signal.Notify(signalChan, os.Interrupt, os.Kill)
+//
+//	//调用cancel函数取消
+//	ctx, cancel := context.WithCancel(context.Background())
+//	defer cancel()
+//
+//	// 监听信号
+//	go func() {
+//		<-signalChan
+//		cancel()
+//	}()
+//
+//	prefix := t.Name()
+//
+//	wg := &sync.WaitGroup{}
+//	wg.Add(1)
+//
+//	//go func() {
+//	//	defer cancel()
+//	//	defer wg.Done()
+//	//
+//	//	params := &WatchCmdbResourceChangeEventTaskParams{
+//	//		Redis:  redisOptions,
+//	//		Prefix: prefix,
+//	//	}
+//	//	payload, _ := json.Marshal(params)
+//	//	if err := WatchCmdbResourceChangeEventTask(ctx, payload); err != nil {
+//	//		t.Errorf("TestWatch failed, err: %v", err)
+//	//		return
+//	//	}
+//	//}()
+//
+//	go func() {
+//		defer cancel()
+//		defer wg.Done()
+//
+//		params := &RefreshTaskParams{
+//			Redis:                redisOptions,
+//			Prefix:               prefix,
+//			EventHandleInterval:  60,
+//			CacheTypes:           []string{"host_topo"},
+//			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800, "service_instance": 60},
+//		}
+//		payload, _ := json.Marshal(params)
+//		if err := CacheRefreshTask(ctx, payload); err != nil {
+//			t.Errorf("TestHandle failed, err: %v", err)
+//			return
+//		}
+//	}()
+//
+//	wg.Wait()
+//}

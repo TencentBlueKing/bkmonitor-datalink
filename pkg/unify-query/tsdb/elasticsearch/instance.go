@@ -95,7 +95,8 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index    string
+	index string
+	// 单位是 s
 	start    int64
 	end      int64
 	timeZone string
@@ -154,16 +155,28 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 }
 
 func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
+	defer span.End(&err)
+
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(ctx, fmt.Sprintf("get mapping error: %s", r))
+			err = fmt.Errorf("get mapping error: %s", r)
 		}
+		span.End(&err)
 	}()
+
+	span.Set("alias", alias)
 
 	indexs, err := i.getIndexes(ctx, alias)
 	if err != nil {
 		return nil, err
 	}
+
+	span.Set("indexs", indexs)
 
 	for _, index := range indexs {
 		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
@@ -172,6 +185,9 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 		}
 
 		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
+			span.Set("index", index)
+			span.Set("mapping", mapping)
+
 			return mapping, nil
 		} else {
 			return nil, fmt.Errorf("get mappings error with index: %s", index)
@@ -192,6 +208,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	filterQueries := make([]elastic.Query, 0)
 
+	// 过滤条件生成 elastic.query
 	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
 		return nil, err
@@ -199,9 +216,15 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if query != nil {
 		filterQueries = append(filterQueries, query)
 	}
-	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
-	// 注入 querystring
+	// 查询时间生成 elastic.query
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
+
+	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
 		q, qsErr := qs.Parser()
@@ -243,7 +266,15 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
+	if source == nil {
+		return nil, fmt.Errorf("empty es query source")
+	}
+
 	body, _ := source.Source()
+	if body == nil {
+		return nil, fmt.Errorf("empty query body")
+	}
+
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
@@ -465,8 +496,8 @@ func (i *Instance) QueryRaw(
 
 		qo := &queryOption{
 			index: query.DB,
-			start: start.UnixMilli(),
-			end:   end.UnixMilli(),
+			start: start.Unix(),
+			end:   end.Unix(),
 			query: query,
 		}
 
@@ -486,7 +517,7 @@ func (i *Instance) QueryRaw(
 
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-			WithQuery(i.toEs(query.Field), qo.start, qo.end, query.Timezone, query.From, size).
+			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMapping(mapping).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)

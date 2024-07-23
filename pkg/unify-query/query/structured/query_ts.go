@@ -256,6 +256,12 @@ func (q *QueryTs) ToPromExpr(
 	return result, nil
 }
 
+type TimeField struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	Unit string `json:"unit,omitempty"`
+}
+
 type Query struct {
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
@@ -555,6 +561,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-vm-rt", vmRt)
 	span.Set("tsdb-db", db)
 	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
+	span.Set("tsdb-time-field", tsDB.TimeField)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -720,6 +727,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
+	query.TimeField = tsDB.TimeField
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)

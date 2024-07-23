@@ -28,6 +28,13 @@ const (
 	UUID = "query_uuid"
 )
 
+type TimeField struct {
+	Name     string
+	Type     string
+	Unit     string
+	UnitRate int64
+}
+
 // Aggregate 聚合方法
 type Aggregate struct {
 	Name       string
@@ -72,13 +79,14 @@ type Query struct {
 	IsSingleMetric bool
 
 	// 兼容 InfluxDB 结构体
-	RetentionPolicy string   // 存储 RP
-	DB              string   // 存储 DB
-	Measurement     string   // 存储 Measurement
-	Field           string   // 存储 Field
-	Timezone        string   // 存储 Timezone
-	Fields          []string // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
-	Measurements    []string // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
+	RetentionPolicy string    // 存储 RP
+	DB              string    // 存储 DB
+	Measurement     string    // 存储 Measurement
+	Field           string    // 存储 Field
+	TimeField       TimeField // 时间字段
+	Timezone        string    // 存储 Timezone
+	Fields          []string  // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
+	Measurements    []string  // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
 
 	// 用于 promql 查询
 	IsHasOr bool // 标记是否有 or 条件

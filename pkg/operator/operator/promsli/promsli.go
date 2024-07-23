@@ -33,7 +33,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -48,7 +48,7 @@ type Controller struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	client kubernetes.Interface
-	bus    *kits.RateBus
+	bus    *notifier.RateBus
 
 	mut             sync.Mutex
 	rules           map[string]*promv1.PrometheusRule
@@ -67,7 +67,7 @@ func NewController(ctx context.Context, client kubernetes.Interface) *Controller
 		ctx:             ctx,
 		cancel:          cancel,
 		client:          client,
-		bus:             kits.NewDefaultRateBus(),
+		bus:             notifier.NewDefaultRateBus(),
 		rules:           make(map[string]*promv1.PrometheusRule),
 		rulesRelation:   make(map[string]string),
 		smMetrics:       map[string]map[string]struct{}{},

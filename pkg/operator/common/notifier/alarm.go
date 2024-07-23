@@ -7,28 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package cmd
+package notifier
 
-import (
-	"github.com/spf13/cobra"
-	"go.uber.org/automaxprocs/maxprocs"
+import "time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
-)
-
-func init() {
-	maxprocs.Logger(func(s string, i ...interface{}) {})
+type Alarmer struct {
+	t *time.Ticker
 }
 
-var rootCmd = &cobra.Command{
-	Use:   "bkmonitor-operator",
-	Short: `bkmonitor-operator cli to manage and deploy the operator/reloader`,
+func NewAlarmer(d time.Duration) *Alarmer {
+	return &Alarmer{t: time.NewTicker(d)}
 }
 
-func init() {
-	rootCmd.PersistentFlags().StringVarP(&config.CustomConfigFilePath, "", "c", "", "config file (default $HOME/.bkmonitor-operator.yaml)")
-}
-
-func Execute() error {
-	return rootCmd.Execute()
+func (a *Alarmer) Alarm() bool {
+	select {
+	case <-a.t.C:
+		return true
+	default:
+		return false
+	}
 }

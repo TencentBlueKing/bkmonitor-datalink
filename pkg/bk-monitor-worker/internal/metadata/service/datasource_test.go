@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -263,4 +264,44 @@ func TestDataSourceSvc_StorageConsulConfig(t *testing.T) {
 	}
 	str, _ := jsonx.MarshalString(s)
 	fmt.Println(str)
+}
+
+func TestDataSourceConsulPath(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	var bkDataId uint = 1000001
+	ds := &resulttable.DataSource{
+		BkDataId:          bkDataId,
+		Token:             "9e679720296f4ad7abf5ad95ac0acbdf",
+		DataName:          "test_data_source",
+		DataDescription:   "data source for test",
+		MqClusterId:       1,
+		MqConfigId:        21,
+		EtlConfig:         "bk_standard_v2_event",
+		IsCustomSource:    true,
+		Creator:           "admin",
+		CreateTime:        time.Time{},
+		LastModifyUser:    "admin",
+		LastModifyTime:    time.Time{},
+		TypeLabel:         "event",
+		SourceLabel:       "bk_monitor",
+		IsEnable:          true,
+		TransferClusterId: "default",
+		SpaceTypeId:       "all",
+		SpaceUid:          "",
+		CreatedFrom:       "bkgse",
+	}
+	err := db.Delete(&ds).Error
+	assert.NoError(t, err)
+	err = db.Create(&ds).Error
+	assert.NoError(t, err)
+
+	var dsObj resulttable.DataSource
+	err = resulttable.NewDataSourceQuerySet(db).BkDataIdEq(bkDataId).One(&dsObj)
+	assert.NoError(t, err)
+
+	dsSvc := NewDataSourceSvc(&dsObj)
+	consulPath := dsSvc.ConsulConfigPath()
+	assert.Contains(t, consulPath, strconv.Itoa(int(bkDataId)))
 }

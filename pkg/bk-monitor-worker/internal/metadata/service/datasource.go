@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
@@ -624,4 +625,26 @@ func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
 		}
 		return uint(channelId), nil
 	}
+}
+
+// CleanConsulPath clean datasource consul path, when not enable or from bkdata
+func CleanConsulPath(consulClient *consul.Instance, dataIdPaths *[]string, consulPaths *[]string) error {
+	// 获取需要删除的路径
+	_, needDeletePaths := lo.Difference(*dataIdPaths, *consulPaths)
+	// 直接删除即可
+	if len(needDeletePaths) == 0 {
+		logger.Info("no need to delete consul path")
+		return nil
+	}
+	if cfg.CanDeleteConsulPath {
+		for _, path := range needDeletePaths {
+			if err := consulClient.Delete(path); err != nil {
+				logger.Error("delete dataid consul path failed, path: %s, error: %s", path, err)
+			}
+		}
+	} else {
+		logger.Infof("different path for datasource and consul_key, path: %v", needDeletePaths)
+	}
+
+	return nil
 }

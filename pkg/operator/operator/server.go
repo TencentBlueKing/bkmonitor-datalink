@@ -483,10 +483,10 @@ func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) 
 	buf := bytebufferpool.Get()
 	defer bytebufferpool.Put(buf)
 
-	objectsref.RelationToPromFormat(buf, c.objectsController.GetNodeRelations())
-	objectsref.RelationToPromFormat(buf, c.objectsController.GetServiceRelations())
-	objectsref.RelationToPromFormat(buf, c.objectsController.GetPodRelations())
-	objectsref.RelationToPromFormat(buf, c.objectsController.GetReplicasetRelations())
+	c.objectsController.GetNodeRelations(buf)
+	c.objectsController.GetServiceRelations(buf)
+	c.objectsController.GetPodRelations(buf)
+	c.objectsController.GetReplicasetRelations(buf)
 
 	w.Write(buf.Bytes())
 }

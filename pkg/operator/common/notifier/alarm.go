@@ -7,33 +7,23 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package kits
+package notifier
 
-func stringToBool(items map[string]string, key string) bool {
-	if value, ok := items[key]; ok {
-		if value == "true" {
-			return true
-		}
+import "time"
+
+type Alarmer struct {
+	t *time.Ticker
+}
+
+func NewAlarmer(d time.Duration) *Alarmer {
+	return &Alarmer{t: time.NewTicker(d)}
+}
+
+func (a *Alarmer) Alarm() bool {
+	select {
+	case <-a.t.C:
+		return true
+	default:
+		return false
 	}
-	return false
-}
-
-func CheckIfCommonResource(items map[string]string) bool {
-	return stringToBool(items, "isCommon")
-}
-
-func CheckIfSystemResource(items map[string]string) bool {
-	return stringToBool(items, "isSystem")
-}
-
-func CheckIfForwardLocalhost(items map[string]string) bool {
-	return stringToBool(items, "forwardLocalhost")
-}
-
-func CheckIfNormalizeMetricName(items map[string]string) bool {
-	return stringToBool(items, "normalizeMetricName")
-}
-
-func CheckIfAntiAffinity(items map[string]string) bool {
-	return stringToBool(items, "antiAffinity")
 }

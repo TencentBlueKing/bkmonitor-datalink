@@ -23,7 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
@@ -34,8 +34,8 @@ import (
 const resyncPeriod = time.Hour * 2
 
 var (
-	daemonsetAlarmer   = kits.NewAlarmer(resyncPeriod)
-	statefulsetAlarmer = kits.NewAlarmer(resyncPeriod)
+	daemonsetAlarmer   = notifier.NewAlarmer(resyncPeriod)
+	statefulsetAlarmer = notifier.NewAlarmer(resyncPeriod)
 )
 
 func Slowdown() {

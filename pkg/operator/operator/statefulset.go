@@ -22,7 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -206,7 +206,7 @@ func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 		c.mm.IncScaledStatefulSetSuccessCounter()
 
 		// 等待一个采集任务调度周期（尽力）确保 replicas 变更已经被 watch 到
-		time.Sleep(kits.WaitPeriod)
+		time.Sleep(notifier.WaitPeriod)
 	}
 }
 

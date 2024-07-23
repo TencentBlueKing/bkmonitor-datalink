@@ -38,8 +38,8 @@ import (
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -49,7 +49,7 @@ const (
 	Base64Protocol = "base64://"
 )
 
-var bus = kits.NewDefaultRateBus()
+var bus = notifier.NewDefaultRateBus()
 
 func Publish() { bus.Publish() }
 
@@ -123,33 +123,33 @@ func EncodeBase64(s string) string {
 }
 
 type BaseParams struct {
-	Client                  kubernetes.Interface
-	RelabelRule             string
-	RelabelIndex            string
-	NormalizeMetricName     bool
-	AntiAffinity            bool
-	Name                    string
-	KubeConfig              string
-	Namespaces              []string
-	Path                    string
-	Scheme                  string
-	ProxyURL                string
-	Period                  string
-	Timeout                 string
-	ForwardLocalhost        bool
-	DisableCustomTimestamp  bool
-	DataID                  *bkv1beta1.DataID
-	Relabels                []*relabel.Config
-	BasicAuth               *promv1.BasicAuth
-	TLSConfig               *promv1.TLSConfig
-	BearerTokenFile         string
-	BearerTokenSecret       *corev1.SecretKeySelector
-	ExtraLabels             map[string]string
-	System                  bool
-	UrlValues               url.Values
-	MetricRelabelConfigs    []yaml.MapSlice
-	AnnotationMatchSelector map[string]string
-	AnnotationDropSelector  map[string]string
+	Client                 kubernetes.Interface
+	RelabelRule            string
+	RelabelIndex           string
+	NormalizeMetricName    bool
+	AntiAffinity           bool
+	Name                   string
+	KubeConfig             string
+	Namespaces             []string
+	Path                   string
+	Scheme                 string
+	ProxyURL               string
+	Period                 string
+	Timeout                string
+	ForwardLocalhost       bool
+	DisableCustomTimestamp bool
+	DataID                 *bkv1beta1.DataID
+	Relabels               []*relabel.Config
+	BasicAuth              *promv1.BasicAuth
+	TLSConfig              *promv1.TLSConfig
+	BearerTokenFile        string
+	BearerTokenSecret      *corev1.SecretKeySelector
+	ExtraLabels            map[string]string
+	System                 bool
+	UrlValues              url.Values
+	MetricRelabelConfigs   []yaml.MapSlice
+	MatchSelector          map[string]string
+	DropSelector           map[string]string
 }
 
 type BaseDiscover struct {
@@ -565,17 +565,17 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 	}
 
 	// annotations 白名单过滤
-	if len(d.AnnotationMatchSelector) > 0 {
-		if !matchSelector(lbls, d.AnnotationMatchSelector) {
-			logger.Debugf("%s annotation selector not match: %v", d.Name(), d.AnnotationMatchSelector)
+	if len(d.MatchSelector) > 0 {
+		if !matchSelector(lbls, d.MatchSelector) {
+			logger.Debugf("%s annotation selector not match: %v", d.Name(), d.MatchSelector)
 			return nil, nil
 		}
 	}
 
 	// annotations 黑名单过滤
-	if len(d.AnnotationDropSelector) > 0 {
-		if matchSelector(lbls, d.AnnotationDropSelector) {
-			logger.Debugf("%s annotation selector drop: %v", d.Name(), d.AnnotationDropSelector)
+	if len(d.DropSelector) > 0 {
+		if matchSelector(lbls, d.DropSelector) {
+			logger.Debugf("%s annotation selector drop: %v", d.Name(), d.DropSelector)
 			return nil, nil
 		}
 	}

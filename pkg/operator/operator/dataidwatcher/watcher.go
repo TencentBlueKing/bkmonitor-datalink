@@ -22,8 +22,9 @@ import (
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	bkinformers "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/informers/externalversions"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -43,7 +44,7 @@ const (
 )
 
 var (
-	bus               = kits.NewDefaultRateBus()
+	bus               = notifier.NewDefaultRateBus()
 	ErrDataIDNotFound = errors.New("dataid not found")
 )
 
@@ -207,8 +208,8 @@ func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
 		dataID.Spec.DataID,
 		dataID.Name,
 		dataID.Labels[keyUsage],
-		kits.CheckIfSystemResource(dataID.Labels),
-		kits.CheckIfCommonResource(dataID.Labels),
+		feature.IfSystemResource(dataID.Labels),
+		feature.IfCommonResource(dataID.Labels),
 	)
 
 	logger.Infof("add DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
@@ -219,11 +220,11 @@ func (w *dataIDWatcher) updateMetricDataID(dataID *bkv1beta1.DataID) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
-	if kits.CheckIfSystemResource(dataID.Labels) {
+	if feature.IfSystemResource(dataID.Labels) {
 		w.metricDataIDs[defaultSystemDataIDKey] = dataID
 		return
 	}
-	if kits.CheckIfCommonResource(dataID.Labels) {
+	if feature.IfCommonResource(dataID.Labels) {
 		w.metricDataIDs[defaultCommonDataIDKey] = dataID
 		return
 	}
@@ -237,11 +238,11 @@ func (w *dataIDWatcher) updateEventDataID(dataID *bkv1beta1.DataID) {
 	w.mut.Lock()
 	defer w.mut.Unlock()
 
-	if kits.CheckIfSystemResource(dataID.Labels) {
+	if feature.IfSystemResource(dataID.Labels) {
 		w.eventDataIDs[defaultSystemDataIDKey] = dataID
 		return
 	}
-	if kits.CheckIfCommonResource(dataID.Labels) {
+	if feature.IfCommonResource(dataID.Labels) {
 		w.eventDataIDs[defaultCommonDataIDKey] = dataID
 		return
 	}
@@ -270,9 +271,9 @@ func (w *dataIDWatcher) deleteMetricDataID(dataID *bkv1beta1.DataID) {
 	defer w.mut.Unlock()
 
 	var uk string
-	if kits.CheckIfSystemResource(dataID.Labels) {
+	if feature.IfSystemResource(dataID.Labels) {
 		uk = defaultSystemDataIDKey
-	} else if kits.CheckIfCommonResource(dataID.Labels) {
+	} else if feature.IfCommonResource(dataID.Labels) {
 		uk = defaultCommonDataIDKey
 	}
 
@@ -288,9 +289,9 @@ func (w *dataIDWatcher) deleteEventDataID(dataID *bkv1beta1.DataID) {
 	defer w.mut.Unlock()
 
 	var uk string
-	if kits.CheckIfSystemResource(dataID.Labels) {
+	if feature.IfSystemResource(dataID.Labels) {
 		uk = defaultSystemDataIDKey
-	} else if kits.CheckIfCommonResource(dataID.Labels) {
+	} else if feature.IfCommonResource(dataID.Labels) {
 		uk = defaultCommonDataIDKey
 	}
 

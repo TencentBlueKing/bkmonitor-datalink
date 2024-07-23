@@ -71,6 +71,8 @@ func TestReceiver(t *testing.T) {
         enabled: true
       beat:
         enabled: true
+      tars:
+        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
@@ -86,6 +88,7 @@ func TestReceiver(t *testing.T) {
 	componentsReady[define.SourcePyroscope] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourcePyroscope) }
 	componentsReady[define.SourceFta] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceFta) }
 	componentsReady[define.SourceBeat] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceBeat) }
+	componentsReady[define.SourceTars] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceTars) }
 
 	r.ready()
 	assert.NoError(t, r.Start())

@@ -173,10 +173,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Handler: metadataTask.ClearDeprecatedRedisKey,
 		},
 		CleanDataIdConsulPath: {
-			// Cron:    "0 2 * * *", // 每天凌晨2点执行
-			Cron:    "*/5 * * * *",
+			Cron:    "0 2 * * *", // 每天凌晨2点执行
 			Handler: metadataTask.CleanDataIdConsulPath,
-			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},
 	}
 }

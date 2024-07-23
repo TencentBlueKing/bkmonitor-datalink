@@ -17,12 +17,12 @@ import (
 
 var pool = sync.Pool{
 	New: func() interface{} {
-		return make([]labels.Label, 0, 24)
+		return make(labels.Labels, 0, 24)
 	},
 }
 
 func Get() labels.Labels {
-	return pool.Get().([]labels.Label)
+	return pool.Get().(labels.Labels)
 }
 
 func Put(lbs labels.Labels) {

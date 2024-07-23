@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -35,12 +36,13 @@ func TestMetricsToPrometheusFormat(t *testing.T) {
 			},
 		}
 
-		lines := RelationToPromFormat(rows)
+		buf := &bytes.Buffer{}
+		RelationToPromFormat(buf, rows)
 
 		expected := `usage{cpu="1",biz="0"} 1
 usage{cpu="2",biz="0"} 1
 `
-		assert.Equal(t, expected, string(lines))
+		assert.Equal(t, expected, buf.String())
 	})
 
 	t.Run("Labels/Count=1", func(t *testing.T) {
@@ -59,12 +61,13 @@ usage{cpu="2",biz="0"} 1
 			},
 		}
 
-		lines := RelationToPromFormat(rows)
+		buf := &bytes.Buffer{}
+		RelationToPromFormat(buf, rows)
 
 		expected := `usage{cpu="1"} 1
 usage{cpu="2"} 1
 `
-		assert.Equal(t, expected, string(lines))
+		assert.Equal(t, expected, buf.String())
 	})
 }
 

@@ -178,6 +178,7 @@ func (c *Operator) handleStatefulSetSecretUpdate(oldObj, newObj interface{}) {}
 func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 	n := calcShouldStatefulSetWorker(configCount)
 	logger.Infof("statefulset workers count should be %d, childConfigs count: %d", n, configCount)
+	c.mm.SetStatefulSetWorkerCount(n)
 
 	// 2 分钟内最多只允许调度 1 次
 	if time.Now().Unix()-c.statefulSetWorkerScaled.Unix() < 120 {

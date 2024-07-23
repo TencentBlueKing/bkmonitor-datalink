@@ -295,7 +295,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	}
 
 	if metricTarget.NodeName == "" {
-		logger.Debugf("no node info from labels: %+v", origLabels)
+		logger.Debugf("%s no node info from labels: %+v", d.Name(), origLabels)
 		metricTarget.NodeName = define.UnknownNode
 	}
 
@@ -476,21 +476,20 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 		case <-ticker.C:
 			counter++
 			tgList, updatedAt := GetTargetGroups(d.role, d.getNamespaces())
-			logger.Debugf("discover %s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
+			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
-				logger.Debugf("discover %s found nothing changed, skip targetgourps handled", d.Name())
+				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
 				continue
 			}
 			d.fetched = true
-			logger.Debugf("discover %s starts to handle targets", d.Name())
+
 			for _, tg := range tgList {
 				if tg == nil {
 					continue
 				}
-				logger.Debugf("discover %s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
+				logger.Debugf("%s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
 			}
-			logger.Debugf("discover %s handle targets done", d.Name())
 		}
 	}
 }
@@ -546,8 +545,8 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 	return count == len(selector)
 }
 
-func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) *ChildConfig {
-	lbls := labelspool.Get() // 实际 labels 不会被引用 可以池化
+func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
+	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
 
 	for ln, lv := range tlset {
@@ -568,56 +567,47 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 	// annotations 白名单过滤
 	if len(d.AnnotationMatchSelector) > 0 {
 		if !matchSelector(lbls, d.AnnotationMatchSelector) {
-			logger.Debugf("annotation selector not match: %v", d.AnnotationMatchSelector)
-			return nil
+			logger.Debugf("%s annotation selector not match: %v", d.Name(), d.AnnotationMatchSelector)
+			return nil, nil
 		}
 	}
 
 	// annotations 黑名单过滤
 	if len(d.AnnotationDropSelector) > 0 {
 		if matchSelector(lbls, d.AnnotationDropSelector) {
-			logger.Debugf("annotation selector drop: %v", d.AnnotationDropSelector)
-			return nil
+			logger.Debugf("%s annotation selector drop: %v", d.Name(), d.AnnotationDropSelector)
+			return nil, nil
 		}
 	}
 
 	sort.Sort(lbls)
 	res, orig, err := d.populateLabels(lbls)
 	if err != nil {
-		d.mm.IncCreatedChildConfigFailedCounter()
-		logger.Errorf("failed to populate labels: %v", err)
-		return nil
+		return nil, errors.Wrap(err, "populate labels failed")
 	}
 	if len(res) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	logger.Debugf("discover %s populate labels %+v", d.Name(), res)
+	logger.Debugf("%s populate labels %+v", d.Name(), res)
 	metricTarget, err := d.makeMetricTarget(res, orig, namespace)
 	if err != nil {
-		d.mm.IncCreatedChildConfigFailedCounter()
-		logger.Errorf("failed to make metric target: %v", err)
-		return nil
+		return nil, errors.Wrap(err, "make metric target failed")
 	}
 
 	if d.ForwardLocalhost {
 		metricTarget.Address, err = forwardAddress(metricTarget.Address)
 		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to forward address: %v, err: %v", metricTarget.Address, err)
-			return nil
+			return nil, errors.Wrapf(err, "forward address failed, address=%s", metricTarget.Address)
 		}
 	}
 
 	metricTarget.DisableCustomTimestamp = d.DisableCustomTimestamp
 	data, err := metricTarget.YamlBytes()
 	if err != nil {
-		d.mm.IncCreatedChildConfigFailedCounter()
-		logger.Errorf("failed to marshal target, err: %s", err)
-		return nil
+		return nil, errors.Wrap(err, "marshal target failed")
 	}
 
-	d.mm.IncCreatedChildConfigSuccessCounter()
 	childConfig := &ChildConfig{
 		Node:         metricTarget.NodeName,
 		FileName:     metricTarget.FileName(),
@@ -631,8 +621,8 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 		TaskType:     metricTarget.TaskType,
 		AntiAffinity: d.AntiAffinity,
 	}
-	logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
-	return childConfig
+	logger.Debugf("%s create child config: %+v", d.Name(), childConfig)
+	return childConfig, nil
 }
 
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
@@ -649,10 +639,17 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	childConfigs := make([]*ChildConfig, 0)
 
 	for _, tlset := range targetGroup.Targets {
-		childConfig := d.handleTarget(namespace, tlset, targetGroup.Labels)
-		if childConfig == nil {
+		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
+		if err != nil {
+			d.mm.IncCreatedChildConfigFailedCounter()
 			continue
 		}
+		if childConfig == nil {
+			d.mm.IncCreatedChildConfigSkippedCounter()
+			continue
+		}
+
+		d.mm.IncCreatedChildConfigSuccessCounter()
 		childConfigs = append(childConfigs, childConfig)
 	}
 
@@ -675,7 +672,7 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	for _, cfg := range childConfigs {
 		hash := cfg.Hash()
 		if _, ok := d.childConfigGroups[source][hash]; !ok {
-			logger.Infof("discover %s adds file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
+			logger.Infof("%s adds file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 			d.childConfigGroups[source][hash] = cfg
 			changed = true
 		}
@@ -693,13 +690,13 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 
 	for _, key := range removed {
 		cfg := d.childConfigGroups[source][key]
-		logger.Infof("discover %s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
+		logger.Infof("%s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 		delete(d.childConfigGroups[source], key)
 	}
 
 	// 如果文件有变更则发送通知
 	if changed {
-		logger.Infof("discover %s found targetgroup.source changed", source)
+		logger.Infof("%s found targetgroup.source changed", source)
 		Publish()
 	}
 }

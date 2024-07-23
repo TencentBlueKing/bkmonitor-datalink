@@ -87,7 +87,7 @@ func (r *Recorder) updateConfigNode(filename, node string) {
 	r.activeConfigFile[filename] = cfg
 }
 
-func (r *Recorder) getActiveConfigFile() []ConfigFileRecord {
+func (r *Recorder) getActiveConfigFiles() []ConfigFileRecord {
 	r.mut.Lock()
 	defer r.mut.Unlock()
 
@@ -98,7 +98,7 @@ func (r *Recorder) getActiveConfigFile() []ConfigFileRecord {
 	return cfgs
 }
 
-func (r *Recorder) getMonitorActiveConfigCount() map[string]int {
+func (r *Recorder) getActiveEndpoints() map[string]int {
 	r.mut.Lock()
 	defer r.mut.Unlock()
 

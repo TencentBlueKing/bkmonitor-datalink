@@ -11,6 +11,7 @@ package objectsref
 
 import (
 	"bytes"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,7 +60,7 @@ func (oc *ObjectsController) GetNodeRelations() []RelationMetric {
 	return metrics
 }
 
-func (oc *ObjectsController) GetServieRelations() []RelationMetric {
+func (oc *ObjectsController) GetServiceRelations() []RelationMetric {
 	var metrics []RelationMetric
 	oc.serviceObjs.rangeServices(func(namespace string, services serviceEntities) {
 		for _, svc := range services {
@@ -295,8 +296,7 @@ func (oc *ObjectsController) GetPodRelations() []RelationMetric {
 	return metrics
 }
 
-func RelationToPromFormat(metrics []RelationMetric) []byte {
-	var lines []byte
+func RelationToPromFormat(w io.Writer, metrics []RelationMetric) {
 	for _, metric := range metrics {
 		var buf bytes.Buffer
 		buf.WriteString(metric.Name)
@@ -316,7 +316,6 @@ func RelationToPromFormat(metrics []RelationMetric) []byte {
 
 		buf.WriteString("} 1")
 		buf.WriteString("\n")
-		lines = append(lines, buf.Bytes()...)
+		w.Write(buf.Bytes())
 	}
-	return lines
 }

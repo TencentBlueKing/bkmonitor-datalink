@@ -236,9 +236,11 @@ func (c *Operator) recordMetrics() {
 		case <-ticker.C:
 			c.mm.UpdateUptime(5)
 			c.mm.SetAppBuildInfo(c.buildInfo)
-			c.updateActiveConfigMetrics()
-			c.updateMonitorResourceMetrics()
-			c.updateActiveSharedDiscoveryMetrics()
+			c.updateNodeConfigMetrics()
+			c.updateMonitorEndpointMetrics()
+			c.updateWorkloadMetrics()
+			c.updateNodeMetrics()
+			c.updateSharedDiscoveryMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -246,36 +248,43 @@ func (c *Operator) recordMetrics() {
 	}
 }
 
-func (c *Operator) updateActiveSharedDiscoveryMetrics() {
-	c.mm.SetActiveSharedDiscoveryCount(discover.GetSharedDiscoveryCount())
+func (c *Operator) updateSharedDiscoveryMetrics() {
+	c.mm.SetSharedDiscoveryCount(discover.GetSharedDiscoveryCount())
 }
 
-func (c *Operator) updateActiveConfigMetrics() {
-	cfgs := c.recorder.getActiveConfigFile()
+func (c *Operator) updateNodeConfigMetrics() {
+	cfgs := c.recorder.getActiveConfigFiles()
 	set := make(map[string]int)
 	for _, cfg := range cfgs {
 		set[cfg.Node]++
 	}
 
 	for k, v := range set {
-		c.mm.SetActiveChildConfigCount(k, v)
+		c.mm.SetNodeConfigCount(k, v)
 	}
 }
 
-func (c *Operator) updateMonitorResourceMetrics() {
-	res := c.recorder.getMonitorResources()
-	set := make(map[string]int)
-	for _, r := range res {
-		set[r.Kind]++
+func (c *Operator) updateMonitorEndpointMetrics() {
+	endpoints := c.recorder.getActiveEndpoints()
+	for name, count := range endpoints {
+		c.mm.SetMonitorEndpointCount(name, count)
 	}
+}
 
-	for k, v := range set {
-		c.mm.SetActiveMonitorResourceCount(k, v)
+func (c *Operator) updateWorkloadMetrics() {
+	workloads, _ := objectsref.GetWorkloadInfo()
+	for resource, count := range workloads {
+		c.mm.SetWorkloadCount(resource, count)
 	}
+}
+
+func (c *Operator) updateNodeMetrics() {
+	nodes, _ := objectsref.GetClusterNodeInfo()
+	c.mm.SetNodeCount(nodes)
 }
 
 func (c *Operator) Run() error {
-	discover.Init()
+	discover.Activate()
 	errChan := make(chan error, 2)
 	c.wg.Add(1)
 	go func() {
@@ -401,7 +410,7 @@ func (c *Operator) Stop() {
 
 	c.dw.Stop()
 	c.objectsController.Stop()
-	discover.StopAllSharedDiscovery()
+	discover.Deactivate()
 }
 
 // waitForCacheSync waits for the informers' caches to be synced.
@@ -612,14 +621,12 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interface{}) {
@@ -652,7 +659,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getServiceMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -661,7 +667,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
@@ -675,11 +680,9 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 		c.promsliController.DeleteServiceMonitor(serviceMonitor)
 	}
 
-	now := time.Now()
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionDelete)
 }
 
 func (c *Operator) getPodMonitorDiscoversName(podMonitor *promv1.PodMonitor) []string {
@@ -807,9 +810,7 @@ func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
@@ -819,9 +820,7 @@ func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
@@ -831,9 +830,7 @@ func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.DeletePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
 }
 
 func (c *Operator) handlePodMonitorAdd(obj interface{}) {
@@ -849,14 +846,12 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}) {
@@ -885,7 +880,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getPodMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -894,7 +888,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handlePodMonitorDelete(obj interface{}) {
@@ -904,11 +897,9 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionDelete)
 }
 
 func (c *Operator) handleDiscoverNotify() {
@@ -922,8 +913,10 @@ func (c *Operator) handleDiscoverNotify() {
 			return
 
 		case <-discover.Notify():
-			c.mm.IncHandledDiscoverNotifyCounter()
+			now := time.Now()
+			c.mm.IncDispatchedTaskCounter()
 			c.dispatchTasks()
+			c.mm.ObserveDispatchedTaskDuration(now)
 
 		case <-timer.C:
 			c.dispatchTasks()

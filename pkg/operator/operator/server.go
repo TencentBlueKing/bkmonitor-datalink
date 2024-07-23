@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -137,7 +138,7 @@ func (c *Operator) CheckActiveDiscoverRoute(w http.ResponseWriter, _ *http.Reque
 }
 
 func (c *Operator) CheckActiveChildConfigRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.recorder.getActiveConfigFile())
+	writeResponse(w, c.recorder.getActiveConfigFiles())
 }
 
 func (c *Operator) CheckActiveSharedDiscoveryRoute(w http.ResponseWriter, _ *http.Request) {
@@ -338,10 +339,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString(fmt.Sprintf(formatWorkloadMsg, workloadUpdated.Format(time.RFC3339), string(b)))
 
 	// 检查 Endpoint 数量
-	counts := c.recorder.getMonitorActiveConfigCount()
-	b, _ = json.MarshalIndent(counts, "", "  ")
+	endpoints := c.recorder.getActiveEndpoints()
+	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
-	for _, v := range counts {
+	for _, v := range endpoints {
 		total += v
 	}
 	buf.WriteString(fmt.Sprintf(formatMonitorEndpointMsg, total, string(b)))
@@ -387,7 +388,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		monitorResourcesContent, _ := json.MarshalIndent(monitorResources, "", "  ")
 
 		var childConfigs []ConfigFileRecord
-		for _, cf := range c.recorder.getActiveConfigFile() {
+		for _, cf := range c.recorder.getActiveConfigFiles() {
 			if strings.Contains(cf.Service, monitorKeyword) {
 				childConfigs = append(childConfigs, cf)
 			}
@@ -479,13 +480,15 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	var lines []byte
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetNodeRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetServieRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetPodRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetReplicasetRelations())...)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
 
-	w.Write(lines)
+	objectsref.RelationToPromFormat(buf, c.objectsController.GetNodeRelations())
+	objectsref.RelationToPromFormat(buf, c.objectsController.GetServiceRelations())
+	objectsref.RelationToPromFormat(buf, c.objectsController.GetPodRelations())
+	objectsref.RelationToPromFormat(buf, c.objectsController.GetReplicasetRelations())
+
+	w.Write(buf.Bytes())
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {

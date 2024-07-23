@@ -20,18 +20,13 @@ func init() {
 	maxprocs.Logger(func(s string, i ...interface{}) {})
 }
 
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "bkmonitor-operator",
-	Short: `bkmonitor-operator cli to manage and deploy the operator program`,
+	Short: `bkmonitor-operator cli to manage and deploy the operator/reloader`,
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(
-		&config.CustomConfigFilePath,
-		"", "c", "",
-		"config file (default is $HOME/.bkmonitor-operator.yaml)",
-	)
+	rootCmd.PersistentFlags().StringVarP(&config.CustomConfigFilePath, "", "c", "", "config file (default $HOME/.bkmonitor-operator.yaml)")
 }
 
 func Execute() error {

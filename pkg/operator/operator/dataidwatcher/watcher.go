@@ -324,8 +324,6 @@ func (w *dataIDWatcher) Stop() {
 }
 
 func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
-	w.mm.IncHandledCounter(define.ActionAdd)
-
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("unexpected DataID type, got %T", obj)
@@ -337,12 +335,11 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 		return
 	}
 
+	w.mm.IncHandledCounter(define.ActionAdd)
 	w.updateDataID(dataID)
 }
 
 func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
-	w.mm.IncHandledCounter(define.ActionDelete)
-
 	dataID, ok := obj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("unexpected DataID type, got %T", obj)
@@ -354,12 +351,11 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 		return
 	}
 
+	w.mm.IncHandledCounter(define.ActionDelete)
 	w.deleteDataID(dataID)
 }
 
 func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{}) {
-	w.mm.IncHandledCounter(define.ActionUpdate)
-
 	old, ok := oldObj.(*bkv1beta1.DataID)
 	if !ok {
 		logger.Errorf("unexpected DataID type, got %T", oldObj)
@@ -376,6 +372,7 @@ func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{
 		return
 	}
 
+	w.mm.IncHandledCounter(define.ActionUpdate)
 	// 删除旧 dataid
 	if old.Labels[labelBkEnv] == ConfBkEnv {
 		w.deleteDataID(old)

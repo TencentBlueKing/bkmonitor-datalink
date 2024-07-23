@@ -887,7 +887,7 @@ func (c *Operator) handleDiscoverNotify() {
 	defer c.wg.Done()
 
 	var last int64
-	do := func(trigger string) {
+	dispatch := func(trigger string) {
 		now := time.Now()
 		c.mm.IncDispatchedTaskCounter(trigger)
 		c.dispatchTasks()
@@ -907,17 +907,17 @@ func (c *Operator) handleDiscoverNotify() {
 
 		case <-discover.Notify():
 			// 1min 内最多只能进行 2 次调度
-			if time.Now().Unix()-last < 30 {
+			if time.Now().Unix()-last <= 30 {
 				timer.Reset(time.Second * 30) // 保证信号不被丢弃
 				continue
 			}
-			do("notify")
+			dispatch("notify")
 
 		case <-ticker.C: // 兜底检查
-			do("ticker")
+			dispatch("ticker")
 
 		case <-timer.C: // 信号再收敛
-			do("timer")
+			dispatch("timer")
 		}
 	}
 }

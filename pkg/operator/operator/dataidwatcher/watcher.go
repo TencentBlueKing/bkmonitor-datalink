@@ -32,15 +32,9 @@ const (
 	defaultSystemDataIDKey = "__default_system__"
 	defaultCommonDataIDKey = "__default_common__"
 
-	// dataid 有两种用途:
-	// 1) event
-	// 2) metric
-	keyUsage    = "usage"
+	// dataid 有两种用途 事件以及指标
 	usageEvent  = "event"
 	usageMetric = "metric"
-
-	// 表示集群所在环境
-	labelBkEnv = "bk_env"
 )
 
 var (
@@ -186,7 +180,7 @@ func (w *dataIDWatcher) GetClusterInfo() (*define.ClusterInfo, error) {
 	}
 	info.BizID = bizID
 
-	info.BkEnv = dataID.Labels[labelBkEnv]
+	info.BkEnv = feature.BkEnv(dataID.Labels)
 	return info, nil
 }
 
@@ -195,7 +189,8 @@ func (w *dataIDWatcher) MatchEventDataID(meta define.MonitorMeta, systemResource
 }
 
 func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
-	switch dataID.Labels[keyUsage] {
+	usage := feature.DataIDUsage(dataID.Labels)
+	switch usage {
 	case usageEvent:
 		w.updateEventDataID(dataID.DeepCopy())
 	case usageMetric:
@@ -207,7 +202,7 @@ func (w *dataIDWatcher) updateDataID(dataID *bkv1beta1.DataID) {
 	w.mm.SetDataIDInfo(
 		dataID.Spec.DataID,
 		dataID.Name,
-		dataID.Labels[keyUsage],
+		usage,
 		feature.IfSystemResource(dataID.Labels),
 		feature.IfCommonResource(dataID.Labels),
 	)
@@ -253,7 +248,7 @@ func (w *dataIDWatcher) updateEventDataID(dataID *bkv1beta1.DataID) {
 }
 
 func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
-	switch dataID.Labels[keyUsage] {
+	switch feature.DataIDUsage(dataID.Labels) {
 	case usageEvent:
 		w.deleteEventDataID(dataID.DeepCopy())
 	case usageMetric:
@@ -330,7 +325,7 @@ func (w *dataIDWatcher) handleDataIDAdd(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-	env := dataID.Labels[labelBkEnv]
+	env := feature.BkEnv(dataID.Labels)
 	if env != ConfBkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
 		return
@@ -346,7 +341,7 @@ func (w *dataIDWatcher) handleDataIDDelete(obj interface{}) {
 		logger.Errorf("unexpected DataID type, got %T", obj)
 		return
 	}
-	env := dataID.Labels[labelBkEnv]
+	env := feature.BkEnv(dataID.Labels)
 	if env != ConfBkEnv {
 		logger.Warnf("want bkenv '%s', but got '%s'", ConfBkEnv, env)
 		return
@@ -375,12 +370,12 @@ func (w *dataIDWatcher) handleDataIDUpdate(oldObj interface{}, newObj interface{
 
 	w.mm.IncHandledCounter(define.ActionUpdate)
 	// 删除旧 dataid
-	if old.Labels[labelBkEnv] == ConfBkEnv {
+	if feature.BkEnv(old.Labels) == ConfBkEnv {
 		w.deleteDataID(old)
 		logger.Infof("delete DataID, name=%v, id=%v, labels=%v", old.Name, old.Spec.DataID, old.Labels)
 	}
 	// 添加新 dataid
-	if cur.Labels[labelBkEnv] == ConfBkEnv {
+	if feature.BkEnv(cur.Labels) == ConfBkEnv {
 		w.updateDataID(cur)
 		logger.Infof("update DataID, name=%v, id=%v, labels=%v", cur.Name, cur.Spec.DataID, cur.Labels)
 	}

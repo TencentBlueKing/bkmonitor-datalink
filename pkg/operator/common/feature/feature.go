@@ -15,6 +15,8 @@ const (
 	// labels features
 	keyCommonResource = "isCommon"
 	keySystemResource = "isSystem"
+	keyBkEnv          = "bk_env"
+	keyDataIDUsage    = "usage"
 
 	// annotations features
 	keyForwardLocalhost     = "forwardLocalhost"
@@ -71,6 +73,14 @@ func IfNormalizeMetricName(m map[string]string) bool {
 // IfAntiAffinity 检查调度时是否需要反节点亲和
 func IfAntiAffinity(m map[string]string) bool {
 	return stringToBool(m, keyAntiAffinity)
+}
+
+func BkEnv(m map[string]string) string {
+	return m[keyBkEnv]
+}
+
+func DataIDUsage(m map[string]string) string {
+	return m[keyDataIDUsage]
 }
 
 func RelabelRule(m map[string]string) string {

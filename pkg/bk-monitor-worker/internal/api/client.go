@@ -176,7 +176,7 @@ func GetBcsProjectApi() (*bcsproject.Client, error) {
 func GetCmdbApi() (*cmdb.Client, error) {
 	muForCmdbApi.Lock()
 	defer muForCmdbApi.Unlock()
-	if bcsClusterManager != nil {
+	if cmdbApi != nil {
 		return cmdbApi, nil
 	}
 	config := bkapi.ClientConfig{

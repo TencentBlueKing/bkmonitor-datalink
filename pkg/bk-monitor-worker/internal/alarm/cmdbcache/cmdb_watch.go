@@ -32,10 +32,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // CmdbResourceType cmdb监听资源类型
@@ -82,10 +83,7 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 	}
 
 	// 创建cmdb api client
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cmdb api client")
-	}
+	cmdbApi := getCmdbApi()
 
 	return &CmdbResourceWatcher{
 		prefix:      prefix,

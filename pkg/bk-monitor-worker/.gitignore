@@ -16,4 +16,3 @@ dev_config.yaml
 local/
 .env
 bmw.yaml
-bmw_test.yaml

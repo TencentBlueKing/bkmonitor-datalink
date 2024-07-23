@@ -92,11 +92,7 @@ func (m *ServiceInstanceCacheManager) useBiz() bool {
 
 // getServiceInstances 获取服务实例列表
 func getServiceInstances(ctx context.Context, bkBizId int) ([]*AlarmServiceInstanceInfo, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "get cmdb api client failed")
-	}
-
+	cmdbApi := getCmdbApi()
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()
 

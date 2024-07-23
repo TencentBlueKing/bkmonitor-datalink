@@ -77,11 +77,7 @@ func NewBusinessCacheManager(prefix string, opt *redis.Options, concurrentLimit 
 
 // getBusinessList 获取业务列表
 func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get cmdb api")
-	}
-
+	cmdbApi := getCmdbApi()
 	// 并发请求获取业务列表
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
@@ -125,14 +121,11 @@ func getBusinessList(ctx context.Context) ([]map[string]interface{}, error) {
 
 // getBusinessAttribute 获取业务对象字段说明
 func getBusinessAttribute(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get cmdb api")
-	}
+	cmdbApi := getCmdbApi()
 
 	// 获取业务对象字段说明
 	var attrResult cmdb.SearchObjectAttributeResp
-	_, err = cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]interface{}{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
+	_, err := cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]interface{}{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
 	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
 	if err != nil {
 		return nil, err

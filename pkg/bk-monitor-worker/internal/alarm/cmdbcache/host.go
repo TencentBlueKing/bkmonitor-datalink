@@ -35,10 +35,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // hostFields 主机字段
@@ -456,10 +457,7 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 
 // getHostAndTopoByBiz 查询业务下的主机及拓扑信息
 func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "get cmdb api client failed")
-	}
+	cmdbApi := getCmdbApi()
 
 	// 设置超时时间
 	_ = cmdbApi.AddOperationOptions()
@@ -523,6 +521,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
 	err = api.HandleApiResultError(bizInstTopoResp.ApiCommonRespMeta, err, "search biz inst topo failed")
 	if err != nil {
+		logger.Errorf("search biz inst topo failed, bk_biz_id: %d, err: %v", bkBizID, err)
 		return nil, nil, err
 	}
 
@@ -535,6 +534,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 	_, err = cmdbApi.GetBizInternalModule().SetBody(map[string]interface{}{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
+		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)
 		return nil, nil, err
 	}
 

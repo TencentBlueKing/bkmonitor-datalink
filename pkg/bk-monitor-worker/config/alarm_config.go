@@ -39,13 +39,13 @@ func initAlarmConfig() {
 	CmdbApiRateLimitTimeout = viper.GetInt("taskConfig.alarm.cmdb_api_rate_limit.timeout")
 
 	// set default value
-	if CmdbApiRateLimitQPS == 0 {
+	if CmdbApiRateLimitQPS < 1 {
 		CmdbApiRateLimitQPS = 100
 	}
 
 	// burst should be greater than qps
 	if CmdbApiRateLimitBurst < int(CmdbApiRateLimitQPS)+1 {
-		CmdbApiRateLimitBurst = int(CmdbApiRateLimitQPS)
+		CmdbApiRateLimitBurst = int(CmdbApiRateLimitQPS) + 1
 	}
 
 	// set default value

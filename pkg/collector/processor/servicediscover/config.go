@@ -46,6 +46,11 @@ func (c *Config) Setup() {
 			}
 			rule.mappings = mappings
 		}
+
+		// 默认替换模式为：只在字段缺失时进行替换
+		if rule.ReplaceType == "" {
+			rule.ReplaceType = ReplaceMissing
+		}
 	}
 
 	// 优先级
@@ -62,6 +67,7 @@ type Rule struct {
 	MatchKey     string       `config:"match_key" mapstructure:"match_key"`
 	PredicateKey string       `config:"predicate_key" mapstructure:"predicate_key"`
 	MatchConfig  MatchConfig  `config:"rule" mapstructure:"rule"`
+	ReplaceType  string       `config:"replace_type" mapstructure:"replace_type"`
 	MatchGroups  []MatchGroup `config:"match_groups" mapstructure:"match_groups"`
 
 	re       *regexp.Regexp

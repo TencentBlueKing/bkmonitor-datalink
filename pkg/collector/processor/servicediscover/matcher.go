@@ -16,20 +16,31 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
+type ReplaceType string
+
+const (
+	ReplaceMissing = "missing" // attributes 以数据本身优先 如若数据中不存在该 Key 则覆盖
+	ReplaceForce   = "force"   // attributes 强制替换
+)
+
 func NewMatcher() Matcher {
 	return Matcher{}
 }
 
 type Matcher struct{}
 
-func (Matcher) Match(span ptrace.Span, mappings map[string]string) {
+func (Matcher) Match(span ptrace.Span, mappings map[string]string, replaceType string) {
 	for k, v := range mappings {
 		switch k {
 		case "span_name":
 			span.SetName(v)
 		default:
-			// 其余 attributes 以数据本身优先 如若数据中不存在该 Key 则覆盖
-			if _, ok := span.Attributes().Get(k); !ok {
+			switch replaceType {
+			case "missing":
+				if _, ok := span.Attributes().Get(k); !ok {
+					span.Attributes().UpsertString(k, v)
+				}
+			case "force":
 				span.Attributes().UpsertString(k, v)
 			}
 		}

@@ -10,6 +10,7 @@
 package servicediscover
 
 import (
+	"fmt"
 	"regexp"
 	"testing"
 
@@ -60,6 +61,7 @@ processor:
           predicate_key: "attributes.http.method"
           kind: "SPAN_KIND_CLIENT"
           match_key: "attributes.http.url"
+          replace_type: "missing"
           match_groups:
             - source: "peer_service"
               destination: "peer.service"
@@ -74,6 +76,7 @@ processor:
           predicate_key: "span_name"
           kind: "SPAN_KIND_SERVER"
           match_key: "span_name"
+          replace_type: "force"
           match_groups:
             - const_val: "GET:/benchmark/{uuid}"
               destination: "span_name"
@@ -128,6 +131,7 @@ processor:
 			MatchType:    "manual",
 			MatchKey:     "attributes.http.url",
 			PredicateKey: "attributes.http.method",
+			ReplaceType:  "missing",
 			MatchConfig: MatchConfig{
 				Params: []RuleParam{
 					{
@@ -167,6 +171,7 @@ processor:
 			MatchConfig: MatchConfig{
 				Regex: `https://(?P<peer_service>[^/]+)/(?P<span_name>\w+)/.+`,
 			},
+			ReplaceType: "missing",
 			MatchGroups: []MatchGroup{
 				{
 					Source:      "peer_service",
@@ -193,6 +198,7 @@ processor:
 			MatchConfig: MatchConfig{
 				Regex: `GET:/benchmark/(?P<uuid>[^/]+)`,
 			},
+			ReplaceType: "force",
 			MatchGroups: []MatchGroup{
 				{
 					ConstVal:    "GET:/benchmark/{uuid}",
@@ -381,28 +387,46 @@ processor:
           predicate_key: "attributes.http.method"
           kind: "SPAN_KIND_SERVER"
           match_key: "attributes.http.url"
+          replace_type: "%v"
           match_groups:
             - const_val: "GET:/benchmark/{uuid}"
               destination: "http.route"
+            - const_val: "http://something-replace-url.com"
+              destination: "http.url"
             - source: "peer_service"
               destination: "peer.service"
           rule:
             regex: http://(?P<peer_service>[^/]+)/benchmark/(?P<uuid>[^/]+)
 `
-	factory := processor.MustCreateFactory(content, NewFactory)
+	factoryReplaceMissing := processor.MustCreateFactory(fmt.Sprintf(content, "missing"), NewFactory)
+	factoryReplaceForce := processor.MustCreateFactory(fmt.Sprintf(content, "force"), NewFactory)
 
 	testCases := []struct {
-		name    string
-		httpUrl string
-		attrs   map[string]string
+		name      string
+		httpUrl   string
+		attrs     map[string]string
+		matchType string
+		factory   processor.Processor
 	}{
 		{
-			name:    "Success",
+			name:    "SuccessMissingReplace",
 			httpUrl: "http://example:19100/benchmark/2024",
 			attrs: map[string]string{
 				"http.route":   "GET:/benchmark/{uuid}",
 				"peer.service": "example:19100",
+				"http.url":     "http://example:19100/benchmark/2024",
 			},
+			factory: factoryReplaceMissing,
+		},
+		{
+			name:    "SuccessForceReplace",
+			httpUrl: "http://example:19100/benchmark/2024",
+			attrs: map[string]string{
+				"http.route":   "GET:/benchmark/{uuid}",
+				"peer.service": "example:19100",
+				"http.url":     "http://something-replace-url.com",
+			},
+			factory: factoryReplaceForce,
 		},
 		{
 			name:    "Failed",
@@ -411,6 +435,7 @@ processor:
 				"http.route":   "",
 				"peer.service": "",
 			},
+			factory: factoryReplaceForce,
 		},
 	}
 	for _, tc := range testCases {
@@ -431,7 +456,7 @@ processor:
 				RecordType: define.RecordTraces,
 				Data:       data,
 			}
-			_, err := factory.Process(record)
+			_, err := tc.factory.Process(record)
 			assert.NoError(t, err)
 
 			data = record.Data.(ptrace.Traces)

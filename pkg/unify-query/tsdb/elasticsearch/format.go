@@ -77,25 +77,9 @@ const (
 	EpochNanoseconds  = "epoch_nanoseconds"
 )
 
-var (
-	epochMap = map[string]string{
-		Second:      EpochSecond,
-		Millisecond: EpochMillis,
-		Microsecond: EpochMicroseconds,
-		Nanosecond:  EpochNanoseconds,
-	}
-)
-
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
 	Error         error
-}
-
-func toEpoch(unit string) string {
-	if v, ok := epochMap[unit]; ok {
-		return v
-	}
-	return EpochMillis
 }
 
 func mapData(prefix string, data map[string]any, res map[string]any) {
@@ -575,7 +559,7 @@ func (f *FormatFactory) Order() map[string]bool {
 		if name == FieldValue {
 			name = f.valueField
 		} else if name == FieldTime {
-			name = DefaultTimeFieldName
+			name = f.timeField.Name
 		}
 
 		if _, ok := f.mapping[name]; ok {
@@ -714,7 +698,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 		sample.Value = 0
 	}
 
-	if timestamp, ok = f.data[DefaultTimeFieldName]; ok {
+	if timestamp, ok = f.data[f.timeField.Name]; ok {
 		switch timestamp.(type) {
 		case int64:
 			sample.Timestamp = timestamp.(int64) * 1e3
@@ -726,7 +710,7 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 			return sample, fmt.Errorf("timestamp key type is error: %T, %v", timestamp, timestamp)
 		}
 	} else {
-		return sample, fmt.Errorf("timestamp is empty %s", DefaultTimeFieldName)
+		return sample, fmt.Errorf("timestamp is empty %s", f.timeField.Name)
 	}
 
 	return sample, nil
@@ -740,7 +724,7 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			if k == f.valueField {
 				continue
 			}
-			if k == DefaultTimeFieldName {
+			if k == f.timeField.Name {
 				continue
 			}
 		}

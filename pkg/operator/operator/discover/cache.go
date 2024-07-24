@@ -67,7 +67,9 @@ func (c *Cache) gc() {
 				}
 			}
 			c.mut.Unlock()
-			logger.Infof("%s cache remove %d items", c.name, total)
+			if total > 0 {
+				logger.Infof("%s cache remove %d items", c.name, total)
+			}
 
 		case <-c.done:
 			return

@@ -36,7 +36,7 @@ func (Matcher) Match(span ptrace.Span, mappings map[string]string, replaceType s
 			span.SetName(v)
 		default:
 			switch replaceType {
-			case "force":
+			case ReplaceForce:
 				span.Attributes().UpsertString(k, v)
 			default:
 				if _, ok := span.Attributes().Get(k); !ok {

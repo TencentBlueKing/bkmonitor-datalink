@@ -163,6 +163,7 @@ type BaseDiscover struct {
 	mm                *metricMonitor
 	checkIfNodeExists define.CheckFunc
 	fetched           bool
+	cache             *Cache
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
@@ -177,6 +178,7 @@ func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.Monito
 		checkIfNodeExists: checkFn,
 		monitorMeta:       monitorMeta,
 		mm:                newMetricMonitor(params.Name),
+		cache:             NewCache(time.Minute * 10),
 	}
 }
 
@@ -243,6 +245,7 @@ func (d *BaseDiscover) Stop() {
 
 	d.wg.Wait()
 	d.mm.IncStoppedCounter()
+	d.cache.Clean()
 	logger.Infof("shutting discover %s", d.Name())
 }
 
@@ -639,6 +642,12 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	childConfigs := make([]*ChildConfig, 0)
 
 	for _, tlset := range targetGroup.Targets {
+		skipped := d.cache.Check(namespace, tlset, targetGroup.Labels)
+		if skipped {
+			d.mm.IncCreatedChildConfigCachedCounter()
+			continue
+		}
+
 		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
 		if err != nil {
 			d.mm.IncCreatedChildConfigFailedCounter()
@@ -646,6 +655,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 		}
 		if childConfig == nil {
 			d.mm.IncCreatedChildConfigSkippedCounter()
+			d.cache.Set(namespace, tlset, targetGroup.Labels)
 			continue
 		}
 

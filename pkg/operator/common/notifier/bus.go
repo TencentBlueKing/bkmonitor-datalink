@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package kits
+package notifier
 
 import (
 	"time"
@@ -50,21 +50,4 @@ func (b *RateBus) Subscribe() <-chan struct{} {
 
 func (b *RateBus) Publish() {
 	b.timer.Reset(b.duration)
-}
-
-type Alarmer struct {
-	t *time.Ticker
-}
-
-func NewAlarmer(d time.Duration) *Alarmer {
-	return &Alarmer{t: time.NewTicker(d)}
-}
-
-func (a *Alarmer) Alarm() bool {
-	select {
-	case <-a.t.C:
-		return true
-	default:
-		return false
-	}
 }

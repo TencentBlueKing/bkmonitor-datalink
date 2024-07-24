@@ -7,33 +7,25 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package kits
+package labelspool
 
-func stringToBool(items map[string]string, key string) bool {
-	if value, ok := items[key]; ok {
-		if value == "true" {
-			return true
-		}
-	}
-	return false
+import (
+	"sync"
+
+	"github.com/prometheus/prometheus/model/labels"
+)
+
+var pool = sync.Pool{
+	New: func() interface{} {
+		return make(labels.Labels, 0, 24)
+	},
 }
 
-func CheckIfCommonResource(items map[string]string) bool {
-	return stringToBool(items, "isCommon")
+func Get() labels.Labels {
+	return pool.Get().(labels.Labels)
 }
 
-func CheckIfSystemResource(items map[string]string) bool {
-	return stringToBool(items, "isSystem")
-}
-
-func CheckIfForwardLocalhost(items map[string]string) bool {
-	return stringToBool(items, "forwardLocalhost")
-}
-
-func CheckIfNormalizeMetricName(items map[string]string) bool {
-	return stringToBool(items, "normalizeMetricName")
-}
-
-func CheckIfAntiAffinity(items map[string]string) bool {
-	return stringToBool(items, "antiAffinity")
+func Put(lbs labels.Labels) {
+	lbs = lbs[:0]
+	pool.Put(lbs)
 }

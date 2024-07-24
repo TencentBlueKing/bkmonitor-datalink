@@ -16,6 +16,7 @@ import (
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
@@ -27,9 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/diffutil"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -96,133 +95,69 @@ func (s *SpaceSvc) RefreshBkccSpace(allowDelete bool) error {
 	if err != nil {
 		return errors.Wrap(err, "getBkccBizIdNameMap failed")
 	}
-	spaceIdSet := mapset.NewSet(mapx.GetMapKeys(bizIdNameMap)...)
+	if len(bizIdNameMap) == 0 {
+		logger.Errorf("query bkcc biz info is empty")
+		return nil
+	}
+	// 提取 bkcc 中业务列表
+	bizIdList := mapx.GetMapKeys(bizIdNameMap)
 
-	// 过滤已经创建空间的业务
+	// 获取已经存在的业务列表
 	db := mysql.GetDBSession().DB
 	var spaceList []space.Space
 	if err := space.NewSpaceQuerySet(db).Select(space.SpaceDBSchema.SpaceId).SpaceTypeIdEq(models.SpaceTypeBKCC).All(&spaceList); err != nil {
+		logger.Errorf("query bkcc space failed, error: %s", err)
 		return errors.Wrap(err, "query bkcc space failed")
 	}
-	existSpaceIdSet := mapset.NewSet[string]()
+	var existSpaceIdList []string
 	for _, sp := range spaceList {
-		existSpaceIdSet.Add(sp.SpaceId)
+		existSpaceIdList = append(existSpaceIdList, sp.SpaceId)
 	}
 
-	diffSet := spaceIdSet.Difference(existSpaceIdSet)
-	diffDelete := existSpaceIdSet.Difference(spaceIdSet)
-	if diffSet.Cardinality() == 0 && diffDelete.Cardinality() == 0 {
-		logger.Infof("bkcc space need not add or delete")
+	// 比对
+	needCreateBizIdList, needDeleteBizIdList := lo.Difference(bizIdList, existSpaceIdList)
+
+	// 如果有删除的数据，则记录
+	if len(needDeleteBizIdList) != 0 && allowDelete {
+		logger.Info("some biz need to delete, biz_id_list: %v", needDeleteBizIdList)
+	}
+
+	// 如果需要创建的业务为空，并且不需要删除，则直接返回
+	if len(needCreateBizIdList) == 0 && !allowDelete {
+		logger.Info("not biz need to create")
 		return nil
 	}
-	// 针对删除的业务
-	if diffDelete.Cardinality() != 0 && allowDelete {
-		deleteSpaceIds := diffDelete.ToSlice()
-		// 删除和数据源的关联
-		count := float64(len(deleteSpaceIds))
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
-			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceDataSource{}.TableName(), map[string]interface{}{
-				space.SpaceDataSourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
-				space.SpaceDataSourceDBSchema.SpaceId.String():     deleteSpaceIds,
-			}), ""))
-		} else {
-			// 删除和数据源的关联
-			metrics.MysqlCount(space.SpaceDataSource{}.TableName(), "RefreshBkccSpace_delete_SpaceDataSource", count)
-			if err := space.NewSpaceDataSourceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdIn(deleteSpaceIds...).Delete(); err != nil {
-				return errors.Wrapf(err, "delete SpaceDataSource with space_type_id [bkcc] space_id [%v] failed", deleteSpaceIds)
-			}
-		}
-		// 标识关联空间不可用，这里主要是针对 bcs 资源
-		var srList []space.SpaceResource
-		var needUpdateSpaceIds []string
-		srQs := space.NewSpaceResourceQuerySet(db).ResourceTypeEq(models.SpaceTypeBKCC).ResourceIdIn(deleteSpaceIds...)
-		if err := srQs.All(&srList); err != nil {
-			return errors.Wrapf(err, "query SpaceResource with resource_type [bkcc] resource_id [%v] failed", deleteSpaceIds)
-		}
-		for _, sr := range srList {
-			needUpdateSpaceIds = append(needUpdateSpaceIds, sr.SpaceId)
-		}
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
-			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.SpaceResource{}.TableName(), map[string]interface{}{
-				space.SpaceResourceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
-				space.SpaceResourceDBSchema.ResourceId.String():  deleteSpaceIds,
-			}), ""))
-
-			if len(needUpdateSpaceIds) != 0 {
-				logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
-					space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCI,
-					space.SpaceDBSchema.SpaceId.String():     needUpdateSpaceIds,
-					space.SpaceDBSchema.IsBcsValid.String():  false,
-				}), ""))
-			}
-
-			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBDelete, diffutil.NewSqlBody(space.Space{}.TableName(), map[string]interface{}{
-				space.SpaceDBSchema.SpaceTypeId.String(): models.SpaceTypeBKCC,
-				space.SpaceDBSchema.SpaceId.String():     deleteSpaceIds,
-			}), ""))
-		} else {
-			// 删除关联资源
-			metrics.MysqlCount(space.SpaceResource{}.TableName(), "RefreshBkccSpace_delete_SpaceResource", count)
-			if err := srQs.Delete(); err != nil {
-				return errors.Wrapf(err, "delete SpaceResource with resource_type [bkcc] resource_id [%v] failed", deleteSpaceIds)
-			}
-			if len(needUpdateSpaceIds) != 0 {
-				// 对应的 BKCI(BCS) 空间，标识为不可用
-				metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_update_Space_IsBcsValid", float64(len(needUpdateSpaceIds)))
-				if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCI).SpaceIdIn(needUpdateSpaceIds...).GetUpdater().SetIsBcsValid(false).Update(); err != nil {
-					return errors.Wrapf(err, "update space is_bcs_valid to [false] for space_type_id [bkci] space_id [%v] failed", needUpdateSpaceIds)
-				}
-			}
-			// 删除对应的 BKCC 空间
-			metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_delete_Space", count)
-			if err := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdIn(deleteSpaceIds...).Delete(); err != nil {
-				return errors.Wrapf(err, "delete Space with space_type_id [bkcc] space_id [%v] failed", deleteSpaceIds)
-			}
-		}
-	}
-
-	// 针对添加的业务
-	if diffSet.Cardinality() == 0 {
-		return nil
-	}
-	var createdSpaces []interface{}
-	for _, bizId := range diffSet.ToSlice() {
+	// 创建数据
+	for _, bizId := range needCreateBizIdList {
+		// 获取业务名称
 		bizName := bizIdNameMap[bizId]
 		sp := space.Space{
 			SpaceTypeId: models.SpaceTypeBKCC,
 			SpaceId:     bizId,
 			SpaceName:   bizName,
 		}
-		metrics.MysqlCount(space.Space{}.TableName(), "RefreshBkccSpace_create_Space", 1)
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space") {
-			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space", diffutil.OperatorTypeDBCreate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
-				space.SpaceDBSchema.SpaceTypeId.String(): sp.SpaceTypeId,
-				space.SpaceDBSchema.SpaceId.String():     sp.SpaceId,
-				space.SpaceDBSchema.SpaceName.String():   sp.SpaceName,
-				space.SpaceDBSchema.Status.String():      "normal",
-				space.SpaceDBSchema.TimeZone.String():    "Asia/Shanghai",
-				space.SpaceDBSchema.Language.String():    "zh-hans",
-			}), ""))
-		} else {
-			if err := sp.Create(db); err != nil {
-				logger.Errorf("create Space with space_type_id [%s] space_id [%s] space_name [%s] failed, %v", models.SpaceTypeBKCC, bizId, bizName, err)
+		if err := sp.Create(db); err != nil {
+			logger.Errorf("create Space with space_type_id [%s] space_id [%s] space_name [%s] failed, %s", models.SpaceTypeBKCC, bizId, bizName, err)
+			continue
+		}
+	}
+	// 如果允许删除，并且比较的删除数据的不为空，则更新业务对应的名称
+	// 更新规则: "(已归档_{datetime.now().strftime('%Y%m%d')})"
+	if len(needDeleteBizIdList) != 0 && allowDelete {
+		for _, bizId := range needDeleteBizIdList {
+			// 按照规则，更新名称
+			// 查询记录
+			qs := space.NewSpaceQuerySet(db).SpaceTypeIdEq(models.SpaceTypeBKCC).SpaceIdEq(bizId)
+			var ds space.Space
+			if err := qs.One(&ds); err != nil {
+				logger.Errorf("query space not error, space_type [%s] space_id [%s], %s", models.SpaceTypeBKCC, bizId, err)
 				continue
 			}
-		}
-		createdSpaces = append(createdSpaces, fmt.Sprintf("%s__%s", models.SpaceTypeBKCC, bizId))
-	}
-	if len(createdSpaces) != 0 {
-		// 追加业务空间到 vm 查询的白名单中, 并通知到 unifyquery
-		rds := redis.GetStorageRedisInstance()
-		if err := rds.SAdd(fmt.Sprintf("%s%s", models.QueryVmSpaceUidListKey, cfg.BypassSuffixPath), createdSpaces...); err != nil {
-			logger.Errorf("reids SAdd [%v] to channel [%s] failed, %v", createdSpaces, fmt.Sprintf("%s%s", models.QueryVmSpaceUidListKey, cfg.BypassSuffixPath), err)
-		}
-		msg, err := jsonx.MarshalString(createdSpaces)
-		if err != nil {
-			return errors.Wrapf(err, "marshal space_id list [%v] failed", createdSpaces)
-		}
-		if err := rds.Publish(fmt.Sprintf("%s%s", models.QueryVmSpaceUidChannelKey, cfg.BypassSuffixPath), msg); err != nil {
-			return errors.Wrapf(err, "publish [%v] to [%v] failed", msg, fmt.Sprintf("%s%s", models.QueryVmSpaceUidChannelKey, cfg.BypassSuffixPath))
+			// 更新空间名称
+			newName := fmt.Sprintf("%s(已归档_%s)", ds.SpaceName, time.Now().Format("20060102"))
+			if err := qs.GetUpdater().SetSpaceName(newName).Update(); err != nil {
+				logger.Errorf("space_type [%s] space_id [%s] update space_name [%s] to [%s] failed, %s", ds.SpaceName, newName, err)
+			}
 		}
 	}
 

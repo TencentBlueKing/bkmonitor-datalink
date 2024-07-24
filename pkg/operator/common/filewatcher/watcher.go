@@ -21,17 +21,14 @@ import (
 
 var defaultWatcher = New()
 
-// Stop 调用 defaultWatcher.Stop
 func Stop() {
 	defaultWatcher.Stop()
 }
 
-// AddPath 调用 defaultWatcher.AddPath
 func AddPath(path string) (<-chan struct{}, error) {
 	return defaultWatcher.AddPath(path)
 }
 
-// RemovePath 调用 defaultWatcher.RemovePath
 func RemovePath(path string) error {
 	return defaultWatcher.RemovePath(path)
 }

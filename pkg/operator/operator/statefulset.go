@@ -22,7 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -178,6 +178,7 @@ func (c *Operator) handleStatefulSetSecretUpdate(oldObj, newObj interface{}) {}
 func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 	n := calcShouldStatefulSetWorker(configCount)
 	logger.Infof("statefulset workers count should be %d, childConfigs count: %d", n, configCount)
+	c.mm.SetStatefulSetWorkerCount(n)
 
 	// 2 分钟内最多只允许调度 1 次
 	if time.Now().Unix()-c.statefulSetWorkerScaled.Unix() < 120 {
@@ -205,7 +206,7 @@ func (c *Operator) reconcileStatefulSetWorker(configCount int) {
 		c.mm.IncScaledStatefulSetSuccessCounter()
 
 		// 等待一个采集任务调度周期（尽力）确保 replicas 变更已经被 watch 到
-		time.Sleep(kits.WaitPeriod)
+		time.Sleep(notifier.WaitPeriod)
 	}
 }
 

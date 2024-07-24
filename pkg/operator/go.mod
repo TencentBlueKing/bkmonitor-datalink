@@ -32,6 +32,7 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/ghodss/yaml v1.0.0
+	github.com/valyala/bytebufferpool v1.0.0
 )
 
 require (

@@ -10,6 +10,7 @@
 package objectsref
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -18,53 +19,55 @@ import (
 
 func TestMetricsToPrometheusFormat(t *testing.T) {
 	t.Run("Labels/Count=2", func(t *testing.T) {
-		rows := []RelationMetric{
+		rows := []relationMetric{
 			{
 				Name: "usage",
-				Labels: []RelationLabel{
+				Labels: []relationLabel{
 					{Name: "cpu", Value: "1"},
 					{Name: "biz", Value: "0"},
 				},
 			},
 			{
 				Name: "usage",
-				Labels: []RelationLabel{
+				Labels: []relationLabel{
 					{Name: "cpu", Value: "2"},
 					{Name: "biz", Value: "0"},
 				},
 			},
 		}
 
-		lines := RelationToPromFormat(rows)
+		buf := &bytes.Buffer{}
+		relationBytes(buf, rows...)
 
 		expected := `usage{cpu="1",biz="0"} 1
 usage{cpu="2",biz="0"} 1
 `
-		assert.Equal(t, expected, string(lines))
+		assert.Equal(t, expected, buf.String())
 	})
 
 	t.Run("Labels/Count=1", func(t *testing.T) {
-		rows := []RelationMetric{
+		rows := []relationMetric{
 			{
 				Name: "usage",
-				Labels: []RelationLabel{
+				Labels: []relationLabel{
 					{Name: "cpu", Value: "1"},
 				},
 			},
 			{
 				Name: "usage",
-				Labels: []RelationLabel{
+				Labels: []relationLabel{
 					{Name: "cpu", Value: "2"},
 				},
 			},
 		}
 
-		lines := RelationToPromFormat(rows)
+		buf := &bytes.Buffer{}
+		relationBytes(buf, rows...)
 
 		expected := `usage{cpu="1"} 1
 usage{cpu="2"} 1
 `
-		assert.Equal(t, expected, string(lines))
+		assert.Equal(t, expected, buf.String())
 	})
 }
 
@@ -97,58 +100,12 @@ func TestGetPodRelations(t *testing.T) {
 		},
 	}
 
-	metrics := objectsController.GetPodRelations()
+	buf := &bytes.Buffer{}
+	objectsController.GetPodRelations(buf)
 
-	expectedMetrics := []RelationMetric{
-		{
-			Name: relationNodePod,
-			Labels: []RelationLabel{
-				{
-					Name: "namespace", Value: namespace,
-				},
-				{
-					Name: "pod", Value: pod,
-				},
-				{
-					Name: "node", Value: node,
-				},
-			},
-		},
-		{
-			Name: relationContainerPod,
-			Labels: []RelationLabel{
-				{
-					Name: "namespace", Value: namespace,
-				},
-				{
-					Name: "pod", Value: pod,
-				},
-				{
-					Name: "node", Value: node,
-				},
-				{
-					Name: "container", Value: containers[0],
-				},
-			},
-		},
-		{
-			Name: relationContainerPod,
-			Labels: []RelationLabel{
-				{
-					Name: "namespace", Value: namespace,
-				},
-				{
-					Name: "pod", Value: pod,
-				},
-				{
-					Name: "node", Value: node,
-				},
-				{
-					Name: "container", Value: containers[1],
-				},
-			},
-		},
-	}
-
-	assert.Equal(t, expectedMetrics, metrics)
+	expected := `node_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1"} 1
+container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-1"} 1
+container_with_pod_relation{namespace="test-ns-1",pod="test-pod-1",node="test-node-1",container="test-container-2"} 1
+`
+	assert.Equal(t, expected, buf.String())
 }

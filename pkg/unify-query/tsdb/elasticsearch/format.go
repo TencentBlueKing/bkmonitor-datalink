@@ -226,8 +226,11 @@ func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
-	mapProperties("", mapping, f.mapping)
+// WithMappings 合并 mapping，后面的合并前面的
+func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
+	for _, mapping := range mappings {
+		mapProperties("", mapping, f.mapping)
+	}
 	return f
 }
 

@@ -154,7 +154,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
+func (i *Instance) getMappings(ctx context.Context, alias string) ([]map[string]any, error) {
 	var (
 		err error
 	)
@@ -170,30 +170,25 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 	}()
 
 	span.Set("alias", alias)
+	mappingMap, err := i.client.GetMapping().Index(alias).Do(ctx)
 
-	indexes, err := i.getIndexes(ctx, alias)
-	if err != nil {
-		return nil, err
+	indexes := make([]string, 0, len(mappingMap))
+	for index := range mappingMap {
+		indexes = append(indexes, index)
 	}
-
+	// 按照正序排列，最新的覆盖老的
+	sort.Strings(indexes)
 	span.Set("indexes", indexes)
+
+	mappings := make([]map[string]any, 0, len(mappingMap))
 	for _, index := range indexes {
-		mappings, mapErr := i.client.GetMapping().Index(index).Do(ctx)
-		if mapErr != nil {
-			return nil, mapErr
-		}
-
-		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
-			span.Set("index", index)
+		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
 			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
-
-			return mapping, nil
-		} else {
-			return nil, fmt.Errorf("get mappings error with index: %s", index)
+			mappings = append(mappings, mapping)
 		}
 	}
 
-	return nil, nil
+	return mappings, nil
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
@@ -502,7 +497,7 @@ func (i *Instance) QueryRaw(
 			query: query,
 		}
 
-		mapping, err1 := i.getMapping(ctx, qo.index)
+		mappings, err1 := i.getMappings(ctx, qo.index)
 		if err1 != nil {
 			rets <- &TimeSeriesResult{
 				Error: err1,
@@ -519,7 +514,7 @@ func (i *Instance) QueryRaw(
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
-			WithMapping(mapping).
+			WithMappings(mappings...).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)
 

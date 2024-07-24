@@ -166,9 +166,6 @@ var (
 	NetPeerNameField = CommonField{
 		SourceAttributes, "net.peer.name", toAttributes("net.peer.name"),
 	}
-	NetPeerIpField = CommonField{
-		SourceAttributes, "net.peer.ip", toAttributes("net.peer.ip"),
-	}
 	NetPeerPortField = CommonField{
 		SourceAttributes, "net.peer.port", toAttributes("net.peer.port"),
 	}
@@ -244,10 +241,6 @@ var (
 		SourceAttributes, "messaging.system",
 		toAttributes("messaging.system"),
 	}
-	MessagingUrlField = CommonField{
-		SourceAttributes, "messaging.url",
-		toAttributes("messaging.url"),
-	}
 	MessagingDestinationField = CommonField{
 		SourceAttributes, "messaging.destination",
 		toAttributes("messaging.destination"),
@@ -321,12 +314,6 @@ var (
 	KindField     = CommonField{SourceOuter, "kind", "kind"}
 	SpanNameField = CommonField{SourceOuter, "span_name", "span_name"}
 )
-
-// AdditionFields are not stored in the pre-calculation table, but are only used during processing
-var AdditionFields = []CommonField{
-	NetPeerIpField,
-	MessagingUrlField,
-}
 
 var StandardFields = []CommonField{
 	HttpHostField,

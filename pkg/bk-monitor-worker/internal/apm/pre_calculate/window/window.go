@@ -66,7 +66,6 @@ func ToStandardSpan(originSpan Span) StandardSpan {
 		Kind:         originSpan.Kind,
 	}
 	standardSpan.Collections = exactStandardFields(standardSpan, originSpan)
-	standardSpan.AdditionFieldsCollections = exactAdditionFields(originSpan)
 	return standardSpan
 }
 
@@ -114,26 +113,6 @@ func exactStandardFields(standardSpan StandardSpan, originSpan Span) map[string]
 		}
 	}
 
-	return res
-}
-
-func exactAdditionFields(originSpan Span) map[string]string {
-	res := make(map[string]string, len(core.AdditionFields))
-	attrVal := originSpan.Attributes
-	for _, f := range core.AdditionFields {
-		var valueStr string
-		if v := attrVal[f.Key]; v != nil {
-			switch v.(type) {
-			case float64:
-				valueStr = strconv.FormatFloat(v.(float64), 'f', -1, 64)
-			default:
-				valueStr = v.(string)
-			}
-		}
-		if valueStr != "" {
-			res[f.FullKey] = valueStr
-		}
-	}
 	return res
 }
 
@@ -216,20 +195,15 @@ type StandardSpan struct {
 	EndTime      int
 	ElapsedTime  int
 
-	StatusCode                core.SpanStatusCode
-	Kind                      int
-	Collections               map[string]string
-	AdditionFieldsCollections map[string]string
+	StatusCode  core.SpanStatusCode
+	Kind        int
+	Collections map[string]string
 }
 
 func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
 	var res string
 	for _, item := range f {
 		res, exist := s.Collections[item.DisplayKey()]
-		if exist {
-			return res
-		}
-		res, exist = s.AdditionFieldsCollections[item.DisplayKey()]
 		if exist {
 			return res
 		}

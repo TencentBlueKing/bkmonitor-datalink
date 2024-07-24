@@ -11,8 +11,6 @@ package window
 
 import (
 	"fmt"
-	"strings"
-
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
@@ -217,89 +215,62 @@ func (m *MetricProcessor) findComponentFlow(
 		return
 	}
 
+	serviceName := span.GetFieldValue(core.ServiceNameField)
+
 	if dbSystem != "" && slices.Contains([]int{KindClient, KindProducer}, span.Kind) {
-		// service (caller) -> db (callee) [db.system:net.peer.name:net.peer.ip:net.peer.port]
+		// service (caller) -> db (callee)
 		dbFlowLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-			"__name__", storage.ApmServiceComponentFlow,
-			"from_apm_service_name", span.GetFieldValue(core.ServiceNameField),
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+			"__name__", storage.ApmServiceFlow,
+			"from_apm_service_name", serviceName,
 			"from_apm_application_name", m.appName,
-			"to_component_category", core.CategoryDb,
-			"to_component_kind", dbSystem,
-			"to_component_name", span.GetFieldValue(core.DbNameField, core.NetPeerNameField),
-			"to_component_ip", span.GetFieldValue(core.NetPeerIpField),
-			"to_component_port", span.GetFieldValue(core.NetPeerPortField),
-			"error", span.IsError(),
+			"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem),
+			"to_apm_application_name", m.appName,
+			"from_span_error", span.IsError(),
+			"to_span_error", span.IsError(),
 		)
 		m.addToStats(dbFlowLabelKey, span.ElapsedTime, metricRecordMapping)
-		metricCount[storage.ApmServiceComponentFlow]++
+		metricCount[storage.ApmServiceFlow]++
 		return
 	}
 
 	if messageSystem != "" {
-		name, ip, port := m.getMessagingInstance(span)
 		if slices.Contains([]int{KindClient, KindProducer}, span.Kind) {
-			// service (caller) -> messageQueue (callee) [messaging.system:net.peer.name:net.peer.ip:net.peer.port]
+			// service (caller) -> messageQueue (callee)
 			messageCalleeFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", storage.ApmServiceComponentFlow,
-				"from_apm_service_name", span.GetFieldValue(core.ServiceNameField),
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+				"__name__", storage.ApmServiceFlow,
+				"from_apm_service_name", serviceName,
 				"from_apm_application_name", m.appName,
-				"to_component_category", core.CategoryMessaging,
-				"to_component_kind", messageSystem,
-				"to_component_name", name,
-				"to_component_ip", ip,
-				"to_component_port", port,
-				"error", span.IsError(),
+				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
+				"to_apm_application_name", m.appName,
+				"from_span_error", span.IsError(),
+				"to_span_error", span.IsError(),
 			)
 			m.addToStats(messageCalleeFlowLabelKey, span.ElapsedTime, metricRecordMapping)
-			metricCount[storage.ApmServiceComponentFlow]++
+			metricCount[storage.ApmServiceFlow]++
 			return
 		}
 		if slices.Contains([]int{KindServer, KindConsumer}, span.Kind) {
 			messageCallerFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v",
-				"__name__", storage.ApmComponentServiceFlow,
-				"from_component_category", core.CategoryMessaging,
-				"from_component_kind", messageSystem,
-				"from_component_name", name,
-				"from_component_ip", ip,
-				"from_component_port", port,
-				"to_apm_service_name", span.GetFieldValue(core.ServiceNameField),
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+				"__name__", storage.ApmServiceFlow,
+				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
+				"from_apm_application_name", m.appName,
+				"to_apm_service_name", serviceName,
 				"to_apm_application_name", m.appName,
-				"error", span.IsError(),
+				"from_span_error", span.IsError(),
+				"to_span_error", span.IsError(),
 			)
 			// For ot-kafka SDK generation span,
 			// the time consumption is the time spent receiving the message,
 			// and does not include the subsequent processing time of the message,
 			// so we get the elapsedTime
 			m.addToStats(messageCallerFlowLabelKey, span.ElapsedTime, metricRecordMapping)
-			metricCount[storage.ApmComponentServiceFlow]++
+			metricCount[storage.ApmServiceFlow]++
 			return
 		}
 	}
-}
-
-// getMessagingInstance tried to retrieve messaging instance from span
-func (m *MetricProcessor) getMessagingInstance(span StandardSpan) (string, string, string) {
-	url := span.GetFieldValue(core.MessagingUrlField)
-	name, address, port := "", "", ""
-	if url != "" {
-		// remove " in value
-		url = strings.ReplaceAll(url, "\"", "")
-		composition := strings.Split(url, ":")
-		if len(composition) >= 2 {
-			address = composition[0]
-			port = composition[1]
-		} else {
-			address = url
-		}
-	} else {
-		name = span.GetFieldValue(core.NetPeerNameField)
-		address = span.GetFieldValue(core.NetPeerIpField)
-		port = span.GetFieldValue(core.NetPeerPortField)
-	}
-	return name, address, port
 }
 
 func newMetricProcessor(dataId string, enabledLayer4Metric bool) MetricProcessor {

@@ -17,12 +17,10 @@ const (
 	ApmServiceK8sRelation      = "apm_service_instance_with_k8s_address_relation"
 	ApmServiceSystemRelation   = "apm_service_instance_with_system_relation"
 
-	ApmServiceFlow          = "apm_service_to_apm_service_flow"
-	ApmServiceComponentFlow = "apm_service_to_apm_component_flow"
-	ApmComponentServiceFlow = "apm_component_to_apm_service_flow"
-	SystemApmServiceFlow    = "system_to_apm_service_flow"
-	ApmServiceSystemFlow    = "apm_service_to_system_flow"
-	SystemFlow              = "system_to_system_flow"
+	ApmServiceFlow       = "apm_service_to_apm_service_flow"
+	SystemApmServiceFlow = "system_to_apm_service_flow"
+	ApmServiceSystemFlow = "apm_service_to_system_flow"
+	SystemFlow           = "system_to_system_flow"
 )
 
 type MetricCollector interface {

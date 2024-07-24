@@ -178,7 +178,7 @@ func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.Monito
 		checkIfNodeExists: checkFn,
 		monitorMeta:       monitorMeta,
 		mm:                newMetricMonitor(params.Name),
-		cache:             NewCache(time.Minute * 10),
+		cache:             NewCache(params.Name, time.Minute*10),
 	}
 }
 

@@ -20,19 +20,22 @@ import (
 	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var seps = []byte{'\xff'}
 
 type Cache struct {
+	name    string
 	mut     sync.Mutex
 	cache   map[uint64]int64
 	expired time.Duration
 	done    chan struct{}
 }
 
-func NewCache(expired time.Duration) *Cache {
+func NewCache(name string, expired time.Duration) *Cache {
 	c := &Cache{
+		name:    name,
 		cache:   make(map[uint64]int64),
 		expired: expired,
 		done:    make(chan struct{}),
@@ -55,13 +58,16 @@ func (c *Cache) gc() {
 		case <-ticker.C:
 			now := time.Now().Unix()
 			secs := int64(c.expired.Seconds())
+			var total int
 			c.mut.Lock()
 			for k, v := range c.cache {
 				if now-v > secs {
 					delete(c.cache, k)
+					total++
 				}
 			}
 			c.mut.Unlock()
+			logger.Infof("%s cache remove %d items", c.name, total)
 
 		case <-c.done:
 			return

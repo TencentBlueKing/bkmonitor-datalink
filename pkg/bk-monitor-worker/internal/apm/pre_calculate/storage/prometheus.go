@@ -96,7 +96,7 @@ func (p *prometheusWriter) WriteBatch(writeReq prompb.WriteRequest) error {
 	metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
 	resp, err := p.client.Do(req)
 
-	logger.Infof("[RemoteWrite] push %d series", len(writeReq.Timeseries))
+	logger.Debugf("[RemoteWrite] push %d series", len(writeReq.Timeseries))
 	if err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)

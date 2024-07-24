@@ -23,6 +23,15 @@ const (
 	SystemFlow           = "system_to_system_flow"
 )
 
+// Flow metrics category and kind
+const (
+	CategoryHttp      = "http"
+	CategoryDb        = "db"
+	CategoryMessaging = "messaging"
+	KindService       = "service"
+	KindComponent     = "component"
+)
+
 type MetricCollector interface {
 	Observe(value any)
 	Collect() prompb.WriteRequest
@@ -217,7 +226,6 @@ func (r *relationMetricsCollector) Collect() prompb.WriteRequest {
 }
 
 func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteRequest {
-	logger.Infof("🌈🌈🌈 convert start 🌈🌈🌈")
 
 	var series []prompb.TimeSeries
 	metricName := make(map[string]int, len(dimensionKeys))
@@ -232,7 +240,6 @@ func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteR
 		metricName[name]++
 	}
 
-	logger.Infof("🌈🌈🌈 convert end 🌈🌈🌈")
 	return prompb.WriteRequest{Timeseries: series}
 }
 

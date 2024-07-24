@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eapache/go-resiliency/semaphore"
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/goware/urlx"
 	"github.com/pkg/errors"
@@ -40,7 +41,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/semaphore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -55,8 +55,6 @@ var bus = notifier.NewDefaultRateBus()
 func Publish() { bus.Publish() }
 
 func Notify() <-chan struct{} { return bus.Subscribe() }
-
-var defaultSemaphore = semaphore.New(4)
 
 // Discover 是监控资源监视器
 type Discover interface {
@@ -180,7 +178,6 @@ func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.Monito
 		BaseParams:        params,
 		checkIfNodeExists: checkFn,
 		monitorMeta:       monitorMeta,
-		sem:               defaultSemaphore,
 		mm:                newMetricMonitor(params.Name),
 	}
 }
@@ -466,10 +463,10 @@ func (d *BaseDiscover) Mask() string {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const period = 10
+	const duration = 10
 	const resync = 100 // 避免事件丢失
 
-	ticker := time.NewTicker(time.Second * period)
+	ticker := time.NewTicker(time.Second * duration)
 	defer ticker.Stop()
 
 	counter := 0
@@ -482,7 +479,7 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			counter++
 			tgList, updatedAt := GetTargetGroups(d.role, d.getNamespaces())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
-			if time.Now().Unix()-updatedAt > period*2 && counter%resync != 0 && d.fetched {
+			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
 				continue
 			}

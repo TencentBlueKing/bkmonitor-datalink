@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/eapache/go-resiliency/semaphore"
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/goware/urlx"
 	"github.com/pkg/errors"
@@ -164,7 +163,6 @@ type BaseDiscover struct {
 	mm                *metricMonitor
 	checkIfNodeExists define.CheckFunc
 	fetched           bool
-	sem               *semaphore.Semaphore
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
@@ -550,9 +548,6 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
 	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
-
-	d.sem.Acquire()
-	defer d.sem.Release()
 
 	for ln, lv := range tlset {
 		lbls = append(lbls, labels.Label{

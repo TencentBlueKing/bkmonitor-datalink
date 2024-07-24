@@ -113,6 +113,7 @@ func (c *Cache) hash(namespace string, tlset, tglbs model.LabelSet) uint64 {
 	defer bytebufferpool.Put(buf)
 
 	buf.WriteString(namespace)
+	buf.Write(seps)
 	for i := 0; i < len(lbs); i++ {
 		lb := lbs[i]
 		buf.WriteString(lb.Name)

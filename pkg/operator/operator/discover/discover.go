@@ -40,6 +40,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/semaphore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -54,6 +55,8 @@ var bus = notifier.NewDefaultRateBus()
 func Publish() { bus.Publish() }
 
 func Notify() <-chan struct{} { return bus.Subscribe() }
+
+var defaultSemaphore = semaphore.New(ConfSyncSemaphore)
 
 // Discover 是监控资源监视器
 type Discover interface {
@@ -163,6 +166,7 @@ type BaseDiscover struct {
 	mm                *metricMonitor
 	checkIfNodeExists define.CheckFunc
 	fetched           bool
+	sem               *semaphore.Semaphore
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
@@ -176,6 +180,7 @@ func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.Monito
 		BaseParams:        params,
 		checkIfNodeExists: checkFn,
 		monitorMeta:       monitorMeta,
+		sem:               defaultSemaphore,
 		mm:                newMetricMonitor(params.Name),
 	}
 }
@@ -547,6 +552,9 @@ func matchSelector(labels []labels.Label, selector map[string]string) bool {
 func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
 	lbls := labelspool.Get()
 	defer labelspool.Put(lbls)
+
+	d.sem.Acquire()
+	defer d.sem.Release()
 
 	for ln, lv := range tlset {
 		lbls = append(lbls, labels.Label{

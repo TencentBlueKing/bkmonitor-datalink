@@ -17,19 +17,23 @@ import (
 )
 
 const (
-	confSyncPeriodPath = "discover.sync_period" // 单位秒
+	confSyncPeriodPath    = "discover.sync_period" // 单位秒
+	confSyncSemaphorePath = "discover.sync_semaphore"
 )
 
 var (
-	ConfSyncPeriod int
+	ConfSyncPeriod    int
+	ConfSyncSemaphore int
 )
 
 func initConfig() {
 	viper.SetDefault(confSyncPeriodPath, 10)
+	viper.SetDefault(confSyncSemaphorePath, 4)
 }
 
 func updateConfig() {
 	ConfSyncPeriod = viper.GetInt(confSyncPeriodPath)
+	ConfSyncSemaphore = viper.GetInt(confSyncSemaphorePath)
 }
 
 func init() {

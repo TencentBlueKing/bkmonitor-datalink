@@ -46,11 +46,6 @@ func (c *Config) Setup() {
 			}
 			rule.mappings = mappings
 		}
-
-		// 默认替换模式为：只在字段缺失时进行替换
-		if rule.ReplaceType == "" {
-			rule.ReplaceType = ReplaceMissing
-		}
 	}
 
 	// 优先级

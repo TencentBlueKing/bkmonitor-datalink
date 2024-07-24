@@ -131,7 +131,7 @@ processor:
 			MatchType:    "manual",
 			MatchKey:     "attributes.http.url",
 			PredicateKey: "attributes.http.method",
-			ReplaceType:  "missing",
+			ReplaceType:  "",
 			MatchConfig: MatchConfig{
 				Params: []RuleParam{
 					{

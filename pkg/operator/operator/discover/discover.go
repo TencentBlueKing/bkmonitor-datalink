@@ -461,10 +461,9 @@ func (d *BaseDiscover) Mask() string {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const duration = 5
 	const resync = 100 // 避免事件丢失
 
-	ticker := time.NewTicker(time.Second * duration)
+	ticker := time.NewTicker(time.Second * time.Duration(ConfSyncPeriod))
 	defer ticker.Stop()
 
 	counter := 0
@@ -477,7 +476,7 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 			counter++
 			tgList, updatedAt := GetTargetGroups(d.role, d.getNamespaces())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
-			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
+			if time.Now().Unix()-updatedAt > int64(ConfSyncPeriod)*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
 				continue
 			}

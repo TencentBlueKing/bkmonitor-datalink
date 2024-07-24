@@ -23,7 +23,6 @@ import (
 	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -123,18 +122,8 @@ func (c *Operator) CheckDataIdRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.checkDataIdRoute())
 }
 
-func (c *Operator) checkActiveDiscoverRoute() []define.MonitorMeta {
-	var ret []define.MonitorMeta
-	c.discoversMut.Lock()
-	for _, dis := range c.discovers {
-		ret = append(ret, dis.MonitorMeta())
-	}
-	c.discoversMut.Unlock()
-	return ret
-}
-
 func (c *Operator) CheckActiveDiscoverRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.checkActiveDiscoverRoute())
+	writeResponse(w, c.getAllDiscover())
 }
 
 func (c *Operator) CheckActiveChildConfigRoute(w http.ResponseWriter, _ *http.Request) {

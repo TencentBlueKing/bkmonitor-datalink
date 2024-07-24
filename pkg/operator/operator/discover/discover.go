@@ -461,7 +461,7 @@ func (d *BaseDiscover) Mask() string {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const duration = 5
+	const duration = 10
 	const resync = 100 // 避免事件丢失
 
 	ticker := time.NewTicker(time.Second * duration)

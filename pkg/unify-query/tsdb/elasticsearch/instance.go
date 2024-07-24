@@ -171,22 +171,21 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 
 	span.Set("alias", alias)
 
-	indexs, err := i.getIndexes(ctx, alias)
+	indexes, err := i.getIndexes(ctx, alias)
 	if err != nil {
 		return nil, err
 	}
 
-	span.Set("indexs", indexs)
-
-	for _, index := range indexs {
-		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
-		if err != nil {
-			return nil, err
+	span.Set("indexes", indexes)
+	for _, index := range indexes {
+		mappings, mapErr := i.client.GetMapping().Index(index).Do(ctx)
+		if mapErr != nil {
+			return nil, mapErr
 		}
 
 		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
 			span.Set("index", index)
-			span.Set("mapping", mapping)
+			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
 
 			return mapping, nil
 		} else {
@@ -279,10 +278,9 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyString := string(bodyJson)
 
 	span.Set("query-index", qo.index)
-	span.Set("query-body", bodyString)
 
-	log.Infof(ctx, "es query index: %s", qo.index)
-	log.Infof(ctx, "es query body: %s", bodyString)
+	log.Infof(ctx, "elasticsearch-query index: %s", qo.index)
+	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
 
 	startAnaylize := time.Now()
 	search := i.client.Search().Index(qo.index).SearchSource(source)
@@ -401,6 +399,9 @@ func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string,
 		indexes = append(indexes, idx)
 	}
 
+	sort.Slice(indexes, func(i, j int) bool {
+		return indexes[i] > indexes[j]
+	})
 	return indexes, nil
 }
 

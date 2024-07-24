@@ -56,7 +56,7 @@ func Publish() { bus.Publish() }
 
 func Notify() <-chan struct{} { return bus.Subscribe() }
 
-var defaultSemaphore = semaphore.New(ConfSyncSemaphore)
+var defaultSemaphore = semaphore.New(4)
 
 // Discover 是监控资源监视器
 type Discover interface {

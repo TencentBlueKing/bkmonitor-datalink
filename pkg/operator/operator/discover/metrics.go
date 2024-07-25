@@ -62,6 +62,15 @@ var (
 		[]string{"name"},
 	)
 
+	discoverCreatedChildConfigCachedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_created_config_cached_total",
+			Help:      "discover created child config cached total",
+		},
+		[]string{"name"},
+	)
+
 	discoverHandledTgTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -116,6 +125,10 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 
 func (m *metricMonitor) IncCreatedChildConfigSkippedCounter() {
 	discoverCreatedChildConfigSkippedTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncCreatedChildConfigCachedCounter() {
+	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
 }
 
 func (m *metricMonitor) IncHandledTgCounter() {

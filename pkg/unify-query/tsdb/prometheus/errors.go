@@ -28,5 +28,9 @@ var (
 
 	ErrInvalidValue = errors.New("invalid value")
 
-	ErrChannelReceived = errors.New("channel closed before a value received")
+	ErrChannelReceived                  = errors.New("channel closed before a value received")
+	ErrQueryMaxRoutingNotFound          = errors.New("QueryMaxRouting not found in ctx or is not of type int")
+	ErrQuerySingleflightTimeoutNotFound = errors.New("QuerySingleflightTimeout not found in ctx or is not of type time.Duration")
+	ErrQueryLookBackDeltaNotFound       = errors.New("QueryLookBackDelta not found in ctx or is not of type time.Duration")
+	ZeroStep                            = errors.New("step is zero")
 )

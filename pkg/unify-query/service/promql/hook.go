@@ -28,6 +28,7 @@ func setDefaultConfig() {
 	viper.SetDefault(EnableNegativeOffsetConfigPath, true)
 	viper.SetDefault(EnableAtModifierConfigPath, true)
 	viper.SetDefault(DefaultStepConfigPath, time.Minute)
+	viper.SetDefault(MaxEngineNumConfigPath, 10)
 }
 
 // LoadConfig

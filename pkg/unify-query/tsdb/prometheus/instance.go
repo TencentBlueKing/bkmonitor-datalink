@@ -11,9 +11,15 @@ package prometheus
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"sync"
 	"time"
 
+	"github.com/panjf2000/ants/v2"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 
@@ -21,8 +27,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	servicePromql "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/actor"
 )
 
 // Instance prometheus 查询引擎
@@ -62,7 +70,8 @@ func (i *Instance) GetInstanceType() string {
 func (i *Instance) QueryRaw(
 	ctx context.Context,
 	query *metadata.Query,
-	start, end time.Time,
+	hints *storage.SelectHints,
+	matchers ...*labels.Matcher,
 ) storage.SeriesSet {
 	return nil
 }
@@ -88,19 +97,13 @@ func (i *Instance) QueryRange(
 	opt := &promql.QueryOpts{
 		LookbackDelta: i.lookBackDelta,
 	}
-
-	log.Infof(ctx, "prometheus-query-range")
-	log.Infof(ctx, "promql: %s", stmt)
-	log.Infof(ctx, "start: %s", start.String())
-	log.Infof(ctx, "end: %s", end.String())
-	log.Infof(ctx, "step: %s", step.String())
-
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 	result := query.Exec(ctx)
+
 	if result.Err != nil {
 		log.Errorf(ctx, result.Err.Error())
 		return nil, result.Err
@@ -110,14 +113,104 @@ func (i *Instance) QueryRange(
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
-
-	matrix, err := result.Matrix()
+	matrix, err := i.DistributedQuery(ctx, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
 	return matrix, nil
+}
+
+func (i *Instance) DistributedQuery(ctx context.Context, stmt string,
+	start, end time.Time, step time.Duration) (promql.Matrix, error) {
+	if qrStorage, ok := i.queryStorage.(*QueryRangeStorage); ok {
+		if customQuerier, ok := qrStorage.InnerQuerier.(*Querier); ok {
+			QueryMaxRouting, ok := ctx.Value("QueryMaxRouting").(int)
+			if !ok {
+				log.Errorf(ctx, ErrQueryMaxRoutingNotFound.Error())
+				return nil, ErrQueryMaxRoutingNotFound
+			}
+
+			SingleflightTimeout, ok := ctx.Value("SingleflightTimeout").(time.Duration)
+			if !ok {
+				log.Errorf(ctx, ErrQuerySingleflightTimeoutNotFound.Error())
+				return nil, ErrQuerySingleflightTimeoutNotFound
+			}
+
+			LookBackDelta, ok := ctx.Value("LookBackDelta").(time.Duration)
+			if !ok {
+				log.Errorf(ctx, ErrQueryLookBackDeltaNotFound.Error())
+				return nil, ErrQueryLookBackDeltaNotFound
+			}
+			duration := end.Sub(start)
+			if step.Seconds() == 0 {
+				log.Errorf(ctx, ZeroStep.Error())
+				return nil, ZeroStep
+			}
+			results := make([]promql.Vector, int(math.Ceil(duration.Seconds()/step.Seconds())))
+			hints := customQuerier.hints
+			windowSize := time.Duration(hints.Range) * time.Millisecond
+			if windowSize == 0 {
+				windowSize = time.Duration(hints.Step) * time.Millisecond
+			}
+			// 从父节点提取对应的窗口信息
+
+			pool, _ := ants.NewPool(10)
+			defer pool.Release()
+			var globalError error
+			var wg sync.WaitGroup
+			for _, result := range customQuerier.QueryResult {
+				resultCopy := result // 创建 result 的副本 这里其实应该是根据 map[指标名]进行处理的
+				wg.Add(1)
+				pool.Submit(func() {
+					defer wg.Done()
+					var innerWg sync.WaitGroup
+					for t, idx := start, 0; t.Before(end); t, idx = t.Add(step), idx+1 {
+						idxCopy, tCopy := idx, t
+						innerWg.Add(1)
+						windowEnd := t.Add(step)
+						windowStart := windowEnd.Add(-windowSize)
+						pool.Submit(func() {
+							defer innerWg.Done()
+							filterQR := filterTimeSeriesByWindow(*resultCopy, windowStart, windowEnd)
+							if filterQR != nil {
+								engine := servicePromql.EnginePool.Get().(*promql.Engine)
+								defer servicePromql.EnginePool.Put(engine)
+								instance := NewInstance(ctx, engine, &actor.ActorQueryRangeStorage{
+									QueryMaxRouting: QueryMaxRouting,
+									Timeout:         SingleflightTimeout,
+									Data:            filterQR,
+								}, LookBackDelta)
+								res, err := instance.Query(ctx, stmt, tCopy)
+								if err != nil {
+									log.Errorf(ctx, err.Error())
+									globalError = err
+								}
+								results[idxCopy] = res
+							}
+						})
+					}
+					defer innerWg.Wait()
+				})
+			}
+
+			wg.Wait()
+			if globalError != nil {
+				return nil, globalError
+			}
+
+			matrix := mergeVectorsToMatrix(results)
+			return matrix, nil
+
+		} else {
+			fmt.Println("InnerQuerier is not of type *Querier")
+			return nil, errors.New("InnerQuerier is not of type *Querier")
+		}
+	} else {
+		fmt.Println("queryStorage is not of type *QueryRangeStorage")
+		return nil, errors.New("queryStorage is not of type *QueryRangeStorage")
+	}
 }
 
 // Query instant 查询
@@ -138,11 +231,6 @@ func (i *Instance) Query(
 		LookbackDelta: i.lookBackDelta,
 	}
 	span.Set("query-opts-look-back-delta", i.lookBackDelta.String())
-
-	log.Infof(ctx, "prometheus-query")
-	log.Infof(ctx, "promql: %s", qs)
-	log.Infof(ctx, "end: %s", end.String())
-
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -181,4 +269,13 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 
 func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
 	return nil
+}
+
+func (i *Instance) QueryRawWithPromResult(
+	ctx context.Context,
+	query *metadata.Query,
+	hints *storage.SelectHints,
+	matchers ...*labels.Matcher,
+) (storage.SeriesSet, *prompb.QueryResult) {
+	return nil, nil
 }

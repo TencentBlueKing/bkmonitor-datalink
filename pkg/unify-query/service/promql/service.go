@@ -11,10 +11,13 @@ package promql
 
 import (
 	"context"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 )
+
+var EnginePool *sync.Pool
 
 // Service 服务侧初始化consul实例使用
 type Service struct {
@@ -27,13 +30,28 @@ func (s *Service) Type() string {
 
 // Start
 func (s *Service) Start(_ context.Context) {
-	promql.NewEngine(&promql.Params{
+	params := &promql.Params{
 		Timeout:              Timeout,
 		LookbackDelta:        LookbackDelta,
 		MaxSamples:           MaxSamples,
 		EnableNegativeOffset: EnableNegativeOffset,
 		EnableAtModifier:     EnableAtModifier,
-	})
+	}
+	promql.NewEngine(params)
+
+	EnginePool = &sync.Pool{
+		New: func() interface{} {
+			// 在这里创建并返回一个新的对象
+			return promql.NewCalEngine(params)
+		},
+	}
+
+	for i := 0; i < MaxEngineNum-1; i++ {
+		go func() {
+			promqlEngine := promql.NewCalEngine(params)
+			EnginePool.Put(promqlEngine)
+		}()
+	}
 	promql.SetDefaultStep(DefaultStep)
 }
 

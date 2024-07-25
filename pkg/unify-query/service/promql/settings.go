@@ -20,6 +20,7 @@ const (
 	EnableNegativeOffsetConfigPath = "promql.enable_negative_offset"
 	EnableAtModifierConfigPath     = "promql.enable_at_modifier"
 	DefaultStepConfigPath          = "promql.default_step"
+	MaxEngineNumConfigPath         = "promql.max_engine_num"
 )
 
 var (
@@ -29,4 +30,5 @@ var (
 	EnableNegativeOffset bool
 	EnableAtModifier     bool
 	DefaultStep          time.Duration
+	MaxEngineNum         int
 )

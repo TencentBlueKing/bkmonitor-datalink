@@ -490,6 +490,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 							}
 						}
 					}
+				case "NeedAddTime":
+					z.Options.NeedAddTime, err = dc.ReadBool()
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "NeedAddTime")
+						return
+					}
 				default:
 					err = dc.Skip()
 					if err != nil {
@@ -661,9 +667,9 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 	if err != nil {
 		return
 	}
-	// map header, size 1
+	// map header, size 2
 	// write "TimeField"
-	err = en.Append(0x81, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
+	err = en.Append(0x82, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
 	if err != nil {
 		return
 	}
@@ -696,6 +702,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 	err = en.WriteString(z.Options.TimeField.Unit)
 	if err != nil {
 		err = msgp.WrapError(err, "Options", "TimeField", "Unit")
+		return
+	}
+	// write "NeedAddTime"
+	err = en.Append(0xab, 0x4e, 0x65, 0x65, 0x64, 0x41, 0x64, 0x64, 0x54, 0x69, 0x6d, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteBool(z.Options.NeedAddTime)
+	if err != nil {
+		err = msgp.WrapError(err, "Options", "NeedAddTime")
 		return
 	}
 	return
@@ -752,9 +768,9 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt64(o, z.DataId)
 	// string "Options"
 	o = append(o, 0xa7, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73)
-	// map header, size 1
+	// map header, size 2
 	// string "TimeField"
-	o = append(o, 0x81, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
+	o = append(o, 0x82, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
 	// map header, size 3
 	// string "Name"
 	o = append(o, 0x83, 0xa4, 0x4e, 0x61, 0x6d, 0x65)
@@ -765,6 +781,9 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "Unit"
 	o = append(o, 0xa4, 0x55, 0x6e, 0x69, 0x74)
 	o = msgp.AppendString(o, z.Options.TimeField.Unit)
+	// string "NeedAddTime"
+	o = append(o, 0xab, 0x4e, 0x65, 0x65, 0x64, 0x41, 0x64, 0x64, 0x54, 0x69, 0x6d, 0x65)
+	o = msgp.AppendBool(o, z.Options.NeedAddTime)
 	return
 }
 
@@ -946,6 +965,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 							}
 						}
 					}
+				case "NeedAddTime":
+					z.Options.NeedAddTime, bts, err = msgp.ReadBoolBytes(bts)
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "NeedAddTime")
+						return
+					}
 				default:
 					bts, err = msgp.Skip(bts)
 					if err != nil {
@@ -976,7 +1001,7 @@ func (z *ResultTableDetail) Msgsize() (s int) {
 	for za0002 := range z.TagsKey {
 		s += msgp.StringPrefixSize + len(z.TagsKey[za0002])
 	}
-	s += 7 + msgp.Int64Size + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit)
+	s += 7 + msgp.Int64Size + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit) + 12 + msgp.BoolSize
 	return
 }
 

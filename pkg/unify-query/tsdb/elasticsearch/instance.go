@@ -95,7 +95,7 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index string
+	indexes []string
 	// 单位是 s
 	start    int64
 	end      int64
@@ -154,7 +154,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getMappings(ctx context.Context, alias string) ([]map[string]any, error) {
+func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[string]any, error) {
 	var (
 		err error
 	)
@@ -169,8 +169,8 @@ func (i *Instance) getMappings(ctx context.Context, alias string) ([]map[string]
 		span.End(&err)
 	}()
 
-	span.Set("alias", alias)
-	mappingMap, err := i.client.GetMapping().Index(alias).Do(ctx)
+	span.Set("alias", aliases)
+	mappingMap, err := i.client.GetMapping().Index(aliases...).Do(ctx)
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -272,13 +272,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-index", qo.index)
+	span.Set("query-indexes", qo.indexes)
 
-	log.Infof(ctx, "elasticsearch-query index: %s", qo.index)
+	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
 
 	startAnaylize := time.Now()
-	search := i.client.Search().Index(qo.index).SearchSource(source)
+	search := i.client.Search().Index(qo.indexes...).SearchSource(source)
 
 	res, err := search.Do(ctx)
 
@@ -459,6 +459,18 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time) []string {
+	var alias []string
+	if needAddTime {
+		for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+			alias = append(alias, fmt.Sprintf("%s_%s*", db, d.Format("20060102")))
+		}
+	} else {
+		alias = append(alias, db)
+	}
+	return alias
+}
+
 // QueryRaw 给 PromEngine 提供查询接口
 func (i *Instance) QueryRaw(
 	ctx context.Context,
@@ -490,14 +502,21 @@ func (i *Instance) QueryRaw(
 			close(rets)
 		}()
 
+		aliases := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end)
+
 		qo := &queryOption{
-			index: query.DB,
-			start: start.Unix(),
-			end:   end.Unix(),
-			query: query,
+			indexes: aliases,
+			start:   start.Unix(),
+			end:     end.Unix(),
+			query:   query,
 		}
 
-		mappings, err1 := i.getMappings(ctx, qo.index)
+		mappings, err1 := i.getMappings(ctx, qo.indexes)
+		// index 不存在，mappings 获取异常直接返回空
+		if len(mappings) == 0 {
+			return
+		}
+
 		if err1 != nil {
 			rets <- &TimeSeriesResult{
 				Error: err1,

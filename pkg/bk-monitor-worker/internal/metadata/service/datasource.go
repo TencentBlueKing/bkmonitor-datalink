@@ -320,16 +320,8 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				if err != nil {
 					return nil, err
 				}
-				skip := false
-				for _, clusterType := range storage.IgnoredStorageClusterTypes {
-					// 如果集群类型为 vm，或者集群类型为 influxdb且结果表在白名单中，则忽略存储
-					if consulConfig.ClusterType == clusterType || (clusterType == models.StorageTypeInfluxdb && slicex.IsExistItem(config.SkipInfluxdbTableIds, rt.TableId)) {
-						skip = true
-						break
-					}
-				}
-
-				if skip {
+				// 当集群类型在白名单或者rt在白名单中时，填过记录
+				if slicex.IsExistItem(storage.IgnoredStorageClusterTypes, consulConfig.ClusterType) || (consulConfig.ClusterType == models.StorageTypeInfluxdb && slicex.IsExistItem(config.SkipInfluxdbTableIds, rt.TableId)) {
 					continue
 				}
 				shipperList = append(shipperList, consulConfig)

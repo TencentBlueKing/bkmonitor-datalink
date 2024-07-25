@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/prometheus/prometheus/promql/parser"
 
@@ -41,16 +42,26 @@ type Args map[string]string
 // 聚合方法列表
 type AggregateMethodList []AggregateMethod
 
-func (a AggregateMethodList) ToQry() []metadata.AggrMethod {
-	aml := make([]metadata.AggrMethod, 0, len(a))
+func (a AggregateMethodList) ToQry(timezone string) metadata.Aggregates {
+	aggs := make(metadata.Aggregates, 0, len(a))
 	for _, aggr := range a {
-		aml = append(aml, metadata.AggrMethod{
+		agg := metadata.Aggregate{
 			Name:       aggr.Method,
 			Dimensions: aggr.Dimensions,
 			Without:    aggr.Without,
-		})
+			Args:       aggr.VArgsList,
+			TimeZone:   timezone,
+		}
+
+		if aggr.Window != "" {
+			window, err := time.ParseDuration(string(aggr.Window))
+			if err == nil {
+				agg.Window = window
+			}
+		}
+		aggs = append(aggs, agg)
 	}
-	return aml
+	return aggs
 }
 
 // 聚合方法

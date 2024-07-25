@@ -18,14 +18,17 @@ bk-collector 是一个通用的数据接收和清洗框架，依赖配置进行�
 
 [receiver](./receiver): 接收层负责接收来个多个组件的上报的数据，目前已实现的组件包括：
 
-| 组件 | Http(Traces) | Http(Metrics) | Http(Logs)| Grpc(Traces) | Grpc(Metrics) | Grpc(Logs) |
-| --- |  -- | --- | --- | --- | --- | --- |
-| jaeger | ✅ |  |  |  |  |  |
-| otlp | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| skywalking | ✅ | | | ✅| | |
-| pushgateway(prometheus) | | ✅ (pb+text) | | | | |
-| remotewrite(prometheus)  | | ✅ (pb+text) | | | | |
-| fta | | ✅ | | | | |
+| 组件                      | Http(Traces) | Http(Metrics) | Http(Logs) | Http(Profiles) | Grpc(Traces) | Grpc(Metrics) | Grpc(Logs) | Tars(Metrics) |
+|-------------------------|--------------|---------------|------------|----------------|--------------|---------------|------------|---------------|
+| jaeger                  | ✅            |               |            |                |              |               |            |               |
+| otlp                    | ✅            | ✅             | ✅          |                | ✅            | ✅             | ✅          |               |
+| skywalking              | ✅            | ✅             |            |                |              |               |            |               |
+| pushgateway(prometheus) |              | ✅ (pb+text)   |            |                |              |               |            |               |
+| remotewrite(prometheus) |              | ✅ (pb+text)   |            |                |              |               |            |               |
+| fta                     |              | ✅             |            |                |              |               |            |               |
+| beat                    |              |               | ✅          |                |              |               |            |               |
+| pyroscope               |              |               |            | ✅              |              |               |            |               |
+| tars                    |              |               |            |                |              |               |            | ✅             |
 
 [proxy](./proxy): 接收自定指标和自定义时序数据上报。
 
@@ -209,6 +212,8 @@ Pipeline 由 processor 实例构成，一个类型的 processor 可以有多个�
 * proxy
 * pingserver
 * fta
+* pyroscope
+* beat
 
 derived 后缀的 pipeline 类型用于处理派生类型的数据。派生指的是从一条流水线衍生出另外一种类型的数据，比如黄金指标的提取。
 
@@ -252,6 +257,8 @@ bk-collector 有三种类型的配置，程序的最终配置结果是三者的�
 * [example/jaegertraces](./example/jaegertraces)
 * [example/ottraces](./example/ottraces)
 * [example/prompushgateway](./example/prompushgateway)
+* [example/fta](./example/fta)
+* [example/promremotewrite](./example/promremotewrite)
 
 ```shell
 $ cd example/ottraces

@@ -64,10 +64,7 @@ func NewSetCacheManager(prefix string, opt *redis.Options, concurrentLimit int) 
 
 // getSetListByBizID 通过业务ID获取集群列表
 func getSetListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, err
-	}
+	cmdbApi := getCmdbApi()
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(

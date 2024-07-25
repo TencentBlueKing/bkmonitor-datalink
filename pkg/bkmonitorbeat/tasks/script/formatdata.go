@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -24,6 +25,10 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.
 	aggreRst := make(map[int64]map[string]tasks.PromEvent)
 	scanner := bufio.NewScanner(bytes.NewBuffer(out))
 	var outputErr error
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return aggreRst, define.ErrNoScriptOutput
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()

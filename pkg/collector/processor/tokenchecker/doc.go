@@ -11,7 +11,7 @@
 # TokenChecker: Token 校验器
 
 processor:
-  # 固定 token（测试用途）
+  # 固定 token
   - name: "token_checker/fixed"
     config:
       type: "fixed"

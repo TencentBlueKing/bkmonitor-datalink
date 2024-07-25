@@ -17,8 +17,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/metricbeat/mb"
@@ -72,6 +74,7 @@ type MetricSet struct {
 	remoteClient           *http.Client
 	workers                int
 	disableCustomTimestamp bool
+	normalizeMetricName    bool
 	remoteRelabelCache     []*relabel.Config
 	MetricRelabelRemote    string
 	MetricRelabelConfigs   []*relabel.Config
@@ -90,6 +93,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		TempFilePattern            string            `config:"temp_file_pattern"`
 		Workers                    int               `config:"workers"`
 		DisableCustomTimestamp     bool              `config:"disable_custom_timestamp"`
+		NormalizeMetricName        bool              `config:"normalize_metric_name"`
 	}{}
 
 	if err := base.Module().UnpackConfig(&config); err != nil {
@@ -149,6 +153,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		DimensionReplace:       config.DimensionReplace,
 		MetricRelabelConfigs:   relabels,
 		disableCustomTimestamp: config.DisableCustomTimestamp,
+		normalizeMetricName:    config.NormalizeMetricName,
 		workers:                config.Workers,
 	}, nil
 }
@@ -325,6 +330,10 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	return eventChan
 }
 
+func normalizeName(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
+}
+
 func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, *diffKey, error) {
 	if len(line) <= 0 || line[0] == '#' {
 		return nil, nil, nil
@@ -338,6 +347,10 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 		upErr := &define.BeaterUpMetricErr{Code: define.BeatMetricBeatPromFormatOuterError, Message: errMsg}
 		logger.Warnf(upErr.Error())
 		return nil, nil, upErr
+	}
+
+	if m.normalizeMetricName {
+		promEvent.Key = normalizeName(promEvent.Key)
 	}
 
 	// 生成事件

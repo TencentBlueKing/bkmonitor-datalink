@@ -117,6 +117,10 @@ var (
 	BkdataProjectMaintainer string
 	// BkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
 	BkdataIsAllowAllCmdbLevel bool
+	// 跳过写入influxdb的结果表列表
+	SkipInfluxdbTableIds []string
+	// 是否可以删除 consul 路径
+	CanDeleteConsulPath bool
 )
 
 func initMetadataVariables() {
@@ -148,7 +152,7 @@ func initMetadataVariables() {
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)
 	PingServerDataid = GetValue("taskConfig.metadata.pingserver.dataid", uint(1100005), viper.GetUint)
 
-	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
+	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
@@ -172,4 +176,6 @@ func initMetadataVariables() {
 	BkdataFlowClusterGroup = GetValue("taskConfig.metadata.bkdata.flowClusterGroup", "default_inland")
 	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
+	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
+	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 }

@@ -46,11 +46,10 @@ tasks:
       {% if diff_metrics %}diff_metrics:
       {% for metric in diff_metrics %}- {{ metric }}
       {% endfor %}
-      {% endif %}
-    {% if metric_relabel_configs %}
+      {% endif %}{% if metric_relabel_configs %}
       metric_relabel_configs:
     {% for config in metric_relabel_configs %}
-        - source_labels: [{{ config.source_labels | join: "', '" }}]
+        - source_labels: [{{ config.source_labels | join("', '") }}]
           {% if config.regex %}regex: '{{ config.regex }}'{% endif %}
           action: {{ config.action }}
           {% if config.target_label %}target_label: '{{ config.target_label }}'{% endif %}

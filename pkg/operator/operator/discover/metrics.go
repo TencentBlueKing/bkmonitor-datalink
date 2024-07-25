@@ -53,11 +53,47 @@ var (
 		[]string{"name"},
 	)
 
+	discoverCreatedChildConfigSkippedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_created_config_skipped_total",
+			Help:      "discover created child config skipped total",
+		},
+		[]string{"name"},
+	)
+
+	discoverCreatedChildConfigCachedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_created_config_cached_total",
+			Help:      "discover created child config cached total",
+		},
+		[]string{"name"},
+	)
+
 	discoverHandledTgTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_handled_tg_total",
 			Help:      "discover handled tg total",
+		},
+		[]string{"name"},
+	)
+
+	discoverDeletedTgSourceTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_deleted_tg_source_total",
+			Help:      "discover deleted tg source total",
+		},
+		[]string{"name"},
+	)
+
+	discoverSkippedTgSourceTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_skipped_tg_source_total",
+			Help:      "discover skipped tg source total",
 		},
 		[]string{"name"},
 	)
@@ -87,6 +123,22 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
 }
 
+func (m *metricMonitor) IncCreatedChildConfigSkippedCounter() {
+	discoverCreatedChildConfigSkippedTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncCreatedChildConfigCachedCounter() {
+	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
+}
+
 func (m *metricMonitor) IncHandledTgCounter() {
 	discoverHandledTgTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncDeletedTgSourceCounter() {
+	discoverDeletedTgSourceTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncSkippedTgSourceCounter() {
+	discoverSkippedTgSourceTotal.WithLabelValues(m.name).Inc()
 }

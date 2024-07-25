@@ -67,7 +67,7 @@ func GetGseApi() (*bkgse.Client, error) {
 	useApiGateWay := cfg.BkApiEnabled
 	if useApiGateWay {
 		config = bkapi.ClientConfig{
-			BkApiUrlTmpl:  fmt.Sprintf("%s/api/{api_name}/", cfg.BkApiUrl),
+			Endpoint:      cfg.BkApiGseApiGwUrl,
 			Stage:         cfg.BkApiStage,
 			AppCode:       cfg.BkApiAppCode,
 			AppSecret:     cfg.BkApiAppSecret,
@@ -176,7 +176,7 @@ func GetBcsProjectApi() (*bcsproject.Client, error) {
 func GetCmdbApi() (*cmdb.Client, error) {
 	muForCmdbApi.Lock()
 	defer muForCmdbApi.Unlock()
-	if bcsClusterManager != nil {
+	if cmdbApi != nil {
 		return cmdbApi, nil
 	}
 	config := bkapi.ClientConfig{

@@ -124,6 +124,8 @@ worker:
 taskConfig:
   # common: 任务通用配置
   common:
+    queues:
+      bigResource: big-resource
     goroutineLimit:
       your_taskName: 10
     bkapi:
@@ -139,6 +141,12 @@ taskConfig:
       bkdataApiBaseUrl: ""
       bkssmUrl: ""
       bcsCcApiUrl: ""
+  # alarm: 告警任务配置
+  alarm:
+    cmdb_api_rate_limit:
+      qps: 100
+      burst: 100
+      timeout: 10
   # metadata: metadata任务配置
   metadata:
     global:

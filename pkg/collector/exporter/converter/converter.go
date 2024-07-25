@@ -88,6 +88,10 @@ func (c commonConverter) Convert(record *define.Record, f define.GatherFunc) {
 		ProfilesConverter.Convert(record, f)
 	case define.RecordFta:
 		FtaConverter.Convert(record, f)
+	case define.RecordBeat:
+		BeatConverter.Convert(record, f)
+	case define.RecordTars:
+		TarsConverter.Convert(record, f)
 	}
 }
 

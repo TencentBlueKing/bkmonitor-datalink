@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	relabelRuleWorkload = "v1/workload"
-	relabelRuleNode     = "v1/node"
+	relabelV1RuleWorkload = "v1/workload"
+	relabelV2RuleWorkload = "v2/workload"
+	relabelV1RuleNode     = "v1/node"
 )
 
 func IsBuiltinLabels(k string) bool {
@@ -56,6 +57,7 @@ type MetricTarget struct {
 	Meta                   define.MonitorMeta
 	RelabelRule            string
 	RelabelIndex           string
+	NormalizeMetricName    bool
 	Address                string
 	NodeName               string
 	Scheme                 string
@@ -81,6 +83,8 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
+
+	hash uint64 // 缓存 hash 避免重复计算
 }
 
 func (t *MetricTarget) FileName() string {
@@ -94,7 +98,7 @@ func (t *MetricTarget) FileName() string {
 // RemoteRelabelConfig 返回采集器 workload 工作负载信息
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	switch t.RelabelRule {
-	case relabelRuleWorkload:
+	case relabelV1RuleWorkload:
 		// index >= 0 表示 annotations 中指定了 index label
 		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
 			return nil
@@ -103,15 +107,41 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 			Key:   "metric_relabel_remote",
 			Value: fmt.Sprintf("http://%s:%d/workload/node/%s", ConfServiceName, ConfServicePort, t.NodeName),
 		}
+	case relabelV2RuleWorkload:
+		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+			return nil
+		}
+		var podName string
+		for _, label := range t.Labels {
+			if label.Name == "pod_name" {
+				podName = label.Value
+				break
+			}
+		}
+		if len(podName) > 0 {
+			return &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s", ConfServiceName, ConfServicePort, t.NodeName, podName),
+			}
+		}
 	}
 	return nil
 }
 
-func (t *MetricTarget) Hash() uint64 {
+func fnvHash(b []byte) uint64 {
 	h := fnv.New64a()
-	b, _ := t.YamlBytes()
 	h.Write(b)
 	return h.Sum64()
+}
+
+func (t *MetricTarget) Hash() uint64 {
+	if t.hash != 0 {
+		return t.hash
+	}
+
+	// 理论上不应该出现
+	_, _ = t.YamlBytes()
+	return t.hash
 }
 
 func (t *MetricTarget) YamlBytes() ([]byte, error) {
@@ -149,6 +179,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 		module = append(module, *remoteRelabel)
 	}
 	module = append(module, yaml.MapItem{Key: "disable_custom_timestamp", Value: t.DisableCustomTimestamp})
+	module = append(module, yaml.MapItem{Key: "normalize_metric_name", Value: t.NormalizeMetricName})
 
 	address := t.Address
 	if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {
@@ -157,7 +188,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	module = append(module, yaml.MapItem{Key: "hosts", Value: []string{address}})
 	if len(t.Params) != 0 {
 		params := make(yaml.MapSlice, 0)
-		keys := make([]string, 0)
+		keys := make([]string, 0, len(t.Params))
 		for key := range t.Params {
 			keys = append(keys, key)
 		}
@@ -228,7 +259,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_name", Value: t.Meta.Name})
 	lbs = append(lbs, yaml.MapItem{Key: "bk_monitor_namespace", Value: t.Meta.Namespace})
 
-	if t.RelabelRule == relabelRuleNode {
+	if t.RelabelRule == relabelV1RuleNode {
 		lbs = append(lbs, yaml.MapItem{Key: "node", Value: t.NodeName})
 	}
 
@@ -236,7 +267,14 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	task = append(task, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{lbs}})
 	task = append(task, yaml.MapItem{Key: "module", Value: module})
 	cfg = append(cfg, yaml.MapItem{Key: "tasks", Value: []yaml.MapSlice{task}})
-	return yaml.Marshal(cfg)
+
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	t.hash = fnvHash(b) // 提前缓存
+	return b, nil
 }
 
 func (t *MetricTarget) generateTaskID() uint64 {
@@ -264,7 +302,7 @@ func avoidOverflow(num uint64) uint64 {
 
 func sortMap(origin map[string]string) []yaml.MapItem {
 	result := make(yaml.MapSlice, 0, len(origin))
-	keys := make([]string, 0)
+	keys := make([]string, 0, len(origin))
 	for key := range origin {
 		keys = append(keys, key)
 	}

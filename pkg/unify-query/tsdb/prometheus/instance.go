@@ -62,8 +62,7 @@ func (i *Instance) GetInstanceType() string {
 func (i *Instance) QueryRaw(
 	ctx context.Context,
 	query *metadata.Query,
-	hints *storage.SelectHints,
-	matchers ...*labels.Matcher,
+	start, end time.Time,
 ) storage.SeriesSet {
 	return nil
 }
@@ -89,6 +88,13 @@ func (i *Instance) QueryRange(
 	opt := &promql.QueryOpts{
 		LookbackDelta: i.lookBackDelta,
 	}
+
+	log.Infof(ctx, "prometheus-query-range")
+	log.Infof(ctx, "promql: %s", stmt)
+	log.Infof(ctx, "start: %s", start.String())
+	log.Infof(ctx, "end: %s", end.String())
+	log.Infof(ctx, "step: %s", step.String())
+
 	query, err := i.engine.NewRangeQuery(i.queryStorage, opt, stmt, start, end, step)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
@@ -132,6 +138,11 @@ func (i *Instance) Query(
 		LookbackDelta: i.lookBackDelta,
 	}
 	span.Set("query-opts-look-back-delta", i.lookBackDelta.String())
+
+	log.Infof(ctx, "prometheus-query")
+	log.Infof(ctx, "promql: %s", qs)
+	log.Infof(ctx, "end: %s", end.String())
+
 	query, err := i.engine.NewInstantQuery(i.queryStorage, opt, qs, end)
 	if err != nil {
 		log.Errorf(ctx, err.Error())

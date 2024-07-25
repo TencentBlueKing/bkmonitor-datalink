@@ -262,9 +262,6 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	// relabel_configs as the last relabeling, to ensure it overrides any other relabelings.
 	relabelings = enforceNamespaceLabel(relabelings, m.Namespace, "")
 
-	// 一个基于hash的label过滤，由于operator不做这个，所以跳过
-	// relabelings = generateAddressShardingRelabelingRules(relabelings, 0)
-
 	return relabelings
 }
 

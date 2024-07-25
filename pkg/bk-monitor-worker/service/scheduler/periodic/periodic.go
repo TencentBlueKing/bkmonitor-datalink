@@ -61,6 +61,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	ReportInfluxdbClusterMetrics := "periodic:cluster_metrics:report_influxdb"
 	PushAndPublishSpaceRouterInfo := "periodic:cluster_metrics:push_and_publish_space_router_info"
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
+	ClearDeprecatedRedisKey := "periodic:metadata:clear_deprecated_redis_key"
+	CleanDataIdConsulPath := "periodic:metadata:clean_data_id_consul_path"
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -159,11 +161,20 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		PushAndPublishSpaceRouterInfo: {
 			Cron:    "*/30 * * * *",
 			Handler: metadataTask.PushAndPublishSpaceRouterInfo,
+			Option:  []task.Option{task.Queue(cfg.BigResourceTaskQueueName)},
 		},
 		ReportESClusterMetrics: {
 			Cron:    "*/1 * * * *",
 			Handler: cmESTask.ReportESClusterMetrics,
 			Option:  []task.Option{task.Queue(cfg.ESClusterMetricQueueName), task.Timeout(300 * time.Second)},
+		},
+		ClearDeprecatedRedisKey: {
+			Cron:    "0 0 */14 * *",
+			Handler: metadataTask.ClearDeprecatedRedisKey,
+		},
+		CleanDataIdConsulPath: {
+			Cron:    "0 2 * * *", // 每天凌晨2点执行
+			Handler: metadataTask.CleanDataIdConsulPath,
 		},
 	}
 }

@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -18,8 +19,9 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 var (
@@ -229,6 +231,8 @@ var (
 	BkApiBkssmUrl string
 	// BkApiBcsCcApiUrl bk-api bcs cc url
 	BkApiBcsCcApiUrl string
+	// BkApiGseApiGwUrl bk-apigw bkgse base url
+	BkApiGseApiGwUrl string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
@@ -238,6 +242,9 @@ var (
 	ESClusterMetricReportDataId      int
 	ESClusterMetricReportAccessToken string
 	ESClusterMetricReportBlackList   []int
+
+	// BigResourceTaskQueueName 占用大资源的队列名称
+	BigResourceTaskQueueName string
 )
 
 func initVariables() {
@@ -312,7 +319,7 @@ func initVariables() {
 	StorageMysqlDbName = GetValue("store.mysql.dbName", "")
 	StorageMysqlCharset = GetValue("store.mysql.charset", "utf8")
 	StorageMysqlMaxIdleConnections = GetValue("store.mysql.maxIdleConnections", 10)
-	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 100)
+	StorageMysqlMaxOpenConnections = GetValue("store.mysql.maxOpenConnections", 120)
 	StorageMysqlDebug = GetValue("store.mysql.debug", false)
 
 	StorageEsUpdateTaskRetainInvalidAlias = GetValue("store.es.esRetainInvalidAlias", false)
@@ -396,6 +403,7 @@ func initVariables() {
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
 	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
 	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
+	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 
@@ -403,6 +411,8 @@ func initVariables() {
 	ESClusterMetricReportDataId = GetValue("taskConfig.logSearch.metric.reportDataId", 100013)
 	ESClusterMetricReportAccessToken = GetValue("taskConfig.logSearch.metric.reportAccessToken", "")
 	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
+
+	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
 }
 
 var (
@@ -456,7 +466,8 @@ func InitConfig() {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
-		logger.Fatalf("read config file: %s error: %s", FilePath, err)
+		pwd, _ := os.Getwd()
+		logger.Fatalf("read config file: %s in %s error: %s", FilePath, pwd, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)
@@ -468,6 +479,7 @@ func InitConfig() {
 	initMetadataVariables()
 	initClusterMetricVariables()
 	initApmVariables()
+	initAlarmConfig()
 
 	prettyPrintSettings()
 }

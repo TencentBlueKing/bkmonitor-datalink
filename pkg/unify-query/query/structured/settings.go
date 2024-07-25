@@ -8,3 +8,29 @@
 // specific language governing permissions and limitations under the License.
 
 package structured
+
+const (
+	MIN   = "min"
+	MAX   = "max"
+	SUM   = "sum"
+	COUNT = "count"
+	LAST  = "last"
+	MEAN  = "mean"
+	AVG   = "avg"
+
+	MinOT   = "min_over_time"
+	MaxOT   = "max_over_time"
+	SumOT   = "sum_over_time"
+	CountOT = "count_over_time"
+	LastOT  = "last_over_time"
+	AvgOT   = "avg_over_time"
+)
+
+var domSampledFunc = map[string]string{
+	MIN + MinOT:   MIN,
+	MAX + MaxOT:   MAX,
+	SUM + SumOT:   SUM,
+	AVG + AvgOT:   AVG,
+	MEAN + AvgOT:  AVG,
+	SUM + CountOT: COUNT,
+}

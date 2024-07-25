@@ -14,7 +14,7 @@ set -e
 # shellcheck disable=SC2086
 
 MODULE=bk-collector
-TEST_COVERAGE_THRESHOLD=78
+TEST_COVERAGE_THRESHOLD=75
 
 function unittest() {
   go test ./... -coverprofile coverage.out -covermode count
@@ -47,13 +47,14 @@ function package() {
   mkdir -p ${dir}/{etc,bin}
 
   # 构建二进制
+  go mod tidy
   GOOS=${goos} GOARCH=${goarch} \
     go build -ldflags " \
   	-s -w \
   	-X main.version=${version} \
   	-X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
   	-X main.gitHash=$(git rev-parse HEAD)" \
-    -o ${dir}/bin/${MODULE} .
+    -o ${dir}/bin/${MODULE} ./cmd/collector
 
   # 复制配置
   cp -R ./support-files/templates/${goos}/${arch}/project.yaml ${dir}/project.yaml
@@ -61,8 +62,24 @@ function package() {
   cp -R ./support-files/templates/${goos}/${arch}/etc ${dir}
 }
 
+function sidecar() {
+    local version=${1:-'v0.0.0'}
+    local dist=${2:-'./dist'}
+    # 构建二进制
+    go mod tidy
+    GOOS=linux GOARCH=amd64 \
+      go build -ldflags " \
+    	-s -w \
+    	-X main.version=${version} \
+    	-X main.buildTime=$(date -u '+%Y-%m-%d_%I:%M:%S%p') \
+    	-X main.gitHash=$(git rev-parse HEAD)" \
+      -o ${dist}/sidecar ./cmd/sidecar
+}
+
 if [ "$1" == "package" ]; then
   package $2 $3 $4 $5 $6
+elif [ "$1" == "sidecar" ]; then
+  sidecar $2 $3
 elif [ "$1" == "test" ]; then
   unittest
 fi

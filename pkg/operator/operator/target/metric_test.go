@@ -79,6 +79,7 @@ tasks:
     proxy_url: http://localhost:8081/metrics
     timeout: 10s
     disable_custom_timestamp: false
+    normalize_metric_name: false
     hosts:
     - http://localhost:8080
     namespace: blueking

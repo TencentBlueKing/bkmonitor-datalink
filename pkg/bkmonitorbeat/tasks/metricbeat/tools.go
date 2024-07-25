@@ -236,7 +236,8 @@ func (t *BKMetricbeatTool) Run(ctx context.Context, e chan<- define.Event) error
 			logger.Error("clear temp file failed: %v", err0)
 		}
 	}()
-loop:
+
+	// ctx.Done() 触发后 evChan 将关闭 循环结束
 	for evc := range evChan {
 		logger.Debugf("receviced event:%v", evc)
 		// Compat: v1 版本 elastic/beats 返回的是 MapStr 而 v2 版本返回的是 Event 对象
@@ -282,13 +283,7 @@ loop:
 				sendEvent = event
 			}
 
-			select {
-			case <-ctx.Done():
-				logger.Info("metric task get ctx done")
-				break loop
-			case e <- sendEvent:
-				logger.Debug("send metricbeat event")
-			}
+			e <- sendEvent
 		}
 	}
 

@@ -23,46 +23,45 @@ var (
 )
 
 // ReloadTsDBStorage 重新加载存储实例到内存里面
-func ReloadTsDBStorage(ctx context.Context, tsDBs map[string]*consul.Storage, opt *Options) error {
+func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt *Options) error {
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
 
 	for storageID, tsDB := range tsDBs {
 		var (
 			storage *Storage
 		)
-		if tsDB.Type == consul.VictoriaMetricsStorageType {
-			storage = &Storage{
-				Type:     tsDB.Type,
-				Address:  tsDB.Address,
-				Username: tsDB.Username,
-				Password: tsDB.Password,
 
-				UriPath: opt.VM.UriPath,
-				Timeout: opt.VM.Timeout,
-			}
-		} else {
-			storage = &Storage{
-				Type:     tsDB.Type,
-				Address:  tsDB.Address,
-				Username: tsDB.Username,
-				Password: tsDB.Password,
-				Timeout:  opt.InfluxDB.Timeout,
-
-				MaxLimit:      opt.InfluxDB.MaxLimit,
-				MaxSLimit:     opt.InfluxDB.MaxSLimit,
-				Toleration:    opt.InfluxDB.Tolerance,
-				ReadRateLimit: opt.InfluxDB.ReadRateLimit,
-
-				ContentType: opt.InfluxDB.ContentType,
-				ChunkSize:   opt.InfluxDB.ChunkSize,
-
-				UriPath:        opt.InfluxDB.RawUriPath,
-				Accept:         opt.InfluxDB.Accept,
-				AcceptEncoding: opt.InfluxDB.AcceptEncoding,
-			}
+		storage = &Storage{
+			Type:     tsDB.Type,
+			Address:  tsDB.Address,
+			Username: tsDB.Username,
+			Password: tsDB.Password,
 		}
 
+		switch tsDB.Type {
+		case consul.VictoriaMetricsStorageType:
+			storage.UriPath = opt.VM.UriPath
+			storage.Timeout = opt.VM.Timeout
+		case consul.ElasticsearchStorageType:
+			storage.Timeout = opt.Es.Timeout
+			storage.MaxRouting = opt.Es.MaxRouting
+			storage.MaxLimit = opt.Es.MaxSize
+		case consul.InfluxDBStorageType:
+			storage.Timeout = opt.InfluxDB.Timeout
+			storage.MaxLimit = opt.InfluxDB.MaxLimit
+			storage.MaxSLimit = opt.InfluxDB.MaxSLimit
+			storage.Toleration = opt.InfluxDB.Tolerance
+			storage.ReadRateLimit = opt.InfluxDB.ReadRateLimit
+
+			storage.ContentType = opt.InfluxDB.ContentType
+			storage.ChunkSize = opt.InfluxDB.ChunkSize
+
+			storage.UriPath = opt.InfluxDB.RawUriPath
+			storage.Accept = opt.InfluxDB.Accept
+			storage.AcceptEncoding = opt.InfluxDB.AcceptEncoding
+		}
 		newStorageMap[storageID] = storage
+
 	}
 	storageLock.Lock()
 	defer storageLock.Unlock()

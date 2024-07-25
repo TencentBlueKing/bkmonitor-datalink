@@ -15,12 +15,16 @@ import (
 	"sync"
 
 	"github.com/jmespath/go-jmespath"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/json"
 )
 
 var CustomJPFunctions = []*jmespath.FunctionEntry{
 	jpfSplit,
 	jpfRegexExtract,
 	jpfGetField,
+	jpfToJSON,
+	jpfZip,
 }
 
 func CompileJMESPathCustom(expression string) (*jmespath.JMESPath, error) {
@@ -100,5 +104,49 @@ var jpfGetField = &jmespath.FunctionEntry{
 			return nil, nil
 		}
 		return value, nil
+	},
+}
+
+// jpfToJSON 将字符串转换为 JSON
+var jpfToJSON = &jmespath.FunctionEntry{
+	Name: "to_json",
+	Arguments: []jmespath.ArgSpec{
+		{Types: []jmespath.JpType{jmespath.JpString}},
+	},
+	Handler: func(arguments []interface{}) (interface{}, error) {
+		data := arguments[0].(string)
+		var result interface{}
+		err := json.Unmarshal([]byte(data), &result)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	},
+}
+
+// jpfZip 将两个列表合并为一个对象
+var jpfZip = &jmespath.FunctionEntry{
+	Name: "zip",
+	Arguments: []jmespath.ArgSpec{
+		{Types: []jmespath.JpType{jmespath.JpArray}},
+		{Types: []jmespath.JpType{jmespath.JpArray}},
+	},
+	Handler: func(arguments []interface{}) (interface{}, error) {
+		keys := arguments[0].([]interface{})
+		values := arguments[1].([]interface{})
+
+		if len(keys) != len(values) {
+			return nil, nil
+		}
+
+		result := make(map[string]interface{})
+		for i, key := range keys {
+			keyStr, ok := key.(string)
+			if !ok {
+				return nil, nil
+			}
+			result[keyStr] = values[i]
+		}
+		return result, nil
 	},
 }

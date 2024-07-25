@@ -21,7 +21,6 @@ var (
 	BuildTime = "unknown.buildTime"
 )
 
-// versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "display version of bkmonitor-operator",

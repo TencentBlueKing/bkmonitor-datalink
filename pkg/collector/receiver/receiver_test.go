@@ -69,20 +69,26 @@ func TestReceiver(t *testing.T) {
         enabled: true
       fta:
         enabled: true
+      beat:
+        enabled: true
+      tars:
+        enabled: true
 `
 
 	config := confengine.MustLoadConfigContent(configContent)
 	r, err := New(config)
 	assert.NoError(t, err)
 
-	componentsReady[define.SourceJaeger] = func() { t.Logf("%s ready", define.SourceJaeger) }
-	componentsReady[define.SourceOtlp] = func() { t.Logf("%s ready", define.SourceOtlp) }
-	componentsReady[define.SourcePushGateway] = func() { t.Logf("%s ready", define.SourcePushGateway) }
-	componentsReady[define.SourceRemoteWrite] = func() { t.Logf("%s ready", define.SourceRemoteWrite) }
-	componentsReady[define.SourceZipkin] = func() { t.Logf("%s ready", define.SourceZipkin) }
-	componentsReady[define.SourceSkywalking] = func() { t.Logf("%s ready", define.SourceSkywalking) }
-	componentsReady[define.SourcePyroscope] = func() { t.Logf("%s ready", define.SourcePyroscope) }
-	componentsReady[define.SourceFta] = func() { t.Logf("%s ready", define.SourceFta) }
+	componentsReady[define.SourceJaeger] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceJaeger) }
+	componentsReady[define.SourceOtlp] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceOtlp) }
+	componentsReady[define.SourcePushGateway] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourcePushGateway) }
+	componentsReady[define.SourceRemoteWrite] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceRemoteWrite) }
+	componentsReady[define.SourceZipkin] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceZipkin) }
+	componentsReady[define.SourceSkywalking] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceSkywalking) }
+	componentsReady[define.SourcePyroscope] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourcePyroscope) }
+	componentsReady[define.SourceFta] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceFta) }
+	componentsReady[define.SourceBeat] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceBeat) }
+	componentsReady[define.SourceTars] = func(_ ComponentConfig) { t.Logf("%s ready", define.SourceTars) }
 
 	r.ready()
 	assert.NoError(t, r.Start())

@@ -87,6 +87,8 @@ func (s *Service) Reload(ctx context.Context) {
 	registerTSQueryService(s.g)
 	registerTSQueryExemplarService(s.g)
 	registerTSQueryPromQLService(s.g)
+	registerTSQueryReferenceQueryService(s.g)
+	registerTSQueryRawQueryService(s.g)
 	registerTSQueryStructToPromQLService(s.g)
 	registerTSQueryPromQLToStructService(s.g)
 	registerHandlerQueryTsClusterMetrics(s.g)

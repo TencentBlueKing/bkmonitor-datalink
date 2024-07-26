@@ -38,17 +38,18 @@ type MetricProcessor struct {
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
-	m.findSpanMetric(receiver, fullTreeGraph)
-	m.findParentChildAndAloneFlowMetric(receiver, fullTreeGraph)
+	flowIgnoreSpanIds := m.findSpanMetric(receiver, fullTreeGraph)
+	m.findParentChildAndAloneFlowMetric(receiver, fullTreeGraph, flowIgnoreSpanIds)
 
 }
 
 func (m *MetricProcessor) findSpanMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
-) {
+) []string {
 	var labels []string
 	metricCount := make(map[string]int)
 
+	var componentDiscoverSpanIds []string
 	flowMetricCount := make(map[string]int)
 	flowMetricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	for _, span := range fullTreeGraph.StandardSpans() {
@@ -95,7 +96,7 @@ func (m *MetricProcessor) findSpanMetric(
 			metricCount[storage.ApmServiceSystemRelation]++
 		}
 
-		m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount)
+		m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount, componentDiscoverSpanIds)
 	}
 
 	if len(labels) > 0 {
@@ -104,11 +105,14 @@ func (m *MetricProcessor) findSpanMetric(
 	if len(flowMetricRecordMapping) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: flowMetricRecordMapping}, flowMetricCount, receiver)
 	}
+
+	return componentDiscoverSpanIds
 }
 
 // findParentChildAndAloneFlowMetric find the metrics from spans
 func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
+	ignoreSpanIds []string,
 ) {
 
 	metricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
@@ -193,6 +197,9 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	}
 
 	for _, aloneNode := range aloneNodes {
+		if slices.Contains(ignoreSpanIds, aloneNode.SpanId) {
+			continue
+		}
 		// 在这个 trace 里面它是孤独节点 此次调用就需要记录而不需要理会这个节点是否发生了调用关系
 		serviceName := aloneNode.GetFieldValue(core.ServiceNameField)
 		if slices.Contains(CallerKinds, aloneNode.Kind) {
@@ -243,7 +250,10 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 }
 
 func (m *MetricProcessor) findComponentFlowMetric(
-	span StandardSpan, metricRecordMapping map[string]*storage.FlowMetricRecordStats, metricCount map[string]int,
+	span StandardSpan,
+	metricRecordMapping map[string]*storage.FlowMetricRecordStats,
+	metricCount map[string]int,
+	componentDiscoverSpanIds []string,
 ) {
 	// Only support discover db or messaging component
 	dbSystem := span.GetFieldValue(core.DbSystemField)
@@ -252,6 +262,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 		return
 	}
 
+	componentDiscoverSpanIds = append(componentDiscoverSpanIds, span.SpanId)
 	serviceName := span.GetFieldValue(core.ServiceNameField)
 
 	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {

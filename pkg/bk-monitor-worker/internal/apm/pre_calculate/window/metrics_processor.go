@@ -96,7 +96,9 @@ func (m *MetricProcessor) findSpanMetric(
 			metricCount[storage.ApmServiceSystemRelation]++
 		}
 
-		m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount, componentDiscoverSpanIds)
+		componentDiscoverSpanIds = append(componentDiscoverSpanIds,
+			m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...,
+		)
 	}
 
 	if len(labels) > 0 {
@@ -253,16 +255,14 @@ func (m *MetricProcessor) findComponentFlowMetric(
 	span StandardSpan,
 	metricRecordMapping map[string]*storage.FlowMetricRecordStats,
 	metricCount map[string]int,
-	componentDiscoverSpanIds []string,
-) {
+) (discoverSpanIds []string) {
 	// Only support discover db or messaging component
 	dbSystem := span.GetFieldValue(core.DbSystemField)
 	messageSystem := span.GetFieldValue(core.MessagingSystemField)
 	if dbSystem == "" && messageSystem == "" {
 		return
 	}
-
-	componentDiscoverSpanIds = append(componentDiscoverSpanIds, span.SpanId)
+	discoverSpanIds = append(discoverSpanIds, span.SpanId)
 	serviceName := span.GetFieldValue(core.ServiceNameField)
 
 	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {
@@ -331,6 +331,8 @@ func (m *MetricProcessor) findComponentFlowMetric(
 			return
 		}
 	}
+
+	return
 }
 
 func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {

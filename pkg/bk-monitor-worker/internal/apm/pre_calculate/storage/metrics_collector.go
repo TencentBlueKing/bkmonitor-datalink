@@ -25,11 +25,12 @@ const (
 
 // Flow metrics category and kind
 const (
-	CategoryHttp      = "http"
-	CategoryDb        = "db"
-	CategoryMessaging = "messaging"
-	KindService       = "service"
-	KindComponent     = "component"
+	CategoryHttp       = "http"
+	CategoryDb         = "db"
+	CategoryMessaging  = "messaging"
+	KindService        = "service"
+	KindComponent      = "component"
+	KindVirtualService = "virtualService"
 )
 
 type MetricCollector interface {

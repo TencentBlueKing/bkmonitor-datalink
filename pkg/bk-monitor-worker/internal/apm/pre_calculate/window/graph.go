@@ -9,7 +9,10 @@
 
 package window
 
-import "golang.org/x/exp/slices"
+import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"golang.org/x/exp/slices"
+)
 
 type Node struct {
 	StandardSpan
@@ -165,24 +168,87 @@ func (g *DiGraph) FindParentChildPairs() [][2]Node {
 	return res
 }
 
-// FindDirectFilterParentChildPairs Return all pairs of directly connected parent-child nodes
+// FindDirectParentChildParisAndAloneNodes
+// 1. Finds nodes in DiGraph that meet specified requirements.
+// Requirement 1: Node.Kind == Server/Consumer and (Parent is nil or all ancestor node kinds != [Client, Producer]).
+// Requirement 2: Node.Kind == Client/Producer and (no child nodes or all child node kinds != [Server/Consumer]).
+// 2. Return all pairs of directly connected parent-child nodes
 // whose parent node and child node conform to specific kinds
 // (Not contain span pairs that contain other nodes in the parent-child relationship)
-func (g *DiGraph) FindDirectFilterParentChildPairs(parentKinds, childKinds []int) [][2]Node {
-	var res [][2]Node
+func (g *DiGraph) FindDirectParentChildParisAndAloneNodes(parentKinds, childKinds []int) ([][2]Node, []Node) {
+	var aloneNodes []Node
+	var parentChildPairs [][2]Node
 
-	for _, parentNode := range g.Nodes {
-		if slices.Contains(parentKinds, parentNode.Kind) {
-			childNodes := g.Edges[parentNode.SpanId]
-			for _, childNode := range childNodes {
-				if slices.Contains(childKinds, childNode.Kind) {
-					res = append(res, [2]Node{parentNode, childNode})
-				}
+	nodeMapping := make(map[string]Node)
+	for _, node := range g.Nodes {
+		nodeMapping[node.SpanId] = node
+	}
+
+	ancestorCache := make(map[string]bool)
+	descendantCache := make(map[string]bool)
+
+	var hasAncestorCaller func(node Node) bool
+	hasAncestorCaller = func(node Node) bool {
+		if result, exists := ancestorCache[node.SpanId]; exists {
+			return result
+		}
+		parentNode, exists := nodeMapping[node.ParentSpanId]
+		if !exists {
+			ancestorCache[node.SpanId] = false
+			return false
+		}
+		if slices.Contains([]core.SpanKind{core.KindClient, core.KindProducer}, core.SpanKind(parentNode.Kind)) {
+			ancestorCache[node.SpanId] = true
+			return true
+		}
+		result := hasAncestorCaller(parentNode)
+		ancestorCache[node.SpanId] = result
+		return result
+	}
+
+	var hasChildCallee func(node Node) bool
+	hasChildCallee = func(node Node) bool {
+		if result, exists := descendantCache[node.SpanId]; exists {
+			return result
+		}
+		for _, child := range g.Edges[node.SpanId] {
+			if slices.Contains([]core.SpanKind{core.KindServer, core.KindConsumer}, core.SpanKind(child.Kind)) {
+				descendantCache[node.SpanId] = true
+				return true
+			}
+			if hasChildCallee(child) {
+				descendantCache[node.SpanId] = true
+				return true
+			}
+		}
+		descendantCache[node.SpanId] = false
+		return false
+	}
+
+	for _, node := range g.Nodes {
+		// handle alone logic
+		if slices.Contains([]core.SpanKind{core.KindServer, core.KindConsumer}, core.SpanKind(node.Kind)) {
+			if node.ParentSpanId == "" || !hasAncestorCaller(node) {
+				aloneNodes = append(aloneNodes, node)
+			}
+		} else if slices.Contains([]core.SpanKind{core.KindClient, core.KindProducer}, core.SpanKind(node.Kind)) {
+			if len(g.Edges[node.SpanId]) == 0 || !hasChildCallee(node) {
+				aloneNodes = append(aloneNodes, node)
 			}
 		}
 
+		// handle parent-child logic
+		if slices.Contains(parentKinds, node.Kind) {
+			childNodes := g.Edges[node.SpanId]
+			for _, childNode := range childNodes {
+				if slices.Contains(childKinds, childNode.Kind) {
+					parentChildPairs = append(parentChildPairs, [2]Node{node, childNode})
+				}
+			}
+		}
 	}
-	return res
+
+	return parentChildPairs, aloneNodes
 }
 
 // FindChildPairsBasedFullTree Find out all parent-child

@@ -19,10 +19,13 @@ import (
 )
 
 const (
-	KindClient   = 3
-	KindProducer = 4
-	KindServer   = 2
-	KindConsumer = 5
+	VirtualSvrCallee = "bk_vServiceCallee"
+	VirtualSvrCaller = "bk_vServiceCaller"
+)
+
+var (
+	CallerKinds = []int{int(core.KindClient), int(core.KindProducer)}
+	CalleeKinds = []int{int(core.KindServer), int(core.KindConsumer)}
 )
 
 type MetricProcessor struct {
@@ -36,18 +39,8 @@ type MetricProcessor struct {
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
 	m.findSpanMetric(receiver, fullTreeGraph)
-	m.findParentChildMetric(receiver, fullTreeGraph)
-}
+	m.findParentChildAndAloneFlowMetric(receiver, fullTreeGraph)
 
-func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
-	for k, v := range metricCount {
-		metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
-	}
-
-	receiver <- storage.SaveRequest{
-		Target: storage.Prometheus,
-		Data:   data,
-	}
 }
 
 func (m *MetricProcessor) findSpanMetric(
@@ -102,7 +95,7 @@ func (m *MetricProcessor) findSpanMetric(
 			metricCount[storage.ApmServiceSystemRelation]++
 		}
 
-		m.findComponentFlow(span, flowMetricRecordMapping, flowMetricCount)
+		m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount)
 	}
 
 	if len(labels) > 0 {
@@ -113,16 +106,16 @@ func (m *MetricProcessor) findSpanMetric(
 	}
 }
 
-// findParentChildMetric find the metrics from spans
-func (m *MetricProcessor) findParentChildMetric(
+// findParentChildAndAloneFlowMetric find the metrics from spans
+func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
 ) {
 
 	metricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	metricCount := make(map[string]int)
 
-	for _, pair := range fullTreeGraph.FindDirectFilterParentChildPairs([]int{KindClient, KindProducer}, []int{KindServer, KindConsumer}) {
-
+	parentChildPairs, aloneNodes := fullTreeGraph.FindDirectParentChildParisAndAloneNodes(CallerKinds, CalleeKinds)
+	for _, pair := range parentChildPairs {
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
 		duration := pair[0].EndTime - pair[1].StartTime
@@ -199,21 +192,57 @@ func (m *MetricProcessor) findParentChildMetric(
 		}
 	}
 
+	for _, aloneNode := range aloneNodes {
+		// 在这个 trace 里面它是孤独节点 此次调用就需要记录而不需要理会这个节点是否发生了调用关系
+		serviceName := aloneNode.GetFieldValue(core.ServiceNameField)
+		if slices.Contains(CallerKinds, aloneNode.Kind) {
+			// fill callee
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+				"__name__", storage.ApmServiceFlow,
+				"from_apm_service_name", serviceName,
+				"from_apm_application_name", m.appName,
+				"from_apm_service_category", storage.CategoryHttp,
+				"from_apm_service_kind", storage.KindService,
+				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee),
+				"to_apm_application_name", m.appName,
+				"to_apm_service_category", storage.CategoryHttp,
+				"to_apm_service_kind", storage.KindVirtualService,
+				"from_span_error", aloneNode.IsError(),
+				"to_span_error", aloneNode.IsError(),
+			)
+			m.addToStats(labelKey, aloneNode.ElapsedTime, metricRecordMapping)
+			metricCount[storage.ApmServiceFlow]++
+			continue
+		}
+		if slices.Contains(CalleeKinds, aloneNode.Kind) {
+			// fill caller
+			labelKey := fmt.Sprintf(
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+				"__name__", storage.ApmServiceFlow,
+				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller),
+				"from_apm_application_name", m.appName,
+				"from_apm_service_category", storage.CategoryHttp,
+				"from_apm_service_kind", storage.KindVirtualService,
+				"to_apm_service_name", serviceName,
+				"to_apm_application_name", m.appName,
+				"to_apm_service_category", storage.CategoryHttp,
+				"to_apm_service_kind", storage.KindService,
+				"from_span_error", aloneNode.IsError(),
+				"to_span_error", aloneNode.IsError(),
+			)
+			m.addToStats(labelKey, aloneNode.ElapsedTime, metricRecordMapping)
+			metricCount[storage.ApmServiceFlow]++
+			continue
+		}
+	}
+
 	if len(metricRecordMapping) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: metricRecordMapping}, metricCount, receiver)
 	}
 }
 
-func (m *MetricProcessor) addToStats(labelKey string, duration int, metricRecordMapping map[string]*storage.FlowMetricRecordStats) {
-	c, exist := metricRecordMapping[labelKey]
-	if !exist {
-		metricRecordMapping[labelKey] = &storage.FlowMetricRecordStats{DurationValues: []float64{float64(duration)}}
-	} else {
-		c.DurationValues = append(c.DurationValues, float64(duration))
-	}
-}
-
-func (m *MetricProcessor) findComponentFlow(
+func (m *MetricProcessor) findComponentFlowMetric(
 	span StandardSpan, metricRecordMapping map[string]*storage.FlowMetricRecordStats, metricCount map[string]int,
 ) {
 	// Only support discover db or messaging component
@@ -225,7 +254,7 @@ func (m *MetricProcessor) findComponentFlow(
 
 	serviceName := span.GetFieldValue(core.ServiceNameField)
 
-	if dbSystem != "" && slices.Contains([]int{KindClient, KindProducer}, span.Kind) {
+	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {
 		// service (caller) -> db (callee)
 		dbFlowLabelKey := fmt.Sprintf(
 			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
@@ -247,7 +276,7 @@ func (m *MetricProcessor) findComponentFlow(
 	}
 
 	if messageSystem != "" {
-		if slices.Contains([]int{KindClient, KindProducer}, span.Kind) {
+		if slices.Contains(CallerKinds, span.Kind) {
 			// service (caller) -> messageQueue (callee)
 			messageCalleeFlowLabelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
@@ -267,7 +296,7 @@ func (m *MetricProcessor) findComponentFlow(
 			metricCount[storage.ApmServiceFlow]++
 			return
 		}
-		if slices.Contains([]int{KindServer, KindConsumer}, span.Kind) {
+		if slices.Contains(CalleeKinds, span.Kind) {
 			messageCallerFlowLabelKey := fmt.Sprintf(
 				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
@@ -290,6 +319,26 @@ func (m *MetricProcessor) findComponentFlow(
 			metricCount[storage.ApmServiceFlow]++
 			return
 		}
+	}
+}
+
+func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
+	for k, v := range metricCount {
+		metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
+	}
+
+	receiver <- storage.SaveRequest{
+		Target: storage.Prometheus,
+		Data:   data,
+	}
+}
+
+func (m *MetricProcessor) addToStats(labelKey string, duration int, metricRecordMapping map[string]*storage.FlowMetricRecordStats) {
+	c, exist := metricRecordMapping[labelKey]
+	if !exist {
+		metricRecordMapping[labelKey] = &storage.FlowMetricRecordStats{DurationValues: []float64{float64(duration)}}
+	} else {
+		c.DurationValues = append(c.DurationValues, float64(duration))
 	}
 }
 

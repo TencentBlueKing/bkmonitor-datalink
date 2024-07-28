@@ -10,6 +10,7 @@
 package window
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"time"
@@ -68,7 +69,7 @@ type Processor struct {
 	traceEsQueryLimiter *rate.Limiter
 
 	// Metric discover
-	metricProcessor MetricProcessor
+	metricProcessor *MetricProcessor
 
 	logger   monitorLogger.Logger
 	baseInfo core.BaseInfo
@@ -472,7 +473,7 @@ func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
 	}
 }
 
-func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
+func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
 		setter(&opts)
@@ -494,7 +495,7 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId, opts.metricLayer4ReportEnabled),
+		metricProcessor: newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
 		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

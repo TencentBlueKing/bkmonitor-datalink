@@ -10,12 +10,18 @@
 package window
 
 import (
+	"context"
 	"fmt"
+	"strconv"
+	"time"
+
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 const (
@@ -29,12 +35,16 @@ var (
 )
 
 type MetricProcessor struct {
+	ctx context.Context
+
 	bkBizId string
 	appName string
 	appId   string
 	dataId  string
 
 	enabledLayer4Report bool
+
+	customServiceRules []models.CustomServiceRule
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
@@ -49,7 +59,7 @@ func (m *MetricProcessor) findSpanMetric(
 	var labels []string
 	metricCount := make(map[string]int)
 
-	var componentDiscoverSpanIds []string
+	var discoverSpanIds []string
 	flowMetricCount := make(map[string]int)
 	flowMetricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	for _, span := range fullTreeGraph.StandardSpans() {
@@ -96,8 +106,11 @@ func (m *MetricProcessor) findSpanMetric(
 			metricCount[storage.ApmServiceSystemRelation]++
 		}
 
-		componentDiscoverSpanIds = append(componentDiscoverSpanIds,
+		discoverSpanIds = append(discoverSpanIds,
 			m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...,
+		)
+		discoverSpanIds = append(discoverSpanIds,
+			m.findCustomServiceFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...,
 		)
 	}
 
@@ -108,7 +121,7 @@ func (m *MetricProcessor) findSpanMetric(
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: flowMetricRecordMapping}, flowMetricCount, receiver)
 	}
 
-	return componentDiscoverSpanIds
+	return discoverSpanIds
 }
 
 // findParentChildAndAloneFlowMetric find the metrics from spans
@@ -335,6 +348,52 @@ func (m *MetricProcessor) findComponentFlowMetric(
 	return
 }
 
+func (m *MetricProcessor) findCustomServiceFlowMetric(
+	span StandardSpan,
+	metricRecordMapping map[string]*storage.FlowMetricRecordStats,
+	metricCount map[string]int,
+) (discoverSpanIds []string) {
+	serviceName := span.GetFieldValue(core.ServiceNameField)
+	for _, rule := range m.customServiceRules {
+		predicateKeyValue := span.GetFieldValue(rule.PredicateKey)
+		if predicateKeyValue == "" {
+			continue
+		}
+		val := span.GetFieldValue(rule.MatchKey)
+		if val == "" {
+			continue
+		}
+		mappings, matched, matchType := rule.Match(val)
+		logger.Debugf("Matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+		if !matched {
+			continue
+		}
+		peerService, exist := mappings["peerService"]
+		if !exist {
+			continue
+		}
+		customServiceLabelKey := fmt.Sprintf(
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+			"__name__", storage.ApmServiceFlow,
+			"from_apm_service_name", serviceName,
+			"from_apm_application_name", m.appName,
+			"from_apm_service_category", storage.CategoryHttp,
+			"from_apm_service_kind", storage.KindService,
+			"to_apm_service_name", fmt.Sprintf("%s:%s", rule.Type, peerService),
+			"to_apm_application_name", m.appName,
+			"to_apm_service_category", storage.CategoryHttp,
+			"to_apm_service_kind", storage.KindCustomService,
+			"from_span_error", span.IsError(),
+			"to_span_error", span.IsError(),
+		)
+		m.addToStats(customServiceLabelKey, span.ElapsedTime, metricRecordMapping)
+		metricCount[storage.ApmServiceFlow]++
+		discoverSpanIds = append(discoverSpanIds, span.SpanId)
+		break
+	}
+	return
+}
+
 func (m *MetricProcessor) sendToSave(data storage.PrometheusStorageData, metricCount map[string]int, receiver chan<- storage.SaveRequest) {
 	for k, v := range metricCount {
 		metrics.RecordApmRelationMetricFindCount(m.dataId, k, v)
@@ -355,14 +414,51 @@ func (m *MetricProcessor) addToStats(labelKey string, duration int, metricRecord
 	}
 }
 
-func newMetricProcessor(dataId string, enabledLayer4Metric bool) MetricProcessor {
+// refreshCustomService refresh custom service config from db, expire in 10min.
+func (m *MetricProcessor) refreshCustomService() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	intBizId, _ := strconv.Atoi(m.bkBizId)
+	refreshFromDb := func() {
+		var result []models.CustomServiceConfig
+		err := models.NewCustomServiceConfigQuerySet(
+			mysql.GetDBSession().DB,
+		).BkBizIdEq(intBizId).AppNameEq(m.appName).ConfigLevelEq("app_level").ConfigKeyEq(m.appName).TypeEq("http").All(&result)
+		if err != nil {
+			logger.Warnf("Something got error during query custom service! BkBizId: %s AppName: %s exception: %s", m.bkBizId, m.appName, err)
+			return
+		}
+		var rules []models.CustomServiceRule
+		for _, item := range result {
+			rules = append(rules, item.ToRule())
+		}
+		m.customServiceRules = rules
+		logger.Debugf("Refresh custom service successfully, length: %d", len(rules))
+	}
+
+	refreshFromDb()
+	for {
+		select {
+		case <-ticker.C:
+			refreshFromDb()
+		case <-m.ctx.Done():
+			return
+		}
+	}
+}
+
+func newMetricProcessor(ctx context.Context, dataId string, enabledLayer4Metric bool) *MetricProcessor {
 	logger.Infof("[RelationMetric] create metric processor, dataId: %s", dataId)
 	baseInfo := core.GetMetadataCenter().GetBaseInfo(dataId)
-	return MetricProcessor{
+	p := MetricProcessor{
+		ctx:                 ctx,
 		dataId:              dataId,
 		bkBizId:             baseInfo.BkBizId,
 		appName:             baseInfo.AppName,
 		appId:               baseInfo.AppId,
 		enabledLayer4Report: enabledLayer4Metric,
 	}
+	go p.refreshCustomService()
+	return &p
 }

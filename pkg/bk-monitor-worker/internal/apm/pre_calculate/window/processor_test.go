@@ -10,6 +10,7 @@
 package window
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -181,7 +182,7 @@ func initialProcessor(t *testing.T, dataId string, enabledMetrics bool) Processo
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId, false),
+		metricProcessor: newMetricProcessor(context.Background(), dataId, false),
 		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

@@ -304,7 +304,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.startInfo.DataId, p.proxy, p.config.processorConfig...)
+	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(

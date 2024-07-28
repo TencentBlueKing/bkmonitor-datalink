@@ -31,6 +31,7 @@ const (
 	KindService        = "service"
 	KindComponent      = "component"
 	KindVirtualService = "virtualService"
+	KindCustomService  = "remote_service"
 )
 
 type MetricCollector interface {

@@ -222,6 +222,7 @@ loop:
 				subWindow.processor = Processor{}
 			}
 			w.subWindows = make(map[int]*distributiveSubWindow)
+
 			break loop
 		}
 	}

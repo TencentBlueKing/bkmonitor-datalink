@@ -6,7 +6,29 @@
 ## 快速部署
 
 在docker desktop上安装consul，redis，influxdb
+- Consul：用于服务发现和配置管理，存储并提供 InfluxDB 实例的配置信息
 
+  ```bash
+  docker run -d -p 8500:8500 -p 8600:8600/udp --name=dev-consul -e CONSUL_BIND_INTERFACE=eth0 consul:1.10.3
+  ```
+
+- InfluxDB：作为时序数据库，存储监控指标数据并提供基于 PromQL 语法的查询能力。
+
+  版本为1.8.10-推荐使用客制化版本：
+
+  ```bash
+  // 拉取镜像Image
+  docker pull mirrors.tencent.com/shamcleren/influxdb:1.8.10-bk
+  
+  // 启动服务
+  docker run -d -p 8086:8086 --name bk-influx -v influxdb-data:/var/lib/influxdb mirrors.tencent.com/shamcleren/influxdb:1.8.10-bk
+  ```
+
+- Redis：用于缓存和存储与查询相关的元数据，如空间关联的表信息、表详情和标签字段。
+
+  ```bash
+  docker run -d -p 6379:6379 --name=dev-redis redis
+  ```
 ### 本地创建redis数据
 
 query/ts接口对应redis中三个hash，对应的键分别为
@@ -40,7 +62,7 @@ hset "bkmonitorv3:spaces:result_table_detail" "custom_report_aggate.base"  "{\"s
 先在consul上创建influxdb实例，创建之后可以获取storageID为8的实例
 
 ```bash
-consul kv put bkmonitorv3/unify-query/data/storage/8 {"address":"http://127.0.0.1:8086","username":"","password":"","type":"influxdb"}
+consul kv put bkmonitorv3/unify-query/data/storage/8 '{"address":"http://127.0.0.1:8086","username":"","password":"","type":"influxdb"}'
 ```
 
 在redis储存influxdb所在的集群信息和主机信息
@@ -115,7 +137,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "end_time": "1716946906",
     "step": "60s"
 }'
+```
 
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -215,6 +241,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "step": "60s"
 }'
 
+```
+
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -245,8 +276,8 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
         }
     ]
 }
-
 ```
+
 test query support fuzzy `__name__`
 ```
 curl --location 'http://127.0.0.1:10205/query/ts' \
@@ -302,7 +333,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "end_time": "1716946906",
     "step": "60s"
 }'
+```
 
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -332,6 +367,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     ]
 }
 ```
+
 创建完数据，可以用工具图形化显示，工具链接：https://github.com/CymaticLabs/InfluxDBStudio
 
 ## 接口详情

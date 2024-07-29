@@ -215,6 +215,10 @@ func (s *StandardSpan) IsError() bool {
 	return s.StatusCode == core.StatusCodeError
 }
 
+func (s *StandardSpan) Elapsed() int {
+	return s.EndTime - s.StartTime
+}
+
 // Handler window handle logic
 type Handler interface {
 	add(StandardSpan)

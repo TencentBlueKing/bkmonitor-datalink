@@ -12,6 +12,7 @@ package window
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -137,7 +138,8 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	for _, pair := range parentChildPairs {
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
-		duration := pair[0].EndTime - pair[1].StartTime
+
+		duration := int(math.Abs(float64(pair[1].StartTime - pair[0].StartTime)))
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
@@ -233,7 +235,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 				"from_span_error", aloneNode.IsError(),
 				"to_span_error", aloneNode.IsError(),
 			)
-			m.addToStats(labelKey, aloneNode.ElapsedTime, metricRecordMapping)
+			m.addToStats(labelKey, aloneNode.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			continue
 		}
@@ -253,7 +255,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 				"from_span_error", aloneNode.IsError(),
 				"to_span_error", aloneNode.IsError(),
 			)
-			m.addToStats(labelKey, aloneNode.ElapsedTime, metricRecordMapping)
+			m.addToStats(labelKey, aloneNode.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			continue
 		}
@@ -294,7 +296,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 			"from_span_error", span.IsError(),
 			"to_span_error", span.IsError(),
 		)
-		m.addToStats(dbFlowLabelKey, span.ElapsedTime, metricRecordMapping)
+		m.addToStats(dbFlowLabelKey, span.Elapsed(), metricRecordMapping)
 		metricCount[storage.ApmServiceFlow]++
 		return
 	}
@@ -316,7 +318,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 				"from_span_error", span.IsError(),
 				"to_span_error", span.IsError(),
 			)
-			m.addToStats(messageCalleeFlowLabelKey, span.ElapsedTime, metricRecordMapping)
+			m.addToStats(messageCalleeFlowLabelKey, span.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			return
 		}
@@ -339,7 +341,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 			// the time consumption is the time spent receiving the message,
 			// and does not include the subsequent processing time of the message,
 			// so we get the elapsedTime
-			m.addToStats(messageCallerFlowLabelKey, span.ElapsedTime, metricRecordMapping)
+			m.addToStats(messageCallerFlowLabelKey, span.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			return
 		}
@@ -386,7 +388,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 			"from_span_error", span.IsError(),
 			"to_span_error", span.IsError(),
 		)
-		m.addToStats(customServiceLabelKey, span.ElapsedTime, metricRecordMapping)
+		m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
 		metricCount[storage.ApmServiceFlow]++
 		discoverSpanIds = append(discoverSpanIds, span.SpanId)
 		break

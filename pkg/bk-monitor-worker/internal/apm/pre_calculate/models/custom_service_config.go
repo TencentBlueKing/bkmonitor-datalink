@@ -148,9 +148,7 @@ func (r *CustomServiceRule) ManualMatched(val string) (map[string]string, bool) 
 	m := make(map[string]string)
 	for _, group := range r.MatchGroups {
 		switch group.Source {
-		case "path":
-			m[group.Destination] = u.Path
-		case "service":
+		case "peer_service":
 			m[group.Destination] = r.Service
 		}
 	}

@@ -48,7 +48,7 @@ func (sdm spanDimensionMatcher) Match(t string, span ptrace.Span) (map[string]st
 		return nil, false
 	}
 
-	dimensions := make(map[string]string)
+	dimensions := make(map[string]string, 16)
 	var found bool
 loop:
 	for _, pk := range predicateKeys {

@@ -11,6 +11,11 @@
   ```bash
   docker run -d -p 8500:8500 -p 8600:8600/udp --name=dev-consul -e CONSUL_BIND_INTERFACE=eth0 consul:1.10.3
   ```
+- Redis：用于缓存和存储与查询相关的元数据，如空间关联的表信息、表详情和标签字段。
+
+  ```bash
+  docker run -d -p 6379:6379 --name=dev-redis redis
+  ```
 
 - InfluxDB：作为时序数据库，存储监控指标数据并提供基于 PromQL 语法的查询能力。
 
@@ -24,11 +29,7 @@
   docker run -d -p 8086:8086 --name bk-influx -v influxdb-data:/var/lib/influxdb mirrors.tencent.com/shamcleren/influxdb:1.8.10-bk
   ```
 
-- Redis：用于缓存和存储与查询相关的元数据，如空间关联的表信息、表详情和标签字段。
 
-  ```bash
-  docker run -d -p 6379:6379 --name=dev-redis redis
-  ```
 ### 本地创建redis数据
 
 query/ts接口对应redis中三个hash，对应的键分别为

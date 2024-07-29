@@ -459,11 +459,34 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
-func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time) []string {
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) []string {
 	var alias []string
 	if needAddTime {
-		for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-			alias = append(alias, fmt.Sprintf("%s_%s*", db, d.Format("20060102")))
+		loc, err := time.LoadLocation(timezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		start = start.In(loc)
+		end = end.In(loc)
+
+		left := end.Unix() - start.Unix()
+		// 超过 6 个月
+
+		addMonth := 0
+		addDay := 1
+		dateFormat := "20060102"
+		if left > int64(time.Hour.Seconds()*24*14) {
+			addDay = 0
+			addMonth = 1
+			dateFormat = "200601"
+			halfYear := time.Hour * 24 * 30 * 6
+			if left > int64(halfYear.Seconds()) {
+				start = end.Add(halfYear * -1)
+			}
+		}
+
+		for d := start; !d.After(end); d = d.AddDate(0, addMonth, addDay) {
+			alias = append(alias, fmt.Sprintf("%s_%s*", db, d.Format(dateFormat)))
 		}
 	} else {
 		alias = append(alias, db)
@@ -502,7 +525,7 @@ func (i *Instance) QueryRaw(
 			close(rets)
 		}()
 
-		aliases := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end)
+		aliases := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 
 		qo := &queryOption{
 			indexes: aliases,

@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -340,6 +341,68 @@ func TestInstance_queryReference(t *testing.T) {
 
 			fmt.Println("output:")
 			fmt.Println(output.String())
+		})
+	}
+}
+
+func TestInstance_getAlias(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Timeout: time.Minute,
+	})
+	if err != nil {
+		log.Panicf(ctx, err.Error())
+	}
+
+	for name, c := range map[string]struct {
+		start    time.Time
+		end      time.Time
+		timezone string
+
+		expected []string
+	}{
+		"3d with UTC": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
+			expected: []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
+		},
+		"3d with Asia/ShangHai": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
+			timezone: "Asia/ShangHai",
+			expected: []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
+		},
+		"14d with Asia/ShangHai": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
+			timezone: "Asia/ShangHai",
+			expected: []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
+		},
+		"15d with Asia/ShangHai": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
+			timezone: "Asia/ShangHai",
+			expected: []string{"db_test_202401*"},
+		},
+		"6m with Asia/ShangHai": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
+			timezone: "Asia/ShangHai",
+			expected: []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*"},
+		},
+		"7m with Asia/ShangHai": {
+			start:    time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:      time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
+			timezone: "Asia/ShangHai",
+			expected: []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx = metadata.InitHashID(ctx)
+			actual := inst.getAlias(ctx, "db_test", true, c.start, c.end, c.timezone)
+
+			assert.Equal(t, c.expected, actual)
 		})
 	}
 }

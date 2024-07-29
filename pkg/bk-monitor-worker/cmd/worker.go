@@ -79,7 +79,7 @@ func startWorker(cmd *cobra.Command, args []string) {
 	daemonTaskMaintainer := daemon.NewDaemonTaskRunMaintainer(ctx, workerService.GetWorkerId())
 	go daemonTaskMaintainer.Run()
 
-	s := make(chan os.Signal)
+	s := make(chan os.Signal, 1)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {

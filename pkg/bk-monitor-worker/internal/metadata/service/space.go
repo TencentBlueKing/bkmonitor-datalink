@@ -68,22 +68,15 @@ func (s *SpaceSvc) RefreshBkccSpaceName() error {
 		if name == oldName {
 			continue
 		}
-		// 名称变动，需要更新
+		// 名称变动，需要更新和更新时间
 		metrics.MysqlCount(sp.TableName(), "RefreshBkccSpaceName_update", 1)
-		if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_bkcc_space_name") {
-			logger.Info(diffutil.BuildLogStr("refresh_bkcc_space_name", diffutil.OperatorTypeDBUpdate, diffutil.NewSqlBody(sp.TableName(), map[string]interface{}{
-				space.SpaceDBSchema.Id.String():        sp.Id,
-				space.SpaceDBSchema.SpaceName.String(): sp.SpaceName,
-			}), ""))
-		} else {
-			sp.SpaceName = name
-			sp.UpdateTime = time.Now()
-			if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
-				logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
-				continue
-			}
-			logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
+		sp.SpaceName = name
+		sp.UpdateTime = time.Now()
+		if err := sp.Update(db, space.SpaceDBSchema.SpaceName, space.SpaceDBSchema.UpdateTime); err != nil {
+			logger.Errorf("update bkcc space name [%s] to [%s] failed, %v", oldName, sp.SpaceName, err)
+			continue
 		}
+		logger.Infof("update bkcc space name [%s] to [%s]", oldName, sp.SpaceName)
 	}
 	return nil
 }

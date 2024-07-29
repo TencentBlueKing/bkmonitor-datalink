@@ -219,7 +219,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		enabledResultTableList = append(enabledResultTableList, tempList...)
 	}
 	// 组装可用的结果表
-	var enabledRtList []string
+	enabledRtList := rtList[:0]
 	for _, rt := range enabledResultTableList {
 		enabledRtList = append(enabledRtList, rt.TableId)
 	}

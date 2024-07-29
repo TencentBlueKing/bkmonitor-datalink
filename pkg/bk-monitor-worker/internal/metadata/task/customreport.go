@@ -82,20 +82,23 @@ func RefreshTimeSeriesMetric(ctx context.Context, t *t.Task) error {
 			updatedTableIds = append(updatedTableIds, tableId)
 		}
 	}(&wgReceive)
-	ch := make(chan bool, GetGoroutineLimit("refresh_time_series_metric"))
+	ch := make(chan struct{}, GetGoroutineLimit("refresh_time_series_metric"))
 	wg := sync.WaitGroup{}
 	wg.Add(len(tsGroupList))
 	for _, eg := range tsGroupList {
+		ch <- struct{}{}
+		// 默认不在白名单中
+		isInRtList := false
+		// 如果不存在 vm rt, 则不会通过bkbase查询
 		vmRt, ok := rtMapVmRt[eg.TableID]
 		if !ok {
 			logger.Errorf("can not find vm result table id by monitor table id: %s", eg.TableID)
-			wg.Done()
-			continue
+			isInRtList = false
+		} else if slicex.IsExistItem(wlTableIdList, eg.TableID) {
+			// 判断是否在白名单中
+			isInRtList = true
 		}
-		ch <- true
-		// 判断是否在白名单中
-		isInRtList := slicex.IsExistItem(wlTableIdList, eg.TableID)
-		go func(ts customreport.TimeSeriesGroup, tableIdChan chan string, wg *sync.WaitGroup, ch chan bool, vmRt string, isInRtList bool) {
+		go func(ts customreport.TimeSeriesGroup, tableIdChan chan string, wg *sync.WaitGroup, ch chan struct{}, vmRt string, isInRtList bool) {
 			defer func() {
 				<-ch
 				wg.Done()

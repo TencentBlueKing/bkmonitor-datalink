@@ -6,6 +6,29 @@
 ## 快速部署
 
 在docker desktop上安装consul，redis，influxdb
+- Consul：用于服务发现和配置管理，存储并提供 InfluxDB 实例的配置信息
+
+  ```bash
+  docker run -d -p 8500:8500 -p 8600:8600/udp --name=dev-consul -e CONSUL_BIND_INTERFACE=eth0 consul:1.10.3
+  ```
+- Redis：用于缓存和存储与查询相关的元数据，如空间关联的表信息、表详情和标签字段。
+
+  ```bash
+  docker run -d -p 6379:6379 --name=dev-redis redis
+  ```
+
+- InfluxDB：作为时序数据库，存储监控指标数据并提供基于 PromQL 语法的查询能力。
+
+  版本为1.8.10-推荐使用客制化版本：
+
+  ```bash
+  // 拉取镜像Image
+  docker pull mirrors.tencent.com/shamcleren/influxdb:1.8.10-bk
+  
+  // 启动服务
+  docker run -d -p 8086:8086 --name bk-influx -v influxdb-data:/var/lib/influxdb mirrors.tencent.com/shamcleren/influxdb:1.8.10-bk
+  ```
+
 
 ### 本地创建redis数据
 
@@ -40,7 +63,7 @@ hset "bkmonitorv3:spaces:result_table_detail" "custom_report_aggate.base"  "{\"s
 先在consul上创建influxdb实例，创建之后可以获取storageID为8的实例
 
 ```bash
-consul kv put bkmonitorv3/unify-query/data/storage/8 {"address":"http://127.0.0.1:8086","username":"","password":"","type":"influxdb"}
+consul kv put bkmonitorv3/unify-query/data/storage/8 '{"address":"http://127.0.0.1:8086","username":"","password":"","type":"influxdb"}'
 ```
 
 在redis储存influxdb所在的集群信息和主机信息
@@ -115,7 +138,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "end_time": "1716946906",
     "step": "60s"
 }'
+```
 
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -215,6 +242,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "step": "60s"
 }'
 
+```
+
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -245,8 +277,8 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
         }
     ]
 }
-
 ```
+
 test query support fuzzy `__name__`
 ```
 curl --location 'http://127.0.0.1:10205/query/ts' \
@@ -302,7 +334,11 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     "end_time": "1716946906",
     "step": "60s"
 }'
+```
 
+响应数据如下：
+
+```
 {
     "series": [
         {
@@ -332,6 +368,7 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
     ]
 }
 ```
+
 创建完数据，可以用工具图形化显示，工具链接：https://github.com/CymaticLabs/InfluxDBStudio
 
 ## 接口详情
@@ -339,335 +376,335 @@ curl --location 'http://127.0.0.1:10205/query/ts' \
 swagger: '2.0'
 basePath: /
 info:
-   version: '0.1'
-   title: API Gateway Resources
-   description: ''
+  version: '0.1'
+  title: API Gateway Resources
+  description: ''
 schemes:
-   - http
+  - http
 paths:
-   /query/promql:
-      post:
-         operationId: query_promql
-         description: 通过 PromQL 语句查询监控数据
-         tags:
-            - query
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/promql
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts:
-      post:
-         operationId: query_ts
-         description: 使用结构体查询监控数据
-         tags:
-            - query
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /check/query/ts:
-      post:
-         operationId: check_query_ts
-         description: 使用结构体校验查询
-         tags:
-            - check
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /check/query/ts
-               matchSubpath: false
-               timeout: 0
-               upstreams: { }
-               transformHeaders: { }
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: [ ]
-            descriptionEn:
-   /query/ts/exemplar:
-      post:
-         operationId: query_ts_exemplar
-         description: 通过结构体查询 exemplar 数据
-         tags:
-            - query
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/exemplar
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/info/field_keys:
-      post:
-         operationId: info_field_keys
-         description: 查询指标列表
-         tags:
-            - info
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/info/field_keys
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/info/series:
-      post:
-         operationId: info_series
-         description: 查询 series 内容
-         tags:
-            - info
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/info/series
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/info/tag_keys:
-      post:
-         operationId: info_tag_keys
-         description: 查询维度列表
-         tags:
-            - info
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/info/tag_keys
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/info/tag_values:
-      post:
-         operationId: info_tag_values
-         description: 查询维度值
-         tags:
-            - info
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: post
-               path: /query/ts/info/tag_values
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/label/{label_name}/values:
-      get:
-         operationId: info_label_values
-         description: 根据维度查询维度值
-         tags:
-            - info
-         responses:
-            default:
-               description: ''
-         x-bk-apigateway-resource:
-            isPublic: true
-            allowApplyPermission: true
-            matchSubpath: false
-            backend:
-               type: HTTP
-               method: get
-               path: /query/ts/label/{label_name}/values
-               matchSubpath: false
-               timeout: 0
-               upstreams: {}
-               transformHeaders: {}
-            authConfig:
-               userVerifiedRequired: false
-            disabledStages: []
-            descriptionEn:
-   /query/ts/struct_to_promql:
-     post:
-       operationId: transform_struct_to_promql
-       description: 查询结构体转换为promql语句
-       tags:
-         - info
-       responses:
-         default:
-           description: ''
-       x-bk-apigateway-resource:
-         isPublic: true
-         allowApplyPermission: true
-         matchSubpath: false
-         backend:
-           type: HTTP
-           method: post
-           path: /query/ts/struct_to_promql
-           matchSubpath: false
-           timeout: 0
-           upstreams: {}
-           transformHeaders: {}
-         authConfig:
-           userVerifiedRequired: false
-         disabledStages: []
-         descriptionEn:
-   /query/ts/promql_to_struct:
-     post:
-       operationId: transform_promql_to_struct
-       description: promql语句转换为结构体
-       tags:
-         - info
-       responses:
-         default:
-           description: ''
-       x-bk-apigateway-resource:
-         isPublic: true
-         allowApplyPermission: true
-         matchSubpath: false
-         backend:
-           type: HTTP
-           method: post
-           path: /query/ts/promql_to_struct
-           matchSubpath: false
-           timeout: 0
-           upstreams: {}
-           transformHeaders: {}
-         authConfig:
-           userVerifiedRequired: false
-         disabledStages: []
-         descriptionEn:
-   /api/v1/relation/multi_resource_range:
-     post:
-       operationId: relation_multi_resource_query_range
-       description: 查询关系多源
-       tags:
-         - info
-       responses:
-         default:
-           description: ''
-       x-bk-apigateway-resource:
-         isPublic: true
-         allowApplyPermission: true
-         matchSubpath: false
-         backend:
-           type: HTTP
-           method: post
-           path: /api/v1/relation/multi_resource_range
-           matchSubpath: false
-           timeout: 0
-           upstreams: {}
-           transformHeaders: {}
-         authConfig:
-           userVerifiedRequired: false
-         disabledStages: []
-         descriptionEn:
-   /api/v1/relation/multi_resource:
-     post:
-       operationId: relation_multi_resource_query
-       description: 查询关系多源
-       tags:
-         - info
-       responses:
-         default:
-           description: ''
-       x-bk-apigateway-resource:
-         isPublic: true
-         allowApplyPermission: true
-         matchSubpath: false
-         backend:
-           type: HTTP
-           method: post
-           path: /api/v1/relation/multi_resource
-           matchSubpath: false
-           timeout: 0
-           upstreams: {}
-           transformHeaders: {}
-         authConfig:
-           userVerifiedRequired: false
-         disabledStages: []
-         descriptionEn:
+  /query/promql:
+    post:
+      operationId: query_promql
+      description: 通过 PromQL 语句查询监控数据
+      tags:
+        - query
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/promql
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts:
+    post:
+      operationId: query_ts
+      description: 使用结构体查询监控数据
+      tags:
+        - query
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /check/query/ts:
+    post:
+      operationId: check_query_ts
+      description: 使用结构体校验查询
+      tags:
+        - check
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /check/query/ts
+          matchSubpath: false
+          timeout: 0
+          upstreams: { }
+          transformHeaders: { }
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: [ ]
+        descriptionEn:
+  /query/ts/exemplar:
+    post:
+      operationId: query_ts_exemplar
+      description: 通过结构体查询 exemplar 数据
+      tags:
+        - query
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/exemplar
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/info/field_keys:
+    post:
+      operationId: info_field_keys
+      description: 查询指标列表
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/info/field_keys
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/info/series:
+    post:
+      operationId: info_series
+      description: 查询 series 内容
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/info/series
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/info/tag_keys:
+    post:
+      operationId: info_tag_keys
+      description: 查询维度列表
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/info/tag_keys
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/info/tag_values:
+    post:
+      operationId: info_tag_values
+      description: 查询维度值
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/info/tag_values
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/label/{label_name}/values:
+    get:
+      operationId: info_label_values
+      description: 根据维度查询维度值
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: get
+          path: /query/ts/label/{label_name}/values
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/struct_to_promql:
+    post:
+      operationId: transform_struct_to_promql
+      description: 查询结构体转换为promql语句
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/struct_to_promql
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /query/ts/promql_to_struct:
+    post:
+      operationId: transform_promql_to_struct
+      description: promql语句转换为结构体
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /query/ts/promql_to_struct
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /api/v1/relation/multi_resource_range:
+    post:
+      operationId: relation_multi_resource_query_range
+      description: 查询关系多源
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /api/v1/relation/multi_resource_range
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
+  /api/v1/relation/multi_resource:
+    post:
+      operationId: relation_multi_resource_query
+      description: 查询关系多源
+      tags:
+        - info
+      responses:
+        default:
+          description: ''
+      x-bk-apigateway-resource:
+        isPublic: true
+        allowApplyPermission: true
+        matchSubpath: false
+        backend:
+          type: HTTP
+          method: post
+          path: /api/v1/relation/multi_resource
+          matchSubpath: false
+          timeout: 0
+          upstreams: {}
+          transformHeaders: {}
+        authConfig:
+          userVerifiedRequired: false
+        disabledStages: []
+        descriptionEn:
 ```

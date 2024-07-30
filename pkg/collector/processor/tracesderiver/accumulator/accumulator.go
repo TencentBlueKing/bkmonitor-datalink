@@ -230,18 +230,18 @@ func (r *recorder) Total() int {
 }
 
 // Set 更新 labels 缓存
-func (r *recorder) Set(lbs labels.Labels, value float64) bool {
+func (r *recorder) Set(dims map[string]string, value float64) bool {
 	if r.stopped.Load() {
 		return false
 	}
 
-	h := lbs.Hash()
+	h := labels.HashFromMap(dims)
 
 	r.mut.Lock()
 	defer r.mut.Unlock()
 
 	if len(r.statsMap) >= r.maxSeries {
-		logger.Debugf("got exceeded series labels: %v", lbs)
+		logger.Debugf("got exceeded series labels: %v", dims)
 		DefaultMetricMonitor.IncSeriesExceededCounter(r.dataID)
 		r.exceeded++
 		return false
@@ -252,7 +252,7 @@ func (r *recorder) Set(lbs labels.Labels, value float64) bool {
 		if r.enableLimitGrowRate() {
 			r.seriesGrowthRate += 1
 			if r.seriesGrowthRate > r.maxSeriesGrowthRate {
-				logger.Debugf("growth rate exceeded, series labels: %v", lbs)
+				logger.Debugf("growth rate exceeded, series labels: %v", dims)
 				DefaultMetricMonitor.IncSeriesExceededCounter(r.dataID)
 				r.exceeded++
 				return false
@@ -285,6 +285,18 @@ func (r *recorder) Set(lbs labels.Labels, value float64) bool {
 	s.updated = fasttime.UnixTimestamp()
 	r.statsMap[h] = s
 
+	// fastpath: 大多数请求都会命中缓存
+	exist, err := r.stor.Exist(h)
+	if err != nil {
+		logger.Errorf("failed to check labels exist: %v, err: %v", dims, err)
+		return false
+	}
+	if exist {
+		return true
+	}
+
+	// slowpath: alloc labels 开销较大 尽量减少此操作
+	lbs := labels.FromMap(dims)
 	if err := r.stor.SetIf(h, lbs); err != nil {
 		logger.Errorf("failed to set labels: %v, err: %v", lbs, err)
 		return false
@@ -719,7 +731,7 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 	}
 	a.mut.RUnlock()
 	if r != nil {
-		return r.Set(labels.FromMap(dims), value)
+		return r.Set(dims, value)
 	}
 
 	// 写锁保护
@@ -742,7 +754,7 @@ func (a *Accumulator) Accumulate(dataID int32, dims map[string]string, value flo
 		a.recorders[dataID] = r
 	}
 	a.mut.Unlock()
-	return r.Set(labels.FromMap(dims), value)
+	return r.Set(dims, value)
 }
 
 func (a *Accumulator) enableLimitGrowRate() bool {

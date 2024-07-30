@@ -786,6 +786,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-cluster-name", query.ClusterName)
 	span.Set("query-tag-keys", query.TagsKey)
 	span.Set("query-vm-rt", query.VmRt)
+	span.Set("query-need-add-time", query.NeedAddTime)
 
 	return query, nil
 }

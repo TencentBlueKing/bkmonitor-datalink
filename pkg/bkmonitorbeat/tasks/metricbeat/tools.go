@@ -205,24 +205,23 @@ func (t *BKMetricbeatTool) splitBigMetrics(m common.MapStr, batchsize int, maxBa
 	return ret
 }
 
-func (t *BKMetricbeatTool) waitUntil() {
-	period := int(t.taskConf.Period.Seconds())
+func alignTs(period, nowSecs int) int {
 	if period <= 0 {
 		period = 1
 	}
-	now := time.Now().Second()
-	n := period - (now % period)
-	// 超过 1min 的就没有对齐的必要了
-	if n >= 60 || n == period {
-		n = 0
-	}
 
-	// 示例
-	// now: 13, period: 10, wait: 7
-	// now: 13, period: 15, wait: 2
-	// now: 13, period: 30, wait: 17
-	// now: 13, period: 60, wait: 47
-	// now: 13, period: 120, wait: 0
+	n := period - (nowSecs % period)
+	if n >= 60 || n == period {
+		return 0 // 超过 1min 的就没有对齐的必要了
+	}
+	return n
+}
+
+func (t *BKMetricbeatTool) waitUntil() {
+	n := alignTs(int(t.taskConf.Period.Seconds()), time.Now().Second())
+	if n <= 0 {
+		return
+	}
 	time.Sleep(time.Duration(n) * time.Second)
 }
 

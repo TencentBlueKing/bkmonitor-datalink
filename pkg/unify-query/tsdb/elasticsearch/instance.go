@@ -463,7 +463,9 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	var (
 		alias   []string
 		_, span = trace.NewSpan(ctx, "get-alias")
+		err     error
 	)
+	defer span.End(&err)
 
 	span.Set("need-add-time", needAddTime)
 

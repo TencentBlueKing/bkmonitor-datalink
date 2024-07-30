@@ -167,7 +167,7 @@ func (p *OomParser) StreamOoms(ctx context.Context, outStream chan<- *OomInstanc
 				outStream <- oomCurrentInstance
 			}
 		case <-ctx.Done():
-			logger.Errorf("exiting analyzeLines. OOM events will not be reported.")
+			logger.Info("exiting analyzeLines. OOM events will not be reported.")
 			return
 		}
 	}

@@ -83,6 +83,8 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
+
+	hash uint64 // 缓存 hash 避免重复计算
 }
 
 func (t *MetricTarget) FileName() string {
@@ -126,11 +128,20 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	return nil
 }
 
-func (t *MetricTarget) Hash() uint64 {
+func fnvHash(b []byte) uint64 {
 	h := fnv.New64a()
-	b, _ := t.YamlBytes()
 	h.Write(b)
 	return h.Sum64()
+}
+
+func (t *MetricTarget) Hash() uint64 {
+	if t.hash != 0 {
+		return t.hash
+	}
+
+	// 理论上不应该出现
+	_, _ = t.YamlBytes()
+	return t.hash
 }
 
 func (t *MetricTarget) YamlBytes() ([]byte, error) {
@@ -177,7 +188,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	module = append(module, yaml.MapItem{Key: "hosts", Value: []string{address}})
 	if len(t.Params) != 0 {
 		params := make(yaml.MapSlice, 0)
-		keys := make([]string, 0)
+		keys := make([]string, 0, len(t.Params))
 		for key := range t.Params {
 			keys = append(keys, key)
 		}
@@ -256,7 +267,14 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	task = append(task, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{lbs}})
 	task = append(task, yaml.MapItem{Key: "module", Value: module})
 	cfg = append(cfg, yaml.MapItem{Key: "tasks", Value: []yaml.MapSlice{task}})
-	return yaml.Marshal(cfg)
+
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	t.hash = fnvHash(b) // 提前缓存
+	return b, nil
 }
 
 func (t *MetricTarget) generateTaskID() uint64 {
@@ -284,7 +302,7 @@ func avoidOverflow(num uint64) uint64 {
 
 func sortMap(origin map[string]string) []yaml.MapItem {
 	result := make(yaml.MapSlice, 0, len(origin))
-	keys := make([]string, 0)
+	keys := make([]string, 0, len(origin))
 	for key := range origin {
 		keys = append(keys, key)
 	}

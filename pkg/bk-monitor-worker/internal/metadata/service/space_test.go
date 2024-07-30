@@ -10,10 +10,12 @@
 package service
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
@@ -62,7 +64,7 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
 	gomonkey.ApplyMethod(&http.Client{}, "Do", func(t *http.Client, req *http.Request) (*http.Response, error) {
-		data := `{"result":true,"code":0,"data":{"count":3,"info":[{"bk_biz_developer":"","bk_biz_id":100,"bk_biz_maintainer":"admin","bk_biz_name":"biz_100","bk_biz_productor":"","bk_biz_tester":"test8","bk_supplier_account":"0","create_time":"2023-05-23T23:19:57.356+08:00","db_app_abbr":"blueking","default":0,"language":"1","last_time":"2023-11-28T10:45:12.201+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"},{"bk_biz_developer":"","bk_biz_id":101,"bk_biz_maintainer":"admin","bk_biz_name":"biz_101","bk_biz_productor":"","bk_biz_tester":"","bk_supplier_account":"0","create_time":"2023-06-09T12:05:20.042+08:00","db_app_abbr":"abbr","default":0,"language":"1","last_time":"2023-11-14T11:40:40.7+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"},{"bk_biz_developer":"","bk_biz_id":102,"bk_biz_maintainer":"admin","bk_biz_name":"biz_102","bk_biz_productor":"","bk_biz_tester":"","bk_supplier_account":"0","create_time":"2023-06-12T14:51:21.626+08:00","db_app_abbr":"dba","default":0,"language":"1","last_time":"2023-06-12T19:52:05.248+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"}]},"message":"success","permission":null,"request_id":"a4605a2cc8ad454f8e7060f584db04ce"}`
+		data := `{"result":true,"code":0,"data":{"count":3,"info":[{"bk_biz_developer":"","bk_biz_id":100,"bk_biz_maintainer":"admin","bk_biz_name":"biz_100","bk_biz_productor":"","bk_biz_tester":"test8","bk_supplier_account":"0","create_time":"2023-05-23T23:19:57.356+08:00","db_app_abbr":"blueking","default":0,"language":"1","last_time":"2023-11-28T10:45:12.201+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"},{"bk_biz_developer":"","bk_biz_id":101,"bk_biz_maintainer":"admin","bk_biz_name":"biz_101","bk_biz_productor":"","bk_biz_tester":"","bk_supplier_account":"0","create_time":"2023-06-09T12:05:20.042+08:00","db_app_abbr":"abbr","default":0,"language":"1","last_time":"2023-11-14T11:40:40.7+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"},{"bk_biz_developer":"","bk_biz_id":103,"bk_biz_maintainer":"admin","bk_biz_name":"biz_103","bk_biz_productor":"","bk_biz_tester":"","bk_supplier_account":"0","create_time":"2023-06-12T14:51:21.626+08:00","db_app_abbr":"dba","default":0,"language":"1","last_time":"2023-06-12T19:52:05.248+08:00","life_cycle":"2","operator":"","time_zone":"Asia/Shanghai"}]},"message":"success","permission":null,"request_id":"a4605a2cc8ad454f8e7060f584db04ce"}`
 		body := io.NopCloser(strings.NewReader(data))
 		return &http.Response{
 			Status:        "ok",
@@ -73,23 +75,37 @@ func TestSpaceSvc_RefreshBkccSpace(t *testing.T) {
 		}, nil
 	})
 
-	redisClient, redisPatch := mocker.RedisMocker()
-	defer redisPatch.Reset()
-
-	spaceIds := []string{"100", "101", "102"}
-	spaceUids := []string{"bkcc__100", "bkcc__101", "bkcc__102"}
+	spaceIds := []string{"100", "101", "102", "103"}
 	db.Delete(&space.Space{}, "space_id in (?)", spaceIds)
+
 	svc := NewSpaceSvc(nil)
 	err := svc.RefreshBkccSpace(false)
 	assert.NoError(t, err)
-	spaceIdSet, ok := redisClient.SetMap[models.QueryVmSpaceUidListKey]
-	assert.True(t, ok)
-	assert.ElementsMatch(t, spaceIdSet.ToSlice(), spaceUids)
-	var sp100, sp101, sp102 space.Space
+
+	var sp100, sp101, sp103 space.Space
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("100").SpaceNameEq("biz_100").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp100))
 	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("101").SpaceNameEq("biz_101").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp101))
-	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("102").SpaceNameEq("biz_102").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp102))
+	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("103").SpaceNameEq("biz_103").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp103))
 
+	// 校验删除
+	// 创建 102
+	sp102Obj := space.Space{
+		SpaceTypeId: models.SpaceTypeBKCC,
+		SpaceId:     "102",
+		SpaceName:   "biz_102",
+		Status:      "normal",
+		IsBcsValid:  false,
+	}
+	assert.NoError(t, sp102Obj.Create(db))
+	// 校验 102 已归档
+	svc = NewSpaceSvc(nil)
+	err = svc.RefreshBkccSpace(true)
+	assert.NoError(t, err)
+
+	var sp102 space.Space
+	assert.NoError(t, space.NewSpaceQuerySet(db).SpaceIdEq("102").SpaceTypeIdEq(models.SpaceTypeBKCC).StatusEq("normal").IsBcsValidEq(false).One(&sp102))
+	newName := fmt.Sprintf("%s(已归档_%s)", "biz_102", time.Now().Format("20060102"))
+	assert.Equal(t, sp102.SpaceName, newName)
 }
 
 func TestSpaceSvc_RefreshBcsProjectBiz(t *testing.T) {

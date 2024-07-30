@@ -12,6 +12,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	consulSvc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -217,7 +219,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		enabledResultTableList = append(enabledResultTableList, tempList...)
 	}
 	// 组装可用的结果表
-	var enabledRtList []string
+	enabledRtList := rtList[:0]
 	for _, rt := range enabledResultTableList {
 		enabledRtList = append(enabledRtList, rt.TableId)
 	}
@@ -434,5 +436,60 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 		}
 	}
 
+	return nil
+}
+
+// CleanDataIdConsulPath clean consul path of data_id
+// data id cna
+func CleanDataIdConsulPath(ctx context.Context, t *t.Task) error {
+	logger.Info("start to clean consul path of data_id")
+	db := mysql.GetDBSession().DB
+	// 仅获来源为直接通过gse创建的数据源ID
+	var dataIdObjList []resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).CreatedFromEq(common.DataIdFromBkGse).All(&dataIdObjList); err != nil {
+		logger.Errorf("query data source error, %s", err)
+		return err
+	}
+	// 如果为空，则直接返回
+	if len(dataIdObjList) == 0 {
+		logger.Infof("query data source is null")
+		return nil
+	}
+
+	// 组装 dataid 的 consul 路径
+	var dataIdConsulPaths []string
+	for _, ds := range dataIdObjList {
+		dataIdConsulPaths = append(dataIdConsulPaths, service.NewDataSourceSvc(&ds).ConsulConfigPath())
+	}
+
+	// 获取 consul 中存在的数据源 ID
+	consulClient, err := consulSvc.GetInstance()
+	if err != nil {
+		logger.Errorf("get consul client failed, %s", err)
+		return err
+	}
+	// 按照前缀，获取所有路径
+	consulKeys, err := consulClient.ListKeysWithPrefix(fmt.Sprintf(models.DataSourceConsulPathTemplate+"/", config.StorageConsulPathPrefix))
+	if err != nil {
+		logger.Errorf("list consul key with prefix error, %s", err)
+		return err
+	}
+
+	// 过滤出全路径的内容
+	var consulPaths []string
+	for _, key := range consulKeys {
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
+		consulPaths = append(consulPaths, key)
+	}
+
+	// 清理路径
+	if err := service.CleanConsulPath(consulClient, &dataIdConsulPaths, &consulPaths); err != nil {
+		logger.Errorf("clean consul path of data_id error, %s", err)
+		return err
+	}
+
+	logger.Info("clean consul path of data_id end")
 	return nil
 }

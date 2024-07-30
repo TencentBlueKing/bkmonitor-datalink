@@ -23,29 +23,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "start program as operator mode",
-	Long:  `bkmonitor-operator watches serviceMonitor, podMonitor and probe resource from kubernetes and dispatches tasks to workers`,
+	Short: "Start app as operator mode",
+	Long:  `Operator lists/watches resources from kubernetes then dispatches tasks to workers`,
 	Run: func(cmd *cobra.Command, args []string) {
 		waitUntil, err := filewatcher.AddPath(config.CustomConfigFilePath)
 		if err != nil {
-			logger.Errorf("watch config file [%s] failed, error: %s", config.CustomConfigFilePath, err)
-			os.Exit(1)
+			logger.Fatalf("watch config file '%s' failed: %v", config.CustomConfigFilePath, err)
 		}
 		defer filewatcher.Stop()
 
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-		logger.Infof("waiting file [%s] to be updated", config.CustomConfigFilePath)
+		logger.Infof("waiting file '%s' to be updated", config.CustomConfigFilePath)
 		<-waitUntil
 		logger.Info("operator is ready to work")
 
 		if err := config.InitConfig(); err != nil {
-			logger.Errorf("failed to load config: %v", err)
-			os.Exit(1)
+			logger.Fatalf("failed to load config: %v", err)
 		}
 
 		var reloadTotal int
@@ -58,13 +55,11 @@ var runCmd = &cobra.Command{
 				Time:    BuildTime,
 			})
 			if err != nil {
-				logger.Errorf("crate operator failed, error: %s", err)
-				os.Exit(1)
+				logger.Fatalf("crate operator failed, error: %s", err)
 			}
 
 			if err = opr.Run(); err != nil {
-				logger.Errorf("run operator failed, error: %s", err)
-				os.Exit(1)
+				logger.Fatalf("run operator failed, error: %s", err)
 			}
 
 			for {
@@ -83,7 +78,6 @@ var runCmd = &cobra.Command{
 					goto Outer
 
 				case <-sigChan:
-					logger.Info("receive terminal signal")
 					cancel()
 					opr.Stop()
 					return

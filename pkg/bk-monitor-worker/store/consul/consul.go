@@ -119,6 +119,18 @@ func (c *Instance) Delete(key string) error {
 	return nil
 }
 
+func (c *Instance) ListKeysWithPrefix(prefixPath string) ([]string, error) {
+	kvPairs, _, err := c.APIClient.KV().List(prefixPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	var fullPaths []string
+	for _, key := range kvPairs {
+		fullPaths = append(fullPaths, key.Key)
+	}
+	return fullPaths, nil
+}
+
 func (c *Instance) Close() error {
 	return nil
 }

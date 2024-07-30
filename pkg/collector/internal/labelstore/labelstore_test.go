@@ -89,7 +89,17 @@ func testStorage(t *testing.T, stor Storage) {
 		assert.NoError(t, err)
 		assert.Equal(t, labels.Labels{{Name: "index", Value: strconv.FormatInt(int64(i), 10)}}, lbs)
 	}
-	assert.NoError(t, stor.Del(1))
+	assert.NoError(t, stor.Del(1)) // 删除此 key
+
+	var total int
+	for i := 0; i < 100; i++ {
+		exist, err := stor.Exist(uint64(i))
+		assert.NoError(t, err)
+		if exist {
+			total++
+		}
+	}
+	assert.Equal(t, 99, total)
 }
 
 const (

@@ -117,7 +117,7 @@ func TestDbfieldIsNull(t *testing.T) {
 
 	s := &SpacePusher{}
 	t.Run("TestDbfieldIsNull", func(t *testing.T) {
-		_, detailStr, _ := s.composeEsTableIdDetail("system.net", 3, "log", esStorage.IndexSet)
+		_, detailStr, _ := s.composeEsTableIdDetail("system.net", map[string]interface{}{}, 3, "log", esStorage.IndexSet)
 		assert.Equal(t, `{"storage_id": 3,"db":"system_net_*_read","measurement": "__default__"}`, detailStr)
 	})
 }
@@ -217,7 +217,7 @@ func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
 	s := &SpacePusher{}
 	for _, tt := range tests {
 		t.Run(tt.tableId+tt.sourceType, func(t *testing.T) {
-			_, detailStr, _ := s.composeEsTableIdDetail(tt.tableId, tt.storageClusterId, tt.sourceType, tt.indexSet)
+			_, detailStr, _ := s.composeEsTableIdDetail(tt.tableId, map[string]interface{}{}, tt.storageClusterId, tt.sourceType, tt.indexSet)
 			assert.Equal(t, tt.want, detailStr)
 		})
 	}
@@ -451,13 +451,13 @@ func TestComposeEsTableIdDetail(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, uint(defaultStorageClusterId), sourceType, indexSet)
+			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, map[string]interface{}{}, uint(defaultStorageClusterId), sourceType, indexSet)
 			assert.Equal(t, tt.expectedTableId, actualTableId)
 		})
 	}
 
 	// 检验 key
-	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", uint(defaultStorageClusterId), sourceType, indexSet)
+	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", map[string]interface{}{}, uint(defaultStorageClusterId), sourceType, indexSet)
 	var detail map[string]any
 	err := jsonx.UnmarshalString(detailStr, &detail)
 	assert.NoError(t, err)
@@ -657,4 +657,45 @@ func TestClearRtDetail(t *testing.T) {
 
 	assert.Equal(t, 1, len(redisClient.HKeysValue))
 	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestComposeEsTableIdOptions(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	// 创建rt
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+	// 创建选项
+	op1, op2, op3 := "op1", "op2", "op3"
+	val1, val2, val3 := `{"name": "v1"}`, `{"name": "v2"}`, `{"name": "v3"}`
+	opVal1 := models.OptionBase{Value: val1, ValueType: "dict", Creator: "system"}
+	rtOp1 := resulttable.ResultTableOption{OptionBase: opVal1, TableID: rt1, Name: op1}
+	opVal2 := models.OptionBase{Value: val2, ValueType: "dict", Creator: "system"}
+	rtOp2 := resulttable.ResultTableOption{OptionBase: opVal2, TableID: rt2, Name: op2}
+	opVal3 := models.OptionBase{Value: val3, ValueType: "dict", Creator: "system"}
+	rtOp3 := resulttable.ResultTableOption{OptionBase: opVal3, TableID: rt3, Name: op3}
+	db.Delete(rtOp1, "table_id=? AND name=?", rtOp1.TableID, rtOp1.Name)
+	db.Delete(rtOp2, "table_id=? AND name=?", rtOp2.TableID, rtOp2.Name)
+	db.Delete(rtOp3, "table_id=? AND name=?", rtOp3.TableID, rtOp3.Name)
+	assert.NoError(t, rtOp1.Create(db))
+	assert.NoError(t, rtOp2.Create(db))
+	assert.NoError(t, rtOp3.Create(db))
+
+	// 获取正常数据
+	data := SpacePusher{}.composeEsTableIdOptions([]string{rt1, rt2, rt3})
+	assert.Equal(t, 3, len(data))
+	assert.Equal(t, map[string]interface{}{"name": "v1"}, data[rt1][rtOp1.Name])
+
+	// 获取不存在的rt数据
+	data = SpacePusher{}.composeEsTableIdOptions([]string{"not_exist"})
+	assert.Equal(t, 0, len(data))
 }

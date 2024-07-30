@@ -52,6 +52,13 @@ type ResultTableDetail struct {
 	DataLabel       string   `json:"data_label"`
 	TagsKey         []string `json:"tags_key"`
 	DataId          int64    `json:"bk_data_id"`
+	Options         struct {
+		TimeField struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+			Unit string `json:"unit"`
+		} `json:"time_field"`
+	} `json:"options"`
 }
 
 func (ss StableSpace) Len() int {

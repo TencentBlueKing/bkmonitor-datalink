@@ -460,7 +460,13 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 }
 
 func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) []string {
-	var alias []string
+	var (
+		alias   []string
+		_, span = trace.NewSpan(ctx, "get-alias")
+	)
+
+	span.Set("need-add-time", needAddTime)
+
 	if needAddTime {
 		loc, err := time.LoadLocation(timezone)
 		if err != nil {
@@ -471,6 +477,11 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 
 		left := end.Unix() - start.Unix()
 		// 超过 6 个月
+
+		span.Set("timezone", loc.String())
+		span.Set("start", start.String())
+		span.Set("end", end.String())
+		span.Set("left", left)
 
 		addMonth := 0
 		addDay := 1
@@ -491,6 +502,9 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	} else {
 		alias = append(alias, db)
 	}
+
+	span.Set("alias_num", len(alias))
+
 	return alias
 }
 

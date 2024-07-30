@@ -14,7 +14,7 @@ require (
 	github.com/emirpasic/gods v1.12.0
 	github.com/euank/go-kmsg-parser v2.0.0+incompatible
 	github.com/facebookgo/inject v0.0.0-20180706035515-f23751cae28b
-	github.com/fsnotify/fsnotify v1.5.4
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/golang/mock v1.6.0
 	github.com/gosnmp/gosnmp v1.32.0
 	github.com/hpcloud/tail v1.0.0

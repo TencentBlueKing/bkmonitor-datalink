@@ -9,7 +9,9 @@
 
 package feature
 
-import "strings"
+import (
+	"strings"
+)
 
 const (
 	// labels features
@@ -26,6 +28,7 @@ const (
 	keyRelabelIndex         = "relabelIndex"
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
+	keyCadvisorExtraInfo    = "cadvisorExtraInfo"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -48,6 +51,28 @@ func parseSelector(s string) map[string]string {
 		selector[kv[0]] = kv[1]
 	}
 	return selector
+}
+
+func parseCadvisorExtraInfo(s string) ([]string, []string) {
+	const (
+		annotationPrefix = "annotation:"
+		labelPrefix      = "label:"
+	)
+
+	var annotations []string
+	var labels []string
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		k := strings.TrimSpace(part)
+		switch {
+		case strings.HasPrefix(k, annotationPrefix):
+			annotations = append(annotations, strings.TrimSpace(k[len(annotationPrefix):]))
+		case strings.HasPrefix(k, labelPrefix):
+			labels = append(labels, strings.TrimSpace(k[len(labelPrefix):]))
+		}
+	}
+
+	return annotations, labels
 }
 
 // IfCommonResource 检查 DataID 是否为 common 类型
@@ -97,4 +122,8 @@ func MonitorMatchSelector(m map[string]string) map[string]string {
 
 func MonitorDropSelector(m map[string]string) map[string]string {
 	return parseSelector(m[keyMonitorDropSelector])
+}
+
+func CadvisorExtraInfo(m map[string]string) ([]string, []string) {
+	return parseCadvisorExtraInfo(m[keyCadvisorExtraInfo])
 }

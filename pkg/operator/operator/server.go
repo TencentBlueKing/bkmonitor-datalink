@@ -459,13 +459,24 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	podName := r.URL.Query().Get("podName")
-	if len(podName) > 0 {
-		writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName))
-		return
+	split := func(s string) []string {
+		if s == "" {
+			return nil
+		}
+
+		var ret []string
+		for _, part := range strings.Split(s, ",") {
+			ret = append(ret, strings.TrimSpace(part))
+		}
+		return ret
 	}
 
-	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
+	query := r.URL.Query()
+	podName := query.Get("podName")
+	annotations := split(query.Get("annotations"))
+	labels := split(query.Get("labels"))
+
+	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels))
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {

@@ -150,6 +150,8 @@ type BaseParams struct {
 	MetricRelabelConfigs   []yaml.MapSlice
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
+	CadvisorAnnotations    []string
+	CadvisorLabels         []string
 }
 
 type BaseDiscover struct {
@@ -413,6 +415,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
 	metricTarget.NormalizeMetricName = d.NormalizeMetricName
+	metricTarget.CadvisorAnnotations = d.CadvisorAnnotations
+	metricTarget.CadvisorLabels = d.CadvisorLabels
 
 	return metricTarget, nil
 }

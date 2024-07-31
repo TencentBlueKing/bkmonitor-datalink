@@ -83,6 +83,8 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
+	CadvisorAnnotations    []string
+	CadvisorLabels         []string
 
 	hash uint64 // 缓存 hash 避免重复计算
 }
@@ -104,9 +106,16 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 			return nil
 		}
 		return &yaml.MapItem{
-			Key:   "metric_relabel_remote",
-			Value: fmt.Sprintf("http://%s:%d/workload/node/%s", ConfServiceName, ConfServicePort, t.NodeName),
+			Key: "metric_relabel_remote",
+			Value: fmt.Sprintf("http://%s:%d/workload/node/%s?annotations=%s&labels=%s",
+				ConfServiceName,
+				ConfServicePort,
+				t.NodeName,
+				strings.Join(t.CadvisorAnnotations, ","),
+				strings.Join(t.CadvisorLabels, ","),
+			),
 		}
+
 	case relabelV2RuleWorkload:
 		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
 			return nil
@@ -120,8 +129,15 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 		}
 		if len(podName) > 0 {
 			return &yaml.MapItem{
-				Key:   "metric_relabel_remote",
-				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s", ConfServiceName, ConfServicePort, t.NodeName, podName),
+				Key: "metric_relabel_remote",
+				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s&annotations=%s&labels=%s",
+					ConfServiceName,
+					ConfServicePort,
+					t.NodeName,
+					podName,
+					strings.Join(t.CadvisorAnnotations, ","),
+					strings.Join(t.CadvisorLabels, ","),
+				),
 			}
 		}
 	}

@@ -23,19 +23,13 @@ type RelabelConfig struct {
 // WorkloadsRelabelConfigs 返回所有 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
 	pods := oc.podObjs.GetAll()
-	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
-}
-
-// WorkloadsRelabelConfigsByNodeName 根据节点名称获取 workload relabel 配置
-func (oc *ObjectsController) WorkloadsRelabelConfigsByNodeName(nodeName string) []RelabelConfig {
-	pods := oc.podObjs.GetByNodeName(nodeName)
-	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
+	return getWorkloadRelabelConfigs(oc.getRefs(pods, "", nil, nil))
 }
 
 // WorkloadsRelabelConfigsByPodName 根据节点名称和 pod 名称获取 workload relabel 配置
-func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName string) []RelabelConfig {
+func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName string, annotations, labels []string) []RelabelConfig {
 	pods := oc.podObjs.GetByNodeName(nodeName)
-	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods, podName))
+	return getWorkloadRelabelConfigs(oc.getRefs(pods, podName, annotations, labels))
 }
 
 type WorkloadRef struct {
@@ -45,38 +39,58 @@ type WorkloadRef struct {
 	NodeName  string   `json:"nodeName"`
 }
 
-func (oc *ObjectsController) getWorkloadRefs(pods []Object, podNames ...string) []WorkloadRef {
-	refs := make([]WorkloadRef, 0, len(pods))
+type PodInfoRef struct {
+	Name       string            `json:"name"`
+	Namespace  string            `json:"namespace"`
+	Dimensions map[string]string `json:"dimensions"`
+}
+
+func (oc *ObjectsController) getRefs(pods []Object, podName string, annotations, labels []string) ([]WorkloadRef, []PodInfoRef) {
+	workloadRefs := make([]WorkloadRef, 0, len(pods))
+	podInfoRefs := make([]PodInfoRef, 0)
+
 	for _, pod := range pods {
 		ownerRef := Lookup(pod.ID, oc.podObjs, oc.objsMap())
 		if ownerRef == nil {
 			continue
 		}
 
-		// 没有 podname 则命中所有
-		if len(podNames) == 0 {
-			refs = append(refs, WorkloadRef{
+		// 1) 没有 podname 则命中所有
+		// 2) 存在则需要精准匹配
+		if podName == "" || podName == pod.ID.Name {
+			workloadRefs = append(workloadRefs, WorkloadRef{
 				Name:      pod.ID.Name,
 				Namespace: pod.ID.Namespace,
 				Ref:       *ownerRef,
 				NodeName:  pod.NodeName,
 			})
-			continue
-		}
 
-		// 否则只处理匹配到的 podname
-		for _, podName := range podNames {
-			if podName == pod.ID.Name {
-				refs = append(refs, WorkloadRef{
-					Name:      pod.ID.Name,
-					Namespace: pod.ID.Namespace,
-					Ref:       *ownerRef,
-					NodeName:  pod.NodeName,
+			extra := make(map[string]string)
+			for _, name := range annotations {
+				v, ok := pod.Annotations[name]
+				if !ok {
+					continue
+				}
+				extra[name] = v
+			}
+			for _, name := range labels {
+				v, ok := pod.Labels[name]
+				if !ok {
+					continue
+				}
+				extra[name] = v
+			}
+
+			if len(extra) > 0 {
+				podInfoRefs = append(podInfoRefs, PodInfoRef{
+					Name:       pod.ID.Name,
+					Namespace:  pod.ID.Namespace,
+					Dimensions: extra,
 				})
 			}
 		}
 	}
-	return refs
+	return workloadRefs, podInfoRefs
 }
 
 func (oc *ObjectsController) objsMap() map[string]*Objects {
@@ -98,10 +112,10 @@ func (oc *ObjectsController) objsMap() map[string]*Objects {
 	return om
 }
 
-func getWorkloadRelabelConfigs(refs []WorkloadRef) []RelabelConfig {
-	configs := make([]RelabelConfig, 0, len(refs)*2)
+func getWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfoRef) []RelabelConfig {
+	configs := make([]RelabelConfig, 0)
 
-	for _, ref := range refs {
+	for _, ref := range workloadRefs {
 		configs = append(configs, RelabelConfig{
 			SourceLabels: []string{"namespace", "pod_name"},
 			Separator:    ";",
@@ -121,5 +135,19 @@ func getWorkloadRelabelConfigs(refs []WorkloadRef) []RelabelConfig {
 			NodeName:     ref.NodeName,
 		})
 	}
+
+	for _, ref := range podInfoRefs {
+		for name, value := range ref.Dimensions {
+			configs = append(configs, RelabelConfig{
+				SourceLabels: []string{"namespace", "pod_name"},
+				Separator:    ";",
+				Regex:        ref.Namespace + ";" + ref.Name,
+				TargetLabel:  name,
+				Replacement:  value,
+				Action:       "replace",
+			})
+		}
+	}
+
 	return configs
 }

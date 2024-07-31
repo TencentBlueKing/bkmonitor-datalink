@@ -84,3 +84,33 @@ func TestMergeReplaceAttributeMaps(t *testing.T) {
 		"ccc_x": "333",
 	}, m3))
 }
+
+func BenchmarkMergeReplaceCache(b *testing.B) {
+	m := pcommon.NewMap()
+	m.InsertString("telemetry.sdk.name", "telemetry_sdk_name")
+	m.InsertString("telemetry.sdk.version", "telemetry_sdk_version")
+	m.InsertString("telemetry.sdk.language", "telemetry_sdk_language")
+	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeReplaceAttributeMaps(m)
+		}
+	})
+}
+
+func BenchmarkMergeReplaceWithoutCache(b *testing.B) {
+	m := pcommon.NewMap()
+	m.InsertString("telemetry.sdk.namex", "telemetry_sdk_name")
+	m.InsertString("telemetry.sdk.versionx", "telemetry_sdk_version")
+	m.InsertString("telemetry.sdk.languagex", "telemetry_sdk_language")
+	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			MergeReplaceAttributeMaps(m)
+		}
+	})
+}

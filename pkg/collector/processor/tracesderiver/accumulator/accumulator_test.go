@@ -22,7 +22,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/labelstore"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/random"
@@ -46,12 +45,13 @@ func TestCalcStats(t *testing.T) {
 	}, labelstore.GetOrCreateStorage(strconv.Itoa(1001)))
 	defer r.Stop()
 
-	lbs1 := labels.Labels{{Name: "label1", Value: "value1"}}
-	lbs2 := labels.Labels{{Name: "label2", Value: "value2"}}
-	r.Set(lbs1, 1)
-	r.Set(lbs1, 11)
-	r.Set(lbs2, 2)
-	r.Set(lbs2, 12)
+	dims1 := map[string]string{"label1": "value1"}
+	dims2 := map[string]string{"label2": "value2"}
+
+	r.Set(dims1, 1)
+	r.Set(dims1, 11)
+	r.Set(dims2, 2)
+	r.Set(dims2, 12)
 
 	drains := func(ch <-chan *define.Record) {
 		for range ch {
@@ -69,7 +69,7 @@ func TestCalcStats(t *testing.T) {
 		assert.Equal(t, stat.prev, stat.curr)
 	}
 
-	r.Set(lbs1, 10)
+	r.Set(dims1, 10)
 }
 
 func TestAccumulatorExceeded(t *testing.T) {

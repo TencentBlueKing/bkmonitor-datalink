@@ -195,6 +195,16 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	return operator, nil
 }
 
+func (c *Operator) getAllDiscover() []define.MonitorMeta {
+	var ret []define.MonitorMeta
+	c.discoversMut.Lock()
+	for _, dis := range c.discovers {
+		ret = append(ret, dis.MonitorMeta())
+	}
+	c.discoversMut.Unlock()
+	return ret
+}
+
 func (c *Operator) reloadAllDiscovers() {
 	c.discoversMut.Lock()
 	defer c.discoversMut.Unlock()
@@ -243,6 +253,7 @@ func (c *Operator) recordMetrics() {
 
 func (c *Operator) updateSharedDiscoveryMetrics() {
 	c.mm.SetSharedDiscoveryCount(discover.GetSharedDiscoveryCount())
+	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
 }
 
 func (c *Operator) updateNodeConfigMetrics() {

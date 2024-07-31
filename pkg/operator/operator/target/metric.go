@@ -84,7 +84,7 @@ type MetricTarget struct {
 	TaskType               string
 	DisableCustomTimestamp bool
 
-	hash uint64 // 缓存 hash 指 避免重复计算
+	hash uint64 // 缓存 hash 避免重复计算
 }
 
 func (t *MetricTarget) FileName() string {

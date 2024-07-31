@@ -62,6 +62,7 @@ type Rule struct {
 	MatchKey     string       `config:"match_key" mapstructure:"match_key"`
 	PredicateKey string       `config:"predicate_key" mapstructure:"predicate_key"`
 	MatchConfig  MatchConfig  `config:"rule" mapstructure:"rule"`
+	ReplaceType  string       `config:"replace_type" mapstructure:"replace_type"`
 	MatchGroups  []MatchGroup `config:"match_groups" mapstructure:"match_groups"`
 
 	re       *regexp.Regexp

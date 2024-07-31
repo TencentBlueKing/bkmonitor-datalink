@@ -47,6 +47,9 @@ type Storage interface {
 	// SetIf 更新 k 所对应的 labels 如果 k 已经存在 则不做任何处理
 	SetIf(k uint64, lbs labels.Labels) error
 
+	// Exist 判断 k 是否存在
+	Exist(k uint64) (bool, error)
+
 	// Del 删除 k 对应的键值对
 	Del(k uint64) error
 
@@ -233,6 +236,14 @@ func (bs *builtinStorage) Get(k uint64) (labels.Labels, error) {
 	return v, nil
 }
 
+func (bs *builtinStorage) Exist(k uint64) (bool, error) {
+	bs.mut.RLock()
+	defer bs.mut.RUnlock()
+
+	_, ok := bs.store[k]
+	return ok, nil
+}
+
 func (bs *builtinStorage) SetIf(k uint64, v labels.Labels) error {
 	bs.mut.RLock()
 	_, ok := bs.store[k]
@@ -302,6 +313,18 @@ func (ls *leveldbStorage) Get(k uint64) (labels.Labels, error) {
 		return nil, err
 	}
 	return lbs, nil
+}
+
+func (ls *leveldbStorage) Exist(k uint64) (bool, error) {
+	v, err := ls.db.Get(uint64ToBytes(k), nil)
+	if errors.Is(err, leveldb.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return len(v) > 0, nil
 }
 
 func (ls *leveldbStorage) SetIf(k uint64, v labels.Labels) error {

@@ -45,9 +45,9 @@ type WorkloadRef struct {
 }
 
 type PodInfoRef struct {
-	Name       string            `json:"name"`
-	Namespace  string            `json:"namespace"`
-	Dimensions map[string]string `json:"dimensions"`
+	Name       string
+	Namespace  string
+	Dimensions map[string]string
 }
 
 func (oc *ObjectsController) getRefs(pods []Object, podName string, annotations, labels []string) ([]WorkloadRef, []PodInfoRef) {
@@ -72,19 +72,16 @@ func (oc *ObjectsController) getRefs(pods []Object, podName string, annotations,
 
 			extra := make(map[string]string)
 			for _, name := range annotations {
-				v, ok := pod.Annotations[name]
-				if !ok {
-					continue
+				if v, ok := pod.Annotations[name]; ok {
+					extra[name] = v
 				}
-				extra[name] = v
 			}
 			for _, name := range labels {
-				v, ok := pod.Labels[name]
-				if !ok {
-					continue
+				if v, ok := pod.Labels[name]; ok {
+					extra[name] = v
 				}
-				extra[name] = v
 			}
+			// 按需补充维度
 			if len(extra) > 0 {
 				podInfoRefs = append(podInfoRefs, PodInfoRef{
 					Name:       pod.ID.Name,

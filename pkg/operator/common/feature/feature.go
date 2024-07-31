@@ -29,6 +29,7 @@ const (
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
 	keyCadvisorExtraInfo    = "cadvisorExtraInfo"
+	keySliMonitor           = "sliMonitor"
 )
 
 func isMapKeyExists(m map[string]string, key string) bool {
@@ -126,4 +127,8 @@ func MonitorDropSelector(m map[string]string) map[string]string {
 
 func CadvisorExtraInfo(m map[string]string) ([]string, []string) {
 	return parseCadvisorExtraInfo(m[keyCadvisorExtraInfo])
+}
+
+func SliMonitor(m map[string]string) string {
+	return m[keySliMonitor]
 }

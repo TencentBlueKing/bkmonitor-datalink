@@ -658,7 +658,6 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 			continue
 		}
 		if childConfig == nil {
-			d.mm.IncCreatedChildConfigSkippedCounter()
 			d.cache.Set(namespace, tlset, targetGroup.Labels)
 			continue
 		}

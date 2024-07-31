@@ -9,6 +9,11 @@
 
 package objectsref
 
+import (
+	"strings"
+	"unicode"
+)
+
 // RelabelConfig relabel 配置 遵循 prometheus 规则
 type RelabelConfig struct {
 	SourceLabels []string `json:"sourceLabels"`
@@ -80,7 +85,6 @@ func (oc *ObjectsController) getRefs(pods []Object, podName string, annotations,
 				}
 				extra[name] = v
 			}
-
 			if len(extra) > 0 {
 				podInfoRefs = append(podInfoRefs, PodInfoRef{
 					Name:       pod.ID.Name,
@@ -110,6 +114,10 @@ func (oc *ObjectsController) objsMap() map[string]*Objects {
 		om[kindGameDeployment] = oc.gameDeploymentsObjs
 	}
 	return om
+}
+
+func normalizeName(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }
 
 func getWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfoRef) []RelabelConfig {
@@ -142,7 +150,7 @@ func getWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfo
 				SourceLabels: []string{"namespace", "pod_name"},
 				Separator:    ";",
 				Regex:        ref.Namespace + ";" + ref.Name,
-				TargetLabel:  name,
+				TargetLabel:  normalizeName(name),
 				Replacement:  value,
 				Action:       "replace",
 			})

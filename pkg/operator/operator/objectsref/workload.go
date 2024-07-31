@@ -73,12 +73,12 @@ func (oc *ObjectsController) getRefs(pods []Object, podName string, annotations,
 			extra := make(map[string]string)
 			for _, name := range annotations {
 				if v, ok := pod.Annotations[name]; ok {
-					extra[name] = v
+					extra["annotation_"+name] = v
 				}
 			}
 			for _, name := range labels {
 				if v, ok := pod.Labels[name]; ok {
-					extra[name] = v
+					extra["label_"+name] = v
 				}
 			}
 			// 按需补充维度

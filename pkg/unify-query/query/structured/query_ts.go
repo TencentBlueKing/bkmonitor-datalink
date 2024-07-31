@@ -562,6 +562,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-db", db)
 	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
 	span.Set("tsdb-time-field", tsDB.TimeField)
+	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -728,6 +729,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Fields = fields
 	query.Measurements = measurements
 	query.TimeField = tsDB.TimeField
+	query.NeedAddTime = tsDB.NeedAddTime
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
@@ -784,6 +786,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-cluster-name", query.ClusterName)
 	span.Set("query-tag-keys", query.TagsKey)
 	span.Set("query-vm-rt", query.VmRt)
+	span.Set("query-need-add-time", query.NeedAddTime)
 
 	return query, nil
 }

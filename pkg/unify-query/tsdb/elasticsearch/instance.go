@@ -95,7 +95,7 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index string
+	indexes []string
 	// 单位是 s
 	start    int64
 	end      int64
@@ -154,7 +154,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
+func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[string]any, error) {
 	var (
 		err error
 	)
@@ -169,32 +169,26 @@ func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]int
 		span.End(&err)
 	}()
 
-	span.Set("alias", alias)
+	span.Set("alias", aliases)
+	mappingMap, err := i.client.GetMapping().Index(aliases...).Do(ctx)
 
-	indexs, err := i.getIndexes(ctx, alias)
-	if err != nil {
-		return nil, err
+	indexes := make([]string, 0, len(mappingMap))
+	for index := range mappingMap {
+		indexes = append(indexes, index)
 	}
+	// 按照正序排列，最新的覆盖老的
+	sort.Strings(indexes)
+	span.Set("indexes", indexes)
 
-	span.Set("indexs", indexs)
-
-	for _, index := range indexs {
-		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
-			span.Set("index", index)
-			span.Set("mapping", mapping)
-
-			return mapping, nil
-		} else {
-			return nil, fmt.Errorf("get mappings error with index: %s", index)
+	mappings := make([]map[string]any, 0, len(mappingMap))
+	for _, index := range indexes {
+		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
+			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
+			mappings = append(mappings, mapping)
 		}
 	}
 
-	return nil, nil
+	return mappings, nil
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
@@ -278,14 +272,13 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-index", qo.index)
-	span.Set("query-body", bodyString)
+	span.Set("query-indexes", qo.indexes)
 
-	log.Infof(ctx, "es query index: %s", qo.index)
-	log.Infof(ctx, "es query body: %s", bodyString)
+	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
+	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
 
 	startAnaylize := time.Now()
-	search := i.client.Search().Index(qo.index).SearchSource(source)
+	search := i.client.Search().Index(qo.indexes...).SearchSource(source)
 
 	res, err := search.Do(ctx)
 
@@ -401,6 +394,9 @@ func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string,
 		indexes = append(indexes, idx)
 	}
 
+	sort.Slice(indexes, func(i, j int) bool {
+		return indexes[i] > indexes[j]
+	})
 	return indexes, nil
 }
 
@@ -463,6 +459,57 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) []string {
+	var (
+		alias   []string
+		_, span = trace.NewSpan(ctx, "get-alias")
+		err     error
+	)
+	defer span.End(&err)
+
+	span.Set("need-add-time", needAddTime)
+
+	if needAddTime {
+		loc, err := time.LoadLocation(timezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		start = start.In(loc)
+		end = end.In(loc)
+
+		left := end.Unix() - start.Unix()
+		// 超过 6 个月
+
+		span.Set("timezone", loc.String())
+		span.Set("start", start.String())
+		span.Set("end", end.String())
+		span.Set("left", left)
+
+		addMonth := 0
+		addDay := 1
+		dateFormat := "20060102"
+		if left > int64(time.Hour.Seconds()*24*14) {
+			addDay = 0
+			addMonth = 1
+			dateFormat = "200601"
+			halfYear := time.Hour * 24 * 30 * 6
+			if left > int64(halfYear.Seconds()) {
+				start = end.Add(halfYear * -1)
+			}
+		}
+
+		for d := start; !d.After(end); d = d.AddDate(0, addMonth, addDay) {
+			alias = append(alias, fmt.Sprintf("%s_%s*", db, d.Format(dateFormat)))
+		}
+	} else {
+		alias = append(alias, db)
+	}
+
+	span.Set("alias_num", len(alias))
+
+	return alias
+}
+
 // QueryRaw 给 PromEngine 提供查询接口
 func (i *Instance) QueryRaw(
 	ctx context.Context,
@@ -494,14 +541,21 @@ func (i *Instance) QueryRaw(
 			close(rets)
 		}()
 
+		aliases := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+
 		qo := &queryOption{
-			index: query.DB,
-			start: start.Unix(),
-			end:   end.Unix(),
-			query: query,
+			indexes: aliases,
+			start:   start.Unix(),
+			end:     end.Unix(),
+			query:   query,
 		}
 
-		mapping, err1 := i.getMapping(ctx, qo.index)
+		mappings, err1 := i.getMappings(ctx, qo.indexes)
+		// index 不存在，mappings 获取异常直接返回空
+		if len(mappings) == 0 {
+			return
+		}
+
 		if err1 != nil {
 			rets <- &TimeSeriesResult{
 				Error: err1,
@@ -518,7 +572,7 @@ func (i *Instance) QueryRaw(
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
-			WithMapping(mapping).
+			WithMappings(mappings...).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)
 

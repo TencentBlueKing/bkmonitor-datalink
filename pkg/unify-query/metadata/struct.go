@@ -116,6 +116,7 @@ type Query struct {
 	From          int
 	Size          int
 	Orders        Orders
+	NeedAddTime   bool
 }
 
 type Orders map[string]bool

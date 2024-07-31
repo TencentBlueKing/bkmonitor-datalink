@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package storage
+package remotewirte
 
 import (
 	"bytes"
@@ -52,13 +52,13 @@ func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	}
 }
 
-type prometheusWriter struct {
+type PrometheusWriter struct {
 	config PrometheusWriterOptions
 
 	client *http.Client
 }
 
-func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
+func (p *PrometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 	if !p.config.enabled {
 		return nil
 	}
@@ -98,7 +98,7 @@ func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 	return nil
 }
 
-func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter {
+func NewPrometheusWriterClient(config PrometheusWriterOptions) *PrometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
@@ -107,7 +107,7 @@ func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter
 		Timeout: 10 * time.Second,
 	}
 
-	return &prometheusWriter{
+	return &PrometheusWriter{
 		config: config,
 		client: client,
 	}

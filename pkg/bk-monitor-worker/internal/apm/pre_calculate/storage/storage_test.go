@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remotewirte"
 )
 
 func TestProxyInstance_WriteBatch(t *testing.T) {
@@ -34,9 +35,9 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 		SaveHoldMaxCount(1),
 		SaveHoldDuration(time.Second),
 		PrometheusWriterConfig(
-			PrometheusWriterEnabled(true),
-			PrometheusWriterUrl(config.PromRemoteWriteUrl),
-			PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+			remotewrite.PrometheusWriterEnabled(true),
+			remotewrite.PrometheusWriterUrl(config.PromRemoteWriteUrl),
+			remotewrite.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 		),
 	)
 	if err != nil {
@@ -50,7 +51,7 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 	go func() {
 		dataChan <- SaveRequest{
 			Target: Prometheus,
-			Data: PrometheusStorageData{
+			Data: remotewrite.PrometheusStorageData{
 				Value: []prompb.TimeSeries{
 					{
 						Labels: []prompb.Label{

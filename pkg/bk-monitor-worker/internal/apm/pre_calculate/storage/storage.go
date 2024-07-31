@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remotewirte"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -65,7 +66,7 @@ type ProxyOptions struct {
 	traceEsConfig EsOptions
 	saveEsConfig  EsOptions
 
-	prometheusWriterConfig PrometheusWriterOptions
+	prometheusWriterConfig remotewrite.PrometheusWriterOptions
 
 	// saveReqBufferSize Number of queue capacity that hold SaveRequest
 	saveReqBufferSize int
@@ -148,9 +149,9 @@ func SaveEsConfig(opts ...EsOption) ProxyOption {
 	}
 }
 
-func PrometheusWriterConfig(opts ...PrometheusWriterOption) ProxyOption {
+func PrometheusWriterConfig(opts ...remotewrite.PrometheusWriterOption) ProxyOption {
 	return func(options *ProxyOptions) {
-		writerOpts := PrometheusWriterOptions{}
+		writerOpts := remotewrite.PrometheusWriterOptions{}
 		for _, setter := range opts {
 			setter(&writerOpts)
 		}
@@ -175,7 +176,7 @@ type Proxy struct {
 	saveEs           *esStorage
 	cache            CacheOperator
 	bloomFilter      BloomOperator
-	prometheusWriter *prometheusWriter
+	prometheusWriter *remotewrite.PrometheusWriter
 
 	ctx             context.Context
 	saveRequestChan chan SaveRequest
@@ -198,7 +199,7 @@ func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 	ticker := time.NewTicker(p.config.saveHoldDuration)
 	esSaveData := make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 	cacheSaveData := make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
-	prometheusData := make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
+	prometheusData := make([]remotewrite.PrometheusStorageData, 0, p.config.saveHoldMaxCount)
 loop:
 	for {
 		select {
@@ -245,7 +246,7 @@ loop:
 				}
 			case Prometheus:
 
-				item := r.Data.(PrometheusStorageData)
+				item := r.Data.(remotewrite.PrometheusStorageData)
 				prometheusData = append(prometheusData, item)
 				if len(prometheusData) >= p.config.saveHoldMaxCount {
 					err := p.prometheusWriter.WriteBatch(prometheusData)
@@ -255,7 +256,7 @@ loop:
 						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to PROMETHEUS, cause: %s", len(prometheusData), err)
 						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 					}
-					prometheusData = make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
+					prometheusData = make([]remotewrite.PrometheusStorageData, 0, p.config.saveHoldMaxCount)
 				}
 			default:
 				logger.Warnf("An invalid storage SAVE request was received: %s", r.Target)
@@ -289,7 +290,7 @@ loop:
 					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to PROMETHEUS, cause: %s", len(prometheusData), err)
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 				}
-				prometheusData = make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
+				prometheusData = make([]remotewrite.PrometheusStorageData, 0, p.config.saveHoldMaxCount)
 			}
 		case <-p.ctx.Done():
 			ticker.Stop()
@@ -371,7 +372,7 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		saveEs:           saveEsInstance,
 		cache:            cache,
 		bloomFilter:      bloomFilter,
-		prometheusWriter: newPrometheusWriterClient(opt.prometheusWriterConfig),
+		prometheusWriter: remotewrite.NewPrometheusWriterClient(opt.prometheusWriterConfig),
 		ctx:              ctx,
 		saveRequestChan:  make(chan SaveRequest, opt.saveReqBufferSize),
 	}, nil

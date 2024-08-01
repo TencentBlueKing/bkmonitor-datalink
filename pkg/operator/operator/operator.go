@@ -205,6 +205,8 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	kubernetesVersion = version.String()
 	operator.mm.SetKubernetesVersion(kubernetesVersion)
 
+	logger.Infof("VERSION=%#v", version)
+
 	// 1.21.0 开始 endpointslice 正式成为 v1
 	endpointSliceSupported = semver.MustParse(kubernetesVersion).GTE(semver.MustParse("1.21.0"))
 	logger.Infof("kubernetesVersion=%s, endpointSliceSupported=%v", kubernetesVersion, endpointSliceSupported)

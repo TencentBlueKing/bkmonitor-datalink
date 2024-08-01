@@ -205,10 +205,14 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	kubernetesVersion = version.String()
 	operator.mm.SetKubernetesVersion(kubernetesVersion)
 
-	logger.Infof("VERSION=%#v", version)
+	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
+	if err != nil {
+		parsedVersion = semver.MustParse("1.16.0")
+		logger.Errorf("failed to parse kubernetes version, instead of '%v'", parsedVersion)
+	}
 
 	// 1.21.0 开始 endpointslice 正式成为 v1
-	endpointSliceSupported = semver.MustParse(kubernetesVersion).GTE(semver.MustParse("1.21.0"))
+	endpointSliceSupported = parsedVersion.GTE(semver.MustParse("1.21.0"))
 	logger.Infof("kubernetesVersion=%s, endpointSliceSupported=%v", kubernetesVersion, endpointSliceSupported)
 
 	return operator, nil

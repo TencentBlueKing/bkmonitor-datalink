@@ -12,20 +12,6 @@ package objectsref
 import (
 	"sync"
 	"time"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
-)
-
-var clusterVersion = promauto.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Namespace: define.MonitorNamespace,
-		Name:      "cluster_version",
-		Help:      "kubernetes server version",
-	},
-	[]string{"version"},
 )
 
 type namespaceKind struct {
@@ -79,8 +65,4 @@ func incClusterNodeCount() {
 func decClusterNodeCount() {
 	clusterNode--
 	clusterNodeUpdatedAt = time.Now()
-}
-
-func setClusterVersion(v string) {
-	clusterVersion.WithLabelValues(v).Set(1)
 }

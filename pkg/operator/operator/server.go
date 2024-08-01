@@ -273,10 +273,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	var b []byte
 
 	// 检查 kubernetes 版本信息
-	if objectsref.KubernetesServerVersion == "" {
+	if kubernetesVersion == "" {
 		buf.WriteString(formatKubernetesVersionFailedMsg)
 	} else {
-		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, objectsref.KubernetesServerVersion))
+		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, kubernetesVersion))
 	}
 
 	// 检查 bkmonitor-operator 版本信息

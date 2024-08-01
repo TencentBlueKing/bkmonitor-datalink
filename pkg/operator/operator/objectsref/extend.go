@@ -68,8 +68,6 @@ var (
 		Resource: resourceGameDeployments,
 		Kind:     kindGameDeployment,
 	}
-
-	KubernetesServerVersion string
 )
 
 type tkexObjects struct {

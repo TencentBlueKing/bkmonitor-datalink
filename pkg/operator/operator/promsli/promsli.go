@@ -447,10 +447,9 @@ func generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonitor, ep promv1.End
 
 	// Filter targets based on correct port for the endpoint.
 	if ep.Port != "" {
-		sourceLabels := []string{"__meta_kubernetes_endpoint_port_name"}
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			yaml.MapItem{Key: "source_labels", Value: sourceLabels},
+			yaml.MapItem{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_port_name"}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {

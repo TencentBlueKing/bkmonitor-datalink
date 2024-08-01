@@ -6,6 +6,7 @@ require (
 	github.com/IBM/sarama v1.42.1
 	github.com/RedisBloom/redisbloom-go v1.0.0
 	github.com/TencentBlueKing/bk-apigateway-sdks v0.1.16
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/ahmetb/go-linq/v3 v3.2.0
 	github.com/alicebob/miniredis v2.5.0+incompatible
@@ -43,7 +44,7 @@ require (
 	github.com/prometheus-community/elasticsearch_exporter v1.7.0
 	github.com/prometheus/client_golang v1.17.0
 	github.com/prometheus/client_model v0.4.1-0.20230718164431-9a2bf3000d16
-	github.com/prometheus/prometheus v0.36.2
+	github.com/prometheus/prometheus v0.37.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.46.0
 	github.com/spf13/cast v1.5.1
@@ -88,6 +89,8 @@ require (
 	github.com/eapache/go-resiliency v1.4.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
+	github.com/elastic/beats v7.1.1+incompatible // indirect
+	github.com/elastic/go-ucfg v0.7.0 // indirect
 	github.com/fatih/color v1.15.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
@@ -124,6 +127,7 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/joeshaw/multierror v0.0.0-20140124173710-69b34d4ec901 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.7 // indirect
@@ -186,6 +190,10 @@ require (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+
 )
 
-replace github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
+replace (
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse => ../libgse
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
+)

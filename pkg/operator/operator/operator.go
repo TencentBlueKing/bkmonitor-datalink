@@ -208,7 +208,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
 	if err != nil {
 		parsedVersion = semver.MustParse("1.16.0")
-		logger.Errorf("failed to parse kubernetes version, instead of '%v'", parsedVersion)
+		logger.Errorf("parse kubernetes version failed, instead of '%v', err: %v", parsedVersion, err)
 	}
 
 	// 1.21.0 开始 endpointslice 正式成为 v1

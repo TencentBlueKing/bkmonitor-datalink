@@ -66,7 +66,7 @@ func TestParseLabelJoinRule(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		r := parseLabelJoinRule(c.input)
+		r := parseLabelJoinMatcher(c.input)
 		assert.Equal(t, c.annotations, r.Annotations)
 		assert.Equal(t, c.labels, r.Labels)
 	}

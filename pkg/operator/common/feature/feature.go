@@ -28,7 +28,7 @@ const (
 	keyRelabelIndex         = "relabelIndex"
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
-	keyLabelJoinRule        = "labelJoinRule"
+	keyLabelJoinMatcher     = "labelJoinMatcher"
 	keySliMonitor           = "sliMonitor"
 )
 
@@ -54,15 +54,15 @@ func parseSelector(s string) map[string]string {
 	return selector
 }
 
-type LabelJoinRuleSpec struct {
+type LabelJoinMatcherSpec struct {
 	Kind        string
 	Annotations []string
 	Labels      []string
 }
 
-// parseLabelJoinRule 解析 labeljoin 规则
+// parseLabelJoinMatcher 解析 labeljoin 规则
 // Kind://[label:custom_label|annotation:custom_annotation,...]
-func parseLabelJoinRule(s string) *LabelJoinRuleSpec {
+func parseLabelJoinMatcher(s string) *LabelJoinMatcherSpec {
 	const (
 		annotationPrefix = "annotation:"
 		labelPrefix      = "label:"
@@ -88,7 +88,7 @@ func parseLabelJoinRule(s string) *LabelJoinRuleSpec {
 		}
 	}
 
-	return &LabelJoinRuleSpec{
+	return &LabelJoinMatcherSpec{
 		Kind:        "Pod",
 		Annotations: annotations,
 		Labels:      labels,
@@ -144,8 +144,8 @@ func MonitorDropSelector(m map[string]string) map[string]string {
 	return parseSelector(m[keyMonitorDropSelector])
 }
 
-func LabelJoinRule(m map[string]string) *LabelJoinRuleSpec {
-	return parseLabelJoinRule(m[keyLabelJoinRule])
+func LabelJoinMatcher(m map[string]string) *LabelJoinMatcherSpec {
+	return parseLabelJoinMatcher(m[keyLabelJoinMatcher])
 }
 
 func SliMonitor(m map[string]string) string {

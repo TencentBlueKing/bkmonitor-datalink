@@ -151,7 +151,7 @@ type BaseParams struct {
 	MetricRelabelConfigs   []yaml.MapSlice
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
-	LabelJoinRule          *feature.LabelJoinRuleSpec
+	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
 }
 
 type BaseDiscover struct {
@@ -415,7 +415,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
 	metricTarget.NormalizeMetricName = d.NormalizeMetricName
-	metricTarget.LabelJoinRule = d.LabelJoinRule
+	metricTarget.LabelJoinMatcher = d.LabelJoinMatcher
 
 	return metricTarget, nil
 }

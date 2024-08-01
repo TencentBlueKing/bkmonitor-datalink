@@ -85,7 +85,7 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
-	LabelJoinRule          *feature.LabelJoinRuleSpec
+	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
 
 	hash uint64 // 缓存 hash 避免重复计算
 }
@@ -102,10 +102,10 @@ func (t *MetricTarget) FileName() string {
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 	var annotationsRule, labelsRule []string
 	var kind string
-	if t.LabelJoinRule != nil {
-		annotationsRule = t.LabelJoinRule.Annotations
-		labelsRule = t.LabelJoinRule.Labels
-		kind = t.LabelJoinRule.Kind
+	if t.LabelJoinMatcher != nil {
+		annotationsRule = t.LabelJoinMatcher.Annotations
+		labelsRule = t.LabelJoinMatcher.Labels
+		kind = t.LabelJoinMatcher.Kind
 	}
 
 	switch t.RelabelRule {

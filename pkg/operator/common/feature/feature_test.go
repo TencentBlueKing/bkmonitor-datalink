@@ -47,7 +47,7 @@ func TestParseSelector(t *testing.T) {
 	}
 }
 
-func TestParseLabelJoinRule(t *testing.T) {
+func TestParseLabelJoinMatcher(t *testing.T) {
 	cases := []struct {
 		input       string
 		annotations []string
@@ -66,8 +66,8 @@ func TestParseLabelJoinRule(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		r := parseLabelJoinMatcher(c.input)
-		assert.Equal(t, c.annotations, r.Annotations)
-		assert.Equal(t, c.labels, r.Labels)
+		matcher := parseLabelJoinMatcher(c.input)
+		assert.Equal(t, c.annotations, matcher.Annotations)
+		assert.Equal(t, c.labels, matcher.Labels)
 	}
 }

@@ -28,13 +28,20 @@ type RelabelConfig struct {
 // WorkloadsRelabelConfigs 返回所有 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
 	pods := oc.podObjs.GetAll()
-	return getWorkloadRelabelConfigs(oc.getRefs(pods, "", nil, nil))
+	return asWorkloadRelabelConfigs(oc.getRefs(pods, "", nil, nil))
 }
 
 // WorkloadsRelabelConfigsByPodName 根据节点名称和 pod 名称获取 workload relabel 配置
 func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName string, annotations, labels []string) []RelabelConfig {
 	pods := oc.podObjs.GetByNodeName(nodeName)
-	return getWorkloadRelabelConfigs(oc.getRefs(pods, podName, annotations, labels))
+	return asWorkloadRelabelConfigs(oc.getRefs(pods, podName, annotations, labels))
+}
+
+// PodsRelabelConfigs 获取 Pods Relabels 规则
+func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []RelabelConfig {
+	pods := oc.podObjs.GetAll()
+	_, podsRef := oc.getRefs(pods, "", annotations, labels)
+	return asPodsRelabelConfigs(podsRef)
 }
 
 type WorkloadRef struct {
@@ -117,7 +124,25 @@ func normalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }
 
-func getWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfoRef) []RelabelConfig {
+func asPodsRelabelConfigs(podInfoRefs []PodInfoRef) []RelabelConfig {
+	configs := make([]RelabelConfig, 0)
+
+	for _, ref := range podInfoRefs {
+		for name, value := range ref.Dimensions {
+			configs = append(configs, RelabelConfig{
+				SourceLabels: []string{"namespace", "pod_name"},
+				Separator:    ";",
+				Regex:        ref.Namespace + ";" + ref.Name,
+				TargetLabel:  normalizeName(name),
+				Replacement:  value,
+				Action:       "replace",
+			})
+		}
+	}
+	return configs
+}
+
+func asWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfoRef) []RelabelConfig {
 	configs := make([]RelabelConfig, 0)
 
 	for _, ref := range workloadRefs {
@@ -141,18 +166,6 @@ func getWorkloadRelabelConfigs(workloadRefs []WorkloadRef, podInfoRefs []PodInfo
 		})
 	}
 
-	for _, ref := range podInfoRefs {
-		for name, value := range ref.Dimensions {
-			configs = append(configs, RelabelConfig{
-				SourceLabels: []string{"namespace", "pod_name"},
-				Separator:    ";",
-				Regex:        ref.Namespace + ";" + ref.Name,
-				TargetLabel:  normalizeName(name),
-				Replacement:  value,
-				Action:       "replace",
-			})
-		}
-	}
-
+	configs = append(configs, asPodsRelabelConfigs(podInfoRefs)...)
 	return configs
 }

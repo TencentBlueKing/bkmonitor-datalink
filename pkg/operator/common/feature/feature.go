@@ -28,7 +28,7 @@ const (
 	keyRelabelIndex         = "relabelIndex"
 	keyMonitorMatchSelector = "monitorMatchSelector"
 	keyMonitorDropSelector  = "monitorDropSelector"
-	keyCadvisorExtraInfo    = "cadvisorExtraInfo"
+	keyLabelJoinRule        = "labelJoinRule"
 	keySliMonitor           = "sliMonitor"
 )
 
@@ -54,11 +54,26 @@ func parseSelector(s string) map[string]string {
 	return selector
 }
 
-func parseCadvisorExtraInfo(s string) ([]string, []string) {
+type LabelJoinRuleSpec struct {
+	Kind        string
+	Annotations []string
+	Labels      []string
+}
+
+// parseLabelJoinRule 解析 labeljoin 规则
+// Kind://[label:custom_label|annotation:custom_annotation,...]
+func parseLabelJoinRule(s string) *LabelJoinRuleSpec {
 	const (
 		annotationPrefix = "annotation:"
 		labelPrefix      = "label:"
 	)
+
+	switch {
+	case strings.HasPrefix(s, "Pod://"): // TODO(mando): 目前仅支持 Pod
+		s = s[len("Pod://"):]
+	default:
+		return nil
+	}
 
 	var annotations []string
 	var labels []string
@@ -73,7 +88,11 @@ func parseCadvisorExtraInfo(s string) ([]string, []string) {
 		}
 	}
 
-	return annotations, labels
+	return &LabelJoinRuleSpec{
+		Kind:        "Pod",
+		Annotations: annotations,
+		Labels:      labels,
+	}
 }
 
 // IfCommonResource 检查 DataID 是否为 common 类型
@@ -125,8 +144,8 @@ func MonitorDropSelector(m map[string]string) map[string]string {
 	return parseSelector(m[keyMonitorDropSelector])
 }
 
-func CadvisorExtraInfo(m map[string]string) ([]string, []string) {
-	return parseCadvisorExtraInfo(m[keyCadvisorExtraInfo])
+func LabelJoinRule(m map[string]string) *LabelJoinRuleSpec {
+	return parseLabelJoinRule(m[keyLabelJoinRule])
 }
 
 func SliMonitor(m map[string]string) string {

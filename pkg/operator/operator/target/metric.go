@@ -24,12 +24,14 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 )
 
 const (
-	relabelV1RuleWorkload = "v1/workload"
-	relabelV2RuleWorkload = "v2/workload"
-	relabelV1RuleNode     = "v1/node"
+	relabelV1RuleWorkload  = "v1/workload"
+	relabelV2RuleWorkload  = "v2/workload"
+	relabelV1RuleNode      = "v1/node"
+	relabelV1RuleLabelJoin = "v1/labeljoin"
 )
 
 func IsBuiltinLabels(k string) bool {
@@ -83,8 +85,7 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
-	CadvisorAnnotations    []string
-	CadvisorLabels         []string
+	LabelJoinRule          *feature.LabelJoinRuleSpec
 
 	hash uint64 // 缓存 hash 避免重复计算
 }
@@ -99,6 +100,14 @@ func (t *MetricTarget) FileName() string {
 
 // RemoteRelabelConfig 返回采集器 workload 工作负载信息
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
+	var annotationsRule, labelsRule []string
+	var kind string
+	if t.LabelJoinRule != nil {
+		annotationsRule = t.LabelJoinRule.Annotations
+		labelsRule = t.LabelJoinRule.Labels
+		kind = t.LabelJoinRule.Kind
+	}
+
 	switch t.RelabelRule {
 	case relabelV1RuleWorkload:
 		// index >= 0 表示 annotations 中指定了 index label
@@ -111,8 +120,8 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 				ConfServiceName,
 				ConfServicePort,
 				t.NodeName,
-				strings.Join(t.CadvisorAnnotations, ","),
-				strings.Join(t.CadvisorLabels, ","),
+				strings.Join(annotationsRule, ","),
+				strings.Join(labelsRule, ","),
 			),
 		}
 
@@ -135,10 +144,25 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 					ConfServicePort,
 					t.NodeName,
 					podName,
-					strings.Join(t.CadvisorAnnotations, ","),
-					strings.Join(t.CadvisorLabels, ","),
+					strings.Join(annotationsRule, ","),
+					strings.Join(labelsRule, ","),
 				),
 			}
+		}
+
+	case relabelV1RuleLabelJoin:
+		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+			return nil
+		}
+		return &yaml.MapItem{
+			Key: "metric_relabel_remote",
+			Value: fmt.Sprintf("http://%s:%d/labeljoin?kind=%s&annotations=%s&labels=%s",
+				ConfServiceName,
+				ConfServicePort,
+				kind,
+				strings.Join(annotationsRule, ","),
+				strings.Join(labelsRule, ","),
+			),
 		}
 	}
 	return nil

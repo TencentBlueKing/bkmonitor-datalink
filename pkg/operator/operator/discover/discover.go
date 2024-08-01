@@ -37,6 +37,7 @@ import (
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
@@ -150,8 +151,7 @@ type BaseParams struct {
 	MetricRelabelConfigs   []yaml.MapSlice
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
-	CadvisorAnnotations    []string
-	CadvisorLabels         []string
+	LabelJoinRule          *feature.LabelJoinRuleSpec
 }
 
 type BaseDiscover struct {
@@ -415,8 +415,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
 	metricTarget.NormalizeMetricName = d.NormalizeMetricName
-	metricTarget.CadvisorAnnotations = d.CadvisorAnnotations
-	metricTarget.CadvisorLabels = d.CadvisorLabels
+	metricTarget.LabelJoinRule = d.LabelJoinRule
 
 	return metricTarget, nil
 }

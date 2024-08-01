@@ -47,27 +47,27 @@ func TestParseSelector(t *testing.T) {
 	}
 }
 
-func TestParseCadvisorInfo(t *testing.T) {
+func TestParseLabelJoinRule(t *testing.T) {
 	cases := []struct {
 		input       string
 		annotations []string
 		labels      []string
 	}{
 		{
-			input:       "annotation:biz.service,annotation:biz.set,label:zone.key1,label:zone.key2",
+			input:       "Pod://annotation:biz.service,annotation:biz.set,label:zone.key1,label:zone.key2",
 			annotations: []string{"biz.service", "biz.set"},
 			labels:      []string{"zone.key1", "zone.key2"},
 		},
 		{
-			input:       "annotation: biz.service, annotation: biz.set, label: zone.key1, label: zone.key2",
+			input:       "Pod:// annotation: biz.service, annotation: biz.set, label: zone.key1, label: zone.key2",
 			annotations: []string{"biz.service", "biz.set"},
 			labels:      []string{"zone.key1", "zone.key2"},
 		},
 	}
 
 	for _, c := range cases {
-		annotations, labels := parseCadvisorExtraInfo(c.input)
-		assert.Equal(t, c.annotations, annotations)
-		assert.Equal(t, c.labels, labels)
+		r := parseLabelJoinRule(c.input)
+		assert.Equal(t, c.annotations, r.Annotations)
+		assert.Equal(t, c.labels, r.Labels)
 	}
 }

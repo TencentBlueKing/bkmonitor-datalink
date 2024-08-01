@@ -455,28 +455,42 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
+func splitTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+
+	var ret []string
+	for _, part := range strings.Split(s, ",") {
+		ret = append(ret, strings.TrimSpace(part))
+	}
+	return ret
+}
+
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	split := func(s string) []string {
-		if s == "" {
-			return nil
-		}
-
-		var ret []string
-		for _, part := range strings.Split(s, ",") {
-			ret = append(ret, strings.TrimSpace(part))
-		}
-		return ret
-	}
-
 	query := r.URL.Query()
 	podName := query.Get("podName")
-	annotations := split(query.Get("annotations"))
-	labels := split(query.Get("labels"))
+	annotations := splitTrim(query.Get("annotations"))
+	labels := splitTrim(query.Get("labels"))
 
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels))
+}
+
+func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	kind := query.Get("kind")
+	annotations := splitTrim(query.Get("annotations"))
+	labels := splitTrim(query.Get("labels"))
+
+	switch kind {
+	case "Pod":
+		writeResponse(w, c.objectsController.PodsRelabelConfigs(annotations, labels))
+	default:
+		writeResponse(w, nil)
+	}
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -557,6 +571,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 

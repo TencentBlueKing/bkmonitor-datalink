@@ -16,15 +16,38 @@ import (
 )
 
 const (
-	labelEndpointNodeName          = "__meta_kubernetes_endpoint_node_name"
-	labelPodNodeName               = "__meta_kubernetes_pod_node_name"
-	labelEndpointAddressTargetKind = "__meta_kubernetes_endpoint_address_target_kind"
-	labelPodAddressTargetKind      = "__meta_kubernetes_pod_address_target_kind"
-	labelEndpointAddressTargetName = "__meta_kubernetes_endpoint_address_target_name"
-	labelPodAddressTargetName      = "__meta_kubernetes_pod_address_target_name"
-
-	discoverTypeEndpoints = "endpoints"
+	labelPodNodeName          = "__meta_kubernetes_pod_node_name"
+	labelPodAddressTargetKind = "__meta_kubernetes_pod_address_target_kind"
+	labelPodAddressTargetName = "__meta_kubernetes_pod_address_target_name"
 )
+
+func labelEndpointNodeName(endpointslice bool) string {
+	if endpointslice {
+		return "__meta_kubernetes_endpointslice_node_name"
+	}
+	return "__meta_kubernetes_endpoint_node_name"
+}
+
+func labelEndpointAddressTargetKind(endpointslice bool) string {
+	if endpointslice {
+		return "__meta_kubernetes_endpointslice_address_target_kind"
+	}
+	return "__meta_kubernetes_endpoint_address_target_kind"
+}
+
+func labelEndpointAddressTargetName(endpointslice bool) string {
+	if endpointslice {
+		return "__meta_kubernetes_endpointslice_address_target_name"
+	}
+	return "__meta_kubernetes_endpoint_address_target_name"
+}
+
+func discoverTypeEndpoints(endpointslice bool) string {
+	if endpointslice {
+		return "endpointslice"
+	}
+	return "endpoints"
+}
 
 type EndpointParams struct {
 	*BaseParams
@@ -36,12 +59,12 @@ type Endpoint struct {
 
 func NewEndpointDiscover(ctx context.Context, meta define.MonitorMeta, checkFn define.CheckFunc, params *EndpointParams) Discover {
 	return &Endpoint{
-		BaseDiscover: NewBaseDiscover(ctx, discoverTypeEndpoints, meta, checkFn, params.BaseParams),
+		BaseDiscover: NewBaseDiscover(ctx, discoverTypeEndpoints(params.EndpointSliceSupported), meta, checkFn, params.BaseParams),
 	}
 }
 
 func (d *Endpoint) Type() string {
-	return discoverTypeEndpoints
+	return discoverTypeEndpoints(d.EndpointSliceSupported)
 }
 
 func (d *Endpoint) Reload() error {
@@ -51,7 +74,7 @@ func (d *Endpoint) Reload() error {
 
 func (d *Endpoint) Start() error {
 	d.PreStart()
-	RegisterSharedDiscover(discoverTypeEndpoints, d.KubeConfig, d.getNamespaces())
+	RegisterSharedDiscover(discoverTypeEndpoints(d.EndpointSliceSupported), d.KubeConfig, d.getNamespaces())
 
 	d.wg.Add(1)
 	go func() {

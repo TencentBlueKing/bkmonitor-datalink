@@ -150,6 +150,7 @@ type BaseParams struct {
 	MetricRelabelConfigs   []yaml.MapSlice
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
+	EndpointSliceSupported bool
 }
 
 type BaseDiscover struct {
@@ -271,15 +272,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	for _, label := range origLabels {
 		switch label.Name {
 		// 补充 NodeName
-		case labelEndpointNodeName, labelPodNodeName:
+		case labelEndpointNodeName(d.EndpointSliceSupported), labelPodNodeName:
 			metricTarget.NodeName = label.Value
 
 			// 如果 target 类型是 node，则需要特殊处理，此时 endpointNodeName 对应 label 会为空
-		case labelEndpointAddressTargetKind, labelPodAddressTargetKind:
+		case labelEndpointAddressTargetKind(d.EndpointSliceSupported), labelPodAddressTargetKind:
 			if label.Value == "Node" {
 				isNodeType = true
 			}
-		case labelEndpointAddressTargetName, labelPodAddressTargetName:
+		case labelEndpointAddressTargetName(d.EndpointSliceSupported), labelPodAddressTargetName:
 			targetName = label.Value
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
@@ -42,6 +43,11 @@ import (
 const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
+)
+
+var (
+	kubernetesVersion      string
+	endpointSliceSupported bool
 )
 
 // Operator 负责部署和调度任务
@@ -191,6 +197,17 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
+
+	version, err := operator.client.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+	kubernetesVersion = version.String()
+	operator.mm.SetKubernetesVersion(kubernetesVersion)
+
+	// 1.21.0 开始 endpointslice 正式成为 v1
+	endpointSliceSupported = semver.MustParse(kubernetesVersion).GTE(semver.MustParse("1.21.0"))
+	logger.Infof("kubernetesVersion=%s, endpointSliceSupported=%v", kubernetesVersion, endpointSliceSupported)
 
 	return operator, nil
 }
@@ -566,6 +583,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				AntiAffinity:           feature.IfAntiAffinity(serviceMonitor.Annotations),
 				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
+				EndpointSliceSupported: endpointSliceSupported,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,
@@ -765,6 +783,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				AntiAffinity:           feature.IfAntiAffinity(podMonitor.Annotations),
 				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
+				EndpointSliceSupported: endpointSliceSupported,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,

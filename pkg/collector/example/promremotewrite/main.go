@@ -53,6 +53,9 @@ func sendRequest(wr *prompb.WriteRequest) error {
 
 	total++
 	switch {
+	case total%4 == 0:
+		req.Header.Set("X-BK-DATA-ID", "1001")
+		log.Printf("count(%d): token from [X-BK-DATA-ID] header\n", total)
 	case total%3 == 0:
 		req.Header.Set("X-BK-TOKEN", token)
 		log.Printf("count(%d): token from [X-BK-TOKEN] header\n", total)

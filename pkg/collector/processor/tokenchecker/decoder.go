@@ -26,13 +26,27 @@ import (
 )
 
 const (
-	decoderTypeFixed  = "fixed"
-	decoderTypeAcs256 = "aes256"
-	decoderTypeProxy  = "proxy"
-	decoderTypeBeat   = "beat"
+	decoderTypeFixed         = "fixed"
+	decoderTypeAcs256        = "aes256"
+	decoderTypeProxy         = "proxy"
+	decoderTypeBeat          = "beat"
+	decoderTypeDirectMetrics = "directMetrics"
 )
 
+type TokenDecoder interface {
+	Type() string
+	Skip() bool
+	Decode(s string) (define.Token, error)
+}
+
 func NewTokenDecoder(c Config) TokenDecoder {
+	if !strings.Contains(c.Type, "|") {
+		return newTokenDecoder(c)
+	}
+	return newCombineTokenDecoder(c)
+}
+
+func newTokenDecoder(c Config) TokenDecoder {
 	switch c.Type {
 	case decoderTypeFixed:
 		return newFixedTokenDecoder(c)
@@ -42,6 +56,8 @@ func NewTokenDecoder(c Config) TokenDecoder {
 		return newProxyTokenDecoder(c)
 	case decoderTypeBeat:
 		return newBeatDecoder()
+	case decoderTypeDirectMetrics:
+		return newDirectMetricsDecoder()
 	}
 
 	// 未指定 token decoder 时使用固定的解析方案
@@ -52,10 +68,47 @@ func NewTokenDecoder(c Config) TokenDecoder {
 	})
 }
 
-type TokenDecoder interface {
-	Type() string
-	Skip() bool
-	Decode(s string) (define.Token, error)
+// combineTokenDecoder 支持组合多种 decoder 并按序解析
+type combineTokenDecoder struct {
+	typ      string
+	decoders []TokenDecoder
+}
+
+func newCombineTokenDecoder(c Config) combineTokenDecoder {
+	var decoders []TokenDecoder
+
+	originType := c.Type
+	for _, typ := range strings.Split(c.Type, "|") {
+		cloned := c
+		cloned.Type = typ
+		decoders = append(decoders, newTokenDecoder(cloned))
+	}
+
+	return combineTokenDecoder{
+		typ:      originType,
+		decoders: decoders,
+	}
+}
+
+func (d combineTokenDecoder) Type() string {
+	return d.typ
+}
+
+func (d combineTokenDecoder) Skip() bool {
+	return false
+}
+
+func (d combineTokenDecoder) Decode(s string) (define.Token, error) {
+	var token define.Token
+	var err error
+	for i := 0; i < len(d.decoders); i++ {
+		decoder := d.decoders[i]
+		if token, err = decoder.Decode(s); err == nil {
+			return token, nil
+		}
+	}
+
+	return token, err
 }
 
 // newFixedTokenDecoder 根据配置生成固定 Token
@@ -323,5 +376,35 @@ func (d beatDecoder) Decode(s string) (define.Token, error) {
 	return define.Token{
 		Original:   s,
 		BeatDataId: int32(i),
+	}, nil
+}
+
+func newDirectMetricsDecoder() directMetricsDecoder {
+	return directMetricsDecoder{}
+}
+
+type directMetricsDecoder struct{}
+
+func (d directMetricsDecoder) Type() string {
+	return decoderTypeDirectMetrics
+}
+
+func (d directMetricsDecoder) Skip() bool {
+	return false
+}
+
+func (d directMetricsDecoder) Decode(s string) (define.Token, error) {
+	logger.Debugf("directMetrics dataid=%s", s)
+	if len(s) <= 0 {
+		return define.Token{}, errors.New("reject empty dataid")
+	}
+
+	i, _ := strconv.Atoi(s)
+	if i <= 0 {
+		return define.Token{}, errors.Errorf("reject invalid dataid: %s", s)
+	}
+	return define.Token{
+		Original:      s,
+		MetricsDataId: int32(i),
 	}, nil
 }

@@ -484,6 +484,14 @@ bk-collector:
     # Aes256
     - name: "token_checker/aes256"
 
+    - name: "token_checker/combine"
+      config:
+        type: "ase256|directMetrics"
+        resource_key: "bk.data.token"
+        salt: "bk" # 加盐解密标识
+        decoded_iv: "bkbkbkbkbkbkbkbk"
+        decoded_key: "81be7fc6-5476-4934-9417-6d4d593728db"
+
     # Beat 鉴权
     - name: "token_checker/beat"
       config:
@@ -1057,7 +1065,7 @@ bk-collector:
     - name: "remotewrite_pipeline/common"
       type: "remotewrite"
       processors:
-        - "token_checker/aes256"
+        - "token_checker/combine"
         - "rate_limiter/token_bucket"
 
     - name: "proxy_pipeline/common"

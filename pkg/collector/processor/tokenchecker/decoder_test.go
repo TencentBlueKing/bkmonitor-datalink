@@ -203,6 +203,54 @@ func TestBeatDecoder(t *testing.T) {
 	})
 }
 
+func TestCombineDecoder(t *testing.T) {
+	config := Config{
+		Type:       "aes256|directMetrics",
+		Salt:       "bk",
+		DecodedIv:  "bkbkbkbkbkbkbkbk",
+		DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
+	}
+	decoder := NewTokenDecoder(config)
+
+	cases := []struct {
+		Input string
+		Token define.Token
+		Ok    bool
+	}{
+		{
+			Input: "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+			Token: define.Token{
+				Original:      "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfRgw==",
+				TracesDataId:  1001,
+				MetricsDataId: 1002,
+				LogsDataId:    1003,
+				BizId:         2,
+				AppName:       "oneapm-appname",
+			},
+			Ok: true,
+		},
+		{
+			Input: "1001",
+			Token: define.Token{
+				Original:      "1001",
+				MetricsDataId: 1001,
+			},
+			Ok: true,
+		},
+		{
+			Input: "1001x",
+			Token: define.Token{},
+			Ok:    false,
+		},
+	}
+
+	for _, c := range cases {
+		token, err := decoder.Decode(c.Input)
+		assert.Equal(t, c.Ok, err == nil)
+		assert.Equal(t, c.Token, token)
+	}
+}
+
 func BenchmarkAes256Decoder(b *testing.B) {
 	decoder := newAes256TokenDecoder(aes256TokenDecoderConfig)
 	enc := "Ymtia2JrYmtia2JrYmtia8wN6fmFR+AoSEiL2XaAc4D4OOfEBkj4JFjaiyyPod5+rX6vWlJiypZkcxxwdHzQsw=="

@@ -137,6 +137,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 					break
 				}
 			}
+			// v2 需要保证有 podname 才下发
 			if len(podName) > 0 {
 				if len(path) == 0 {
 					path = fmt.Sprintf("/workload/node/%s", t.NodeName)
@@ -151,7 +152,7 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 			if len(path) == 0 {
 				path = "/labeljoin"
 			} else {
-				params["rules"] = "labeljoin"
+				params["rules"] = "labeljoin" // 兼容混合 workload+labeljoin 混合场景
 			}
 			params["kind"] = kind
 			params["annotations"] = strings.Join(annotationsRule, ",")

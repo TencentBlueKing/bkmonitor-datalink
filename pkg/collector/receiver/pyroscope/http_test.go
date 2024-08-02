@@ -11,19 +11,26 @@ package pyroscope
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime/pprof"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/testkits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	pushv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1"
+	typesv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/types/v1"
 )
 
 const (
@@ -45,6 +52,64 @@ func newSvc(code define.StatusCode, msg string, err error) (HttpService, *atomic
 		}},
 	}
 	return svc, n
+}
+
+func collectTestProfileBytes(t *testing.T) []byte {
+	t.Helper()
+
+	buf := bytes.NewBuffer(nil)
+	require.NoError(t, pprof.WriteHeapProfile(buf))
+	return buf.Bytes()
+}
+
+func TestPusherServiceHandler(t *testing.T) {
+	var (
+		defaultToken        = "valid token"
+		defaultInvalidToken = "invalid token"
+		n                   = atomic.NewInt64(0)
+	)
+
+	svc := HttpService{
+		receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
+		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+			if record.Token.Original != defaultToken {
+				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, fmt.Errorf("invalid profile token")
+			}
+			return define.StatusCodeOK, "", nil
+		}},
+	}
+
+	testReq := connect.NewRequest(&pushv1.PushRequest{
+		Series: []*pushv1.RawProfileSeries{
+			{
+				Labels: []*typesv1.LabelPair{
+					{Name: labelNameServiceName, Value: "serviceName"},
+					{Name: "env", Value: "test"},
+				},
+				Samples: []*pushv1.RawSample{
+					{
+						RawProfile: collectTestProfileBytes(t),
+					},
+				},
+			},
+		},
+	})
+
+	// test1  无 Token
+	_, err := svc.Push(context.Background(), testReq)
+	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// test2  不合法 Token
+	testReq.Header().Set(define.KeyToken, defaultInvalidToken)
+	_, err = svc.Push(context.Background(), testReq)
+	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+
+	// test3  正常情况
+	testReq.Header().Set(define.KeyToken, defaultToken)
+	resp, err := svc.Push(context.Background(), testReq)
+	assert.NotNil(t, resp)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(1), n.Load())
 }
 
 func TestHttpRequest(t *testing.T) {

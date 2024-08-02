@@ -10,6 +10,7 @@
 package target
 
 import (
+	"bytes"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
@@ -108,64 +110,84 @@ func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
 		kind = t.LabelJoinMatcher.Kind
 	}
 
-	switch t.RelabelRule {
-	case relabelV1RuleWorkload:
-		// index >= 0 表示 annotations 中指定了 index label
-		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
-			return nil
-		}
-		return &yaml.MapItem{
-			Key: "metric_relabel_remote",
-			Value: fmt.Sprintf("http://%s:%d/workload/node/%s?annotations=%s&labels=%s",
-				ConfServiceName,
-				ConfServicePort,
-				t.NodeName,
-				strings.Join(annotationsRule, ","),
-				strings.Join(labelsRule, ","),
-			),
-		}
+	var path string
+	host := fmt.Sprintf("http://%s:%d", ConfServiceName, ConfServicePort)
+	params := map[string]string{}
 
-	case relabelV2RuleWorkload:
-		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
-			return nil
-		}
-		var podName string
-		for _, label := range t.Labels {
-			if label.Name == "pod_name" {
-				podName = label.Value
-				break
+	rules := utils.SplitTrim(t.RelabelRule, ",")
+	for _, rule := range rules {
+		switch rule {
+		case relabelV1RuleWorkload:
+			// index >= 0 表示 annotations 中指定了 index label
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
 			}
-		}
-		if len(podName) > 0 {
-			return &yaml.MapItem{
-				Key: "metric_relabel_remote",
-				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s&annotations=%s&labels=%s",
-					ConfServiceName,
-					ConfServicePort,
-					t.NodeName,
-					podName,
-					strings.Join(annotationsRule, ","),
-					strings.Join(labelsRule, ","),
-				),
+			if len(path) == 0 {
+				path = fmt.Sprintf("/workload/node/%s", t.NodeName)
 			}
-		}
 
-	case relabelV1RuleLabelJoin:
-		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
-			return nil
-		}
-		return &yaml.MapItem{
-			Key: "metric_relabel_remote",
-			Value: fmt.Sprintf("http://%s:%d/labeljoin?kind=%s&annotations=%s&labels=%s",
-				ConfServiceName,
-				ConfServicePort,
-				kind,
-				strings.Join(annotationsRule, ","),
-				strings.Join(labelsRule, ","),
-			),
+		case relabelV2RuleWorkload:
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
+			}
+			var podName string
+			for _, label := range t.Labels {
+				if label.Name == "pod_name" {
+					podName = label.Value
+					break
+				}
+			}
+			if len(podName) > 0 {
+				if len(path) == 0 {
+					path = fmt.Sprintf("/workload/node/%s", t.NodeName)
+				}
+				params["podName"] = podName
+			}
+
+		case relabelV1RuleLabelJoin:
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
+			}
+			if len(path) == 0 {
+				path = "/labeljoin"
+			} else {
+				params["rules"] = "labeljoin"
+			}
+			params["kind"] = kind
+			params["annotations"] = strings.Join(annotationsRule, ",")
+			params["labels"] = strings.Join(labelsRule, ",")
 		}
 	}
-	return nil
+
+	if len(path) == 0 {
+		return nil
+	}
+
+	u := host + path
+	p := makeParams(params)
+	if len(p) > 0 {
+		u = u + "?" + p
+	}
+	return &yaml.MapItem{
+		Key:   "metric_relabel_remote",
+		Value: u,
+	}
+}
+
+func makeParams(params map[string]string) string {
+	buf := &bytes.Buffer{}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := params[k]
+		if v != "" {
+			buf.WriteString(fmt.Sprintf("%s=%s&", k, v))
+		}
+	}
+	return strings.TrimRight(buf.String(), "&")
 }
 
 func fnvHash(b []byte) uint64 {

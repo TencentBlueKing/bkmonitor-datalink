@@ -23,6 +23,7 @@ import (
 	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -455,35 +456,36 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.objectsController.WorkloadsRelabelConfigs())
 }
 
-func splitTrim(s string) []string {
-	if s == "" {
-		return nil
-	}
-
-	var ret []string
-	for _, part := range strings.Split(s, ",") {
-		ret = append(ret, strings.TrimSpace(part))
-	}
-	return ret
-}
-
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
 	query := r.URL.Query()
 	podName := query.Get("podName")
-	annotations := splitTrim(query.Get("annotations"))
-	labels := splitTrim(query.Get("labels"))
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 
-	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels))
+	var configs []objectsref.RelabelConfig
+	configs = append(configs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
+
+	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
+	kind := query.Get("kind")
+	rules := query.Get("rules")
+	if rules == "labeljoin" {
+		switch kind {
+		case "Pod":
+			configs = append(configs, c.objectsController.PodsRelabelConfigs(annotations, labels)...)
+		}
+	}
+
+	writeResponse(w, configs)
 }
 
 func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	kind := query.Get("kind")
-	annotations := splitTrim(query.Get("annotations"))
-	labels := splitTrim(query.Get("labels"))
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
 
 	switch kind {
 	case "Pod":

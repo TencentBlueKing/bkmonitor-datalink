@@ -12,6 +12,7 @@ package cmdbcache
 import (
 	"bytes"
 	"fmt"
+	"github.com/prometheus/prometheus/prompb"
 )
 
 type RelationLabel struct {
@@ -19,9 +20,43 @@ type RelationLabel struct {
 	Value string
 }
 
+type RelationLabelList []RelationLabel
+
+func (l RelationLabelList) Label() []prompb.Label {
+	lbs := make([]prompb.Label, 0, len(l))
+	for _, i := range l {
+		lbs = append(lbs, prompb.Label{
+			Name:  i.Name,
+			Value: i.Value,
+		})
+	}
+	return lbs
+}
+
 type RelationMetric struct {
 	Name   string
-	Labels []RelationLabel
+	Labels RelationLabelList
+}
+
+func (m RelationMetric) TimeSeries(bkBizID int) prompb.TimeSeries {
+	lbs := append(
+		[]prompb.Label{
+			{
+				Name:  "__name__",
+				Value: m.Name,
+			},
+			{
+				Name:  "bk_biz_id",
+				Value: fmt.Sprintf("%d", bkBizID),
+			},
+		},
+		m.Labels.Label()...,
+	)
+
+	return prompb.TimeSeries{
+		Labels:  lbs,
+		Samples: []prompb.Sample{{Value: 1}},
+	}
 }
 
 func (m RelationMetric) String(bkBizID int) string {

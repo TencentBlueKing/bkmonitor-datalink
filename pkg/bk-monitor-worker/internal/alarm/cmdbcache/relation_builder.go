@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/prometheus/prometheus/prompb"
 	"sync"
 )
 
@@ -173,4 +175,34 @@ func (b *RelationMetricsBuilder) String() string {
 	}
 
 	return buf.String()
+}
+
+// Push 通过 remote write 上报数据
+func (b *RelationMetricsBuilder) Push() error {
+	url := ""
+	headers := make(map[string]string)
+	options := remote.GetPrometheusWriteOptions(
+		remote.PrometheusWriterEnabled(true),
+		remote.PrometheusWriterUrl(url),
+		remote.PrometheusWriterHeaders(headers),
+	)
+
+	var tsList []prompb.TimeSeries
+	metricsMap := make(map[string]struct{})
+	b.metricsLock.RLock()
+	for bkBizID, nodeMap := range b.metrics {
+		for _, nodes := range nodeMap {
+			for _, relationMetric := range nodes.toRelationMetrics() {
+				ts := relationMetric.TimeSeries(bkBizID)
+				if _, ok := metricsMap[ts.String()]; !ok {
+					metricsMap[ts.String()] = struct{}{}
+					tsList = append(tsList, ts)
+				}
+			}
+		}
+	}
+	b.metricsLock.RUnlock()
+
+	prometheusWriter := remote.NewPrometheusWriterClient(options)
+	return prometheusWriter.WriteBatch(tsList)
 }

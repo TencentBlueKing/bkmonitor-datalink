@@ -26,111 +26,121 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 
-	prometheusWriter := NewPrometheusWriterClient(PrometheusWriterOptions{
-		enabled: true,
-		url:     config.PromRemoteWriteUrl,
-		headers: config.PromRemoteWriteHeaders,
-	})
-	data := append([]PrometheusStorageData{
+	options := GetPrometheusWriteOptions(
+		PrometheusWriterEnabled(true),
+		PrometheusWriterUrl(config.PromRemoteWriteUrl),
+		PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+	)
+	prometheusWriter := NewPrometheusWriterClient(options)
+	ts := append([]prompb.TimeSeries{
+
 		{
-			Value: []prompb.TimeSeries{
+			Labels: []prompb.Label{
 				{
-					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "prometheus_test",
-						},
-						{
-							Name:  "role",
-							Value: "child",
-						},
-						{
-							Name:  "status",
-							Value: "pending",
-						},
-					},
-					Samples: []prompb.Sample{
-						{
-							Timestamp: time.Now().UnixMilli(),
-							Value:     rand.Float64() * float64(rand.Intn(100)),
-						},
-					},
+					Name:  "__name__",
+					Value: "prometheus_test",
 				},
 				{
-					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "prometheus_test",
-						},
-						{
-							Name:  "role",
-							Value: "child",
-						},
-						{
-							Name:  "status",
-							Value: "running",
-						},
-					},
-					Samples: []prompb.Sample{
-						{
-							Timestamp: time.Now().UnixMilli(),
-							Value:     rand.Float64() * float64(rand.Intn(100)),
-						},
-					},
+					Name:  "role",
+					Value: "child",
+				},
+				{
+					Name:  "status",
+					Value: "pending",
+				},
+				{
+					Name:  "date",
+					Value: time.Now().Format("2006010215"),
+				},
+			},
+			Samples: []prompb.Sample{
+				{
+					Timestamp: time.Now().UnixMilli(),
+					Value:     rand.Float64() * float64(rand.Intn(100)),
 				},
 			},
 		},
 		{
-			Value: []prompb.TimeSeries{
+			Labels: []prompb.Label{
 				{
-					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "prometheus_test",
-						},
-						{
-							Name:  "role",
-							Value: "parent",
-						},
-						{
-							Name:  "status",
-							Value: "pending",
-						},
-					},
-					Samples: []prompb.Sample{
-						{
-							Timestamp: time.Now().UnixMilli(),
-							Value:     rand.Float64() * float64(rand.Intn(100)),
-						},
-					},
+					Name:  "__name__",
+					Value: "prometheus_test",
 				},
 				{
-					Labels: []prompb.Label{
-						{
-							Name:  "__name__",
-							Value: "prometheus_test",
-						},
-						{
-							Name:  "role",
-							Value: "parent",
-						},
-						{
-							Name:  "status",
-							Value: "running",
-						},
-					},
-					Samples: []prompb.Sample{
-						{
-							Timestamp: time.Now().UnixMilli(),
-							Value:     rand.Float64() * float64(rand.Intn(100)),
-						},
-					},
+					Name:  "role",
+					Value: "child",
+				},
+				{
+					Name:  "status",
+					Value: "running",
+				},
+				{
+					Name:  "date",
+					Value: time.Now().Format("2006010215"),
+				},
+			},
+			Samples: []prompb.Sample{
+				{
+					Timestamp: time.Now().UnixMilli(),
+					Value:     rand.Float64() * float64(rand.Intn(100)),
+				},
+			},
+		},
+		{
+			Labels: []prompb.Label{
+				{
+					Name:  "__name__",
+					Value: "prometheus_test",
+				},
+				{
+					Name:  "role",
+					Value: "parent",
+				},
+				{
+					Name:  "status",
+					Value: "pending",
+				},
+				{
+					Name:  "date",
+					Value: time.Now().Format("2006010215"),
+				},
+			},
+			Samples: []prompb.Sample{
+				{
+					Timestamp: time.Now().UnixMilli(),
+					Value:     rand.Float64() * float64(rand.Intn(100)),
+				},
+			},
+		},
+		{
+			Labels: []prompb.Label{
+				{
+					Name:  "__name__",
+					Value: "prometheus_test",
+				},
+				{
+					Name:  "role",
+					Value: "parent",
+				},
+				{
+					Name:  "status",
+					Value: "running",
+				},
+				{
+					Name:  "date",
+					Value: time.Now().Format("2006010215"),
+				},
+			},
+			Samples: []prompb.Sample{
+				{
+					Timestamp: time.Now().UnixMilli(),
+					Value:     rand.Float64() * float64(rand.Intn(100)),
 				},
 			},
 		},
 	})
 
-	err := prometheusWriter.WriteBatch(data)
+	err := prometheusWriter.WriteBatch(ts)
 	if err != nil {
 		log.Fatal(err)
 	}

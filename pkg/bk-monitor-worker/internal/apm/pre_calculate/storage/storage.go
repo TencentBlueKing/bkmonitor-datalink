@@ -199,7 +199,7 @@ func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 	ticker := time.NewTicker(p.config.saveHoldDuration)
 	esSaveData := make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 	cacheSaveData := make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
-	prometheusData := make([]remotewrite.PrometheusStorageData, 0, p.config.saveHoldMaxCount)
+	prometheusData := make(remotewrite.PrometheusStorageDataList, 0, p.config.saveHoldMaxCount)
 loop:
 	for {
 		select {
@@ -245,11 +245,10 @@ loop:
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			case Prometheus:
-
 				item := r.Data.(remotewrite.PrometheusStorageData)
 				prometheusData = append(prometheusData, item)
 				if len(prometheusData) >= p.config.saveHoldMaxCount {
-					err := p.prometheusWriter.WriteBatch(prometheusData)
+					err := p.prometheusWriter.WriteBatch(prometheusData.ToTimeSeries())
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
 					if err != nil {
@@ -283,7 +282,7 @@ loop:
 				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 			}
 			if len(prometheusData) != 0 {
-				err := p.prometheusWriter.WriteBatch(prometheusData)
+				err := p.prometheusWriter.WriteBatch(prometheusData.ToTimeSeries())
 				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
 				if err != nil {

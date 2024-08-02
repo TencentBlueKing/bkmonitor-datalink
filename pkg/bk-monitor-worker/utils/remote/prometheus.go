@@ -22,6 +22,8 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
+type PrometheusStorageDataList []PrometheusStorageData
+
 type PrometheusStorageData struct {
 	Value []prompb.TimeSeries
 }
@@ -58,17 +60,31 @@ type PrometheusWriter struct {
 	client *http.Client
 }
 
-func (p *PrometheusWriter) WriteBatch(data []PrometheusStorageData) error {
+func GetPrometheusWriteOptions(opts ...PrometheusWriterOption) PrometheusWriterOptions {
+	var res PrometheusWriterOptions
+	for _, opt := range opts {
+		opt(&res)
+	}
+	return res
+}
+
+func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
+	if d == nil {
+		return nil
+	}
+	var ts []prompb.TimeSeries
+	for _, item := range d {
+		ts = append(ts, item.Value...)
+	}
+	return ts
+}
+
+func (p *PrometheusWriter) WriteBatch(tsList []prompb.TimeSeries) error {
 	if !p.config.enabled {
 		return nil
 	}
 
-	var series []prompb.TimeSeries
-	for _, item := range data {
-		series = append(series, item.Value...)
-	}
-
-	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: series})
+	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: tsList})
 	if err != nil {
 		return err
 	}

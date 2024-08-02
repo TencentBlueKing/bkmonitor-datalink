@@ -27,10 +27,8 @@ func TestProxyInstance_WriteBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mocker.InitTestDBConfig("../../../../dist/bmw.yaml")
 
-	dataID := "1234"
-
 	proxy, err := NewProxyInstance(
-		dataID, ctx,
+		"", ctx,
 		WorkerCount(1),
 		SaveHoldMaxCount(1),
 		SaveHoldDuration(time.Second),

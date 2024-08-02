@@ -211,6 +211,7 @@ func TestCombineDecoder(t *testing.T) {
 		DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
 	}
 	decoder := NewTokenDecoder(config)
+	assert.Equal(t, "aes256|directMetrics", decoder.Type())
 
 	cases := []struct {
 		Input string

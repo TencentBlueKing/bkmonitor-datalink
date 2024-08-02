@@ -39,7 +39,7 @@ var (
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 25) // 避免高频操作
 }
 
 func EqualMap(a, b map[string]struct{}) bool {
@@ -301,7 +301,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	}
 
 	for secretName := range dropSecrets {
-		Slowdown() // 避免高频操作
+		Slowdown()
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {

@@ -92,13 +92,11 @@ tasks:
 }
 
 func TestRemoteRelabelConfig(t *testing.T) {
-	type Case struct {
+	cases := []struct {
 		Name   string
 		Input  *MetricTarget
 		Output *yaml.MapItem
-	}
-
-	cases := []Case{
+	}{
 		{
 			Name: "NoRules",
 			Input: &MetricTarget{
@@ -205,5 +203,37 @@ func TestRemoteRelabelConfig(t *testing.T) {
 		t.Run(c.Name, func(t *testing.T) {
 			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
 		})
+	}
+}
+
+func TestMakeParams(t *testing.T) {
+	cases := []struct {
+		Input  map[string]string
+		Output string
+	}{
+		{
+			Input: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+			Output: "key1=value1&key2=value2",
+		},
+		{
+			Input: map[string]string{
+				"key1": "value1",
+			},
+			Output: "key1=value1",
+		},
+		{
+			Input: map[string]string{
+				"key1": "",
+				"key2": "value2",
+			},
+			Output: "key2=value2",
+		},
+	}
+
+	for _, c := range cases {
+		assert.Equal(t, c.Output, makeParams(c.Input))
 	}
 }

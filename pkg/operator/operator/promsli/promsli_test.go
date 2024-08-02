@@ -16,12 +16,10 @@ import (
 )
 
 func TestParsePromQLMetrics(t *testing.T) {
-	type Case struct {
+	cases := []struct {
 		q       string
 		metrics []string
-	}
-
-	cases := []Case{
+	}{
 		{
 			q: `
 (
@@ -68,12 +66,10 @@ func TestParsePromQLMetrics(t *testing.T) {
 }
 
 func TestToPromFormat(t *testing.T) {
-	type Case struct {
+	cases := []struct {
 		Input  map[string]string
 		Output string
-	}
-
-	cases := []Case{
+	}{
 		{
 			Input:  map[string]string{"foo": "bar", "key1": "value1"},
 			Output: `alert_rules{foo="bar",key1="value1"} 1`,

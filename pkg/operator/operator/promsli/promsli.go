@@ -331,7 +331,6 @@ func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 	var cfg []yaml.MapSlice
 	for _, sm := range c.serviceMonitors {
 		// 内置白名单
-		feature.SliMonitor(sm.Annotations)
 		if feature.SliMonitor(sm.Annotations) == sliAnnotationBuiltin {
 			for i, ep := range sm.Spec.Endpoints {
 				cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i, nil))

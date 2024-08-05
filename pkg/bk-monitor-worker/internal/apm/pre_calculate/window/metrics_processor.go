@@ -33,6 +33,11 @@ const (
 var (
 	CallerKinds = []int{int(core.KindClient), int(core.KindProducer)}
 	CalleeKinds = []int{int(core.KindServer), int(core.KindConsumer)}
+
+	// MatchFromDb 从 DB 中获取自定义服务规则进行匹配
+	MatchFromDb = "db"
+	// MatchFromSpan 从 Span 中获取字段进行匹配
+	MatchFromSpan = "span"
 )
 
 type MetricProcessor struct {
@@ -45,7 +50,8 @@ type MetricProcessor struct {
 
 	enabledLayer4Report bool
 
-	customServiceRules []models.CustomServiceRule
+	customServiceDiscoverType string
+	customServiceRules        []models.CustomServiceRule
 }
 
 func (m *MetricProcessor) ToMetrics(receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph) {
@@ -356,43 +362,54 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 	metricCount map[string]int,
 ) (discoverSpanIds []string) {
 	serviceName := span.GetFieldValue(core.ServiceNameField)
-	for _, rule := range m.customServiceRules {
-		predicateKeyValue := span.GetFieldValue(rule.PredicateKey)
-		if predicateKeyValue == "" {
-			continue
+	var peerService string
+	var peerServiceType string
+	if m.customServiceDiscoverType == MatchFromSpan {
+		peerService = span.GetFieldValue(core.PeerServiceField)
+		peerServiceType = "http"
+	} else {
+		for _, rule := range m.customServiceRules {
+			predicateKeyValue := span.GetFieldValue(rule.PredicateKey)
+			if predicateKeyValue == "" {
+				continue
+			}
+			val := span.GetFieldValue(rule.MatchKey)
+			if val == "" {
+				continue
+			}
+			mappings, matched, matchType := rule.Match(val)
+			logger.Debugf("Matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
+			if !matched {
+				continue
+			}
+			peerService = mappings["peerService"]
+			if peerService == "" {
+				continue
+			}
+			peerServiceType = rule.Type
+			break
 		}
-		val := span.GetFieldValue(rule.MatchKey)
-		if val == "" {
-			continue
-		}
-		mappings, matched, matchType := rule.Match(val)
-		logger.Debugf("Matcher: mappings=%v, matched=%v, matchType=%v", mappings, matched, matchType)
-		if !matched {
-			continue
-		}
-		peerService, exist := mappings["peerService"]
-		if !exist {
-			continue
-		}
-		customServiceLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
-			"__name__", storage.ApmServiceFlow,
-			"from_apm_service_name", serviceName,
-			"from_apm_application_name", m.appName,
-			"from_apm_service_category", storage.CategoryHttp,
-			"from_apm_service_kind", storage.KindService,
-			"to_apm_service_name", fmt.Sprintf("%s:%s", rule.Type, peerService),
-			"to_apm_application_name", m.appName,
-			"to_apm_service_category", storage.CategoryHttp,
-			"to_apm_service_kind", storage.KindCustomService,
-			"from_span_error", span.IsError(),
-			"to_span_error", span.IsError(),
-		)
-		m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
-		metricCount[storage.ApmServiceFlow]++
-		discoverSpanIds = append(discoverSpanIds, span.SpanId)
-		break
 	}
+	if peerService == "" {
+		return
+	}
+	customServiceLabelKey := fmt.Sprintf(
+		"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
+		"__name__", storage.ApmServiceFlow,
+		"from_apm_service_name", serviceName,
+		"from_apm_application_name", m.appName,
+		"from_apm_service_category", storage.CategoryHttp,
+		"from_apm_service_kind", storage.KindService,
+		"to_apm_service_name", fmt.Sprintf("%s:%s", peerServiceType, peerService),
+		"to_apm_application_name", m.appName,
+		"to_apm_service_category", storage.CategoryHttp,
+		"to_apm_service_kind", storage.KindCustomService,
+		"from_span_error", span.IsError(),
+		"to_span_error", span.IsError(),
+	)
+	m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
+	metricCount[storage.ApmServiceFlow]++
+	discoverSpanIds = append(discoverSpanIds, span.SpanId)
 	return
 }
 
@@ -460,7 +477,13 @@ func newMetricProcessor(ctx context.Context, dataId string, enabledLayer4Metric 
 		appName:             baseInfo.AppName,
 		appId:               baseInfo.AppId,
 		enabledLayer4Report: enabledLayer4Metric,
+		// 自定义服务的发现 目前统一为从 Span 的字段中匹配
+		customServiceDiscoverType: MatchFromSpan,
 	}
-	go p.refreshCustomService()
+
+	if p.customServiceDiscoverType == MatchFromDb {
+		go p.refreshCustomService()
+	}
+
 	return &p
 }

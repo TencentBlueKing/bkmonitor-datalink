@@ -93,13 +93,14 @@ func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.Pu
 	ip := utils.ParseRequestIP(rpcReq.Peer().Addr)
 	start := time.Now()
 
-	token := rpcReq.Header().Get(define.KeyToken)
-	if token == "" {
+	originToken := rpcReq.Header().Get(define.KeyToken)
+	if originToken == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		err := fmt.Errorf("invalid profile token, ip=%s", ip)
 		logger.Warnf(err.Error())
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	token := define.Token{Original: originToken}
 
 	for _, rpcSeries := range rpcReq.Msg.Series {
 		tags := make(map[string]string)
@@ -117,13 +118,13 @@ func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.Pu
 			rawProfile := define.ProfilesRawData{
 				Data: define.ProfilePprofFormatOrigin(sample.RawProfile),
 				Metadata: define.ProfileMetadata{
-					StartTime:       start, // 这里的时间实际没有使用，具体的时间取自pprof数据
-					EndTime:         start, // 这里的时间实际没有使用，具体的时间取自pprof数据
+					StartTime:       start, // 这里的时间实际没有使用，具体的时间取自 pprof 数据
+					EndTime:         start, // 这里的时间实际没有使用，具体的时间取自 pprof 数据
 					SpyName:         EbpfSpy,
 					Format:          define.FormatPprof,
 					AggregationType: "cpu",
 					Units:           "nanoseconds",
-					Tags:            tags,
+					Tags:            utils.CloneMap(tags),
 					AppName:         serviceName,
 				},
 			}
@@ -133,7 +134,7 @@ func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.Pu
 				RequestClient: define.RequestClient{IP: ip},
 				RecordType:    define.RecordProfiles,
 				Data:          rawProfile,
-				Token:         define.Token{Original: token},
+				Token:         token,
 			}
 			code, processorName, err := s.Validate(r)
 			if err != nil {
@@ -144,9 +145,9 @@ func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.Pu
 			}
 
 			s.Publish(r)
-			receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, 0, start)
 		}
 	}
+	receiver.RecordHandleMetrics(metricMonitor, token, define.RequestHttp, define.RecordProfiles, 0, start)
 	return connect.NewResponse(&pushv1.PushResponse{}), nil
 }
 

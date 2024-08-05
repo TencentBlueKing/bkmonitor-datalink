@@ -63,53 +63,67 @@ func collectTestProfileBytes(t *testing.T) []byte {
 }
 
 func TestPusherServiceHandler(t *testing.T) {
-	var (
-		defaultToken        = "valid token"
-		defaultInvalidToken = "invalid token"
-		n                   = atomic.NewInt64(0)
+	const (
+		DefaultToken        = "valid token"
+		DefaultInvalidToken = "invalid token"
 	)
 
-	svc := HttpService{
-		receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
-		pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
-			if record.Token.Original != defaultToken {
-				return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, fmt.Errorf("invalid profile token")
-			}
-			return define.StatusCodeOK, "", nil
-		}},
+	newTestSvc := func() (HttpService, *atomic.Int64) {
+		n := atomic.NewInt64(0)
+		svc := HttpService{
+			receiver.Publisher{Func: func(record *define.Record) { n.Inc() }},
+			pipeline.Validator{Func: func(record *define.Record) (define.StatusCode, string, error) {
+				if record.Token.Original != DefaultToken {
+					return define.StatusCodeUnauthorized, define.ProcessorTokenChecker, fmt.Errorf("invalid profile token")
+				}
+				return define.StatusCodeOK, "", nil
+			}},
+		}
+		return svc, n
 	}
 
-	testReq := connect.NewRequest(&pushv1.PushRequest{
-		Series: []*pushv1.RawProfileSeries{
-			{
-				Labels: []*typesv1.LabelPair{
-					{Name: labelNameServiceName, Value: "serviceName"},
-					{Name: "env", Value: "test"},
-				},
-				Samples: []*pushv1.RawSample{
-					{
-						RawProfile: collectTestProfileBytes(t),
+	newTestReq := func() *connect.Request[pushv1.PushRequest] {
+		return connect.NewRequest(&pushv1.PushRequest{
+			Series: []*pushv1.RawProfileSeries{
+				{
+					Labels: []*typesv1.LabelPair{
+						{Name: labelNameServiceName, Value: "serviceName"},
+						{Name: "env", Value: "test"},
+					},
+					Samples: []*pushv1.RawSample{
+						{
+							RawProfile: collectTestProfileBytes(t),
+						},
 					},
 				},
 			},
-		},
+		})
+	}
+
+	t.Run("test no token", func(t *testing.T) {
+		svc, _ := newTestSvc()
+		testReq := newTestReq()
+		_, err := svc.Push(context.Background(), testReq)
+		assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	})
 
-	// test1  无 Token
-	_, err := svc.Push(context.Background(), testReq)
-	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	t.Run("test invalid token", func(t *testing.T) {
+		svc, _ := newTestSvc()
+		testReq := newTestReq()
+		testReq.Header().Set(define.KeyToken, DefaultInvalidToken)
+		_, err := svc.Push(context.Background(), testReq)
+		assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	})
 
-	// test2  不合法 Token
-	testReq.Header().Set(define.KeyToken, defaultInvalidToken)
-	_, err = svc.Push(context.Background(), testReq)
-	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-
-	// test3  正常情况
-	testReq.Header().Set(define.KeyToken, defaultToken)
-	resp, err := svc.Push(context.Background(), testReq)
-	assert.NotNil(t, resp)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(1), n.Load())
+	t.Run("test success", func(t *testing.T) {
+		svc, n := newTestSvc()
+		testReq := newTestReq()
+		testReq.Header().Set(define.KeyToken, DefaultToken)
+		resp, err := svc.Push(context.Background(), testReq)
+		assert.NotNil(t, resp)
+		assert.Nil(t, err)
+		assert.Equal(t, int64(1), n.Load())
+	})
 }
 
 func TestHttpRequest(t *testing.T) {

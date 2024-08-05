@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,7 +105,9 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ch := c.scrapeForce(namespace, monitor)
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+	ch := c.scrapeForce(namespace, monitor, i)
 	const batch = 1000
 	n := 0
 	for line := range ch {

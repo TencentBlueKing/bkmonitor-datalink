@@ -17,7 +17,8 @@ MODULE=bk-collector
 TEST_COVERAGE_THRESHOLD=75
 
 function unittest() {
-  go test ./... -coverprofile coverage.out -covermode count
+  go test ./... -coverprofile coverage.tmp -covermode count
+  cat coverage.tmp | grep -v '/pyroscope/gen' > coverage.out
   go tool cover -func coverage.out
   echo "Quality Gate: checking test coverage is above threshold ..."
   echo "Threshold             : $TEST_COVERAGE_THRESHOLD%"

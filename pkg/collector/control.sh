@@ -18,7 +18,7 @@ TEST_COVERAGE_THRESHOLD=75
 
 function unittest() {
   go test ./... -coverprofile coverage.tmp -covermode count
-  cat coverage.tmp | grep -v '/pyroscope/gen' > coverage.out
+  cat coverage.tmp | grep -v '/gen/' > coverage.out
   go tool cover -func coverage.out
   echo "Quality Gate: checking test coverage is above threshold ..."
   echo "Threshold             : $TEST_COVERAGE_THRESHOLD%"

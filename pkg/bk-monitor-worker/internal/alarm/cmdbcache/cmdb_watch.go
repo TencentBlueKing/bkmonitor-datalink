@@ -527,10 +527,16 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				// 事件处理
 				handler.Handle(cancelCtx)
 
+				// 推送自定义上报数据
+				if err := GetRelationMetricsBuilder().PushAll(cancelCtx, time.Now()); err != nil {
+					logger.Errorf("relation metrics builder push all error: %v", err.Error())
+				}
+
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
 					handler.Close()
+					GetRelationMetricsBuilder().ClearAllMetrics()
 					return
 				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
 				}

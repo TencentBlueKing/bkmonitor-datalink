@@ -11,6 +11,7 @@ package remote
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"testing"
@@ -26,6 +27,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 
+	metric := fmt.Sprintf("prometheus_%s", time.Now().Format("2006010215"))
 	options := GetPrometheusWriteOptions(
 		PrometheusWriterEnabled(true),
 		PrometheusWriterUrl(config.PromRemoteWriteUrl),
@@ -38,7 +40,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
-					Value: "prometheus_test",
+					Value: metric,
 				},
 				{
 					Name:  "role",
@@ -64,7 +66,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
-					Value: "prometheus_test",
+					Value: metric,
 				},
 				{
 					Name:  "role",
@@ -90,7 +92,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
-					Value: "prometheus_test",
+					Value: metric,
 				},
 				{
 					Name:  "role",
@@ -116,7 +118,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 			Labels: []prompb.Label{
 				{
 					Name:  "__name__",
-					Value: "prometheus_test",
+					Value: metric,
 				},
 				{
 					Name:  "role",
@@ -140,7 +142,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 		},
 	})
 
-	err := prometheusWriter.WriteBatch(ts)
+	err := prometheusWriter.WriteBatch(ctx, ts)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -248,7 +248,7 @@ loop:
 				item := r.Data.(remotewrite.PrometheusStorageData)
 				prometheusData = append(prometheusData, item)
 				if len(prometheusData) >= p.config.saveHoldMaxCount {
-					err := p.prometheusWriter.WriteBatch(prometheusData.ToTimeSeries())
+					err := p.prometheusWriter.WriteBatch(p.ctx, prometheusData.ToTimeSeries())
 					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
 					if err != nil {
@@ -282,7 +282,7 @@ loop:
 				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 			}
 			if len(prometheusData) != 0 {
-				err := p.prometheusWriter.WriteBatch(prometheusData.ToTimeSeries())
+				err := p.prometheusWriter.WriteBatch(p.ctx, prometheusData.ToTimeSeries())
 				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
 				if err != nil {

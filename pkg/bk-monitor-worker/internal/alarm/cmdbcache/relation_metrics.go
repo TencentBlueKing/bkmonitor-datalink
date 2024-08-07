@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/prometheus/prometheus/prompb"
+	"time"
 )
 
 type RelationLabel struct {
@@ -38,7 +39,7 @@ type RelationMetric struct {
 	Labels RelationLabelList
 }
 
-func (m RelationMetric) TimeSeries(bkBizID int) prompb.TimeSeries {
+func (m RelationMetric) TimeSeries(bkBizID int, timestamp time.Time) prompb.TimeSeries {
 	lbs := append(
 		[]prompb.Label{
 			{
@@ -55,7 +56,7 @@ func (m RelationMetric) TimeSeries(bkBizID int) prompb.TimeSeries {
 
 	return prompb.TimeSeries{
 		Labels:  lbs,
-		Samples: []prompb.Sample{{Value: 1}},
+		Samples: []prompb.Sample{{Value: 1, Timestamp: timestamp.UnixMilli()}},
 	}
 }
 

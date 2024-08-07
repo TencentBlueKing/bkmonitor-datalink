@@ -11,6 +11,7 @@ package remote
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -79,7 +80,7 @@ func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
 	return ts
 }
 
-func (p *PrometheusWriter) WriteBatch(tsList []prompb.TimeSeries) error {
+func (p *PrometheusWriter) WriteBatch(ctx context.Context, tsList []prompb.TimeSeries) error {
 	if !p.config.enabled {
 		return nil
 	}
@@ -89,7 +90,7 @@ func (p *PrometheusWriter) WriteBatch(tsList []prompb.TimeSeries) error {
 		return err
 	}
 	compressedData := snappy.Encode(nil, reqBytes)
-	req, err := http.NewRequest("POST", p.config.url, bytes.NewBuffer(compressedData))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.config.url, bytes.NewBuffer(compressedData))
 	if err != nil {
 		return err
 	}

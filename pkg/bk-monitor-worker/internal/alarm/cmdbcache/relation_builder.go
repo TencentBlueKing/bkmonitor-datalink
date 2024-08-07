@@ -13,23 +13,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/prometheus/prometheus/prompb"
 	"sync"
+	"time"
 )
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
-	ctx         context.Context
 	metricsLock sync.RWMutex
 	metrics     map[int]map[int]Nodes
 }
 
 var (
-	defaultRelationMetricsBuilder = NewRelationMetricsBuilder()
+	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
 )
 
-func NewRelationMetricsBuilder() *RelationMetricsBuilder {
+func newRelationMetricsBuilder() *RelationMetricsBuilder {
 	return &RelationMetricsBuilder{
 		metrics: make(map[int]map[int]Nodes),
 	}
@@ -52,12 +54,6 @@ func (b *RelationMetricsBuilder) toString(v any) string {
 	return val
 }
 
-// WithContext 写入 context 用于管理上下文
-func (b *RelationMetricsBuilder) WithContext(ctx context.Context) *RelationMetricsBuilder {
-	b.ctx = ctx
-	return b
-}
-
 // ClearAllMetrics 清理全部指标
 func (b *RelationMetricsBuilder) ClearAllMetrics() {
 	b.metrics = make(map[int]map[int]Nodes)
@@ -75,7 +71,6 @@ func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hosts ...*AlarmHostInfo)
 			}
 		}
 	}
-
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
@@ -178,31 +173,45 @@ func (b *RelationMetricsBuilder) String() string {
 }
 
 // Push 通过 remote write 上报数据
-func (b *RelationMetricsBuilder) Push() error {
-	url := ""
-	headers := make(map[string]string)
+func (b *RelationMetricsBuilder) Push(ctx context.Context, bkBizID int, tsList []prompb.TimeSeries) error {
+	headers := config.PromRemoteWriteHeaders
+	headers["x-bk-data-id"] = fmt.Sprintf("%d", 1584605)
 	options := remote.GetPrometheusWriteOptions(
 		remote.PrometheusWriterEnabled(true),
-		remote.PrometheusWriterUrl(url),
+		remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 		remote.PrometheusWriterHeaders(headers),
 	)
 
-	var tsList []prompb.TimeSeries
+	logger.Infof("push metrics in bkBizID: %d, series: %d", bkBizID, len(tsList))
+	prometheusWriter := remote.NewPrometheusWriterClient(options)
+	return prometheusWriter.WriteBatch(ctx, tsList)
+}
+
+// PushAll 推送全业务数据
+func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
+	bkBizTsList := make(map[int][]prompb.TimeSeries)
 	metricsMap := make(map[string]struct{})
 	b.metricsLock.RLock()
 	for bkBizID, nodeMap := range b.metrics {
+		if _, ok := bkBizTsList[bkBizID]; !ok {
+			bkBizTsList[bkBizID] = make([]prompb.TimeSeries, 0)
+		}
 		for _, nodes := range nodeMap {
 			for _, relationMetric := range nodes.toRelationMetrics() {
-				ts := relationMetric.TimeSeries(bkBizID)
+				ts := relationMetric.TimeSeries(bkBizID, timestamp)
 				if _, ok := metricsMap[ts.String()]; !ok {
 					metricsMap[ts.String()] = struct{}{}
-					tsList = append(tsList, ts)
+					bkBizTsList[bkBizID] = append(bkBizTsList[bkBizID], ts)
 				}
 			}
 		}
 	}
 	b.metricsLock.RUnlock()
 
-	prometheusWriter := remote.NewPrometheusWriterClient(options)
-	return prometheusWriter.WriteBatch(tsList)
+	for bkBizID, ts := range bkBizTsList {
+		if err := b.Push(ctx, bkBizID, ts); err != nil {
+			return err
+		}
+	}
+	return nil
 }

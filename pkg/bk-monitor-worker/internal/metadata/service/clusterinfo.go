@@ -86,7 +86,6 @@ func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
 	// 针对有用户名和密码的类型，添加认证机制
 	// 组装配置
 	kafkaConfig := sarama.NewConfig()
-	kafkaConfig.Version = sarama.V0_10_2_1
 	if k.Username != "" && k.Password != "" {
 		kafkaConfig.Net.SASL.Enable = true
 		kafkaConfig.Net.SASL.User = k.Username

@@ -12,7 +12,6 @@ package config
 import (
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
 )
 
@@ -118,6 +117,11 @@ var (
 	HashSecret string
 )
 
+var (
+	// DurationBuckets 10 μs -> 5s
+	DurationBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 5}
+)
+
 func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)
 
@@ -161,7 +165,7 @@ func initApmVariables() {
 	*/
 	RelationMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.relationMetric.duration", 10*time.Minute, viper.GetDuration)
 	FlowMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.duration", 1*time.Minute, viper.GetDuration)
-	MetricsDurationBuckets = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.buckets", prometheus.DefBuckets, GetFloatSlice)
+	MetricsDurationBuckets = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.buckets", DurationBuckets, GetFloatSlice)
 	MetricsProcessLayer4ExportEnabled = GetValue("taskConfig.apmPreCalculate.metrics.enabledLayer4", false)
 
 	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.report.semaphoreReportInterval", 5*time.Second, viper.GetDuration)

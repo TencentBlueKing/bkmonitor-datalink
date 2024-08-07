@@ -145,6 +145,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
 
+		// unit: μs
 		duration := int(math.Abs(float64(pair[1].StartTime - pair[0].StartTime)))
 
 		if cService != "" && sService != "" {

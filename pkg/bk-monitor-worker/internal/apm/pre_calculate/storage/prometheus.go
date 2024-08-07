@@ -167,7 +167,7 @@ func MetricFlowBuckets(b []float64) MetricConfigOption {
 		sort.Float64s(b)
 		res := make([]float64, 0, len(b)+1)
 		for i := 0; i < len(b); i++ {
-			res = append(res, b[i]*1e9)
+			res = append(res, b[i]*1e6)
 		}
 		res = append(res, math.MaxFloat64)
 		options.flowMetricBuckets = res

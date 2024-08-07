@@ -118,7 +118,8 @@ var (
 )
 
 var (
-	// DurationBuckets 10 μs -> 5s
+	// DurationBuckets unit: s (10 ms -> 5s)
+	// 未来需要由用户确定 目前暂时固定
 	DurationBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 5}
 )
 

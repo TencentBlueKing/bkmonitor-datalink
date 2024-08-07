@@ -92,6 +92,8 @@ func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
 		kafkaConfig.Net.SASL.Password = cipher.GetDBAESCipher().AESDecrypt(k.Password)
 		kafkaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &utilsKafka.XDGSCRAMClient{HashGeneratorFcn: utilsKafka.SHA512} }
 		kafkaConfig.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA512)
+	} else {
+		kafkaConfig.Version = sarama.V0_10_2_0
 	}
 
 	client, err := sarama.NewClient([]string{hosts}, kafkaConfig)

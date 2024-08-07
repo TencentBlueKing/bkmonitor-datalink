@@ -10,7 +10,7 @@
 package mocker
 
 import (
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 )
 
 type KafkaClientMocker struct {

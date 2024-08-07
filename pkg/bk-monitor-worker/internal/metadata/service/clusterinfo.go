@@ -13,7 +13,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
@@ -86,14 +86,13 @@ func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
 	// 针对有用户名和密码的类型，添加认证机制
 	// 组装配置
 	kafkaConfig := sarama.NewConfig()
+	kafkaConfig.Version = sarama.V0_10_2_0
 	if k.Username != "" && k.Password != "" {
 		kafkaConfig.Net.SASL.Enable = true
 		kafkaConfig.Net.SASL.User = k.Username
 		kafkaConfig.Net.SASL.Password = cipher.GetDBAESCipher().AESDecrypt(k.Password)
 		kafkaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &utilsKafka.XDGSCRAMClient{HashGeneratorFcn: utilsKafka.SHA512} }
 		kafkaConfig.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA512)
-	} else {
-		kafkaConfig.Version = sarama.V0_10_2_0
 	}
 
 	client, err := sarama.NewClient([]string{hosts}, kafkaConfig)

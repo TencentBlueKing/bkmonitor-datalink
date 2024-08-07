@@ -374,7 +374,7 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		}
 	}
 
-	bloomFilter, err := newLayersCapDecreaseBloomClient(ctx, opt.bloomConfig)
+	bloomFilter, err := newLayersCapDecreaseBloomClient(dataId, ctx, opt.bloomConfig)
 	if err != nil {
 		return nil, err
 	}

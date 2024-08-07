@@ -3,8 +3,8 @@ module github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker
 go 1.21
 
 require (
-	github.com/IBM/sarama v1.42.1
 	github.com/RedisBloom/redisbloom-go v1.0.0
+	github.com/Shopify/sarama v1.27.0
 	github.com/TencentBlueKing/bk-apigateway-sdks v0.1.16
 	github.com/agiledragon/gomonkey/v2 v2.11.0
 	github.com/ahmetb/go-linq/v3 v3.2.0
@@ -53,7 +53,7 @@ require (
 	github.com/tylertreat/BoomFilters v0.0.0-20210315201527-1a82519a3e43
 	github.com/wcharczuk/go-chart/v2 v2.1.1
 	github.com/xdg-go/scram v1.1.2
-	github.com/xdg/scram v1.0.5
+	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c
 	go.etcd.io/bbolt v1.3.7
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/zap v1.24.0
@@ -118,11 +118,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/hashicorp/serf v0.10.1 // indirect
 	github.com/imdario/mergo v0.3.16 // indirect
-	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
-	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
 	github.com/jcmturner/gofork v1.7.6 // indirect
-	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
-	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -138,7 +134,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nbio/st v0.0.0-20140626010706-e9e8d9816f32 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.8 // indirect
-	github.com/pierrec/lz4/v4 v4.1.18 // indirect
+	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.11.1 // indirect
@@ -173,6 +169,10 @@ require (
 	gopkg.in/h2non/gentleman.v2 v2.0.5 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
+	gopkg.in/jcmturner/aescts.v1 v1.0.1 // indirect
+	gopkg.in/jcmturner/dnsutils.v1 v1.0.1 // indirect
+	gopkg.in/jcmturner/gokrb5.v7 v7.5.0 // indirect
+	gopkg.in/jcmturner/rpc.v1 v1.1.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect

@@ -611,7 +611,7 @@ func (s SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]ma
 func (s SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
-	// 组装数据
+	// 组装ES对应数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_id":  storageClusterId,
 		"db":          tableIdDb,

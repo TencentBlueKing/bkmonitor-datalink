@@ -400,9 +400,9 @@ func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
 	for {
 		select {
 		case <-ticker.C:
-			isUpdated := core.GetMetadataCenter().CheckUpdate(p.startInfo.DataId)
+			isUpdated, diff := core.GetMetadataCenter().CheckUpdate(p.startInfo.DataId)
 			if isUpdated {
-				apmLogger.Infof("[ConsulConfigWatcher] dataId: %s config updated, will be reload!", p.startInfo.DataId)
+				apmLogger.Infof("[ConsulConfigWatcher] dataId: %s config updated(diff: %s), will be reload!", p.startInfo.DataId, diff)
 				errorReceiveChan <- errors.New("reload for config update")
 				return
 			}

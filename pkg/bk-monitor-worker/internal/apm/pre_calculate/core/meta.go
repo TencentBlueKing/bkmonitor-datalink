@@ -160,19 +160,23 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 }
 
 // CheckUpdate check the info whether updated
-func (c *MetadataCenter) CheckUpdate(dataId string) bool {
+func (c *MetadataCenter) CheckUpdate(dataId string) (bool, string) {
 	info := DataIdInfo{DataId: dataId}
 	if err := c.fillInfo(dataId, &info); err != nil {
 		logger.Warnf("Check DataId updated failed, error: %s", err)
-		return false
+		return false, ""
 	}
 	v, exist := c.Mapping.Load(dataId)
 	if !exist {
 		logger.Warnf("Check DataId updated but not found in Mapping!")
-		return true
+		return true, "DataId not found in mapping"
 	}
 
-	return !cmp.Equal(v, info)
+	diff := cmp.Diff(v, info)
+	if diff != "" {
+		return true, diff
+	}
+	return false, ""
 }
 
 // GetKafkaConfig get kafka config of DataId

@@ -812,7 +812,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			// 是否需要忽略时间聚合函数
 			if q.IsDomSampled {
 				if q.AggregateMethodList != nil {
-					q.TimeAggregation = TimeAggregation{}
+					q.TimeAggregation.Function = LastOT
 					q.AggregateMethodList = q.AggregateMethodList[1:]
 				}
 			}

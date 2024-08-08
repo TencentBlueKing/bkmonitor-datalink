@@ -614,7 +614,7 @@ func (s SpacePusher) composeEsTableIdDetail(tableId string, options map[string]i
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_id":  storageClusterId,
-		"db":          tableIdDb,
+		"db":          indexSet,
 		"measurement": models.TSGroupDefaultMeasurement,
 		"source_type": sourceType,
 		"options":     options,

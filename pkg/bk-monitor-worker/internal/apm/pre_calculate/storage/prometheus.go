@@ -24,6 +24,7 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
+	"golang.org/x/exp/maps"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
@@ -121,22 +122,24 @@ func newPrometheusWriterClient(dataId, token, url string, headers map[string]str
 		Timeout: 10 * time.Second,
 	}
 
-	isValid := false
-	if _, exist := headers["x-bk-token"]; !exist {
-		if token == "" {
-			logger.Errorf("[PromeRemoteWrite] token is empty! Metrics will not be report!")
-		} else {
-			headers["X-BK-TOKEN"] = token
-			isValid = true
+	h := make(map[string]string, len(headers))
+	maps.Copy(h, headers)
+	if _, exist := h["x-bk-token"]; !exist {
+		if _, oExist := h["X-BK-TOKEN"]; !oExist {
+			h["X-BK-TOKEN"] = token
 		}
 	} else {
+		h["X-BK-TOKEN"] = h["x-bk-token"]
+	}
+	isValid := false
+	if v, _ := h["X-BK-TOKEN"]; v != "" {
 		isValid = true
 	}
 
 	return &prometheusWriter{
 		dataId:  dataId,
 		url:     url,
-		headers: headers,
+		headers: h,
 		client:  client,
 		isValid: isValid,
 	}
@@ -236,14 +239,14 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 	token := core.GetMetadataCenter().GetToken(dataId)
 	logger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nheaders: %s \ndataId(%s) -> token: %s \n"+
-			"flowMetricDuration: %s flowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
+			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
+			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
 		config.url, config.headers, dataId, token,
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
 	h := &MetricDimensionsHandler{
-		promClient:               newPrometheusWriterClient(dataId, core.GetMetadataCenter().GetToken(dataId), config.url, config.headers),
+		promClient:               newPrometheusWriterClient(dataId, token, config.url, config.headers),
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,

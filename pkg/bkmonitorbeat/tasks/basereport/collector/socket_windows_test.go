@@ -10,13 +10,14 @@
 package collector_test
 
 import (
-	"onemoretime/collector-go-sdk-v2/bkdatalib/system/net"
 	"reflect"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/basereport/collector"
 )
 
 func TestGetTcp4SocketStatusCount(t *testing.T) {
-	out, err := net.GetTcp4SocketStatusCount()
+	out, err := collector.GetTcp4SocketStatusCount()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +39,9 @@ func TestGetAllTcp4Socket(t *testing.T) {
 	map1[135] = true
 	map1[445] = true
 	map1[49152] = true
-	data1, err1 := net.GetAllTcp4Socket(net.NoneSocketFilter{})
-	data2, err2 := net.GetAllTcp4Socket(net.TcpSocketListenFilter{})
-	data3, err3 := net.GetAllTcp4Socket(net.TcpSocketListenPortFilter{ListenPorts: map1})
+	data1, err1 := collector.GetAllTcp4Socket(collector.NoneSocketFilter{})
+	data2, err2 := collector.GetAllTcp4Socket(collector.TcpSocketListenFilter{})
+	data3, err3 := collector.GetAllTcp4Socket(collector.TcpSocketListenPortFilter{ListenPorts: map1})
 	if err1 != nil {
 		t.Fatal(err1)
 	}
@@ -77,7 +78,7 @@ func TestGetAllTcp4Socket(t *testing.T) {
 			t.Fatal("Pid data is wrong")
 		}
 		for _, e := range v.Element {
-			if e.Stat != net.TCP_LISTEN {
+			if e.Stat != collector.TCP_LISTEN {
 				t.Fatal("filter tcp listening socket is wrong")
 			}
 		}
@@ -102,8 +103,8 @@ func TestGetAllUdp4Socket(t *testing.T) {
 	map1[123] = true
 	map1[137] = true
 	map1[138] = true
-	data1, err1 := net.GetAllUdp4Socket(net.NoneSocketFilter{})
-	data2, err2 := net.GetAllUdp4Socket(net.UdpSocketListenPortFilter{ListenPorts: map1})
+	data1, err1 := collector.GetAllUdp4Socket(collector.NoneSocketFilter{})
+	data2, err2 := collector.GetAllUdp4Socket(collector.UdpSocketListenPortFilter{ListenPorts: map1})
 	if err1 != nil {
 		t.Fatal(err1)
 	}
@@ -149,7 +150,7 @@ func TestGetAllUdp4Socket(t *testing.T) {
 func Test_IpToInt(t *testing.T) {
 	var ip string = "127.0.0.1"
 	var ipInt uint32 = 3232238081
-	data := net.IpToInt(ip)
+	data := collector.IpToInt(ip)
 	if data != ipInt {
 		t.Fatalf("test is not passed")
 	}
@@ -159,7 +160,7 @@ func Test_IpToInt(t *testing.T) {
 func Test_RemoveEmpty(t *testing.T) {
 	arr1 := []string{"name", "", "age", "", "", "class"}
 	arr2 := []string{"name", "age", "class"}
-	data := net.RemoveEmpty(arr1)
+	data := collector.RemoveEmpty(arr1)
 	if len(data) != len(arr2) {
 		t.Fatalf("test is not passed")
 	}

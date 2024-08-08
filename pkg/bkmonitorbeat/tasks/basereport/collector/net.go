@@ -55,7 +55,7 @@ var lastStatTime time.Time
 
 func getProtocolStats() (map[string]map[string]int64, error) {
 	// udp protocol packages
-	var udpProtocolName = []string{
+	udpProtocolName := []string{
 		"udp",
 	}
 
@@ -300,7 +300,6 @@ func FilterNetIOStats(ioCounterStat []net.IOCountersStat, config configs.NetConf
 		filteredList = append(filteredList, stat)
 	}
 	return filteredList
-
 }
 
 func FilterNetInterfaceStats(interfaceStats []net.InterfaceStat, config configs.NetConfig) []net.InterfaceStat {
@@ -326,5 +325,4 @@ func FilterNetInterfaceStats(interfaceStats []net.InterfaceStat, config configs.
 		filteredInterfaceList = append(filteredInterfaceList, inter)
 	}
 	return filteredInterfaceList
-
 }

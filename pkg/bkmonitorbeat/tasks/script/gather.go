@@ -39,7 +39,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		taskConf    = g.TaskConfig.(*configs.ScriptTaskConfig)
 		originEvent = NewEvent(g)
 	)
-	//init event time
+	// init event time
 	localtime, utctime, _ := bkcommon.GetDateTime()
 	originEvent.LocalTime = localtime
 	originEvent.UTCTime = utctime

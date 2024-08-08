@@ -25,10 +25,10 @@ func setICMP(on bool) error {
 	} else {
 		v = "1"
 	}
-	err := os.WriteFile(ipv4ICMPFile, []byte(v), 0644)
+	err := os.WriteFile(ipv4ICMPFile, []byte(v), 0o644)
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(ipv6ICMPFile, []byte(v), 0644)
+	err = os.WriteFile(ipv6ICMPFile, []byte(v), 0o644)
 	return err
 }

@@ -15,16 +15,14 @@ type SocketFilter interface {
 }
 
 // NoneSocketFilter will return all sockets
-type NoneSocketFilter struct {
-}
+type NoneSocketFilter struct{}
 
 func (f NoneSocketFilter) Filter(socket SocketInfo) bool {
 	return true
 }
 
 // TcpSocketListenFilter only return listen status tcp sockets
-type TcpSocketListenFilter struct {
-}
+type TcpSocketListenFilter struct{}
 
 func (f TcpSocketListenFilter) Filter(socket SocketInfo) bool {
 	if socket.Stat == TCP_LISTEN {
@@ -59,8 +57,8 @@ func (f UdpSocketListenPortFilter) Filter(socket SocketInfo) bool {
 	// udp are stateless
 	// has socket ?
 	_, exist := f.ListenPorts[socket.SrcPort]
-	//加强异常校验，理论上不应该找到已链接的udp socket
-	//因为udp socket本身无状态，所以用ip和端口为0来判断
+	// 加强异常校验，理论上不应该找到已链接的udp socket
+	// 因为udp socket本身无状态，所以用ip和端口为0来判断
 	if exist && socket.DstIp == 0 && socket.DstPort == 0 {
 		return true
 	} else {

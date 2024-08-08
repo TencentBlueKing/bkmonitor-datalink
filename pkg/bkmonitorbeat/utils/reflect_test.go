@@ -19,8 +19,7 @@ type TestGetValueByNameS struct {
 	Value int64
 }
 
-type TestGetValueByNameI interface {
-}
+type TestGetValueByNameI interface{}
 
 func TestGetValueByName(t *testing.T) {
 	x := TestGetValueByNameS{

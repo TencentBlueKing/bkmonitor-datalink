@@ -47,12 +47,11 @@ func PhysicalMemoryInfo(specialSource bool) (info *mem.VirtualMemoryStat, err er
 	// 使用特殊方案时，usedPercent = Used/total
 	info.UsedPercent = float64(info.Used) / float64(info.Total) * 100.0
 	return
-
 }
 
 func GetSwapInfo() (in, out float64, lasterr error) {
 	var wg sync.WaitGroup
-	var sinfobefore, sinfoafter = new(swapinfo), new(swapinfo)
+	sinfobefore, sinfoafter := new(swapinfo), new(swapinfo)
 
 	wg.Add(2)
 	go func(sinfobefore *swapinfo) {

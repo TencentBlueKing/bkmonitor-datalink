@@ -57,7 +57,8 @@ func GetUname() (string, error) {
 				return "", nil
 			}
 			fields := [][]byte{
-				uname.Sysname[:], uname.Nodename[:], uname.Release[:], uname.Version[:], uname.Machine[:]}
+				uname.Sysname[:], uname.Nodename[:], uname.Release[:], uname.Version[:], uname.Machine[:],
+			}
 			parts := make([]string, 0, len(fields))
 			for _, field := range fields {
 				parts = append(parts, string(field))

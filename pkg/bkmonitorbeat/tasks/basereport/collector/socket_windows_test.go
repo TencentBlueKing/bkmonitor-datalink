@@ -10,10 +10,9 @@
 package collector_test
 
 import (
+	"onemoretime/collector-go-sdk-v2/bkdatalib/system/net"
 	"reflect"
 	"testing"
-
-	"onemoretime/collector-go-sdk-v2/bkdatalib/system/net"
 )
 
 func TestGetTcp4SocketStatusCount(t *testing.T) {

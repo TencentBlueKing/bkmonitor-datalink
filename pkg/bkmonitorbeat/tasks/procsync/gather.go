@@ -306,7 +306,7 @@ func (g *Gather) deleteDstCfgs(cfgs []ProcCustomConf) {
 func (g *Gather) writeDstCfgs(cfgs []ProcCustomConf) {
 	for _, f := range cfgs {
 		p := filepath.Join(g.config.DstDir, f.Name)
-		if err := os.WriteFile(p, f.Content, 0666); err != nil {
+		if err := os.WriteFile(p, f.Content, 0o666); err != nil {
 			logger.Errorf("failed to write file: %s, err: %v", f.Name, err)
 			return
 		}

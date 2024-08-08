@@ -103,7 +103,7 @@ func (s *mockService) close() {
 }
 
 func appendFileln(filename string, content string) {
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
 	check(err)
 	defer func() {
 		err = f.Close()
@@ -166,7 +166,7 @@ func Test_Truncate(t *testing.T) {
 	appendFileln(filename, "test truncate1")
 	waitCollect()
 
-	f, err := os.OpenFile(filename, os.O_WRONLY, 0644)
+	f, err := os.OpenFile(filename, os.O_WRONLY, 0o644)
 	check(err)
 	err = f.Truncate(0)
 

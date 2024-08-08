@@ -63,7 +63,7 @@ func GetTcp4SocketStatusCountByNetlink() (SocketStatusCount, error) {
 
 	rawcount := make([]uint, TCP_MAX_STATES)
 	for _, m := range msgs {
-		var req = *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
+		req := *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
 		rawcount[int(req.State)]++
 	}
 

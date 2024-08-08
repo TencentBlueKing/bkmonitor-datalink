@@ -47,7 +47,6 @@ func (e *Event) AsMapStr() common.MapStr {
 
 	// label注入进dimension
 	if e.Labels != nil {
-
 		for _, labelInfo := range e.Labels {
 			tempGroup := make(map[string]string)
 			for key, value := range labelInfo {
@@ -56,7 +55,6 @@ func (e *Event) AsMapStr() common.MapStr {
 
 			groupInfo = append(groupInfo, tempGroup)
 		}
-
 	}
 	e.Dimension["bk_biz_id"] = e.BizID
 

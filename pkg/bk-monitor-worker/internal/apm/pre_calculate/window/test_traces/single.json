@@ -1,0 +1,56 @@
+[
+  {
+    "events": [
+      {
+        "timestamp": 1720330958057438,
+        "attributes": {
+          "exception.message": "[500] Request.subject invalid: Subject.id should not be empty",
+          "exception.stacktrace": "Traceback (most recent call last):\n  File \"/app/.heroku/python/lib/python3.10/site-packages/exceptions.APIRequestError: [500] Request.subject invalid: Subject.id should not be empty\n",
+          "exception.escaped": "False",
+          "exception.type": "APIRequestError"
+        },
+        "name": "exception"
+      }
+    ],
+    "time": "1720330961000",
+    "elapsed_time": 214400,
+    "span_name": "TestEndpoint",
+    "links": [],
+    "attributes": {
+      "request.api.name": "TestEndpoint",
+      "request.data": "",
+      "request.api.method": "GET",
+      "request.api.module_name": "testModule",
+      "request.url": "http://127.0.0.1/all/",
+      "request.header": {
+        "blueking-language": "zh-cn",
+        "cookie": "zh-cn"
+      },
+      "request.api.platform_auth": false,
+      "request.api.tags": "",
+      "apdex_type": "satisfied"
+    },
+    "parent_span_id": "47487ad84cfb4f65",
+    "start_time": 1720330957843061,
+    "status": {
+      "code": 2,
+      "message": "APIRequestError: [500] Request.subject invalid: Subject.id should not be empty"
+    },
+    "trace_state": "",
+    "trace_id": "5d8f5140b03d2ffaa51fe278ed020d88",
+    "resource": {
+      "telemetry.sdk.version": "1.20.0",
+      "telemetry.sdk.language": "python",
+      "telemetry.sdk.name": "opentelemetry",
+      "bk.instance.id": "python:testModule:testAppName:192.168.0.1:",
+      "service.environment": "stag",
+      "service.version": "1985",
+      "net.host.ip": "127.0.0.1",
+      "net.host.name": "my-host",
+      "service.name": "testModule"
+    },
+    "kind": 1,
+    "span_id": "7498271d6a651651",
+    "end_time": 1720330958057462
+  }
+]

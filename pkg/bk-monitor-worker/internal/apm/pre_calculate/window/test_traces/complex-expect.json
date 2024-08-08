@@ -1,0 +1,113 @@
+{
+  "biz_id": "2",
+  "biz_name": "BlueKing",
+  "app_id": "1",
+  "app_name": "testApp",
+  "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+  "hierarchy_count": 2,
+  "service_count": 2,
+  "span_count": 5,
+  "min_start_time": 1712580180056467,
+  "max_end_time": 1712580240133066,
+  "trace_duration": 60076599,
+  "span_max_duration": 60075171,
+  "span_min_duration": 460,
+  "root_service": "bkApp_celery_worker",
+  "root_service_span_id": "e85abc91c026aea1",
+  "root_service_span_name": "run/mqueue.tasks.check_mq_length",
+  "root_service_status_code": null,
+  "root_service_category": "async_backend",
+  "root_service_kind": 5,
+  "root_span_id": "c89113e2fb8f1f9a",
+  "root_span_name": "apply_async/mqueue.tasks.check_mq_length",
+  "root_span_service": "bkApp_celery_beat",
+  "root_span_kind": 4,
+  "error": false,
+  "error_count": 0,
+  "time": 1720426215936011,
+  "category_statistics": {
+    "async_backend": 2,
+    "db": 2,
+    "http": 1,
+    "messaging": 0,
+    "other": 0,
+    "rpc": 0
+  },
+  "kind_statistics": {
+    "async": 2,
+    "interval": 0,
+    "sync": 3,
+    "unspecified": 0
+  },
+  "collections": {
+    "attributes.celery.action": [
+      "apply_async",
+      "run"
+    ],
+    "attributes.celery.task_name": [
+      "mqueue.tasks.check_mq_length"
+    ],
+    "attributes.db.statement": [
+      "LPUSH meta {\"body\": \"W1tdLCB7fSwgeyJjYWxsYmFja3MiOiBudWxs2hvcm...",
+      "LPUSH meta {\"body\": \"W1tdLCB7Im1xXbnVsbmVycm..."
+    ],
+    "attributes.db.system": [
+      "redis"
+    ],
+    "attributes.http.method": [
+      "POST"
+    ],
+    "attributes.http.status_code": [
+      "200"
+    ],
+    "attributes.http.url": [
+      "http://127.0.0.1:10205/v2/push/"
+    ],
+    "attributes.messaging.destination": [
+      "meta"
+    ],
+    "attributes.messaging.destination_kind": [
+      "queue"
+    ],
+    "attributes.net.peer.name": [
+      "ins.testApp"
+    ],
+    "kind": [
+      "4",
+      "3",
+      "5"
+    ],
+    "resource.bk.instance.id": [
+      "python:bkApp_celery_beat:::",
+      "python:bkApp_celery_worker:::"
+    ],
+    "resource.host.ip": [
+      "192.168.0.5",
+      "192.168.0.3"
+    ],
+    "resource.net.host.ip": [
+      "192.168.0.1",
+      "192.168.0.2",
+      "192.168.0.4"
+    ],
+    "resource.service.name": [
+      "bkApp_celery_beat",
+      "bkApp_celery_worker"
+    ],
+    "resource.telemetry.sdk.language": [
+      "python"
+    ],
+    "resource.telemetry.sdk.name": [
+      "opentelemetry"
+    ],
+    "resource.telemetry.sdk.version": [
+      "1.18.0"
+    ],
+    "span_name": [
+      "apply_async/mqueue.tasks.check_mq_length",
+      "LPUSH",
+      "run/mqueue.tasks.check_mq_length",
+      "HTTP POST"
+    ]
+  }
+}

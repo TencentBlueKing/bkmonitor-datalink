@@ -60,7 +60,6 @@ func ProfileAppIdx(h string) MetricOption {
 			return
 		}
 		defaultV := "apm_precalculate"
-		logger.Infof("profile appIdx is not specified, %s is used as the default", defaultV)
 		options.profileAppIdx = defaultV
 	}
 }

@@ -1,0 +1,11 @@
+[
+  "__name__=apm_service_with_apm_service_instance_relation,apm_service_name=bkApp_celery_beat,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_beat:::",
+  "__name__=apm_service_instance_with_k8s_address_relation,apm_service_name=bkApp_celery_beat,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_beat:::,address=,bcs_cluster_id=",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=bkApp_celery_beat,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_beat:::,bk_target_ip=192.168.0.1",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=bkApp_celery_beat,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_beat:::,bk_target_ip=192.168.0.5",
+  "__name__=apm_service_with_apm_service_instance_relation,apm_service_name=bkApp_celery_worker,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_worker:::",
+  "__name__=apm_service_instance_with_k8s_address_relation,apm_service_name=bkApp_celery_worker,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_worker:::,address=,bcs_cluster_id=",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=bkApp_celery_worker,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_worker:::,bk_target_ip=192.168.0.2",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=bkApp_celery_worker,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_worker:::,bk_target_ip=192.168.0.3",
+  "__name__=apm_service_instance_with_system_relation,apm_service_name=bkApp_celery_worker,apm_application_name=testApp,apm_service_instance_name=python:bkApp_celery_worker:::,bk_target_ip=192.168.0.4"
+]

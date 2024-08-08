@@ -17,7 +17,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
@@ -257,7 +258,7 @@ func (p *Precalculate) launch(
 	runInstance.startWindowHandler(messageChan, saveReqChan)
 	runInstance.startProfileReport()
 	go runInstance.startRecordSemaphoreAcquired()
-
+	go runInstance.watchConsulConfigUpdate(errorReceiveChan)
 	apmLogger.Infof("dataId: %s launch successfully", startInfo.DataId)
 }
 
@@ -303,7 +304,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 
 func (p *RunInstance) startWindowHandler(messageChan <-chan []window.StandardSpan, saveReqChan chan<- storage.SaveRequest) {
 
-	processor := window.NewProcessor(p.startInfo.DataId, p.proxy, p.config.processorConfig...)
+	processor := window.NewProcessor(p.ctx, p.startInfo.DataId, p.proxy, p.config.processorConfig...)
 
 	operation := window.Operation{
 		Operator: window.NewDistributiveWindow(
@@ -338,11 +339,6 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.EsUsername(saveEsConfig.Username),
 				storage.EsPassword(saveEsConfig.Password),
 				storage.EsIndexName(saveEsConfig.IndexName),
-			),
-			storage.PrometheusWriterConfig(
-				storage.PrometheusWriterEnabled(config.PromRemoteWriteEnabled),
-				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 			),
 		}, p.config.storageConfig...,
 		)...,
@@ -395,4 +391,26 @@ func (p *RunInstance) startRecordSemaphoreAcquired() {
 			return
 		}
 	}
+}
+
+// watchConsulConfigUpdate if the config of dataId in consul is updated, will be reload daemon task.
+func (p *RunInstance) watchConsulConfigUpdate(errorReceiveChan chan<- error) {
+	ticker := time.NewTicker(10 * time.Minute)
+
+	for {
+		select {
+		case <-ticker.C:
+			isUpdated, diff := core.GetMetadataCenter().CheckUpdate(p.startInfo.DataId)
+			if isUpdated {
+				apmLogger.Infof("[ConsulConfigWatcher] dataId: %s config updated(diff: %s), will be reload!", p.startInfo.DataId, diff)
+				errorReceiveChan <- errors.New("reload for config update")
+				return
+			}
+		case <-p.ctx.Done():
+			apmLogger.Infof("[ConsulConfigWatcher] dataId: %s consul config update checker exit", p.startInfo.DataId)
+			ticker.Stop()
+			return
+		}
+	}
+
 }

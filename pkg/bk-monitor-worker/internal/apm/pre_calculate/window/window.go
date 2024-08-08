@@ -183,7 +183,7 @@ type CollectTrace struct {
 	TraceId string
 	Graph   DiGraph
 
-	Runtime Runtime
+	Runtime *Runtime
 }
 
 type StandardSpan struct {
@@ -209,6 +209,14 @@ func (s *StandardSpan) GetFieldValue(f ...core.CommonField) string {
 		}
 	}
 	return res
+}
+
+func (s *StandardSpan) IsError() bool {
+	return s.StatusCode == core.StatusCodeError
+}
+
+func (s *StandardSpan) Elapsed() int {
+	return s.EndTime - s.StartTime
 }
 
 // Handler window handle logic

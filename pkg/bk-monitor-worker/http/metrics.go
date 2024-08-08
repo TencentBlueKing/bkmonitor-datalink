@@ -35,6 +35,8 @@ func NewProfHttpService() *gin.Engine {
 
 	pprof.Register(svr)
 
+	// 动态设置日志级别
+	svr.POST("/bmw/log/level", SetLogLevel)
 	return svr
 }
 

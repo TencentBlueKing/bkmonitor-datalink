@@ -78,37 +78,36 @@ func NoDataMaxDuration(i time.Duration) RuntimeConfigOption {
 // ReentrantRuntimeStrategy Configure the runtime policy.
 // You can customize different policies to change the window expiration time or to record additional information.
 // All the different window implements has the Runtime instance.
-type ReentrantRuntimeStrategy func(RuntimeConfig, Runtime, CollectTrace)
+type ReentrantRuntimeStrategy func(RuntimeConfig, *Runtime, CollectTrace)
 
 var (
-	ReentrantLogRecord ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime Runtime, _ CollectTrace) {
+	ReentrantLogRecord ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, _ CollectTrace) {
 		newExpiration := runtime.Expiration.Add(config.expireIntervalIncrement)
 		if newExpiration.Sub(runtime.FirstExpiration) >= config.maxDuration {
 			newExpiration = runtime.FirstExpiration.Add(config.maxDuration)
 		}
-
 		runtime.Expiration = newExpiration
 		runtime.IncreaseExpirationCount++
 		runtime.ReentrantCount += 1
 	}
 
-	ReentrantLimitMaxCount ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime Runtime, collect CollectTrace) {
+	ReentrantLimitMaxCount ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, collect CollectTrace) {
 		if collect.Graph.Length() > config.maxSize {
 			runtime.Expiration = time.Now()
 		}
 	}
 
-	RefreshUpdateTime ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime Runtime, v CollectTrace) {
+	RefreshUpdateTime ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, v CollectTrace) {
 		runtime.LastUpdateTime = time.Now()
 	}
 
-	PredicateLimitMaxDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime Runtime, v CollectTrace) {
+	PredicateLimitMaxDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, v CollectTrace) {
 		if time.Since(runtime.FirstExpiration) > config.maxDuration {
 			runtime.Expiration = time.Now()
 		}
 	}
 
-	PredicateNoDataDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime Runtime, v CollectTrace) {
+	PredicateNoDataDuration ReentrantRuntimeStrategy = func(config RuntimeConfig, runtime *Runtime, v CollectTrace) {
 		if time.Since(runtime.LastUpdateTime) > config.noDataMaxDuration {
 			runtime.Expiration = time.Now()
 		}
@@ -129,15 +128,15 @@ func NewRuntimeStrategies(c RuntimeConfig, reentrantStrategies []ReentrantRuntim
 	}
 }
 
-func (c *ConfigBaseRuntimeStrategies) handleExist(runtime Runtime, collect CollectTrace) {
+func (c *ConfigBaseRuntimeStrategies) handleExist(runtime *Runtime, collect CollectTrace) {
 	for _, strategy := range c.reentrantStrategies {
 		strategy(c.config, runtime, collect)
 	}
 }
 
-func (c *ConfigBaseRuntimeStrategies) handleNew() Runtime {
+func (c *ConfigBaseRuntimeStrategies) handleNew() *Runtime {
 	now := time.Now()
-	return Runtime{
+	return &Runtime{
 		FirstExpiration:         now,
 		Expiration:              now.Add(c.config.expireInterval),
 		LastUpdateTime:          now,
@@ -146,11 +145,12 @@ func (c *ConfigBaseRuntimeStrategies) handleNew() Runtime {
 	}
 }
 
-func (c *ConfigBaseRuntimeStrategies) predicate(runtime Runtime, collect CollectTrace) bool {
+func (c *ConfigBaseRuntimeStrategies) predicate(runtime *Runtime, collect CollectTrace) bool {
 
 	for _, strategy := range c.predicateStrategies {
 		strategy(c.config, runtime, collect)
 	}
 
-	return time.Now().After(runtime.Expiration)
+	a := time.Now().After(runtime.Expiration)
+	return a
 }

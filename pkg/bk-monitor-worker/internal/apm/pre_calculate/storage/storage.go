@@ -66,6 +66,7 @@ type ProxyOptions struct {
 	saveEsConfig  EsOptions
 
 	prometheusWriterConfig PrometheusWriterOptions
+	metricsConfig          MetricConfigOptions
 
 	// saveReqBufferSize Number of queue capacity that hold SaveRequest
 	saveReqBufferSize int
@@ -158,11 +159,29 @@ func PrometheusWriterConfig(opts ...PrometheusWriterOption) ProxyOption {
 	}
 }
 
+func MetricsConfig(opts ...MetricConfigOption) ProxyOption {
+	return func(options *ProxyOptions) {
+		metricOpts := MetricConfigOptions{}
+		for _, setter := range opts {
+			setter(&metricOpts)
+		}
+		options.metricsConfig = metricOpts
+	}
+}
+
 // SaveReqBufferSize Number of storage chan
 func SaveReqBufferSize(s int) ProxyOption {
 	return func(options *ProxyOptions) {
 		options.saveReqBufferSize = s
 	}
+}
+
+type Backend interface {
+	Run(errorReceiveChan chan<- error)
+	SaveRequest() chan<- SaveRequest
+	ReceiveSaveRequest(errorReceiveChan chan<- error)
+	Query(queryRequest QueryRequest) (any, error)
+	Exist(req ExistRequest) (bool, error)
 }
 
 // Proxy storage backend proxy.
@@ -171,11 +190,11 @@ type Proxy struct {
 
 	config ProxyOptions
 
-	traceEs          *esStorage
-	saveEs           *esStorage
-	cache            CacheOperator
-	bloomFilter      BloomOperator
-	prometheusWriter *prometheusWriter
+	traceEs                  *esStorage
+	saveEs                   *esStorage
+	cache                    CacheOperator
+	bloomFilter              BloomOperator
+	prometheusMetricsHandler *MetricDimensionsHandler
 
 	ctx             context.Context
 	saveRequestChan chan SaveRequest
@@ -186,10 +205,23 @@ func (p *Proxy) Run(errorReceiveChan chan<- error) {
 	for i := 0; i < p.config.workerCount; i++ {
 		go p.ReceiveSaveRequest(errorReceiveChan)
 	}
+	go p.watchSaveRequestChan()
 }
 
 func (p *Proxy) SaveRequest() chan<- SaveRequest {
 	return p.saveRequestChan
+}
+
+func (p *Proxy) watchSaveRequestChan() {
+	for {
+		select {
+		case <-p.ctx.Done():
+			// prevent repeated close under multithreading
+			close(p.saveRequestChan)
+			logger.Infof("close storage saveRequestChan")
+			return
+		}
+	}
 }
 
 func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
@@ -198,11 +230,14 @@ func (p *Proxy) ReceiveSaveRequest(errorReceiveChan chan<- error) {
 	ticker := time.NewTicker(p.config.saveHoldDuration)
 	esSaveData := make([]EsStorageData, 0, p.config.saveHoldMaxCount)
 	cacheSaveData := make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
-	prometheusData := make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
 loop:
 	for {
 		select {
-		case r := <-p.saveRequestChan:
+		case r, isOpen := <-p.saveRequestChan:
+			if !isOpen {
+				logger.Infof("saveRequestChan close, return")
+				return
+			}
 			switch r.Target {
 			case SaveEs:
 				item := r.Data.(EsStorageData)
@@ -244,19 +279,9 @@ loop:
 					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SaveBloomFilterFailed)
 				}
 			case Prometheus:
-
+				// Metrics of prometheus is directly handed over to handler (Sending is triggered by handler)
 				item := r.Data.(PrometheusStorageData)
-				prometheusData = append(prometheusData, item)
-				if len(prometheusData) >= p.config.saveHoldMaxCount {
-					err := p.prometheusWriter.WriteBatch(prometheusData)
-					metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
-					metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
-					if err != nil {
-						logger.Errorf("[MAX TRIGGER] Failed to save %d pieces of data to PROMETHEUS, cause: %s", len(prometheusData), err)
-						metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
-					}
-					prometheusData = make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
-				}
+				p.prometheusMetricsHandler.Add(item)
 			default:
 				logger.Warnf("An invalid storage SAVE request was received: %s", r.Target)
 			}
@@ -281,20 +306,10 @@ loop:
 				}
 				cacheSaveData = make([]CacheStorageData, 0, p.config.saveHoldMaxCount)
 			}
-			if len(prometheusData) != 0 {
-				err := p.prometheusWriter.WriteBatch(prometheusData)
-				metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
-				metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(prometheusData))
-				if err != nil {
-					logger.Errorf("[TICKER TRIGGER] Failed to save %d pieces of data to PROMETHEUS, cause: %s", len(prometheusData), err)
-					metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
-				}
-				prometheusData = make([]PrometheusStorageData, 0, p.config.saveHoldMaxCount)
-			}
 		case <-p.ctx.Done():
 			ticker.Stop()
 			p.cache.Close()
-			close(p.saveRequestChan)
+			p.prometheusMetricsHandler.Close()
 			break loop
 		}
 	}
@@ -359,21 +374,21 @@ func NewProxyInstance(dataId string, ctx context.Context, options ...ProxyOption
 		}
 	}
 
-	bloomFilter, err := newLayersCapDecreaseBloomClient(ctx, opt.bloomConfig)
+	bloomFilter, err := newLayersCapDecreaseBloomClient(dataId, ctx, opt.bloomConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Proxy{
-		dataId:           dataId,
-		config:           opt,
-		traceEs:          traceEsInstance,
-		saveEs:           saveEsInstance,
-		cache:            cache,
-		bloomFilter:      bloomFilter,
-		prometheusWriter: newPrometheusWriterClient(opt.prometheusWriterConfig),
-		ctx:              ctx,
-		saveRequestChan:  make(chan SaveRequest, opt.saveReqBufferSize),
+		dataId:                   dataId,
+		config:                   opt,
+		traceEs:                  traceEsInstance,
+		saveEs:                   saveEsInstance,
+		cache:                    cache,
+		bloomFilter:              bloomFilter,
+		prometheusMetricsHandler: NewMetricDimensionHandler(ctx, dataId, opt.prometheusWriterConfig, opt.metricsConfig),
+		ctx:                      ctx,
+		saveRequestChan:          make(chan SaveRequest, opt.saveReqBufferSize),
 	}, nil
 }
 

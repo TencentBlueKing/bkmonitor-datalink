@@ -169,8 +169,6 @@ var (
 		[]string{"data_id", "sub_window_id"},
 	)
 
-	// RelationMetricSystem 主机关联指标
-	RelationMetricSystem       = "system_flow"
 	apmRelationMetricFindCount = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: ApmNamespace,

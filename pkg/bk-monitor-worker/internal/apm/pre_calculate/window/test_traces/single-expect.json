@@ -1,0 +1,74 @@
+{
+  "biz_id": "2",
+  "biz_name": "BlueKing",
+  "app_id": "1",
+  "app_name": "testApp",
+  "trace_id": "5d8f5140b03d2ffaa51fe278ed020d88",
+  "hierarchy_count": 1,
+  "service_count": 1,
+  "span_count": 1,
+  "min_start_time": 1720330957843061,
+  "max_end_time": 1720330958057462,
+  "trace_duration": 214401,
+  "span_max_duration": 214401,
+  "span_min_duration": 214401,
+  "root_service": "",
+  "root_service_span_id": "",
+  "root_service_span_name": "",
+  "root_service_status_code": null,
+  "root_service_category": "",
+  "root_service_kind": 0,
+  "root_span_id": "7498271d6a651651",
+  "root_span_name": "TestEndpoint",
+  "root_span_service": "testModule",
+  "root_span_kind": 1,
+  "error": true,
+  "error_count": 1,
+  "time": 1720349710596394,
+  "category_statistics": {
+    "async_backend": 0,
+    "db": 0,
+    "http": 0,
+    "messaging": 0,
+    "other": 0,
+    "rpc": 0
+  },
+  "kind_statistics": {
+    "async": 0,
+    "interval": 1,
+    "sync": 0,
+    "unspecified": 0
+  },
+  "collections": {
+    "kind": [
+      "1"
+    ],
+    "resource.bk.instance.id": [
+      "python:testModule:testAppName:192.168.0.1:"
+    ],
+    "resource.net.host.ip": [
+      "127.0.0.1"
+    ],
+    "resource.net.host.name": [
+      "my-host"
+    ],
+    "resource.service.name": [
+      "testModule"
+    ],
+    "resource.service.version": [
+      "1985"
+    ],
+    "resource.telemetry.sdk.language": [
+      "python"
+    ],
+    "resource.telemetry.sdk.name": [
+      "opentelemetry"
+    ],
+    "resource.telemetry.sdk.version": [
+      "1.20.0"
+    ],
+    "span_name": [
+      "TestEndpoint"
+    ]
+  }
+}

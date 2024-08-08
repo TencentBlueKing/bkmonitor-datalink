@@ -249,6 +249,8 @@ type BloomChain struct {
 
 // OverlapBloom time-overlap bloom, base on boom.Filter
 type OverlapBloom struct {
+	dataId string
+
 	bloomChain BloomChain
 	cap        uint
 	fpRate     float64
@@ -323,7 +325,7 @@ func (m *OverlapBloom) AutoReset() {
 			logger.Debugf("auto reset get lock")
 			m.bloomChain.front = m.bloomChain.after
 			m.bloomChain.after = nil
-			logger.Infof("auto reset release lock, move after to front, set after = null")
+			logger.Infof("auto reset release lock, move after to front, set after = null dataId: %s", m.dataId)
 			m.lock.Unlock()
 		case <-m.ctx.Done():
 			intervalTicker.Stop()
@@ -336,9 +338,10 @@ func (m *OverlapBloom) Close() {
 	m.cancel()
 }
 
-func newOverlapBloomClient(ctx context.Context, f boom.Filter, cap uint, fpRate float64, resetDuration time.Duration) boom.Filter {
+func newOverlapBloomClient(dataId string, ctx context.Context, f boom.Filter, cap uint, fpRate float64, resetDuration time.Duration) boom.Filter {
 	childCtx, childCancel := context.WithCancel(ctx)
 	bloom := OverlapBloom{
+		dataId:        dataId,
 		bloomChain:    BloomChain{front: f},
 		resetDuration: resetDuration,
 		cap:           cap,
@@ -521,7 +524,7 @@ func (l *LayersCapDecreaseOverlapBloom) Exist(originKey string) (bool, error) {
 	return true, nil
 }
 
-func newLayersCapDecreaseBloomClient(ctx context.Context, options BloomOptions) (BloomOperator, error) {
+func newLayersCapDecreaseBloomClient(dataId string, ctx context.Context, options BloomOptions) (BloomOperator, error) {
 	var blooms []boom.Filter
 
 	curCap := options.layersCapDecreaseBloomOptions.cap
@@ -529,7 +532,7 @@ func newLayersCapDecreaseBloomClient(ctx context.Context, options BloomOptions) 
 		sbf := boom.NewDefaultStableBloomFilter(uint(curCap), options.fpRate)
 		// select overlapBloom as super stratum
 		bloom := newOverlapBloomClient(
-			ctx, sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,
+			dataId, ctx, sbf, uint(curCap), options.fpRate, options.normalOverlapBloomOptions.resetDuration,
 		)
 		blooms = append(blooms, bloom)
 		curCap = curCap / options.layersCapDecreaseBloomOptions.divisor

@@ -1,0 +1,183 @@
+[
+    {
+        "trace_state": "",
+        "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+        "parent_span_id": "",
+        "start_time": 1712580180056467,
+        "span_id": "c89113e2fb8f1f9a",
+        "events": [],
+        "time": "1712580181000",
+        "span_name": "apply_async/mqueue.tasks.check_mq_length",
+        "status": {
+            "code": 0,
+            "message": ""
+        },
+        "links": [],
+        "end_time": 1712580180057552,
+        "resource": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.18.0",
+            "service.name": "bkApp_celery_beat",
+            "bk_data_id": -1,
+            "bk.instance.id": "python:bkApp_celery_beat:::",
+            "net.host.ip": "192.168.0.1"
+        },
+        "elapsed_time": 1084,
+        "attributes": {
+            "celery.task_name": "mqueue.tasks.check_mq_length",
+            "messaging.destination_kind": "queue",
+            "messaging.destination": "meta",
+            "apdex_type": "satisfied",
+            "celery.action": "apply_async",
+            "messaging.message_id": "9cc140a5-c2bf-43c7-b291-10976d236f5b"
+        },
+        "kind": 4
+    },
+    {
+        "end_time": 1712580180057479,
+        "parent_span_id": "c89113e2fb8f1f9a",
+        "resource": {
+            "service.name": "bkApp_celery_beat",
+            "bk_data_id": -1,
+            "bk.instance.id": "python:bkApp_celery_beat:::",
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.18.0",
+            "host.ip": "192.168.0.5"
+        },
+        "trace_state": "",
+        "span_name": "LPUSH",
+        "links": [],
+        "attributes": {
+            "db.statement": "LPUSH meta {\"body\": \"W1tdLCB7fSwgeyJjYWxsYmFja3MiOiBudWxs2hvcm...",
+            "db.system": "redis",
+            "db.redis.database_index": 15,
+            "net.peer.name": "ins.testApp",
+            "net.peer.port": 30000,
+            "net.transport": "ip_tcp",
+            "db.redis.args_length": 3,
+            "apdex_type": "satisfied"
+        },
+        "span_id": "f01dc3cc42b51482",
+        "events": [],
+        "elapsed_time": 488,
+        "status": {
+            "code": 0,
+            "message": ""
+        },
+        "kind": 3,
+        "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+        "start_time": 1712580180056991,
+        "time": "1712580181000"
+    },
+    {
+        "trace_state": "",
+        "span_id": "e85abc91c026aea1",
+        "start_time": 1712580180057895,
+        "kind": 5,
+        "elapsed_time": 60075171,
+        "attributes": {
+            "celery.hostname": "gen6@testApp--beat-844777f766-m5j8r",
+            "celery.action": "run",
+            "celery.reply_to": "0ed52a10-3063-34d5-a938-b741b7942cc3",
+            "apdex_type": "frustrated",
+            "celery.delivery_info": "{'exchange': '', 'routing_key': 'meta', 'priority': 0, 'redelivered': None}",
+            "messaging.message_id": "9cc140a5-c2bf-43c7-b291-10976d236f5b",
+            "celery.task_name": "mqueue.tasks.check_mq_length",
+            "messaging.conversation_id": "9cc140a5-c2bf-43c7-b291-10976d236f5b",
+            "celery.state": "SUCCESS",
+            "messaging.destination": "meta"
+        },
+        "links": [],
+        "status": {
+            "message": "",
+            "code": 0
+        },
+        "span_name": "run/mqueue.tasks.check_mq_length",
+        "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+        "end_time": 1712580240133066,
+        "events": [],
+        "time": "1712580244000",
+        "parent_span_id": "c89113e2fb8f1f9a",
+        "resource": {
+            "telemetry.sdk.version": "1.18.0",
+            "service.name": "bkApp_celery_worker",
+            "bk_data_id": -1,
+            "bk.instance.id": "python:bkApp_celery_worker:::",
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "net.host.ip": "192.168.0.2"
+        }
+    },
+    {
+        "start_time": 1712580180059327,
+        "span_id": "f15840023bae9ffa",
+        "kind": 3,
+        "parent_span_id": "a042c38468858597",
+        "elapsed_time": 460,
+        "time": "1712580184000",
+        "resource": {
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.18.0",
+            "service.name": "bkApp_celery_worker",
+            "bk_data_id": -1,
+            "bk.instance.id": "python:bkApp_celery_worker:::",
+            "telemetry.sdk.language": "python",
+            "host.ip": "192.168.0.3"
+        },
+        "events": [],
+        "span_name": "LPUSH",
+        "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+        "end_time": 1712580180059787,
+        "attributes": {
+            "db.redis.args_length": 3,
+            "apdex_type": "satisfied",
+            "db.statement": "LPUSH meta {\"body\": \"W1tdLCB7Im1xXbnVsbmVycm...",
+            "db.system": "redis",
+            "db.redis.database_index": 15,
+            "net.peer.name": "ins.testApp",
+            "net.peer.port": 30000,
+            "net.transport": "ip_tcp"
+        },
+        "trace_state": "",
+        "links": [],
+        "status": {
+            "code": 0,
+            "message": ""
+        }
+    },
+    {
+        "trace_id": "3775128e80c1da365aa8437eb7fc21ad",
+        "time": "1712580186000",
+        "resource": {
+            "telemetry.sdk.language": "python",
+            "telemetry.sdk.name": "opentelemetry",
+            "telemetry.sdk.version": "1.18.0",
+            "service.name": "bkApp_celery_worker",
+            "bk_data_id": -1,
+            "bk.instance.id": "python:bkApp_celery_worker:::",
+            "net.host.ip": "192.168.0.4"
+        },
+        "links": [],
+        "start_time": 1712580180068844,
+        "trace_state": "",
+        "kind": 3,
+        "status": {
+            "message": "",
+            "code": 0
+        },
+        "events": [],
+        "span_id": "cb78a517544777cf",
+        "end_time": 1712580180081195,
+        "elapsed_time": 12350,
+        "attributes": {
+            "http.url": "http://127.0.0.1:10205/v2/push/",
+            "http.status_code": 200,
+            "apdex_type": "satisfied",
+            "http.method": "POST"
+        },
+        "parent_span_id": "d16cfbcfae2847f6",
+        "span_name": "HTTP POST"
+    }
+]

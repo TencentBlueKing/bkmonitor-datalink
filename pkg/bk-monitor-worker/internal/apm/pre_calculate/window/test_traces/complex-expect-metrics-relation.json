@@ -1,0 +1,10 @@
+[
+  "__name__=apm_service_to_apm_service_flow,from_apm_service_name=bkApp_celery_beat,from_apm_application_name=testApp,to_apm_service_name=bkApp_celery_beat,to_apm_application_name=testApp",
+  "__name__=system_to_apm_service_flow,from_bk_target_ip=192.168.0.1,to_apm_service_name=bkApp_celery_beat,to_apm_application_name=testApp",
+  "__name__=apm_service_to_system_flow,from_apm_service_name=bkApp_celery_beat,from_apm_application_name=testApp,to_bk_target_ip=192.168.0.5",
+  "__name__=system_to_system_flow,from_bk_target_ip=192.168.0.1,to_bk_target_ip=192.168.0.5",
+  "__name__=apm_service_to_apm_service_flow,from_apm_service_name=bkApp_celery_beat,from_apm_application_name=testApp,to_apm_service_name=bkApp_celery_worker,to_apm_application_name=testApp",
+  "__name__=system_to_apm_service_flow,from_bk_target_ip=192.168.0.1,to_apm_service_name=bkApp_celery_worker,to_apm_application_name=testApp",
+  "__name__=apm_service_to_system_flow,from_apm_service_name=bkApp_celery_beat,from_apm_application_name=testApp,to_bk_target_ip=192.168.0.2",
+  "__name__=system_to_system_flow,from_bk_target_ip=192.168.0.1,to_bk_target_ip=192.168.0.2"
+]

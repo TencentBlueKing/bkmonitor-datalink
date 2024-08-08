@@ -10,6 +10,7 @@
 package window
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"time"
@@ -26,10 +27,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-type ProcessTraceMeta struct {
-	Runtime Runtime
-}
 
 type ProcessResult struct {
 	BizId                 string                        `json:"biz_id"`
@@ -68,11 +65,11 @@ type Processor struct {
 	config ProcessorOptions
 
 	dataIdBaseInfo      core.BaseInfo
-	proxy               *storage.Proxy
+	proxy               storage.Backend
 	traceEsQueryLimiter *rate.Limiter
 
 	// Metric discover
-	metricProcessor MetricProcessor
+	metricProcessor *MetricProcessor
 
 	logger   monitorLogger.Logger
 	baseInfo core.BaseInfo
@@ -91,7 +88,13 @@ func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event)
 		existSpans := p.listSpanFromStorage(event)
 		p.revertToCollect(&event, existSpans)
 	}
-	p.Process(receiver, event)
+	graph := event.Graph
+	graph.RefreshEdges()
+
+	p.ToTraceInfo(receiver, event)
+	if p.config.metricReportEnabled {
+		p.metricProcessor.ToMetrics(receiver, graph)
+	}
 }
 
 func (p *Processor) revertToCollect(event *Event, exists []*StandardSpan) {
@@ -192,15 +195,9 @@ func (p *Processor) recoverSpans(originSpans []map[string]any) ([]*StandardSpan,
 	return res, nil
 }
 
-func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
+func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event) {
 
-	graph := event.Graph
-	graph.RefreshEdges()
-
-	// discover metrics of relation and remote-write to Prometheus
-	p.metricProcessor.process(receiver, graph)
-
-	nodeDegrees := graph.NodeDepths()
+	nodeDegrees := event.Graph.NodeDepths()
 
 	services := mapset.NewSet[string]()
 	var startTimes []int
@@ -277,7 +274,7 @@ func (p *Processor) Process(receiver chan<- storage.SaveRequest, event Event) {
 		AppId:               p.baseInfo.AppId,
 		AppName:             p.baseInfo.AppName,
 		TraceId:             event.TraceId,
-		HierarchyCount:      graph.LongestPath() + 1,
+		HierarchyCount:      event.Graph.LongestPath() + 1,
 		ServiceCount:        len(services.ToSlice()),
 		SpanCount:           event.Graph.Length(),
 		MinStartTime:        startTimes[0],
@@ -368,7 +365,7 @@ func initCategoryStatistics() map[core.SpanCategory]int {
 func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 	var matchCategory core.SpanCategory
 	var isMatch bool
-	for category, predicate := range core.CategoryPredicateFieldMapping {
+	for _, predicate := range core.CategoryPredicateFields {
 		match := true
 
 		if len(predicate.OptionFields) != 0 {
@@ -388,7 +385,7 @@ func inferCategory(collections map[string]string) (core.SpanCategory, bool) {
 			return exist
 		}).Any()
 		if match {
-			matchCategory = category
+			matchCategory = predicate.Category
 			isMatch = true
 			// if span contains multiple category fields, the count is not repeated
 			break
@@ -404,7 +401,6 @@ func processCategoryStatistics(collections map[string]string, s map[core.SpanCat
 	if match {
 		s[category]++
 	}
-
 }
 
 func initKindCategoryStatistics() map[core.SpanKindCategory]int {
@@ -440,9 +436,10 @@ func collectCollections(collections map[string][]string, spanCollections map[str
 }
 
 type ProcessorOptions struct {
-	enabledInfoCache bool
-	traceEsQueryRate int
-	metricSampleRate int
+	enabledInfoCache          bool
+	traceEsQueryRate          int
+	metricReportEnabled       bool
+	metricLayer4ReportEnabled bool
 }
 
 type ProcessorOption func(*ProcessorOptions)
@@ -463,21 +460,30 @@ func TraceEsQueryRate(r int) ProcessorOption {
 	}
 }
 
-// MetricSampleRate If the current limit value > indicator, relation index will not be calculated for trace.
-func MetricSampleRate(r int) ProcessorOption {
+// TraceMetricsReportEnabled enable the metrics report
+func TraceMetricsReportEnabled(e bool) ProcessorOption {
 	return func(options *ProcessorOptions) {
-		options.metricSampleRate = r
+		options.metricReportEnabled = e
 	}
 }
 
-func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
+func TraceMetricsLayer4ReportEnabled(e bool) ProcessorOption {
+	return func(options *ProcessorOptions) {
+		options.metricLayer4ReportEnabled = e
+	}
+}
+
+func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Proxy, options ...ProcessorOption) Processor {
 	opts := ProcessorOptions{}
 	for _, setter := range options {
 		setter(&opts)
 	}
 
 	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(opts.traceEsQueryRate)), opts.traceEsQueryRate)
-	logger.Infof("create es query limiter, dataId: %s rate: %d", dataId, opts.traceEsQueryRate)
+	logger.Infof(
+		"[NewProcessor] es query limiter, dataId: %s rate: %d metricReport: %t",
+		dataId, opts.traceEsQueryRate, opts.metricReportEnabled,
+	)
 
 	return Processor{
 		dataId:              dataId,
@@ -489,7 +495,7 @@ func NewProcessor(dataId string, storageProxy *storage.Proxy, options ...Process
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(dataId, opts.metricSampleRate),
+		metricProcessor: newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
 		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
 	}
 }

@@ -195,7 +195,6 @@ func TestEventProcessor_Handle(t *testing.T) {
 			}
 		}
 	}
-
 }
 
 func BenchmarkEventProcessor_Handle(b *testing.B) {

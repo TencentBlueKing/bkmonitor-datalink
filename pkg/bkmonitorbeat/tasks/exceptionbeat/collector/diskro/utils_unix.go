@@ -43,7 +43,7 @@ func NewMountPointInfo(stat disk.PartitionStat) *MountPointInfo {
 
 // NewBatchMountPointInfo: 批量生成MountPoint信息
 func NewBatchMountPointInfo(statList []disk.PartitionStat) []*MountPointInfo {
-	var resultList = make([]*MountPointInfo, 0, len(statList))
+	resultList := make([]*MountPointInfo, 0, len(statList))
 
 	for _, stat := range statList {
 		resultList = append(resultList, NewMountPointInfo(stat))
@@ -115,9 +115,7 @@ func (mp *MountPointInfo) setHistoryInfo() error {
 
 // IsReadOnlyStatusChange  返回当前的状态是否有从RW到RO的状态转变
 func (mp *MountPointInfo) IsReadOnlyStatusChange() bool {
-	var (
-		historyMp *MountPointInfo
-	)
+	var historyMp *MountPointInfo
 
 	// 如果能拿到状态，表示之前这个挂载点是存在过RW的状态的。所以此时如果是RO的状态，那么可以直接判断有发生过变化
 	if !mp.IsReadOnly() {
@@ -165,7 +163,7 @@ func (mp *MountPointInfo) IsMatchRule(rule []string) bool {
 		err       error
 	)
 
-	var filePathList = filepath.SplitList(mp.MountPoint)
+	filePathList := filepath.SplitList(mp.MountPoint)
 	logger.Debugf("mount_point->[%s] is split to->[%#v]", mp.MountPoint, filePathList)
 
 	for _, filePath := range filePathList {

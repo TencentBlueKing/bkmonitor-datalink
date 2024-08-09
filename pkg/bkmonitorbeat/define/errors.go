@@ -167,7 +167,6 @@ func GetErrorCodeByError(err error) int {
 		return ErrCodeMap[ErrNotConfigured]
 	}
 	return val
-
 }
 
 // ErrCodeMap 建立error与errorcode之间的关系
@@ -182,7 +181,7 @@ var ErrCodeMap = map[error]int{
 	ErrValue:           107,
 	ErrKey:             108,
 
-	//Global errors
+	// Global errors
 	ErrNoChildPath:     111,
 	ErrGetChildTasks:   112,
 	ErrUnpackCfgError:  113,
@@ -194,13 +193,13 @@ var ErrCodeMap = map[error]int{
 	ErrNoVersion:     123,
 	ErrTaskRepeat:    124,
 
-	//SimpleTask errors
+	// SimpleTask errors
 	ErrTypeConvertError: 131,
 
-	//Corefile Errors
+	// Corefile Errors
 	ErrNoEventID: 134,
 
-	//Custom errors
+	// Custom errors
 	ErrNoPort: 135,
 	ErrNoPath: 136,
 
@@ -235,10 +234,10 @@ var (
 	ErrNoPath = errors.New("missing listen path")
 
 	// Ping Errors
-	ErrNoTarget        = errors.New("no targets found")  //目标列表为空
-	ErrWrongTargetType = errors.New("wrong target type") //目标类型不是ip也不是domain
+	ErrNoTarget        = errors.New("no targets found")  // 目标列表为空
+	ErrWrongTargetType = errors.New("wrong target type") // 目标类型不是ip也不是domain
 
-	//GlobalConfig errors
+	// GlobalConfig errors
 	ErrNoChildPath     = errors.New("bkmonitorbeat.include not configured")
 	ErrGetChildTasks   = errors.New("get child tasks error")
 	ErrUnpackCfgError  = errors.New("Unpack cfg error")

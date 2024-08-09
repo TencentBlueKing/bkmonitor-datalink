@@ -611,37 +611,10 @@ func (s SpacePusher) composeEsTableIdOptions(tableIdList []string) map[string]ma
 func (s SpacePusher) composeEsTableIdDetail(tableId string, options map[string]interface{}, storageClusterId uint, sourceType, indexSet string) (string, string, error) {
 	logger.Infof("compose es table id detail, table_id [%s], options [%+v], storage_cluster_id [%d], source_type [%s], index_set [%s]", tableId, options, storageClusterId, sourceType, indexSet)
 
-	var indexList []string
-	var processedList []string
-	tableIdDb := indexSet
-	if sourceType == models.EsSourceTypeLOG {
-		if indexSet != "" {
-			indexList = strings.Split(indexSet, ",")
-		} else {
-			indexList = []string{tableId}
-		}
-		for _, index := range indexList {
-			processedIndex := strings.ReplaceAll(index, ".", "_")
-			finalString := fmt.Sprintf("%s_*_read", processedIndex)
-			processedList = append(processedList, finalString)
-		}
-		tableIdDb = strings.Join(processedList, ",")
-	} else if sourceType == models.EsSourceTypeBKDATA {
-		if indexSet != "" {
-			indexList = strings.Split(indexSet, ",")
-		}
-		for _, index := range indexList {
-			finalString := fmt.Sprintf("%s_*", index)
-			processedList = append(processedList, finalString)
-		}
-		tableIdDb = strings.Join(processedList, ",")
-	} else if sourceType != models.EsSourceTypeES {
-		return tableId, "", errors.Errorf("Source_type [%s] is not a log,bkdata,es of which type", sourceType)
-	}
 	// 组装数据
 	detailStr, err := jsonx.MarshalString(map[string]any{
 		"storage_id":  storageClusterId,
-		"db":          tableIdDb,
+		"db":          indexSet,
 		"measurement": models.TSGroupDefaultMeasurement,
 		"source_type": sourceType,
 		"options":     options,

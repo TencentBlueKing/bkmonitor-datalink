@@ -104,7 +104,6 @@ func (ac *accumulator) addFields(
 
 	totalMap["time"] = timeMap
 	ac.metrics <- totalMap
-
 }
 
 // AddError passes a runtime error to the accumulator.

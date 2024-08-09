@@ -95,7 +95,6 @@ func (sd *sharedDiscovery) start() {
 				if !ok {
 					// 第一次记录且没有 targets 则跳过
 					if tg == nil || len(tg.Targets) == 0 {
-						sd.mm.IncSkippedTgSourceCounter()
 						logger.Infof("sharedDiscovery %s skip tg source '%s'", sd.id, tg.Source)
 						continue
 					}

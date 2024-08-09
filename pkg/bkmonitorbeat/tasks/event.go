@@ -235,7 +235,7 @@ func (e *StandardEvent) AsMapStr() common.MapStr {
 
 // NewStandardEvent :
 func NewStandardEvent(task define.TaskConfig) *StandardEvent {
-	var labels = task.GetLabels()
+	labels := task.GetLabels()
 	return &StandardEvent{
 		Labels: labels,
 		BizID:  task.GetBizID(),
@@ -404,7 +404,7 @@ func (e *MetricEvent) GetType() string {
 
 // NewMetricEvent :
 func NewMetricEvent(task define.TaskConfig) *MetricEvent {
-	var labels = task.GetLabels()
+	labels := task.GetLabels()
 	return &MetricEvent{
 		Labels: labels,
 		BizID:  task.GetBizID(),
@@ -444,7 +444,8 @@ func NewGatherUpEventWithDims(task define.Task, upCode define.BeatErrorCode, cus
 }
 
 func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.BeatErrorCode,
-	customDims common.MapStr) *GatherUpEvent {
+	customDims common.MapStr,
+) *GatherUpEvent {
 	name, ok := define.BeatErrorCodeNameMap[upCode]
 	if !ok {
 		name = "NotKnownErrorCode"

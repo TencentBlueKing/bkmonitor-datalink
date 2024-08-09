@@ -106,12 +106,12 @@ func (s *Scheduler) Reload(ctx context.Context, conf define.Config, newTasks []d
 	removeTasks := make(map[string]*keyword.TaskConfig)
 	addTasks := make(map[string]*keyword.TaskConfig)
 
-	//step 1: 生成原来的任务清单
+	// step 1: 生成原来的任务清单
 	for taskID, task := range s.tasks {
 		removeTasks[taskID] = task
 	}
 
-	//step 2: 根据新配置找出有变动的任务列表
+	// step 2: 根据新配置找出有变动的任务列表
 	for _, newTask := range newTasks {
 		taskConfig := s.taskToKeywordTask(newTask)
 		taskId := taskConfig.TaskID
@@ -132,17 +132,17 @@ func (s *Scheduler) Reload(ctx context.Context, conf define.Config, newTasks []d
 
 	logger.Infof("[Reload]removeTasks=>%d, addTasks=>%d", len(removeTasks), len(addTasks))
 
-	//step 3：清理任务信息
+	// step 3：清理任务信息
 	if len(removeTasks) > 0 {
 		s.removeTasks(removeTasks)
 	}
 
-	//step 4：对新增的任务进行采集
+	// step 4：对新增的任务进行采集
 	if len(addTasks) > 0 {
 		s.addTasks(addTasks)
 	}
 
-	//step 5: reload input module
+	// step 5: reload input module
 	if input.SingleInstance != nil {
 		input.SingleInstance.Reload(addTasks)
 	}

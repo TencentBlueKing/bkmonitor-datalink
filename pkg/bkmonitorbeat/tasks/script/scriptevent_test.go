@@ -31,7 +31,7 @@ func TestScriptEvent(t *testing.T) {
 	}
 	st := New(globalConf, taskConf).(*Gather)
 	event := NewEvent(st)
-	if event.ErrorCode != define.BeatErrCodeUnknown {
+	if event.ErrorCode != define.CodeUnknown {
 		t.Errorf("script event initial failed")
 	}
 }

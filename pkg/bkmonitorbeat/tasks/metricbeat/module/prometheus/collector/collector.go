@@ -11,6 +11,7 @@ package collector
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -275,11 +276,11 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	var total atomic.Int64
 
 	markUp := func(err error) {
-		events := m.mustProduceEvents(define.MetricBeatScrapeLine(int(total.Load())), milliTs)
+		events := m.asEvents(define.MetricBeatScrapeLine(int(total.Load())), milliTs)
 		if err == nil {
-			events = append(events, m.mustProduceEvents(define.MetricBeatUp(define.BeatErrCodeOK), milliTs)...)
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK), milliTs)...)
 		} else {
-			events = append(events, m.mustProduceEvents(define.MetricBeatUp(define.CodeMetricBeatFormatErr.Code()), milliTs)...)
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeMetricBeatFormatErr), milliTs)...)
 		}
 		for i := 0; i < len(events); i++ {
 			eventChan <- events[i]
@@ -335,7 +336,7 @@ func normalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }
 
-func (m *MetricSet) mustProduceEvents(line string, timestamp int64) []common.MapStr {
+func (m *MetricSet) asEvents(line string, timestamp int64) []common.MapStr {
 	events, _, _ := m.produceEvents(line, timestamp)
 	return events
 }
@@ -441,4 +442,9 @@ func (m *MetricSet) fillMetrics(summary common.MapStr, rc io.ReadCloser, up bool
 	}
 	summary["metrics"] = events
 	logger.Infof("got metrics count: %d", len(events))
+}
+
+func newCodeReader(code define.NamedCode) io.ReadCloser {
+	r := bytes.NewReader([]byte(define.MetricBeatUp(code)))
+	return io.NopCloser(r)
 }

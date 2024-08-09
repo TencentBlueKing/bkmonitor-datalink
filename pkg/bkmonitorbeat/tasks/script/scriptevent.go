@@ -23,7 +23,7 @@ type Event struct {
 	DataID    int32
 	TaskID    int32
 	TaskType  string
-	ErrorCode define.BeatErrorCode
+	ErrorCode define.NamedCode
 	BizID     int32
 	StartAt   time.Time
 	EndAt     time.Time
@@ -95,7 +95,7 @@ func NewEvent(t define.Task) *Event {
 		TaskID:    t.GetTaskID(),
 		TaskType:  taskConf.GetType(),
 		StartAt:   time.Now().UTC(),
-		ErrorCode: define.BeatErrCodeUnknown,
+		ErrorCode: define.CodeUnknown,
 		Dimension: common.MapStr{},
 		Metric:    common.MapStr{},
 		Exemplar:  common.MapStr{},
@@ -106,7 +106,7 @@ func NewEvent(t define.Task) *Event {
 
 // Success 普通指标事件正常结束
 func (e *Event) Success() {
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.EndAt = time.Now()
 	e.Message = "success"
 }

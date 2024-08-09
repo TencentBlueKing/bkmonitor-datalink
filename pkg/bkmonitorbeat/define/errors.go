@@ -14,12 +14,6 @@ import (
 	"fmt"
 )
 
-const (
-	BeaterUpMetric              = "bkm_gather_up"
-	BeaterUpMetricCodeLabel     = "bkm_up_code"
-	BeaterUpMetricCodeNameLabel = "bkm_up_code_name"
-)
-
 // BeaterUpMetricErr 包含上报状态码的异常
 type BeaterUpMetricErr struct {
 	Code    int

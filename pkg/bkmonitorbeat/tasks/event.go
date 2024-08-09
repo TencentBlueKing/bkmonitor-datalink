@@ -28,7 +28,7 @@ type Event struct {
 	TaskType          string
 	Available         float64
 	Status            int32
-	ErrorCode         define.BeatErrorCode
+	ErrorCode         define.NamedCode
 	StartAt           time.Time
 	EndAt             time.Time
 	AvailableDuration time.Duration
@@ -39,14 +39,14 @@ type Event struct {
 func (e *Event) IgnoreCMDBLevel() bool { return false }
 
 // Fail :
-func (e *Event) Fail(code define.BeatErrorCode) {
+func (e *Event) Fail(code define.NamedCode) {
 	e.Status = define.GatherStatusError
 	e.ErrorCode = code
 	e.EndAt = time.Now()
 	e.Available = 0
 }
 
-func (e *Event) FailWithTime(code define.BeatErrorCode, start, end time.Time) {
+func (e *Event) FailWithTime(code define.NamedCode, start, end time.Time) {
 	e.Status = define.GatherStatusError
 	e.ErrorCode = code
 	e.Available = 0
@@ -57,14 +57,14 @@ func (e *Event) FailWithTime(code define.BeatErrorCode, start, end time.Time) {
 // Success :
 func (e *Event) Success() {
 	e.Status = define.GatherStatusOK
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.EndAt = time.Now()
 	e.Available = 1
 }
 
 func (e *Event) SuccessWithTime(start, end time.Time) {
 	e.Status = define.GatherStatusOK
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.Available = 1
 	e.StartAt = start
 	e.EndAt = end
@@ -77,7 +77,7 @@ func (e *Event) SuccessOrTimeout() {
 	}
 	if e.AvailableDuration > time.Nanosecond && e.TaskDuration() > e.AvailableDuration {
 		logger.Debugf("fail because task duration exceed")
-		e.Fail(define.BeatErrCodeTimeout)
+		e.Fail(define.CodeTimeout)
 	} else {
 		e.Success()
 	}
@@ -97,7 +97,7 @@ func (e *Event) AsMapStr() common.MapStr {
 		"timestamp":     e.StartAt.Unix(),
 		"task_type":     e.TaskType,
 		"status":        e.Status,
-		"error_code":    e.ErrorCode,
+		"error_code":    e.ErrorCode.Code(),
 		"available":     e.Available,
 		"task_duration": int(e.TaskDuration().Milliseconds()),
 	}
@@ -125,7 +125,7 @@ func NewEvent(task define.Task) *Event {
 		TaskID:            task.GetTaskID(),
 		TaskType:          taskConf.GetType(),
 		Status:            define.GatherStatusUnknown,
-		ErrorCode:         define.BeatErrCodeUnknown,
+		ErrorCode:         define.CodeUnknown,
 		Labels:            taskConf.GetLabels(),
 	}
 }
@@ -435,31 +435,29 @@ func (e *GatherUpEvent) AsMapStr() common.MapStr {
 	return mapStr
 }
 
-func NewGatherUpEvent(task define.Task, upCode define.BeatErrorCode) *GatherUpEvent {
+func NewGatherUpEvent(task define.Task, upCode define.NamedCode) *GatherUpEvent {
 	return NewGatherUpEventWithDims(task, upCode, nil)
 }
 
-func NewGatherUpEventWithDims(task define.Task, upCode define.BeatErrorCode, customDims common.MapStr) *GatherUpEvent {
+func NewGatherUpEventWithDims(task define.Task, upCode define.NamedCode, customDims common.MapStr) *GatherUpEvent {
 	return NewGatherUpEventWithConfig(task.GetConfig(), task.GetGlobalConfig(), upCode, customDims)
 }
 
-func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.BeatErrorCode,
-	customDims common.MapStr,
-) *GatherUpEvent {
-	name, ok := define.CodeNameMap[upCode]
-	if !ok {
+func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.NamedCode, customDims common.MapStr) *GatherUpEvent {
+	name := upCode.Name()
+	if name == "" {
 		name = "NotKnownErrorCode"
 	}
 	dims := common.MapStr{
-		"task_id":                          strconv.Itoa(int(taskConfig.GetTaskID())),
-		"bk_collect_type":                  taskConfig.GetType(),
-		"bk_biz_id":                        strconv.Itoa(int(taskConfig.GetBizID())),
-		"bk_collect_config_id":             "",
-		"bk_target_cloud_id":               "",
-		"bk_target_host_id":                "",
-		"bk_target_ip":                     "",
-		define.BeaterUpMetricCodeLabel:     strconv.Itoa(int(upCode)),
-		define.BeaterUpMetricCodeNameLabel: name,
+		"task_id":              strconv.Itoa(int(taskConfig.GetTaskID())),
+		"bk_collect_type":      taskConfig.GetType(),
+		"bk_biz_id":            strconv.Itoa(int(taskConfig.GetBizID())),
+		"bk_collect_config_id": "",
+		"bk_target_cloud_id":   "",
+		"bk_target_host_id":    "",
+		"bk_target_ip":         "",
+		define.LabelUpCode:     strconv.Itoa(upCode.Code()),
+		define.LabelUpCodeName: name,
 	}
 	// 从配置文件中获取维度字段
 	for _, labels := range taskConfig.GetLabels() {
@@ -479,7 +477,7 @@ func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig defin
 		DataID:     globalConfig.GetGatherUpDataID(),
 		Time:       time.Now(),
 		Dimensions: dims,
-		Metrics:    common.MapStr{define.BeaterUpMetric: 1},
+		Metrics:    common.MapStr{define.NameGatherUp: 1},
 	}
 	return ev
 }

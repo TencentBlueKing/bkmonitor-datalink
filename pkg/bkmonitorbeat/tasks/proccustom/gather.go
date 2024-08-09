@@ -109,7 +109,7 @@ func (g *Gather) AsPortEvents(pid int32, cmd string, conns []process.FileSocket)
 	return []Event{event}
 }
 
-func (g *Gather) newUpMetricEvent(upCode define.BeatErrorCode) define.Event {
+func (g *Gather) newUpMetricEvent(upCode define.NamedCode) define.Event {
 	return tasks.NewGatherUpEvent(g, upCode)
 }
 
@@ -200,8 +200,6 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 	pid, err := g.getPidFromPidPath()
 	if err != nil {
 		logger.Warnf("pid file not found, %v", err)
-		failedEvent := g.newUpMetricEvent(define.BeaterProcPIDFileNotFountOuterError)
-		e <- failedEvent
 		return
 	}
 
@@ -211,8 +209,6 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		one, err := g.ctr.GetOneMetaData(pid)
 		if err != nil {
 			logger.Errorf("failed to get one proc perf detailed: %v", err)
-			failedEvent := g.newUpMetricEvent(define.BeaterProcStateReadOuterError)
-			e <- failedEvent
 			return
 		}
 		match = append(match, one)
@@ -220,15 +216,11 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		// 通过进程关键字匹配方式读取进程信息分支
 		all, err := g.GetAllMetaDataWithCache()
 		if err != nil {
-			failedEvent := g.newUpMetricEvent(define.BeaterProcSnapshotReadError)
-			e <- failedEvent
 			logger.Errorf("failed to get all proc perf detailed: %v", err)
 			return
 		}
 		match = g.config.Match(all)
 		if len(match) == 0 {
-			failedEvent := g.newUpMetricEvent(define.BeaterProcNotMatchedOuterError)
-			e <- failedEvent
 			logger.Warn("No processes matched keyword pattern")
 			return
 		}
@@ -257,11 +249,6 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 			logger.Errorf(
 				"ConnDetector.Get failed, connector: %#v pids: %v, err: %v ", connDetector, pids, err,
 			)
-			if _, ok := connDetector.(process.StdDetector); ok {
-				e <- g.newUpMetricEvent(define.BeaterProcStdConnDetectError)
-			} else {
-				e <- g.newUpMetricEvent(define.BeaterProcNetConnDetectError)
-			}
 			g.degradeToStdConn = true
 			return
 		} else {
@@ -283,7 +270,7 @@ func (g *Gather) Run(_ context.Context, e chan<- define.Event) {
 		}
 	}
 
-	upEvent := g.newUpMetricEvent(define.BeatErrCodeOK)
+	upEvent := g.newUpMetricEvent(define.CodeOK)
 	e <- upEvent
 }
 

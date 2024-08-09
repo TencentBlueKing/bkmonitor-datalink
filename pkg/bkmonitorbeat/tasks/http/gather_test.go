@@ -89,17 +89,17 @@ func (s *GatherSuite) TestGatherRun() {
 	cases := []struct {
 		code         int
 		responseCode int
-		errorCode    define.BeatErrorCode
+		errorCode    define.NamedCode
 		expect       string
 		err          error
 	}{
-		{200, 200, define.BeatErrCodeOK, "", nil},
-		{200, 200, define.BeatErrCodeResponseMatchError, "x", nil},
-		{400, 400, define.BeatErrCodeResponseCodeError, "", nil},
-		{500, 0, define.BeatErrCodeResponseError, "", &url.Error{
+		{200, 200, define.CodeOK, "", nil},
+		{200, 200, define.CodeNetResponseMatchErr, "x", nil},
+		{400, 400, define.CodeNetResponseCodeErr, "", nil},
+		{500, 0, define.CodeNetResponseErr, "", &url.Error{
 			Op: "parse", URL: "", Err: errors.New("test"),
 		}},
-		{200, 0, define.BeatErrCodeResponseTimeoutError, "", &url.Error{
+		{200, 0, define.CodeNetResponseTimeoutErr, "", &url.Error{
 			Op: "parse", URL: "", Err: &timeoutTestError{timeout: true},
 		}},
 	}

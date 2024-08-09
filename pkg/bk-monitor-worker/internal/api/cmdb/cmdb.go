@@ -176,3 +176,25 @@ func (c *Client) ListServiceInstanceDetail(opts ...define.OperationOption) defin
 		Path:   path,
 	}, opts...)
 }
+
+// SearchDynamicGroup for cmdb resource search_dynamic_group
+// 查询动态分组
+func (c *Client) SearchDynamicGroup(opts ...define.OperationOption) define.Operation {
+	path := "search_dynamic_group"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "search_dynamic_group",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}
+
+// ExecuteDynamicGroup for cmdb resource execute_dynamic_group
+// 执行动态分组
+func (c *Client) ExecuteDynamicGroup(opts ...define.OperationOption) define.Operation {
+	path := "execute_dynamic_group"
+	return c.BkApiClient.NewOperation(bkapi.OperationConfig{
+		Name:   "execute_dynamic_group",
+		Method: "POST",
+		Path:   path,
+	}, opts...)
+}

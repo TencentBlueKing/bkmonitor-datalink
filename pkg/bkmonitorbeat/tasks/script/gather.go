@@ -71,9 +71,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	if err != nil {
 		logger.Errorf("execCmd [%s] failed:%s, failed content:%s", fmtCommand, err.Error(), out)
 		if err == utils.ErrScriptTimeout {
-			e <- tasks.NewGatherUpEvent(g, define.BeatScriptTimeoutErr)
+			e <- tasks.NewGatherUpEvent(g, define.CodeScriptTimeoutError)
 		} else {
-			e <- tasks.NewGatherUpEvent(g, define.BeatScriptRunOuterError)
+			e <- tasks.NewGatherUpEvent(g, define.CodeScriptRunOuterError)
 		}
 		return
 	}
@@ -82,7 +82,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	aggreRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
 	if formatErr == define.ErrNoScriptOutput {
-		e <- tasks.NewGatherUpEvent(g, define.BeatScriptNoOutputErr)
+		e <- tasks.NewGatherUpEvent(g, define.CodeScriptNoOutputError)
 		logger.Error(formatErr)
 		return
 	}
@@ -140,7 +140,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	if formatErr != nil {
-		e <- tasks.NewGatherUpEvent(g, define.BeatScriptPromFormatOuterError)
+		e <- tasks.NewGatherUpEvent(g, define.CodeScriptPromFormatOuterError)
 		if len(aggreRst) == 0 {
 			logger.Errorf("format output failed totally: %s", formatErr.Error())
 		} else {

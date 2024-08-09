@@ -446,7 +446,7 @@ func NewGatherUpEventWithDims(task define.Task, upCode define.BeatErrorCode, cus
 func NewGatherUpEventWithConfig(taskConfig define.TaskConfig, globalConfig define.Config, upCode define.BeatErrorCode,
 	customDims common.MapStr,
 ) *GatherUpEvent {
-	name, ok := define.BeatErrorCodeNameMap[upCode]
+	name, ok := define.CodeNameMap[upCode]
 	if !ok {
 		name = "NotKnownErrorCode"
 	}

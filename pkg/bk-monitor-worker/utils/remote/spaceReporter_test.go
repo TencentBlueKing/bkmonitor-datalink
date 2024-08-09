@@ -12,28 +12,29 @@ package remote
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func TestPrometheusWriter_WriteBatch(t *testing.T) {
+func TestSpaceReporter__Do(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 
-	metric := fmt.Sprintf("prometheus_%s", time.Now().Format("2006010215"))
-	options := GetPrometheusWriteOptions(
-		PrometheusWriterEnabled(true),
-		PrometheusWriterUrl(config.PromRemoteWriteUrl),
-		PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
-	)
-	prometheusWriter := NewPrometheusWriterClient(options)
+	rp, err := NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+	if err != nil {
+		logger.Fatal(err.Error())
+	}
+
+	metric := fmt.Sprintf("space_reporter_%s", time.Now().Format("2006010215"))
 	ts := append([]prompb.TimeSeries{
 
 		{
@@ -142,11 +143,6 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 		},
 	})
 
-	err := prometheusWriter.WriteBatch(ctx, "", ts)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	cancel()
-	<-ctx.Done()
+	err = rp.Do(ctx, "bkcc__2", ts...)
+	assert.Nil(t, err)
 }

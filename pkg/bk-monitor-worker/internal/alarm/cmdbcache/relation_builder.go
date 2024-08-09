@@ -13,16 +13,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	"github.com/prometheus/prometheus/prompb"
 	"sync"
 	"time"
+
+	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
+	spaceReport remote.Reporter
 	metricsLock sync.RWMutex
 	metrics     map[int]map[int]Nodes
 }
@@ -39,6 +40,11 @@ func newRelationMetricsBuilder() *RelationMetricsBuilder {
 
 func GetRelationMetricsBuilder() *RelationMetricsBuilder {
 	return defaultRelationMetricsBuilder
+}
+
+func (b *RelationMetricsBuilder) WithSpaceReport(reporter remote.Reporter) *RelationMetricsBuilder {
+	b.spaceReport = reporter
+	return b
 }
 
 func (b *RelationMetricsBuilder) toString(v any) string {
@@ -172,23 +178,12 @@ func (b *RelationMetricsBuilder) String() string {
 	return buf.String()
 }
 
-// Push 通过 remote write 上报数据
-func (b *RelationMetricsBuilder) Push(ctx context.Context, bkBizID int, tsList []prompb.TimeSeries) error {
-	headers := config.PromRemoteWriteHeaders
-	headers["x-bk-data-id"] = fmt.Sprintf("%d", 1584605)
-	options := remote.GetPrometheusWriteOptions(
-		remote.PrometheusWriterEnabled(true),
-		remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-		remote.PrometheusWriterHeaders(headers),
-	)
-
-	logger.Infof("push metrics in bkBizID: %d, series: %d", bkBizID, len(tsList))
-	prometheusWriter := remote.NewPrometheusWriterClient(options)
-	return prometheusWriter.WriteBatch(ctx, tsList)
-}
-
 // PushAll 推送全业务数据
 func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
+	if b.spaceReport == nil {
+		return fmt.Errorf("space reporter is nil")
+	}
+
 	bkBizTsList := make(map[int][]prompb.TimeSeries)
 	metricsMap := make(map[string]struct{})
 	b.metricsLock.RLock()
@@ -209,7 +204,8 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 	b.metricsLock.RUnlock()
 
 	for bkBizID, ts := range bkBizTsList {
-		if err := b.Push(ctx, bkBizID, ts); err != nil {
+		spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
+		if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 			return err
 		}
 	}

@@ -21,6 +21,12 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	tokenKey = "X-BK-TOKEN"
 )
 
 type PrometheusStorageDataList []PrometheusStorageData
@@ -80,7 +86,7 @@ func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
 	return ts
 }
 
-func (p *PrometheusWriter) WriteBatch(ctx context.Context, tsList []prompb.TimeSeries) error {
+func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList []prompb.TimeSeries) error {
 	if !p.config.enabled {
 		return nil
 	}
@@ -101,6 +107,11 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, tsList []prompb.TimeS
 		req.Header.Set(k, v)
 	}
 
+	// 支持使用不同的 token
+	if token != "" {
+		req.Header.Set(tokenKey, token)
+	}
+
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
@@ -111,6 +122,8 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, tsList []prompb.TimeS
 	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
 		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
 	}
+
+	logger.Infof("prom remote wirte ts: %d", len(tsList))
 
 	return nil
 }

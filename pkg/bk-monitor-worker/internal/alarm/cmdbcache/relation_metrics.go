@@ -12,8 +12,9 @@ package cmdbcache
 import (
 	"bytes"
 	"fmt"
-	"github.com/prometheus/prometheus/prompb"
 	"time"
+
+	"github.com/prometheus/prometheus/prompb"
 )
 
 type RelationLabel struct {

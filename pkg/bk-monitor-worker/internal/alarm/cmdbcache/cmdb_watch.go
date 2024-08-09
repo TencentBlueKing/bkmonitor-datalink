@@ -32,9 +32,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -522,15 +524,23 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			logger.Infof("start handle cmdb resource(%s) event", cacheType)
 			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
 
+			// 启动上报服务
+			reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+			if err != nil {
+				logger.Errorf("new space reporter: %v", err)
+			}
+
 			for {
 				tn := time.Now()
 				// 事件处理
 				handler.Handle(cancelCtx)
 
 				// 推送自定义上报数据
-				if err := GetRelationMetricsBuilder().PushAll(cancelCtx, time.Now()); err != nil {
-					logger.Errorf("relation metrics builder push all error: %v", err.Error())
-				}
+				go func() {
+					if err := GetRelationMetricsBuilder().WithSpaceReport(reporter).PushAll(cancelCtx, time.Now()); err != nil {
+						logger.Errorf("relation metrics builder push all error: %v", err.Error())
+					}
+				}()
 
 				// 事件处理间隔时间
 				select {

@@ -370,6 +370,13 @@ func TestInstance_getAlias(t *testing.T) {
 			needAddTime: true,
 			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
 		},
+		"change month with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
+			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
+		},
 		"2d with Asia/ShangHai": {
 			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
 			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),

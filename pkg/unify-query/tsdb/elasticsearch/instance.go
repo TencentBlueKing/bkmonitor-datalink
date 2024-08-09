@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -460,14 +459,21 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
+func timeToDate(t time.Time, unit string) time.Time {
+	switch unit {
+	case "month":
+		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	default:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+}
+
 func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
 	var (
-		aliases  []string
-		_, span  = trace.NewSpan(ctx, "get-alias")
-		err      error
-		loc      *time.Location
-		startInt int
-		endInt   int
+		aliases []string
+		_, span = trace.NewSpan(ctx, "get-alias")
+		err     error
+		loc     *time.Location
 	)
 	defer span.End(&err)
 
@@ -493,29 +499,36 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	span.Set("end", end.String())
 	span.Set("left", left)
 
-	dateFormat := "20060102"
+	var (
+		dateFormat string
+		addDay     int
+		addMonth   int
+
+		startTime time.Time
+		endTime   time.Time
+	)
+
 	if left > int64(time.Hour.Seconds()*24*14) {
-		dateFormat = "200601"
 		halfYear := time.Hour * 24 * 30 * 6
 		if left > int64(halfYear.Seconds()) {
 			start = end.Add(halfYear * -1)
 		}
-	}
 
-	startInt, err = strconv.Atoi(start.Format(dateFormat))
-	if err != nil {
-		return nil, err
-	}
-
-	endInt, err = strconv.Atoi(end.Format(dateFormat))
-	if err != nil {
-		return nil, err
+		startTime = timeToDate(start, "month")
+		endTime = timeToDate(end, "month")
+		dateFormat = "200601"
+		addMonth = 1
+	} else {
+		startTime = timeToDate(start, "day")
+		endTime = timeToDate(end, "day")
+		dateFormat = "20060102"
+		addDay = 1
 	}
 
 	newAliases := make([]string, 0)
-	for d := startInt; d <= endInt; d++ {
+	for d := startTime; !d.After(endTime); d = d.AddDate(0, addMonth, addDay) {
 		for _, alias := range aliases {
-			newAliases = append(newAliases, fmt.Sprintf("%s_%d*", alias, d))
+			newAliases = append(newAliases, fmt.Sprintf("%s_%s*", alias, d.Format(dateFormat)))
 		}
 	}
 

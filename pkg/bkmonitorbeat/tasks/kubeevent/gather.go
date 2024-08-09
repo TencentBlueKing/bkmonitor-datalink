@@ -145,6 +145,8 @@ func (r *recorder) Recv(event k8sEvent) {
 			// 事件第一次发生时间在采集器启动前
 			// 事件最近一次发生时间也在采集器启动前
 			// 次数为 0 且下个周期不发送
+			r.set[h].windowL = 0
+			r.set[h].windowR = 0
 		}
 		logger.Infof("receive set event first: %+v", r.set[h])
 		return

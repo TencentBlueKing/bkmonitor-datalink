@@ -55,7 +55,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 	if err != nil {
 		logger.Errorf("use timestamp unit:%s to get timestamp handler failed, %s", taskConf.TimestampUnit, err)
-		e <- tasks.NewGatherUpEvent(g, define.BeatErrScriptTsUnitConfigError)
 		return
 	}
 
@@ -71,9 +70,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	if err != nil {
 		logger.Errorf("execCmd [%s] failed:%s, failed content:%s", fmtCommand, err.Error(), out)
 		if err == utils.ErrScriptTimeout {
-			e <- tasks.NewGatherUpEvent(g, define.BeatScriptTimeoutErr)
+			e <- tasks.NewGatherUpEvent(g, define.CodeScriptTimeoutErr)
 		} else {
-			e <- tasks.NewGatherUpEvent(g, define.BeatScriptRunOuterError)
+			e <- tasks.NewGatherUpEvent(g, define.CodeScriptRunErr)
 		}
 		return
 	}
@@ -82,7 +81,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	aggreRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
 	if formatErr == define.ErrNoScriptOutput {
-		e <- tasks.NewGatherUpEvent(g, define.BeatScriptNoOutputErr)
+		e <- tasks.NewGatherUpEvent(g, define.CodeScriptNoOutputErr)
 		logger.Error(formatErr)
 		return
 	}
@@ -140,14 +139,14 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	if formatErr != nil {
-		e <- tasks.NewGatherUpEvent(g, define.BeatScriptPromFormatOuterError)
+		e <- tasks.NewGatherUpEvent(g, define.CodeScriptFormatErr)
 		if len(aggreRst) == 0 {
 			logger.Errorf("format output failed totally: %s", formatErr.Error())
 		} else {
 			logger.Errorf("format output failed partly: %s", formatErr.Error())
 		}
 	} else {
-		e <- tasks.NewGatherUpEvent(g, define.BeatErrCodeOK)
+		e <- tasks.NewGatherUpEvent(g, define.CodeOK)
 		logger.Debugf("format command line %s result success", fmtCommand)
 	}
 }

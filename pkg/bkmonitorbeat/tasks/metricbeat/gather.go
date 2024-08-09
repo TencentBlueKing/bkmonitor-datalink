@@ -27,7 +27,7 @@ type Gather struct {
 	cancel context.CancelFunc
 	config *configs.MetricBeatConfig
 
-	tool MetricTool
+	tool *Tool
 }
 
 // Run :
@@ -43,7 +43,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 
 	if g.tool == nil {
-		g.tool = new(BKMetricbeatTool)
+		g.tool = new(Tool)
 		err := g.tool.Init(g.config, g.GetGlobalConfig())
 		if err != nil {
 			logger.Errorf("metricbeat init failed, err:%v", err)

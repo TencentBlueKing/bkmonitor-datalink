@@ -127,7 +127,7 @@ metric4label1"value3"} 22
 		assert.True(t, ok)
 		index++
 	}
-	failedMetric := newFailReader(define.BeatMetricBeatConnOuterError)
+	failedMetric := newCodeReader(define.CodeMetricBeatConnErr)
 	ch = mb.getEventsFromReader(failedMetric, func() {}, false)
 	for msg := range ch {
 		fmt.Printf("msg: %v", msg)

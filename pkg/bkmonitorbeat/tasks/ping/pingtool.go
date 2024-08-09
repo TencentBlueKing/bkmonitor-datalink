@@ -138,7 +138,7 @@ func (t *BatchPingTool) getIP(target Target) ([]net.IP, error) {
 	if target.GetTargetType() == "domain" {
 		ips, err := tasks.LookupIP(context.Background(), t.targetIPType, target.GetTarget())
 		if err != nil {
-			return nil, &define.BeaterUpMetricErr{Code: define.BeatPingDNSResolveOuterError, Message: err.Error()}
+			return nil, &define.BeaterUpMetricErr{Code: define.CodeDNSResolveErr.Code(), Message: err.Error()}
 		}
 		// 检测全部模式返回所有ip列表
 		if t.dnsCheckMode == configs.CheckModeAll {
@@ -153,7 +153,7 @@ func (t *BatchPingTool) getIP(target Target) ([]net.IP, error) {
 	// 类型为ip
 	ip := net.ParseIP(target.GetTarget())
 	if ip == nil {
-		return nil, &define.BeaterUpMetricErr{Code: define.BeatPingInvalidIPOuterError, Message: "invalid ip"}
+		return nil, &define.BeaterUpMetricErr{Code: define.CodeNetInvalidIPErr.Code(), Message: "invalid ip"}
 	}
 	return []net.IP{ip}, nil
 }
@@ -173,7 +173,7 @@ func (t *BatchPingTool) initInfoList(list []Target) map[string]map[string]*Info 
 			if errors.As(err, &upErr) {
 				upCode = upErr.Code
 			} else {
-				upCode = define.BeatErrInternalErr
+				upCode = define.CodeInternalErr.Code()
 			}
 			info := new(Info)
 			info.Name = v.GetTarget()

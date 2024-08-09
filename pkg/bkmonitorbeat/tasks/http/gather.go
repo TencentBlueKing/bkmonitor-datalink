@@ -78,7 +78,7 @@ func (e *Event) OK() bool {
 }
 
 // Fail :
-func (e *Event) Fail(code define.BeatErrorCode) {
+func (e *Event) Fail(code define.NamedCode) {
 	e.Event.Fail(code)
 	e.Status = int32(e.Index)
 }
@@ -89,9 +89,9 @@ func (e *Event) FailFromError(err error) {
 	switch typ := err.(type) {
 	case *url.Error:
 		if typ.Timeout() {
-			e.Fail(define.BeatErrCodeResponseTimeoutError)
+			e.Fail(define.CodeNetResponseTimeoutErr)
 		} else {
-			e.Fail(define.BeatErrCodeResponseError)
+			e.Fail(define.CodeNetResponseErr)
 		}
 	}
 }
@@ -248,7 +248,7 @@ func (g *Gather) GatherURL(
 	// 初始化请求
 	request, err := g.makeRequest(ctx, step, url)
 	if err != nil {
-		event.Fail(define.BeatErrCodeRequestInitError)
+		event.Fail(define.CodeNetRequestInitErr)
 		return false
 	}
 	// 获取结果
@@ -276,7 +276,7 @@ func (g *Gather) GatherURL(
 	}
 	// 检查响应状态码是否符合预期
 	if !g.checkResponseCode(step, response) {
-		event.Fail(define.BeatErrCodeResponseCodeError)
+		event.Fail(define.CodeNetResponseCodeErr)
 		return false
 	}
 	// 未配置响应内容无需检查
@@ -288,7 +288,7 @@ func (g *Gather) GatherURL(
 	// 读取响应内容明文reader
 	responseRd := makeResponseReader(response)
 	if responseRd == nil {
-		event.Fail(define.BeatErrCodeResponseHandleError)
+		event.Fail(define.CodeNetResponseHandleErr)
 		return false
 	}
 	defer func() {
@@ -322,7 +322,7 @@ func (g *Gather) GatherURL(
 		ok = utils.IsMatch(step.ResponseFormat, body, []byte(step.Response))
 		if !ok {
 			logger.Debugf("%v: %v match body fail with type[%v]", conf.TaskID, url, step.ResponseFormat)
-			event.Fail(define.BeatErrCodeResponseMatchError)
+			event.Fail(define.CodeNetResponseMatchErr)
 			return false
 		}
 	}
@@ -427,7 +427,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 		hostsInfo := tasks.GetHostsInfo(ctx, urls, conf.DNSCheckMode, conf.TargetIPType, configs.Http)
 		for _, h := range hostsInfo {
-			if h.Errno != define.BeatErrCodeOK {
+			if h.Errno != define.CodeOK {
 				event := NewEvent(g)
 				event.ToStep(1, step, h.Host)
 				event.Fail(h.Errno)

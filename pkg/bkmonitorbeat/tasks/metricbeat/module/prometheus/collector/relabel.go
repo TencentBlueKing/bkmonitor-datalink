@@ -93,7 +93,7 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	logger.Debugf("get original labels: %v", promLabels)
 
 	// up metric 不做 relabels 调整
-	if promEvent.Key == define.MetricBeatUpMetric {
+	if promEvent.Key == define.NameMetricBeatUp {
 		return true
 	}
 

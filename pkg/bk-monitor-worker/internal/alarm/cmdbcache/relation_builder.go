@@ -14,20 +14,25 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
-	ctx         context.Context
+	spaceReport remote.Reporter
 	metricsLock sync.RWMutex
 	metrics     map[int]map[int]Nodes
 }
 
 var (
-	defaultRelationMetricsBuilder = NewRelationMetricsBuilder()
+	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
 )
 
-func NewRelationMetricsBuilder() *RelationMetricsBuilder {
+func newRelationMetricsBuilder() *RelationMetricsBuilder {
 	return &RelationMetricsBuilder{
 		metrics: make(map[int]map[int]Nodes),
 	}
@@ -35,6 +40,11 @@ func NewRelationMetricsBuilder() *RelationMetricsBuilder {
 
 func GetRelationMetricsBuilder() *RelationMetricsBuilder {
 	return defaultRelationMetricsBuilder
+}
+
+func (b *RelationMetricsBuilder) WithSpaceReport(reporter remote.Reporter) *RelationMetricsBuilder {
+	b.spaceReport = reporter
+	return b
 }
 
 func (b *RelationMetricsBuilder) toString(v any) string {
@@ -48,12 +58,6 @@ func (b *RelationMetricsBuilder) toString(v any) string {
 		val = fmt.Sprintf("%v", v)
 	}
 	return val
-}
-
-// WithContext 写入 context 用于管理上下文
-func (b *RelationMetricsBuilder) WithContext(ctx context.Context) *RelationMetricsBuilder {
-	b.ctx = ctx
-	return b
 }
 
 // ClearAllMetrics 清理全部指标
@@ -73,7 +77,6 @@ func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hosts ...*AlarmHostInfo)
 			}
 		}
 	}
-
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
@@ -173,4 +176,38 @@ func (b *RelationMetricsBuilder) String() string {
 	}
 
 	return buf.String()
+}
+
+// PushAll 推送全业务数据
+func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
+	if b.spaceReport == nil {
+		return fmt.Errorf("space reporter is nil")
+	}
+
+	bkBizTsList := make(map[int][]prompb.TimeSeries)
+	metricsMap := make(map[string]struct{})
+	b.metricsLock.RLock()
+	for bkBizID, nodeMap := range b.metrics {
+		if _, ok := bkBizTsList[bkBizID]; !ok {
+			bkBizTsList[bkBizID] = make([]prompb.TimeSeries, 0)
+		}
+		for _, nodes := range nodeMap {
+			for _, relationMetric := range nodes.toRelationMetrics() {
+				ts := relationMetric.TimeSeries(bkBizID, timestamp)
+				if _, ok := metricsMap[ts.String()]; !ok {
+					metricsMap[ts.String()] = struct{}{}
+					bkBizTsList[bkBizID] = append(bkBizTsList[bkBizID], ts)
+				}
+			}
+		}
+	}
+	b.metricsLock.RUnlock()
+
+	for bkBizID, ts := range bkBizTsList {
+		spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
+		if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
+			return err
+		}
+	}
+	return nil
 }

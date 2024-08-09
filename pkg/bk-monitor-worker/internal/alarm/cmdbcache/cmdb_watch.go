@@ -501,6 +501,36 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// 推送自定义上报数据
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// 启动指标上报
+		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+		if err != nil {
+			logger.Errorf("new space reporter: %v", err)
+			return
+		}
+		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
+
+		for {
+			tn := time.Now()
+
+			// 上报指标
+			if err := spaceReport.PushAll(cancelCtx, tn); err != nil {
+				logger.Errorf("relation metrics builder push all error: %v", err.Error())
+			}
+
+			// 事件处理间隔时间
+			select {
+			case <-cancelCtx.Done():
+				GetRelationMetricsBuilder().ClearAllMetrics()
+				return
+			case <-time.After(time.Minute - time.Now().Sub(tn)):
+			}
+		}
+	}()
+
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
 		cacheType := cacheType
@@ -524,29 +554,15 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			logger.Infof("start handle cmdb resource(%s) event", cacheType)
 			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
 
-			// 启动上报服务
-			reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
-			if err != nil {
-				logger.Errorf("new space reporter: %v", err)
-			}
-
 			for {
 				tn := time.Now()
 				// 事件处理
 				handler.Handle(cancelCtx)
 
-				// 推送自定义上报数据
-				go func() {
-					if err := GetRelationMetricsBuilder().WithSpaceReport(reporter).PushAll(cancelCtx, time.Now()); err != nil {
-						logger.Errorf("relation metrics builder push all error: %v", err.Error())
-					}
-				}()
-
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
 					handler.Close()
-					GetRelationMetricsBuilder().ClearAllMetrics()
 					return
 				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
 				}

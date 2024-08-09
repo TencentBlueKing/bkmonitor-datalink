@@ -38,6 +38,7 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 	}
 	ast, err := parser.Parse(s.q)
 	if err != nil {
+		err = fmt.Errorf("query string parser error %s", err)
 		return s.query, err
 	}
 

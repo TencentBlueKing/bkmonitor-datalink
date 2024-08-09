@@ -82,6 +82,9 @@ func TestQsToDsl(t *testing.T) {
 			q:   `"1642903" AND OR NOT "get_proc_status_v2"`,
 			err: fmt.Errorf("syntax error: unexpected tOR"),
 		},
+		{
+			q: `sync_spaces AND -keyword AND -BKLOGAPI`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)

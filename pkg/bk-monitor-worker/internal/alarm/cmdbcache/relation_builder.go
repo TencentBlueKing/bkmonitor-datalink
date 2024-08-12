@@ -211,17 +211,27 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	for bkBizID, nodeMap := range b.metrics {
+	// 提前把 bkBizIDs 取出来，缩小锁区间，控制在单业务下
+	bkBizIDs := make([]int, 0, len(b.metrics))
+	b.metricsLock.RLock()
+	for bizID := range b.metrics {
+		bkBizIDs = append(bkBizIDs, bizID)
+	}
+	b.metricsLock.RUnlock()
+
+	for bkBizID := range bkBizIDs {
 		ts := getTsPool()
 		metricsMap := getTsMapPool()
 
 		b.metricsLock.RLock()
-		for _, nodes := range nodeMap {
-			for _, relationMetric := range nodes.toRelationMetrics() {
-				d := relationMetric.TimeSeries(bkBizID, timestamp)
-				if _, ok := metricsMap[d.String()]; !ok {
-					metricsMap[d.String()] = struct{}{}
-					ts = append(ts, d)
+		if nodeMap, ok := b.metrics[bkBizID]; ok {
+			for _, nodes := range nodeMap {
+				for _, relationMetric := range nodes.toRelationMetrics() {
+					d := relationMetric.TimeSeries(bkBizID, timestamp)
+					if _, ok = metricsMap[d.String()]; !ok {
+						metricsMap[d.String()] = struct{}{}
+						ts = append(ts, d)
+					}
 				}
 			}
 		}

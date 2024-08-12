@@ -211,13 +211,11 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	b.metricsLock.RLock()
-	defer b.metricsLock.RUnlock()
-
 	for bkBizID, nodeMap := range b.metrics {
 		ts := getTsPool()
 		metricsMap := getTsMapPool()
 
+		b.metricsLock.RLock()
 		for _, nodes := range nodeMap {
 			for _, relationMetric := range nodes.toRelationMetrics() {
 				d := relationMetric.TimeSeries(bkBizID, timestamp)
@@ -227,6 +225,7 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 				}
 			}
 		}
+		b.metricsLock.RUnlock()
 
 		// 上传业务 timeSeries
 		spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)

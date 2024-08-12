@@ -21,16 +21,43 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
+var (
+	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
+
+	tsPool = sync.Pool{
+		New: func() any {
+			return make([]prompb.TimeSeries, 0)
+		},
+	}
+	tsMapPool = sync.Pool{New: func() any {
+		return make(map[string]struct{})
+	}}
+)
+
+func getTsMapPool() map[string]struct{} {
+	return tsMapPool.Get().(map[string]struct{})
+}
+
+func putTsMapPool(tsMap map[string]struct{}) {
+	tsMap = make(map[string]struct{})
+	tsMapPool.Put(tsMap)
+}
+
+func getTsPool() []prompb.TimeSeries {
+	return tsPool.Get().([]prompb.TimeSeries)
+}
+
+func putTsPool(ts []prompb.TimeSeries) {
+	ts = ts[:0]
+	tsPool.Put(ts)
+}
+
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
 	spaceReport remote.Reporter
 	metricsLock sync.RWMutex
 	metrics     map[int]map[int]Nodes
 }
-
-var (
-	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
-)
 
 func newRelationMetricsBuilder() *RelationMetricsBuilder {
 	return &RelationMetricsBuilder{
@@ -184,30 +211,32 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		return fmt.Errorf("space reporter is nil")
 	}
 
-	bkBizTsList := make(map[int][]prompb.TimeSeries)
-	metricsMap := make(map[string]struct{})
 	b.metricsLock.RLock()
+	defer b.metricsLock.RUnlock()
+
 	for bkBizID, nodeMap := range b.metrics {
-		if _, ok := bkBizTsList[bkBizID]; !ok {
-			bkBizTsList[bkBizID] = make([]prompb.TimeSeries, 0)
-		}
+		ts := getTsPool()
+		metricsMap := getTsMapPool()
+
 		for _, nodes := range nodeMap {
 			for _, relationMetric := range nodes.toRelationMetrics() {
-				ts := relationMetric.TimeSeries(bkBizID, timestamp)
-				if _, ok := metricsMap[ts.String()]; !ok {
-					metricsMap[ts.String()] = struct{}{}
-					bkBizTsList[bkBizID] = append(bkBizTsList[bkBizID], ts)
+				d := relationMetric.TimeSeries(bkBizID, timestamp)
+				if _, ok := metricsMap[d.String()]; !ok {
+					metricsMap[d.String()] = struct{}{}
+					ts = append(ts, d)
 				}
 			}
 		}
-	}
-	b.metricsLock.RUnlock()
 
-	for bkBizID, ts := range bkBizTsList {
+		// 上传业务 timeSeries
 		spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
 		if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 			return err
 		}
+
+		putTsPool(ts)
+		putTsMapPool(metricsMap)
 	}
+
 	return nil
 }

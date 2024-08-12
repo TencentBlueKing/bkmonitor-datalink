@@ -10,6 +10,7 @@
 package http
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/cmdbcache"
 	"net/http"
 	"time"
 
@@ -30,10 +31,17 @@ func NewProfHttpService() *gin.Engine {
 
 	// metrics
 	svr.GET("/bmw/metrics", prometheusHandler())
+	svr.GET("/bmw/relation/metrics", relationHandler)
 
 	pprof.Register(svr)
 
 	return svr
+}
+
+func relationHandler(c *gin.Context) {
+	relationMetrics := cmdbcache.GetRelationMetricsBuilder().String()
+
+	c.String(http.StatusOK, relationMetrics)
 }
 
 func prometheusHandler() gin.HandlerFunc {

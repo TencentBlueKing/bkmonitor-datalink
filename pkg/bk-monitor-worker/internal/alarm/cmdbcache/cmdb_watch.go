@@ -511,6 +511,9 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			logger.Errorf("new space reporter: %v", err)
 			return
 		}
+		defer func() {
+			err = reporter.Close(ctx)
+		}()
 		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
 
 		for {

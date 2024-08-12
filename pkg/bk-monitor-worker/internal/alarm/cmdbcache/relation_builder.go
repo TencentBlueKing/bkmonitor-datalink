@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"sync"
 	"time"
 
@@ -242,6 +243,8 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
 			return err
 		}
+
+		logger.Infof("push %s cmdb relation metrics %d", spaceUID, len(ts))
 
 		putTsPool(ts)
 		putTsMapPool(metricsMap)

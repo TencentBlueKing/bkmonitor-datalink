@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/prometheus/prometheus/prompb"
 
@@ -28,6 +27,7 @@ type ResultTableDetail struct {
 
 type Reporter interface {
 	Do(ctx context.Context, spaceUID string, tsList ...prompb.TimeSeries) error
+	Close(ctx context.Context) error
 }
 
 type reporter struct {
@@ -55,7 +55,14 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		writer: writer,
 		key:    key,
 	}
+
+	logger.Infof("start space reporter in %s, %s", key, writerUrl)
 	return report, nil
+}
+
+func (r *reporter) Close(_ context.Context) error {
+	r.writer.client.CloseIdleConnections()
+	return r.client.Close()
 }
 
 func (r *reporter) Do(ctx context.Context, spaceUID string, tsList ...prompb.TimeSeries) error {

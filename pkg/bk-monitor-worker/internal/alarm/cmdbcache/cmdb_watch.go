@@ -508,7 +508,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		// 启动指标上报
 		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
 		if err != nil {
-			logger.Errorf("new space reporter: %v", err)
+			logger.Errorf("[cmdb_relation] new space reporter: %v", err)
 			return
 		}
 		defer func() {
@@ -521,7 +521,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 
 			// 上报指标
 			if err := spaceReport.PushAll(cancelCtx, tn); err != nil {
-				logger.Errorf("relation metrics builder push all error: %v", err.Error())
+				logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
 			}
 
 			// 事件处理间隔时间
@@ -549,13 +549,13 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			// 创建资源变更事件处理器
 			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
-				logger.Errorf("new cmdb event handler failed: %v", err)
+				logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 				cancel()
 				return
 			}
 
-			logger.Infof("start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
+			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
+			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

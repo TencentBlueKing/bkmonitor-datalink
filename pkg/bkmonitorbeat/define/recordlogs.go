@@ -7,21 +7,48 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-
-package toolkit
+package define
 
 import (
-	"os/exec"
+	"fmt"
+	"path/filepath"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func ListRouteTable() (string, error) {
-	bytes, err := exec.Command("route", "-n").CombinedOutput()
-	if err != nil {
-		logger.Errorf("exec route -n failed")
-		return "", err
-	}
-	return string(bytes), nil
+var rl = newRecordLogs(LogConfig{Stdout: true})
+
+func SetLogConfig(c LogConfig) {
+	c.Level = "info" // MUST BE 'INFO'
+	rl = newRecordLogs(c)
+}
+
+type recordLogs struct {
+	l logger.Logger
+}
+
+func newRecordLogs(c LogConfig) *recordLogs {
+	l := logger.New(logger.Options{
+		Stdout:     c.Stdout,
+		Filename:   filepath.Join(c.Path, "bkmonitorbeat.record"),
+		MaxSize:    c.MaxSize,
+		MaxAge:     c.MaxAge,
+		MaxBackups: c.Backups,
+		Level:      c.Level,
+	})
+	return &recordLogs{l: l}
+}
+
+func RecordLog(template string, kvs []LogKV) {
+	template = fmt.Sprintf("%s; fields=%+v", template, kvs)
+	rl.l.Info(template)
+}
+
+type LogKV struct {
+	K string
+	V interface{}
+}
+
+func (kv LogKV) String() string {
+	return fmt.Sprintf("%s=(%v)", kv.K, kv.V)
 }

@@ -20,23 +20,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// Gather :
 type Gather struct {
 	tasks.BaseTask
 	ctx    context.Context
 	cancel context.CancelFunc
 	config *configs.MetricBeatConfig
-
-	tool *Tool
+	tool   *Tool
 }
 
-// Run :
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	// 预处理
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 	g.ctx, g.cancel = context.WithCancel(ctx)
-	logger.Info("metricbeat is starting")
 
 	if gc, ok := g.GlobalConfig.(*configs.Config); ok {
 		g.config.Workers = gc.MetricbeatWorkers
@@ -44,7 +39,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	if g.tool == nil {
 		g.tool = new(Tool)
-		err := g.tool.Init(g.config, g.GetGlobalConfig())
+		err := g.tool.Init(g.config, g.GlobalConfig, g.TaskConfig)
 		if err != nil {
 			logger.Errorf("metricbeat init failed, err:%v", err)
 			g.tool = nil

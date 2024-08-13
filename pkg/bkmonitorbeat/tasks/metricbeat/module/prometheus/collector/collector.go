@@ -68,12 +68,12 @@ type MetricSet struct {
 	workers                int
 	disableCustomTimestamp bool
 	normalizeMetricName    bool
+	enableAlignTs          bool
 	remoteRelabelCache     []*relabel.Config
 	MetricRelabelRemote    string
 	MetricRelabelConfigs   []*relabel.Config
 }
 
-// New :
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	config := struct {
 		Namespace                  string            `config:"namespace" validate:"required"`
@@ -85,6 +85,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		MetricRelabelRemoteTimeout string            `config:"metric_relabel_remote_timeout"`
 		TempFilePattern            string            `config:"temp_file_pattern"`
 		Workers                    int               `config:"workers"`
+		EnableAlignTs              bool              `config:"enable_align_ts"`
 		DisableCustomTimestamp     bool              `config:"disable_custom_timestamp"`
 		NormalizeMetricName        bool              `config:"normalize_metric_name"`
 	}{}
@@ -93,7 +94,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		logger.Errorf("unpack failed, error: %s", err)
 		return nil, err
 	}
-	logger.Debugf("base.metric.set config: %+v", config)
+	logger.Infof("base.metric.set config: %+v", config)
 
 	deltaKeys := map[string]struct{}{}
 	lastDeltaMetrics := make(map[string]map[string]float64)
@@ -105,16 +106,14 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	var relabels []*relabel.Config
 	data, err := yaml.Marshal(config.MetricRelabelConfigs)
 	if err != nil {
-		logger.Errorf("marshal metric relabel config failed, error: %s", err)
+		logger.Errorf("marshal metric relabel config failed: %s", err)
 		return nil, err
 	}
 
-	logger.Debugf("get metric relabel config: %s", data)
 	if err = yaml.Unmarshal(data, &relabels); err != nil {
-		logger.Errorf("unmarshal metric relabel config failed, error: %s", err)
+		logger.Errorf("unmarshal metric relabel config failed: %s", err)
 		return nil, err
 	}
-	logger.Debugf("get metric relabel struct: %v", relabels)
 
 	duration := time.Second * 3
 	if config.MetricRelabelRemoteTimeout != "" {
@@ -148,6 +147,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		disableCustomTimestamp: config.DisableCustomTimestamp,
 		normalizeMetricName:    config.NormalizeMetricName,
 		workers:                config.Workers,
+		enableAlignTs:          config.EnableAlignTs,
 	}, nil
 }
 
@@ -274,18 +274,22 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 
 	var total atomic.Int64
 
-	markUp := func(err error) {
-		events := m.mustProduceEvents(define.MetricBeatScrapeLine(int(total.Load())), milliTs)
+	// 补充 up 指标文本
+	markUp := func(err error, t0 time.Time) {
+		// 需要减去自监控指标
+		events := m.asEvents(define.MetricBeatScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
 		if err == nil {
-			events = append(events, m.mustProduceEvents(define.MetricBeatUp(define.BeatErrCodeOK), milliTs)...)
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK, m.logkvs()), milliTs)...)
 		} else {
-			events = append(events, m.mustProduceEvents(define.MetricBeatUp(define.CodeMetricBeatFormatErr.Code()), milliTs)...)
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeInvalidPromFormat, m.logkvs()), milliTs)...)
 		}
+		events = append(events, m.asEvents(define.MetricBeatHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
 		for i := 0; i < len(events); i++ {
 			eventChan <- events[i]
 		}
 	}
 
+	start := time.Now()
 	go func() {
 		defer close(eventChan)
 		defer cleanup()
@@ -324,7 +328,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		wg.Wait()
 
 		if up {
-			markUp(produceErr) // 一次采集只上报一次状态
+			markUp(produceErr, start) // 一次采集只上报一次状态
 		}
 		m.lastDeltaMetrics = lastDiffMetrics
 	}()
@@ -335,7 +339,7 @@ func normalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }
 
-func (m *MetricSet) mustProduceEvents(line string, timestamp int64) []common.MapStr {
+func (m *MetricSet) asEvents(line string, timestamp int64) []common.MapStr {
 	events, _, _ := m.produceEvents(line, timestamp)
 	return events
 }
@@ -374,6 +378,12 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 	return events, dk, nil
 }
 
+func (m *MetricSet) logkvs() []define.LogKV {
+	return []define.LogKV{
+		{K: "uri", V: m.HostData().SanitizedURI},
+	}
+}
+
 // Fetch 采集逻辑入口
 func (m *MetricSet) Fetch() (common.MapStr, error) {
 	summary := common.MapStr{}
@@ -381,7 +391,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 
 	rsp, err := m.httpClient.FetchResponse()
 	if err != nil {
-		m.fillMetrics(summary, newCodeReader(define.CodeMetricBeatConnErr), false)
+		m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeConnRefused, m.logkvs()), false)
 		return summary, errors.Wrap(err, "request failed")
 	}
 	defer rsp.Body.Close()
@@ -392,32 +402,40 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 	if m.useTempFile {
 		metricsFile, err = utils.CreateTempFile(m.tempFilePattern)
 		if err != nil {
-			m.fillMetrics(summary, newCodeReader(define.CodeMetricBeatWriteFileErr), false)
-			return summary, errors.Wrap(err, "create metricsFile failed")
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			err = errors.Wrap(err, "create metricsFile failed")
+			logger.Error(err)
+			return summary, err
 		}
 
 		if _, err = io.Copy(metricsFile, rsp.Body); err != nil {
-			m.fillMetrics(summary, newCodeReader(define.CodeMetricBeatWriteFileErr), false)
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
-			return summary, errors.Wrap(err, "write metricsFile failed")
+			err = errors.Wrap(err, "write metricsFile failed")
+			logger.Error(err)
+			return summary, err
 		}
 
 		info, err := metricsFile.Stat()
 		if err != nil {
-			m.fillMetrics(summary, newCodeReader(define.CodeMetricBeatWriteFileErr), false)
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
-			return summary, errors.Wrap(err, "stats metricsFile failed")
+			err = errors.Wrap(err, "stats metricsFile failed")
+			logger.Error(err)
+			return summary, err
 		}
 
-		metricsFile.WriteString("\n" + define.MetricBeatScrapeSize(int(info.Size())))
-		metricsFile.WriteString("\n" + define.MetricBeatScrapeDuration(time.Since(startTime).Seconds()))
+		metricsFile.WriteString("\n" + define.MetricBeatScrapeSize(int(info.Size()), m.logkvs()))
+		metricsFile.WriteString("\n" + define.MetricBeatScrapeDuration(time.Since(startTime).Seconds(), m.logkvs()))
 
 		if err = metricsFile.Close(); err != nil {
-			m.fillMetrics(summary, newCodeReader(define.CodeMetricBeatWriteFileErr), false)
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = os.Remove(metricsFile.Name())
-			return summary, errors.Wrap(err, "close metricsFile failed")
+			err = errors.Wrap(err, "close metricsFile failed")
+			logger.Error(err)
+			return summary, err
 		}
 	}
 
@@ -430,7 +448,6 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		m.fillMetrics(summary, rsp.Body, true)
 	}
 	summary["namespace"] = m.namespace
-	logger.Debugf("end fetch data from: %s, get summary data: %s", m.Host(), summary["namespace"])
 	return summary, err
 }
 
@@ -440,5 +457,4 @@ func (m *MetricSet) fillMetrics(summary common.MapStr, rc io.ReadCloser, up bool
 		events = append(events, event)
 	}
 	summary["metrics"] = events
-	logger.Infof("got metrics count: %d", len(events))
 }

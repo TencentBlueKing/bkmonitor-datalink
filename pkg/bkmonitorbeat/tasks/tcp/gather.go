@@ -51,16 +51,16 @@ func (g *Gather) newEvent(taskConf *configs.TCPTaskConfig, taskHost string) *tas
 	return event
 }
 
-func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskConfig, targetHost string, event *tasks.SimpleEvent) define.BeatErrorCode {
+func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskConfig, targetHost string, event *tasks.SimpleEvent) define.NamedCode {
 	// 连接
 	address := net.JoinHostPort(targetHost, strconv.Itoa(taskConf.TargetPort))
 	conn, err := NewConn(ctx, taskConf, address) // for mock
 	if err != nil {
 		logger.Debugf("%v: connect %v fail: %v", taskConf.TaskID, address, err)
 		if e, ok := err.(net.Error); ok && e.Timeout() {
-			return define.BeatErrCodeConnTimeoutError
+			return define.CodeConnTimeout
 		}
-		return define.BeatErrCodeConnError
+		return define.CodeConnFailed
 	}
 
 	defer func() {
@@ -75,21 +75,21 @@ func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskC
 	// 无需检查情况直接返回成功
 	if noNeedMatch(taskConf) {
 		logger.Debugf("%v: return without match", taskConf.TaskID)
-		return define.BeatErrCodeOK
+		return define.CodeOK
 	}
 	// 设置超时
 	logger.Debugf("%v: set deadline: %v", taskConf.TaskID, taskConf.Timeout)
 	err = conn.SetDeadline(event.StartAt.Add(taskConf.Timeout))
 	if err != nil {
 		logger.Warnf("%v: set deadline error: %v", taskConf.TaskID, err)
-		return define.BeatErrCodeRequestDeadLineError
+		return define.CodeRequestFailed
 	}
 	// 按配置发送请求
 	if len(taskConf.Request) > 0 {
 		requestData, err := utils.ConvertStringToBytes(taskConf.Request, taskConf.RequestFormat)
 		if err != nil {
 			logger.Warnf("%v: make request failed: %v", taskConf.TaskID, err)
-			return define.BeatErrCodeRequestInitError
+			return define.CodeBadRequestParams
 		}
 
 		logger.Debugf("%v: request: %s", taskConf.TaskID, requestData)
@@ -97,10 +97,10 @@ func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskC
 		if err != nil {
 			logger.Debugf("%v: write request error: %v", taskConf.TaskID, err)
 			if e, ok := err.(net.Error); ok && e.Timeout() {
-				return define.BeatErrCodeRequestTimeoutError
+				return define.CodeRequestTimeout
 			}
 			logger.Debugf("%v: write error: %v", taskConf.TaskID, err)
-			return define.BeatErrCodeRequestError
+			return define.CodeRequestFailed
 		}
 		logger.Debugf("%v: written data length: %v", taskConf.TaskID, count)
 	}
@@ -112,10 +112,10 @@ func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskC
 		if err != nil && err != io.EOF {
 			logger.Debugf("%v: read error: %v", taskConf.TaskID, err)
 			if e, ok := err.(net.Error); ok && e.Timeout() {
-				return define.BeatErrCodeResponseTimeoutError
+				return define.CodeRequestTimeout
 			}
 			logger.Debugf("%v: read error: %v", taskConf.TaskID, err)
-			return define.BeatErrCodeResponseError
+			return define.CodeResponseFailed
 		}
 		response = response[:count]
 		logger.Debugf("%v: response: %s", taskConf.TaskID, response)
@@ -125,10 +125,10 @@ func (g *Gather) checkTargetHost(ctx context.Context, taskConf *configs.TCPTaskC
 		ok := utils.IsMatch(taskConf.ResponseFormat, response, []byte(taskConf.Response))
 		if !ok {
 			logger.Debugf("%v: match response fail with type[%v]", taskConf.TaskID, taskConf.ResponseFormat)
-			return define.BeatErrCodeResponseMatchError
+			return define.CodeResponseNotMatch
 		}
 	}
-	return define.BeatErrCodeOK
+	return define.CodeOK
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
@@ -153,7 +153,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 	hostsInfo := tasks.GetHostsInfo(ctx, hosts, taskConf.DNSCheckMode, taskConf.TargetIPType, configs.Tcp)
 	for _, h := range hostsInfo {
-		if h.Errno != define.BeatErrCodeOK {
+		if h.Errno != define.CodeOK {
 			event := g.newEvent(taskConf, h.Host)
 			event.Fail(h.Errno)
 			e <- event
@@ -187,7 +187,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				}()
 				// 检查单个目标
 				code := g.checkTargetHost(ctx, taskConf, host, event)
-				if code == define.BeatErrCodeOK {
+				if code == define.CodeOK {
 					event.SuccessOrTimeout()
 				} else {
 					event.Fail(code)

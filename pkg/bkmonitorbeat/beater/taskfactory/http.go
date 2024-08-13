@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build httptask || basetask
-// +build httptask basetask
 
 package taskfactory
 

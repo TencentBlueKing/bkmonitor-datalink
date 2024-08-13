@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build tcptask || basetask
-// +build tcptask basetask
 
 package taskfactory
 

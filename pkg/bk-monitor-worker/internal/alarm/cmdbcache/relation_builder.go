@@ -13,13 +13,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"sync"
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 var (
@@ -176,9 +176,13 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 		}
 	}
 
-	b.metricsLock.Lock()
-	b.metrics[bkBizID] = nodeMap
-	b.metricsLock.Unlock()
+	if len(nodeMap) > 0 {
+		b.metricsLock.Lock()
+		b.metrics[bkBizID] = nodeMap
+		b.metricsLock.Unlock()
+
+		logger.Infof("[cmdb_relation] set metrics %d: %d", bkBizID, len(nodeMap))
+	}
 
 	return nil
 }
@@ -238,13 +242,14 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		}
 		b.metricsLock.RUnlock()
 
-		// 上传业务 timeSeries
-		spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
-		if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
-			return err
+		if len(ts) > 0 {
+			// 上传业务 timeSeries
+			spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
+			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
+				return err
+			}
+			logger.Infof("[cmdb_relation] push %s cmdb relation metrics %d", spaceUID, len(ts))
 		}
-
-		logger.Infof("push %s cmdb relation metrics %d", spaceUID, len(ts))
 
 		putTsPool(ts)
 		putTsMapPool(metricsMap)

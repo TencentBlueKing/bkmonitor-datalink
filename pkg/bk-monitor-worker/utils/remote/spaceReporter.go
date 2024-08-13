@@ -56,7 +56,7 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		key:    key,
 	}
 
-	logger.Infof("start space reporter in %s, %s", key, writerUrl)
+	logger.Infof("[cmdb_relation] start space reporter in %s, %s", key, writerUrl)
 	return report, nil
 }
 
@@ -89,7 +89,7 @@ func (r *reporter) Do(ctx context.Context, spaceUID string, tsList ...prompb.Tim
 
 	// token is empty
 	if resultTableDetail.Token == "" {
-		logger.Warnf("build in result table token is empty with %s", spaceUID)
+		logger.Warnf("[cmdb_relation] build in result table token is empty with %s", spaceUID)
 		return nil
 	}
 

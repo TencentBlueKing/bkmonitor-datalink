@@ -195,7 +195,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 
 		// 处理跨时间间隔
 		if index != lastIndex && lastIndex != "" {
-			cnt, err := b.flush(ctx, index, records)
+			cnt, err := b.flush(ctx, lastIndex, records)
 			records = records[:0]
 			count += cnt
 			errs.Add(err)

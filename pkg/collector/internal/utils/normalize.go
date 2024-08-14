@@ -19,7 +19,7 @@ func NormalizeName(s string) string {
 }
 
 // IsNameNormalized 判断是否为合法指标名称
-// 此方式会被 regexp 方式要更快 参见 benchmark
+// 此方式会比 regexp 方式要更快 参见 benchmark
 func IsNameNormalized(s string) bool {
 	if len(s) == 0 {
 		return false

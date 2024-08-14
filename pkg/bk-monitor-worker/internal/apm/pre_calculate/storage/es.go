@@ -67,6 +67,7 @@ type EsStorageData struct {
 }
 
 type EsQueryData struct {
+	IndexName string
 	Body      map[string]any
 	Converter Converter
 }
@@ -185,7 +186,7 @@ func (e *esStorage) Query(data any) (any, error) {
 
 	res, err := e.client.Search(
 		e.client.Search.WithContext(e.ctx),
-		e.client.Search.WithIndex(e.indexName),
+		e.client.Search.WithIndex(body.IndexName),
 		e.client.Search.WithBody(&buf),
 		e.client.Search.WithTrackTotalHits(false),
 	)

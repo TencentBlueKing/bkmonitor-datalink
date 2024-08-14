@@ -182,6 +182,7 @@ type Backend interface {
 	ReceiveSaveRequest(errorReceiveChan chan<- error)
 	Query(queryRequest QueryRequest) (any, error)
 	Exist(req ExistRequest) (bool, error)
+	GetClient(t Target) any
 }
 
 // Proxy storage backend proxy.
@@ -343,6 +344,17 @@ func (p *Proxy) Exist(req ExistRequest) (bool, error) {
 	default:
 		logger.Warnf("Exist method does not support type: %s, it will return false", req.Target)
 		return false, nil
+	}
+}
+
+func (p *Proxy) GetClient(t Target) any {
+	switch t {
+	case TraceEs:
+		return p.traceEs.client
+	case SaveEs:
+		return p.saveEs.client
+	default:
+		return nil
 	}
 }
 

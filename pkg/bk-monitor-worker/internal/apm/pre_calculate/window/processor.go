@@ -11,6 +11,9 @@ package window
 
 import (
 	"context"
+	"fmt"
+	"github.com/elastic/go-elasticsearch/v7"
+	"regexp"
 	"sort"
 	"strconv"
 	"time"
@@ -61,6 +64,8 @@ type ProcessResult struct {
 }
 
 type Processor struct {
+	ctx context.Context
+
 	dataId string
 	config ProcessorOptions
 
@@ -73,6 +78,14 @@ type Processor struct {
 
 	logger   monitorLogger.Logger
 	baseInfo core.BaseInfo
+
+	traceEsOriginIndexName string
+	traceEsIndexName       string
+	indexNameLastUpdate    time.Time
+}
+
+type IndexResponse struct {
+	Index string `json:"index"`
 }
 
 func (p *Processor) PreProcess(receiver chan<- storage.SaveRequest, event Event) {
@@ -138,6 +151,7 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 	spanBytes, err := p.proxy.Query(storage.QueryRequest{
 		Target: storage.TraceEs,
 		Data: storage.EsQueryData{
+			IndexName: p.getQueryIndexName(),
 			Body: map[string]any{
 				"query": map[string]any{
 					"bool": map[string]any{
@@ -183,6 +197,84 @@ func (p *Processor) listSpanFromStorage(event Event) []*StandardSpan {
 
 	spans = append(spans, originSpans...)
 	return spans
+}
+
+func (p *Processor) getQueryIndexName() string {
+
+	obtainLastlyIndexName := func() (string, error) {
+		client := p.proxy.GetClient(storage.TraceEs).(*elasticsearch.Client)
+		response, err := client.Cat.Indices(
+			client.Cat.Indices.WithIndex(fmt.Sprintf("%s_*_*", p.traceEsOriginIndexName)),
+			client.Cat.Indices.WithFormat("json"),
+			client.Cat.Indices.WithContext(p.ctx),
+		)
+		if err != nil {
+			return "", err
+		}
+		defer response.Body.Close()
+		if response.IsError() {
+			return "", nil
+		}
+		var indices []IndexResponse
+		if err := jsonx.Decode(response.Body, &indices); err != nil {
+			return "", nil
+		}
+		indexNames := p.filterAndSortValidIndexNames(indices)
+		if len(indexNames) == 0 {
+			return "", nil
+		}
+		// 只查询最新索引的数据
+		return indexNames[0], nil
+	}
+
+	if time.Since(p.indexNameLastUpdate) >= 24*time.Hour {
+		// calculate lastly index name
+		n, err := obtainLastlyIndexName()
+		if err != nil {
+			logger.Warnf("Obtain lastly index name failed, error: %s", err)
+		} else {
+			p.traceEsIndexName = n
+		}
+		p.indexNameLastUpdate = time.Now()
+	}
+
+	return p.traceEsIndexName
+}
+
+func (p *Processor) filterAndSortValidIndexNames(indices []IndexResponse) []string {
+	var dateIndexPairs []struct {
+		date time.Time
+		name string
+	}
+
+	pattern := regexp.MustCompile(fmt.Sprintf(".*_bkapm_trace_%s_(\\d{8})_\\d+$", regexp.QuoteMeta(p.baseInfo.AppName)))
+
+	for _, info := range indices {
+		name := info.Index
+		matches := pattern.FindStringSubmatch(name)
+		if len(matches) > 1 {
+			dateStr := matches[1]
+			date, err := time.Parse("20060102", dateStr)
+			if err == nil {
+				dateIndexPairs = append(dateIndexPairs, struct {
+					date time.Time
+					name string
+				}{date: date, name: name})
+			}
+		}
+	}
+
+	// Sort by time
+	sort.Slice(dateIndexPairs, func(i, j int) bool {
+		return dateIndexPairs[i].date.After(dateIndexPairs[j].date)
+	})
+
+	validIndexNames := make([]string, len(dateIndexPairs))
+	for i, pair := range dateIndexPairs {
+		validIndexNames[i] = pair.name
+	}
+
+	return validIndexNames
 }
 
 func (p *Processor) recoverSpans(originSpans []map[string]any) ([]*StandardSpan, error) {
@@ -486,6 +578,7 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 	)
 
 	return Processor{
+		ctx:                 ctx,
 		dataId:              dataId,
 		config:              opts,
 		dataIdBaseInfo:      core.GetMetadataCenter().GetBaseInfo(dataId),
@@ -495,7 +588,10 @@ func NewProcessor(ctx context.Context, dataId string, storageProxy *storage.Prox
 			zap.String("location", "processor"),
 			zap.String("dataId", dataId),
 		),
-		metricProcessor: newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
-		baseInfo:        core.GetMetadataCenter().GetBaseInfo(dataId),
+		metricProcessor:        newMetricProcessor(ctx, dataId, opts.metricLayer4ReportEnabled),
+		baseInfo:               core.GetMetadataCenter().GetBaseInfo(dataId),
+		indexNameLastUpdate:    time.Now().Add(-24 * time.Hour),
+		traceEsOriginIndexName: core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName,
+		traceEsIndexName:       fmt.Sprintf("%s*", core.GetMetadataCenter().GetTraceEsConfig(dataId).IndexName),
 	}
 }

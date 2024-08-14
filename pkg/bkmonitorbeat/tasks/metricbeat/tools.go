@@ -103,12 +103,12 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 		if len(eventList) >= batchsize {
 			cloned := m.Clone()
 			if _, err = cloned.Put(metricKey, eventList); err != nil {
-				logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+				logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 				continue
 			}
 			err = cloned.Delete(metricReaderKey)
 			if err != nil {
-				logger.Errorf("failed to delete prometheus.collector.metrics_reader key: %v", err)
+				logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
 				continue
 			}
 
@@ -129,12 +129,12 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 	if len(eventList) > 0 {
 		cloned := m.Clone()
 		if _, err = cloned.Put(metricKey, eventList); err != nil {
-			logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+			logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 			return
 		}
 		err = cloned.Delete(metricReaderKey)
 		if err != nil {
-			logger.Errorf("failed to delete prometheus.collector.metrics_reader key: %v", err)
+			logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
 			return
 		}
 		ret <- cloned
@@ -173,7 +173,7 @@ func splitBigMetricsFromSlice(m common.MapStr, batchsize int, maxBatches int, re
 
 		cloned := m.Clone()
 		if _, err := cloned.Put(metricKey, lst[left:right]); err != nil {
-			logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+			logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 			continue
 		}
 
@@ -231,7 +231,7 @@ func (t *Tool) Run(ctx context.Context, e chan<- define.Event) error {
 
 	globalConfig, ok := ctx.Value("gConfig").(*configs.Config)
 	if !ok {
-		logger.Error("get global config in metricbeat running failed.")
+		logger.Error("get global config failed")
 	} else {
 		keepOneDimension = globalConfig.KeepOneDimension
 		batchsize = globalConfig.MetricsBatchSize
@@ -312,7 +312,7 @@ func (t *Tool) KeepOneDimension(name string, data common.MapStr) {
 
 	val, err := data.GetValue(name)
 	if err != nil {
-		logger.Warnf("get module(%s) data err=>(%v)", name, err)
+		logger.Warnf("tool get data failed: %v", err)
 		return
 	}
 
@@ -323,7 +323,7 @@ func (t *Tool) KeepOneDimension(name string, data common.MapStr) {
 
 	collector, err := moduleData.GetValue("collector")
 	if err != nil {
-		logger.Warnf("get module(%s) collector data err=>(%v)", name, err)
+		logger.Warnf("tool get collector data failed: %v", err)
 		return
 	}
 
@@ -334,7 +334,7 @@ func (t *Tool) KeepOneDimension(name string, data common.MapStr) {
 
 	metrics, err := collectorData.GetValue("metrics")
 	if err != nil {
-		logger.Warnf("get module(%s) collector metrics data err=>(%v)", name, err)
+		logger.Warnf("tool get collector metrics data failed: %v", err)
 		return
 	}
 

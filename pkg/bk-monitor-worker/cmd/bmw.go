@@ -11,13 +11,13 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/cmd/apm"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	_ "go.uber.org/automaxprocs"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/cmd/apm"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 

@@ -38,10 +38,27 @@ type Event struct {
 	Exemplar  common.MapStr
 }
 
-// IgnoreCMDBLevel :
-func (e *Event) IgnoreCMDBLevel() bool { return false }
+func NewEvent(t define.Task) *Event {
+	taskConf := t.GetConfig()
+	return &Event{
+		DataID:    taskConf.GetDataID(),
+		BizID:     taskConf.GetBizID(),
+		TaskID:    t.GetTaskID(),
+		TaskType:  taskConf.GetType(),
+		StartAt:   time.Now().UTC(),
+		ErrorCode: define.CodeUnknown,
+		Dimension: common.MapStr{},
+		Metric:    common.MapStr{},
+		Exemplar:  common.MapStr{},
+		UserTime:  time.Now().UTC().Format(bkcommon.TimeFormat),
+		Labels:    taskConf.GetLabels(),
+	}
+}
 
-// AsMapStr :
+func (e *Event) IgnoreCMDBLevel() bool {
+	return false
+}
+
 func (e *Event) AsMapStr() common.MapStr {
 	groupInfo := make([]map[string]string, 0)
 
@@ -83,23 +100,6 @@ func (e *Event) GetType() string {
 
 func (e *Event) TaskDuration() time.Duration {
 	return e.EndAt.Sub(e.StartAt)
-}
-
-func NewEvent(t define.Task) *Event {
-	taskConf := t.GetConfig()
-	return &Event{
-		DataID:    taskConf.GetDataID(),
-		BizID:     taskConf.GetBizID(),
-		TaskID:    t.GetTaskID(),
-		TaskType:  taskConf.GetType(),
-		StartAt:   time.Now().UTC(),
-		ErrorCode: define.CodeUnknown,
-		Dimension: common.MapStr{},
-		Metric:    common.MapStr{},
-		Exemplar:  common.MapStr{},
-		UserTime:  time.Now().UTC().Format(bkcommon.TimeFormat),
-		Labels:    taskConf.GetLabels(),
-	}
 }
 
 // Success 普通指标事件正常结束

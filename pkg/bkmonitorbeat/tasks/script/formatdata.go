@@ -21,9 +21,9 @@ import (
 
 // FormatOutput 解析 Prom 格式数据，输出结构化数据，同时输出失败记录
 func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.TimestampHandler) (map[int64]map[string]tasks.PromEvent, error) {
-	aggreRst := make(map[int64]map[string]tasks.PromEvent)
+	aggRst := make(map[int64]map[string]tasks.PromEvent)
 	if len(bytes.TrimSpace(out)) == 0 {
-		return aggreRst, define.ErrNoScriptOutput
+		return aggRst, define.ErrNoScriptOutput
 	}
 
 	var outputErr error
@@ -42,7 +42,7 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.
 		}
 
 		promEvent.AggreValue[promEvent.Key] = promEvent.Value
-		subRst, tsExist := aggreRst[promEvent.TS]
+		subRst, tsExist := aggRst[promEvent.TS]
 		if tsExist {
 			p, dmExist := subRst[promEvent.HashKey]
 			if dmExist {
@@ -51,12 +51,12 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.
 			} else {
 				subRst[promEvent.HashKey] = promEvent
 			}
-			aggreRst[promEvent.TS] = subRst
+			aggRst[promEvent.TS] = subRst
 		} else {
 			subRst = make(map[string]tasks.PromEvent)
 			subRst[promEvent.HashKey] = promEvent
-			aggreRst[promEvent.TS] = subRst
+			aggRst[promEvent.TS] = subRst
 		}
 	}
-	return aggreRst, outputErr
+	return aggRst, outputErr
 }

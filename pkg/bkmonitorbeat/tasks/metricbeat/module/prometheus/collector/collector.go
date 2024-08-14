@@ -275,13 +275,13 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	var total atomic.Int64
 
 	// 补充 up 指标文本
-	markUp := func(err error, t0 time.Time) {
+	markUp := func(failed bool, t0 time.Time) {
 		// 需要减去自监控指标
 		events := m.asEvents(define.MetricBeatScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
-		if err == nil {
-			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK, m.logkvs()), milliTs)...)
-		} else {
+		if failed {
 			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeInvalidPromFormat, m.logkvs()), milliTs)...)
+		} else {
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK, m.logkvs()), milliTs)...)
 		}
 		events = append(events, m.asEvents(define.MetricBeatHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
 		for i := 0; i < len(events); i++ {
@@ -301,7 +301,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 
 		wg := sync.WaitGroup{}
-		var produceErr error
+		var produceErr atomic.Bool
 		for i := 0; i < worker; i++ {
 			wg.Add(1)
 			go func() {
@@ -310,7 +310,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 					events, dk, err := m.produceEvents(line, milliTs)
 					if err != nil {
 						logger.Warnf("failed to produce events: %v", err)
-						produceErr = err
+						produceErr.Store(true)
 						continue
 					}
 					if dk != nil {
@@ -328,7 +328,7 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		wg.Wait()
 
 		if up {
-			markUp(produceErr, start) // 一次采集只上报一次状态
+			markUp(produceErr.Load(), start) // 一次采集只上报一次状态
 		}
 		m.lastDeltaMetrics = lastDiffMetrics
 	}()

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -185,16 +186,14 @@ func (g *Gather) makeRequest(ctx context.Context, step *configs.HTTPTaskStepConf
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 	requestData, err := utils.ConvertStringToBytes(step.Request, step.RequestFormat)
 	if err != nil {
-		logger.Errorf("%v: convert request data error: %v", conf.TaskID, err)
-		return nil, err
+		return nil, errors.Wrapf(err, "convert request data failed, taskID=%v", conf.TaskID)
 	}
 
 	logger.Infof("%v: %s %s request: %s", conf.TaskID, step.Method, url, requestData)
 	reader := bytes.NewReader(requestData)
 	request, err := http.NewRequest(step.Method, url, reader)
 	if err != nil {
-		logger.Errorf("%v: create %v failed: %v", conf.TaskID, url, err)
-		return nil, err
+		return nil, errors.Wrapf(err, "make request failed, taskID=%v", conf.TaskID)
 	}
 	request = request.WithContext(ctx)
 
@@ -240,6 +239,7 @@ func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTP
 	// 初始化请求
 	request, err := g.makeRequest(ctx, step, url)
 	if err != nil {
+		logger.Error(err)
 		event.Fail(define.CodeBadRequestParams)
 		return false
 	}
@@ -250,16 +250,9 @@ func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTP
 		event.FailFromError(err)
 		return false
 	}
-	defer func() {
-		err := response.Body.Close()
-		if err != nil {
-			logger.Warnf("%v: close response error: %v", conf.TaskID, err)
-		}
-	}()
+	defer response.Body.Close()
 
-	logger.Infof("%v: %v %v response: code=%v, status=%v",
-		conf.TaskID, step.Method, url, response.StatusCode, response.Status,
-	)
+	logger.Infof("%v: %v %v response: code=%v", conf.TaskID, step.Method, url, response.StatusCode)
 	// 根据结果设置事件字段
 	err = g.UpdateEventByResponse(event, response)
 	if err != nil {
@@ -326,7 +319,7 @@ func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTP
 var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) Client {
 	cj, err := cookiejar.New(nil)
 	if err != nil {
-		logger.Errorf("create cookiejar failed????: %v", err)
+		logger.Errorf("create cookiejar failed: %v", err)
 	}
 	dialer := net.Dialer{
 		Timeout: conf.Timeout,
@@ -464,14 +457,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 }
 
-// New :
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{
 		contentTypeRegexp: regexp.MustCompile(`(?P<mediatype>[^;\s]*)\s*;?\s*(?:charset\s*=\s*(?P<charset>[^;\s]*)|)\s*;?\s*`),
 	}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
-
 	gather.Init()
 
 	return gather

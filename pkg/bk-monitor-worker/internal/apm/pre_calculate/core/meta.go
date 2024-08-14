@@ -97,6 +97,16 @@ func CreateMetadataCenter() error {
 	return nil
 }
 
+// CreateMockMetadataCenter create fake client
+func CreateMockMetadataCenter() error {
+	centerInstance = &MetadataCenter{
+		Mapping: &sync.Map{},
+		Consul:  store.CreateDummyStore(),
+	}
+	logger.Warnf("😱 Create fake consulClient, make sure you guys are not in production!!!")
+	return nil
+}
+
 // InitMetadataCenter only for tests
 func InitMetadataCenter(c *MetadataCenter) {
 	centerInstance = c

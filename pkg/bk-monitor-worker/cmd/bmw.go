@@ -11,6 +11,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/cmd/apm"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -38,6 +39,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(
 		&config.FilePath, "config", "./bmw.yaml", "path of project service config files",
 	)
+	rootCmd.AddCommand(apm.StartFromFileCmd())
 }
 
 func addFlag(configLoc string, flagName string, addVarFunc func()) {

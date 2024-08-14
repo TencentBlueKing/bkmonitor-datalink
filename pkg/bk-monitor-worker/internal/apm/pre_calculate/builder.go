@@ -42,13 +42,13 @@ type Builder interface {
 }
 
 type PreCalculateProcessor interface {
+	PreCalculateProcessorStandLone
+
 	Start(stopParentContext context.Context, errorReceiveChan chan<- error, payload []byte)
 	GetTaskDimension(payload []byte) string
 	Run(errorChan chan<- error)
 
 	StartByDataId(ctx context.Context, startInfo StartInfo, errorReceiveChan chan<- error, config ...PrecalculateOption)
-
-	WatchConnections(filePath string)
 }
 
 var (
@@ -199,9 +199,9 @@ loop:
 					ctx: runInstanceCtx, startInfo: startInfo, config: p.defaultConfig, errorReceiveChan: errorReceiveChan,
 				}
 			} else {
-				// config overwrite
+				// config merge
 				signal = readySignal{
-					ctx: runInstanceCtx, startInfo: startInfo, config: config[0], errorReceiveChan: errorReceiveChan,
+					ctx: runInstanceCtx, startInfo: startInfo, config: p.MergeConfig(p.defaultConfig, config[0]), errorReceiveChan: errorReceiveChan,
 				}
 			}
 			p.readySignalChan <- signal
@@ -214,6 +214,28 @@ loop:
 	}
 
 	apmLogger.Infof("[StartByDataId] done - DataId: %s Qps: %d", startInfo.DataId, startInfo.Qps)
+}
+
+func (p *Precalculate) MergeConfig(defaultConfig, customConfig PrecalculateOption) PrecalculateOption {
+	if len(customConfig.distributiveWindowConfig) != 0 {
+		defaultConfig.distributiveWindowConfig = append(defaultConfig.distributiveWindowConfig, customConfig.distributiveWindowConfig...)
+	}
+	if len(customConfig.runtimeConfig) != 0 {
+		defaultConfig.runtimeConfig = append(defaultConfig.runtimeConfig, customConfig.runtimeConfig...)
+	}
+	if len(customConfig.notifierConfig) != 0 {
+		defaultConfig.notifierConfig = append(defaultConfig.notifierConfig, customConfig.notifierConfig...)
+	}
+	if len(customConfig.processorConfig) != 0 {
+		defaultConfig.processorConfig = append(defaultConfig.processorConfig, customConfig.processorConfig...)
+	}
+	if len(customConfig.storageConfig) != 0 {
+		defaultConfig.storageConfig = append(defaultConfig.storageConfig, customConfig.storageConfig...)
+	}
+	if len(customConfig.profileReportConfig) != 0 {
+		defaultConfig.profileReportConfig = append(defaultConfig.profileReportConfig, customConfig.profileReportConfig...)
+	}
+	return defaultConfig
 }
 
 func (p *Precalculate) Run(runSuccess chan<- error) {

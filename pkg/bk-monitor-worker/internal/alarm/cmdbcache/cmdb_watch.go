@@ -504,7 +504,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 推送自定义上报数据
 	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		// 启动指标上报
 		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
 		if err != nil {
@@ -517,19 +516,20 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
 
 		for {
-			tn := time.Now()
-
-			// 上报指标
-			if err := spaceReport.PushAll(cancelCtx, tn); err != nil {
-				logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
-			}
+			ticker := time.NewTicker(time.Minute)
 
 			// 事件处理间隔时间
 			select {
 			case <-cancelCtx.Done():
 				GetRelationMetricsBuilder().ClearAllMetrics()
+				ticker.Stop()
 				return
-			case <-time.After(time.Minute - time.Now().Sub(tn)):
+			case <-ticker.C:
+				// 上报指标
+				logger.Infof("[cmdb_relation] space report push all")
+				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+				}
 			}
 		}
 	}()

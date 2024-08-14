@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/prometheus/prometheus/prompb"
 

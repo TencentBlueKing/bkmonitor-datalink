@@ -180,10 +180,9 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 		b.metricsLock.Lock()
 		b.metrics[bkBizID] = nodeMap
 		b.metricsLock.Unlock()
-
-		logger.Infof("[cmdb_relation] set metrics %d: %d", bkBizID, len(nodeMap))
 	}
 
+	logger.Infof("[cmdb_relation] set metrics  bkcc__%d: %d", bkBizID, len(nodeMap))
 	return nil
 }
 

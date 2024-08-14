@@ -48,19 +48,15 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	// 生成当前时间戳和时间处理函数
 	milliTimestamp := time.Now().UnixMilli()
-	timeHandler, err := tasks.GetTimestampHandler(taskConf.TimestampUnit)
+	timeHandler, _ := tasks.GetTimestampHandler(taskConf.TimestampUnit)
 	if timeHandler == nil {
-		timeHandler, _ = tasks.GetTimestampHandler("ms")
-	}
-	if err != nil {
-		logger.Errorf("use timestamp unit: %s to get timestamp handler failed: %s", taskConf.TimestampUnit, err)
-		return
+		timeHandler, _ = tasks.GetTimestampHandler("ms") // 兜底
 	}
 
 	logger.Infof("task command (%s) timeout config %v", taskConf.Command, taskConf.Timeout)
 	cmdCtx, cmdCancel := context.WithTimeout(ctx, taskConf.Timeout)
-	// releases resources if execCmd completes before timeout elapses
 	defer cmdCancel()
+
 	fmtCommand := ShellWordPreProcess(taskConf.Command)
 
 	t0 := time.Now()

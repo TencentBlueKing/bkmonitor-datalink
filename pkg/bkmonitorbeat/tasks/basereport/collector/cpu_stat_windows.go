@@ -57,8 +57,8 @@ func getCPUStatUsage(report *CpuReport) error {
 		} else {
 			// TODO : gopsutil implement has bug
 			// windows TimesStat has only User, System, Idle, Irq
-			//perUsage := 100 - stat.Idle
-			//report.Usage = append(report.Usage, perUsage)
+			// perUsage := 100 - stat.Idle
+			// report.Usage = append(report.Usage, perUsage)
 			report.Stat = append(report.Stat, stat)
 		}
 	}

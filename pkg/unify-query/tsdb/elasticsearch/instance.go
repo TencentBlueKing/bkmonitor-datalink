@@ -95,7 +95,8 @@ type InstanceOption struct {
 }
 
 type queryOption struct {
-	index    string
+	indexes []string
+	// 单位是 s
 	start    int64
 	end      int64
 	timeZone string
@@ -153,32 +154,41 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getMapping(ctx context.Context, alias string) (map[string]interface{}, error) {
+func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[string]any, error) {
+	var (
+		err error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-get-mapping")
+	defer span.End(&err)
+
 	defer func() {
 		if r := recover(); r != nil {
-			log.Errorf(ctx, fmt.Sprintf("get mapping error: %s", r))
+			err = fmt.Errorf("get mapping error: %s", r)
 		}
+		span.End(&err)
 	}()
 
-	indexs, err := i.getIndexes(ctx, alias)
-	if err != nil {
-		return nil, err
+	span.Set("alias", aliases)
+	mappingMap, err := i.client.GetMapping().Index(aliases...).Do(ctx)
+
+	indexes := make([]string, 0, len(mappingMap))
+	for index := range mappingMap {
+		indexes = append(indexes, index)
+	}
+	// 按照正序排列，最新的覆盖老的
+	sort.Strings(indexes)
+	span.Set("indexes", indexes)
+
+	mappings := make([]map[string]any, 0, len(mappingMap))
+	for _, index := range indexes {
+		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
+			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
+			mappings = append(mappings, mapping)
+		}
 	}
 
-	for _, index := range indexs {
-		mappings, err := i.client.GetMapping().Index(index).Do(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		if mapping, ok := mappings[index].(map[string]any)["mappings"].(map[string]any); ok {
-			return mapping, nil
-		} else {
-			return nil, fmt.Errorf("get mappings error with index: %s", index)
-		}
-	}
-
-	return nil, nil
+	return mappings, nil
 }
 
 func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFactory) (*elastic.SearchResult, error) {
@@ -192,6 +202,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	filterQueries := make([]elastic.Query, 0)
 
+	// 过滤条件生成 elastic.query
 	query, err := fact.Query(qb.AllConditions)
 	if err != nil {
 		return nil, err
@@ -199,9 +210,15 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	if query != nil {
 		filterQueries = append(filterQueries, query)
 	}
-	filterQueries = append(filterQueries, elastic.NewRangeQuery(Timestamp).Gte(qo.start).Lt(qo.end).Format(TimeFormat))
 
-	// 注入 querystring
+	// 查询时间生成 elastic.query
+	rangeQuery, err := fact.RangeQuery()
+	if err != nil {
+		return nil, err
+	}
+	filterQueries = append(filterQueries, rangeQuery)
+
+	// querystring 生成 elastic.query
 	if qb.QueryString != "" {
 		qs := NewQueryString(qb.QueryString, fact.NestedField)
 		q, qsErr := qs.Parser()
@@ -243,18 +260,25 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		fact.Size(source)
 	}
 
+	if source == nil {
+		return nil, fmt.Errorf("empty es query source")
+	}
+
 	body, _ := source.Source()
+	if body == nil {
+		return nil, fmt.Errorf("empty query body")
+	}
+
 	bodyJson, _ := json.Marshal(body)
 	bodyString := string(bodyJson)
 
-	span.Set("query-index", qo.index)
-	span.Set("query-body", bodyString)
+	span.Set("query-indexes", qo.indexes)
 
-	log.Infof(ctx, "es query index: %s", qo.index)
-	log.Infof(ctx, "es query body: %s", bodyString)
+	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
+	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
 
 	startAnaylize := time.Now()
-	search := i.client.Search().Index(qo.index).SearchSource(source)
+	search := i.client.Search().Index(qo.indexes...).SearchSource(source)
 
 	res, err := search.Do(ctx)
 
@@ -370,6 +394,9 @@ func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string,
 		indexes = append(indexes, idx)
 	}
 
+	sort.Slice(indexes, func(i, j int) bool {
+		return indexes[i] > indexes[j]
+	})
 	return indexes, nil
 }
 
@@ -432,6 +459,83 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
+func timeToDate(t time.Time, unit string) time.Time {
+	switch unit {
+	case "month":
+		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	default:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+}
+
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
+	var (
+		aliases []string
+		_, span = trace.NewSpan(ctx, "get-alias")
+		err     error
+		loc     *time.Location
+	)
+	defer span.End(&err)
+
+	aliases = strings.Split(db, ",")
+
+	span.Set("need-add-time", needAddTime)
+	if !needAddTime {
+		return aliases, nil
+	}
+
+	loc, err = time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	start = start.In(loc)
+	end = end.In(loc)
+
+	left := end.Unix() - start.Unix()
+	// 超过 6 个月
+
+	span.Set("timezone", loc.String())
+	span.Set("start", start.String())
+	span.Set("end", end.String())
+	span.Set("left", left)
+
+	var (
+		dateFormat string
+		addDay     int
+		addMonth   int
+
+		startTime time.Time
+		endTime   time.Time
+	)
+
+	if left > int64(time.Hour.Seconds()*24*14) {
+		halfYear := time.Hour * 24 * 30 * 6
+		if left > int64(halfYear.Seconds()) {
+			start = end.Add(halfYear * -1)
+		}
+
+		startTime = timeToDate(start, "month")
+		endTime = timeToDate(end, "month")
+		dateFormat = "200601"
+		addMonth = 1
+	} else {
+		startTime = timeToDate(start, "day")
+		endTime = timeToDate(end, "day")
+		dateFormat = "20060102"
+		addDay = 1
+	}
+
+	newAliases := make([]string, 0)
+	for d := startTime; !d.After(endTime); d = d.AddDate(0, addMonth, addDay) {
+		for _, alias := range aliases {
+			newAliases = append(newAliases, fmt.Sprintf("%s_%s*", alias, d.Format(dateFormat)))
+		}
+	}
+
+	span.Set("new_alias_num", len(newAliases))
+	return newAliases, nil
+}
+
 // QueryRaw 给 PromEngine 提供查询接口
 func (i *Instance) QueryRaw(
 	ctx context.Context,
@@ -463,14 +567,27 @@ func (i *Instance) QueryRaw(
 			close(rets)
 		}()
 
-		qo := &queryOption{
-			index: query.DB,
-			start: start.UnixMilli(),
-			end:   end.UnixMilli(),
-			query: query,
+		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+		if err1 != nil {
+			rets <- &TimeSeriesResult{
+				Error: err1,
+			}
+			return
 		}
 
-		mapping, err1 := i.getMapping(ctx, qo.index)
+		qo := &queryOption{
+			indexes: aliases,
+			start:   start.Unix(),
+			end:     end.Unix(),
+			query:   query,
+		}
+
+		mappings, err1 := i.getMappings(ctx, qo.indexes)
+		// index 不存在，mappings 获取异常直接返回空
+		if len(mappings) == 0 {
+			return
+		}
+
 		if err1 != nil {
 			rets <- &TimeSeriesResult{
 				Error: err1,
@@ -486,8 +603,8 @@ func (i *Instance) QueryRaw(
 
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-			WithQuery(i.toEs(query.Field), qo.start, qo.end, query.Timezone, query.From, size).
-			WithMapping(mapping).
+			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
+			WithMappings(mappings...).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)
 

@@ -32,13 +32,13 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
-	sliAnnotationKey     = "sliMonitor"
 	sliAnnotationBuiltin = "ServiceMonitor/sli"
 
 	rulesMetric = "alert_rules"
@@ -48,7 +48,7 @@ type Controller struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	client kubernetes.Interface
-	bus    *kits.RateBus
+	bus    *notifier.RateBus
 
 	mut             sync.Mutex
 	rules           map[string]*promv1.PrometheusRule
@@ -67,7 +67,7 @@ func NewController(ctx context.Context, client kubernetes.Interface) *Controller
 		ctx:             ctx,
 		cancel:          cancel,
 		client:          client,
-		bus:             kits.NewDefaultRateBus(),
+		bus:             notifier.NewDefaultRateBus(),
 		rules:           make(map[string]*promv1.PrometheusRule),
 		rulesRelation:   make(map[string]string),
 		smMetrics:       map[string]map[string]struct{}{},
@@ -106,8 +106,8 @@ func (c *Controller) handle() {
 }
 
 func verifyServiceMonitor(pr *promv1.PrometheusRule) (string, bool) {
-	v, ok := pr.Annotations[sliAnnotationKey]
-	if !ok {
+	v := feature.SliMonitor(pr.Annotations)
+	if v == "" {
 		logger.Infof("skip none sli-annotations PrometheusRule: %s/%s", pr.Namespace, pr.Name)
 		return "", false
 	}
@@ -331,7 +331,7 @@ func (c *Controller) generateServiceMonitorScrapeConfigs() []yaml.MapSlice {
 	var cfg []yaml.MapSlice
 	for _, sm := range c.serviceMonitors {
 		// 内置白名单
-		if sm.Annotations[sliAnnotationKey] == sliAnnotationBuiltin {
+		if feature.SliMonitor(sm.Annotations) == sliAnnotationBuiltin {
 			for i, ep := range sm.Spec.Endpoints {
 				cfg = append(cfg, generateServiceMonitorScrapeConfig(sm, ep, i, nil))
 			}

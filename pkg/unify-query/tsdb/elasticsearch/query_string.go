@@ -10,6 +10,8 @@
 package elasticsearch
 
 import (
+	"fmt"
+
 	parser "github.com/bytedance/go-querystring-parser"
 	"github.com/olivere/elastic/v7"
 )
@@ -36,29 +38,54 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 	}
 	ast, err := parser.Parse(s.q)
 	if err != nil {
+		err = fmt.Errorf("query string parser error %s", err)
 		return s.query, err
 	}
 
-	return s.walk(ast), nil
+	return s.walk(ast)
 }
 
-func (s *QueryString) walk(condition parser.Condition) elastic.Query {
+func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
+	var (
+		leftQ  elastic.Query
+		rightQ elastic.Query
+		err    error
+	)
 	switch c := condition.(type) {
 	case *parser.NotCondition:
-		return elastic.NewBoolQuery().MustNot(s.walk(c.Condition))
+		leftQ, err = s.walk(c.Condition)
+		if err != nil {
+			return nil, err
+		}
+		leftQ = elastic.NewBoolQuery().MustNot(leftQ)
 	case *parser.OrCondition:
-		return elastic.NewBoolQuery().Should(s.walk(c.Left), s.walk(c.Right))
+		leftQ, err = s.walk(c.Left)
+		if err != nil {
+			return nil, err
+		}
+		rightQ, err = s.walk(c.Right)
+		if err != nil {
+			return nil, err
+		}
+		leftQ = elastic.NewBoolQuery().Should(leftQ, rightQ)
 	case *parser.AndCondition:
-		return elastic.NewBoolQuery().Must(s.walk(c.Left), s.walk(c.Right))
+		leftQ, err = s.walk(c.Left)
+		if err != nil {
+			return nil, err
+		}
+		rightQ, err = s.walk(c.Right)
+		if err != nil {
+			return nil, err
+		}
+		leftQ = elastic.NewBoolQuery().Must(leftQ, rightQ)
 	case *parser.MatchCondition:
 		if c.Field != "" {
-			q := elastic.NewMatchPhraseQuery(c.Field, c.Value)
+			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			if key := s.nestedField(c.Field); key != "" {
-				return elastic.NewNestedQuery(key, q)
+				leftQ = elastic.NewNestedQuery(key, leftQ)
 			}
-			return q
 		} else {
-			return elastic.NewQueryStringQuery(c.Value)
+			leftQ = elastic.NewQueryStringQuery(c.Value)
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)
@@ -73,20 +100,20 @@ func (s *QueryString) walk(condition parser.Condition) elastic.Query {
 			q.Lt(*c.End)
 		}
 		if key := s.nestedField(c.Field); key != "" {
-			return elastic.NewNestedQuery(key, q)
+			leftQ = elastic.NewNestedQuery(key, q)
 		}
-		return q
+		leftQ = q
 	case *parser.WildcardCondition:
 		if c.Field != "" {
-			q := elastic.NewWildcardQuery(c.Field, c.Value)
+			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
 			if key := s.nestedField(c.Field); key != "" {
-				return elastic.NewNestedQuery(key, q)
+				leftQ = elastic.NewNestedQuery(key, leftQ)
 			}
-			return q
 		} else {
-			return elastic.NewQueryStringQuery(c.Value)
+			leftQ = elastic.NewQueryStringQuery(c.Value)
 		}
+	default:
+		err = fmt.Errorf("condition type is not match %T", condition)
 	}
-
-	return nil
+	return leftQ, err
 }

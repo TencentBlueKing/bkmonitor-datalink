@@ -10,6 +10,7 @@
 package target
 
 import (
+	"bytes"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -24,12 +25,15 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 )
 
 const (
-	relabelV1RuleWorkload = "v1/workload"
-	relabelV2RuleWorkload = "v2/workload"
-	relabelV1RuleNode     = "v1/node"
+	relabelV1RuleWorkload  = "v1/workload"
+	relabelV2RuleWorkload  = "v2/workload"
+	relabelV1RuleNode      = "v1/node"
+	relabelV1RuleLabelJoin = "v1/labeljoin"
 )
 
 func IsBuiltinLabels(k string) bool {
@@ -83,6 +87,9 @@ type MetricTarget struct {
 	Mask                   string
 	TaskType               string
 	DisableCustomTimestamp bool
+	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
+
+	hash uint64 // 缓存 hash 避免重复计算
 }
 
 func (t *MetricTarget) FileName() string {
@@ -95,42 +102,109 @@ func (t *MetricTarget) FileName() string {
 
 // RemoteRelabelConfig 返回采集器 workload 工作负载信息
 func (t *MetricTarget) RemoteRelabelConfig() *yaml.MapItem {
-	switch t.RelabelRule {
-	case relabelV1RuleWorkload:
-		// index >= 0 表示 annotations 中指定了 index label
-		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
-			return nil
-		}
-		return &yaml.MapItem{
-			Key:   "metric_relabel_remote",
-			Value: fmt.Sprintf("http://%s:%d/workload/node/%s", ConfServiceName, ConfServicePort, t.NodeName),
-		}
-	case relabelV2RuleWorkload:
-		if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
-			return nil
-		}
-		var podName string
-		for _, label := range t.Labels {
-			if label.Name == "pod_name" {
-				podName = label.Value
-				break
+	var annotationsRule, labelsRule []string
+	var kind string
+	if t.LabelJoinMatcher != nil {
+		annotationsRule = t.LabelJoinMatcher.Annotations
+		labelsRule = t.LabelJoinMatcher.Labels
+		kind = t.LabelJoinMatcher.Kind
+	}
+
+	var path string
+	host := fmt.Sprintf("http://%s:%d", ConfServiceName, ConfServicePort)
+	params := map[string]string{}
+
+	rules := utils.SplitTrim(t.RelabelRule, ",")
+	for _, rule := range rules {
+		switch rule {
+		case relabelV1RuleWorkload:
+			// index >= 0 表示 annotations 中指定了 index label
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
 			}
-		}
-		if len(podName) > 0 {
-			return &yaml.MapItem{
-				Key:   "metric_relabel_remote",
-				Value: fmt.Sprintf("http://%s:%d/workload/node/%s?podName=%s", ConfServiceName, ConfServicePort, t.NodeName, podName),
+			if len(path) == 0 {
+				path = fmt.Sprintf("/workload/node/%s", t.NodeName)
 			}
+
+		case relabelV2RuleWorkload:
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
+			}
+			var podName string
+			for _, label := range t.Labels {
+				if label.Name == "pod_name" {
+					podName = label.Value
+					break
+				}
+			}
+			// v2 需要保证有 podname 才下发
+			if len(podName) > 0 {
+				if len(path) == 0 {
+					path = fmt.Sprintf("/workload/node/%s", t.NodeName)
+				}
+				params["podName"] = podName
+			}
+
+		case relabelV1RuleLabelJoin:
+			if idx := toMonitorIndex(t.RelabelIndex); idx >= 0 && idx != t.Meta.Index {
+				continue
+			}
+			if len(path) == 0 {
+				path = "/labeljoin"
+			} else {
+				params["rules"] = "labeljoin" // 兼容混合 workload+labeljoin 混合场景
+			}
+			params["kind"] = kind
+			params["annotations"] = strings.Join(annotationsRule, ",")
+			params["labels"] = strings.Join(labelsRule, ",")
 		}
 	}
-	return nil
+
+	if len(path) == 0 {
+		return nil
+	}
+
+	u := host + path
+	p := makeParams(params)
+	if len(p) > 0 {
+		u = u + "?" + p
+	}
+	return &yaml.MapItem{
+		Key:   "metric_relabel_remote",
+		Value: u,
+	}
+}
+
+func makeParams(params map[string]string) string {
+	buf := &bytes.Buffer{}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := params[k]
+		if v != "" {
+			buf.WriteString(fmt.Sprintf("%s=%s&", k, v))
+		}
+	}
+	return strings.TrimRight(buf.String(), "&")
+}
+
+func fnvHash(b []byte) uint64 {
+	h := fnv.New64a()
+	h.Write(b)
+	return h.Sum64()
 }
 
 func (t *MetricTarget) Hash() uint64 {
-	h := fnv.New64a()
-	b, _ := t.YamlBytes()
-	h.Write(b)
-	return h.Sum64()
+	if t.hash != 0 {
+		return t.hash
+	}
+
+	// 理论上不应该出现
+	_, _ = t.YamlBytes()
+	return t.hash
 }
 
 func (t *MetricTarget) YamlBytes() ([]byte, error) {
@@ -177,7 +251,7 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	module = append(module, yaml.MapItem{Key: "hosts", Value: []string{address}})
 	if len(t.Params) != 0 {
 		params := make(yaml.MapSlice, 0)
-		keys := make([]string, 0)
+		keys := make([]string, 0, len(t.Params))
 		for key := range t.Params {
 			keys = append(keys, key)
 		}
@@ -256,7 +330,14 @@ func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	task = append(task, yaml.MapItem{Key: "labels", Value: []yaml.MapSlice{lbs}})
 	task = append(task, yaml.MapItem{Key: "module", Value: module})
 	cfg = append(cfg, yaml.MapItem{Key: "tasks", Value: []yaml.MapSlice{task}})
-	return yaml.Marshal(cfg)
+
+	b, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	t.hash = fnvHash(b) // 提前缓存
+	return b, nil
 }
 
 func (t *MetricTarget) generateTaskID() uint64 {
@@ -284,7 +365,7 @@ func avoidOverflow(num uint64) uint64 {
 
 func sortMap(origin map[string]string) []yaml.MapItem {
 	result := make(yaml.MapSlice, 0, len(origin))
-	keys := make([]string, 0)
+	keys := make([]string, 0, len(origin))
 	for key := range origin {
 		keys = append(keys, key)
 	}

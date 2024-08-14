@@ -23,7 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
@@ -34,12 +34,12 @@ import (
 const resyncPeriod = time.Hour * 2
 
 var (
-	daemonsetAlarmer   = kits.NewAlarmer(resyncPeriod)
-	statefulsetAlarmer = kits.NewAlarmer(resyncPeriod)
+	daemonsetAlarmer   = notifier.NewAlarmer(resyncPeriod)
+	statefulsetAlarmer = notifier.NewAlarmer(resyncPeriod)
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 25) // 避免高频操作
 }
 
 func EqualMap(a, b map[string]struct{}) bool {
@@ -153,7 +153,6 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	}
 
 	secret.Data[eventTarget.FileName()] = compressed
-	c.mm.SetActiveSecretFileCount(tasks.TaskTypeEvent, secret.Name, 1)
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
@@ -225,7 +224,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		}
 
 		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretFileCount(tasks.TaskTypeDaemonSet, secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -303,7 +301,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	}
 
 	for secretName := range dropSecrets {
-		Slowdown() // 避免高频操作
+		Slowdown()
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
@@ -449,7 +447,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		}
 
 		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretFileCount(tasks.TaskTypeStatefulSet, secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -530,12 +527,9 @@ func (c *Operator) dispatchTasks() {
 		logger.Info("dryrun mode, skip dispatch")
 		return
 	}
-	c.mm.IncDispatchedTaskCounter()
-	now := time.Now()
 
 	statefulset, daemonset := c.collectChildConfigs()
 	c.createOrUpdateChildSecret(statefulset, daemonset)
-	c.mm.ObserveDispatchedTaskDuration(now)
 }
 
 func newSecret(name string, taskType string) *corev1.Secret {

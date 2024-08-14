@@ -53,11 +53,29 @@ var (
 		[]string{"name"},
 	)
 
+	discoverCreatedChildConfigCachedTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_created_config_cached_total",
+			Help:      "discover created child config cached total",
+		},
+		[]string{"name"},
+	)
+
 	discoverHandledTgTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
 			Name:      "discover_handled_tg_total",
 			Help:      "discover handled tg total",
+		},
+		[]string{"name"},
+	)
+
+	discoverDeletedTgSourceTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_deleted_tg_source_total",
+			Help:      "discover deleted tg source total",
 		},
 		[]string{"name"},
 	)
@@ -87,6 +105,14 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
 }
 
+func (m *metricMonitor) IncCreatedChildConfigCachedCounter() {
+	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
+}
+
 func (m *metricMonitor) IncHandledTgCounter() {
 	discoverHandledTgTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) IncDeletedTgSourceCounter() {
+	discoverDeletedTgSourceTotal.WithLabelValues(m.name).Inc()
 }

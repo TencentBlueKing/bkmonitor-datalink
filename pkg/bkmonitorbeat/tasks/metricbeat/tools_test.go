@@ -7,33 +7,33 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package kits
+package metricbeat
 
-func stringToBool(items map[string]string, key string) bool {
-	if value, ok := items[key]; ok {
-		if value == "true" {
-			return true
-		}
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestAlignTs(t *testing.T) {
+	type Case struct {
+		period  int
+		nowSecs int
+		wait    int
 	}
-	return false
-}
 
-func CheckIfCommonResource(items map[string]string) bool {
-	return stringToBool(items, "isCommon")
-}
+	cases := []Case{
+		{period: 10, nowSecs: 10, wait: 0},
+		{period: 10, nowSecs: 13, wait: 7},
+		{period: 15, nowSecs: 13, wait: 2},
+		{period: 30, nowSecs: 13, wait: 17},
+		{period: 60, nowSecs: 13, wait: 47},
+		{period: 120, nowSecs: 13, wait: 0},
+		{period: 15, nowSecs: 14, wait: 1},
+	}
 
-func CheckIfSystemResource(items map[string]string) bool {
-	return stringToBool(items, "isSystem")
-}
-
-func CheckIfForwardLocalhost(items map[string]string) bool {
-	return stringToBool(items, "forwardLocalhost")
-}
-
-func CheckIfNormalizeMetricName(items map[string]string) bool {
-	return stringToBool(items, "normalizeMetricName")
-}
-
-func CheckIfAntiAffinity(items map[string]string) bool {
-	return stringToBool(items, "antiAffinity")
+	for _, tt := range cases {
+		wait := alignTs(tt.period, tt.nowSecs)
+		assert.Equal(t, tt.wait, wait)
+	}
 }

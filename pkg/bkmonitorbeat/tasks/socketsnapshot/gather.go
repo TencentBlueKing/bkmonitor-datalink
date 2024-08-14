@@ -7,10 +7,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package socketsanpshot
+package socketsnapshot
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -62,5 +63,23 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		logger.Errorf("faile to get procs sockets: %v", err)
 		return
 	}
-	e <- &Event{dataid: g.config.DataID, data: sockets, utcTime: now}
+
+	total := len(sockets)
+	if total <= 0 {
+		return
+	}
+
+	const size = 10000
+	batch := int(math.Ceil(float64(total) / float64(size))) // 向上取整
+	var start, end int
+	for i := 0; i < batch; i++ {
+		end = start + size
+		if end >= total {
+			end = total
+		}
+
+		data := sockets[start:end]
+		e <- &Event{dataid: g.config.DataID, data: data, utcTime: now}
+		start = end
+	}
 }

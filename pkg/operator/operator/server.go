@@ -15,14 +15,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -103,7 +105,9 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ch := c.scrapeForce(namespace, monitor)
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+	ch := c.scrapeForce(namespace, monitor, i)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -122,22 +126,12 @@ func (c *Operator) CheckDataIdRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.checkDataIdRoute())
 }
 
-func (c *Operator) checkActiveDiscoverRoute() []define.MonitorMeta {
-	var ret []define.MonitorMeta
-	c.discoversMut.Lock()
-	for _, dis := range c.discovers {
-		ret = append(ret, dis.MonitorMeta())
-	}
-	c.discoversMut.Unlock()
-	return ret
-}
-
 func (c *Operator) CheckActiveDiscoverRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.checkActiveDiscoverRoute())
+	writeResponse(w, c.getAllDiscover())
 }
 
 func (c *Operator) CheckActiveChildConfigRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.recorder.getActiveConfigFile())
+	writeResponse(w, c.recorder.getActiveConfigFiles())
 }
 
 func (c *Operator) CheckActiveSharedDiscoveryRoute(w http.ResponseWriter, _ *http.Request) {
@@ -338,10 +332,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString(fmt.Sprintf(formatWorkloadMsg, workloadUpdated.Format(time.RFC3339), string(b)))
 
 	// 检查 Endpoint 数量
-	counts := c.recorder.getMonitorActiveConfigCount()
-	b, _ = json.MarshalIndent(counts, "", "  ")
+	endpoints := c.recorder.getActiveEndpoints()
+	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
-	for _, v := range counts {
+	for _, v := range endpoints {
 		total += v
 	}
 	buf.WriteString(fmt.Sprintf(formatMonitorEndpointMsg, total, string(b)))
@@ -387,7 +381,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		monitorResourcesContent, _ := json.MarshalIndent(monitorResources, "", "  ")
 
 		var childConfigs []ConfigFileRecord
-		for _, cf := range c.recorder.getActiveConfigFile() {
+		for _, cf := range c.recorder.getActiveConfigFiles() {
 			if strings.Contains(cf.Service, monitorKeyword) {
 				childConfigs = append(childConfigs, cf)
 			}
@@ -469,23 +463,51 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	podName := r.URL.Query().Get("podName")
-	if len(podName) > 0 {
-		writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName))
-		return
+	query := r.URL.Query()
+	podName := query.Get("podName")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	var configs []objectsref.RelabelConfig
+	configs = append(configs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
+
+	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
+	kind := query.Get("kind")
+	rules := query.Get("rules")
+	if rules == "labeljoin" {
+		switch kind {
+		case "Pod":
+			configs = append(configs, c.objectsController.PodsRelabelConfigs(annotations, labels)...)
+		}
 	}
 
-	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
+	writeResponse(w, configs)
+}
+
+func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	kind := query.Get("kind")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	switch kind {
+	case "Pod":
+		writeResponse(w, c.objectsController.PodsRelabelConfigs(annotations, labels))
+	default:
+		writeResponse(w, nil)
+	}
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	var lines []byte
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetNodeRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetServieRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetPodRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetReplicasetRelations())...)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
 
-	w.Write(lines)
+	c.objectsController.GetNodeRelations(buf)
+	c.objectsController.GetServiceRelations(buf)
+	c.objectsController.GetPodRelations(buf)
+	c.objectsController.GetReplicasetRelations(buf)
+
+	w.Write(buf.Bytes())
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -554,6 +576,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 

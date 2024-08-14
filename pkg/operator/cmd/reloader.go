@@ -23,20 +23,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// reloaderCmd represents the reloader command
 var reloaderCmd = &cobra.Command{
 	Use:   "reloader",
-	Short: "start program as reloader mode",
-	Long:  `start bkmonitor-reloader which will watch configs and send reload signal to worker`,
+	Short: "Start app as reloader mode",
+	Long:  "Reloader watches configs then send signal to worker",
 	Run: func(cmd *cobra.Command, args []string) {
 		waitUntil, err := filewatcher.AddPath(config.CustomConfigFilePath)
 		if err != nil {
-			logger.Errorf("watch config file [%s] failed, error: %s", config.CustomConfigFilePath, err)
-			os.Exit(1)
+			logger.Fatalf("watch config file '%s' failed: %s", config.CustomConfigFilePath, err)
 		}
 		defer filewatcher.Stop()
 
-		logger.Infof("waiting file [%s] to be updated", config.CustomConfigFilePath)
+		logger.Infof("waiting file '%s' to be updated", config.CustomConfigFilePath)
 		<-waitUntil
 		logger.Info("reloader is ready to worker")
 

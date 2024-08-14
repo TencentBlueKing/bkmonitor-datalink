@@ -31,7 +31,9 @@ require (
 	github.com/Tencent/bk-bcs/bcs-scenarios/kourse v0.0.0-20220914032224-06b1bd3358bc
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v0.0.0-00010101000000-000000000000
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.0.0-00010101000000-000000000000
+	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/ghodss/yaml v1.0.0
+	github.com/valyala/bytebufferpool v1.0.0
 )
 
 require (
@@ -47,7 +49,6 @@ require (
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/containerd/cgroups v1.0.3 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect

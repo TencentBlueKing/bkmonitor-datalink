@@ -142,6 +142,12 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		VmRt:            rtDetail.VmRt,
 		StorageName:     rtDetail.StorageName,
 		MetricName:      fieldName,
+		TimeField: metadata.TimeField{
+			Name: rtDetail.Options.TimeField.Name,
+			Type: rtDetail.Options.TimeField.Type,
+			Unit: rtDetail.Options.TimeField.Unit,
+		},
+		NeedAddTime: rtDetail.Options.NeedAddTime,
 	}
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在

@@ -44,7 +44,7 @@ const (
 var expectDimension = map[string]string{
 	"1_2_1234_4_5":       trapTestPayload,
 	EventAgentAddressKey: trapTestAgentAddress,
-	//EventAggentPortKey:    "51080",
+	// EventAggentPortKey:    "51080",
 	EventCommunityKey:    "public",
 	EventDisplayNameKey:  ".1.2.1234.0.55",
 	EventEnterpriseKey:   trapTestEnterpriseOid,
@@ -350,7 +350,7 @@ func (gs *GatherSuit) sendTrap(count uint32) {
 		Value: "." + objOid,
 	}
 
-	var puds = make([]gosnmp.SnmpPDU, 0, 2)
+	puds := make([]gosnmp.SnmpPDU, 0, 2)
 	puds = append(puds, pdu)
 	if trapTestVersion != gosnmp.Version1 {
 		puds = append(puds, pduObj)
@@ -380,7 +380,6 @@ func TestRun(t *testing.T) {
 }
 
 func TestMatchOid(t *testing.T) {
-
 	testCases := map[string]struct {
 		example string
 		expect  string

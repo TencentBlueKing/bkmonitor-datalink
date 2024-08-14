@@ -24,82 +24,116 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-type Kind struct {
+var (
+	gWg     sync.WaitGroup
+	gCtx    context.Context
+	gCancel context.CancelFunc
+
+	sharedDiscoveryLock sync.Mutex
+	sharedDiscoveryMap  map[string]*sharedDiscovery
+)
+
+// Activate 初始化全局 sharedDiscovery
+func Activate() {
+	gCtx, gCancel = context.WithCancel(context.Background())
+	sharedDiscoveryMap = map[string]*sharedDiscovery{}
+}
+
+// Deactivate 清理全局 sharedDiscovery
+func Deactivate() {
+	gCancel()
+	gWg.Wait()
+}
+
+type sharedDiscovery struct {
 	id         string
 	namespaces []string
 	ctx        context.Context
 	discovery  *promdiscover.Discovery
 	ch         chan []*targetgroup.Group
 	mut        sync.RWMutex
-	store      map[string]*TgWithTime
+	store      map[string]*tgWithTime
+	mm         *metricMonitor
 }
 
-type TgWithTime struct {
+type tgWithTime struct {
 	tg        *targetgroup.Group
 	updatedAt int64
 }
 
-func NewKind(ctx context.Context, id string, namespaces []string, discovery *promdiscover.Discovery) *Kind {
-	return &Kind{
+func newSharedDiscovery(ctx context.Context, id string, namespaces []string, discovery *promdiscover.Discovery) *sharedDiscovery {
+	return &sharedDiscovery{
 		ctx:        ctx,
 		id:         id,
 		namespaces: namespaces,
 		discovery:  discovery,
 		ch:         make(chan []*targetgroup.Group),
-		store:      map[string]*TgWithTime{},
+		store:      map[string]*tgWithTime{},
+		mm:         newMetricMonitor(id),
 	}
 }
 
-func (k *Kind) Watch() {
-	k.discovery.Run(k.ctx, k.ch)
+func (sd *sharedDiscovery) watch() {
+	sd.discovery.Run(sd.ctx, sd.ch)
 }
 
-func (k *Kind) Start() {
+func (sd *sharedDiscovery) start() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-k.ctx.Done():
+		case <-sd.ctx.Done():
 			return
 
-		case tgs := <-k.ch:
-			k.mut.Lock()
+		case tgs := <-sd.ch:
+			sd.mut.Lock()
 			now := time.Now()
 			for _, tg := range tgs {
 				logger.Debugf("targetgroup %s updated at: %v", tg.Source, now)
-				k.store[tg.Source] = &TgWithTime{tg: tg, updatedAt: now.Unix()}
+				_, ok := sd.store[tg.Source]
+				if !ok {
+					// 第一次记录且没有 targets 则跳过
+					if tg == nil || len(tg.Targets) == 0 {
+						logger.Infof("sharedDiscovery %s skip tg source '%s'", sd.id, tg.Source)
+						continue
+					}
+				}
+				sd.store[tg.Source] = &tgWithTime{tg: tg, updatedAt: now.Unix()}
 			}
-			k.mut.Unlock()
+			sd.mut.Unlock()
+
+		case <-ticker.C:
+			sd.mut.Lock()
+			now := time.Now().Unix()
+			for source, tg := range sd.store {
+				// 超过 10 分钟未更新且已经没有目标的对象需要删除
+				if now-tg.updatedAt > 600 {
+					if tg.tg == nil || len(tg.tg.Targets) == 0 {
+						delete(sd.store, source)
+						sd.mm.IncDeletedTgSourceCounter()
+						logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.id, source)
+					}
+				}
+			}
+			sd.mut.Unlock()
 		}
 	}
 }
 
-func (k *Kind) Fetch() ([]*targetgroup.Group, int64) {
-	k.mut.RLock()
-	defer k.mut.RUnlock()
+func (sd *sharedDiscovery) fetch() ([]*targetgroup.Group, int64) {
+	sd.mut.RLock()
+	defer sd.mut.RUnlock()
 
 	var maxTs int64 = math.MinInt64
 	ret := make([]*targetgroup.Group, 0, 2)
-	for _, v := range k.store {
+	for _, v := range sd.store {
 		if maxTs < v.updatedAt {
 			maxTs = v.updatedAt
 		}
 		ret = append(ret, v.tg)
 	}
 	return ret, maxTs
-}
-
-var (
-	globalWg            sync.WaitGroup
-	globalCtx           context.Context
-	globalCancel        context.CancelFunc
-	sharedDiscoveryLock sync.Mutex
-	sharedDiscoveryMap  map[string]*Kind
-)
-
-// Init 初始化全局 SharedDiscovery
-func Init() {
-	globalCtx, globalCancel = context.WithCancel(context.Background())
-	globalWg = sync.WaitGroup{}
-	sharedDiscoveryMap = map[string]*Kind{}
 }
 
 type SharedDiscoveryInfo struct {
@@ -133,16 +167,11 @@ func GetSharedDiscoveryCount() int {
 	return len(sharedDiscoveryMap)
 }
 
-func StopAllSharedDiscovery() {
-	globalCancel()
-	globalWg.Wait()
-}
-
 func getUniqueKey(role string, namespaces []string) string {
 	return fmt.Sprintf("%s/%s", role, strings.Join(namespaces, "/"))
 }
 
-// RegisterSharedDiscover 注册 SharedDiscovery
+// RegisterSharedDiscover 注册 sharedDiscovery
 // 共享 Discovery 实例可以减少 API Server 请求压力 同时也可以减少进程内存开销
 func RegisterSharedDiscover(role, kubeConfig string, namespaces []string) {
 	sharedDiscoveryLock.Lock()
@@ -160,17 +189,17 @@ func RegisterSharedDiscover(role, kubeConfig string, namespaces []string) {
 			logger.Errorf("failed to create promdiscover: %v", err)
 			return
 		}
-		kind := NewKind(globalCtx, uniqueKey, namespaces, discovery)
-		globalWg.Add(2)
+		sd := newSharedDiscovery(gCtx, uniqueKey, namespaces, discovery)
+		gWg.Add(2)
 		go func() {
-			defer globalWg.Done()
-			kind.Watch()
+			defer gWg.Done()
+			sd.watch()
 		}()
 		go func() {
-			defer globalWg.Done()
-			kind.Start()
+			defer gWg.Done()
+			sd.start()
 		}()
-		sharedDiscoveryMap[uniqueKey] = kind
+		sharedDiscoveryMap[uniqueKey] = sd
 	}
 }
 
@@ -180,7 +209,7 @@ func GetTargetGroups(role string, namespaces []string) ([]*targetgroup.Group, in
 
 	uniqueKey := getUniqueKey(role, namespaces)
 	if d, ok := sharedDiscoveryMap[uniqueKey]; ok {
-		return d.Fetch()
+		return d.fetch()
 	}
 
 	return nil, 0

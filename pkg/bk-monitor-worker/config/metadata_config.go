@@ -119,6 +119,8 @@ var (
 	BkdataIsAllowAllCmdbLevel bool
 	// 跳过写入influxdb的结果表列表
 	SkipInfluxdbTableIds []string
+	// 是否可以删除 consul 路径
+	CanDeleteConsulPath bool
 )
 
 func initMetadataVariables() {
@@ -175,4 +177,5 @@ func initMetadataVariables() {
 	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
 	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
+	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 }

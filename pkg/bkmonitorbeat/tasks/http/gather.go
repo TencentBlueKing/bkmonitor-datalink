@@ -387,9 +387,7 @@ var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) C
 
 // Run 主入口
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	var (
-		conf = g.GetConfig().(*configs.HTTPTaskConfig)
-	)
+	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 
 	for _, c := range conf.Steps {
 		validateConfig(c)
@@ -414,12 +412,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		//	2) target_ip_type:4 从 ip 列表中查找是否存在 ipv4 的 ip，存在则取第一个测试，不存在则返回错误码 3011
 		//	3) target_ip_type:6 从 ip 列表中查找是否存在 ipv6 的 ip，存在则取第一个测试，不存在则返回错误码 3012
 		if step.URL == "" && (len(step.URLList) == 0) {
-			//不上报任何数据
+			// 不上报任何数据
 			logger.Debugf("http URLList is empty.")
 			return
 		}
 
-		//获取配置的url列表
+		// 获取配置的url列表
 		urls := make([]string, 0)
 		if step.URL != "" {
 			urls = append(urls, step.URL)

@@ -72,7 +72,7 @@ metric3:foo:bar{label1="value3"} 12
 	}
 	index := 0
 	for msg := range ch {
-		for k, _ := range expected[index] {
+		for k := range expected[index] {
 			assert.Equal(t, expected[index][k], msg[k])
 		}
 		_, ok := msg["timestamp"]
@@ -120,7 +120,7 @@ metric4label1"value3"} 22
 
 	index = 0
 	for msg := range ch {
-		for k, _ := range expected[index] {
+		for k := range expected[index] {
 			assert.Equal(t, expected[index][k], msg[k])
 		}
 		_, ok := msg["timestamp"]

@@ -45,7 +45,7 @@ const (
 )
 
 const (
-	//udpConn UDP state
+	// udpConn UDP state
 	udpConn uint8 = iota + 7
 )
 
@@ -222,7 +222,7 @@ func (v be16) Int() int {
 
 func stateToFlag(num uint8) uint32 {
 	if num == 0 {
-		return 0xfff //4095
+		return 0xfff // 4095
 	} else if num > tcpClose {
 		return 0
 	}
@@ -272,7 +272,7 @@ func sockdiagSend(proto, seq, family uint8, exts uint8, states uint32) (skfd int
 
 	var diagReq inetDiagRequest
 	diagReq.Nlh.Type = sockDiagByFamily
-	//man 7 netlink: NLM_F_DUMP Convenience macro; equivalent to (NLM_F_ROOT|NLM_F_MATCH).
+	// man 7 netlink: NLM_F_DUMP Convenience macro; equivalent to (NLM_F_ROOT|NLM_F_MATCH).
 	diagReq.Nlh.Flags = unix.NLM_F_DUMP | unix.NLM_F_REQUEST
 	diagReq.Nlh.Seq = uint32(seq)
 	diagReq.Nlh.Pid = 0
@@ -315,9 +315,7 @@ func sockdiagRecv(skfd int, proto uint8) (map[uint32]FileSocket, error) {
 		stateMap = tcpStatesMap
 	}
 
-	var (
-		n int
-	)
+	var n int
 
 	// loop here, it will ensure that all messages have been read from the kernel
 loop:
@@ -429,7 +427,6 @@ func getConcernPidInodes(pids []int32) map[int32][]uint64 {
 
 		inodes, err := getProcInodes("/proc", pid)
 		if err != nil {
-			logger.Errorf("failed to get /proc info: %v", err)
 			continue
 		}
 		ret[pid] = inodes

@@ -478,6 +478,7 @@ func InitConfig() {
 	initMetadataVariables()
 	initClusterMetricVariables()
 	initApmVariables()
+	initAlarmConfig()
 
 	prettyPrintSettings()
 }

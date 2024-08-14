@@ -143,6 +143,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			logger.Errorf("format output failed partly: %s", formatErr)
 		}
 	} else {
+		total++
 		e <- tasks.NewGatherUpEventWithValue(g, define.CodeOK, float64(total))
 	}
 }

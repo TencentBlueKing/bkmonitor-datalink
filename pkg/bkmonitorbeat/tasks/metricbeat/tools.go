@@ -289,6 +289,7 @@ func (t *Tool) Run(ctx context.Context, e chan<- define.Event) error {
 			}
 		}
 
+		total++ // gather_up 本身也是一个数据包
 		if configs.IsContainerMode() {
 			e <- tasks.NewGatherUpEventWithConfig(t.taskConf.GetDataID(), t.taskConf, define.CodeOK, nil, float64(total))
 		} else {

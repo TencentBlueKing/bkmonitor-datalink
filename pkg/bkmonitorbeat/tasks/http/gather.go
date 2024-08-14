@@ -131,7 +131,7 @@ type Gather struct {
 }
 
 // UpdateEventByResponse 根据返回写入结果数据
-func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) error {
+func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) {
 	event.Message = response.Status
 	event.ResponseCode = response.StatusCode
 	event.ContentLength, _ = strconv.Atoi(response.Header.Get("Content-Length"))
@@ -147,8 +147,6 @@ func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) er
 			}
 		}
 	}
-
-	return nil
 }
 
 func validateConfig(c *configs.HTTPTaskStepConfig) {
@@ -254,11 +252,8 @@ func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTP
 
 	logger.Infof("%v: %v %v response: code=%v", conf.TaskID, step.Method, url, response.StatusCode)
 	// 根据结果设置事件字段
-	err = g.UpdateEventByResponse(event, response)
-	if err != nil {
-		logger.Warnf("update event by response failed: %v", err)
-		return false
-	}
+	g.UpdateEventByResponse(event, response)
+
 	// 检查响应状态码是否符合预期
 	if !g.checkResponseCode(step, response) {
 		event.Fail(define.CodeResponseNotMatch)

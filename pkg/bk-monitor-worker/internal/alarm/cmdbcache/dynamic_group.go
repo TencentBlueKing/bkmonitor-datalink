@@ -177,6 +177,7 @@ func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]
 			}
 
 			dynamicGroupToRelatedIDs[dg.ID] = map[string]interface{}{
+				"bk_biz_id":   bizID,
 				"bk_inst_ids": relatedIDs,
 				"bk_obj_id":   dg.BkObjId,
 				"name":        dg.Name,

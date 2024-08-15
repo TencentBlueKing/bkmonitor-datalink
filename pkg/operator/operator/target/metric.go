@@ -68,7 +68,6 @@ type MetricTarget struct {
 	DataID                 int
 	Namespace              string
 	MaxTimeout             string
-	MinPeriod              string
 	Period                 string
 	Timeout                string
 	Path                   string

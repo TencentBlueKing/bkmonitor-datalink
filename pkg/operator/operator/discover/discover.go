@@ -601,6 +601,9 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 		return nil, errors.Wrap(err, "make metric target failed")
 	}
 
+	interval, _ := time.ParseDuration(metricTarget.Period)
+	d.mm.SetMonitorScrapeInterval(interval.Seconds())
+
 	if d.ForwardLocalhost {
 		metricTarget.Address, err = forwardAddress(metricTarget.Address)
 		if err != nil {

@@ -79,6 +79,15 @@ var (
 		},
 		[]string{"name"},
 	)
+
+	monitorScrapeIntervalSeconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "monitor_scrape_interval_seconds",
+			Help:      "monitor scrape interval in seconds",
+		},
+		[]string{"name"},
+	)
 )
 
 func newMetricMonitor(name string) *metricMonitor {
@@ -115,4 +124,8 @@ func (m *metricMonitor) IncHandledTgCounter() {
 
 func (m *metricMonitor) IncDeletedTgSourceCounter() {
 	discoverDeletedTgSourceTotal.WithLabelValues(m.name).Inc()
+}
+
+func (m *metricMonitor) SetMonitorScrapeInterval(v float64) {
+	monitorScrapeIntervalSeconds.WithLabelValues(m.name).Set(v)
 }

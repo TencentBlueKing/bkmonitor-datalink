@@ -29,12 +29,13 @@ type recordLogs struct {
 
 func newRecordLogs(c LogConfig) *recordLogs {
 	l := logger.New(logger.Options{
-		Stdout:     c.Stdout,
-		Filename:   filepath.Join(c.Path, "bkmonitorbeat.record"),
-		MaxSize:    c.MaxSize,
-		MaxAge:     c.MaxAge,
-		MaxBackups: c.Backups,
-		Level:      c.Level,
+		Stdout:        c.Stdout,
+		Filename:      filepath.Join(c.Path, "bkmonitorbeat.record"),
+		MaxSize:       c.MaxSize,
+		MaxAge:        c.MaxAge,
+		MaxBackups:    c.Backups,
+		Level:         c.Level,
+		DisableCaller: true,
 	})
 	return &recordLogs{l: l}
 }

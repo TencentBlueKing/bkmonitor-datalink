@@ -537,7 +537,7 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 
 # Check Routes
 --------------
-* GET /check?monitor=${monitor}&scrape=true|false
+* GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
 * GET /check/scrape
 * GET /check/scrape/{namespace}

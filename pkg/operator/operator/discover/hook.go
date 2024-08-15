@@ -7,49 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package discover
 
 import (
-	"fmt"
-	"path/filepath"
+	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var rl = newRecordLogs(LogConfig{Stdout: true})
+const (
+	confDefaultPeriodPath = "discover.scrape.default_period"
+)
 
-func SetLogConfig(c LogConfig) {
-	c.Level = "info" // MUST BE 'INFO'
-	rl = newRecordLogs(c)
+var (
+	ConfDefaultPeriod string
+)
+
+func initConfig() {
+	viper.SetDefault(confDefaultPeriodPath, "60s")
 }
 
-type recordLogs struct {
-	l logger.Logger
+func updateConfig() {
+	ConfDefaultPeriod = viper.GetString(confDefaultPeriodPath)
 }
 
-func newRecordLogs(c LogConfig) *recordLogs {
-	l := logger.New(logger.Options{
-		Stdout:        c.Stdout,
-		Filename:      filepath.Join(c.Path, "bkmonitorbeat.record"),
-		MaxSize:       c.MaxSize,
-		MaxAge:        c.MaxAge,
-		MaxBackups:    c.Backups,
-		Level:         c.Level,
-		DisableCaller: true,
-	})
-	return &recordLogs{l: l}
-}
+func init() {
+	if err := config.EventBus.Subscribe(config.EventConfigPreParse, initConfig); err != nil {
+		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPreParse, err)
+	}
 
-func RecordLog(template string, kvs []LogKV) {
-	template = fmt.Sprintf("%s; fields=%+v", template, kvs)
-	rl.l.Info(template)
-}
-
-type LogKV struct {
-	K string
-	V interface{}
-}
-
-func (kv LogKV) String() string {
-	return fmt.Sprintf("%s=(%v)", kv.K, kv.V)
+	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
+		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
+	}
 }

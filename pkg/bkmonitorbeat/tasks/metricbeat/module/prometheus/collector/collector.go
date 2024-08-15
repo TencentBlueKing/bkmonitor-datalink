@@ -392,7 +392,9 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 	rsp, err := m.httpClient.FetchResponse()
 	if err != nil {
 		m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeConnRefused, m.logkvs()), false)
-		return summary, errors.Wrap(err, "request failed")
+		err = errors.Wrap(err, "request failed")
+		logger.Error(err)
+		return summary, err
 	}
 	defer rsp.Body.Close()
 

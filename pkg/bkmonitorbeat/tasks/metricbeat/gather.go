@@ -41,7 +41,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		g.tool = new(Tool)
 		err := g.tool.Init(g.config, g.GlobalConfig, g.TaskConfig)
 		if err != nil {
-			logger.Errorf("metricbeat init failed, err:%v", err)
+			logger.Errorf("metricbeat init failed: %v", err)
 			g.tool = nil
 			return
 		}
@@ -50,12 +50,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	valCtx := context.WithValue(g.ctx, "gConfig", g.GlobalConfig)
 	err := g.tool.Run(valCtx, e)
 	if err != nil {
-		logger.Errorf("metricbeat run failed, err: %v", err)
+		logger.Errorf("metricbeat run failed: %v", err)
 		return
 	}
 }
 
-// New :
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig

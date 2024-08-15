@@ -352,7 +352,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		secretClient := d.Client.CoreV1().Secrets(d.monitorMeta.Namespace)
 		bearerToken, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.BearerTokenSecret)
 		if err != nil {
-			return nil, errors.Wrapf(err, "get bearer token from secret failed, monitor=%s", d.monitorMeta.ID())
+			return nil, errors.Wrap(err, "get bearer token from secret failed")
 		}
 		metricTarget.BearerToken = bearerToken
 	}
@@ -366,7 +366,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.CA.Secret != nil {
 			ca, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.CA.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS CA from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS CA from secret failed")
 			}
 			metricTarget.TLSConfig.CAs = []string{EncodeBase64(ca)}
 		}
@@ -377,7 +377,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.Cert.Secret != nil {
 			cert, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.Cert.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Cert from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Cert from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Certificate = EncodeBase64(cert)
 		}
@@ -388,7 +388,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.KeySecret != nil {
 			key, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.KeySecret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Key from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Key from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Key = EncodeBase64(key)
 		}

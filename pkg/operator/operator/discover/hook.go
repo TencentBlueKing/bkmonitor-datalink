@@ -21,15 +21,7 @@ const (
 )
 
 var (
-	ConfMaxTimeout          string
-	ConfMinPeriod           string
-	ConfDefaultPeriod       string
-	ConfEventScrapeInterval string
-	ConfEventScrapeFiles    []string
-	ConfEventMaxSpan        string
-	ConfBuiltinLabels       []string
-	ConfServiceName         string
-	ConfServicePort         int
+	ConfDefaultPeriod string
 )
 
 func initConfig() {

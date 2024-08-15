@@ -2,6 +2,10 @@ package apm
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	bmwHttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/http"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,6 +34,18 @@ func StartFromFileCmd() *cobra.Command {
 func listenFile(cmd *cobra.Command, args []string) {
 	config.InitConfig()
 	log.InitLogger()
+
+	r := bmwHttp.NewProfHttpService()
+	srv := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", config.ControllerListenHost, config.ControllerListenPort),
+		Handler: r,
+	}
+	logger.Infof("Starting HTTP server at %s:%d", config.ControllerListenHost, config.ControllerListenPort)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatalf("listen addr error, %v", err)
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := tools.StartListenerFromFile(ctx, filePath); err != nil {

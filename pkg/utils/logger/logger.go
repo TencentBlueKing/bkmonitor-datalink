@@ -104,7 +104,7 @@ type Options struct {
 	// Level is a logging priority. Higher levels are more important.
 	Level string `yaml:"level"`
 
-	// DisableCaller specifies whether to disable display caller info or not.
+	// DisableCaller specifies whether to display caller info or not.
 	DisableCaller bool
 }
 

@@ -158,7 +158,6 @@ func (r *recorder) Recv(event k8sEvent) {
 	logger.Infof("receive set event again: %+v", r.set[h])
 }
 
-// Gather :
 type Gather struct {
 	tasks.BaseTask
 	config *configs.KubeEventConfig
@@ -167,11 +166,7 @@ type Gather struct {
 	cancel context.CancelFunc
 }
 
-// Run :
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	logger.Info("kubeevent gather is running...")
-	defer logger.Info("kubeevent exit")
-
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 

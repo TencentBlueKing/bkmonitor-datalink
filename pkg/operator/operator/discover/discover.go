@@ -640,7 +640,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 	namespace, _, err := metaFromSource(targetGroup.Source)
 	if err != nil {
-		logger.Errorf("failed to parse source: %v", err)
+		logger.Errorf("%s failed to parse source: %v", d.Name(), err)
 		return
 	}
 
@@ -656,6 +656,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
 		if err != nil {
+			logger.Error("%s handle target failed: %v", d.Name(), err)
 			d.mm.IncCreatedChildConfigFailedCounter()
 			continue
 		}

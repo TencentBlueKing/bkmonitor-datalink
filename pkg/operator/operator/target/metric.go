@@ -208,13 +208,6 @@ func (t *MetricTarget) Hash() uint64 {
 
 func (t *MetricTarget) YamlBytes() ([]byte, error) {
 	cfg := make(yaml.MapSlice, 0)
-	if t.Period == "" {
-		t.Period = ConfDefaultPeriod
-	}
-	if t.Timeout == "" {
-		t.Timeout = t.Period
-	}
-
 	cfg = append(cfg, yaml.MapItem{Key: "type", Value: "metricbeat"})
 	cfg = append(cfg, yaml.MapItem{Key: "name", Value: t.Address + t.Path})
 	cfg = append(cfg, yaml.MapItem{Key: "version", Value: "1"})

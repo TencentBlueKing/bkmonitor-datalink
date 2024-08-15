@@ -400,6 +400,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.Labels = lbls
 	}
 
+	period := d.Period
+	if period == "" {
+		period = ConfDefaultPeriod
+	}
+	timeout := d.Timeout
+	if timeout == "" {
+		timeout = period
+	}
+
 	metricTarget.Meta = d.monitorMeta
 	metricTarget.ExtraLabels = d.ExtraLabels
 	metricTarget.Namespace = namespace // 采集目标的 namespace
@@ -407,8 +416,8 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.DimensionReplace = d.DataID().Spec.DimensionReplace
 	metricTarget.MetricReplace = d.DataID().Spec.MetricReplace
 	metricTarget.MetricRelabelConfigs = d.MetricRelabelConfigs
-	metricTarget.Period = d.Period
-	metricTarget.Timeout = d.Timeout
+	metricTarget.Period = period
+	metricTarget.Timeout = timeout
 	metricTarget.ProxyURL = d.ProxyURL
 	metricTarget.Mask = d.Mask()
 	metricTarget.TaskType = taskType

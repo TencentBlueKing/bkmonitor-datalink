@@ -656,7 +656,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
 		if err != nil {
-			logger.Error("%s handle target failed: %v", d.Name(), err)
+			logger.Errorf("%s handle target failed: %v", d.Name(), err)
 			d.mm.IncCreatedChildConfigFailedCounter()
 			continue
 		}

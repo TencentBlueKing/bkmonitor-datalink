@@ -12,7 +12,6 @@ package window
 import (
 	"context"
 	"fmt"
-	"github.com/elastic/go-elasticsearch/v7"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/ahmetb/go-linq/v3"
 	mapset "github.com/deckarep/golang-set/v2"
+	"github.com/elastic/go-elasticsearch/v7"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/time/rate"

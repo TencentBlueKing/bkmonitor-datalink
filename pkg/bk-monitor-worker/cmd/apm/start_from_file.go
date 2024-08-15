@@ -10,6 +10,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/tools"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -28,6 +29,7 @@ func StartFromFileCmd() *cobra.Command {
 
 func listenFile(cmd *cobra.Command, args []string) {
 	config.InitConfig()
+	log.InitLogger()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := tools.StartListenerFromFile(ctx, filePath); err != nil {

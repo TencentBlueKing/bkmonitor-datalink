@@ -21,8 +21,10 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/minio/highwayhash"
 	boom "github.com/tylertreat/BoomFilters"
+	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // BloomStorageData storage request of bloom-filter
@@ -146,6 +148,7 @@ type MemoryBloom struct {
 	nextCleanDate time.Time
 	cleanDuration time.Duration
 	resetFunc     func()
+	logger        monitorLogger.Logger
 }
 
 func (m *MemoryBloom) Add(data []byte) boom.Filter {
@@ -163,12 +166,12 @@ func (m *MemoryBloom) TestAndAdd(key []byte) bool {
 func (m *MemoryBloom) AutoReset() {
 	// Prevent the memory from being too large.
 	// Data will be cleared after a specified time.
-	logger.Infof("RedisNormalBloom-filter will reset every %s", m.config.autoClean)
+	m.logger.Infof("RedisNormalBloom-filter will reset every %s", m.config.autoClean)
 	for {
 		if time.Now().After(m.nextCleanDate) {
 			m.resetFunc()
 			m.nextCleanDate = time.Now().Add(m.cleanDuration)
-			logger.Infof("RedisNormalBloom-filter reset data trigger, next time the filter reset data is %s", m.nextCleanDate)
+			m.logger.Infof("RedisNormalBloom-filter reset data trigger, next time the filter reset data is %s", m.nextCleanDate)
 		}
 		time.Sleep(1 * time.Minute)
 	}
@@ -182,6 +185,7 @@ func newBloomClient(f boom.Filter, resetFunc func(), options BloomOptions) boom.
 		nextCleanDate: time.Now().Add(options.normalMemoryBloomOptions.autoClean),
 		cleanDuration: options.normalMemoryBloomOptions.autoClean,
 		resetFunc:     resetFunc,
+		logger:        monitorLogger.With(zap.String("name", "memoryBloom")),
 	}
 	go bloom.AutoReset()
 	return bloom
@@ -259,6 +263,7 @@ type OverlapBloom struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	lock          sync.Mutex
+	logger        monitorLogger.Logger
 }
 
 func (m *OverlapBloom) Add(data []byte) boom.Filter {
@@ -284,23 +289,23 @@ func (m *OverlapBloom) TestAndAdd(key []byte) bool {
 func (m *OverlapBloom) AddOverlap() {
 
 	intervalTicker := time.NewTicker(m.resetDuration / 2)
-	logger.Infof("overlap bloom add overlap interval: %s", m.resetDuration/2)
+	m.logger.Infof("overlap bloom add overlap interval: %s", m.resetDuration/2)
 
 	for {
 		select {
 		case <-intervalTicker.C:
-			logger.Debugf("add overlap trigger")
+			m.logger.Debugf("add overlap trigger")
 			for {
 				m.lock.Lock()
-				logger.Debugf("add overlap get lock")
+				m.logger.Debugf("add overlap get lock")
 				if m.bloomChain.after != nil {
-					logger.Debugf("add overlap release lock via after not null")
+					m.logger.Debugf("add overlap release lock via after not null")
 					m.lock.Unlock()
 					time.Sleep(time.Second)
 					continue
 				}
 				m.bloomChain.after = boom.NewBloomFilter(m.cap, m.fpRate)
-				logger.Infof("add overlap release lock，after is created")
+				m.logger.Infof("add overlap release lock，after is created")
 				// changed to interleaved execution
 				intervalTicker = time.NewTicker(m.resetDuration)
 				m.lock.Unlock()
@@ -315,17 +320,17 @@ func (m *OverlapBloom) AddOverlap() {
 
 func (m *OverlapBloom) AutoReset() {
 	intervalTicker := time.NewTicker(m.resetDuration)
-	logger.Infof("overlap bloom reset interval: %s", m.resetDuration)
+	m.logger.Infof("overlap bloom reset interval: %s", m.resetDuration)
 
 	for {
 		select {
 		case <-intervalTicker.C:
-			logger.Debugf("auto reset trigger")
+			m.logger.Debugf("auto reset trigger")
 			m.lock.Lock()
-			logger.Debugf("auto reset get lock")
+			m.logger.Debugf("auto reset get lock")
 			m.bloomChain.front = m.bloomChain.after
 			m.bloomChain.after = nil
-			logger.Infof("auto reset release lock, move after to front, set after = null dataId: %s", m.dataId)
+			m.logger.Infof("auto reset release lock, move after to front, set after = null dataId: %s", m.dataId)
 			m.lock.Unlock()
 		case <-m.ctx.Done():
 			intervalTicker.Stop()
@@ -348,6 +353,7 @@ func newOverlapBloomClient(dataId string, ctx context.Context, f boom.Filter, ca
 		fpRate:        fpRate,
 		ctx:           childCtx,
 		cancel:        childCancel,
+		logger:        monitorLogger.With(zap.String("name", "overlapBloom"), zap.String("dataId", dataId)),
 	}
 
 	go bloom.AddOverlap()
@@ -366,7 +372,7 @@ type LayersBloomOption func(*LayersBloomOptions)
 func Layers(s int) LayersBloomOption {
 	return func(options *LayersBloomOptions) {
 		if s > len(strategies) {
-			logger.Warnf("layer: %d > strategies count, set to %d", s, len(strategies))
+			monitorLogger.Warnf("layer: %d > strategies count, set to %d", s, len(strategies))
 			s = len(strategies)
 		}
 		options.layers = s
@@ -427,13 +433,14 @@ func LayerCapDecreaseBloomConfig(opts ...LayersCapDecreaseBloomOption) BloomOpti
 type LayersMemoryBloom struct {
 	blooms     []boom.Filter
 	strategies []layerStrategy
+	logger     monitorLogger.Logger
 }
 
 func (l *LayersMemoryBloom) Add(data BloomStorageData) error {
 	for index, b := range l.blooms {
 		key := l.strategies[index](data.Key)
 		if err := b.Add(key); err != nil {
-			logger.Errorf("failed to add data in blooms[%d]. error: %s", index, err)
+			l.logger.Errorf("failed to add data in blooms[%d]. error: %s", index, err)
 		}
 
 	}
@@ -461,8 +468,12 @@ func newLayersBloomClient(options BloomOptions) (BloomOperator, error) {
 		bloom := newBloomClient(sbf, func() { sbf.Reset() }, options)
 		blooms = append(blooms, bloom)
 	}
-	logger.Infof("bloom-filter layers: %d", options.layersBloomOptions.layers)
-	return &LayersMemoryBloom{blooms: blooms, strategies: strategies}, nil
+	monitorLogger.Infof("bloom-filter layers: %d", options.layersBloomOptions.layers)
+	return &LayersMemoryBloom{
+		blooms:     blooms,
+		strategies: strategies,
+		logger:     monitorLogger.With(zap.String("name", "layerBloomFilter")),
+	}, nil
 }
 
 type LayersCapDecreaseBloomOption func(*LayersCapDecreaseBloomOptions)

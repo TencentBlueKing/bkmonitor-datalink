@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/prompb"
+
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // MetricsName
@@ -216,7 +218,7 @@ func (r *relationMetricsCollector) Collect() prompb.WriteRequest {
 	var keys []string
 	for dimensionKey, ts := range r.data {
 		if ts.Before(edge) {
-			logger.Debugf("[RelationMetricsCollector] key: %s expired, timestamp: %s", dimensionKey, ts)
+			monitorLogger.Debugf("[RelationMetricsCollector] key: %s expired, timestamp: %s", dimensionKey, ts)
 			keys = append(keys, dimensionKey)
 		}
 	}

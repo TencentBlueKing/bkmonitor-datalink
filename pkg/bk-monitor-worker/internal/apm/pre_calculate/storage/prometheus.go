@@ -24,10 +24,12 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -68,6 +70,7 @@ type prometheusWriter struct {
 
 	client  *http.Client
 	isValid bool
+	logger  monitorLogger.Logger
 }
 
 func (p *prometheusWriter) WriteBatch(writeReq prompb.WriteRequest) error {
@@ -97,7 +100,7 @@ func (p *prometheusWriter) WriteBatch(writeReq prompb.WriteRequest) error {
 	metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
 	resp, err := p.client.Do(req)
 
-	logger.Debugf("[RemoteWrite] push %d series", len(writeReq.Timeseries))
+	p.logger.Debugf("[RemoteWrite] push %d series to host: %s (headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
 	if err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
@@ -142,6 +145,7 @@ func newPrometheusWriterClient(dataId, token, url string, headers map[string]str
 		headers: h,
 		client:  client,
 		isValid: isValid,
+		logger:  monitorLogger.With(zap.String("name", "prometheus"), zap.String("dataId", dataId)),
 	}
 }
 
@@ -185,6 +189,7 @@ type MetricDimensionsHandler struct {
 	flowMetricCollector      *flowMetricsCollector
 
 	promClient *prometheusWriter
+	logger     monitorLogger.Logger
 }
 
 func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
@@ -197,7 +202,7 @@ func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
 	case PromFlowMetric:
 		m.flowMetricCollector.Observe(data.Value)
 	default:
-		logger.Warnf("[MetricDimensionHandler] receive not support kind: %d", data.Kind)
+		m.logger.Warnf("[MetricDimensionHandler] receive not support kind: %d", data.Kind)
 	}
 }
 
@@ -206,13 +211,13 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	defer m.mu.Unlock()
 
 	if err := m.promClient.WriteBatch(c.Collect()); err != nil {
-		logger.Errorf("[TraceMetricsReport] report to %s failed, error: %s", m.promClient.url, err)
+		m.logger.Errorf("[TraceMetricsReport] report to %s failed, error: %s", m.promClient.url, err)
 	}
 }
 
 func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
 	ticker := time.NewTicker(c.Ttl())
-	logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
+	m.logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
 
 	for {
 		select {
@@ -220,7 +225,7 @@ func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
 			m.cleanUpAndReport(c)
 		case <-m.ctx.Done():
 			ticker.Stop()
-			logger.Infof("[MetricReport] stop report metrics")
+			m.logger.Infof("[MetricReport] stop report metrics")
 			return
 		}
 	}
@@ -237,7 +242,7 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 ) *MetricDimensionsHandler {
 
 	token := core.GetMetadataCenter().GetToken(dataId)
-	logger.Infof(
+	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
 			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
@@ -250,6 +255,7 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,
+		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}
 	go h.LoopCollect(h.relationMetricDimensions)
 	go h.LoopCollect(h.flowMetricCollector)

@@ -75,7 +75,7 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 	baseConfig := configs.NewConfig()
 	err = cfg.Unpack(baseConfig)
 	if err != nil {
-		return fmt.Errorf("%s: %w", define.ErrUnpackCfgError, err)
+		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
 	}
 	ce.config = baseConfig
 

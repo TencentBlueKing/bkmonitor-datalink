@@ -29,6 +29,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs/validator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report"
 	senderagent "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/agent"
 	senderhttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/http"
@@ -38,7 +39,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// build vars
 var (
 	BeatName         = "bkmonitorbeat"
 	Version          = "unknown"
@@ -158,20 +158,14 @@ func main() {
 		fmt.Printf("failed to parse logging config: %v\n", err)
 		os.Exit(1)
 	}
-	type LogConfig struct {
-		Stdout  bool   `config:"stdout"`
-		Level   string `config:"level"`
-		Path    string `config:"path"`
-		MaxSize int    `config:"maxsize"`
-		MaxAge  int    `config:"maxage"`
-		Backups int    `config:"backups"`
-	}
-	var logCfg LogConfig
+
+	var logCfg define.LogConfig
 	if err := logCfgContent.Unpack(&logCfg); err != nil {
 		fmt.Printf("failed to unpack logging config: %v\n", err)
 		os.Exit(1)
 	}
 
+	define.SetLogConfig(logCfg)
 	logger.SetOptions(logger.Options{
 		Stdout:     logCfg.Stdout,
 		Filename:   filepath.Join(logCfg.Path, "bkmonitorbeat.log"),

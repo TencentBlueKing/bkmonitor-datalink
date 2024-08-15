@@ -13,19 +13,18 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/metricbeat/mb"
 	"github.com/elastic/beats/metricbeat/mb/module"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks/metricbeat/include" // 初始化 bkmetricbeats 组件
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/utils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -35,56 +34,52 @@ const (
 	tempFilePatternFormat = "metricset_metrics_%s_*.list"
 )
 
-// MetricTool metricbeat接口
-type MetricTool interface {
-	Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error
-	Run(ctx context.Context, e chan<- define.Event) error
-}
-
-// BKMetricbeatTool 蓝鲸修改后的metricbeat移植
-type BKMetricbeatTool struct {
+type Tool struct {
 	module          *module.Wrapper
-	taskConf        *configs.MetricBeatConfig
+	mbConfig        *configs.MetricBeatConfig
 	tempFilePattern string
-	globalConf      define.Config
+
+	globalConf define.Config
+	taskConf   define.TaskConfig
 }
 
-// Init 初始化参数，主要处理配置文件中的modules
-func (t *BKMetricbeatTool) Init(taskConf *configs.MetricBeatConfig, globalConf define.Config) error {
+// Init 初始化参数 处理配置文件中的 modules
+func (t *Tool) Init(mbConfig *configs.MetricBeatConfig, globalConf define.Config, taskConf define.TaskConfig) error {
 	// 补充 period 把调度直接交给 Gather
-	t.tempFilePattern = fmt.Sprintf(tempFilePatternFormat, taskConf.GetIdent())
-	err := taskConf.Module.Merge(common.MapStr{
-		"period":            taskConf.Period,
+	t.tempFilePattern = fmt.Sprintf(tempFilePatternFormat, mbConfig.GetIdent())
+	err := mbConfig.Module.Merge(common.MapStr{
+		"period":            mbConfig.Period,
 		"temp_file_pattern": t.tempFilePattern,
-		"workers":           taskConf.Workers,
+		"workers":           mbConfig.Workers,
+		"enable_align_ts":   mbConfig.EnableAlignTs,
 	})
 	if err != nil {
-		logger.Errorf("merge modules failed, error: %v", err)
-		return err
+		return errors.Wrap(err, "merge modules failed")
 	}
-	modules, err := module.NewWrapper(taskConf.Module, mb.Registry)
+	modules, err := module.NewWrapper(mbConfig.Module, mb.Registry)
 	if err != nil {
-		logger.Errorf("get modules failed, error: %v", err)
-		return err
+		return errors.Wrap(err, "get modules failed")
 	}
 
 	logger.Infof("modules.Config: %+v", modules.Config())
 	t.module = modules
-	t.taskConf = taskConf
+	t.mbConfig = mbConfig
 	t.globalConf = globalConf
+	t.taskConf = taskConf
 	return nil
 }
 
 func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret chan<- common.MapStr) {
 	defer close(ret)
-	metricsReaderInterface, err := m.GetValue(metricReaderKey)
+
+	fn, err := m.GetValue(metricReaderKey)
 	if err != nil {
-		logger.Errorf("no metricChannelKey [%v]", m)
+		logger.Errorf("get reader failed: %v", err)
 		return
 	}
-	metricsReader, ok := metricsReaderInterface.(define.MetricsReaderFunc)
+	metricsReader, ok := fn.(define.MetricsReaderFunc)
 	if !ok {
-		logger.Errorf("metricChannelKey not chan [%v]", metricsReaderInterface)
+		logger.Errorf("as reader failed, got %T", fn)
 		return
 	}
 	metricsChan, err := metricsReader()
@@ -92,63 +87,65 @@ func splitBigMetricsFromReader(m common.MapStr, batchsize, maxBatches int, ret c
 		logger.Errorf("failed to get metricsChan: %v", err)
 		return
 	}
+
 	eventList := make([]common.MapStr, 0, batchsize)
 	batches := 0
 	total := 0
-	// 按批组装
+
 	var drain bool
 	for event := range metricsChan {
 		if drain {
 			// 排空 channel
 			continue
 		}
+
 		eventList = append(eventList, event)
-		// 达到批次数量
 		if len(eventList) >= batchsize {
 			cloned := m.Clone()
 			if _, err = cloned.Put(metricKey, eventList); err != nil {
-				logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+				logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 				continue
 			}
 			err = cloned.Delete(metricReaderKey)
 			if err != nil {
-				logger.Errorf("failed to delete prometheus.collector.metrics_reader key: %v", err)
+				logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
 				continue
 			}
-			logger.Debugf("sent eventList: %d", len(eventList))
+
 			ret <- cloned
-			// 计数
 			total += len(eventList)
 			batches++
+
 			// 清空当前批次
 			eventList = make([]common.MapStr, 0, batchsize)
 			if batches >= maxBatches {
-				logger.Errorf("metric batches reached max batches:%d, will not report more data in this task", maxBatches)
+				logger.Errorf("metric batches reached max batches: %d", maxBatches)
 				drain = true // 如果已经超过了最大批次 则需要丢弃接下来的其他数据
 			}
 		}
 	}
+
+	// 处理批次剩余事件
 	if len(eventList) > 0 {
-		// 处理批次剩余事件
 		cloned := m.Clone()
 		if _, err = cloned.Put(metricKey, eventList); err != nil {
-			logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+			logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 			return
 		}
 		err = cloned.Delete(metricReaderKey)
 		if err != nil {
-			logger.Errorf("failed to delete prometheus.collector.metrics_reader key: %v", err)
+			logger.Errorf("failed to delete '%s' key: %v", metricReaderKey, err)
 			return
 		}
-		logger.Debugf("sent eventList: %d", len(eventList))
 		ret <- cloned
 		total += len(eventList)
 	}
-	logger.Infof("get events from channel %d", total)
+	logger.Infof("get events from channel: %d", total)
 }
 
 func splitBigMetricsFromSlice(m common.MapStr, batchsize int, maxBatches int, ret chan common.MapStr) {
 	defer close(ret)
+
 	// 无 metrics key 或者非切片类型直接返回 只对 `prometheus.collector.metrics` key 做改动 不入侵其他逻辑
 	i, err := m.GetValue(metricKey)
 	if err != nil {
@@ -158,9 +155,9 @@ func splitBigMetricsFromSlice(m common.MapStr, batchsize int, maxBatches int, re
 	if !ok {
 		return
 	}
-	logger.Debugf("splitBigMetricsFromSlice %d", len(lst))
-	total := len(lst)
+	logger.Infof("get events from slice: %d", len(lst))
 
+	total := len(lst)
 	batches := 0
 	// 按批组装
 	for i := 0; i < (total/batchsize)+1; i++ {
@@ -176,29 +173,27 @@ func splitBigMetricsFromSlice(m common.MapStr, batchsize int, maxBatches int, re
 
 		cloned := m.Clone()
 		if _, err := cloned.Put(metricKey, lst[left:right]); err != nil {
-			logger.Errorf("failed to put prometheus.collector.metrics key: %v", err)
+			logger.Errorf("failed to put '%s' key: %v", metricKey, err)
 			continue
 		}
 
 		ret <- cloned
 		batches++
 		if batches >= maxBatches {
-			logger.Warnf("metric batches reached max batches:%d,will not report more data in this task", maxBatches)
+			logger.Errorf("metric batches reached max batches: %d", maxBatches)
 			break
 		}
 	}
 }
 
 // splitBigMetrics 拆分 prometheus 上报采集的大指标
-func (t *BKMetricbeatTool) splitBigMetrics(m common.MapStr, batchsize int, maxBatches int) <-chan common.MapStr {
+func splitBigMetrics(m common.MapStr, batchsize int, maxBatches int) <-chan common.MapStr {
 	ret := make(chan common.MapStr)
 	if ok, err := m.HasKey(metricReaderKey); err == nil && ok {
-		// 通过channel返回的指标列表
-		logger.Debug("splitBigMetricsFromReader")
+		// 通过 channel 返回的指标列表
 		go splitBigMetricsFromReader(m, batchsize, maxBatches, ret)
 	} else {
 		// 直接返回的指标列表
-		logger.Debug("splitBigMetricsFromSlice")
 		go splitBigMetricsFromSlice(m, batchsize, maxBatches, ret)
 	}
 
@@ -217,26 +212,26 @@ func alignTs(period, nowSecs int) int {
 	return n
 }
 
-func (t *BKMetricbeatTool) waitUntil() {
-	n := alignTs(int(t.taskConf.Period.Seconds()), time.Now().Second())
+func (t *Tool) waitUntil() {
+	n := alignTs(int(t.mbConfig.Period.Seconds()), time.Now().Second())
 	if n <= 0 {
 		return
 	}
 	time.Sleep(time.Duration(n) * time.Second)
 }
 
-// Run 使用bkmetricbeat原有逻辑执行任务
-func (t *BKMetricbeatTool) Run(ctx context.Context, e chan<- define.Event) error {
-	t.waitUntil() // 采集时刻对齐
+func (t *Tool) Run(ctx context.Context, e chan<- define.Event) error {
+	if t.mbConfig.EnableAlignTs {
+		t.waitUntil() // 采集时刻对齐
+	}
 
-	logger.Debug("BKMetricbeatTool is running...")
 	keepOneDimension := false
 	var batchsize int
 	var maxBatches int
 
 	globalConfig, ok := ctx.Value("gConfig").(*configs.Config)
 	if !ok {
-		logger.Error("get global config in bkmetricbeat running failed.")
+		logger.Error("get global config failed")
 	} else {
 		keepOneDimension = globalConfig.KeepOneDimension
 		batchsize = globalConfig.MetricsBatchSize
@@ -256,19 +251,18 @@ func (t *BKMetricbeatTool) Run(ctx context.Context, e chan<- define.Event) error
 	defer func() {
 		err0 := utils.ClearTempFile(t.tempFilePattern)
 		if err0 != nil {
-			logger.Error("clear temp file failed: %v", err0)
+			logger.Errorf("clear temp file failed: %v", err0)
 		}
 	}()
 
 	// ctx.Done() 触发后 evChan 将关闭 循环结束
 	for evc := range evChan {
-		logger.Debugf("receviced event:%v", evc)
 		// Compat: v1 版本 elastic/beats 返回的是 MapStr 而 v2 版本返回的是 Event 对象
 		// 这里需要做一个转换
 		ev := common.MapStr{}
 		ev.Update(evc.Meta)
 		ev.Update(evc.Fields)
-		ev.Put("dataid", t.taskConf.DataID)
+		ev.Put("dataid", t.mbConfig.DataID)
 
 		// 是个坑 一定要 UTC 时间
 		ev.Put("@timestamp", evc.Timestamp.UTC().Format("2006-01-02T15:04:05.000Z"))
@@ -277,76 +271,48 @@ func (t *BKMetricbeatTool) Run(ctx context.Context, e chan<- define.Event) error
 			t.KeepOneDimension(t.module.Name(), ev)
 		}
 
-		splitedMetrics := t.splitBigMetrics(ev, batchsize, maxBatches)
-
-		for v := range splitedMetrics {
-			var sendEvent define.Event
-			event := tasks.NewMetricEvent(t.taskConf)
-			logger.Debugf("data_id: %d, labels: %#v", t.taskConf.DataID, t.taskConf.GetLabels())
-
+		var total int
+		splitMetrics := splitBigMetrics(ev, batchsize, maxBatches)
+		for v := range splitMetrics {
+			event := tasks.NewMetricEvent(t.mbConfig)
 			event.Data = v
-			// 仅二进制采集环境下，提取状态指标整理，整理成专属格式和DataID，进行分发
-			if !beat.IsContainerMode() {
-				upEvent := t.BuildGatherUp(v)
-				if upEvent != nil {
-					e <- upEvent
-				}
-			}
-
+			total++
 			// 启动自定义上报时，按自定义上报格式发送数据
-			if t.taskConf.CustomReport {
-				logger.Debugf("dataid:%d use custom report format metricbeat event", t.taskConf.DataID)
-				event.DataID = t.taskConf.DataID
-				sendEvent = &tasks.CustomMetricEvent{
+			if t.mbConfig.CustomReport {
+				event.DataID = t.mbConfig.DataID
+				e <- &tasks.CustomMetricEvent{
 					MetricEvent: event,
 					Timestamp:   evc.Timestamp.Unix(),
 				}
 			} else {
-				logger.Debugf("dataid:%d use normal format metricbeat event", t.taskConf.DataID)
-				sendEvent = event
+				e <- event
 			}
+		}
 
-			e <- sendEvent
+		total++ // gather_up 本身也是一个数据包
+		if configs.IsContainerMode() {
+			e <- tasks.NewGatherUpEventWithConfig(t.taskConf.GetDataID(), t.taskConf, define.CodeOK, nil, float64(total))
+		} else {
+			// 兼容二进制环境数据 使用内置 dataid
+			e <- tasks.NewGatherUpEventWithConfig(t.globalConf.GetGatherUpDataID(), t.taskConf, define.CodeOK, nil, float64(total))
 		}
 	}
 
-	logger.Infof("metric task evChan exit,module:%v", mo.String())
+	logger.Infof("metric task evChan exit, module: %s", mo.String())
 	return nil
 }
 
 // KeepOneDimension 只在测试模式 && Prometheus场景需要这么处理
 // 指标名+维度字段名 作为唯一的key
 // 不同维度值只保留一个，但是如果有多的维度名，那么需要保留
-//
-//	 "prometheus":{
-//	    "collector":{
-//	        "metrics":[
-//	            {
-//	                "key":"go_gc_duration_seconds",
-//	                "labels":{
-//	                    "quantile":"0"
-//	                },
-//	                "value":0
-//	            },
-//	            {
-//	                "key":"go_gc_duration_seconds_sum",
-//	                "labels":{
-//
-//	                },
-//	                "value":0
-//	            }
-//	        ],
-//	        "namespace":"bond_example"
-//	    }
-//	}
-func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
+func (t *Tool) KeepOneDimension(name string, data common.MapStr) {
 	if name != "prometheus" {
 		return
 	}
 
 	val, err := data.GetValue(name)
 	if err != nil {
-		logger.Warnf("get module(%s) data err=>(%v)", name, err)
+		logger.Warnf("tool get data failed: %v", err)
 		return
 	}
 
@@ -357,7 +323,7 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 
 	collector, err := moduleData.GetValue("collector")
 	if err != nil {
-		logger.Warnf("get module(%s) collector data err=>(%v)", name, err)
+		logger.Warnf("tool get collector data failed: %v", err)
 		return
 	}
 
@@ -368,7 +334,7 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 
 	metrics, err := collectorData.GetValue("metrics")
 	if err != nil {
-		logger.Warnf("get module(%s) collector metrics data err=>(%v)", name, err)
+		logger.Warnf("tool get collector metrics data failed: %v", err)
 		return
 	}
 
@@ -414,42 +380,4 @@ func (t *BKMetricbeatTool) KeepOneDimension(name string, data common.MapStr) {
 		}
 	}
 	collectorData["metrics"] = newMetrics
-	logger.Debugf("old metrics(%v), \n new metrics(%v)", oldMetrics, newMetrics)
-}
-
-// BuildGatherUp 从 Beat 事件中提取状态信息
-func (t *BKMetricbeatTool) BuildGatherUp(evc common.MapStr) define.Event {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Errorf("Panic in BuildGatherUp: %+v", r)
-		}
-	}()
-
-	metricsVal, err := evc.GetValue("prometheus.collector.metrics")
-	if err != nil {
-		logger.Errorf("KeyNotFound(prometheus.collector.metrics) in metricbeat: %v", err)
-		return nil
-	}
-	metrics, ok := metricsVal.([]common.MapStr)
-	if !ok {
-		logger.Errorf("Fail to convert prometheus.collector.metrics(%v) to []common.MapStr", metricsVal)
-		return nil
-	}
-	for _, m := range metrics {
-		if m["key"] == define.MetricBeatUpMetric {
-			labels, ok := m["labels"].(common.MapStr)
-			if !ok {
-				logger.Errorf("Fail to convert labels(%v) to common.MapStr", m)
-				return nil
-			}
-			code, ok := labels["code"].(string)
-			if !ok {
-				logger.Errorf("Fail to convert code(%v) to string", labels)
-				return nil
-			}
-			codeNum, _ := strconv.ParseInt(code, 10, 32)
-			return tasks.NewGatherUpEventWithConfig(t.taskConf, t.globalConf, define.BeatErrorCode(codeNum), nil)
-		}
-	}
-	return nil
 }

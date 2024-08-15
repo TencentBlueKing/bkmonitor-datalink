@@ -27,13 +27,13 @@ import (
 	"encoding/json"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -46,7 +46,10 @@ type DynamicGroupCacheManager struct {
 
 // NewDynamicGroupCacheManager 创建动态分组缓存管理器
 func NewDynamicGroupCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*DynamicGroupCacheManager, error) {
-	base, _ := NewBaseCacheManager(prefix, opt, concurrentLimit)
+	base, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create base cache Manager")
+	}
 	base.initUpdatedFieldSet(DynamicGroupCacheKey)
 	return &DynamicGroupCacheManager{
 		BaseCacheManager: base,

@@ -87,8 +87,11 @@ func (c *Operator) checkDataIdRoute() []checkDataId {
 }
 
 // CheckScrapeRoute 查看拉取指标信息
-func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.scrapeAll())
+func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, r *http.Request) {
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+
+	writeResponse(w, c.scrapeAll(i))
 }
 
 // CheckScrapeNamespaceMonitorRoute 根据命名空间查看拉取指标信息
@@ -342,8 +345,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
 	if onScrape == "true" {
-		stats := c.scrapeAll()
+		stats := c.scrapeAll(i)
 		n = 5
 		if n > stats.MonitorCount {
 			n = stats.MonitorCount
@@ -539,9 +544,9 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 --------------
 * GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
-* GET /check/scrape
-* GET /check/scrape/{namespace}
-* GET /check/scrape/{namespace}/{monitor}
+* GET /check/scrape?workers=N
+* GET /check/scrape/{namespace}?workers=N
+* GET /check/scrape/{namespace}/{monitor}?workers=N
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover

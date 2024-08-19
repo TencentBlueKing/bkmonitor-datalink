@@ -95,7 +95,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 	return out
 }
 
-func (c *Operator) scrapeAll() *scrapeStats {
+func (c *Operator) scrapeAll(workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -116,11 +116,20 @@ func (c *Operator) scrapeAll() *scrapeStats {
 		stop <- struct{}{}
 	}()
 
+	if workers <= 0 {
+		workers = 8 // 默认 workers 数
+	}
+	sem := make(chan struct{}, workers)
+
 	wg := sync.WaitGroup{}
 	for _, cfg := range childConfigs {
 		wg.Add(1)
 		go func(cfg *discover.ChildConfig) {
-			defer wg.Done()
+			sem <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-sem
+			}()
 			client, err := scraper.New(cfg.Data)
 			if err != nil {
 				logger.Warnf("failed to crate scraper http client: %v", err)

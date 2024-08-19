@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus-community/elasticsearch_exporter/collector"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_model/go"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics"
@@ -175,6 +174,12 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 				}
 				esMetrics = append(esMetrics, esm)
 			}
+		}
+
+		if len(esMetrics) == 0 {
+			logger.Infof("skip to process es %s metrics [%s], all metric count: %v, current timestamp: %v ",
+				metricType, c.ClusterName, len(esMetrics), timestamp)
+			return nil
 		}
 
 		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",

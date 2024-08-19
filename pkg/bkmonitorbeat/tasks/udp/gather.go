@@ -81,11 +81,11 @@ func NewEvent(t *Gather, startAt time.Time, taskHost string) *Event {
 	}
 }
 
-func (g *Gather) checkTargetHost(ctx context.Context, targetHost string, event *Event) define.BeatErrorCode {
+func (g *Gather) checkTargetHost(ctx context.Context, targetHost string, event *Event) define.NamedCode {
 	var (
 		times int
 		body  []byte
-		code  define.BeatErrorCode
+		code  define.NamedCode
 	)
 Loop:
 	// 按配置的重试次数执行
@@ -94,7 +94,7 @@ Loop:
 		conn, err := NewConn(ctx, g.config, targetHost)
 		if err != nil {
 			logger.Errorf("failed to build connection: %v", err)
-			return define.BeatErrCodeConnError
+			return define.CodeConnFailed
 		}
 		defer func() {
 			err := conn.Close()
@@ -113,7 +113,7 @@ Loop:
 			event.EndAt = time.Now()
 		}
 		switch code {
-		case define.BeatErrCodeOK, define.BeatErrCodeResponseConnRefused:
+		case define.CodeOK, define.CodeConnRefused:
 			// 成功以及对端不存在两种情况直接 break
 			break Loop
 		}
@@ -123,7 +123,7 @@ Loop:
 	event.Times = times
 
 	// 拨测失败
-	if code != define.BeatErrCodeOK {
+	if code != define.CodeOK {
 		return code
 	}
 
@@ -131,12 +131,12 @@ Loop:
 		// 拨测成功 但响应内容不符预期
 		matched := utils.IsMatch(g.config.ResponseFormat, body, []byte(g.config.Response))
 		if !matched {
-			return define.BeatErrCodeResponseMatchError
+			return define.CodeResponseNotMatch
 		}
 	}
 
 	// 拨测成功 且响应内容符合预期
-	return define.BeatErrCodeOK
+	return define.CodeOK
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
@@ -164,7 +164,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 	hostsInfo := tasks.GetHostsInfo(ctx, hosts, g.config.DNSCheckMode, g.config.TargetIPType, configs.Udp)
 	for _, h := range hostsInfo {
-		if h.Errno != define.BeatErrCodeOK {
+		if h.Errno != define.CodeOK {
 			event := NewEvent(g, start, h.Host)
 			event.Fail(h.Errno)
 			e <- event
@@ -200,7 +200,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				code := g.checkTargetHost(ctx, host, event)
 				// 结束时间已在处理过程中配置，需保留
 				end := event.EndAt
-				if code == define.BeatErrCodeOK {
+				if code == define.CodeOK {
 					event.Success()
 				} else {
 					event.Fail(code)
@@ -237,22 +237,22 @@ var NewConn = func(ctx context.Context, config *configs.UDPTaskConfig, targetHos
 }
 
 // detect 发送请求到对端服务 并返回响应内容
-func (g *Gather) detect(conn net.Conn) ([]byte, define.BeatErrorCode) {
+func (g *Gather) detect(conn net.Conn) ([]byte, define.NamedCode) {
 	msg, err := utils.ConvertStringToBytes(g.config.Request, g.config.RequestFormat)
 	if err != nil {
 		logger.Errorf("failed to convert strings to bytes: %v", err)
-		return nil, define.BeatErrCodeRequestInitError
+		return nil, define.CodeBadRequestParams
 	}
 
 	if _, err = conn.Write(msg); err != nil {
 		logger.Errorf("failed to write udp message: %v", err)
-		return nil, define.BeatErrCodeRequestError
+		return nil, define.CodeRequestFailed
 	}
 
 	err = conn.SetDeadline(time.Now().Add(g.config.AvailableDuration))
 	if err != nil {
 		logger.Errorf("failed to set connection deadline: %v", err)
-		return nil, define.BeatErrCodeRequestDeadLineError
+		return nil, define.CodeRequestFailed
 	}
 
 	body := make([]byte, g.config.BufferSize)
@@ -260,19 +260,19 @@ func (g *Gather) detect(conn net.Conn) ([]byte, define.BeatErrorCode) {
 	if err != nil && err != io.EOF {
 		if strings.Contains(err.Error(), "connection refused") {
 			logger.Errorf("cause the connection refuse error: %v", err)
-			return nil, define.BeatErrCodeResponseConnRefused
+			return nil, define.CodeConnRefused
 		}
 		if g.config.Response != "" || (g.config.Response == "" && g.config.WaitEmptyResponse) {
 			if strings.Contains(err.Error(), "timeout") {
 				logger.Errorf("cause the timeout error: %v", err)
-				return nil, define.BeatErrCodeResponseTimeoutError
+				return nil, define.CodeRequestTimeout
 			}
 
 			logger.Errorf("failed to read connection body: %v", err)
-			return nil, define.BeatErrCodeResponseError
+			return nil, define.CodeResponseFailed
 		}
 	}
-	return body[:n], define.BeatErrCodeOK
+	return body[:n], define.CodeOK
 }
 
 // New :

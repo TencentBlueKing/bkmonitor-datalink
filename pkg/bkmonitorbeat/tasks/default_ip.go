@@ -24,7 +24,7 @@ import (
 type HostInfo struct {
 	Host  string
 	Ips   []string
-	Errno define.BeatErrorCode
+	Errno define.NamedCode
 }
 
 func filterIpsWithDomain(domain string, ipList []string, dnsMode configs.CheckMode, ipType configs.IPType) ([]string, *HostInfo) {
@@ -37,14 +37,14 @@ func filterIpsWithDomain(domain string, ipList []string, dnsMode configs.CheckMo
 				hostsInfo = &HostInfo{
 					Host:  domain,
 					Ips:   nil,
-					Errno: define.BeatErrCodeResponseNotFindIpv4,
+					Errno: define.CodeIPNotFound,
 				}
 			}
 			if ipType == configs.IPv6 {
 				hostsInfo = &HostInfo{
 					Host:  domain,
 					Ips:   nil,
-					Errno: define.BeatErrCodeResponseNotFindIpv6,
+					Errno: define.CodeIPNotFound,
 				}
 			}
 		}
@@ -70,7 +70,7 @@ func GetHostsInfo(ctx context.Context, hosts []string, dnsMode configs.CheckMode
 				hostsInfo = append(hostsInfo, HostInfo{
 					Host:  hostSrc,
 					Ips:   nil,
-					Errno: define.BeatErrCodeResponseParseUrlErr,
+					Errno: define.CodeInvalidURL,
 				})
 				continue
 			}
@@ -89,7 +89,7 @@ func GetHostsInfo(ctx context.Context, hosts []string, dnsMode configs.CheckMode
 				hostsInfo = append(hostsInfo, HostInfo{
 					Host:  hostSrc,
 					Ips:   nil,
-					Errno: define.BeatErrCodeDNSResolveError,
+					Errno: define.CodeDNSResolveFailed,
 				})
 				continue
 			}
@@ -111,7 +111,7 @@ func GetHostsInfo(ctx context.Context, hosts []string, dnsMode configs.CheckMode
 		hostsInfo = append(hostsInfo, HostInfo{
 			Host:  hostSrc,
 			Ips:   ipList,
-			Errno: define.BeatErrCodeOK,
+			Errno: define.CodeOK,
 		})
 	}
 	return hostsInfo

@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build linux || exceptionbeat || basetask
-// +build linux exceptionbeat basetask
 
 package taskfactory
 

@@ -7,21 +7,37 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-
-package toolkit
+package discover
 
 import (
-	"os/exec"
+	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-func ListRouteTable() (string, error) {
-	bytes, err := exec.Command("route", "-n").CombinedOutput()
-	if err != nil {
-		logger.Errorf("exec route -n failed")
-		return "", err
+const (
+	confDefaultPeriodPath = "discover.scrape.default_period"
+)
+
+var (
+	ConfDefaultPeriod string
+)
+
+func initConfig() {
+	viper.SetDefault(confDefaultPeriodPath, "60s")
+}
+
+func updateConfig() {
+	ConfDefaultPeriod = viper.GetString(confDefaultPeriodPath)
+}
+
+func init() {
+	if err := config.EventBus.Subscribe(config.EventConfigPreParse, initConfig); err != nil {
+		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPreParse, err)
 	}
-	return string(bytes), nil
+
+	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
+		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
+	}
 }

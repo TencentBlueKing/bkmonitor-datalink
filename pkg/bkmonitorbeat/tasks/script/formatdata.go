@@ -19,32 +19,30 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// FormatOutput : 解析 Prom 格式数据，输出结构化数据，同时输出失败记录
+// FormatOutput 解析 Prom 格式数据，输出结构化数据，同时输出失败记录
 func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.TimestampHandler) (map[int64]map[string]tasks.PromEvent, error) {
-	// map[timestamp]map[dimension_hash]PromEvent
-	aggreRst := make(map[int64]map[string]tasks.PromEvent)
-	scanner := bufio.NewScanner(bytes.NewBuffer(out))
-	var outputErr error
-
+	aggRst := make(map[int64]map[string]tasks.PromEvent)
 	if len(bytes.TrimSpace(out)) == 0 {
-		return aggreRst, define.ErrNoScriptOutput
+		return aggRst, define.ErrNoScriptOutput
 	}
 
+	var outputErr error
+	scanner := bufio.NewScanner(bytes.NewBuffer(out))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
 
-		promEvent, promErr := tasks.NewPromEvent(line, ts, offsetTime, handler)
-		if promErr != nil {
-			logger.Warnf("parse line=>(%s) failed,error:%s", line, promErr)
-			outputErr = promErr
+		promEvent, err := tasks.NewPromEvent(line, ts, offsetTime, handler)
+		if err != nil {
+			logger.Warnf("parse line=>(%s) failed: %s", line, err)
+			outputErr = err
 			continue
 		}
 
 		promEvent.AggreValue[promEvent.Key] = promEvent.Value
-		subRst, tsExist := aggreRst[promEvent.TS]
+		subRst, tsExist := aggRst[promEvent.TS]
 		if tsExist {
 			p, dmExist := subRst[promEvent.HashKey]
 			if dmExist {
@@ -53,12 +51,12 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.
 			} else {
 				subRst[promEvent.HashKey] = promEvent
 			}
-			aggreRst[promEvent.TS] = subRst
+			aggRst[promEvent.TS] = subRst
 		} else {
-			subRst = make(map[string]tasks.PromEvent, 0)
+			subRst = make(map[string]tasks.PromEvent)
 			subRst[promEvent.HashKey] = promEvent
-			aggreRst[promEvent.TS] = subRst
+			aggRst[promEvent.TS] = subRst
 		}
 	}
-	return aggreRst, outputErr
+	return aggRst, outputErr
 }

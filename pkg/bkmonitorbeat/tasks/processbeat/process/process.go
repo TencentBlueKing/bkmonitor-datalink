@@ -233,7 +233,6 @@ func (pc *ProcCollector) CollectProcStat(metas []define.ProcStat) ([]common.MapS
 			"displayname": item.DisplayName,
 		})
 	}
-	logger.Debugf("metas: %+v", metas)
 	logger.Debugf("pc.cmdbConf: %+v", pc.cmdbConf)
 	logger.Debugf("visited: %+v", visited)
 	logger.Debugf("not exists: %+v", notExists)

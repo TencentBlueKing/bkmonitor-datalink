@@ -11,20 +11,19 @@ package collector
 
 import (
 	"bufio"
-	"bytes"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
 	"github.com/elastic/beats/libbeat/common"
 	"github.com/elastic/beats/metricbeat/mb"
 	"github.com/elastic/beats/metricbeat/mb/parse"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v3"
 
@@ -39,10 +38,6 @@ const (
 	defaultPath   = "/metrics"
 	metricName    = "__name__"
 )
-
-func newMetricUp(code int) string {
-	return fmt.Sprintf(`%s{code="%d"} 1`, define.MetricBeatUpMetric, code)
-}
 
 var hostParser = parse.URLHostParserBuilder{
 	DefaultScheme: defaultScheme,
@@ -73,12 +68,12 @@ type MetricSet struct {
 	workers                int
 	disableCustomTimestamp bool
 	normalizeMetricName    bool
+	enableAlignTs          bool
 	remoteRelabelCache     []*relabel.Config
 	MetricRelabelRemote    string
 	MetricRelabelConfigs   []*relabel.Config
 }
 
-// New :
 func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	config := struct {
 		Namespace                  string            `config:"namespace" validate:"required"`
@@ -90,6 +85,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		MetricRelabelRemoteTimeout string            `config:"metric_relabel_remote_timeout"`
 		TempFilePattern            string            `config:"temp_file_pattern"`
 		Workers                    int               `config:"workers"`
+		EnableAlignTs              bool              `config:"enable_align_ts"`
 		DisableCustomTimestamp     bool              `config:"disable_custom_timestamp"`
 		NormalizeMetricName        bool              `config:"normalize_metric_name"`
 	}{}
@@ -98,7 +94,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		logger.Errorf("unpack failed, error: %s", err)
 		return nil, err
 	}
-	logger.Debugf("base.metric.set config: %+v", config)
+	logger.Infof("base.metric.set config: %+v", config)
 
 	deltaKeys := map[string]struct{}{}
 	lastDeltaMetrics := make(map[string]map[string]float64)
@@ -110,16 +106,14 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	var relabels []*relabel.Config
 	data, err := yaml.Marshal(config.MetricRelabelConfigs)
 	if err != nil {
-		logger.Errorf("marshal metric relabel config failed, error: %s", err)
+		logger.Errorf("marshal metric relabel config failed: %s", err)
 		return nil, err
 	}
 
-	logger.Debugf("get metric relabel config: %s", data)
 	if err = yaml.Unmarshal(data, &relabels); err != nil {
-		logger.Errorf("unmarshal metric relabel config failed, error: %s", err)
+		logger.Errorf("unmarshal metric relabel config failed: %s", err)
 		return nil, err
 	}
-	logger.Debugf("get metric relabel struct: %v", relabels)
 
 	duration := time.Second * 3
 	if config.MetricRelabelRemoteTimeout != "" {
@@ -153,6 +147,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		disableCustomTimestamp: config.DisableCustomTimestamp,
 		normalizeMetricName:    config.NormalizeMetricName,
 		workers:                config.Workers,
+		enableAlignTs:          config.EnableAlignTs,
 	}, nil
 }
 
@@ -229,7 +224,6 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) (common.Ma
 func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, error) {
 	f, err := os.Open(fileName)
 	if err != nil {
-		logger.Errorf("open metricsFile failed, err: %v", err)
 		return nil, err
 	}
 
@@ -278,6 +272,24 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	milliTs := time.Now().UnixMilli()
 	eventChan := make(chan common.MapStr)
 
+	var total atomic.Int64
+
+	// 补充 up 指标文本
+	markUp := func(failed bool, t0 time.Time) {
+		// 需要减去自监控指标
+		events := m.asEvents(define.MetricBeatScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
+		if failed {
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeInvalidPromFormat, m.logkvs()), milliTs)...)
+		} else {
+			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK, m.logkvs()), milliTs)...)
+		}
+		events = append(events, m.asEvents(define.MetricBeatHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
+		for i := 0; i < len(events); i++ {
+			eventChan <- events[i]
+		}
+	}
+
+	start := time.Now()
 	go func() {
 		defer close(eventChan)
 		defer cleanup()
@@ -289,15 +301,17 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 
 		wg := sync.WaitGroup{}
+		var produceErr atomic.Bool
 		for i := 0; i < worker; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				var upErr *define.BeaterUpMetricErr
 				for line := range linesCh {
 					events, dk, err := m.produceEvents(line, milliTs)
 					if err != nil {
-						errors.As(err, &upErr)
+						logger.Warnf("failed to produce events: %v", err)
+						produceErr.Store(true)
+						continue
 					}
 					if dk != nil {
 						lastDiffMetricMut.Lock()
@@ -306,23 +320,16 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 					}
 					for j := 0; j < len(events); j++ {
 						eventChan <- events[j]
-					}
-				}
-				// 遍历解析 Prom 语句存在错误时则传入异常状态码，无错误则传入OK状态码
-				if up {
-					var events []common.MapStr
-					if upErr == nil {
-						events, _, _ = m.produceEvents(newMetricUp(define.BeatErrCodeOK), milliTs)
-					} else {
-						events, _, _ = m.produceEvents(newMetricUp(upErr.Code), milliTs)
-					}
-					if len(events) > 0 {
-						eventChan <- events[0]
+						total.Add(1)
 					}
 				}
 			}()
 		}
 		wg.Wait()
+
+		if up {
+			markUp(produceErr.Load(), start) // 一次采集只上报一次状态
+		}
 		m.lastDeltaMetrics = lastDiffMetrics
 	}()
 	return eventChan
@@ -330,6 +337,11 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 
 func normalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
+}
+
+func (m *MetricSet) asEvents(line string, timestamp int64) []common.MapStr {
+	events, _, _ := m.produceEvents(line, timestamp)
+	return events
 }
 
 func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, *diffKey, error) {
@@ -341,10 +353,7 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 	tsHandler, _ := tasks.GetTimestampHandler("s")
 	promEvent, err := tasks.NewPromEvent(line, timestamp, timeOffset, tsHandler)
 	if err != nil {
-		errMsg := fmt.Sprintf("parse line=>(%s) failed, err: %s", line, err)
-		upErr := &define.BeaterUpMetricErr{Code: define.BeatMetricBeatPromFormatOuterError, Message: errMsg}
-		logger.Warnf(upErr.Error())
-		return nil, nil, upErr
+		return nil, nil, errors.Wrapf(err, "parse line(%s) failed", line)
 	}
 
 	if m.normalizeMetricName {
@@ -369,51 +378,70 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 	return events, dk, nil
 }
 
-func newFailReader(code int) io.ReadCloser {
-	r := bytes.NewReader([]byte(newMetricUp(code)))
-	return io.NopCloser(r)
+func (m *MetricSet) logkvs() []define.LogKV {
+	return []define.LogKV{
+		{K: "uri", V: m.HostData().SanitizedURI},
+	}
 }
 
 // Fetch 采集逻辑入口
 func (m *MetricSet) Fetch() (common.MapStr, error) {
-	var err error
 	summary := common.MapStr{}
-
 	startTime := time.Now()
+
 	rsp, err := m.httpClient.FetchResponse()
-	logger.Debugf("httpClient response %s, take: %v", m.Host(), time.Since(startTime))
 	if err != nil {
-		logger.Errorf("failed to get data, err: %v", err)
-		m.fillMetrics(summary, newFailReader(define.BeatMetricBeatConnOuterError), false)
+		m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeConnRefused, m.logkvs()), false)
+		err = errors.Wrap(err, "request failed")
+		logger.Error(err)
 		return summary, err
 	}
 	defer rsp.Body.Close()
+
+	logger.Infof("http request: host=%s, take=%v", m.Host(), time.Since(startTime))
 
 	var metricsFile *os.File
 	if m.useTempFile {
 		metricsFile, err = utils.CreateTempFile(m.tempFilePattern)
 		if err != nil {
-			logger.Errorf("create metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			err = errors.Wrap(err, "create metricsFile failed")
+			logger.Error(err)
 			return summary, err
 		}
 
 		if _, err = io.Copy(metricsFile, rsp.Body); err != nil {
-			logger.Errorf("write metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
+			err = errors.Wrap(err, "write metricsFile failed")
+			logger.Error(err)
 			return summary, err
 		}
-		if err = metricsFile.Close(); err != nil {
-			logger.Errorf("close metricsFile failed, err: %v", err)
-			m.fillMetrics(summary, newFailReader(define.BeaterMetricBeatWriteTmpFileError), false)
+
+		info, err := metricsFile.Stat()
+		if err != nil {
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
+			err = errors.Wrap(err, "stats metricsFile failed")
+			logger.Error(err)
+			return summary, err
+		}
+
+		metricsFile.WriteString("\n" + define.MetricBeatScrapeSize(int(info.Size()), m.logkvs()))
+		metricsFile.WriteString("\n" + define.MetricBeatScrapeDuration(time.Since(startTime).Seconds(), m.logkvs()))
+
+		if err = metricsFile.Close(); err != nil {
+			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			_ = os.Remove(metricsFile.Name())
+			err = errors.Wrap(err, "close metricsFile failed")
+			logger.Error(err)
 			return summary, err
 		}
 	}
 
-	// 解析prometheus数据
+	// 解析 prometheus 数据
 	if m.useTempFile {
 		summary["metrics_reader"] = define.MetricsReaderFunc(func() (<-chan common.MapStr, error) {
 			return m.getEventsFromFile(metricsFile.Name())
@@ -422,7 +450,6 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 		m.fillMetrics(summary, rsp.Body, true)
 	}
 	summary["namespace"] = m.namespace
-	logger.Debugf("end fetch data from: %s, get summary data: %s", m.Host(), summary["namespace"])
 	return summary, err
 }
 
@@ -432,5 +459,4 @@ func (m *MetricSet) fillMetrics(summary common.MapStr, rc io.ReadCloser, up bool
 		events = append(events, event)
 	}
 	summary["metrics"] = events
-	logger.Debugf("got metrics count: %d", len(events))
 }

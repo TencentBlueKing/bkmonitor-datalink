@@ -179,7 +179,7 @@ func (c *Config) Clean() error {
 	// 此处只是做一个心跳data id是否存在配置而已
 	if c.Mode == "daemon" && c.HeartBeat.GlobalDataID == 0 && c.HeartBeat.DataID == 0 {
 		logger.Errorf("failed to get heart_beat data_id, please check config.")
-		return define.ErrUnpackCfgError
+		return define.ErrUnpackCfg
 	}
 
 	c.ConcurrencyLimit.Clean()

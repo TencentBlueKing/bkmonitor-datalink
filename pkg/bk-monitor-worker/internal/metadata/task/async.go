@@ -12,7 +12,6 @@ package task
 import (
 	"context"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
 	"sync"
 
 	"github.com/jinzhu/gorm"

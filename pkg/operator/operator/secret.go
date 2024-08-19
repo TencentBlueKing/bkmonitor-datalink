@@ -125,11 +125,19 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 		logger.Errorf("no event dataid found, err: %s", err)
 		return
 	}
+
+	upMetricsDataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, false)
+	if err != nil {
+		logger.Errorf("no upmetrics dataid found, err: %s", err)
+		return
+	}
+
 	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
 
 	eventTarget := &target.EventTarget{
-		DataID: dataID.Spec.DataID,
-		Labels: dataID.Spec.Labels,
+		DataID:          dataID.Spec.DataID,
+		Labels:          dataID.Spec.Labels,
+		UpMetricsDataID: upMetricsDataID.Spec.DataID,
 	}
 
 	b, err := eventTarget.YamlBytes()

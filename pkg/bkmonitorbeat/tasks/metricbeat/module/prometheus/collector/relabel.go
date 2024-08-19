@@ -19,7 +19,6 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -92,7 +91,7 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	})
 
 	// up metric 不做 relabels 调整
-	if define.IsInnerMetric(promEvent.Key) {
+	if IsInnerMetric(promEvent.Key) {
 		return true
 	}
 

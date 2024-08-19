@@ -277,13 +277,13 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	// 补充 up 指标文本
 	markUp := func(failed bool, t0 time.Time) {
 		// 需要减去自监控指标
-		events := m.asEvents(define.MetricBeatScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
+		events := m.asEvents(CodeScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
 		if failed {
-			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeInvalidPromFormat, m.logkvs()), milliTs)...)
+			events = append(events, m.asEvents(CodeUp(define.CodeInvalidPromFormat, m.logkvs()), milliTs)...)
 		} else {
-			events = append(events, m.asEvents(define.MetricBeatUp(define.CodeOK, m.logkvs()), milliTs)...)
+			events = append(events, m.asEvents(CodeUp(define.CodeOK, m.logkvs()), milliTs)...)
 		}
-		events = append(events, m.asEvents(define.MetricBeatHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
+		events = append(events, m.asEvents(CodeHandleDuration(time.Since(t0).Seconds(), m.logkvs()), milliTs)...)
 		for i := 0; i < len(events); i++ {
 			eventChan <- events[i]
 		}
@@ -391,7 +391,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 
 	rsp, err := m.httpClient.FetchResponse()
 	if err != nil {
-		m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeConnRefused, m.logkvs()), false)
+		m.fillMetrics(summary, NewCodeReader(define.CodeConnRefused, m.logkvs()), false)
 		err = errors.Wrap(err, "request failed")
 		logger.Error(err)
 		return summary, err
@@ -404,14 +404,14 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 	if m.useTempFile {
 		metricsFile, err = utils.CreateTempFile(m.tempFilePattern)
 		if err != nil {
-			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			m.fillMetrics(summary, NewCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			err = errors.Wrap(err, "create metricsFile failed")
 			logger.Error(err)
 			return summary, err
 		}
 
 		if _, err = io.Copy(metricsFile, rsp.Body); err != nil {
-			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			m.fillMetrics(summary, NewCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
 			err = errors.Wrap(err, "write metricsFile failed")
@@ -421,7 +421,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 
 		info, err := metricsFile.Stat()
 		if err != nil {
-			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			m.fillMetrics(summary, NewCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = metricsFile.Close()
 			_ = os.Remove(metricsFile.Name())
 			err = errors.Wrap(err, "stats metricsFile failed")
@@ -429,11 +429,11 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 			return summary, err
 		}
 
-		metricsFile.WriteString("\n" + define.MetricBeatScrapeSize(int(info.Size()), m.logkvs()))
-		metricsFile.WriteString("\n" + define.MetricBeatScrapeDuration(time.Since(startTime).Seconds(), m.logkvs()))
+		metricsFile.WriteString("\n" + CodeScrapeSize(int(info.Size()), m.logkvs()))
+		metricsFile.WriteString("\n" + CodeScrapeDuration(time.Since(startTime).Seconds(), m.logkvs()))
 
 		if err = metricsFile.Close(); err != nil {
-			m.fillMetrics(summary, define.NewMetricBeatCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
+			m.fillMetrics(summary, NewCodeReader(define.CodeWriteTempFileFailed, m.logkvs()), false)
 			_ = os.Remove(metricsFile.Name())
 			err = errors.Wrap(err, "close metricsFile failed")
 			logger.Error(err)

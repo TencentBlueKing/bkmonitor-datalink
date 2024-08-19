@@ -32,11 +32,12 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // CmdbResourceType cmdb监听资源类型
@@ -503,6 +504,39 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// 推送自定义上报数据
+	wg.Add(1)
+	go func() {
+		// 启动指标上报
+		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
+		if err != nil {
+			logger.Errorf("[cmdb_relation] new space reporter: %v", err)
+			return
+		}
+		defer func() {
+			err = reporter.Close(ctx)
+		}()
+		spaceReport := GetRelationMetricsBuilder().WithSpaceReport(reporter)
+
+		for {
+			ticker := time.NewTicker(time.Minute)
+
+			// 事件处理间隔时间
+			select {
+			case <-cancelCtx.Done():
+				GetRelationMetricsBuilder().ClearAllMetrics()
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				// 上报指标
+				logger.Infof("[cmdb_relation] space report push all")
+				if err = spaceReport.PushAll(cancelCtx, time.Now()); err != nil {
+					logger.Errorf("[cmdb_relation] relation metrics builder push all error: %v", err.Error())
+				}
+			}
+		}
+	}()
+
 	for _, cacheType := range cacheTypes {
 		wg.Add(1)
 		cacheType := cacheType
@@ -518,13 +552,13 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 			// 创建资源变更事件处理器
 			handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheType, fullRefreshInterval, bizConcurrent)
 			if err != nil {
-				logger.Errorf("new cmdb event handler failed: %v", err)
+				logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 				cancel()
 				return
 			}
 
-			logger.Infof("start handle cmdb resource(%s) event", cacheType)
-			defer logger.Infof("end handle cmdb resource(%s) event", cacheType)
+			logger.Infof("[cmdb_relation] start handle cmdb resource(%s) event", cacheType)
+			defer logger.Infof("[cmdb_relation] end handle cmdb resource(%s) event", cacheType)
 
 			for {
 				tn := time.Now()

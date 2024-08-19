@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build !windows && !freebsd
-// +build !windows,!freebsd
 
 package collector
 

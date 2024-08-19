@@ -40,7 +40,7 @@ type Info struct {
 	MaxRTT     float64
 	MinRTT     float64
 	TotalRTT   float64
-	Code       int
+	Code       define.NamedCode
 }
 
 // BatchPingTool 批量Ping
@@ -133,29 +133,29 @@ func (t *BatchPingTool) Ping(doFunc DoFunc) error {
 	return nil
 }
 
-func (t *BatchPingTool) getIP(target Target) ([]net.IP, error) {
+func (t *BatchPingTool) getIP(target Target) ([]net.IP, define.NamedCode, error) {
 	// 类型为域名
 	if target.GetTargetType() == "domain" {
 		ips, err := tasks.LookupIP(context.Background(), t.targetIPType, target.GetTarget())
 		if err != nil {
-			return nil, &define.BeaterUpMetricErr{Code: define.BeatPingDNSResolveOuterError, Message: err.Error()}
+			return nil, define.CodeDNSResolveFailed, err
 		}
 		// 检测全部模式返回所有ip列表
 		if t.dnsCheckMode == configs.CheckModeAll {
-			return ips, nil
+			return ips, define.CodeOK, nil
 		}
 		// 非检测全部模式返回第一个
 		if len(ips) > 0 {
-			return ips[:1], nil
+			return ips[:1], define.CodeOK, nil
 		}
-		return nil, nil
+		return nil, define.CodeOK, nil
 	}
 	// 类型为ip
 	ip := net.ParseIP(target.GetTarget())
 	if ip == nil {
-		return nil, &define.BeaterUpMetricErr{Code: define.BeatPingInvalidIPOuterError, Message: "invalid ip"}
+		return nil, define.CodeInvalidIP, errors.New("invalid ip")
 	}
-	return []net.IP{ip}, nil
+	return []net.IP{ip}, define.CodeOK, nil
 }
 
 // initInfoList 将string类型的urls转换为ipaddr类型,并生成记录结果的map，key为目标-ip，值为对应测试信息
@@ -165,24 +165,18 @@ func (t *BatchPingTool) initInfoList(list []Target) map[string]map[string]*Info 
 		// 按目标填入map
 		addrMap[v.GetTarget()] = make(map[string]*Info)
 		// 解析地址对应ip列表
-		ips, err := t.getIP(v)
+		ips, code, err := t.getIP(v)
 		if err != nil {
 			logger.Errorf("getIP failed: %v config: %+v", err, v)
-			var upErr *define.BeaterUpMetricErr
-			var upCode int
-			if errors.As(err, &upErr) {
-				upCode = upErr.Code
-			} else {
-				upCode = define.BeatErrInternalErr
-			}
 			info := new(Info)
 			info.Name = v.GetTarget()
 			info.Type = v.GetTargetType()
-			info.Code = upCode
+			info.Code = code
 			// 目标地址解析不到主机IP，则置空，写入异常结论
 			addrMap[v.GetTarget()][""] = info
 			continue
 		}
+
 		// 循环处理ip列表生成拨测信息并放到目标对应的map
 		for _, ip := range ips {
 			info := new(Info)
@@ -191,6 +185,7 @@ func (t *BatchPingTool) initInfoList(list []Target) map[string]map[string]*Info 
 			info.Addr = &net.IPAddr{IP: ip}
 			info.RecvCount = 0
 			info.TotalCount = t.totalCount
+			info.Code = code
 			// 按ip填入对应目标下的map
 			addrMap[v.GetTarget()][ip.String()] = info
 		}

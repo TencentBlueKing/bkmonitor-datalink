@@ -42,9 +42,14 @@ type Instance struct {
 	Client *Client
 }
 
+func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 var _ tsdb.Instance = (*Instance)(nil)
 
-func (i Instance) checkResult(res *Result) error {
+func (i *Instance) checkResult(res *Result) error {
 	if !res.Result {
 		return fmt.Errorf(
 			"%s, %s, %s", res.Message, res.Errors.Error, res.Errors.QueryId,
@@ -64,7 +69,7 @@ func (i Instance) checkResult(res *Result) error {
 	return nil
 }
 
-func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
+func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (*QuerySyncResultData, error) {
 	var (
 		data *QuerySyncResultData
 
@@ -94,7 +99,7 @@ func (i Instance) query(ctx context.Context, sql string, span *trace.Span) (*Que
 	return data, nil
 }
 
-func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
+func (i *Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
 	var (
 		data       *QueryAsyncData
 		stateData  *QueryAsyncStateData
@@ -180,7 +185,7 @@ func (i Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) 
 	return resultData, nil
 }
 
-func (i Instance) dims(dims []string, field string) []string {
+func (i *Instance) dims(dims []string, field string) []string {
 	dimensions := make([]string, 0)
 	for _, dim := range dims {
 		// 判断是否是内置维度，内置维度不是用户上报的维度
@@ -197,7 +202,7 @@ func (i Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i Instance) formatData(field string, isCount bool, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(start time.Time, field string, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -230,7 +235,7 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 
 		// 获取时间戳，单位是毫秒
 		if vtLong, ok = d[timeStamp]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", timeStamp)
+			vtLong = start.UnixMilli()
 		}
 
 		if vtLong == nil {
@@ -246,8 +251,8 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 		}
 
 		// 获取值
-		if vvDouble, ok = d[field]; !ok {
-			return res, fmt.Errorf("dimension %s is emtpy", field)
+		if vvDouble, ok = d[value]; !ok {
+			return res, fmt.Errorf("dimension %s is emtpy", value)
 		}
 
 		if vvDouble == nil {
@@ -259,22 +264,22 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 		case float64:
 			vv = vvDouble.(float64)
 		default:
-			return res, fmt.Errorf("%s type is error %T, %v", field, vvDouble, vvDouble)
+			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
 		}
 
 		var buf strings.Builder
 		lbl := make([]prompb.Label, 0, len(dimensions))
 		// 获取维度信息
 		for _, dimName := range dimensions {
-			value, err := getValue(dimName, d)
+			val, err := getValue(dimName, d)
 			if err != nil {
 				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
 			}
 
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, value))
+			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
 			lbl = append(lbl, prompb.Label{
 				Name:  dimName,
-				Value: value,
+				Value: val,
 			})
 		}
 
@@ -287,17 +292,10 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 			}
 		}
 
-		// 拼装 count 信息
-		repNum := 1
-		if isCount {
-			repNum = int(vv)
-		}
-		for j := 0; j < repNum; j++ {
-			tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
-				Value:     vv,
-				Timestamp: vt,
-			})
-		}
+		tsMap[key].Samples = append(tsMap[key].Samples, prompb.Sample{
+			Value:     vv,
+			Timestamp: vt,
+		})
 	}
 
 	// 转换结构体
@@ -309,87 +307,156 @@ func (i Instance) formatData(field string, isCount bool, keys []string, list []m
 	return res, nil
 }
 
-// bkSql 构建查询语句
-func (i Instance) bkSql(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) (string, bool) {
-	var (
-		sql string
-
-		aggField    string
-		measurement string
-
-		groupList []string
-		where     string
-
-		limit int
-
-		isCount bool
-	)
-
-	measurement = query.Measurement
-	limit = i.Limit + i.Tolerance
-
-	// 判断是否需要提前聚合
-	newFuncName, window, dims := query.GetDownSampleFunc(hints)
-	if newFuncName != "" {
-		isCount = newFuncName == metadata.COUNT
-		// 兼容函数
-		if newFuncName == metadata.MEAN {
-			newFuncName = metadata.AVG
-		}
-
-		// 如果符合聚合规则并且聚合周期大于等于1m，则进行提前聚合
-		groupList = make([]string, 0, len(dims)+1)
-		for _, dim := range dims {
-			groupList = append(groupList, dim)
-		}
-
-		timeField := fmt.Sprintf(`(dtEventTimestamp - (dtEventTimestamp %% %d))`, window.Milliseconds())
-		groupList = append(groupList, timeField)
-
-		aggField = fmt.Sprintf("%s(`%s`) AS `%s`, MAX(%s) AS `%s`", strings.ToUpper(newFuncName), query.Field, query.Field, timeField, timeStamp)
-		if len(dims) > 0 {
-			aggField = fmt.Sprintf("%s, %s", aggField, strings.Join(dims, ", "))
-		}
-	} else {
-		aggField = fmt.Sprintf("*, %s AS `%s`", dtEventTimeStamp, timeStamp)
+func (i *Instance) table(query *metadata.Query) string {
+	table := fmt.Sprintf("`%s`", query.DB)
+	if query.Measurement != "" {
+		table += "." + query.Measurement
 	}
-
-	where = fmt.Sprintf("%s >= %d AND %s < %d", dtEventTimeStamp, hints.Start, dtEventTimeStamp, hints.End)
-	// 拼接过滤条件
-	if query.BkSqlCondition != "" {
-		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
-	}
-
-	sql = fmt.Sprintf(`SELECT %s FROM %s WHERE %s`, aggField, measurement, where)
-	if len(groupList) > 0 {
-		sql = fmt.Sprintf(`%s GROUP BY %s`, sql, strings.Join(groupList, ", "))
-	}
-	sql = fmt.Sprintf("%s ORDER BY `%s` ASC", sql, timeStamp)
-	if limit > 0 {
-		sql = fmt.Sprintf(`%s LIMIT %d`, sql, limit)
-	}
-
-	return sql, isCount
+	return table
 }
 
-func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+// bkSql 构建查询语句
+func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end time.Time) (string, error) {
+	var (
+		selectList = make([]string, 0)
+		groupList  = make([]string, 0)
+		orderList  = make([]string, 0)
+
+		sqlBuilder strings.Builder
+		err        error
+	)
+
+	ctx, span := trace.NewSpan(ctx, "bksql-make-sqlBuilder")
+	defer span.End(&err)
+
+	maxLimit := i.Limit + i.Tolerance
+	limit := query.Size
+	if limit == 0 || limit > maxLimit {
+		limit = maxLimit
+	}
+
+	if len(query.Aggregates) > 1 {
+		return "", fmt.Errorf("bksql 不支持多函数聚合查询, %+v", query.Aggregates)
+	}
+
+	if len(query.Aggregates) == 1 {
+		agg := query.Aggregates[0]
+		if len(agg.Dimensions) > 0 {
+			for _, dim := range agg.Dimensions {
+				newDim := dim
+				if newDim != "*" {
+					newDim = fmt.Sprintf("`%s`", newDim)
+				}
+				groupList = append(groupList, newDim)
+				selectList = append(selectList, newDim)
+			}
+		}
+
+		selectList = append(selectList, fmt.Sprintf("%s(`%s`) AS `%s`", strings.ToUpper(agg.Name), query.Field, value))
+		if agg.Window > 0 && !agg.Without {
+			timeField := fmt.Sprintf("(`%s` - (`%s` %% %d))", dtEventTimeStamp, dtEventTimeStamp, agg.Window.Milliseconds())
+			groupList = append(groupList, timeField)
+			selectList = append(selectList, fmt.Sprintf("MAX(%s) AS `%s`", timeField, timeStamp))
+			orderList = append(orderList, fmt.Sprintf("`%s` ASC", timeStamp))
+		}
+	} else {
+		selectList = append(selectList, "*")
+		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", query.Field, value))
+		selectList = append(selectList, fmt.Sprintf("`%s` AS `%s`", dtEventTimeStamp, timeStamp))
+	}
+
+	sqlBuilder.WriteString("SELECT ")
+	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
+	sqlBuilder.WriteString("FROM " + i.table(query) + " ")
+	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("`%s` >= %d AND `%s` < %d", dtEventTimeStamp, start.UnixMilli(), dtEventTimeStamp, end.UnixMilli()))
+	if query.BkSqlCondition != "" {
+		sqlBuilder.WriteString(" AND (" + query.BkSqlCondition + ")")
+	}
+	if len(groupList) > 0 {
+		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
+	}
+	if len(orderList) > 0 {
+		sqlBuilder.WriteString(" ORDER BY " + strings.Join(orderList, ", "))
+	}
+	if limit > 0 {
+		sqlBuilder.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+	}
+
+	return sqlBuilder.String(), nil
+}
+
+func (i *Instance) query(
+	ctx context.Context,
+	query *metadata.Query,
+	start time.Time,
+	end time.Time,
+	step time.Duration,
+) (*prompb.QueryResult, error) {
+	var (
+		err error
+	)
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "bk-sql-query")
+	defer span.End(&err)
+
+	if i.Client == nil {
+		return nil, fmt.Errorf("es client is nil")
+	}
+
+	if i.Limit > 0 {
+		maxLimit := i.Limit + i.Tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.Limit {
+			query.Size = maxLimit
+		}
+	}
+
+	fact := NewQueryFactory(ctx, query).WithRangeTime(start, end, step)
+	err = fact.ParserQuery()
+	if err != nil {
+		return nil, fmt.Errorf("sql parser error: %v", err)
+	}
+
+	data, err := i.sqlQuery(ctx, fact.SQL(), span)
+	if err != nil {
+		return nil, err
+	}
+
+	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
+	return qr, err
+}
+
+func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)
 	ctx, span := trace.NewSpan(ctx, "bk-sql-raw")
 	defer span.End(&err)
 
-	if hints.Start > hints.End || hints.Start == 0 {
-		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %d, end: %d ", hints.Start, hints.End))
+	if start.UnixMilli() > end.UnixMilli() || start.UnixMilli() == 0 {
+		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %s, end: %s ", start, end))
 	}
 
-	// 确保一定有值
-	if i.Limit <= 0 {
-		i.Limit = 2e5
+	if i.Limit > 0 {
+		maxLimit := i.Limit + i.Tolerance
+		// 如果不传 size，则取最大的限制值
+		if query.Size == 0 || query.Size > i.Limit {
+			query.Size = maxLimit
+		}
 	}
 
-	sql, isCount := i.bkSql(ctx, query, hints, matchers...)
-	data, err := i.query(ctx, sql, span)
+	sql, err := i.bkSql(ctx, query, start, end)
+	if err != nil {
+		return storage.ErrSeriesSet(err)
+	}
+
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -401,11 +468,11 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	span.Set("data-total-records", data.TotalRecords)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
-	if data.TotalRecords > i.Limit {
+	if i.Limit > 0 && data.TotalRecords > i.Limit {
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.Limit))
 	}
 
-	qr, err := i.formatData(query.Field, isCount, data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}
@@ -413,22 +480,22 @@ func (i Instance) QueryRaw(ctx context.Context, query *metadata.Query, hints *st
 	return remote.FromQueryResult(true, qr)
 }
 
-func (i Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		err error
 	)
@@ -442,7 +509,7 @@ func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, 
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
 	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s LIMIT 1", query.Measurement, where)
-	data, err := i.query(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +518,7 @@ func (i Instance) LabelNames(ctx context.Context, query *metadata.Query, start, 
 	return lbs, err
 }
 
-func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	var (
 		err error
 
@@ -471,7 +538,7 @@ func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name s
 		where = fmt.Sprintf("%s AND (%s)", where, query.BkSqlCondition)
 	}
 	sql := fmt.Sprintf("SELECT COUNT(`%s`) AS `%s`, %s FROM %s WHERE %s GROUP BY %s", query.Field, query.Field, name, query.Measurement, where, name)
-	data, err := i.query(ctx, sql, span)
+	data, err := i.sqlQuery(ctx, sql, span)
 	if err != nil {
 		return nil, err
 	}
@@ -495,12 +562,12 @@ func (i Instance) LabelValues(ctx context.Context, query *metadata.Query, name s
 	return lbs, err
 }
 
-func (i Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i Instance) GetInstanceType() string {
+func (i *Instance) GetInstanceType() string {
 	return consul.BkSqlStorageType
 }
 

@@ -66,6 +66,10 @@ const (
 	BkSqlCodeConfigPath                 = "bk_sql.code"
 	BkSqlSecretConfigPath               = "bk_sql.secret"
 	BkSqlTokenConfigPath                = "bk_sql.token"
+
+	EsTimeoutConfigPath    = "elasticsearch.timeout"
+	EsMaxRoutingConfigPath = "elasticsearch.max_routing"
+	EsMaxSizeConfigPath    = "elasticsearch.max_size"
 )
 
 var (
@@ -120,4 +124,8 @@ var (
 
 	OfflineDataArchiveGrpcMaxCallRecvMsgSize int
 	OfflineDataArchiveGrpcMaxCallSendMsgSize int
+
+	EsTimeout    time.Duration
+	EsMaxRouting int
+	EsMaxSize    int
 )

@@ -64,11 +64,7 @@ func NewModuleCacheManager(prefix string, opt *redis.Options, concurrentLimit in
 
 // getModuleListByBizID 通过业务ID获取模块列表
 func getModuleListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, err
-	}
-
+	cmdbApi := getCmdbApi()
 	result, err := api.BatchApiRequest(
 		cmdbApiPageSize,
 		func(resp interface{}) (int, error) {
@@ -122,6 +118,9 @@ func (m *ModuleCacheManager) Type() string {
 func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	// 请求模块信息
 	moduleList, err := getModuleListByBizID(ctx, bizID)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get module list by biz: %d", bizID)
+	}
 
 	moduleCacheData := make(map[string]string)
 	templateToModules := make(map[string][]string)

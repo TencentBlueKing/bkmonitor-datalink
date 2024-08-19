@@ -160,6 +160,18 @@ bk-collector:
       middlewares:
         - "maxbytes"
 
+    # Tars Server Config
+    tars_server:
+      # 是否启动 Tars 服务
+      # default: false
+      enabled: true
+      # 传输协议，目前支持 tcp
+      # default: ""
+      transport: "tcp"
+      # 服务监听端点
+      # default: ""
+      endpoint: ":4319"
+
     components:
       jaeger:
         enabled: true
@@ -177,7 +189,10 @@ bk-collector:
         enabled: true
       fta:
         enabled: true
-
+      beat:
+        enabled: true
+      tars:
+        enabled: true
 
   # =============================== Processor ================================
   # name: 名称规则为 ${processor}[/${id}]，id 字段为可选项
@@ -468,6 +483,11 @@ bk-collector:
     # TokenChecker: 权限校验处理器
     # Aes256
     - name: "token_checker/aes256"
+
+    # Beat 鉴权
+    - name: "token_checker/beat"
+      config:
+        type: "beat"
 
     # LicenseChecker: 验证接入的节点数
     - name: "license_checker/common"
@@ -1078,6 +1098,17 @@ bk-collector:
           - "token_checker/aes256"
           - "rate_limiter/token_bucket"
 
+    - name: "beat_pipeline/common"
+      type: "beat"
+      processors:
+        - "token_checker/beat"
+        - "rate_limiter/token_bucket"
+
+    - name: "tars_pipeline/common"
+      type: "tars"
+      processors:
+        - "token_checker/aes256"
+        - "rate_limiter/token_bucket"
 
   # =============================== Exporter =================================
   exporter:

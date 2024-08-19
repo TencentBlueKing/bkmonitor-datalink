@@ -42,6 +42,7 @@ var (
 	DefaultTagKey = "__default__/__default__/__default__==__default__"
 )
 
+// Router 查询路由
 type Router struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -60,6 +61,7 @@ type Router struct {
 	hostStatusInfo influxdb.HostStatusInfo
 }
 
+// MockRouter mock 路由信息
 func MockRouter(proxyInfo influxdb.ProxyInfo) {
 	ir := GetInfluxDBRouter()
 	ir.lock.Lock()
@@ -73,6 +75,7 @@ func MockRouter(proxyInfo influxdb.ProxyInfo) {
 	}
 }
 
+// GetInfluxDBRouter 获取实例
 func GetInfluxDBRouter() *Router {
 	once.Do(func() {
 		influxDBRouter = &Router{
@@ -117,6 +120,7 @@ func (r *Router) ReloadRouter(ctx context.Context, prefix string, dialOpts []grp
 	return err
 }
 
+// Ping ping 方法
 func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int) {
 	// 不存在 host 信息则直接返回
 	if len(r.hostInfo) == 0 {
@@ -129,7 +133,7 @@ func (r *Router) Ping(ctx context.Context, timeout time.Duration, pingCount int)
 		// 重试 pingCount 次数
 		var read bool
 		for i := 0; i < pingCount; i++ {
-			addr := fmt.Sprintf("%s://%s:%d/ping", v.Protocol, v.DomainName, v.Port)
+			addr := fmt.Sprintf("%s://%s:%d/ping", HTTP, v.DomainName, v.Port)
 			req, err := http.NewRequest("GET", addr, nil)
 			if err != nil {
 				log.Warnf(ctx, "unable to NewRequest, addr:%s, error: %s", addr, err)

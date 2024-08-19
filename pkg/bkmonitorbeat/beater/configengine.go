@@ -29,23 +29,23 @@ import (
 
 // BaseConfigEngine 配置引擎，负责配置管理及心跳上报
 type BaseConfigEngine struct {
-	ctx        context.Context    //当前生效的ctx
-	cancelFunc context.CancelFunc //关闭ctx的function
-	bt         define.Beater      //绑定beater，以获取beater的状态数据
+	ctx        context.Context    // 当前生效的ctx
+	cancelFunc context.CancelFunc // 关闭ctx的function
+	bt         define.Beater      // 绑定beater，以获取beater的状态数据
 
-	cfg                   *common.Config //生效中的全局配置
+	cfg                   *common.Config // 生效中的全局配置
 	config                *configs.Config
-	hasChildPath          bool                           //是否有子任务配置标志位
-	tasks                 []define.TaskConfig            //全部任务的列表,该列表由全局任务和子任务整合后生成
-	globalTasks           []define.TaskConfig            //全局配置里面的任务列表
-	childMetaTasks        []*configs.ChildTaskMetaConfig //子任务列表，是还未被清洗时的存储
-	correctChildMetaTasks []*configs.ChildTaskMetaConfig //正确的子任务列表，子配置心跳会用到
-	repeatChildMetaTasks  []*configs.ChildTaskMetaConfig //重复的子任务列表，子配置心跳会用到
-	wrongChildMetaTasks   []*configs.ChildTaskMetaConfig //错误的子任务列表,子配置心跳会用到
-	errorChildMetaTasks   []*configs.ChildTaskMetaConfig //读取失败的子任务列表,子配置心跳会用到
+	hasChildPath          bool                           // 是否有子任务配置标志位
+	tasks                 []define.TaskConfig            // 全部任务的列表,该列表由全局任务和子任务整合后生成
+	globalTasks           []define.TaskConfig            // 全局配置里面的任务列表
+	childMetaTasks        []*configs.ChildTaskMetaConfig // 子任务列表，是还未被清洗时的存储
+	correctChildMetaTasks []*configs.ChildTaskMetaConfig // 正确的子任务列表，子配置心跳会用到
+	repeatChildMetaTasks  []*configs.ChildTaskMetaConfig // 重复的子任务列表，子配置心跳会用到
+	wrongChildMetaTasks   []*configs.ChildTaskMetaConfig // 错误的子任务列表,子配置心跳会用到
+	errorChildMetaTasks   []*configs.ChildTaskMetaConfig // 读取失败的子任务列表,子配置心跳会用到
 
-	heartbeatLock sync.Mutex   //心跳数据读写锁
-	heartbeatInfo define.Event //用于上传的心跳数据,全局配置部分
+	heartbeatLock sync.Mutex   // 心跳数据读写锁
+	heartbeatInfo define.Event // 用于上传的心跳数据,全局配置部分
 }
 
 // NewBaseConfigEngine 获取configEngine
@@ -75,14 +75,14 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 	baseConfig := configs.NewConfig()
 	err = cfg.Unpack(baseConfig)
 	if err != nil {
-		return define.ErrUnpackCfgError
+		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
 	}
 	ce.config = baseConfig
 
 	// 检查全局配置,这一步如果有任何错误，则整个采集器会报错并关闭
 	err = baseConfig.Clean()
 	if err != nil {
-		return fmt.Errorf("%s : %w", define.ErrCleanGlobalFail, err)
+		return fmt.Errorf("%s: %w", define.ErrCleanGlobalFail, err)
 	}
 	// 存储全局配置中的任务
 	ce.globalTasks = baseConfig.GetTaskConfigList()
@@ -150,7 +150,6 @@ func (ce *BaseConfigEngine) GetChildTasks() error {
 
 // GetTasksFromDir 从文件夹中提取任务,使用递归逻辑处理多层文件夹
 func (ce *BaseConfigEngine) GetTasksFromDir(dirPath string) error {
-
 	// 读取文件夹下的文件列表
 	fileList, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -186,8 +185,8 @@ func (ce *BaseConfigEngine) GetTasksFromDir(dirPath string) error {
 		taskConfig, err := ce.GetChildTask(file, basePath)
 		if err != nil {
 			// 如果有错误，则获取失败，但是仍记录一条心跳到heartbeatlist,这条心跳只上传错误任务的配置文件路径，以及错误代码
-			//path := filepath.Join(basePath, file.Name())
-			//ce.errorChildMetaTasks = append(ce.errorChildMetaTasks, &configs.ChildTaskMetaConfig{Path: path})
+			// path := filepath.Join(basePath, file.Name())
+			// ce.errorChildMetaTasks = append(ce.errorChildMetaTasks, &configs.ChildTaskMetaConfig{Path: path})
 			continue
 		}
 		// 如果没有错误，就直接将获得的任务加入到childtask列表中,提供给CleanTask进行整合
@@ -226,7 +225,6 @@ func (ce *BaseConfigEngine) GetChildTask(file os.DirEntry, basePath string) (*co
 		return nil, getTaskFailError
 	}
 	return childMetaConfig, nil
-
 }
 
 // ParseToUcfg 通过输入的字符串解析出一个ucfg.Config对象，用来进一步转换出指定的TaskConfig
@@ -304,7 +302,7 @@ func (ce *BaseConfigEngine) checkChildError() {
 		if err = childTask.Clean(); err != nil {
 			logger.Infof("wrong child config,path:%v", childTask.Path)
 			// wrongChildTasks记录了所有出错的子任务
-			//ce.wrongChildMetaTasks = append(ce.wrongChildMetaTasks, childTask)
+			// ce.wrongChildMetaTasks = append(ce.wrongChildMetaTasks, childTask)
 		} else {
 			logger.Infof("correct child config,path:%v", childTask.Path)
 
@@ -334,7 +332,6 @@ func (ce *BaseConfigEngine) checkChildError() {
 			ce.correctChildMetaTasks = append(ce.correctChildMetaTasks, childTask)
 
 		}
-
 	}
 }
 
@@ -351,7 +348,6 @@ func (ce *BaseConfigEngine) checkConfigRepeat() {
 				typeMap[v.GetType()] = 1
 			}
 		}
-
 	}
 
 	// 将去重后的任务列表重新赋值给ce.tasks
@@ -388,7 +384,6 @@ func (ce *BaseConfigEngine) refreshGlobalHeartBeat() {
 		return
 	}
 	ce.heartbeatInfo = NewGlobalHeartBeatEvent(bt)
-
 }
 
 func (ce *BaseConfigEngine) refreshChildHeartBeat() {}

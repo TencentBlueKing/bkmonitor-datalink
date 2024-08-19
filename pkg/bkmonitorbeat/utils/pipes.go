@@ -24,10 +24,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-var (
-	// ErrScriptTimeout : the error indicate that script run timeout
-	ErrScriptTimeout = fmt.Errorf("run script timeout")
-)
+// ErrScriptTimeout : the error indicate that script run timeout
+var ErrScriptTimeout = fmt.Errorf("run script timeout")
 
 // RunString Convert a shell command with a series of pipes into
 // correspondingly piped list of *exec.Cmd

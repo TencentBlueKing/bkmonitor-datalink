@@ -37,7 +37,10 @@ func init() {
 	receiver.RegisterReadyFunc(define.SourceJaeger, Ready)
 }
 
-func Ready() {
+func Ready(config receiver.ComponentConfig) {
+	if !config.Jaeger.Enabled {
+		return
+	}
 	receiver.RegisterRecvHttpRoute(define.SourceJaeger, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,

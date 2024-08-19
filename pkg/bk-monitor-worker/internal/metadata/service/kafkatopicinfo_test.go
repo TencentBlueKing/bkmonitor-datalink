@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
@@ -75,7 +75,7 @@ func TestKafkaTopicInfoSvc_RefreshTopicInfo(t *testing.T) {
 	gomonkey.ApplyFunc(ClusterInfoSvc.GetKafkaClient, func(svc ClusterInfoSvc) (sarama.Client, error) {
 		return mockerClient, nil
 	})
-	err = NewKafkaTopicInfoSvc(&topicInfo).RefreshTopicInfo()
+	err = NewKafkaTopicInfoSvc(&topicInfo).RefreshTopicInfo(cluster, mockerClient)
 	assert.NoError(t, err)
 	var result storage.KafkaTopicInfo
 	err = storage.NewKafkaTopicInfoQuerySet(db).TopicEq(topicInfo.Topic).One(&result)

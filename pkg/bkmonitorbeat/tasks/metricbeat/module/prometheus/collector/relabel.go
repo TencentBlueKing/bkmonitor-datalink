@@ -90,10 +90,9 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 		Name:  metricName,
 		Value: promEvent.Key,
 	})
-	logger.Debugf("get original labels: %v", promLabels)
 
 	// up metric 不做 relabels 调整
-	if promEvent.Key == define.MetricBeatUpMetric {
+	if define.IsInnerMetric(promEvent.Key) {
 		return true
 	}
 
@@ -103,7 +102,6 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 		logger.Debugf("data: %v skipped by metric relabel config", promLabels)
 		return false
 	}
-	logger.Debugf("get result labels: %v", lset)
 
 	if len(m.remoteRelabelCache) > 0 {
 		lset = relabel.Process(lset, m.remoteRelabelCache...)

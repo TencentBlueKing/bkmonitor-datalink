@@ -11,6 +11,7 @@ package operator
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
@@ -33,12 +34,12 @@ import (
 const resyncPeriod = time.Hour * 2
 
 var (
-	daemonsetAlarmer   = kits.NewAlarmer(resyncPeriod)
-	statefulsetAlarmer = kits.NewAlarmer(resyncPeriod)
+	daemonsetAlarmer   = notifier.NewAlarmer(resyncPeriod)
+	statefulsetAlarmer = notifier.NewAlarmer(resyncPeriod)
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 25) // 避免高频操作
 }
 
 func EqualMap(a, b map[string]struct{}) bool {
@@ -152,7 +153,6 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	}
 
 	secret.Data[eventTarget.FileName()] = compressed
-	c.mm.SetActiveSecretFileCount(tasks.TaskTypeEvent, secret.Name, 1)
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
@@ -224,7 +224,6 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		}
 
 		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretFileCount(tasks.TaskTypeDaemonSet, secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -302,7 +301,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	}
 
 	for secretName := range dropSecrets {
-		Slowdown() // 避免高频操作
+		Slowdown()
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
@@ -333,6 +332,23 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		return childConfigs[i].FileName < childConfigs[j].FileName
 	})
 
+	parseHost := func(s string) string {
+		h, _, err := net.SplitHostPort(s)
+		if err != nil {
+			return ""
+		}
+		return h
+	}
+
+	workers := c.objectsController.GetPods(ConfStatefulSetWorkerRegex)
+	indexWorkers := make(map[int]string)
+	for ip, w := range workers {
+		indexWorkers[w.Index] = ip
+	}
+	logger.Infof("found statefulset workers(%s): %+v", ConfStatefulSetWorkerRegex, workers)
+
+	antiNodeConfigs := make([]*discover.ChildConfig, 0)
+
 	currTasksCache := make(map[int]map[string]struct{})
 	groups := make([][]*discover.ChildConfig, n)
 	for idx, config := range childConfigs {
@@ -342,10 +358,49 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		} else {
 			mod = int(config.Hash() % uint64(n)) // 默认为 hash 分配
 		}
-		groups[mod] = append(groups[mod], config)
 
+		// 检查是否命中反亲和规则
+		var matchAntiAffinity bool
+		if config.AntiAffinity {
+			h := parseHost(config.Address)
+			if _, ok := workers[h]; ok {
+				antiNodeConfigs = append(antiNodeConfigs, config)
+				matchAntiAffinity = true
+			}
+		}
+		// 命中了则不再继续分配
+		if matchAntiAffinity {
+			continue
+		}
+
+		groups[mod] = append(groups[mod], config)
 		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 
+		if _, ok := currTasksCache[mod]; !ok {
+			currTasksCache[mod] = make(map[string]struct{})
+		}
+		currTasksCache[mod][config.FileName] = struct{}{}
+	}
+
+	for i := 0; i < len(antiNodeConfigs); i++ {
+		config := antiNodeConfigs[i]
+
+		// 取出 IP 与 host 相同的 worker 并避开
+		// 如果实在只有一个 worker 那也就木有办法了 ┓(-´∀`-)┏
+		h := parseHost(config.Address)
+		w := workers[h]
+		mod := (w.Index + 1) % len(workers)
+
+		// n 为最初确定的 workers 数量
+		// 如果此时已经扩容了新节点 那先临时将其分配到 0 号 worker 上并等待下一个周期修正
+		if mod >= n {
+			mod = 0
+		}
+
+		groups[mod] = append(groups[mod], config)
+		logger.Infof("worker match antiaffinity rules, host=%s, worker%d(%s)", h, mod, indexWorkers[mod])
+
+		c.recorder.updateConfigNode(config.FileName, fmt.Sprintf("worker%d", mod))
 		if _, ok := currTasksCache[mod]; !ok {
 			currTasksCache[mod] = make(map[string]struct{})
 		}
@@ -392,7 +447,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		}
 
 		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
-		c.mm.SetActiveSecretFileCount(tasks.TaskTypeStatefulSet, secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
 			c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionCreateOrUpdate)
@@ -473,12 +527,9 @@ func (c *Operator) dispatchTasks() {
 		logger.Info("dryrun mode, skip dispatch")
 		return
 	}
-	c.mm.IncDispatchedTaskCounter()
-	now := time.Now()
 
 	statefulset, daemonset := c.collectChildConfigs()
 	c.createOrUpdateChildSecret(statefulset, daemonset)
-	c.mm.ObserveDispatchedTaskDuration(now)
 }
 
 func newSecret(name string, taskType string) *corev1.Secret {

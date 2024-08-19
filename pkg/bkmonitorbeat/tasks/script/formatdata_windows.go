@@ -15,7 +15,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// ShellWordPreProcess :
 func ShellWordPreProcess(cmdline string) string {
 	cmdline = strings.Replace(cmdline, "\\", "\\\\", -1)
 	target := cmdline

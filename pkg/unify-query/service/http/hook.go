@@ -44,6 +44,9 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryHandlePathConfigPath, "/query/ts")
 	viper.SetDefault(TSQueryExemplarHandlePathConfigPath, "/query/ts/exemplar")
 	viper.SetDefault(TSQueryPromQLHandlePathConfigPath, "/query/ts/promql")
+	viper.SetDefault(TSQueryReferenceQueryHandlePathConfigPath, "/query/ts/reference")
+	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
+	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")
 	viper.SetDefault(TSQueryPromQLToStructHandlePathConfigPath, "/query/ts/promql_to_struct")
@@ -92,6 +95,7 @@ func LoadConfig() {
 	SlowQueryThreshold = viper.GetDuration(SlowQueryThresholdConfigPath)
 	DefaultQueryListLimit = viper.GetInt(DefaultQueryListLimitPath)
 	DefaultInfoLimit = viper.GetInt(InfoDefaultLimit)
+	TSQueryRawMAXLimit = viper.GetInt(TSQueryRawMAXLimitConfigPath)
 
 	QueryMaxRouting = viper.GetInt(QueryMaxRoutingConfigPath)
 

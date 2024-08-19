@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	tsDBInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 )
 
@@ -40,13 +41,17 @@ type QueryRangeStorage struct {
 }
 
 func (s *QueryRangeStorage) Querier(ctx context.Context, min, max int64) (storage.Querier, error) {
+	return NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout), nil
+}
+
+func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout time.Duration) *Querier {
 	return &Querier{
 		ctx:        ctx,
-		min:        time.Unix(min, 0),
-		max:        time.Unix(max, 0),
-		maxRouting: s.QueryMaxRouting,
-		timeout:    s.Timeout,
-	}, nil
+		min:        min,
+		max:        max,
+		maxRouting: maxRouting,
+		timeout:    timeout,
+	}
 }
 
 type Querier struct {
@@ -151,7 +156,32 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
 				span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
 
-				setCh <- query.instance.QueryRaw(ctx, query.qry, hints, matchers...)
+				var (
+					start int64
+					end   int64
+				)
+				qp := metadata.GetQueryParams(ctx)
+				if qp.IsReference {
+					start = qp.Start * 1e3
+					end = qp.End * 1e3
+				} else {
+					start = hints.Start
+					end = hints.End
+
+					if len(query.qry.Aggregates) == 1 {
+						agg := query.qry.Aggregates[0]
+
+						// 如果使用时间聚合计算，是否对齐开始时间
+						if agg.Window.Milliseconds() > 0 {
+							start = intMathFloor(start, agg.Window.Milliseconds()) * agg.Window.Milliseconds()
+						}
+					}
+				}
+
+				startTime := time.UnixMilli(start)
+				endTime := time.UnixMilli(end)
+
+				setCh <- query.instance.QueryRaw(ctx, query.qry, startTime, endTime)
 				return
 
 			} else {
@@ -348,42 +378,54 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		instance tsdb.Instance
 		err      error
 	)
-	ctx, span := trace.NewSpan(ctx, "storage-get-instance")
+	ctx, span := trace.NewSpan(ctx, "stg-get-instance")
 	defer span.End(&err)
-	storage, err := tsdb.GetStorage(qry.StorageID)
+	stg, err := tsdb.GetStorage(qry.StorageID)
 	if err != nil {
 		log.Errorf(
-			ctx, "get storage error: %s.%s: %s", qry.DB, qry.Measurement, err.Error(),
+			ctx, "get stg error: %s.%s: %s", qry.DB, qry.Measurement, err.Error(),
 		)
 		return nil
 	}
-	if storage.Instance != nil {
-		return storage.Instance
+	if stg.Instance != nil {
+		return stg.Instance
 	}
 
-	span.Set("stroage-type", storage.Type)
-	span.Set("storage-id", qry.StorageID)
-	span.Set("storage-address", storage.Address)
-	span.Set("storage-uri-path", storage.UriPath)
+	span.Set("stroage-type", stg.Type)
+	span.Set("stg-id", qry.StorageID)
+	span.Set("stg-address", stg.Address)
+	span.Set("stg-uri-path", stg.UriPath)
 
-	curl := &curl.HttpCurl{Log: log.DefaultLogger}
-	switch storage.Type {
-	// vm 实例直接在 storage.instance 就有了，无需进到这个逻辑
-	case consul.VictoriaMetricsStorageType:
-		return nil
+	curlGet := &curl.HttpCurl{Log: log.DefaultLogger}
+	switch stg.Type {
+	// vm 实例直接在 stg.instance 就有了，无需进到这个逻辑
+	case consul.ElasticsearchStorageType:
+		instOption := &elasticsearch.InstanceOption{
+			Address:    stg.Address,
+			Username:   stg.Username,
+			Password:   stg.Password,
+			MaxSize:    stg.MaxLimit,
+			Timeout:    stg.Timeout,
+			MaxRouting: stg.MaxRouting,
+		}
+		instance, err = elasticsearch.NewInstance(ctx, instOption)
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			return nil
+		}
 	case consul.InfluxDBStorageType:
 		insOption := tsDBInfluxdb.Options{
-			ReadRateLimit:  storage.ReadRateLimit,
-			Timeout:        storage.Timeout,
-			ContentType:    storage.ContentType,
-			ChunkSize:      storage.ChunkSize,
-			RawUriPath:     storage.UriPath,
-			Accept:         storage.Accept,
-			AcceptEncoding: storage.AcceptEncoding,
-			MaxLimit:       storage.MaxLimit,
-			MaxSlimit:      storage.MaxSLimit,
-			Tolerance:      storage.Toleration,
-			Curl:           curl,
+			ReadRateLimit:  stg.ReadRateLimit,
+			Timeout:        stg.Timeout,
+			ContentType:    stg.ContentType,
+			ChunkSize:      stg.ChunkSize,
+			RawUriPath:     stg.UriPath,
+			Accept:         stg.Accept,
+			AcceptEncoding: stg.AcceptEncoding,
+			MaxLimit:       stg.MaxLimit,
+			MaxSlimit:      stg.MaxSLimit,
+			Tolerance:      stg.Toleration,
+			Curl:           curlGet,
 		}
 
 		host, err := influxdb.GetInfluxDBRouter().GetInfluxDBHost(
@@ -412,5 +454,6 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	default:
 		return nil
 	}
+
 	return instance
 }

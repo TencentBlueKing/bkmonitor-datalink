@@ -267,7 +267,7 @@ func TestPromQueryBasic(t *testing.T) {
 			assert.Nil(t, err)
 			if err == nil {
 				query.SpaceUid = testCase.spaceUid
-				resp, err := queryTs(ctx, query)
+				resp, err := queryTsWithPromEngine(ctx, query)
 				if testCase.err != nil {
 					assert.Equal(t, testCase.err, err)
 				} else {

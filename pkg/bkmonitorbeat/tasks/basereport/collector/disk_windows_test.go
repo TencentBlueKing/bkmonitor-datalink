@@ -21,13 +21,13 @@ import (
 
 func TestFilterDiskIoStats(t *testing.T) {
 	diskStats := map[string]DiskStats{
-		"/dev/sda": DiskStats{
+		"/dev/sda": {
 			ReadCount:  100,
 			WriteCount: 200,
 			ReadBytes:  300,
 			WriteBytes: 400,
 		},
-		"/dev/sdb": DiskStats{
+		"/dev/sdb": {
 			ReadCount:  500,
 			WriteCount: 600,
 			ReadBytes:  700,
@@ -48,7 +48,7 @@ func TestFilterDiskIoStats(t *testing.T) {
 	resultDiskStats := FilterDiskIoStats(diskStats, config)
 
 	expectedDiskStats := map[string]DiskStats{
-		"/dev/sda": DiskStats{
+		"/dev/sda": {
 			ReadCount:  100,
 			WriteCount: 200,
 			ReadBytes:  300,
@@ -57,7 +57,6 @@ func TestFilterDiskIoStats(t *testing.T) {
 	}
 
 	assert.True(t, reflect.DeepEqual(resultDiskStats, expectedDiskStats), "Expected  %v,  but  got  %v", expectedDiskStats, resultDiskStats)
-
 }
 
 func TestFilterPartitions(t *testing.T) {

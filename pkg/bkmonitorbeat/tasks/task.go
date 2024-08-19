@@ -71,7 +71,7 @@ func (t *BaseTask) getTaskConcurrencyLimitConfig() *configs.TaskConcurrencyLimit
 // PreRun :
 func (t *BaseTask) PreRun(ctx context.Context) {
 	conf := t.GetConfig()
-	logger.Infof("task[%v] begin", conf.GetTaskID())
+	logger.Infof("[%s] task(%v) begin", conf.GetType(), conf.GetTaskID())
 	t.HookPreRun.Apply(ctx)
 	// 初始化并发限制对象
 	c := t.getTaskConcurrencyLimitConfig()
@@ -101,7 +101,7 @@ func (t *BaseTask) PreRun(ctx context.Context) {
 // PostRun :
 func (t *BaseTask) PostRun(ctx context.Context) {
 	conf := t.GetConfig()
-	logger.Infof("task[%v] finish", conf.GetTaskID())
+	logger.Infof("[%s] task(%v) done", conf.GetType(), conf.GetTaskID())
 	t.HookPostRun.Apply(ctx)
 	c := t.getTaskConcurrencyLimitConfig()
 	if c != nil {

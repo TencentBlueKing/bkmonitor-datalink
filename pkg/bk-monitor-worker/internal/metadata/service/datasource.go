@@ -17,7 +17,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/bkgse"
@@ -193,7 +196,7 @@ func (d DataSourceSvc) makeToken() string {
 
 // ConsulPath 获取datasource的consul根路径
 func (DataSourceSvc) ConsulPath() string {
-	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix, cfg.BypassSuffixPath)
+	return fmt.Sprintf(models.DataSourceConsulPathTemplate, cfg.StorageConsulPathPrefix)
 }
 
 // ConsulConfigPath 获取具体data_id的consul配置路径
@@ -317,14 +320,8 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 				if err != nil {
 					return nil, err
 				}
-				skip := false
-				for _, clusterType := range storage.IgnoredStorageClusterTypes {
-					if consulConfig.ClusterType == clusterType {
-						skip = true
-						break
-					}
-				}
-				if skip {
+				// 当集群类型在白名单或者rt在白名单中时，填过记录
+				if slicex.IsExistItem(storage.IgnoredStorageClusterTypes, consulConfig.ClusterType) || (consulConfig.ClusterType == models.StorageTypeInfluxdb && slicex.IsExistItem(config.SkipInfluxdbTableIds, rt.TableId)) {
 					continue
 				}
 				shipperList = append(shipperList, consulConfig)
@@ -362,8 +359,20 @@ func (d DataSourceSvc) isCustomTimeSeriesReport() bool {
 	return slicex.IsExistItem([]string{models.ETLConfigTypeBkStandardV2TimeSeries}, d.EtlConfig)
 }
 
+// CanRefreshConfig 判断是否可以刷新GSE和consul配置
+func (d DataSourceSvc) CanRefreshConfig() bool {
+	if d.IsEnable && d.CreatedFrom == common.DataIdFromBkGse {
+		return true
+	}
+	return false
+}
+
 // RefreshGseConfig 刷新GSE配置，同步路由配置到gse
 func (d DataSourceSvc) RefreshGseConfig() error {
+	if !d.CanRefreshConfig() {
+		logger.Infof("data_id [%d] can not refresh gse config, skip", d.BkDataId)
+		return nil
+	}
 	mqCluster, err := d.MqCluster()
 	if err != nil {
 		return err
@@ -380,25 +389,11 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		return errors.Wrapf(err, "data_id [%v] query gse route failed", d.BkDataId)
 	}
 	if data == nil {
-		logger.Errorf("data_id [%v] can not find route info from gse, please check your datasource config", d.BkDataId)
+		logger.Errorf("data_id [%d] can not find route info from gse, please check your datasource config", d.BkDataId)
 		if err := d.AddBuiltInChannelIdToGse(); err != nil {
-			return errors.Wrapf(err, "add builtin channel id [%v] to gse failed", d.BkDataId)
+			return errors.Wrapf(err, "add builtin channel id [%d] to gse failed", d.BkDataId)
 		}
 		return nil
-	}
-
-	var oldRoute *bkgse.GSERoute
-	config, err := d.GseRouteConfig()
-	if err != nil {
-		return err
-	}
-	configJSON, err := jsonx.MarshalString(config)
-	if err != nil {
-		return err
-	}
-	err = jsonx.UnmarshalString(configJSON, &config)
-	if err != nil {
-		return err
 	}
 
 	dataJSON, err := jsonx.MarshalString(data)
@@ -407,6 +402,12 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 	}
 	var dataList []bkgse.QueryRouteDataResp
 	err = jsonx.UnmarshalString(dataJSON, &dataList)
+	if err != nil {
+		return err
+	}
+
+	var oldRoute *bkgse.GSERoute
+	config, err := d.GseRouteConfig()
 	if err != nil {
 		return err
 	}
@@ -442,28 +443,26 @@ func (d DataSourceSvc) RefreshGseConfig() error {
 		}
 	}
 	if equal {
-		logger.Infof("data_id [%v] gse route config has no difference from gse, skip", d.BkDataId)
+		logger.Infof("data_id [%d] gse route config has no difference from gse, skip", d.BkDataId)
 		return nil
 	}
-	logger.Infof("data_id [%v] gse route config [%v] is different from gse [%v], will refresh it", d.BkDataId, config, oldRoute)
+	logger.Infof("data_id [%d] gse route config [%#v] is different from gse [%#v], will refresh it", d.BkDataId, config, oldRoute)
 	metrics.GSEUpdateCount(d.BkDataId)
+
 	updateParam := bkgse.UpdateRouteParams{
 		Condition: bkgse.RouteMetadata{
 			ChannelId: d.BkDataId,
-			PlatName:  "bkmonitor",
+			PlatName:  common.AccessGseApiPlatName,
 		},
 		Specification: map[string]interface{}{"route": []interface{}{config}},
 		Operation:     bkgse.Operation{OperatorName: "admin"},
 	}
-	if cfg.BypassSuffixPath != "" && !slicex.IsExistItem(cfg.SkipBypassTasks, "refresh_datasource") {
-		paramStr, _ := jsonx.MarshalString(updateParam)
-		logger.Info(diffutil.BuildLogStr("refresh_datasource", diffutil.OperatorTypeAPIPost, diffutil.NewStringBody(paramStr), ""))
-	} else {
-		if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
-			return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
-		}
-		logger.Infof("data_id [%v] success to push route info to gse", d.BkDataId)
+
+	if _, err = apiservice.Gse.UpdateRoute(updateParam); err != nil {
+		return errors.Wrapf(err, "UpdateRoute for data_id [%d] failed", d.BkDataId)
 	}
+	logger.Infof("data_id [%d] success to push route info to gse", d.BkDataId)
+
 	return nil
 }
 
@@ -517,9 +516,6 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 			"stream_to_id": mqCluster.GseStreamToId,
 			"kafka": map[string]interface{}{
 				"topic_name": mqConfig.Topic,
-				"data_set":   mqConfig.Topic[:len(mqConfig.Topic)-1],
-				"partition":  mqConfig.Partition,
-				"biz_id":     0,
 			},
 		},
 		FilterNameAnd: make([]interface{}, 0),
@@ -531,7 +527,8 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 // RefreshConsulConfig 更新consul配置，告知ETL等其他依赖模块配置有所更新
 func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	// 如果数据源没有启用，则不用刷新 consul 配置
-	if !d.IsEnable {
+	if !d.CanRefreshConfig() {
+		logger.Infof("data_id [%d] can not refresh consul config, skip", d.BkDataId)
 		return nil
 	}
 
@@ -620,4 +617,26 @@ func (d DataSourceSvc) ApplyForDataIdFromGse(operator string) (uint, error) {
 		}
 		return uint(channelId), nil
 	}
+}
+
+// CleanConsulPath clean datasource consul path, when not enable or from bkdata
+func CleanConsulPath(consulClient *consul.Instance, dataIdPaths *[]string, consulPaths *[]string) error {
+	// 获取需要删除的路径
+	_, needDeletePaths := lo.Difference(*dataIdPaths, *consulPaths)
+	// 直接删除即可
+	if len(needDeletePaths) == 0 {
+		logger.Info("no need to delete consul path")
+		return nil
+	}
+	if cfg.CanDeleteConsulPath {
+		for _, path := range needDeletePaths {
+			if err := consulClient.Delete(path); err != nil {
+				logger.Error("delete dataid consul path failed, path: %s, error: %s", path, err)
+			}
+		}
+	} else {
+		logger.Infof("different path for datasource and consul_key, path: %v", needDeletePaths)
+	}
+
+	return nil
 }

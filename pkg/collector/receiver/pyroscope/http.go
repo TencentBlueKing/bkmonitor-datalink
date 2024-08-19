@@ -11,6 +11,8 @@ package pyroscope
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -19,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
 
@@ -26,6 +29,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
+	pushv1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/pyroscope/gen/proto/go/push/v1/pushv1connect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -35,11 +40,15 @@ const (
 	formFieldJFR              = "jfr"
 	formFieldPreviousProfile  = "prev_profile"
 	formFieldSampleTypeConfig = "sample_type_config"
+
+	labelNameServiceName         = "service_name"
+	defaultLabelValueServiceName = "unspecified"
 )
 
 const (
 	GoSpy      = "gospy"
 	JavaSpy    = "javaspy"
+	EbpfSpy    = "ebpfspy"
 	DDTraceSpy = "ddtrace"
 	PerfSpy    = "perf_script"
 )
@@ -62,7 +71,10 @@ func init() {
 var metricMonitor = receiver.DefaultMetricMonitor.Source(define.SourcePyroscope)
 
 // Ready 注册 pyroscope 的 http 路由
-func Ready() {
+func Ready(config receiver.ComponentConfig) {
+	if !config.Pyroscope.Enabled {
+		return
+	}
 	receiver.RegisterRecvHttpRoute(define.SourcePyroscope, []receiver.RouteWithFunc{
 		{
 			Method:       http.MethodPost,
@@ -70,6 +82,72 @@ func Ready() {
 			HandlerFunc:  httpSvc.ProfilesIngest,
 		},
 	})
+
+	// 注册 connect rpc 服务，兼容 phlare 的数据上报，用来接收 ebpf 采集的 profiling 数据
+	pushv1connect.RegisterPusherServiceHandler(receiver.RecvHttpRouter(), httpSvc)
+}
+
+func (s HttpService) Push(ctx context.Context, rpcReq *connect.Request[pushv1.PushRequest]) (*connect.Response[pushv1.PushResponse], error) {
+	defer utils.HandleCrash()
+	ip := utils.ParseRequestIP(rpcReq.Peer().Addr)
+	start := time.Now()
+
+	originToken := rpcReq.Header().Get(define.KeyToken)
+	if originToken == "" {
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
+		err := fmt.Errorf("invalid profile token, ip=%s", ip)
+		logger.Warnf(err.Error())
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	token := define.Token{Original: originToken}
+
+	for _, rpcSeries := range rpcReq.Msg.Series {
+		tags := make(map[string]string)
+		for _, label := range rpcSeries.Labels {
+			tags[label.Name] = label.Value
+		}
+
+		// 补充 service_name 字段
+		serviceName, ok := tags[labelNameServiceName]
+		if !ok || serviceName == "" {
+			tags[labelNameServiceName] = defaultLabelValueServiceName
+		}
+
+		for _, sample := range rpcSeries.Samples {
+			rawProfile := define.ProfilesRawData{
+				Data: define.ProfilePprofFormatOrigin(sample.RawProfile),
+				Metadata: define.ProfileMetadata{
+					StartTime:       start, // 这里的时间实际没有使用，具体的时间取自 pprof 数据
+					EndTime:         start, // 这里的时间实际没有使用，具体的时间取自 pprof 数据
+					SpyName:         EbpfSpy,
+					Format:          define.FormatPprof,
+					AggregationType: "cpu",
+					Units:           "nanoseconds",
+					Tags:            utils.CloneMap(tags),
+					AppName:         serviceName,
+				},
+			}
+
+			r := &define.Record{
+				RequestType:   define.RequestHttp,
+				RequestClient: define.RequestClient{IP: ip},
+				RecordType:    define.RecordProfiles,
+				Data:          rawProfile,
+				Token:         token,
+			}
+			code, processorName, err := s.Validate(r)
+			if err != nil {
+				err = errors.Wrapf(err, "run pre-check %s failed, code=%d, ip=%s", processorName, code, ip)
+				logger.WarnRate(time.Minute, r.Token.Original, err)
+				metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordProfiles, processorName, r.Token.Original, code)
+				return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			}
+
+			s.Publish(r)
+		}
+	}
+	receiver.RecordHandleMetrics(metricMonitor, token, define.RequestHttp, define.RecordProfiles, 0, start)
+	return connect.NewResponse(&pushv1.PushResponse{}), nil
 }
 
 // ProfilesIngest 接收 pyroscope 上报的 profile 数据

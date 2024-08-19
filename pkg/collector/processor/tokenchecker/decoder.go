@@ -29,6 +29,7 @@ const (
 	decoderTypeFixed  = "fixed"
 	decoderTypeAcs256 = "aes256"
 	decoderTypeProxy  = "proxy"
+	decoderTypeBeat   = "beat"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
@@ -39,9 +40,11 @@ func NewTokenDecoder(c Config) TokenDecoder {
 		return newAes256TokenDecoder(c)
 	case decoderTypeProxy:
 		return newProxyTokenDecoder(c)
+	case decoderTypeBeat:
+		return newBeatDecoder()
 	}
 
-	// 未指定 token decoder 时使用固定的解析方案（for test）
+	// 未指定 token decoder 时使用固定的解析方案
 	return newFixedTokenDecoder(Config{
 		Type:       decoderTypeFixed,
 		FixedToken: "unspecified-token",
@@ -55,7 +58,7 @@ type TokenDecoder interface {
 	Decode(s string) (define.Token, error)
 }
 
-// newFixedTokenDecoder 根据配置生成固定 Token 用于测试场景
+// newFixedTokenDecoder 根据配置生成固定 Token
 func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
 		token: define.Token{
@@ -291,4 +294,34 @@ func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
 	}
 
 	return token, nil
+}
+
+func newBeatDecoder() beatDecoder {
+	return beatDecoder{}
+}
+
+type beatDecoder struct{}
+
+func (d beatDecoder) Type() string {
+	return decoderTypeBeat
+}
+
+func (d beatDecoder) Skip() bool {
+	return false
+}
+
+func (d beatDecoder) Decode(s string) (define.Token, error) {
+	logger.Debugf("beat dataid=%s", s)
+	if len(s) <= 0 {
+		return define.Token{}, errors.New("reject empty dataid")
+	}
+
+	i, _ := strconv.Atoi(s)
+	if i <= 0 {
+		return define.Token{}, errors.Errorf("reject invalid dataid: %s", s)
+	}
+	return define.Token{
+		Original:   s,
+		BeatDataId: int32(i),
+	}, nil
 }

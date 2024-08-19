@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
+	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
@@ -50,7 +51,6 @@ type Event struct {
 	ResolvedIP    string
 }
 
-// AsMapStr :
 func (e *Event) AsMapStr() common.MapStr {
 	mapStr := e.Event.AsMapStr()
 	mapStr["url"] = e.URL
@@ -72,31 +72,27 @@ func (e *Event) ToStep(index int, step *configs.HTTPTaskStepConfig, url string) 
 	e.Index = index
 }
 
-// OK :
 func (e *Event) OK() bool {
 	return e.Status == define.GatherStatusOK
 }
 
-// Fail :
-func (e *Event) Fail(code define.BeatErrorCode) {
+func (e *Event) Fail(code define.NamedCode) {
 	e.Event.Fail(code)
 	e.Status = int32(e.Index)
 }
 
-// FailFromError :
 func (e *Event) FailFromError(err error) {
 	e.Message = err.Error()
 	switch typ := err.(type) {
 	case *url.Error:
 		if typ.Timeout() {
-			e.Fail(define.BeatErrCodeResponseTimeoutError)
+			e.Fail(define.CodeRequestTimeout)
 		} else {
-			e.Fail(define.BeatErrCodeResponseError)
+			e.Fail(define.CodeResponseFailed)
 		}
 	}
 }
 
-// NewEvent :
 func NewEvent(g *Gather) *Event {
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 	evt := tasks.NewEvent(g)
@@ -110,7 +106,7 @@ func NewEvent(g *Gather) *Event {
 	return event
 }
 
-// makeResponseReader 从response获取reader
+// makeResponseReader 从 response 获取 reader
 func makeResponseReader(response *http.Response) io.ReadCloser {
 	var (
 		err        error
@@ -128,7 +124,6 @@ func makeResponseReader(response *http.Response) io.ReadCloser {
 	return responseRd
 }
 
-// Gather :
 type Gather struct {
 	tasks.BaseTask
 	contentTypeRegexp *regexp.Regexp
@@ -136,7 +131,7 @@ type Gather struct {
 }
 
 // UpdateEventByResponse 根据返回写入结果数据
-func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) error {
+func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) {
 	event.Message = response.Status
 	event.ResponseCode = response.StatusCode
 	event.ContentLength, _ = strconv.Atoi(response.Header.Get("Content-Length"))
@@ -152,8 +147,6 @@ func (g *Gather) UpdateEventByResponse(event *Event, response *http.Response) er
 			}
 		}
 	}
-
-	return nil
 }
 
 func validateConfig(c *configs.HTTPTaskStepConfig) {
@@ -191,16 +184,14 @@ func (g *Gather) makeRequest(ctx context.Context, step *configs.HTTPTaskStepConf
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 	requestData, err := utils.ConvertStringToBytes(step.Request, step.RequestFormat)
 	if err != nil {
-		logger.Warnf("%v: convert request data error: %v", conf.TaskID, err)
-		return nil, err
+		return nil, errors.Wrapf(err, "convert request data failed, taskID=%v", conf.TaskID)
 	}
 
-	logger.Debugf("%v: %s %s request: %s", conf.TaskID, step.Method, url, requestData)
+	logger.Infof("%v: %s %s request: %s", conf.TaskID, step.Method, url, requestData)
 	reader := bytes.NewReader(requestData)
 	request, err := http.NewRequest(step.Method, url, reader)
 	if err != nil {
-		logger.Warnf("%v: create %v failed: %v", conf.TaskID, url, err)
-		return nil, err
+		return nil, errors.Wrapf(err, "make request failed, taskID=%v", conf.TaskID)
 	}
 	request = request.WithContext(ctx)
 
@@ -230,15 +221,13 @@ type Client interface {
 }
 
 // GatherURL 测试链接并设置结果事件，url为请求的链接，proxyHost和proxyIP为需要代理的host和ip
-func (g *Gather) GatherURL(
-	ctx context.Context, event *Event, step *configs.HTTPTaskStepConfig,
-	url, host string,
-) bool {
+func (g *Gather) GatherURL(ctx context.Context, event *Event, step *configs.HTTPTaskStepConfig, url, host string) bool {
 	var (
 		ok    bool
 		count int
 		err   error
 	)
+
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 	client := NewClient(conf, map[string]string{host: host})
 	utils.RecoverFor(func(err error) {
@@ -248,35 +237,26 @@ func (g *Gather) GatherURL(
 	// 初始化请求
 	request, err := g.makeRequest(ctx, step, url)
 	if err != nil {
-		event.Fail(define.BeatErrCodeRequestInitError)
+		logger.Error(err)
+		event.Fail(define.CodeBadRequestParams)
 		return false
 	}
 	// 获取结果
 	response, err := client.Do(request)
 	if err != nil {
-		logger.Debugf("%v: %v failed: %v", conf.TaskID, url, err)
+		logger.Errorf("request failed, taskid=%v, url=%v, err: %v", conf.TaskID, url, err)
 		event.FailFromError(err)
 		return false
 	}
-	defer func() {
-		err := response.Body.Close()
-		if err != nil {
-			logger.Warnf("%v: close response error: %v", conf.TaskID, err)
-		}
-	}()
+	defer response.Body.Close()
 
-	logger.Debugf("%v: %v %v response: code=%v, status=%v",
-		conf.TaskID, step.Method, url, response.StatusCode, response.Status,
-	)
+	logger.Infof("%v: %v %v response: code=%v", conf.TaskID, step.Method, url, response.StatusCode)
 	// 根据结果设置事件字段
-	err = g.UpdateEventByResponse(event, response)
-	if err != nil {
-		logger.Warnf("update event by response failed: %v", err)
-		return false
-	}
+	g.UpdateEventByResponse(event, response)
+
 	// 检查响应状态码是否符合预期
 	if !g.checkResponseCode(step, response) {
-		event.Fail(define.BeatErrCodeResponseCodeError)
+		event.Fail(define.CodeResponseNotMatch)
 		return false
 	}
 	// 未配置响应内容无需检查
@@ -288,7 +268,7 @@ func (g *Gather) GatherURL(
 	// 读取响应内容明文reader
 	responseRd := makeResponseReader(response)
 	if responseRd == nil {
-		event.Fail(define.BeatErrCodeResponseHandleError)
+		event.Fail(define.CodeResponseFailed)
 		return false
 	}
 	defer func() {
@@ -322,7 +302,7 @@ func (g *Gather) GatherURL(
 		ok = utils.IsMatch(step.ResponseFormat, body, []byte(step.Response))
 		if !ok {
 			logger.Debugf("%v: %v match body fail with type[%v]", conf.TaskID, url, step.ResponseFormat)
-			event.Fail(define.BeatErrCodeResponseMatchError)
+			event.Fail(define.CodeResponseNotMatch)
 			return false
 		}
 	}
@@ -334,7 +314,7 @@ func (g *Gather) GatherURL(
 var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) Client {
 	cj, err := cookiejar.New(nil)
 	if err != nil {
-		logger.Errorf("create cookiejar failed????: %v", err)
+		logger.Errorf("create cookiejar failed: %v", err)
 	}
 	dialer := net.Dialer{
 		Timeout: conf.Timeout,
@@ -387,9 +367,7 @@ var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) C
 
 // Run 主入口
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	var (
-		conf = g.GetConfig().(*configs.HTTPTaskConfig)
-	)
+	conf := g.GetConfig().(*configs.HTTPTaskConfig)
 
 	for _, c := range conf.Steps {
 		validateConfig(c)
@@ -414,12 +392,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		//	2) target_ip_type:4 从 ip 列表中查找是否存在 ipv4 的 ip，存在则取第一个测试，不存在则返回错误码 3011
 		//	3) target_ip_type:6 从 ip 列表中查找是否存在 ipv6 的 ip，存在则取第一个测试，不存在则返回错误码 3012
 		if step.URL == "" && (len(step.URLList) == 0) {
-			//不上报任何数据
+			// 不上报任何数据
 			logger.Debugf("http URLList is empty.")
 			return
 		}
 
-		//获取配置的url列表
+		// 获取配置的url列表
 		urls := make([]string, 0)
 		if step.URL != "" {
 			urls = append(urls, step.URL)
@@ -429,7 +407,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 		hostsInfo := tasks.GetHostsInfo(ctx, urls, conf.DNSCheckMode, conf.TargetIPType, configs.Http)
 		for _, h := range hostsInfo {
-			if h.Errno != define.BeatErrCodeOK {
+			if h.Errno != define.CodeOK {
 				event := NewEvent(g)
 				event.ToStep(1, step, h.Host)
 				event.Fail(h.Errno)
@@ -444,7 +422,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			// 获取并发限制信号量
 			err := g.GetSemaphore().Acquire(ctx, int64(len(ips)))
 			if err != nil {
-				logger.Errorf("Semaphore Acquire failed for task http task id: %d", g.TaskConfig.GetTaskID())
+				logger.Errorf("semaphore acquire failed for task http task id: %d", g.TaskConfig.GetTaskID())
 				return
 			}
 			// 按照代理IP列表逐个请求
@@ -465,7 +443,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 						// 发送事件
 						e <- event
 					}()
-					// 检查url并设置结果事件
+					// 检查 url 并设置结果事件
 					g.GatherURL(gCtx, event, s, u, h)
 				}(index, step, u, ipStr)
 			}
@@ -474,14 +452,12 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 }
 
-// New :
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{
 		contentTypeRegexp: regexp.MustCompile(`(?P<mediatype>[^;\s]*)\s*;?\s*(?:charset\s*=\s*(?P<charset>[^;\s]*)|)\s*;?\s*`),
 	}
 	gather.GlobalConfig = globalConfig
 	gather.TaskConfig = taskConfig
-
 	gather.Init()
 
 	return gather

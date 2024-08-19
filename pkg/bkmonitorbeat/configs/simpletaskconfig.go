@@ -46,7 +46,7 @@ func (c *SimpleMatchParam) CleanParams() error {
 			_, err = utils.ConvertHexStringToBytes(c.Request)
 			if err != nil {
 				logger.Errorf("ConvertHexStringToBytes error:%v", err)
-				return define.ErrTypeConvertError
+				return define.ErrTypeConvert
 			}
 		}
 	}
@@ -56,7 +56,7 @@ func (c *SimpleMatchParam) CleanParams() error {
 			_, err = utils.ConvertHexStringToBytes(c.Response)
 			if err != nil {
 				logger.Errorf("ConvertHexStringToBytes error:%v", err)
-				return define.ErrTypeConvertError
+				return define.ErrTypeConvert
 			}
 		}
 	}

@@ -37,8 +37,7 @@ type TestCurl struct {
 }
 
 func (c *TestCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error)) {
-	//TODO implement me
-	panic("implement me")
+	return
 }
 
 func (c *TestCurl) hashOption(opt Options) string {

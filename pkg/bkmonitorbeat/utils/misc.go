@@ -31,7 +31,7 @@ func PathExist(path string) bool {
 // GeneratorHashKey
 func GeneratorHashKey(names []string) string {
 	const keySepatator = "||"
-	var hash = sha1.New()
+	hash := sha1.New()
 
 	var key bytes.Buffer
 	for _, name := range names {
@@ -68,4 +68,17 @@ func PidStoreFile() string {
 		return "pidstore"
 	}
 	return pidstore
+}
+
+type SpecBlockIO struct {
+	Major      int64
+	Minor      int64
+	WriteBytes uint64
+	ReadBytes  uint64
+	WriteIOps  uint64
+	ReadIOps   uint64
+}
+
+func IsLinuxOS() bool {
+	return runtime.GOOS == "linux"
 }

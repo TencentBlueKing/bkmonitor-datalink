@@ -436,7 +436,7 @@ func TestHandleCondition(t *testing.T) {
 	assert.Equal(
 		t,
 		`(((test1='3' or test1='4') and (test2='5' or test2='6')) or ((test3='7' or test3='8') and (test4!='9' and test4!='10')))`,
-		MakeOrExpression(conditions, false))
+		MakeOrExpression(conditions))
 }
 
 // TestAstResult

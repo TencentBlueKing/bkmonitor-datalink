@@ -40,8 +40,8 @@ func IsContainerMode() bool {
 
 // TaskConcurrencyLimitConfig 任务并发限制配置
 type TaskConcurrencyLimitConfig struct {
-	PerInstanceLimit int64 `config:"per_instance"` //全局限制
-	PerTaskLimit     int64 `config:"per_task"`     //单任务限制
+	PerInstanceLimit int64 `config:"per_instance"` // 全局限制
+	PerTaskLimit     int64 `config:"per_task"`     // 单任务限制
 }
 
 // Clean 初始化参数
@@ -93,25 +93,31 @@ type Config struct {
 	MustHostIDExist    bool   `config:"must_host_id_exist"`
 	DisableNetLink     bool   `config:"disable_netlink"`
 
-	TCPTask           *TCPTaskMetaConfig     `config:"tcp_task"`
-	HeartBeat         *HeartBeatConfig       `config:"heart_beat"`
-	GatherUpBeat      *GatherUpBeatConfig    `config:"gather_up_beat"`
-	UDPTask           *UDPTaskMetaConfig     `config:"udp_task"`
-	HTTPTask          *HTTPTaskMetaConfig    `config:"http_task"`
-	ScriptTask        *ScriptTaskMetaConfig  `config:"script_task"`
-	PingTask          *PingTaskMetaConfig    `config:"ping_task"`
-	MetricTask        *MetricBeatMetaConfig  `config:"metricbeat_task"`
-	KeywordTask       *KeywordTaskMetaConfig `config:"keyword_task"`
-	TrapTask          *TrapMetaConfig        `config:"trap_task"`
-	StaticTask        *StaticTaskMetaConfig  `config:"static_task"`
-	BaseReportTask    *BasereportConfig      `config:"basereport_task"`
-	ExceptionBeatTask *ExceptionBeatConfig   `config:"exceptionbeat_task"`
-	KubeeventTask     *KubeEventConfig       `config:"kubeevent_task"`
-	ProcessBeatTask   *ProcessbeatConfig     `config:"processbeat_task"`
-	ProcConfTask      *ProcConfig            `config:"procconf_task"`
-	ProcCustomTask    *ProcCustomConfig      `config:"proccustom_task"`
-	ProcSyncTask      *ProcSyncConfig        `config:"procsync_task"`
-	ProcStatusTask    *ProcStatusConfig      `config:"procstatus_task"`
+	TCPTask            *TCPTaskMetaConfig     `config:"tcp_task"`
+	HeartBeat          *HeartBeatConfig       `config:"heart_beat"`
+	GatherUpBeat       *GatherUpBeatConfig    `config:"gather_up_beat"`
+	UDPTask            *UDPTaskMetaConfig     `config:"udp_task"`
+	HTTPTask           *HTTPTaskMetaConfig    `config:"http_task"`
+	ScriptTask         *ScriptTaskMetaConfig  `config:"script_task"`
+	PingTask           *PingTaskMetaConfig    `config:"ping_task"`
+	MetricTask         *MetricBeatMetaConfig  `config:"metricbeat_task"`
+	KeywordTask        *KeywordTaskMetaConfig `config:"keyword_task"`
+	TrapTask           *TrapMetaConfig        `config:"trap_task"`
+	StaticTask         *StaticTaskMetaConfig  `config:"static_task"`
+	BaseReportTask     *BasereportConfig      `config:"basereport_task"`
+	ExceptionBeatTask  *ExceptionBeatConfig   `config:"exceptionbeat_task"`
+	KubeeventTask      *KubeEventConfig       `config:"kubeevent_task"`
+	ProcessBeatTask    *ProcessbeatConfig     `config:"processbeat_task"`
+	ProcConfTask       *ProcConfig            `config:"procconf_task"`
+	ProcCustomTask     *ProcCustomConfig      `config:"proccustom_task"`
+	ProcSyncTask       *ProcSyncConfig        `config:"procsync_task"`
+	ProcStatusTask     *ProcStatusConfig      `config:"procstatus_task"`
+	LoginLogTask       *LoginLogConfig        `config:"loginlog_task"`
+	ProcSnapshotTask   *ProcSnapshotConfig    `config:"procsnapshot_task"`
+	ProcBinTask        *ProcBinConfig         `config:"procbin_task"`
+	SocketSnapshotTask *SocketSnapshotConfig  `config:"socketsnapshot_task"`
+	ShellHistoryTask   *ShellHistoryConfig    `config:"shellhistory_task"`
+	RpmPackageTask     *RpmPackageConfig      `config:"rpmpackage_task"`
 }
 
 // NewConfig : new config struct
@@ -143,6 +149,12 @@ func NewConfig() *Config {
 	config.ProcCustomTask = NewProcCustomConfig(config)
 	config.ProcSyncTask = NewProcSyncConfig(config)
 	config.ProcStatusTask = NewProcStatusConfig(config)
+	config.LoginLogTask = NewLoginLogConfig(config)
+	config.ProcSnapshotTask = NewProcSnapshotConfig(config)
+	config.ProcBinTask = NewProcBinConfig(config)
+	config.SocketSnapshotTask = NewSocketSnapshotConfig(config)
+	config.ShellHistoryTask = NewShellHistoryConfig(config)
+	config.RpmPackageTask = NewRpmPackageConfig(config)
 
 	return config
 }
@@ -167,7 +179,7 @@ func (c *Config) Clean() error {
 	// 此处只是做一个心跳data id是否存在配置而已
 	if c.Mode == "daemon" && c.HeartBeat.GlobalDataID == 0 && c.HeartBeat.DataID == 0 {
 		logger.Errorf("failed to get heart_beat data_id, please check config.")
-		return define.ErrUnpackCfgError
+		return define.ErrUnpackCfg
 	}
 
 	c.ConcurrencyLimit.Clean()

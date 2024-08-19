@@ -36,6 +36,7 @@ var (
 	ConfEventMaxSpan        string
 	ConfBuiltinLabels       []string
 	ConfServiceName         string
+	ConfServicePort         int
 )
 
 func initConfig() {

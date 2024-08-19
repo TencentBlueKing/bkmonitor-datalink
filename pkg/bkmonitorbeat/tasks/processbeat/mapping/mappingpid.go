@@ -177,7 +177,6 @@ func (m *Operator) inherateProcessInfo(proc Process, groupLength map[string]int,
 			currentGlobalMap[group][mappingPID] = pid
 		}
 	}
-
 }
 
 // GenerateReportList 用全局map生成没有分组的pid清单

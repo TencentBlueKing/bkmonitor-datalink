@@ -94,6 +94,12 @@ const (
 	ESAliasExpiredDelayDays = 1 // ES别名延迟过期时间
 )
 
+const (
+	EsSourceTypeLOG    = "log"
+	EsSourceTypeBKDATA = "bkdata"
+	EsSourceTypeES     = "es"
+)
+
 // Influxdb Redis Keys
 const (
 	InfluxdbKeyPrefix             = "bkmonitorv3:influxdb" // 前缀
@@ -163,7 +169,7 @@ const (
 
 // root consul path template
 const (
-	DataSourceConsulPathTemplate          = "%s%s/metadata/v1"                          // DataSource的consul根路径
+	DataSourceConsulPathTemplate          = "%s/metadata/v1"                            // DataSource的consul根路径
 	InfluxdbClusterInfoConsulPathTemplate = "%s%s/metadata/influxdb_info/cluster_info"  // InfluxdbClusterInfo的consul根路径
 	InfluxdbStorageConsulPathTemplate     = "%s%s/metadata/influxdb_info/router"        // InfluxdbStorage router的consul根路径
 	InfluxdbHostInfoConsulPathTemplate    = "%s%s/metadata/influxdb_info/host_info"     // InfluxdbHostInfo的consul根路径

@@ -22,6 +22,10 @@ var (
 	MetadataMetricDimensionKeyPrefix string
 	// MetadataMetricDimensionMaxMetricFetchStep config of metadata.refreshMetric task
 	MetadataMetricDimensionMaxMetricFetchStep int
+	// MetadataMetricDimensionByBkData refresh metric dimension by bkdata
+	MetadataMetricDimensionByBkData bool
+	// MetadataTableIdListForBkDataTsMetrics refresh metadata table_id dimension by bkdata
+	BkDataTableIdListRedisPath string
 
 	// BcsEnableBcsGray  是否启用BCS集群灰度模式
 	BcsEnableBcsGray bool
@@ -113,12 +117,18 @@ var (
 	BkdataProjectMaintainer string
 	// BkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
 	BkdataIsAllowAllCmdbLevel bool
+	// 跳过写入influxdb的结果表列表
+	SkipInfluxdbTableIds []string
+	// 是否可以删除 consul 路径
+	CanDeleteConsulPath bool
 )
 
 func initMetadataVariables() {
 	MetadataMetricDimensionMetricKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricKeyPrefix", "bkmonitor:metrics_")
 	MetadataMetricDimensionKeyPrefix = GetValue("taskConfig.metadata.metricDimension.metricDimensionKeyPrefix", "bkmonitor:metric_dimensions_")
 	MetadataMetricDimensionMaxMetricFetchStep = GetValue("taskConfig.metadata.metricDimension.maxMetricsFetchStep", 500)
+	MetadataMetricDimensionByBkData = GetValue("taskConfig.metadata.metricDimension.metadataMetricDimensionByBkData", false)
+	BkDataTableIdListRedisPath = GetValue("taskConfig.metadata.metricDimension.BkDataTableIdListRedisPath", "metadata:query_metric:table_id_list")
 
 	BcsEnableBcsGray = GetValue("taskConfig.metadata.bcs.enableBcsGray", false)
 	BcsGrayClusterIdList = GetValue("taskConfig.metadata.bcs.grayClusterIdList", []string{})
@@ -142,7 +152,7 @@ func initMetadataVariables() {
 	PingServerEnableDirectAreaPingCollect = GetValue("taskConfig.metadata.pingserver.enableDirectAreaPingCollect", true)
 	PingServerDataid = GetValue("taskConfig.metadata.pingserver.dataid", uint(1100005), viper.GetUint)
 
-	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", fmt.Sprintf("bkmonitorv3:spaces%s", BypassSuffixPath))
+	SpaceRedisKey = GetValue("taskConfig.metadata.space.redisKey", "bkmonitorv3:spaces")
 	DataLabelToResultTableKey = GetValue("taskConfig.metadata.space.dataLabelToResultTableKey", fmt.Sprintf("%s:data_label_to_result_table", SpaceRedisKey))
 	DataLabelToResultTableChannel = GetValue("taskConfig.metadata.space.dataLabelToResultTableChannel", fmt.Sprintf("%s:data_label_to_result_table:channel", SpaceRedisKey))
 	ResultTableDetailKey = GetValue("taskConfig.metadata.space.resultTableDetailKey", fmt.Sprintf("%s:result_table_detail", SpaceRedisKey))
@@ -166,4 +176,6 @@ func initMetadataVariables() {
 	BkdataFlowClusterGroup = GetValue("taskConfig.metadata.bkdata.flowClusterGroup", "default_inland")
 	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
+	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
+	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 }

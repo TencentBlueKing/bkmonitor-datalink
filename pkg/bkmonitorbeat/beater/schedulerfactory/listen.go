@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build listenscheduler || basescheduler
-// +build listenscheduler basescheduler
 
 package schedulerfactory
 

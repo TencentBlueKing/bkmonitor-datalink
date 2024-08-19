@@ -16,6 +16,7 @@ import (
 	"hash/fnv"
 	"net"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -36,8 +37,10 @@ import (
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -47,7 +50,7 @@ const (
 	Base64Protocol = "base64://"
 )
 
-var bus = kits.NewDefaultRateBus()
+var bus = notifier.NewDefaultRateBus()
 
 func Publish() { bus.Publish() }
 
@@ -91,16 +94,17 @@ type Discover interface {
 
 // ChildConfig 子任务配置文件信息
 type ChildConfig struct {
-	Meta      define.MonitorMeta
-	Node      string
-	FileName  string
-	Address   string
-	Data      []byte
-	Scheme    string
-	Path      string
-	Mask      string
-	TaskType  string
-	Namespace string
+	Meta         define.MonitorMeta
+	Node         string
+	FileName     string
+	Address      string
+	Data         []byte
+	Scheme       string
+	Path         string
+	Mask         string
+	TaskType     string
+	Namespace    string
+	AntiAffinity bool
 }
 
 func (c ChildConfig) String() string {
@@ -123,6 +127,8 @@ type BaseParams struct {
 	Client                 kubernetes.Interface
 	RelabelRule            string
 	RelabelIndex           string
+	NormalizeMetricName    bool
+	AntiAffinity           bool
 	Name                   string
 	KubeConfig             string
 	Namespaces             []string
@@ -143,6 +149,9 @@ type BaseParams struct {
 	System                 bool
 	UrlValues              url.Values
 	MetricRelabelConfigs   []yaml.MapSlice
+	MatchSelector          map[string]string
+	DropSelector           map[string]string
+	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
 }
 
 type BaseDiscover struct {
@@ -156,6 +165,7 @@ type BaseDiscover struct {
 	mm                *metricMonitor
 	checkIfNodeExists define.CheckFunc
 	fetched           bool
+	cache             *Cache
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
@@ -170,6 +180,7 @@ func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.Monito
 		checkIfNodeExists: checkFn,
 		monitorMeta:       monitorMeta,
 		mm:                newMetricMonitor(params.Name),
+		cache:             NewCache(params.Name, time.Minute*10),
 	}
 }
 
@@ -236,6 +247,7 @@ func (d *BaseDiscover) Stop() {
 
 	d.wg.Wait()
 	d.mm.IncStoppedCounter()
+	d.cache.Clean()
 	logger.Infof("shutting discover %s", d.Name())
 }
 
@@ -288,7 +300,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	}
 
 	if metricTarget.NodeName == "" {
-		logger.Debugf("no node info from labels: %+v", origLabels)
+		logger.Debugf("%s no node info from labels: %+v", d.Name(), origLabels)
 		metricTarget.NodeName = define.UnknownNode
 	}
 
@@ -298,9 +310,6 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.Params = make(url.Values)
 	}
 
-	// 匹配优先级
-	// 1) from labels
-	// 2) from struct
 	if metricTarget.Scheme == "" {
 		metricTarget.Scheme = d.Scheme
 	}
@@ -343,7 +352,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		secretClient := d.Client.CoreV1().Secrets(d.monitorMeta.Namespace)
 		bearerToken, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.BearerTokenSecret)
 		if err != nil {
-			return nil, errors.Wrapf(err, "get bearer token from secret failed, monitor=%s", d.monitorMeta.ID())
+			return nil, errors.Wrap(err, "get bearer token from secret failed")
 		}
 		metricTarget.BearerToken = bearerToken
 	}
@@ -357,7 +366,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.CA.Secret != nil {
 			ca, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.CA.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS CA from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS CA from secret failed")
 			}
 			metricTarget.TLSConfig.CAs = []string{EncodeBase64(ca)}
 		}
@@ -368,7 +377,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.Cert.Secret != nil {
 			cert, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.Cert.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Cert from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Cert from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Certificate = EncodeBase64(cert)
 		}
@@ -379,7 +388,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.KeySecret != nil {
 			key, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.KeySecret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Key from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Key from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Key = EncodeBase64(key)
 		}
@@ -391,6 +400,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.Labels = lbls
 	}
 
+	period := d.Period
+	if period == "" {
+		period = ConfDefaultPeriod
+	}
+	timeout := d.Timeout
+	if timeout == "" {
+		timeout = period
+	}
+
 	metricTarget.Meta = d.monitorMeta
 	metricTarget.ExtraLabels = d.ExtraLabels
 	metricTarget.Namespace = namespace // 采集目标的 namespace
@@ -398,13 +416,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.DimensionReplace = d.DataID().Spec.DimensionReplace
 	metricTarget.MetricReplace = d.DataID().Spec.MetricReplace
 	metricTarget.MetricRelabelConfigs = d.MetricRelabelConfigs
-	metricTarget.Period = d.Period
-	metricTarget.Timeout = d.Timeout
+	metricTarget.Period = period
+	metricTarget.Timeout = timeout
 	metricTarget.ProxyURL = d.ProxyURL
 	metricTarget.Mask = d.Mask()
 	metricTarget.TaskType = taskType
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
+	metricTarget.NormalizeMetricName = d.NormalizeMetricName
+	metricTarget.LabelJoinMatcher = d.LabelJoinMatcher
 
 	return metricTarget, nil
 }
@@ -456,7 +476,7 @@ func (d *BaseDiscover) Mask() string {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const duration = 5
+	const duration = 10
 	const resync = 100 // 避免事件丢失
 
 	ticker := time.NewTicker(time.Second * duration)
@@ -471,21 +491,20 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 		case <-ticker.C:
 			counter++
 			tgList, updatedAt := GetTargetGroups(d.role, d.getNamespaces())
-			logger.Debugf("discover %s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
+			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
-				logger.Debugf("discover %s found nothing changed, skip targetgourps handled", d.Name())
+				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())
 				continue
 			}
 			d.fetched = true
-			logger.Debugf("discover %s starts to handle targets", d.Name())
+
 			for _, tg := range tgList {
 				if tg == nil {
 					continue
 				}
-				logger.Debugf("discover %s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
+				logger.Debugf("%s get targets source: %s, targets: %+v, labels: %+v", d.Name(), tg.Source, tg.Targets, tg.Labels)
 				d.handleTargetGroup(tg)
 			}
-			logger.Debugf("discover %s handle targets done", d.Name())
 		}
 	}
 }
@@ -520,13 +539,117 @@ func metaFromSource(s string) (string, string, error) {
 	return parts[1], parts[2], nil
 }
 
+func matchSelector(labels []labels.Label, selector map[string]string) bool {
+	var count int
+	for k, v := range selector {
+		re, err := regexp.Compile(v)
+		if err != nil {
+			logger.Errorf("failed to compile expr '%s', err: %v", v, err)
+			continue
+		}
+		for _, lbs := range labels {
+			if lbs.Name == k {
+				if !re.MatchString(lbs.Value) {
+					return false
+				}
+				count++
+				break
+			}
+		}
+	}
+	return count == len(selector)
+}
+
+func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSet) (*ChildConfig, error) {
+	lbls := labelspool.Get()
+	defer labelspool.Put(lbls)
+
+	for ln, lv := range tlset {
+		lbls = append(lbls, labels.Label{
+			Name:  string(ln),
+			Value: string(lv),
+		})
+	}
+	for ln, lv := range tglbs {
+		if _, ok := tlset[ln]; !ok {
+			lbls = append(lbls, labels.Label{
+				Name:  string(ln),
+				Value: string(lv),
+			})
+		}
+	}
+
+	// annotations 白名单过滤
+	if len(d.MatchSelector) > 0 {
+		if !matchSelector(lbls, d.MatchSelector) {
+			logger.Debugf("%s annotation selector not match: %v", d.Name(), d.MatchSelector)
+			return nil, nil
+		}
+	}
+
+	// annotations 黑名单过滤
+	if len(d.DropSelector) > 0 {
+		if matchSelector(lbls, d.DropSelector) {
+			logger.Debugf("%s annotation selector drop: %v", d.Name(), d.DropSelector)
+			return nil, nil
+		}
+	}
+
+	sort.Sort(lbls)
+	res, orig, err := d.populateLabels(lbls)
+	if err != nil {
+		return nil, errors.Wrap(err, "populate labels failed")
+	}
+	if len(res) == 0 {
+		return nil, nil
+	}
+
+	logger.Debugf("%s populate labels %+v", d.Name(), res)
+	metricTarget, err := d.makeMetricTarget(res, orig, namespace)
+	if err != nil {
+		return nil, errors.Wrap(err, "make metric target failed")
+	}
+
+	interval, _ := time.ParseDuration(metricTarget.Period)
+	d.mm.SetMonitorScrapeInterval(interval.Seconds())
+
+	if d.ForwardLocalhost {
+		metricTarget.Address, err = forwardAddress(metricTarget.Address)
+		if err != nil {
+			return nil, errors.Wrapf(err, "forward address failed, address=%s", metricTarget.Address)
+		}
+	}
+
+	metricTarget.DisableCustomTimestamp = d.DisableCustomTimestamp
+	data, err := metricTarget.YamlBytes()
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal target failed")
+	}
+
+	childConfig := &ChildConfig{
+		Node:         metricTarget.NodeName,
+		FileName:     metricTarget.FileName(),
+		Address:      metricTarget.Address,
+		Data:         data,
+		Scheme:       metricTarget.Scheme,
+		Path:         metricTarget.Path,
+		Mask:         metricTarget.Mask,
+		Meta:         metricTarget.Meta,
+		Namespace:    metricTarget.Namespace,
+		TaskType:     metricTarget.TaskType,
+		AntiAffinity: d.AntiAffinity,
+	}
+	logger.Debugf("%s create child config: %+v", d.Name(), childConfig)
+	return childConfig, nil
+}
+
 // handleTargetGroup 遍历自身的所有 target group 计算得到活跃的 target 并删除消失的 target
 func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	d.mm.IncHandledTgCounter()
 
 	namespace, _, err := metaFromSource(targetGroup.Source)
 	if err != nil {
-		logger.Errorf("failed to parse source: %v", err)
+		logger.Errorf("%s failed to parse source: %v", d.Name(), err)
 		return
 	}
 
@@ -534,72 +657,24 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 	childConfigs := make([]*ChildConfig, 0)
 
 	for _, tlset := range targetGroup.Targets {
-		lbls := make(labels.Labels, 0, len(tlset)+len(targetGroup.Labels))
-		for ln, lv := range tlset {
-			lbls = append(lbls, labels.Label{
-				Name:  string(ln),
-				Value: string(lv),
-			})
-		}
-		for ln, lv := range targetGroup.Labels {
-			if _, ok := tlset[ln]; !ok {
-				lbls = append(lbls, labels.Label{
-					Name:  string(ln),
-					Value: string(lv),
-				})
-			}
-		}
-
-		sort.Sort(lbls)
-		res, orig, err := d.populateLabels(lbls)
-		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to populate labels: %v", err)
-			continue
-		}
-		if len(res) == 0 {
+		skipped := d.cache.Check(namespace, tlset, targetGroup.Labels)
+		if skipped {
+			d.mm.IncCreatedChildConfigCachedCounter()
 			continue
 		}
 
-		logger.Debugf("discover %s populate labels %+v", d.Name(), res)
-		metricTarget, err := d.makeMetricTarget(res, orig, namespace)
+		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
 		if err != nil {
+			logger.Errorf("%s handle target failed: %v", d.Name(), err)
 			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to make metric target: %v", err)
 			continue
 		}
-
-		if d.ForwardLocalhost {
-			metricTarget.Address, err = forwardAddress(metricTarget.Address)
-			if err != nil {
-				d.mm.IncCreatedChildConfigFailedCounter()
-				logger.Errorf("failed to forward address: %v, err: %v", metricTarget.Address, err)
-				continue
-			}
-		}
-
-		metricTarget.DisableCustomTimestamp = d.DisableCustomTimestamp
-		data, err := metricTarget.YamlBytes()
-		if err != nil {
-			d.mm.IncCreatedChildConfigFailedCounter()
-			logger.Errorf("failed to marshal target, err: %s", err)
+		if childConfig == nil {
+			d.cache.Set(namespace, tlset, targetGroup.Labels)
 			continue
 		}
 
 		d.mm.IncCreatedChildConfigSuccessCounter()
-		childConfig := &ChildConfig{
-			Node:      metricTarget.NodeName,
-			FileName:  metricTarget.FileName(),
-			Address:   metricTarget.Address,
-			Data:      data,
-			Scheme:    metricTarget.Scheme,
-			Path:      metricTarget.Path,
-			Mask:      metricTarget.Mask,
-			Meta:      metricTarget.Meta,
-			Namespace: metricTarget.Namespace,
-			TaskType:  metricTarget.TaskType,
-		}
-		logger.Debugf("discover %s create child config: %v", d.Name(), childConfig)
 		childConfigs = append(childConfigs, childConfig)
 	}
 
@@ -622,7 +697,7 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 	for _, cfg := range childConfigs {
 		hash := cfg.Hash()
 		if _, ok := d.childConfigGroups[source][hash]; !ok {
-			logger.Infof("discover %s adds file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
+			logger.Infof("%s adds file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 			d.childConfigGroups[source][hash] = cfg
 			changed = true
 		}
@@ -640,13 +715,13 @@ func (d *BaseDiscover) notify(source string, childConfigs []*ChildConfig) {
 
 	for _, key := range removed {
 		cfg := d.childConfigGroups[source][key]
-		logger.Infof("discover %s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
+		logger.Infof("%s deletes file, node=%s, filename=%s", d.Name(), cfg.Node, cfg.FileName)
 		delete(d.childConfigGroups[source], key)
 	}
 
 	// 如果文件有变更则发送通知
 	if changed {
-		logger.Infof("discover %s found targetgroup.source changed", source)
+		logger.Infof("%s found targetgroup.source changed", source)
 		Publish()
 	}
 }

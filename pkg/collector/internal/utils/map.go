@@ -38,6 +38,34 @@ func MergeMaps(ms ...map[string]string) map[string]string {
 	return dst
 }
 
+// 标准字段的映射关系 使用缓存可提升性能 参见 benchmark
+var mappings = map[string]string{
+	"service.name":               "service_name",
+	"service.version":            "service_version",
+	"status.code":                "status_code",
+	"bk.instance.id":             "bk_instance_id",
+	"telemetry.sdk.name":         "telemetry_sdk_name",
+	"telemetry.sdk.version":      "telemetry_sdk_version",
+	"telemetry.sdk.language":     "telemetry_sdk_language",
+	"db.name":                    "db_name",
+	"db.operation":               "db_operation",
+	"db.system":                  "db_system",
+	"net.host.port":              "net_host_port",
+	"net.host.name":              "net_host_name",
+	"http.scheme":                "http_scheme",
+	"http.method":                "http_method",
+	"http.flavor":                "http_favor",
+	"http.status_code":           "http_status_code",
+	"http.server_name":           "http_server_name",
+	"rpc.method":                 "rpc_method",
+	"rpc.service":                "rpc_service",
+	"rpc.grpc.status_code":       "rpc_grpc_status_code",
+	"peer.service":               "peer_service",
+	"messaging.system":           "messaging_system",
+	"messaging.destination":      "messaging_destination",
+	"messaging.destination_kind": "messaging_destination_kind",
+}
+
 func MergeReplaceMaps(ms ...map[string]string) map[string]string {
 	dst := make(map[string]string)
 	for _, m := range ms {
@@ -54,8 +82,13 @@ func MergeReplaceAttributeMaps(attrs ...pcommon.Map) map[string]string {
 	dst := make(map[string]string)
 	for _, attr := range attrs {
 		attr.Range(func(k string, v pcommon.Value) bool {
-			newKey := strings.ReplaceAll(k, ".", "_")
-			dst[newKey] = v.AsString()
+			newKey, ok := mappings[k]
+			if ok {
+				dst[newKey] = v.AsString()
+			} else {
+				newKey = strings.ReplaceAll(k, ".", "_")
+				dst[newKey] = v.AsString()
+			}
 			return true
 		})
 	}

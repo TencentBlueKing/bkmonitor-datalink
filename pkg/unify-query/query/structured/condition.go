@@ -39,6 +39,20 @@ type Conditions struct {
 	ConditionList []string `json:"condition_list,omitempty" example:"and"`
 }
 
+// InsertCondition 从数组顶端写入
+func (c *Conditions) InsertCondition(s string) {
+	cls := make([]string, len(c.ConditionList)+1)
+	cls = append([]string{s}, c.ConditionList...)
+	c.ConditionList = cls
+}
+
+// InsertField 从数组顶端写入
+func (c *Conditions) InsertField(field ConditionField) {
+	cfs := make([]ConditionField, len(c.FieldList)+1)
+	cfs = append([]ConditionField{field}, c.FieldList...)
+	c.FieldList = cfs
+}
+
 // AnalysisConditions
 func (c *Conditions) AnalysisConditions() (AllConditions, error) {
 
@@ -194,11 +208,11 @@ func (c AllConditions) BkSql() string {
 			}
 
 			if len(nf.Value) == 1 {
-				conditionString = append(conditionString, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, nf.Value[0]))
+				conditionString = append(conditionString, fmt.Sprintf("`%s` %s '%s'", nf.DimensionName, nf.Operator, nf.Value[0]))
 			} else {
 				var vals []string
 				for _, v := range nf.Value {
-					vals = append(vals, fmt.Sprintf("%s %s '%s'", nf.DimensionName, nf.Operator, v))
+					vals = append(vals, fmt.Sprintf("`%s` %s '%s'", nf.DimensionName, nf.Operator, v))
 				}
 				logical := promql.OrOperator
 				// 如果是不等于，则要用and连接

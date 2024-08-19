@@ -42,5 +42,4 @@ func (s *MetricbeatConfigSuite) TestConfigClean() {
 	s.Equal(define.DefaultPeriod, metaConf.MinPeriod)
 	s.Equal(define.DefaultPeriod, taskConf.Period)
 	s.Equal(define.DefaultTimeout, taskConf.Timeout)
-
 }

@@ -64,10 +64,7 @@ func NewSetCacheManager(prefix string, opt *redis.Options, concurrentLimit int) 
 
 // getSetListByBizID 通过业务ID获取集群列表
 func getSetListByBizID(ctx context.Context, bizID int) ([]map[string]interface{}, error) {
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, err
-	}
+	cmdbApi := getCmdbApi()
 
 	// 请求集群信息
 	result, err := api.BatchApiRequest(
@@ -120,7 +117,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 	// 请求集群信息
 	result, err := getSetListByBizID(ctx, bizID)
 	if err != nil {
-		return errors.Wrap(err, "failed to get set list by biz")
+		return errors.Wrapf(err, "failed to get set list by biz: %d", bizID)
 	}
 
 	// 准备缓存数据
@@ -168,7 +165,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 		if err != nil {
 			return errors.Wrapf(err, "refresh set template cache by biz: %d failed", bizID)
 		}
-		logger.Infof("refresh service_template cache by biz: %d, service_template count: %d", bizID, len(setTemplateCacheData))
+		logger.Infof("refresh set_template cache by biz: %d, set_template count: %d", bizID, len(setTemplateCacheData))
 	}
 
 	return nil

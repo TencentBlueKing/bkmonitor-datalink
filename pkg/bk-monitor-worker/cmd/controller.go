@@ -78,7 +78,7 @@ func startController(cmd *cobra.Command, args []string) {
 	go daemonTaskScheduler.Run()
 
 	logger.Infof("Task module started.")
-	s := make(chan os.Signal)
+	s := make(chan os.Signal, 1)
 	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
 	for {
 		switch <-s {

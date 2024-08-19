@@ -385,7 +385,7 @@ func initVirtualInterfaceSet() error {
 
 // not implemented
 func GetNetInfoFromDev() (map[string]NetInfo, error) {
-	//return nil, fmt.Errorf("get netinfo from dev not implemented in windows")
+	// return nil, fmt.Errorf("get netinfo from dev not implemented in windows")
 	return nil, nil
 }
 

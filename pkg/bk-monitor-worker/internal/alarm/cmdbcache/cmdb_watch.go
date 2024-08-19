@@ -82,10 +82,7 @@ func NewCmdbResourceWatcher(prefix string, rOpt *redis.Options) (*CmdbResourceWa
 	}
 
 	// 创建cmdb api client
-	cmdbApi, err := api.GetCmdbApi()
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cmdb api client")
-	}
+	cmdbApi := getCmdbApi()
 
 	return &CmdbResourceWatcher{
 		prefix:      prefix,
@@ -287,6 +284,11 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheType string, f
 		resourceTypes:       resourceTypes,
 		fullRefreshInterval: fullRefreshInterval,
 	}, nil
+}
+
+// Close 关闭操作
+func (h *CmdbEventHandler) Close() {
+	GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
 // getBkEvents 获取全部资源变更事件
@@ -528,6 +530,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 				// 事件处理间隔时间
 				select {
 				case <-cancelCtx.Done():
+					handler.Close()
 					return
 				case <-time.After(eventHandleInterval - time.Now().Sub(tn)):
 				}

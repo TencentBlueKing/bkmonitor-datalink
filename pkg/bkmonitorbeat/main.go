@@ -10,6 +10,9 @@
 package main
 
 import (
+	"context"
+	"crypto/md5"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +29,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs/validator"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report"
 	senderagent "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/agent"
 	senderhttp "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/report/sender/http"
@@ -35,13 +39,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// build vars
 var (
 	BeatName         = "bkmonitorbeat"
 	Version          = "unknown"
 	reportFlag       = flag.Bool("report", false, "Report event to time series to bkmonitorproxy")
 	fakeproc         = flag.String("fakeproc", "", "Show the real pid of the mapping process info")
 	disableNormalize = flag.Bool("disable-normalize", false, "If present, disable data normalization")
+
+	verifyRpm             = flag.Bool("verify-rpm", false, "If present, display the rpm packages verify result")
+	cgroupBlockWriteBytes = flag.Int("cgroup-block-write-bytes", 0, "set root devices block io write bytes")
+	cgroupBlockReadBytes  = flag.Int("cgroup-block-read-bytes", 0, "set root devices block io read bytes")
+	cgroupBlockWriteIOps  = flag.Int("cgroup-block-write-iops", 0, "set root devices block io write iops")
+	cgroupBlockReadIOps   = flag.Int("cgroup-block-read-iops", 0, "set root devices block io read iops")
 )
 
 func registerValidators() {
@@ -91,6 +100,41 @@ func main() {
 		os.Exit(0)
 	}
 
+	if *verifyRpm {
+		logger.SetOptions(logger.Options{DevNull: true})
+		exe, _ := os.Executable()
+		h := fmt.Sprintf("%x", md5.Sum([]byte(exe)))
+
+		major, minor, err := utils.GetRootDevices()
+		if err != nil {
+			fmt.Println("failed to get root devices:", err)
+			os.Exit(1)
+		}
+
+		err = utils.SetLinuxCGroup(fmt.Sprintf("blockio-%s", h), utils.SpecBlockIO{
+			Major:      major,
+			Minor:      minor,
+			WriteBytes: uint64(*cgroupBlockWriteBytes),
+			ReadBytes:  uint64(*cgroupBlockReadBytes),
+			WriteIOps:  uint64(*cgroupBlockWriteIOps),
+			ReadIOps:   uint64(*cgroupBlockReadIOps),
+		})
+		if err != nil {
+			fmt.Println("failed to set block cgroup:", err)
+			os.Exit(1)
+		}
+
+		ret, err := utils.RpmVerify(context.Background())
+		if err != nil {
+			fmt.Println("failed to verify rpm packages:", err)
+			os.Exit(1)
+		}
+
+		b, _ := json.Marshal(ret)
+		fmt.Println(string(b))
+		os.Exit(0)
+	}
+
 	senderagent.Register(time.Millisecond * 100)
 	// add from base reporter
 	c := make(chan os.Signal, 1)
@@ -114,20 +158,14 @@ func main() {
 		fmt.Printf("failed to parse logging config: %v\n", err)
 		os.Exit(1)
 	}
-	type LogConfig struct {
-		Stdout  bool   `config:"stdout"`
-		Level   string `config:"level"`
-		Path    string `config:"path"`
-		MaxSize int    `config:"maxsize"`
-		MaxAge  int    `config:"maxage"`
-		Backups int    `config:"backups"`
-	}
-	var logCfg LogConfig
+
+	var logCfg define.LogConfig
 	if err := logCfgContent.Unpack(&logCfg); err != nil {
 		fmt.Printf("failed to unpack logging config: %v\n", err)
 		os.Exit(1)
 	}
 
+	define.SetLogConfig(logCfg)
 	logger.SetOptions(logger.Options{
 		Stdout:     logCfg.Stdout,
 		Filename:   filepath.Join(logCfg.Path, "bkmonitorbeat.log"),

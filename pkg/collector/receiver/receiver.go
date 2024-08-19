@@ -10,12 +10,16 @@
 package receiver
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/TarsCloud/TarsGo/tars"
+	tarstransport "github.com/TarsCloud/TarsGo/tars/transport"
+	"github.com/TarsCloud/TarsGo/tars/util/tools"
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/elastic/beats/libbeat/outputs/transport"
 	"github.com/pkg/errors"
@@ -37,6 +41,7 @@ type Receiver struct {
 	recvServer  *http.Server // 接收服务
 	recvTls     *transport.TLSConfig
 	grpcServer  *grpc.Server
+	tarsServer  *tarstransport.TarsServer
 }
 
 var (
@@ -122,41 +127,10 @@ func New(conf *confengine.Config) (*Receiver, error) {
 }
 
 func (r *Receiver) ready() {
+	config := GetComponentConfig()
 	for k, f := range componentsReady {
-		switch k {
-		case define.SourceJaeger:
-			if GetComponentConfig().Jaeger.Enabled {
-				f()
-			}
-		case define.SourceOtlp:
-			if GetComponentConfig().Otlp.Enabled {
-				f()
-			}
-		case define.SourcePushGateway:
-			if GetComponentConfig().PushGateway.Enabled {
-				f()
-			}
-		case define.SourceRemoteWrite:
-			if GetComponentConfig().RemoteWrite.Enabled {
-				f()
-			}
-		case define.SourceZipkin:
-			if GetComponentConfig().Zipkin.Enabled {
-				f()
-			}
-		case define.SourceSkywalking:
-			if GetComponentConfig().Skywalking.Enabled {
-				f()
-			}
-		case define.SourcePyroscope:
-			if GetComponentConfig().Pyroscope.Enabled {
-				f()
-			}
-		case define.SourceFta:
-			if GetComponentConfig().Fta.Enabled {
-				f()
-			}
-		}
+		f(config)
+		logger.Infof("register '%s' component", k)
 	}
 }
 
@@ -209,7 +183,7 @@ func (r *Receiver) starAdminHttpServer() error {
 		return err
 	}
 
-	logger.Infof("register http admin route: %+v", AdminHttpRouter())
+	logger.Infof("register http admin route: %+v", AdminHttpRoutes())
 	return r.adminServer.Serve(l)
 }
 
@@ -236,6 +210,32 @@ func (r *Receiver) startGrpcServer() error {
 		return err
 	}
 	return r.grpcServer.Serve(l)
+}
+
+func (r *Receiver) startTarsServer() error {
+	endpoint := r.config.TarsServer.Endpoint
+	logger.Infof("start to listen tars server at: %v", endpoint)
+
+	conf := &tarstransport.TarsServerConf{
+		Proto:          r.config.TarsServer.Transport,
+		Address:        endpoint,
+		MaxInvoke:      tars.MaxInvoke,
+		AcceptTimeout:  tools.ParseTimeOut(tars.AcceptTimeout),
+		ReadTimeout:    tools.ParseTimeOut(tars.ReadTimeout),
+		WriteTimeout:   tools.ParseTimeOut(tars.WriteTimeout),
+		HandleTimeout:  tools.ParseTimeOut(tars.HandleTimeout),
+		IdleTimeout:    tools.ParseTimeOut(tars.IdleTimeout),
+		QueueCap:       tars.QueueCap,
+		TCPReadBuffer:  tars.TCPReadBuffer,
+		TCPWriteBuffer: tars.TCPWriteBuffer,
+		TCPNoDelay:     tars.TCPNoDelay,
+	}
+	s := NewTarsProtocol(serviceMgr.tarsServants, true)
+	r.tarsServer = tarstransport.NewTarsServer(s, conf)
+	if err := r.tarsServer.Listen(); err != nil {
+		return err
+	}
+	return r.tarsServer.Serve()
 }
 
 func (r *Receiver) Start() error {
@@ -288,6 +288,18 @@ func (r *Receiver) Start() error {
 		}
 	}()
 
+	// 启动 Recv Tars 服务
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		if !r.config.TarsServer.Enabled {
+			return
+		}
+		if err := r.startTarsServer(); err != nil {
+			errs <- err
+		}
+	}()
+
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	select {
@@ -318,6 +330,17 @@ func (r *Receiver) Stop() error {
 
 	if r.config.GrpcServer.Enabled {
 		r.grpcServer.Stop()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if r.config.TarsServer.Enabled {
+		if err := r.tarsServer.Shutdown(ctx); err != nil {
+			logger.Errorf("receiver stop tars server got err: %v", err)
+		} else {
+			logger.Info("receiver tars server stopped")
+		}
 	}
 
 	r.wg.Wait()

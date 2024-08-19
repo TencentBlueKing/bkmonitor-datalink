@@ -18,8 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
-type TestMetaConfig struct {
-}
+type TestMetaConfig struct{}
 
 func (c *TestMetaConfig) Clean() error {
 	return nil
@@ -41,7 +40,6 @@ func (s *ChildConfigSuite) TestClean() {
 	child.Type = "fff"
 	err := child.Clean()
 	s.Equal(nil, err)
-
 }
 
 func TestRun(t *testing.T) {

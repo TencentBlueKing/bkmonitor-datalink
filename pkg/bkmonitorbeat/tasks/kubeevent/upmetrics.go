@@ -44,8 +44,12 @@ func CodeMetrics(dataID int32, taskConfig define.TaskConfig, receive, report int
 		},
 	}
 
+	var kvs []define.LogKV
+	for k, v := range dims {
+		kvs = append(kvs, define.LogKV{K: k, V: v})
+	}
 	for k, v := range ev.Metrics {
-		define.RecordLog(fmt.Sprintf("[%s] %s{} %f", taskConfig.GetType(), k, v), nil)
+		define.RecordLog(fmt.Sprintf("[%s] %s{} %f", taskConfig.GetType(), k, v), kvs)
 	}
 	return ev
 }

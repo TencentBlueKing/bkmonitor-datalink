@@ -126,6 +126,7 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 		return
 	}
 
+	// kubeevent 任务的自监控使用 custommetrics dataid
 	upMetricsDataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, false)
 	if err != nil {
 		logger.Errorf("no upmetrics dataid found, err: %s", err)

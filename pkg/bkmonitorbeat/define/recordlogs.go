@@ -41,7 +41,7 @@ func newRecordLogs(c LogConfig) *recordLogs {
 }
 
 func RecordLog(template string, kvs []LogKV) {
-	template = fmt.Sprintf("%s; fields=%+v", template, kvs)
+	template = fmt.Sprintf("%s; kvs=%+v", template, kvs)
 	rl.l.Info(template)
 }
 

@@ -135,6 +135,18 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		denyTargetNamespaces[namespace] = struct{}{}
 	}
 
+	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
+	if err != nil {
+		parsedVersion = semver.MustParse("1.12.0") // 最低支持的 k8s 版本
+		logger.Errorf("parse kubernetes version failed, instead of '%v', err: %v", parsedVersion, err)
+	}
+
+	// 1.21.0 开始 endpointslice 正式成为 v1
+	endpointSliceSupported = parsedVersion.GTE(semver.MustParse("1.21.0"))
+	if endpointSliceSupported {
+		logger.Info("use 'endpointslice' instead of 'endpoint'")
+	}
+
 	if ConfEnableServiceMonitor {
 		operator.serviceMonitorInformer, err = prominformers.NewInformersForResource(
 			prominformers.NewMonitoringInformerFactories(
@@ -185,7 +197,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
 		}
-		operator.promsliController = promsli.NewController(operator.ctx, operator.client)
+		operator.promsliController = promsli.NewController(operator.ctx, operator.client, endpointSliceSupported)
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
@@ -204,16 +216,6 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 	kubernetesVersion = version.String()
 	operator.mm.SetKubernetesVersion(kubernetesVersion)
-
-	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
-	if err != nil {
-		parsedVersion = semver.MustParse("1.16.0")
-		logger.Errorf("parse kubernetes version failed, instead of '%v', err: %v", parsedVersion, err)
-	}
-
-	// 1.21.0 开始 endpointslice 正式成为 v1
-	endpointSliceSupported = parsedVersion.GTE(semver.MustParse("1.21.0"))
-	logger.Infof("kubernetesVersion=%s, endpointSliceSupported=%v", kubernetesVersion, endpointSliceSupported)
 
 	return operator, nil
 }
@@ -589,8 +591,8 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				AntiAffinity:           feature.IfAntiAffinity(serviceMonitor.Annotations),
 				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
-				EndpointSliceSupported: endpointSliceSupported,
 				LabelJoinMatcher:       feature.LabelJoinMatcher(serviceMonitor.Annotations),
+				EndpointSliceSupported: endpointSliceSupported,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,
@@ -791,8 +793,8 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				AntiAffinity:           feature.IfAntiAffinity(podMonitor.Annotations),
 				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
-				EndpointSliceSupported: endpointSliceSupported,
 				LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
+				EndpointSliceSupported: endpointSliceSupported,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,

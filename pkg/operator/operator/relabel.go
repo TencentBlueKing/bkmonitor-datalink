@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 func sanitizeLabelName(name string) string {
@@ -147,19 +149,11 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 
 	// Filter targets based on correct port for the endpoint.
 	if ep.Port != "" {
-		if endpointSliceSupported {
-			relabelings = append(relabelings, yaml.MapSlice{
-				{Key: "action", Value: "keep"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_endpointslice_port_name"}},
-				{Key: "regex", Value: ep.Port},
-			})
-		} else {
-			relabelings = append(relabelings, yaml.MapSlice{
-				{Key: "action", Value: "keep"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_port_name"}},
-				{Key: "regex", Value: ep.Port},
-			})
-		}
+		relabelings = append(relabelings, yaml.MapSlice{
+			{Key: "action", Value: "keep"},
+			{Key: "source_labels", Value: []string{define.LabelEndpointAddressPortName(endpointSliceSupported)}},
+			{Key: "regex", Value: ep.Port},
+		})
 	} else if ep.TargetPort != nil {
 		if ep.TargetPort.StrVal != "" {
 			relabelings = append(relabelings, yaml.MapSlice{
@@ -176,48 +170,22 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 		}
 	}
 
-	relabelTargetKindNode := func() yaml.MapSlice {
-		if endpointSliceSupported {
-			return yaml.MapSlice{ // Relabel node labels for pre v2.3 meta labels
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_endpointslice_address_target_kind", "__meta_kubernetes_endpointslice_address_target_name"}},
-				{Key: "separator", Value: ";"},
-				{Key: "regex", Value: "Node;(.*)"},
-				{Key: "replacement", Value: "${1}"},
-				{Key: "target_label", Value: "node"},
-			}
-		}
-		return yaml.MapSlice{ // Relabel node labels for pre v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+	// Relabel namespace and pod and service labels into proper labels.
+	relabelings = append(relabelings, []yaml.MapSlice{
+		{ // Relabel node labels for pre v2.3 meta labels
+			{Key: "source_labels", Value: []string{define.LabelEndpointAddressTargetKind(endpointSliceSupported), define.LabelEndpointAddressTargetName(endpointSliceSupported)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Node;(.*)"},
 			{Key: "replacement", Value: "${1}"},
 			{Key: "target_label", Value: "node"},
-		}
-	}
-
-	relabelTargetKindPod := func() yaml.MapSlice {
-		if endpointSliceSupported {
-			return yaml.MapSlice{ // Relabel pod labels for >=v2.3 meta labels
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_endpointslice_address_target_kind", "__meta_kubernetes_endpointslice_address_target_name"}},
-				{Key: "separator", Value: ";"},
-				{Key: "regex", Value: "Pod;(.*)"},
-				{Key: "replacement", Value: "${1}"},
-				{Key: "target_label", Value: "pod"},
-			}
-		}
-		return yaml.MapSlice{ // Relabel pod labels for >=v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+		},
+		{ // Relabel pod labels for >=v2.3 meta labels
+			{Key: "source_labels", Value: []string{define.LabelEndpointAddressTargetKind(endpointSliceSupported), define.LabelEndpointAddressTargetName(endpointSliceSupported)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Pod;(.*)"},
 			{Key: "replacement", Value: "${1}"},
 			{Key: "target_label", Value: "pod"},
-		}
-	}
-
-	// Relabel namespace and pod and service labels into proper labels.
-	relabelings = append(relabelings, []yaml.MapSlice{
-		relabelTargetKindNode(),
-		relabelTargetKindPod(),
+		},
 		{
 			{Key: "source_labels", Value: []string{"__meta_kubernetes_namespace"}},
 			{Key: "target_label", Value: "namespace"},

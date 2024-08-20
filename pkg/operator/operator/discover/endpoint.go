@@ -21,27 +21,6 @@ const (
 	labelPodAddressTargetName = "__meta_kubernetes_pod_address_target_name"
 )
 
-func labelEndpointNodeName(endpointslice bool) string {
-	if endpointslice {
-		return "__meta_kubernetes_endpointslice_node_name"
-	}
-	return "__meta_kubernetes_endpoint_node_name"
-}
-
-func labelEndpointAddressTargetKind(endpointslice bool) string {
-	if endpointslice {
-		return "__meta_kubernetes_endpointslice_address_target_kind"
-	}
-	return "__meta_kubernetes_endpoint_address_target_kind"
-}
-
-func labelEndpointAddressTargetName(endpointslice bool) string {
-	if endpointslice {
-		return "__meta_kubernetes_endpointslice_address_target_name"
-	}
-	return "__meta_kubernetes_endpoint_address_target_name"
-}
-
 func discoverTypeEndpoints(endpointslice bool) string {
 	if endpointslice {
 		return "endpointslice"

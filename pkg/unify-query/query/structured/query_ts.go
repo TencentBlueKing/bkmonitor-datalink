@@ -730,6 +730,7 @@ func (q *Query) BuildMetadataQuery(
 	query.Measurements = measurements
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
+	query.SourceType = tsDB.SourceType
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)

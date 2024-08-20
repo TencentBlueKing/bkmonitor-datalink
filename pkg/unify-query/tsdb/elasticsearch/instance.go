@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -92,6 +94,8 @@ type InstanceOption struct {
 	MaxSize    int
 	MaxRouting int
 	Timeout    time.Duration
+	Headers    http.Header
+	SourceType string
 }
 
 type queryOption struct {
@@ -117,7 +121,6 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
-
 	ins := &Instance{
 		ctx:     ctx,
 		timeout: opt.Timeout,
@@ -135,7 +138,25 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		elastic.SetSniff(false),
 	}
 	if opt.Username != "" && opt.Password != "" {
-		cliOpts = append(cliOpts, elastic.SetBasicAuth(opt.Username, opt.Password))
+		cliOpts = append(
+			cliOpts,
+			elastic.SetBasicAuth(opt.Username, opt.Password),
+		)
+	}
+
+	if opt.SourceType == structured.BkData {
+		headers := bkapi.GetBkDataApi().Headers(nil)
+		httpHeaders := make(http.Header)
+		for k, v := range headers {
+			httpHeaders[k] = []string{v}
+		}
+
+		cliOpts = append(
+			cliOpts,
+			elastic.SetHealthcheck(false),
+			elastic.SetHeaders(httpHeaders),
+		)
+
 	}
 
 	cli, err := elastic.NewClient(cliOpts...)
@@ -170,7 +191,7 @@ func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[str
 	}()
 
 	span.Set("alias", aliases)
-	mappingMap, err := i.client.GetMapping().Index(aliases...).Do(ctx)
+	mappingMap, err := i.client.GetMapping().Index(aliases...).Type("").Do(ctx)
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {

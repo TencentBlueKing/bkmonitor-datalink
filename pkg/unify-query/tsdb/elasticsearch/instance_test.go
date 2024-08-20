@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -36,11 +37,16 @@ func TestInstance_queryReference(t *testing.T) {
 	timeout := viper.GetDuration("mock.es.timeout")
 	maxSize := viper.GetInt("mock.es.max_size")
 	maxRouting := viper.GetInt("mock.es.max_routing")
+	sourceType := viper.GetString("mock.es.source_type")
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
+
+	if sourceType == "bkdata" {
+		address = bkapi.GetBkDataApi().Url("es")
+	}
 
 	ins, err := NewInstance(ctx, &InstanceOption{
 		Address:    address,
@@ -48,17 +54,25 @@ func TestInstance_queryReference(t *testing.T) {
 		Password:   password,
 		MaxRouting: maxRouting,
 		MaxSize:    maxSize,
+		SourceType: sourceType,
 	})
 	if err != nil {
 		t.Fatal(err)
 		return
 	}
 
-	defaultStart := time.UnixMilli(1717027200000)
-	defaultEnd := time.UnixMilli(1717027230000)
+	defaultEnd := time.Now()
+	defaultStart := defaultEnd.Add(time.Hour * -1)
 
-	db := "2_bklog_bkapigateway_esb_container1_*_read"
-	field := "gseIndex"
+	//db := "2_bklog_bk_unify_query_*_read"
+	//field := "gseIndex"
+
+	// bkdata db
+	defaultEnd = time.UnixMilli(1722527999000)
+	defaultStart = time.UnixMilli(1717171200000)
+
+	db := "39_bklog_bkaudit_plugin_20240723_66b8acde57_202407*"
+	field := "dtEventTimeStamp"
 
 	for idx, c := range map[string]struct {
 		query *metadata.Query
@@ -89,8 +103,8 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				QueryString: "fields.field_name: bk-dev-3",
 			},
-			start: time.UnixMilli(1717482000000),
-			end:   time.UnixMilli(1717482160000),
+			start: defaultStart,
+			end:   defaultEnd,
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{
@@ -202,6 +216,11 @@ func TestInstance_queryReference(t *testing.T) {
 				Field: field,
 				From:  0,
 				Size:  10,
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+					Type: TimeFieldTypeTime,
+					Unit: Millisecond,
+				},
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},

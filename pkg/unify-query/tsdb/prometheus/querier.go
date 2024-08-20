@@ -407,6 +407,7 @@ func GetInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			MaxSize:    stg.MaxLimit,
 			Timeout:    stg.Timeout,
 			MaxRouting: stg.MaxRouting,
+			SourceType: qry.SourceType,
 		}
 		instance, err = elasticsearch.NewInstance(ctx, instOption)
 		if err != nil {

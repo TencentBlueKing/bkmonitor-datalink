@@ -85,7 +85,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 				leftQ = elastic.NewNestedQuery(key, leftQ)
 			}
 		} else {
-			leftQ = elastic.NewQueryStringQuery(c.Value)
+			leftQ = elastic.NewQueryStringQuery(fmt.Sprintf(`"%s"`, c.Value))
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)
@@ -110,7 +110,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 				leftQ = elastic.NewNestedQuery(key, leftQ)
 			}
 		} else {
-			leftQ = elastic.NewQueryStringQuery(c.Value)
+			leftQ = elastic.NewQueryStringQuery(c.Value).AnalyzeWildcard(true)
 		}
 	default:
 		err = fmt.Errorf("condition type is not match %T", condition)

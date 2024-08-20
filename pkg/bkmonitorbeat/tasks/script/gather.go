@@ -53,16 +53,14 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		timeHandler, _ = tasks.GetTimestampHandler("ms") // 兜底
 	}
 
-	logger.Infof("task command (%s) timeout config %v", taskConf.Command, taskConf.Timeout)
 	cmdCtx, cmdCancel := context.WithTimeout(ctx, taskConf.Timeout)
 	defer cmdCancel()
-
-	fmtCommand := ShellWordPreProcess(taskConf.Command)
+	command := ShellWordPreProcess(taskConf.Command)
 
 	t0 := time.Now()
-	out, err := ExecCmdLine(cmdCtx, fmtCommand, taskConf.UserEnvs)
+	out, err := ExecCmdLine(cmdCtx, command, taskConf.UserEnvs)
 	if err != nil {
-		logger.Errorf("execCmd [%s] failed: %s, content: [%s]", fmtCommand, err, out)
+		logger.Errorf("execute command (%s) failed, out=(%s), err: %v", command, out, err)
 		if errors.Is(err, utils.ErrScriptTimeout) {
 			e <- tasks.NewGatherUpEvent(g, define.CodeScriptTimeout)
 		} else {
@@ -70,7 +68,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 		return
 	}
-	logger.Infof("task command(%s) take: %v", fmtCommand, time.Since(t0))
+	logger.Debugf("task command(%s) take %v, out=(%s)", command, time.Since(t0), out)
 
 	aggRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
 	if errors.Is(formatErr, define.ErrNoScriptOutput) {
@@ -134,9 +132,9 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	if formatErr != nil {
 		e <- tasks.NewGatherUpEvent(g, define.CodeInvalidPromFormat)
 		if len(aggRst) == 0 {
-			logger.Errorf("format output failed totally: %s", formatErr)
+			logger.Errorf("command(%s) format output failed totally: %s", command, formatErr)
 		} else {
-			logger.Errorf("format output failed partly: %s", formatErr)
+			logger.Errorf("command(%s) format output failed partly: %s", command, formatErr)
 		}
 	} else {
 		total++
@@ -153,7 +151,7 @@ func (g *Gather) KeepOneDimension(data map[int64]map[string]tasks.PromEvent) {
 		newSubResult := make(map[string]tasks.PromEvent)
 		for dimensionKey, pe := range subResult {
 			// 清理部分指标，当前面的维度已经包含了某个指标后，那么接下来的维度里，则删除这个指标
-			lenOfdimensionNames := len(pe.Labels)
+			dimensionNamesLen := len(pe.Labels)
 			dimFieldNames := make([]string, 0)
 			for dimK := range pe.Labels {
 				dimFieldNames = append(dimFieldNames, dimK)
@@ -163,7 +161,7 @@ func (g *Gather) KeepOneDimension(data map[int64]map[string]tasks.PromEvent) {
 
 			newAggValue := make(common.MapStr)
 			for aggKey, aggValue := range pe.AggreValue {
-				dimFieldNames[lenOfdimensionNames] = aggKey
+				dimFieldNames[dimensionNamesLen] = aggKey
 				hashKey := utils.GeneratorHashKey(dimFieldNames)
 				if !keySet.Has(hashKey) {
 					keySet.Add(hashKey)

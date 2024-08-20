@@ -108,7 +108,7 @@ type ChildConfig struct {
 }
 
 func (c ChildConfig) String() string {
-	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s, Data=%s", c.Node, c.FileName, c.Address, string(c.Data))
+	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s", c.Node, c.FileName, c.Address)
 }
 
 func (c ChildConfig) Hash() uint64 {

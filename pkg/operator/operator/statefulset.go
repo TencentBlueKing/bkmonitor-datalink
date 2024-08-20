@@ -104,7 +104,7 @@ func (c *Operator) handleStatefulSetWorkerUpdate(oldObj, newObj interface{}) {
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		logger.Debugf("StatefulSet %+v does not change", old)
+		logger.Debugf("StatefulSet '%s/%s' does not change", old.Namespace, old.Name)
 		return
 	}
 

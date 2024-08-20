@@ -135,6 +135,13 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		denyTargetNamespaces[namespace] = struct{}{}
 	}
 
+	version, err := operator.client.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+	kubernetesVersion = version.String()
+	operator.mm.SetKubernetesVersion(kubernetesVersion)
+
 	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
 	if err != nil {
 		parsedVersion = semver.MustParse("1.12.0") // 最低支持的 k8s 版本
@@ -209,13 +216,6 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
-
-	version, err := operator.client.Discovery().ServerVersion()
-	if err != nil {
-		return nil, err
-	}
-	kubernetesVersion = version.String()
-	operator.mm.SetKubernetesVersion(kubernetesVersion)
 
 	return operator, nil
 }
@@ -664,7 +664,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		logger.Debugf("serviceMonitor %+v does not change", old)
+		logger.Debugf("serviceMonitor '%s/%s' does not change", old.Namespace, old.Name)
 		return
 	}
 
@@ -888,7 +888,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		logger.Debugf("podMonitor %+v does not change", old)
+		logger.Debugf("podMonitor '%s/%s' does not change", old.Namespace, old.Name)
 		return
 	}
 

@@ -151,7 +151,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{define.LabelEndpointAddressPortName(endpointSliceSupported)}},
+			{Key: "source_labels", Value: []string{define.LabelEndpointPortName(endpointSliceSupported)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {

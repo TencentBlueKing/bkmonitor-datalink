@@ -452,7 +452,7 @@ func (c *Controller) generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonito
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			yaml.MapItem{Key: "source_labels", Value: []string{define.LabelEndpointAddressPortName(c.endpointSliceSupported)}},
+			yaml.MapItem{Key: "source_labels", Value: []string{define.LabelEndpointPortName(c.endpointSliceSupported)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {

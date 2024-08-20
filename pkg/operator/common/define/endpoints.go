@@ -30,7 +30,7 @@ func LabelEndpointAddressTargetName(endpointslice bool) string {
 	return "__meta_kubernetes_endpoint_address_target_name"
 }
 
-func LabelEndpointAddressPortName(endpointslice bool) string {
+func LabelEndpointPortName(endpointslice bool) string {
 	if endpointslice {
 		return "__meta_kubernetes_endpointslice_port_name"
 	}

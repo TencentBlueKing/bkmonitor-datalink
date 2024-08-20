@@ -51,6 +51,7 @@ const (
 	CmdbResourceTypeModule           CmdbResourceType = "module"
 	CmdbResourceTypeMainlineInstance CmdbResourceType = "mainline_instance"
 	CmdbResourceTypeProcess          CmdbResourceType = "process"
+	CmdbResourceTypeDynamicGroup     CmdbResourceType = "dynamic_group"
 )
 
 // CmdbResourceTypeFields cmdb资源类型对应的监听字段
@@ -359,6 +360,27 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 
 // Handle 处理cmdb资源变更事件
 func (h *CmdbEventHandler) Handle(ctx context.Context) {
+	// 如果超过全量刷新间隔时间，执行全量刷新
+	if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
+		// 全量刷新
+		err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
+		if err != nil {
+			logger.Errorf("refresh all cache failed: %v", err)
+		}
+
+		logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
+
+		// 记录全量刷新时间
+		lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
+		_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
+		if err != nil {
+			logger.Errorf("set last update time error: %v", err)
+		}
+
+		return
+	}
+
+	// 处理资源变更事件
 	for _, resourceType := range h.resourceTypes {
 		// 获取资源变更事件
 		events, err := h.getBkEvents(ctx, resourceType)
@@ -371,26 +393,6 @@ func (h *CmdbEventHandler) Handle(ctx context.Context) {
 
 		// 重置
 		h.cacheManager.Reset()
-
-		// 如果超过全量刷新间隔时间，执行全量刷新
-		if h.ifRunRefreshAll(ctx, h.cacheManager.Type()) {
-			// 全量刷新
-			err := RefreshAll(ctx, h.cacheManager, h.cacheManager.GetConcurrentLimit())
-			if err != nil {
-				logger.Errorf("refresh all cache failed: %v", err)
-			}
-
-			logger.Infof("refresh all cmdb resource(%s) cache", h.cacheManager.Type())
-
-			// 记录全量刷新时间
-			lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, h.cacheManager.Type())
-			_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
-			if err != nil {
-				logger.Errorf("set last update time error: %v", err)
-			}
-
-			return
-		}
 
 		// 无事件
 		if len(events) == 0 {
@@ -436,6 +438,7 @@ var cmdbEventHandlerResourceTypeMap = map[string][]CmdbResourceType{
 	"module":           {CmdbResourceTypeModule},
 	"set":              {CmdbResourceTypeSet},
 	"service_instance": {CmdbResourceTypeProcess},
+	"dynamic_group":    {CmdbResourceTypeDynamicGroup},
 }
 
 // RefreshTaskParams cmdb缓存刷新任务参数

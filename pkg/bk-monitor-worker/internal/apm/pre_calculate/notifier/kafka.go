@@ -14,7 +14,7 @@ import (
 	"crypto/sha512"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/Shopify/sarama"
 	"github.com/bytedance/sonic"
 	"github.com/xdg-go/scram"
 	"k8s.io/client-go/util/flowcontrol"

@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package collector
 
@@ -88,7 +87,6 @@ func Init() {
 	NodeIP = info.IP
 	BizID = info.Bizid
 	CloudID = info.Cloudid
-
 }
 
 func (e ExceptionBeatEvent) AsMapStr() common.MapStr {
@@ -127,7 +125,7 @@ func SendBulk(dataid int, extra []beat.MapStr, e chan<- define.Event) {
 		}
 
 		delete(extraitem, "event_time")
-		var value = []beat.MapStr{
+		value := []beat.MapStr{
 			{
 				"event_desc":          "",
 				"event_raw_id":        newID - 1,

@@ -106,22 +106,6 @@ func TestSpacePusher_refineEsTableIds(t *testing.T) {
 	assert.ElementsMatch(t, []string{itableName, itableName1}, ids)
 }
 
-func TestDbfieldIsNull(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-
-	var esStorage storage.ESStorage
-	storage.NewESStorageQuerySet(db).
-		Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet).
-		TableIDEq("system.net").One(&esStorage)
-
-	s := &SpacePusher{}
-	t.Run("TestDbfieldIsNull", func(t *testing.T) {
-		_, detailStr, _ := s.composeEsTableIdDetail("system.net", map[string]interface{}{}, 3, "log", esStorage.IndexSet)
-		assert.Equal(t, `{"storage_id": 3,"db":"system_net_*_read","measurement": "__default__"}`, detailStr)
-	})
-}
-
 func TestSpacePusher_GetBizIdBySpace(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -195,30 +179,6 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
 			datavalues, _ := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
 			assert.Equal(t, tt.want, datavalues)
-		})
-	}
-}
-
-func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
-	tests := []struct {
-		tableId          string
-		storageClusterId uint
-		sourceType       string
-		indexSet         string
-		want             string
-	}{
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index_1_*_read,index_2_*_read,index_3_*_read","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "", want: `{"storage_id": 3,"db":"apache_net_*_read","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "bkdata", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1_*,index.2_*,index.3_*","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "es", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1,index.2,index.3","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "es1234", indexSet: "index.1,index.2,index.3", want: ""},
-	}
-
-	s := &SpacePusher{}
-	for _, tt := range tests {
-		t.Run(tt.tableId+tt.sourceType, func(t *testing.T) {
-			_, detailStr, _ := s.composeEsTableIdDetail(tt.tableId, map[string]interface{}{}, tt.storageClusterId, tt.sourceType, tt.indexSet)
-			assert.Equal(t, tt.want, detailStr)
 		})
 	}
 }
@@ -435,38 +395,6 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	dataList, ok := cache.Get(CachedClusterDataIdKey)
 	assert.True(t, ok)
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
-}
-
-func TestComposeEsTableIdDetail(t *testing.T) {
-	defaultStorageClusterId := 1
-	sourceType := "es"
-	indexSet := "system"
-	tests := []struct {
-		name            string
-		tableId         string
-		expectedTableId string
-	}{
-		{"table_id_with_dot", "test.demo", "test.demo"},
-		{"table_id_without_dot", "test_demo", "test_demo.__default__"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, map[string]interface{}{}, uint(defaultStorageClusterId), sourceType, indexSet)
-			assert.Equal(t, tt.expectedTableId, actualTableId)
-		})
-	}
-
-	// 检验 key
-	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", map[string]interface{}{}, uint(defaultStorageClusterId), sourceType, indexSet)
-	var detail map[string]any
-	err := jsonx.UnmarshalString(detailStr, &detail)
-	assert.NoError(t, err)
-	expectedKey := mapset.NewSet[string]("storage_id", "db", "measurement")
-	actualKey := mapset.NewSet[string]()
-	for key, _ := range detail {
-		actualKey.Add(key)
-	}
-	assert.True(t, expectedKey.Equal(actualKey))
 }
 
 func TestGetDataLabelByTableId(t *testing.T) {

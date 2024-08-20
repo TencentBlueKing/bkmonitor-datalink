@@ -590,6 +590,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
 				EndpointSliceSupported: endpointSliceSupported,
+				LabelJoinMatcher:       feature.LabelJoinMatcher(serviceMonitor.Annotations),
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,
@@ -780,6 +781,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		if tlsConfig != nil {
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
+
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
 				Client:                 c.client,
@@ -790,6 +792,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
 				EndpointSliceSupported: endpointSliceSupported,
+				LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,

@@ -32,7 +32,7 @@ func Test_UdpProtoCountersWin(t *testing.T) {
 }
 
 func Test_ProtoCountersWin(t *testing.T) {
-	var protocols = []string{"udp", "tcp", "ip"}
+	protocols := []string{"udp", "tcp", "ip"}
 	data, err := collector.ProtoCounters(protocols)
 	if err != nil {
 		t.Fatal(err)

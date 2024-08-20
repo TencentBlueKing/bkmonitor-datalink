@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -85,8 +87,11 @@ func (c *Operator) checkDataIdRoute() []checkDataId {
 }
 
 // CheckScrapeRoute 查看拉取指标信息
-func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.scrapeAll())
+func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, r *http.Request) {
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+
+	writeResponse(w, c.scrapeAll(i))
 }
 
 // CheckScrapeNamespaceMonitorRoute 根据命名空间查看拉取指标信息
@@ -103,7 +108,9 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ch := c.scrapeForce(namespace, monitor)
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+	ch := c.scrapeForce(namespace, monitor, i)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -338,8 +345,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
 	if onScrape == "true" {
-		stats := c.scrapeAll()
+		stats := c.scrapeAll(i)
 		n = 5
 		if n > stats.MonitorCount {
 			n = stats.MonitorCount
@@ -459,13 +468,39 @@ func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
 
-	podName := r.URL.Query().Get("podName")
-	if len(podName) > 0 {
-		writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName))
-		return
+	query := r.URL.Query()
+	podName := query.Get("podName")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	var configs []objectsref.RelabelConfig
+	configs = append(configs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
+
+	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
+	kind := query.Get("kind")
+	rules := query.Get("rules")
+	if rules == "labeljoin" {
+		switch kind {
+		case "Pod":
+			configs = append(configs, c.objectsController.PodsRelabelConfigs(annotations, labels)...)
+		}
 	}
 
-	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
+	writeResponse(w, configs)
+}
+
+func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	kind := query.Get("kind")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	switch kind {
+	case "Pod":
+		writeResponse(w, c.objectsController.PodsRelabelConfigs(annotations, labels))
+	default:
+		writeResponse(w, nil)
+	}
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -507,11 +542,11 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 
 # Check Routes
 --------------
-* GET /check?monitor=${monitor}&scrape=true|false
+* GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
-* GET /check/scrape
-* GET /check/scrape/{namespace}
-* GET /check/scrape/{namespace}/{monitor}
+* GET /check/scrape?workers=N
+* GET /check/scrape/{namespace}?workers=N
+* GET /check/scrape/{namespace}/{monitor}?workers=N
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover
@@ -546,6 +581,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 

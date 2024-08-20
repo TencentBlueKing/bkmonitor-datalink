@@ -9,7 +9,6 @@
 //
 
 //go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly linux netbsd openbsd solaris zos
 
 package tasks
 

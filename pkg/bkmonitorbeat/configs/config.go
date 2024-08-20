@@ -40,8 +40,8 @@ func IsContainerMode() bool {
 
 // TaskConcurrencyLimitConfig 任务并发限制配置
 type TaskConcurrencyLimitConfig struct {
-	PerInstanceLimit int64 `config:"per_instance"` //全局限制
-	PerTaskLimit     int64 `config:"per_task"`     //单任务限制
+	PerInstanceLimit int64 `config:"per_instance"` // 全局限制
+	PerTaskLimit     int64 `config:"per_task"`     // 单任务限制
 }
 
 // Clean 初始化参数
@@ -179,7 +179,7 @@ func (c *Config) Clean() error {
 	// 此处只是做一个心跳data id是否存在配置而已
 	if c.Mode == "daemon" && c.HeartBeat.GlobalDataID == 0 && c.HeartBeat.DataID == 0 {
 		logger.Errorf("failed to get heart_beat data_id, please check config.")
-		return define.ErrUnpackCfgError
+		return define.ErrUnpackCfg
 	}
 
 	c.ConcurrencyLimit.Clean()

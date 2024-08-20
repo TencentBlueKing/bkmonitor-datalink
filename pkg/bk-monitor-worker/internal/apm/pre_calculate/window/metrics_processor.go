@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 )
 
 type MetricProcessor struct {
@@ -140,7 +141,7 @@ func (m *MetricProcessor) findParentChildMetric(
 	if len(series) > 0 {
 		receiver <- storage.SaveRequest{
 			Target: storage.Prometheus,
-			Data:   storage.PrometheusStorageData{Value: series},
+			Data:   remotewrite.PrometheusStorageData{Value: series},
 		}
 	}
 

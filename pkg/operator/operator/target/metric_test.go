@@ -14,8 +14,10 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 )
 
 func TestMetricsTarget(t *testing.T) {
@@ -87,4 +89,151 @@ tasks:
     bearer_file: /path/to/token
 `
 	assert.Equal(t, expected, string(b))
+}
+
+func TestRemoteRelabelConfig(t *testing.T) {
+	cases := []struct {
+		Name   string
+		Input  *MetricTarget
+		Output *yaml.MapItem
+	}{
+		{
+			Name: "NoRules",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "",
+			},
+			Output: nil,
+		},
+		{
+			Name: "v1/workload",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload",
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1",
+			},
+		},
+		{
+			Name: "v2/workload",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload",
+				Labels:       labels.Labels{{Name: "pod_name", Value: "pod1"}},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?podName=pod1",
+			},
+		},
+		{
+			Name: "v2/workload,labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload,v1/labeljoin",
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/labeljoin",
+			},
+		},
+		{
+			Name: "v1/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+			},
+		},
+		{
+			Name: "v2/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v2/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+				Labels: labels.Labels{
+					{Name: "pod_name", Value: "pod1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&podName=pod1&rules=labeljoin",
+			},
+		},
+		{
+			Name: "v1/workload,v1/labeljoin",
+			Input: &MetricTarget{
+				NodeName:     "worker1",
+				RelabelIndex: "0",
+				RelabelRule:  "v1/workload,v1/labeljoin",
+				LabelJoinMatcher: &feature.LabelJoinMatcherSpec{
+					Kind:        "Pod",
+					Annotations: []string{"annotations1"},
+					Labels:      []string{"label1"},
+				},
+			},
+			Output: &yaml.MapItem{
+				Key:   "metric_relabel_remote",
+				Value: "http://:0/workload/node/worker1?annotations=annotations1&kind=Pod&labels=label1&rules=labeljoin",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			assert.Equal(t, c.Output, c.Input.RemoteRelabelConfig())
+		})
+	}
+}
+
+func TestMakeParams(t *testing.T) {
+	cases := []struct {
+		Input  map[string]string
+		Output string
+	}{
+		{
+			Input: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+			Output: "key1=value1&key2=value2",
+		},
+		{
+			Input: map[string]string{
+				"key1": "value1",
+			},
+			Output: "key1=value1",
+		},
+		{
+			Input: map[string]string{
+				"key1": "",
+				"key2": "value2",
+			},
+			Output: "key2=value2",
+		},
+	}
+
+	for _, c := range cases {
+		assert.Equal(t, c.Output, makeParams(c.Input))
+	}
 }

@@ -45,9 +45,10 @@ type Object struct {
 	OwnerRefs []OwnerRef
 
 	// Pod 属性
-	NodeName string
-	Labels   map[string]string
-	PodIP    string
+	NodeName    string
+	PodIP       string
+	Labels      map[string]string
+	Annotations map[string]string
 
 	// Containers
 	Containers []string
@@ -353,11 +354,12 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs:  toRefs(pod.OwnerReferences),
-				NodeName:   pod.Spec.NodeName,
-				Labels:     pod.Labels,
-				PodIP:      pod.Status.PodIP,
-				Containers: toContainers(pod.Spec.Containers),
+				OwnerRefs:   toRefs(pod.OwnerReferences),
+				NodeName:    pod.Spec.NodeName,
+				Labels:      pod.Labels,
+				Annotations: pod.Annotations,
+				PodIP:       pod.Status.PodIP,
+				Containers:  toContainers(pod.Spec.Containers),
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -371,11 +373,12 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs:  toRefs(pod.OwnerReferences),
-				NodeName:   pod.Spec.NodeName,
-				Labels:     pod.Labels,
-				PodIP:      pod.Status.PodIP,
-				Containers: toContainers(pod.Spec.Containers),
+				OwnerRefs:   toRefs(pod.OwnerReferences),
+				NodeName:    pod.Spec.NodeName,
+				Labels:      pod.Labels,
+				Annotations: pod.Annotations,
+				PodIP:       pod.Status.PodIP,
+				Containers:  toContainers(pod.Spec.Containers),
 			})
 		},
 		DeleteFunc: func(obj interface{}) {

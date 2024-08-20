@@ -39,7 +39,7 @@ var (
 )
 
 func Slowdown() {
-	time.Sleep(time.Millisecond * 20)
+	time.Sleep(time.Millisecond * 25) // 避免高频操作
 }
 
 func EqualMap(a, b map[string]struct{}) bool {
@@ -125,11 +125,20 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 		logger.Errorf("no event dataid found, err: %s", err)
 		return
 	}
+
+	// kubeevent 任务的自监控使用 custommetrics dataid
+	upMetricsDataID, err := c.dw.MatchMetricDataID(define.MonitorMeta{}, false)
+	if err != nil {
+		logger.Errorf("no upmetrics dataid found, err: %s", err)
+		return
+	}
+
 	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
 
 	eventTarget := &target.EventTarget{
-		DataID: dataID.Spec.DataID,
-		Labels: dataID.Spec.Labels,
+		DataID:          dataID.Spec.DataID,
+		Labels:          dataID.Spec.Labels,
+		UpMetricsDataID: upMetricsDataID.Spec.DataID,
 	}
 
 	b, err := eventTarget.YamlBytes()
@@ -301,7 +310,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	}
 
 	for secretName := range dropSecrets {
-		Slowdown() // 避免高频操作
+		Slowdown()
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {

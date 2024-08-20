@@ -103,6 +103,9 @@ type Options struct {
 
 	// Level is a logging priority. Higher levels are more important.
 	Level string `yaml:"level"`
+
+	// DisableCaller specifies whether to display caller info or not.
+	DisableCaller bool
 }
 
 type RateCall struct {
@@ -303,7 +306,14 @@ func New(opt Options) Logger {
 	level := loggerLevelMap[opt.Level]
 
 	core := zapcore.NewCore(encoder, w, zapcore.Level(level))
-	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+
+	var logger *zap.Logger
+	if opt.DisableCaller {
+		logger = zap.New(core)
+	} else {
+		logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	}
+
 	return Logger{
 		sugared:   logger.Sugar(),
 		warnRate:  NewRateCall(),

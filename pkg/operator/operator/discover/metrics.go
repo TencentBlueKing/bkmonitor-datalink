@@ -53,15 +53,6 @@ var (
 		[]string{"name"},
 	)
 
-	discoverCreatedChildConfigSkippedTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "discover_created_config_skipped_total",
-			Help:      "discover created child config skipped total",
-		},
-		[]string{"name"},
-	)
-
 	discoverCreatedChildConfigCachedTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -89,11 +80,11 @@ var (
 		[]string{"name"},
 	)
 
-	discoverSkippedTgSourceTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
+	monitorScrapeIntervalSeconds = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "discover_skipped_tg_source_total",
-			Help:      "discover skipped tg source total",
+			Name:      "monitor_scrape_interval_seconds",
+			Help:      "monitor scrape interval in seconds",
 		},
 		[]string{"name"},
 	)
@@ -123,10 +114,6 @@ func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncCreatedChildConfigSkippedCounter() {
-	discoverCreatedChildConfigSkippedTotal.WithLabelValues(m.name).Inc()
-}
-
 func (m *metricMonitor) IncCreatedChildConfigCachedCounter() {
 	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
 }
@@ -139,6 +126,6 @@ func (m *metricMonitor) IncDeletedTgSourceCounter() {
 	discoverDeletedTgSourceTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncSkippedTgSourceCounter() {
-	discoverSkippedTgSourceTotal.WithLabelValues(m.name).Inc()
+func (m *metricMonitor) SetMonitorScrapeInterval(v float64) {
+	monitorScrapeIntervalSeconds.WithLabelValues(m.name).Set(v)
 }

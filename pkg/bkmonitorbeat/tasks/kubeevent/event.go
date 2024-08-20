@@ -103,13 +103,23 @@ func (e *k8sEvent) GetFirstTime() int64 {
 }
 
 func (e *k8sEvent) GetLastTime() int64 {
+	var t0, t1 int64
 	if e.LastTs != "" {
-		return parseTimeLayout(e.LastTs)
+		t0 = parseTimeLayout(e.LastTs)
 	}
 	if e.Series != nil {
-		return parseTimeLayout(e.Series.LastObservedTime)
+		t1 = parseTimeLayout(e.Series.LastObservedTime)
 	}
-	return time.Now().Unix()
+
+	if t0 == 0 && t1 == 0 {
+		return time.Now().Unix() // 兜底
+	}
+
+	// 取最新时间点
+	if t0 > t1 {
+		return t0
+	}
+	return t1
 }
 
 func (e *k8sEvent) GetCount() int {
@@ -127,49 +137,21 @@ func (e *k8sEvent) IsZeroTime() bool {
 }
 
 type wrapEvent struct {
-	k8sEvent
-	dataID         int32
-	externalLabels []map[string]string
+	dataID int32
+	data   []common.MapStr
 }
 
-func newWrapEvent(dataID int32, externalLabels []map[string]string, e k8sEvent) *wrapEvent {
+func newWrapEvent(dataID int32, data []common.MapStr) *wrapEvent {
 	return &wrapEvent{
-		k8sEvent:       e,
-		dataID:         dataID,
-		externalLabels: externalLabels,
+		dataID: dataID,
+		data:   data,
 	}
 }
 
 func (e *wrapEvent) AsMapStr() common.MapStr {
-	dimensions := common.MapStr{
-		"kind":       e.InvolvedObject.Kind,
-		"namespace":  e.InvolvedObject.Namespace,
-		"name":       e.InvolvedObject.Name,
-		"apiVersion": e.InvolvedObject.ApiVersion,
-		"uid":        e.Metadata.Uid,
-		"host":       e.Source.Host,
-		"type":       e.Type,
-	}
-	for i := 0; i < len(e.externalLabels); i++ {
-		for k, v := range e.externalLabels[i] {
-			dimensions[k] = v
-		}
-	}
-
-	data := common.MapStr{
-		"event_name": e.Reason,
-		"target":     e.GetTarget(),
-		"event": common.MapStr{
-			"content": e.Message,
-			"count":   e.Count,
-		},
-		"dimension": dimensions,
-		"timestamp": e.GetLastTime() * 1000, //ms
-	}
-
 	return common.MapStr{
 		"dataid": e.dataID,
-		"data":   []common.MapStr{data},
+		"data":   e.data,
 	}
 }
 
@@ -179,4 +161,32 @@ func (e *wrapEvent) IgnoreCMDBLevel() bool {
 
 func (e *wrapEvent) GetType() string {
 	return define.ModuleKubeevent
+}
+
+func toEventMapStr(e k8sEvent, externalLabels []map[string]string) common.MapStr {
+	dimensions := common.MapStr{
+		"kind":       e.InvolvedObject.Kind,
+		"namespace":  e.InvolvedObject.Namespace,
+		"name":       e.InvolvedObject.Name,
+		"apiVersion": e.InvolvedObject.ApiVersion,
+		"uid":        e.Metadata.Uid,
+		"host":       e.Source.Host,
+		"type":       e.Type,
+	}
+	for i := 0; i < len(externalLabels); i++ {
+		for k, v := range externalLabels[i] {
+			dimensions[k] = v
+		}
+	}
+
+	return common.MapStr{
+		"event_name": e.Reason,
+		"target":     e.GetTarget(),
+		"event": common.MapStr{
+			"content": e.Message,
+			"count":   e.Count,
+		},
+		"dimension": dimensions,
+		"timestamp": e.GetLastTime() * 1000, // ms
+	}
 }

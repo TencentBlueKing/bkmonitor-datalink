@@ -7,32 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package tasks
+package utils
 
-import (
-	"testing"
+import "strings"
 
-	"github.com/stretchr/testify/assert"
-)
-
-func TestAccumulate(t *testing.T) {
-	metrics := make(chan map[string]interface{})
-	acc := NewAccumulator(metrics)
-	measurement := "test"
-	fields := map[string]interface{}{
-		"fielda": 123,
-	}
-	tags := map[string]string{
-		"taga": "testa",
+func SplitTrim(s, sep string) []string {
+	if s == "" {
+		return nil
 	}
 
-	go func() {
-		defer close(metrics)
-		acc.AddFields(measurement, fields, tags)
-	}()
-	for v := range metrics {
-		assert.Equal(t, measurement, v["measurement"])
-		assert.Equal(t, tags, v["tag"])
-		assert.Equal(t, fields, v["fields"])
+	var ret []string
+	for _, part := range strings.Split(s, sep) {
+		ret = append(ret, strings.TrimSpace(part))
 	}
+	return ret
 }

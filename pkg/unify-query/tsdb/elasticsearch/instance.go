@@ -459,55 +459,81 @@ func (i *Instance) mergeTimeSeries(rets chan *TimeSeriesResult) (*prompb.QueryRe
 	return qr, nil
 }
 
-func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) []string {
+func timeToDate(t time.Time, unit string) time.Time {
+	switch unit {
+	case "month":
+		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	default:
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	}
+}
+
+func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, start, end time.Time, timezone string) ([]string, error) {
 	var (
-		alias   []string
+		aliases []string
 		_, span = trace.NewSpan(ctx, "get-alias")
 		err     error
+		loc     *time.Location
 	)
 	defer span.End(&err)
 
+	aliases = strings.Split(db, ",")
+
 	span.Set("need-add-time", needAddTime)
-
-	if needAddTime {
-		loc, err := time.LoadLocation(timezone)
-		if err != nil {
-			loc = time.UTC
-		}
-		start = start.In(loc)
-		end = end.In(loc)
-
-		left := end.Unix() - start.Unix()
-		// 超过 6 个月
-
-		span.Set("timezone", loc.String())
-		span.Set("start", start.String())
-		span.Set("end", end.String())
-		span.Set("left", left)
-
-		addMonth := 0
-		addDay := 1
-		dateFormat := "20060102"
-		if left > int64(time.Hour.Seconds()*24*14) {
-			addDay = 0
-			addMonth = 1
-			dateFormat = "200601"
-			halfYear := time.Hour * 24 * 30 * 6
-			if left > int64(halfYear.Seconds()) {
-				start = end.Add(halfYear * -1)
-			}
-		}
-
-		for d := start; !d.After(end); d = d.AddDate(0, addMonth, addDay) {
-			alias = append(alias, fmt.Sprintf("%s_%s*", db, d.Format(dateFormat)))
-		}
-	} else {
-		alias = append(alias, db)
+	if !needAddTime {
+		return aliases, nil
 	}
 
-	span.Set("alias_num", len(alias))
+	loc, err = time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	start = start.In(loc)
+	end = end.In(loc)
 
-	return alias
+	left := end.Unix() - start.Unix()
+	// 超过 6 个月
+
+	span.Set("timezone", loc.String())
+	span.Set("start", start.String())
+	span.Set("end", end.String())
+	span.Set("left", left)
+
+	var (
+		dateFormat string
+		addDay     int
+		addMonth   int
+
+		startTime time.Time
+		endTime   time.Time
+	)
+
+	if left > int64(time.Hour.Seconds()*24*14) {
+		halfYear := time.Hour * 24 * 30 * 6
+		if left > int64(halfYear.Seconds()) {
+			start = end.Add(halfYear * -1)
+		}
+
+		startTime = timeToDate(start, "month")
+		endTime = timeToDate(end, "month")
+		dateFormat = "200601"
+		addMonth = 1
+	} else {
+		startTime = timeToDate(start, "day")
+		endTime = timeToDate(end, "day")
+		dateFormat = "20060102"
+		addDay = 1
+	}
+
+	newAliases := make([]string, 0)
+	for d := startTime; !d.After(endTime); d = d.AddDate(0, addMonth, addDay) {
+		for _, alias := range aliases {
+			newAliases = append(newAliases, fmt.Sprintf("%s_%s*", alias, d.Format(dateFormat)))
+		}
+	}
+
+	span.Set("new_alias_num", len(newAliases))
+	return newAliases, nil
 }
 
 // QueryRaw 给 PromEngine 提供查询接口
@@ -541,7 +567,13 @@ func (i *Instance) QueryRaw(
 			close(rets)
 		}()
 
-		aliases := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+		aliases, err1 := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+		if err1 != nil {
+			rets <- &TimeSeriesResult{
+				Error: err1,
+			}
+			return
+		}
 
 		qo := &queryOption{
 			indexes: aliases,
@@ -600,6 +632,10 @@ func (i *Instance) QueryRaw(
 	qr, err := i.mergeTimeSeries(rets)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
+	}
+
+	if len(qr.Timeseries) == 0 {
+		return storage.EmptySeriesSet()
 	}
 
 	return remote.FromQueryResult(false, qr)

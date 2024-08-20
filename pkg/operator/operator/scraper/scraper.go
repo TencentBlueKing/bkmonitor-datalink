@@ -77,13 +77,14 @@ func (c *Scraper) StringCh() chan string {
 		for _, host := range c.config.Hosts {
 			resp, err := c.doRequest(host)
 			if err != nil {
+				ch <- fmt.Sprintf("scraper error: host=%s, err=%v", host, err)
 				continue
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode >= 400 {
+			if resp.StatusCode >= 300 {
 				b, _ := io.ReadAll(resp.Body)
-				msg := fmt.Sprintf("scrape error => status code: %v, response: %v", resp.StatusCode, string(b))
+				msg := fmt.Sprintf("scraper error: host=%s, status_code=%d, response(%v)", host, resp.StatusCode, string(b))
 				ch <- msg
 				continue
 			}

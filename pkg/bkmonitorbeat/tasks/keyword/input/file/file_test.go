@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build !integration
-// +build !integration
 
 package file
 
@@ -21,7 +20,6 @@ import (
 )
 
 func TestIsSameFile(t *testing.T) {
-
 	// 创建测试的文件
 	absPath, err := filepath.Abs(".")
 

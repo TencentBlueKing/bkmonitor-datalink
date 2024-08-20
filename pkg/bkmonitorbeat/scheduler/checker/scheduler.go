@@ -82,7 +82,7 @@ func (s *CheckScheduler) Run(ctx context.Context) {
 	defer s.PostRun.Apply(ctx)
 
 	if s.tasks.Size() == 0 {
-		panic(define.ErrTaskNoutFound)
+		panic(define.ErrTaskNotFound)
 	}
 
 	logger.Infof("CheckScheduler checking %d tasks", s.tasks.Size())

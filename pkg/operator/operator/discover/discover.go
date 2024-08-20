@@ -37,6 +37,7 @@ import (
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
@@ -151,6 +152,7 @@ type BaseParams struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	EndpointSliceSupported bool
+	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
 }
 
 type BaseDiscover struct {
@@ -351,7 +353,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		secretClient := d.Client.CoreV1().Secrets(d.monitorMeta.Namespace)
 		bearerToken, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.BearerTokenSecret)
 		if err != nil {
-			return nil, errors.Wrapf(err, "get bearer token from secret failed, monitor=%s", d.monitorMeta.ID())
+			return nil, errors.Wrap(err, "get bearer token from secret failed")
 		}
 		metricTarget.BearerToken = bearerToken
 	}
@@ -365,7 +367,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.CA.Secret != nil {
 			ca, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.CA.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS CA from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS CA from secret failed")
 			}
 			metricTarget.TLSConfig.CAs = []string{EncodeBase64(ca)}
 		}
@@ -376,7 +378,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.Cert.Secret != nil {
 			cert, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.Cert.Secret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Cert from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Cert from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Certificate = EncodeBase64(cert)
 		}
@@ -387,7 +389,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		if d.TLSConfig.KeySecret != nil {
 			key, err := k8sutils.GetSecretDataBySecretKeySelector(d.ctx, secretClient, *d.TLSConfig.KeySecret)
 			if err != nil {
-				return nil, errors.Wrapf(err, "get TLS Key from secret failed, monitor=%s", d.monitorMeta.ID())
+				return nil, errors.Wrap(err, "get TLS Key from secret failed")
 			}
 			metricTarget.TLSConfig.Certificate.Key = EncodeBase64(key)
 		}
@@ -399,6 +401,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 		metricTarget.Labels = lbls
 	}
 
+	period := d.Period
+	if period == "" {
+		period = ConfDefaultPeriod
+	}
+	timeout := d.Timeout
+	if timeout == "" {
+		timeout = period
+	}
+
 	metricTarget.Meta = d.monitorMeta
 	metricTarget.ExtraLabels = d.ExtraLabels
 	metricTarget.Namespace = namespace // 采集目标的 namespace
@@ -406,14 +417,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	metricTarget.DimensionReplace = d.DataID().Spec.DimensionReplace
 	metricTarget.MetricReplace = d.DataID().Spec.MetricReplace
 	metricTarget.MetricRelabelConfigs = d.MetricRelabelConfigs
-	metricTarget.Period = d.Period
-	metricTarget.Timeout = d.Timeout
+	metricTarget.Period = period
+	metricTarget.Timeout = timeout
 	metricTarget.ProxyURL = d.ProxyURL
 	metricTarget.Mask = d.Mask()
 	metricTarget.TaskType = taskType
 	metricTarget.RelabelRule = d.RelabelRule
 	metricTarget.RelabelIndex = d.RelabelIndex
 	metricTarget.NormalizeMetricName = d.NormalizeMetricName
+	metricTarget.LabelJoinMatcher = d.LabelJoinMatcher
 
 	return metricTarget, nil
 }
@@ -599,6 +611,9 @@ func (d *BaseDiscover) handleTarget(namespace string, tlset, tglbs model.LabelSe
 		return nil, errors.Wrap(err, "make metric target failed")
 	}
 
+	interval, _ := time.ParseDuration(metricTarget.Period)
+	d.mm.SetMonitorScrapeInterval(interval.Seconds())
+
 	if d.ForwardLocalhost {
 		metricTarget.Address, err = forwardAddress(metricTarget.Address)
 		if err != nil {
@@ -635,7 +650,7 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 	namespace, _, err := metaFromSource(targetGroup.Source)
 	if err != nil {
-		logger.Errorf("failed to parse source: %v", err)
+		logger.Errorf("%s failed to parse source: %v", d.Name(), err)
 		return
 	}
 
@@ -651,11 +666,11 @@ func (d *BaseDiscover) handleTargetGroup(targetGroup *targetgroup.Group) {
 
 		childConfig, err := d.handleTarget(namespace, tlset, targetGroup.Labels)
 		if err != nil {
+			logger.Errorf("%s handle target failed: %v", d.Name(), err)
 			d.mm.IncCreatedChildConfigFailedCounter()
 			continue
 		}
 		if childConfig == nil {
-			d.mm.IncCreatedChildConfigSkippedCounter()
 			d.cache.Set(namespace, tlset, targetGroup.Labels)
 			continue
 		}

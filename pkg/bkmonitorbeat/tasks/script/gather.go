@@ -26,7 +26,7 @@ import (
 )
 
 // ExecCmdLine is so tests can mock out exec.Command usage.
-var ExecCmdLine = utils.RunStringWithoutErr
+var ExecCmdLine = utils.RunString
 
 type Gather struct {
 	tasks.BaseTask

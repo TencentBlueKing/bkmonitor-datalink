@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// FormatSuite :
 type FormatSuite struct {
 	suite.Suite
 }
@@ -39,7 +38,6 @@ func (s *FormatSuite) TestGatherRun() {
 	}
 }
 
-// TestFormat :
 func TestFormat(t *testing.T) {
 	suite.Run(t, &FormatSuite{})
 }

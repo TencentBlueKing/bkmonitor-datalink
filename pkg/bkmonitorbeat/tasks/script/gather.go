@@ -68,7 +68,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 		return
 	}
-	logger.Debugf("task command(%s) take %v, out=(%s)", command, time.Since(t0), out)
+
+	since := time.Since(t0)
+	logger.Debugf("task command(%s) take %v, out=(%s)", command, since, out)
+	define.RecordLogf("[script] execute command(%s) take %v, len(out)=%d", command, since, len(out))
 
 	aggRst, formatErr := FormatOutput([]byte(out), milliTimestamp, taskConf.TimeOffset, timeHandler)
 	if errors.Is(formatErr, define.ErrNoScriptOutput) {

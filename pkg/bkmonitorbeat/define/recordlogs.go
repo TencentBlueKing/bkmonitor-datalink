@@ -45,6 +45,10 @@ func RecordLog(template string, kvs []LogKV) {
 	rl.l.Info(template)
 }
 
+func RecordLogf(template string, args ...interface{}) {
+	rl.l.Infof(template, args...)
+}
+
 type LogKV struct {
 	K string
 	V interface{}

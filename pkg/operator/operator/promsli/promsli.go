@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	promyaml "github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -33,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"

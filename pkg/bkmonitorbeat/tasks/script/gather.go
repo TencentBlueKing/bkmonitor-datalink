@@ -146,8 +146,8 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 }
 
 // KeepOneDimension 只在测试模式需要这么处理
-// 指标名+维度字段名 作为唯一的key
-// 不同维度值只保留一个，但是如果有多的维度名，那么需要保留，详细可以看test里的案例
+// 指标名+维度字段名 作为唯一的 key
+// 不同维度值只保留一个，但是如果有多的维度名，那么需要保留，详细可以看 test 里的案例
 func (g *Gather) KeepOneDimension(data map[int64]map[string]tasks.PromEvent) {
 	for timestamp, subResult := range data {
 		keySet := common.StringSet{}

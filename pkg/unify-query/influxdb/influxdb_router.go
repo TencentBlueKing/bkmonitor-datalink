@@ -63,7 +63,7 @@ type Router struct {
 	hostStatusInfo influxdb.HostStatusInfo
 }
 
-func MockRouter(proxyInfo influxdb.ProxyInfo) {
+func MockRouter(proxyInfo influxdb.ProxyInfo, queryRouterInfo influxdb.QueryRouterInfo) {
 	ir := GetInfluxDBRouter()
 	ir.lock.Lock()
 	defer ir.lock.Unlock()
@@ -73,6 +73,12 @@ func MockRouter(proxyInfo influxdb.ProxyInfo) {
 	}
 	for k, v := range proxyInfo {
 		ir.proxyInfo[k] = v
+	}
+	if ir.queryRouterInfo == nil {
+		ir.queryRouterInfo = make(influxdb.QueryRouterInfo)
+	}
+	for k, v := range queryRouterInfo {
+		ir.queryRouterInfo[k] = v
 	}
 }
 
@@ -500,6 +506,17 @@ func (r *Router) GetProxyByTableID(tableId, field string, isProxy bool) (*influx
 	}
 
 	return nil, fmt.Errorf("influxdb proxy router is empty, with %s %s", tableId, field)
+}
+
+func (r *Router) GetQueryRouter(tableId string) (*influxdb.QueryRouter, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	if routerInfo, ok := r.queryRouterInfo[tableId]; ok {
+		return routerInfo, nil
+	} else {
+		return nil, fmt.Errorf("tableid(%s) is not exists in Router.queryRouterInfo", tableId)
+	}
+
 }
 
 func GetTagRouter(ctx context.Context, tagsKey []string, condition string) (string, error) {

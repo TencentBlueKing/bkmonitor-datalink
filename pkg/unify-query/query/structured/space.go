@@ -48,7 +48,7 @@ func NewSpaceFilter(ctx context.Context, spaceUid string) (*SpaceFilter, error) 
 	}, nil
 }
 
-func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB, error) {
+func (s *SpaceFilter) DataList(tableID TableID, conditions Conditions, fieldName string) ([]*redis.TsDB, error) {
 	if tableID == "" && fieldName == "" {
 		return nil, fmt.Errorf("%s, %s", ErrEmptyTableID.Error(), ErrMetricMissing.Error())
 	}
@@ -58,6 +58,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB
 	s.mux.Lock()
 	defer s.mux.Unlock()
 
+	isK8s := false
 	filterTsDBs := make([]*redis.TsDB, 0)
 	// 判断如果 tableID 完整的情况下，则直接取对应的 tsDB
 	if db != "" && measurement != "" {
@@ -85,6 +86,7 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB
 			}
 		}
 	} else {
+		isK8s = true
 		for _, v := range s.space {
 			// 如果不指定 tableID 或者 dataLabel，则只获取单指标单表的 tsdb
 			if v.IsSplit() {
@@ -97,6 +99,35 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB
 				}
 			}
 		}
+	}
+
+	// 【针对容器集群的检索优化】将过滤条件与空间 RT 绑定的 bcs_cluster_id 进行对比，如果不符合则过滤掉，符合则返回
+	if isK8s {
+		resultTsDBs := make([]*redis.TsDB, 0)
+		router := influxdb.GetInfluxDBRouter()
+		allConditions, err := conditions.AnalysisConditionsV2()
+		if err != nil {
+			log.Errorf(s.ctx, "failed to analysis conditions for->[%s], nothing will return.", err)
+			return nil, err
+		}
+
+		for _, tsDB := range filterTsDBs {
+			compareResult := true
+			router, err := router.GetQueryRouter(tsDB.TableID)
+			if err != nil {
+				log.Warnf(s.ctx, "failed to get query router for->[%s], skip filter BCS space.", err)
+			} else if router.BcsClusterId != "" {
+				compareResult, err = allConditions.Compare(ClusterID, router.BcsClusterId)
+				if err != nil {
+					log.Errorf(s.ctx, "failed to compare conditions for->[%s], nothing will return.", err)
+					return nil, err
+				}
+			}
+			if compareResult {
+				resultTsDBs = append(resultTsDBs, tsDB)
+			}
+		}
+		filterTsDBs = resultTsDBs
 	}
 
 	if len(s.space) == 0 {
@@ -114,13 +145,15 @@ func (s *SpaceFilter) DataList(tableID TableID, fieldName string) ([]*redis.TsDB
 		metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, msg)
 		log.Warnf(s.ctx, msg)
 	}
+
 	return filterTsDBs, nil
 }
 
 type TsDBOption struct {
-	SpaceUid  string
-	TableID   TableID
-	FieldName string
+	SpaceUid   string
+	TableID    TableID
+	FieldName  string
+	Conditions Conditions
 }
 
 type TsDBs []*redis.TsDB
@@ -140,7 +173,7 @@ func GetTsDBList(ctx context.Context, option *TsDBOption) (TsDBs, error) {
 		return nil, err
 	}
 
-	tsDBs, err := spaceFilter.DataList(option.TableID, option.FieldName)
+	tsDBs, err := spaceFilter.DataList(option.TableID, option.Conditions, option.FieldName)
 	if err != nil {
 		return nil, err
 	}

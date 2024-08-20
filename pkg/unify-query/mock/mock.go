@@ -37,7 +37,7 @@ func SetOfflineDataArchiveMetadata(m offlineDataArchiveMetadata.Metadata) {
 	offlineDataArchive.MockMetaData(m)
 }
 
-func SetSpaceAndProxyMockData(ctx context.Context, path, bucketName, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
+func SetSpaceAndProxyAndRouterMockData(ctx context.Context, path, bucketName, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy, queryRouter *ir.QueryRouter) {
 	logInit()
 
 	sr, _ := influxdb.GetSpaceRouter(path, bucketName)
@@ -55,7 +55,15 @@ func SetSpaceAndProxyMockData(ctx context.Context, path, bucketName, spaceUid st
 	proxyInfo := ir.ProxyInfo{
 		tdb.TableID: proxy,
 	}
-	influxdb.MockRouter(proxyInfo)
+	queryRouterInfo := make(ir.QueryRouterInfo)
+	if queryRouter != nil {
+		queryRouterInfo[tdb.TableID] = queryRouter
+	}
+	influxdb.MockRouter(proxyInfo, queryRouterInfo)
+}
+
+func SetSpaceAndProxyMockData(ctx context.Context, path, bucketName, spaceUid string, tdb *redis.TsDB, proxy *ir.Proxy) {
+	SetSpaceAndProxyAndRouterMockData(ctx, path, bucketName, spaceUid, tdb, proxy, nil)
 }
 
 func SetRedisClient(ctx context.Context, serverName string) {

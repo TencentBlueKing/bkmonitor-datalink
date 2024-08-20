@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -35,6 +36,80 @@ type Conditions struct {
 	FieldList []ConditionField `json:"field_list"`
 	// ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
 	ConditionList []string `json:"condition_list" example:"and"`
+}
+
+type AllConditions [][]ConditionField
+
+// containElement  判断一个切片中是否包含某个元素
+func containElement(slice []string, element string) bool {
+	if element == "" || len(slice) == 0 {
+		return false
+	}
+	for _, item := range slice {
+		if item == element {
+			return true
+		}
+	}
+	return false
+}
+
+// Compare 比较 AllConditions 中的条件 condition
+// 当存在 condition 的维度名与 key 相等，则进行比较操作, 一经出现不满足条件则直接返回 false
+// 当所有的 condition 维度都不与 key 相等 也会放行
+func (c AllConditions) Compare(key, value string) (bool, error) {
+	for _, cond := range c {
+		for _, field := range cond {
+			// 判断字段的维度名是否符合
+			if field.DimensionName != key {
+				continue
+			}
+			switch field.Operator {
+			case ConditionEqual, ConditionContains:
+				// 当出现 value 不属于 field.Value 列表的时候可以判定为 compare 失败
+				if !containElement(field.Value, value) {
+					return false, nil
+				}
+			case ConditionNotEqual, ConditionNotContains:
+				// 当出现 value 属于 field.Value 列表的时候可以判定为 compare 失败
+				if containElement(field.Value, value) {
+					return false, nil
+				}
+			case ConditionRegEqual:
+				for _, val := range field.Value {
+					reExp, err := regexp.Compile(val)
+					// 编译正则表达式失败的情况下直接返回 false 以及错误信息
+					if err != nil {
+						return false, err
+					}
+					matched := reExp.Match([]byte(value))
+					// 如果出现匹配不上的情况，可以判定 compare 失败
+					if matched {
+						return true, nil
+					}
+				}
+				return false, nil
+			case ConditionNotRegEqual:
+				for _, val := range field.Value {
+					reExp, err := regexp.Compile(val)
+					// 编译正则表达式失败的情况下直接返回 false 以及错误信息
+					if err != nil {
+						return false, err
+					}
+					matched := reExp.Match([]byte(value))
+					// 如果出现正则匹配上的情况，视为 compare 失败
+					if matched {
+						return false, nil
+					}
+				}
+			}
+		}
+	}
+	return true, nil
+}
+
+// AnalysisConditionsV2
+func (c *Conditions) AnalysisConditionsV2() (AllConditions, error) {
+	return c.AnalysisConditions()
 }
 
 // AnalysisConditions

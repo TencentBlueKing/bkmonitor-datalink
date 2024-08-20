@@ -12,6 +12,8 @@ package structured
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -119,18 +121,48 @@ func TestQueryToMetric(t *testing.T) {
 	ctx := context.Background()
 	mock.SetRedisClient(ctx, "test")
 
-	mock.SetSpaceAndProxyMockData(
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	absPath, err := filepath.Abs(executable)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("Executable Path:", absPath)
+
+	// Optionally print the directory
+	dir := filepath.Dir(absPath)
+	fmt.Println("Executable Directory:", dir)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("Current working directory:", cwd)
+	}
+
+	mock.SetSpaceAndProxyAndRouterMockData(
 		ctx, "query_ts_test", "query_ts_test", spaceUid, &redis.TsDB{
 			TableID:         tableID,
 			Field:           []string{field},
-			MeasurementType: redis.BKTraditionalMeasurement,
+			MeasurementType: redis.BkSplitMeasurement,
 			DataLabel:       dataLabel,
 		}, &ir.Proxy{
-			MeasurementType: redis.BKTraditionalMeasurement,
+			MeasurementType: redis.BkSplitMeasurement,
 			StorageID:       storageID,
 			ClusterName:     clusterName,
 			Db:              db,
 			Measurement:     measurement,
+		}, &ir.QueryRouter{
+			BkBizId:            "",
+			DataId:             "",
+			MeasurementType:    measurement,
+			VmTableId:          tableID,
+			BcsClusterId:       "bcs-k8s-1001",
+			IsInfluxdbDisabled: false,
 		},
 	)
 
@@ -170,6 +202,16 @@ func TestQueryToMetric(t *testing.T) {
 				Start:         "0",
 				End:           "300",
 				Step:          "1m",
+				Conditions: Conditions{
+					FieldList: []ConditionField{
+						ConditionField{
+							DimensionName: "bcs_cluster_id",
+							Value:         []string{"bcs-k8s-1002"},
+							Operator:      "ne",
+						},
+					},
+					ConditionList: []string{},
+				},
 			},
 			metric: &md.QueryMetric{
 				QueryList: md.QueryList{

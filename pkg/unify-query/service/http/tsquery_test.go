@@ -227,7 +227,7 @@ func MockSpace(t *testing.T) {
 		},
 	}
 
-	influxdb.MockRouter(proxyInfo)
+	influxdb.MockRouter(proxyInfo, nil)
 	mock.SetRedisClient(context.TODO(), "test")
 }
 

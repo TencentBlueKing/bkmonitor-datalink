@@ -214,7 +214,8 @@ const (
 	formatScrapeMsg = `
 [√] check scrape stats
 - Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误，更新时间 %s
-- Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。部分指标会有黑白名单机制，此抓取数据不做任何过滤
+- Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。
+* 部分指标会有黑白名单机制，此抓取数据不做任何过滤。
 * TOP%d 数据量如下，详细情况可访问 /check/scrape 路由。%s
 %s
 `
@@ -245,16 +246,16 @@ const (
 `
 	formatOperatorLogMsg = `
 [o] bkmonitor-operator logs
-- Description: 使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息。
+- Description: 使用 'kubectl logs -n ${.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息。
 `
 	formatBkmonitorbeatTroubleshootingMsg = `
 [o] bkmonitorbeat troubleshooting
 - Description: 如若上述检查无发现异常问题，则考虑排查 bkmonitorbeat 本身的采集是否出现异常
-- Suggestion: 优先检查采集器日志是否有异常，采集器会在每次采集记录日志流水。
-  1）根据上述检查得到采集任务所在节点，并使用 'kubectl get pods -n ${.Release.Namespace} -owide' 确定对应的 bkmonitorbeat pod
-  2）使用 'kubectl exec it -n ${.Release.Namespace} ${bkmonitorbeat-pod}' 命令查看 bkmonitorbeat 所在进程 pid
-  3）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/bkmonitorbeat.strace' 等待一分钟导出 strace 数据
-  4）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说明 bkmonitorbeat 本身没问题，需要排查链路问题
+- Suggestion: 优先检查采集器日志是否有异常，采集器会在每次采集记录日志流水
+  1）根据上述检查得到采集任务所在节点，并使用 'kubectl get pods -n ${.Namespace} -owide' 确定对应的采集器 pod
+  2）使用 'kubectl exec it -n ${.Namespace} ${worker-pod}' 命令查看 bkmonitorbeat 所在进程 pid
+  3）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/strace' 等待一分钟导出 strace 数据
+  4）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说采集工作正常，需要排查链路问题
   5）链路排查可按照二进制部署排查思路 kafka -> transfer -> influxdb-proxy -> influxdb
 `
 )

@@ -1,6 +1,6 @@
 # 故障定位 API 帮助文档
 
-在了解故障定位 API 之前，我们可以先来查看一下所有的路由信息。
+在了解故障定位 API 之前，可以先来查看一下所有的路由信息。
 ```shell
 $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl http://localhost:8080
 
@@ -43,12 +43,12 @@ $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl h
 * GET /debug/pprof/trace
 * GET /debug/pprof/{other}
 ```
-可以看见，有 Admin、Metadata、Check、Profile 相关的路由。
-- Admin 提供了重新加载配置等接口。
-- MetaData 提供了查看自定义指标、版本、工作负载等接口。
-- Profile 提供了性能分析等接口。
+operator 提供了 Admin、Metadata、Check、Profile 相关的路由。
+- Admin：提供了重新加载配置等接口。
+- MetaData：提供了查看自定义指标、版本、工作负载等接口。
+- Profile：提供了性能分析等接口。
 
-本篇文档，我们重点分析 Check Routes。
+本文档将重点介绍 Check Routes。
 
 ## 故障排查 API 以及用法
 
@@ -56,11 +56,15 @@ $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl h
 
 > 故障排查接口，支持 `monitor` 关键字查询参数。
 
-在进行故障排查之前，我们可以先使用 /check 用于来查询相关信息看一下是否能匹配上。例如：检查版本、dataIds 数量以及信息、集群信息、operator 监听 Endpoints 的数量等等。看看能否和预期对上。
+在进行故障排查之前可以先使用 /check 用于来查询相关信息看一下是否能匹配上。例如版本信息、DataID 信息、集群信息、operator 监听 Endpoints 的数量等等，确定相关信息是否符合预期。
 
-发现与预期不一致，说明没有监控到相关信息。大概率是配置问题，可能是配置格式错误等等。
+如若发现与预期不一致，说明没有监控到相关资源。可能是配置错误或者鉴权问题。
 
 ```shell
+# bkm-operator-79486746f5-n6ztd 为当前集群中 operator pod。
+# 可以通过 `kubectl get pods -n bkmonitor-operator | grep bkm-operator` 查找。
+# 监听端口默认为 8080。
+
 $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl http://localhost:8080/check?monitor=blueking
 
 [√] check kubernetes version
@@ -175,25 +179,27 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
 ```
 在检查信息时，我们可以重点观察上面的 `check monitor resources`。上面的例子中使用了关键字 `blueking` 进行了过滤。
 
-> 关键字匹配均为 Contains 模糊匹配，非精确匹配
+**关键字匹配均为 Contains 模糊匹配，非精确匹配。**
 
-其中关键字匹配规则，对于`监测到 ServiceMonitor/PodMonitor/Probe 资源以及对应的采集目标`是以 serviceMonitor/podMonitor 名称、serviceMonitor/podMonitor 的 namespace 进行匹配的；对于 `生成的 bkmonitorbeat 的采集配置文件` 是以 MonitorMeta 的 Kind/Namespace/Name/Index 的格式来进行匹配的。MonitorMeta 描述了监控类型的元数据信息，目前类型有 serviceMonitor, podMonitor, probe。
+当我们想根据 serviceMonitor/podMonitor 名称或者 namespace 等等相关信息做过滤，可以使用关键字。
 
-当我们想根据 serviceMonitor/podMonitor 名称或者 namespace 等等相关信息做过滤，我们就可以使用关键字。
+* 对于`监测到 ServiceMonitor/PodMonitor/Probe 资源以及对应的采集目标`是以 serviceMonitor/podMonitor 名称、serviceMonitor/podMonitor 的 namespace 进行匹配的。
 
-下面是关于 `check monitor resources` 返回数据的说明，下面的两部分按照返回的次序来说明：
+* 对于`生成的 bkmonitorbeat 的采集配置文件` 是以 MonitorMeta 的 Kind/Namespace/Name/Index 的格式来进行匹配的。MonitorMeta 描述了监控类型的元数据信息，目前类型有 serviceMonitor, podMonitor, probe。
+
+下面是关于 `check monitor resources` 返回数据的说明。
 
 **1）监测到 ServiceMonitor/PodMonitor/Probe 资源以及对应的采集目标**
   
-当想知道每个 serviceMonitor/podMonitor 监控的具体信息可以使用这个接口，serviceMonitor/podMonitor 会配置抓取若干个端口的信息，例如：path、port 等信息。而一个 serviceMonitor 会监控到若干 service，每个服务的 Endpoints 是一系列的 IP + 端口。
+当想知道每个 serviceMonitor/podMonitor 监控的具体信息可以使用这个接口，serviceMonitor/podMonitor 会配置抓取若干个端口的信息，如 path、port 等信息。而一个 serviceMonitor 会监控到若干 service，每个 serivce 的 Endpoints 是一系列的 IP:Port。
 
 **2）生成的 bkmonitorbeat 采集配置文件**
 
-`child_config` 是由蓝鲸监控这边自定义的采集器识别的采集配置文件。也就是 bkmonitorbeat 采集任务的配置文件。当我们想要知道采集任务位于哪些 serviceMonitor/podMonitor 上、采集任务被分配到了哪个 node 上、对应哪个 dataId 我们就可以查看这个信息。
+`child_config` 是由蓝鲸监控定义的采集器采集配置文件。/check 接口可以查看 serviceMonitor/podMonitor 匹配到哪些采集任务以及采集任务被分配到了哪个 node 上、以及对应的 DataID。
 
-这里我们简单举个例子，介绍一下 serviceMonitor/PodMonitor 的匹配规则
+这里我们简单举个例子，介绍一下 serviceMonitor/podMonitor 的匹配规则。
 
-* 先查询 namespace下的所有 serviceMonitors
+* 先查询 namespace 下的所有 serviceMonitor
   ```shell
   $ kubectl get servicemonitors.monitoring.coreos.com -n bkmonitor-operator
   NAME                                                 AGE
@@ -206,7 +212,8 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
   bkmonitor-operator-bkmonit-node-exporter             397d
   bkmonitor-operator-operator                          208d
   ```
-* 查看其中某一个 serviceMonitor 配置信息，这里以 bkmonitor-operator-bkmonit-kubelet 举例子
+
+* 查看其中某一个 serviceMonitor 信息，以 bkmonitor-operator-bkmonit-kubelet 为例。
   ```shell
   $ kubectl get servicemonitors.monitoring.coreos.com -n bkmonitor-operator  bkmonitor-operator-bkmonit-kubelet -oyaml
   apiVersion: monitoring.coreos.com/v1
@@ -221,22 +228,23 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
     namespaceSelector:
       matchNames:
       - bkmonitor-operator
+    # servicemonito 匹配规则
     selector:
       matchLabels:
         app.kubernetes.io/managed-by: bkmonitor-operator
         k8s-app: kubelet
   ```
-  serviceMonitor 的 selector 和 namespaceSelector 字段用于选择需要监控的 Kubernetes 服务。这些字段决定了，应该要抓取哪些服务。配置可见 如上配置文件的最后几行。
+  serviceMonitor 的 selector 和 namespaceSelector 字段用于匹配 Service 资源。
 
-* 根据查询 serviceMonitor 监控的 service
+* 根据查询 serviceMonitor 匹配的 Service
   ```shell
   $ kubectl get service -n bkmonitor-operator -l app.kubernetes.io/managed-by=bkmonitor-operator,k8s-app=kubelet
   NAME                         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)                        AGE
   bkmonitor-operator-kubelet   ClusterIP   None         <none>        10250/TCP,10255/TCP,4194/TCP   397d
   ```
-  可以看见 bkmonitor-operator-bkmonit-kubelet 监控到的 service 是 bkmonitor-operator-kubelet
+  bkmonitor-operator-bkmonit-kubelet 匹配到的 Service 为 bkmonitor-operator-kubelet。
 
-* 查询该 service 对应的的 Endpoints
+* 查询 Service 对应的 Endpoints
   ```shell
   $ kubectl describe service -n bkmonitor-operator bkmonitor-operator-kubelet
   Name:              bkmonitor-operator-kubelet
@@ -261,16 +269,11 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
   Endpoints:         127.0.3.8:4194,127.0.4.6:4194,127.0.4.8:4194 + 21 more...
   Session Affinity:  None
   ```
-  这里的 Endpoints 也就是例子中 bkmonitor-operator-bkmonit-kubelet 这个 serviceMonitor 监控到的 IP + Port 列表。
+  这里的 Endpoints 也就是例子中 bkmonitor-operator-bkmonit-kubelet 这个 serviceMonitor 匹配的 IP:Port 列表。
 
 ### GET /check/scrape
 
-> 检查采集任务指标数量。
-
-这个接口是用于查询某个 serviceMonitor/podMonitor 采集指标的数量。
-
-例如用户想要让蓝鲸监控这边能监控到他们自定义的一些指标，则需要配置自己的 serviceMonitor/podMonitor 来告诉蓝鲸监控，监控会从配置的 serviceMonitor/podMonitor 中找到需要抓取的 port、path、schema 等相关的信息中进行监控。
-一般这时候，用户想看看自己配置的 serviceMonitor/podMonitor 的指标量级，就可以使用这个接口。
+> 检查采集任务抓取到的指标数量。
 
 ```shell
 $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl http://localhost:8080/check/scrape | jq .
@@ -303,13 +306,14 @@ $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl h
 
 ### GET /check/scrape/{namespace}
 
-> 检查某个指定 namespace 指标文本并返回。
+> 抓取某个指定 namespace 指标文本并返回。
 
-该接口会向指定的 namespace 下面的各个 serviceMonitor/podMonitor 的 Endpoints 获取指标文本信息。
+该接口会向指定的 namespace 下面的各个 serviceMonitor/podMonitor 的 Endpoints 抓取指标文本信息。
 
 例如需要查询某一个具体的指标名对应的指标文本信息，这里我们通过 kube_endpoint_info 这个指标名进行过滤来展示。
 
 ```shell
+# kube_endpoint_info 指标里面的 namespace 指采集目标的 namespace。
 $ kubectl exec -it -n bkmonitor-operator bkm-operator-79486746f5-n6ztd -- curl http://localhost:8080/check/scrape/bkmonitor-operator | grep kube_endpoint_info
 kube_endpoint_info{namespace="bkapp-cc-portal-prod",endpoint="cc-portal--quality"} 1
 kube_endpoint_info{namespace="bkapp-cc-portal-prod",endpoint="cc-portal--auditlog"} 1
@@ -325,19 +329,18 @@ kube_endpoint_info{namespace="aiops-default",endpoint="service-c22c7db09943e5c50
 kube_endpoint_info{namespace="bkmonitor-operator",endpoint="bkmonitor-operator-kubelet"} 1
 ...
 ```
-kube_endpoint_info 指标里面的 namespace 指采集目标的 namespace。
 
 ### GET /check/scrape/{namespace}/{monitor}
 
-> 检查某个 namespace 下的 monitor 指标文本并返回。
+> 抓取某个 namespace 下的 monitor 指标文本并返回。
 
-同上面，只需要加入 monitor （即 serviceMonitor/podMonitor 名称）信息即可。
+同上，需要指定 serviceMonitor/podMonitor 名称信息。
 
 ### GET /check/active_discover
 
 > 检查活跃的 discover 情况。
 
-discover 是各个 serviceMonitor/podMonitor 的 Spec 信息的监听器。一个 serviceMonitor/podMonitor 的 Endpoints 的 Spec 可能配置了若干个采集端口。这些端口由 Index 来标识。
+discover 是各个 serviceMonitor/podMonitor 的 Spec 信息的监听器。一个 serviceMonitor/podMonitor 的 Endpoints Spec 可能配置了若干个采集端口，端口由 Index 来标识。
 
 当用户需要检查自己配置的 serviceMonitor/podMonitor 抓取端口是否配置成功，可以使用这个接口来进行判断。若原本只配置了 2 个抓取端口，现在需要新增（或减少）一个，但是 Index 没有变化，说明未配置成功。
 

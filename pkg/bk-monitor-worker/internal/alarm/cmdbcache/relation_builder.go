@@ -30,19 +30,7 @@ var (
 			return make([]prompb.TimeSeries, 0)
 		},
 	}
-	tsMapPool = sync.Pool{New: func() any {
-		return make(map[string]struct{})
-	}}
 )
-
-func getTsMapPool() map[string]struct{} {
-	return tsMapPool.Get().(map[string]struct{})
-}
-
-func putTsMapPool(tsMap map[string]struct{}) {
-	tsMap = make(map[string]struct{})
-	tsMapPool.Put(tsMap)
-}
 
 func getTsPool() []prompb.TimeSeries {
 	return tsPool.Get().([]prompb.TimeSeries)
@@ -225,7 +213,7 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 
 	for bkBizID := range bkBizIDs {
 		ts := getTsPool()
-		metricsMap := getTsMapPool()
+		metricsMap := make(map[string]struct{})
 
 		b.metricsLock.RLock()
 		if nodeMap, ok := b.metrics[bkBizID]; ok {
@@ -251,7 +239,6 @@ func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Tim
 		}
 
 		putTsPool(ts)
-		putTsMapPool(metricsMap)
 	}
 
 	return nil

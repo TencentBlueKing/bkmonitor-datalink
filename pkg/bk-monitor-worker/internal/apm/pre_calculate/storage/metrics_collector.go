@@ -16,7 +16,7 @@ import (
 // MetricsName
 const (
 	ApmServiceInstanceRelation = "apm_service_with_apm_service_instance_relation"
-	ApmServiceK8sRelation      = "apm_service_instance_with_k8s_address_relation"
+	ApmServicePodRelation      = "apm_service_instance_with_pod_relation"
 	ApmServiceSystemRelation   = "apm_service_instance_with_system_relation"
 
 	ApmServiceFlow       = "apm_service_to_apm_service_flow"

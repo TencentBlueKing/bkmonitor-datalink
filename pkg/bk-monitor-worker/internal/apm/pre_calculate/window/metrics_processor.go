@@ -84,19 +84,20 @@ func (m *MetricProcessor) findSpanMetric(
 			metricCount[storage.ApmServiceInstanceRelation]++
 		}
 
-		// apm_service_instance_with_k8s_address_relation
-		serviceK8sRelationLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
-			"__name__", storage.ApmServiceK8sRelation,
+		// apm_service_instance_with_pod_address_relation
+		servicePodRelationLabelKey := fmt.Sprintf(
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
+			"__name__", storage.ApmServicePodRelation,
 			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
 			"apm_application_name", m.appName,
 			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
-			"address", span.GetFieldValue(core.K8sPodIp),
 			"bcs_cluster_id", span.GetFieldValue(core.K8sBcsClusterId),
+			"namespace", span.GetFieldValue(core.K8sNamespace),
+			"pod", span.GetFieldValue(core.K8sPodName),
 		)
-		if !slices.Contains(labels, serviceK8sRelationLabelKey) {
-			labels = append(labels, serviceK8sRelationLabelKey)
-			metricCount[storage.ApmServiceK8sRelation]++
+		if !slices.Contains(labels, servicePodRelationLabelKey) {
+			labels = append(labels, servicePodRelationLabelKey)
+			metricCount[storage.ApmServicePodRelation]++
 		}
 
 		// apm_service_instance_with_system_relation

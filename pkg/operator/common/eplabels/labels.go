@@ -7,30 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package define
+package eplabels
 
-func LabelEndpointNodeName(endpointslice bool) string {
+func EndpointNodeName(endpointslice bool) string {
 	if endpointslice {
 		return "__meta_kubernetes_endpointslice_node_name"
 	}
 	return "__meta_kubernetes_endpoint_node_name"
 }
 
-func LabelEndpointAddressTargetKind(endpointslice bool) string {
+func EndpointAddressTargetKind(endpointslice bool) string {
 	if endpointslice {
 		return "__meta_kubernetes_endpointslice_address_target_kind"
 	}
 	return "__meta_kubernetes_endpoint_address_target_kind"
 }
 
-func LabelEndpointAddressTargetName(endpointslice bool) string {
+func EndpointAddressTargetName(endpointslice bool) string {
 	if endpointslice {
 		return "__meta_kubernetes_endpointslice_address_target_name"
 	}
 	return "__meta_kubernetes_endpoint_address_target_name"
 }
 
-func LabelEndpointPortName(endpointslice bool) string {
+func EndpointPortName(endpointslice bool) string {
 	if endpointslice {
 		return "__meta_kubernetes_endpointslice_port_name"
 	}

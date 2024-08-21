@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 )
 
 func sanitizeLabelName(name string) string {
@@ -151,7 +151,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{define.LabelEndpointPortName(endpointSliceSupported)}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointPortName(useEndpointslice)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {
@@ -173,14 +173,14 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	// Relabel namespace and pod and service labels into proper labels.
 	relabelings = append(relabelings, []yaml.MapSlice{
 		{ // Relabel node labels for pre v2.3 meta labels
-			{Key: "source_labels", Value: []string{define.LabelEndpointAddressTargetKind(endpointSliceSupported), define.LabelEndpointAddressTargetName(endpointSliceSupported)}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Node;(.*)"},
 			{Key: "replacement", Value: "${1}"},
 			{Key: "target_label", Value: "node"},
 		},
 		{ // Relabel pod labels for >=v2.3 meta labels
-			{Key: "source_labels", Value: []string{define.LabelEndpointAddressTargetKind(endpointSliceSupported), define.LabelEndpointAddressTargetName(endpointSliceSupported)}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Pod;(.*)"},
 			{Key: "replacement", Value: "${1}"},

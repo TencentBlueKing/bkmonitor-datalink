@@ -46,8 +46,8 @@ const (
 )
 
 var (
-	kubernetesVersion      string
-	endpointSliceSupported bool
+	kubernetesVersion string
+	useEndpointslice  bool
 )
 
 // Operator 负责部署和调度任务
@@ -149,8 +149,8 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	// 1.21.0 开始 endpointslice 正式成为 v1
-	endpointSliceSupported = parsedVersion.GTE(semver.MustParse("1.21.0"))
-	if endpointSliceSupported {
+	useEndpointslice = parsedVersion.GTE(semver.MustParse("1.21.0")) && ConfEnableEndpointslice
+	if useEndpointslice {
 		logger.Info("use 'endpointslice' instead of 'endpoint'")
 	}
 
@@ -204,7 +204,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
 		}
-		operator.promsliController = promsli.NewController(operator.ctx, operator.client, endpointSliceSupported)
+		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
@@ -592,7 +592,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
 				LabelJoinMatcher:       feature.LabelJoinMatcher(serviceMonitor.Annotations),
-				EndpointSliceSupported: endpointSliceSupported,
+				UseEndpointSlice:       useEndpointslice,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,
@@ -794,7 +794,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
 				LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
-				EndpointSliceSupported: endpointSliceSupported,
+				UseEndpointSlice:       useEndpointslice,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
 				KubeConfig:             ConfKubeConfig,

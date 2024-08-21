@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	promyaml "github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -32,7 +33,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
@@ -51,31 +51,31 @@ type Controller struct {
 	client kubernetes.Interface
 	bus    *notifier.RateBus
 
-	mut                    sync.Mutex
-	rules                  map[string]*promv1.PrometheusRule
-	rulesRelation          map[string]string
-	smMetrics              map[string]map[string]struct{}
-	serviceMonitors        map[string]*promv1.ServiceMonitor
-	registerRules          map[string]struct{}
-	endpointSliceSupported bool
+	mut              sync.Mutex
+	rules            map[string]*promv1.PrometheusRule
+	rulesRelation    map[string]string
+	smMetrics        map[string]map[string]struct{}
+	serviceMonitors  map[string]*promv1.ServiceMonitor
+	registerRules    map[string]struct{}
+	useEndpointslice bool
 
 	prevScrapeContent []byte
 	prevRuleContent   map[string]string
 }
 
-func NewController(ctx context.Context, client kubernetes.Interface, endpointSliceSupported bool) *Controller {
+func NewController(ctx context.Context, client kubernetes.Interface, useEndpointslice bool) *Controller {
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Controller{
-		ctx:                    ctx,
-		cancel:                 cancel,
-		client:                 client,
-		bus:                    notifier.NewDefaultRateBus(),
-		rules:                  make(map[string]*promv1.PrometheusRule),
-		rulesRelation:          make(map[string]string),
-		smMetrics:              map[string]map[string]struct{}{},
-		endpointSliceSupported: endpointSliceSupported,
-		serviceMonitors:        make(map[string]*promv1.ServiceMonitor),
-		registerRules:          map[string]struct{}{},
+		ctx:              ctx,
+		cancel:           cancel,
+		client:           client,
+		bus:              notifier.NewDefaultRateBus(),
+		rules:            make(map[string]*promv1.PrometheusRule),
+		rulesRelation:    make(map[string]string),
+		smMetrics:        map[string]map[string]struct{}{},
+		useEndpointslice: useEndpointslice,
+		serviceMonitors:  make(map[string]*promv1.ServiceMonitor),
+		registerRules:    map[string]struct{}{},
 	}
 
 	go c.handle()
@@ -452,7 +452,7 @@ func (c *Controller) generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonito
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			yaml.MapItem{Key: "source_labels", Value: []string{define.LabelEndpointPortName(c.endpointSliceSupported)}},
+			yaml.MapItem{Key: "source_labels", Value: []string{eplabels.EndpointPortName(c.useEndpointslice)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {
@@ -471,7 +471,7 @@ func (c *Controller) generateServiceMonitorScrapeConfig(sm *promv1.ServiceMonito
 		}
 	}
 
-	sourceLabels := []string{define.LabelEndpointAddressTargetKind(c.endpointSliceSupported), define.LabelEndpointAddressTargetName(c.endpointSliceSupported)}
+	sourceLabels := []string{eplabels.EndpointAddressTargetKind(c.useEndpointslice), eplabels.EndpointAddressTargetName(c.useEndpointslice)}
 	// Relabel namespace and pod and service labels into proper labels.
 	relabelings = append(relabelings, []yaml.MapSlice{
 		{ // Relabel node labels with meta labels available with Prometheus >= v2.3.

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/goware/urlx"
 	"github.com/pkg/errors"
@@ -152,7 +153,7 @@ type BaseParams struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
-	EndpointSliceSupported bool
+	UseEndpointSlice       bool
 }
 
 type BaseDiscover struct {
@@ -274,15 +275,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	for _, label := range origLabels {
 		switch label.Name {
 		// 补充 NodeName
-		case define.LabelEndpointNodeName(d.EndpointSliceSupported), labelPodNodeName:
+		case eplabels.EndpointNodeName(d.UseEndpointSlice), labelPodNodeName:
 			metricTarget.NodeName = label.Value
 
 			// 如果 target 类型是 node，则需要特殊处理，此时 endpointNodeName 对应 label 会为空
-		case define.LabelEndpointAddressTargetKind(d.EndpointSliceSupported), labelPodAddressTargetKind:
+		case eplabels.EndpointAddressTargetKind(d.UseEndpointSlice), labelPodAddressTargetKind:
 			if label.Value == "Node" {
 				isNodeType = true
 			}
-		case define.LabelEndpointAddressTargetName(d.EndpointSliceSupported), labelPodAddressTargetName:
+		case eplabels.EndpointAddressTargetName(d.UseEndpointSlice), labelPodAddressTargetName:
 			targetName = label.Value
 		}
 	}

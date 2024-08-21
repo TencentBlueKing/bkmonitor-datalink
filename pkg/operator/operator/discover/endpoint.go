@@ -38,12 +38,12 @@ type Endpoint struct {
 
 func NewEndpointDiscover(ctx context.Context, meta define.MonitorMeta, checkFn define.CheckFunc, params *EndpointParams) Discover {
 	return &Endpoint{
-		BaseDiscover: NewBaseDiscover(ctx, discoverTypeEndpoints(params.EndpointSliceSupported), meta, checkFn, params.BaseParams),
+		BaseDiscover: NewBaseDiscover(ctx, discoverTypeEndpoints(params.UseEndpointSlice), meta, checkFn, params.BaseParams),
 	}
 }
 
 func (d *Endpoint) Type() string {
-	return discoverTypeEndpoints(d.EndpointSliceSupported)
+	return discoverTypeEndpoints(d.UseEndpointSlice)
 }
 
 func (d *Endpoint) Reload() error {
@@ -53,7 +53,7 @@ func (d *Endpoint) Reload() error {
 
 func (d *Endpoint) Start() error {
 	d.PreStart()
-	RegisterSharedDiscover(discoverTypeEndpoints(d.EndpointSliceSupported), d.KubeConfig, d.getNamespaces())
+	RegisterSharedDiscover(discoverTypeEndpoints(d.UseEndpointSlice), d.KubeConfig, d.getNamespaces())
 
 	d.wg.Add(1)
 	go func() {

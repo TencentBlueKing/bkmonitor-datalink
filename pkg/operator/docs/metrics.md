@@ -24,8 +24,6 @@
 | discover_removed_config_total          | Counter   | 移除子任务计数器           |
 | discover_received_tg_total             | Counter   | 接收 targetgroup 计数器 |
 | discover_handled_tg_duration_seconds   | Histogram | 处理 targetgroup 耗时  |
-| discover_accessed_secret_success_total | Counter       | 获取 sercets 成功次数    |
-| discover_accessed_secret_failed_total  | Counter       | 获取 sercets 失败次数    |
 
 ### Workload
 

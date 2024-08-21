@@ -290,9 +290,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 	trace.InsertStringIntoSpan("table_id", string(tableID), span)
 
 	tsDBs, err := GetTsDBList(ctx, &TsDBOption{
-		SpaceUid:  spaceUid,
-		TableID:   tableID,
-		FieldName: metricName,
+		SpaceUid:   spaceUid,
+		TableID:    tableID,
+		FieldName:  metricName,
+		Conditions: q.Conditions,
 	})
 	if err != nil {
 		return nil, err

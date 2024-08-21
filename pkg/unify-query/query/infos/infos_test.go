@@ -85,7 +85,7 @@ func mockSpace() {
 		},
 	}
 
-	influxdb.MockRouter(proxyInfo)
+	influxdb.MockRouter(proxyInfo, nil)
 }
 
 // fakeData

@@ -345,3 +345,35 @@ type ListServiceInstanceDetailInfo struct {
 	ServiceTemplateId int         `json:"service_template_id" mapstructure:"service_template_id"`
 	ProcessInstances  interface{} `json:"process_instances" mapstructure:"process_instances"`
 }
+
+// SearchDynamicGroupResp 查询动态分组返回
+type SearchDynamicGroupResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     SearchDynamicGroupData `json:"data" mapstructure:"data"`
+}
+
+// SearchDynamicGroupData 查询动态分组数据
+type SearchDynamicGroupData struct {
+	Count int                      `json:"count" mapstructure:"count"`
+	Info  []SearchDynamicGroupInfo `json:"info" mapstructure:"info"`
+}
+
+// SearchDynamicGroupInfo 查询动态分组信息
+type SearchDynamicGroupInfo struct {
+	BkBizId int    `json:"bk_biz_id" mapstructure:"bk_biz_id"`
+	ID      string `json:"id" mapstructure:"id"`
+	Name    string `json:"name" mapstructure:"name"`
+	BkObjId string `json:"bk_obj_id" mapstructure:"bk_obj_id"`
+}
+
+// ExecuteDynamicGroupResp 执行动态分组返回
+type ExecuteDynamicGroupResp struct {
+	define.ApiCommonRespMeta `mapstructure:",squash"`
+	Data                     ExecuteDynamicGroupData `json:"data" mapstructure:"data"`
+}
+
+// ExecuteDynamicGroupData 执行动态分组数据
+type ExecuteDynamicGroupData struct {
+	Count int                      `json:"count" mapstructure:"count"`
+	Info  []map[string]interface{} `json:"info" mapstructure:"info"`
+}

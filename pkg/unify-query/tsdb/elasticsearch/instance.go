@@ -655,5 +655,9 @@ func (i *Instance) QueryRaw(
 		return storage.ErrSeriesSet(err)
 	}
 
+	if len(qr.Timeseries) == 0 {
+		return storage.EmptySeriesSet()
+	}
+
 	return remote.FromQueryResult(false, qr)
 }

@@ -304,6 +304,9 @@ bk-collector:
     # DbFilter: db 处理器
     - name: "db_filter/common"
 
+    # Attribute_filter 应用层级的配置
+    - name: "attribute_filter/app"
+
     # PprofTranslator: pprof 协议转换器
     - name: "pprof_translator/common"
       config:
@@ -1753,6 +1756,7 @@ bk-collector:
         - "resource_filter/instance_id"
         - "attribute_filter/as_string"
         - "db_filter/common"
+        - "attribute_filter/app"
         - "service_discover/common"
         - "apdex_calculator/standard"
         - "traces_deriver/delta"

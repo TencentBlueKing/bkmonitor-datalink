@@ -171,7 +171,7 @@ const (
 	formatCheckDataIDFailedMsg = `
 [x] check dataids
 - Description: 期待 dataids 数量应大于等于 3 个，目前发现 %d 个
-- Suggestion: dataid 是由 metadata 组件注入，请确定接入流程是否规范。同时检查 metadata 日志，确定是否出现异常（必要时携带日志联系开发或者运维同学）
+- Suggestion: dataid 由 metadata 组件注入，请确定接入流程是否规范。同时检查 metadata 日志，确定是否出现异常。
   * operator 从启动到监听 dataids 资源可能存在约 20s 的延迟
   * 监控后台为传统部署，日志路径为 /data/bkee/logs/bkmonitorv3/kernel_metadata.log
   * 监控后台为容器部署，请查看 bkmonitor-alarm-cron-worker pod 的日志
@@ -189,7 +189,7 @@ const (
 [√] check namespaces
 - Description: 监测 namespace 白名单列表 %v，namespace 黑名单列表 %v
 - Suggestion: 请检查所需监控资源是否位于监测命名空间列表下，黑名单只在白名单列表为空时生效
-  * 如若发现所需命名空间没有在监测列表中，请修改 values.yaml 中的 denyTargetNamespaces 或者 targetNamespaces，并 'helm upgrade' 到集群中
+  * 如若发现所需命名空间没有在监测列表中，请修改 values.yaml 中的 denyTargetNamespaces 或者 targetNamespaces，并更新到集群中
 `
 	formatCheckNamespaceFailedMsg = `
 [x] check namespaces
@@ -245,19 +245,17 @@ const (
 `
 	formatOperatorLogMsg = `
 [o] bkmonitor-operator logs
-- Description: 使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息
-- Suggestion: 检查 ERROR 日志是否有明显的报错信息，必要时携带日志联系开发或者运维同学
+- Description: 使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息。
 `
 	formatBkmonitorbeatTroubleshootingMsg = `
 [o] bkmonitorbeat troubleshooting
 - Description: 如若上述检查无发现异常问题，则考虑排查 bkmonitorbeat 本身的采集是否出现异常
-- Suggestion: 使用 strace 命令抓取 bkmonitorbeat write syscall 数据
+- Suggestion: 优先检查采集器日志是否有异常，采集器会在每次采集记录日志流水。
   1）根据上述检查得到采集任务所在节点，并使用 'kubectl get pods -n ${.Release.Namespace} -owide' 确定对应的 bkmonitorbeat pod
-  2）使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息
-  3）使用 'kubectl exec it -n ${.Release.Namespace} ${bkmonitorbeat-pod}' 命令查看 bkmonitorbeat 所在进程 pid
-  4）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/bkmonitorbeat.strace' 等待一分钟导出 strace 数据
-  5）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说明 bkmonitorbeat 本身没问题，需要排查链路问题
-  6）链路排查可按照二进制部署排查思路 kafka -> transfer -> influxdb-proxy -> influxdb（必要时携带日志联系开发或者运维同学）
+  2）使用 'kubectl exec it -n ${.Release.Namespace} ${bkmonitorbeat-pod}' 命令查看 bkmonitorbeat 所在进程 pid
+  3）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/bkmonitorbeat.strace' 等待一分钟导出 strace 数据
+  4）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说明 bkmonitorbeat 本身没问题，需要排查链路问题
+  5）链路排查可按照二进制部署排查思路 kafka -> transfer -> influxdb-proxy -> influxdb
 `
 )
 

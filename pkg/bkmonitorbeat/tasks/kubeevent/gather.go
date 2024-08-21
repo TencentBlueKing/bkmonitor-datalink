@@ -13,8 +13,10 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/hpcloud/tail"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -24,15 +26,19 @@ import (
 )
 
 type recorder struct {
-	ctx            context.Context
-	set            map[string]*k8sEvent
-	mut            sync.Mutex
-	interval       time.Duration
-	eventSpan      time.Duration
-	started        int64
-	dataID         int32
-	externalLabels []map[string]string
-	out            chan define.Event
+	ctx             context.Context
+	set             map[string]*k8sEvent
+	mut             sync.Mutex
+	interval        time.Duration
+	eventSpan       time.Duration
+	started         int64
+	dataID          int32
+	upMetricsDataID int32
+	externalLabels  []map[string]string
+	out             chan common.MapStr
+
+	received atomic.Int64
+	sent     atomic.Int64
 }
 
 func newRecorder(ctx context.Context, conf *configs.KubeEventConfig) *recorder {
@@ -45,14 +51,15 @@ func newRecorder(ctx context.Context, conf *configs.KubeEventConfig) *recorder {
 		eventSpan = conf.EventSpan
 	}
 	r := &recorder{
-		ctx:            ctx,
-		interval:       interval,
-		eventSpan:      eventSpan,
-		dataID:         conf.DataID,
-		externalLabels: conf.GetLabels(),
-		set:            map[string]*k8sEvent{},
-		started:        time.Now().Unix(),
-		out:            make(chan define.Event, 1),
+		ctx:             ctx,
+		interval:        interval,
+		eventSpan:       eventSpan,
+		dataID:          conf.DataID,
+		upMetricsDataID: conf.UpMetricsDataID,
+		externalLabels:  conf.GetLabels(),
+		set:             map[string]*k8sEvent{},
+		started:         time.Now().Unix(),
+		out:             make(chan common.MapStr, 1),
 	}
 
 	go r.loopSent()
@@ -104,7 +111,7 @@ func (r *recorder) loopSent() {
 					continue
 				}
 				cloned.Count = cnt
-				r.out <- newWrapEvent(r.dataID, r.externalLabels, *cloned)
+				r.out <- toEventMapStr(*cloned, r.externalLabels)
 			}
 			r.mut.Unlock()
 
@@ -118,6 +125,8 @@ func (r *recorder) loopSent() {
 func (r *recorder) Recv(event k8sEvent) {
 	r.mut.Lock()
 	defer r.mut.Unlock()
+
+	r.received.Add(1)
 
 	// 异常时间处理
 	if event.IsZeroTime() {
@@ -176,11 +185,38 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		go g.watchEvents(f)
 	}
 
+	const batch = 100
+	events := make([]common.MapStr, 0, batch)
+
+	ticker := time.NewTicker(time.Second * 3)
+	defer ticker.Stop()
+
+	reportTicker := time.NewTicker(time.Minute) // 自监控上报周期
+	defer reportTicker.Stop()
+
+	sentOut := func() {
+		e <- newWrapEvent(g.store.dataID, events)
+		g.store.sent.Add(int64(len(events)))
+		events = make([]common.MapStr, 0, batch)
+	}
+
 	for {
 		select {
 		case out := <-g.store.out:
-			logger.Infof("send k8s event: %+v", out.AsMapStr())
-			e <- out
+			logger.Infof("send k8s event: %+v", out)
+			events = append(events, out)
+			if len(events) >= batch {
+				sentOut()
+			}
+
+		case <-ticker.C:
+			if len(events) > 0 {
+				sentOut()
+			}
+
+		case <-reportTicker.C:
+			e <- CodeMetrics(g.store.upMetricsDataID, g.TaskConfig, g.store.received.Load(), g.store.sent.Load())
+
 		case <-g.ctx.Done():
 			return
 		}
@@ -215,7 +251,6 @@ func (g *Gather) watchEvents(filename string) {
 	}
 }
 
-// New :
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig

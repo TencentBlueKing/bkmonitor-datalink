@@ -7,10 +7,11 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package storage
+package remote
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +21,15 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+const (
+	tokenKey = "X-BK-TOKEN"
+)
+
+type PrometheusStorageDataList []PrometheusStorageData
 
 type PrometheusStorageData struct {
 	Value []prompb.TimeSeries
@@ -52,28 +61,42 @@ func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	}
 }
 
-type prometheusWriter struct {
+type PrometheusWriter struct {
 	config PrometheusWriterOptions
 
 	client *http.Client
 }
 
-func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
+func GetPrometheusWriteOptions(opts ...PrometheusWriterOption) PrometheusWriterOptions {
+	var res PrometheusWriterOptions
+	for _, opt := range opts {
+		opt(&res)
+	}
+	return res
+}
+
+func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
+	if d == nil {
+		return nil
+	}
+	var ts []prompb.TimeSeries
+	for _, item := range d {
+		ts = append(ts, item.Value...)
+	}
+	return ts
+}
+
+func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList []prompb.TimeSeries) error {
 	if !p.config.enabled {
 		return nil
 	}
 
-	var series []prompb.TimeSeries
-	for _, item := range data {
-		series = append(series, item.Value...)
-	}
-
-	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: series})
+	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: tsList})
 	if err != nil {
 		return err
 	}
 	compressedData := snappy.Encode(nil, reqBytes)
-	req, err := http.NewRequest("POST", p.config.url, bytes.NewBuffer(compressedData))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.config.url, bytes.NewBuffer(compressedData))
 	if err != nil {
 		return err
 	}
@@ -82,6 +105,11 @@ func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 	req.Header.Set("X-Prometheus-Remote-Write-Version", "0.1.0")
 	for k, v := range p.config.headers {
 		req.Header.Set(k, v)
+	}
+
+	// 支持使用不同的 token
+	if token != "" {
+		req.Header.Set(tokenKey, token)
 	}
 
 	resp, err := p.client.Do(req)
@@ -95,10 +123,12 @@ func (p *prometheusWriter) WriteBatch(data []PrometheusStorageData) error {
 		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
 	}
 
+	logger.Infof("prom remote wirte ts: %d", len(tsList))
+
 	return nil
 }
 
-func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter {
+func NewPrometheusWriterClient(config PrometheusWriterOptions) *PrometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
@@ -107,7 +137,7 @@ func newPrometheusWriterClient(config PrometheusWriterOptions) *prometheusWriter
 		Timeout: 10 * time.Second,
 	}
 
-	return &prometheusWriter{
+	return &PrometheusWriter{
 		config: config,
 		client: client,
 	}

@@ -18,7 +18,6 @@ import (
 	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 )
 
-// Event script event
 type Event struct {
 	DataID    int32
 	TaskID    int32

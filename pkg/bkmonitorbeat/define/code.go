@@ -9,75 +9,24 @@
 
 package define
 
-import (
-	"bytes"
-	"fmt"
-	"io"
-)
-
 const (
 	NameGatherUp    = "bkm_gather_up"
 	LabelUpCode     = "bkm_up_code"
 	LabelUpCodeName = "bkm_up_code_name"
+
+	// MetricBeat 任务指标
 
 	NameMetricBeatUp             = "bkm_metricbeat_endpoint_up"
 	NameMetricBeatScrapeDuration = "bkm_metricbeat_scrape_duration_seconds"
 	NameMetricBeatScrapeSize     = "bkm_metricbeat_scrape_size_bytes"
 	NameMetricBeatScrapeLine     = "bkm_metricbeat_scrape_line"
 	NameMetricBeatHandleDuration = "bkm_metricbeat_handle_duration_seconds"
+
+	// KubeEvent 任务指标
+
+	NameKubeEventReceiveEvents = "bkm_kubeevent_receive_events"
+	NameKubeEventReportEvents  = "bkm_kubeevent_report_events"
 )
-
-var innerMetrics = map[string]struct{}{
-	NameMetricBeatUp:             {},
-	NameMetricBeatScrapeDuration: {},
-	NameMetricBeatScrapeSize:     {},
-	NameMetricBeatScrapeLine:     {},
-	NameMetricBeatHandleDuration: {},
-}
-
-func IsInnerMetric(s string) bool {
-	_, ok := innerMetrics[s]
-	return ok
-}
-
-func NewMetricBeatCodeReader(code NamedCode, kvs []LogKV) io.ReadCloser {
-	r := bytes.NewReader([]byte(MetricBeatUp(code, kvs)))
-	return io.NopCloser(r)
-}
-
-const (
-	prefixMetricbeat = "[metricbeat] "
-)
-
-func MetricBeatUp(code NamedCode, kvs []LogKV) string {
-	s := fmt.Sprintf(`%s{code="%d",code_name="%s"} 1`, NameMetricBeatUp, code.Code(), code.Name())
-	RecordLog(prefixMetricbeat+s, kvs)
-	return s
-}
-
-func MetricBeatScrapeDuration(seconds float64, kvs []LogKV) string {
-	s := fmt.Sprintf(`%s{} %f`, NameMetricBeatScrapeDuration, seconds)
-	RecordLog(prefixMetricbeat+s, kvs)
-	return s
-}
-
-func MetricBeatScrapeSize(size int, kvs []LogKV) string {
-	s := fmt.Sprintf(`%s{} %d`, NameMetricBeatScrapeSize, size)
-	RecordLog(prefixMetricbeat+s, kvs)
-	return s
-}
-
-func MetricBeatScrapeLine(n int, kvs []LogKV) string {
-	s := fmt.Sprintf(`%s{} %d`, NameMetricBeatScrapeLine, n)
-	RecordLog(prefixMetricbeat+s, kvs)
-	return s
-}
-
-func MetricBeatHandleDuration(seconds float64, kvs []LogKV) string {
-	s := fmt.Sprintf(`%s{} %f`, NameMetricBeatHandleDuration, seconds)
-	RecordLog(prefixMetricbeat+s, kvs)
-	return s
-}
 
 type NamedCode struct {
 	code int

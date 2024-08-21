@@ -14,20 +14,41 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/prometheus/prometheus/prompb"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+var (
+	defaultRelationMetricsBuilder = newRelationMetricsBuilder()
+
+	tsPool = sync.Pool{
+		New: func() any {
+			return make([]prompb.TimeSeries, 0)
+		},
+	}
+)
+
+func getTsPool() []prompb.TimeSeries {
+	return tsPool.Get().([]prompb.TimeSeries)
+}
+
+func putTsPool(ts []prompb.TimeSeries) {
+	ts = ts[:0]
+	tsPool.Put(ts)
+}
 
 // RelationMetricsBuilder 关联指标构建器，生成指标缓存以及输出 prometheus 上报指标
 type RelationMetricsBuilder struct {
-	ctx         context.Context
+	spaceReport remote.Reporter
 	metricsLock sync.RWMutex
 	metrics     map[int]map[int]Nodes
 }
 
-var (
-	defaultRelationMetricsBuilder = NewRelationMetricsBuilder()
-)
-
-func NewRelationMetricsBuilder() *RelationMetricsBuilder {
+func newRelationMetricsBuilder() *RelationMetricsBuilder {
 	return &RelationMetricsBuilder{
 		metrics: make(map[int]map[int]Nodes),
 	}
@@ -35,6 +56,11 @@ func NewRelationMetricsBuilder() *RelationMetricsBuilder {
 
 func GetRelationMetricsBuilder() *RelationMetricsBuilder {
 	return defaultRelationMetricsBuilder
+}
+
+func (b *RelationMetricsBuilder) WithSpaceReport(reporter remote.Reporter) *RelationMetricsBuilder {
+	b.spaceReport = reporter
+	return b
 }
 
 func (b *RelationMetricsBuilder) toString(v any) string {
@@ -48,12 +74,6 @@ func (b *RelationMetricsBuilder) toString(v any) string {
 		val = fmt.Sprintf("%v", v)
 	}
 	return val
-}
-
-// WithContext 写入 context 用于管理上下文
-func (b *RelationMetricsBuilder) WithContext(ctx context.Context) *RelationMetricsBuilder {
-	b.ctx = ctx
-	return b
 }
 
 // ClearAllMetrics 清理全部指标
@@ -73,7 +93,6 @@ func (b *RelationMetricsBuilder) ClearMetricsWithHostID(hosts ...*AlarmHostInfo)
 			}
 		}
 	}
-
 }
 
 // BuildMetrics 通过 hosts 构建关联指标，存入缓存
@@ -145,10 +164,13 @@ func (b *RelationMetricsBuilder) BuildMetrics(_ context.Context, bkBizID int, ho
 		}
 	}
 
-	b.metricsLock.Lock()
-	b.metrics[bkBizID] = nodeMap
-	b.metricsLock.Unlock()
+	if len(nodeMap) > 0 {
+		b.metricsLock.Lock()
+		b.metrics[bkBizID] = nodeMap
+		b.metricsLock.Unlock()
+	}
 
+	logger.Infof("[cmdb_relation] set metrics  bkcc__%d: %d", bkBizID, len(nodeMap))
 	return nil
 }
 
@@ -173,4 +195,51 @@ func (b *RelationMetricsBuilder) String() string {
 	}
 
 	return buf.String()
+}
+
+// PushAll 推送全业务数据
+func (b *RelationMetricsBuilder) PushAll(ctx context.Context, timestamp time.Time) error {
+	if b.spaceReport == nil {
+		return fmt.Errorf("space reporter is nil")
+	}
+
+	// 提前把 bkBizIDs 取出来，缩小锁区间，控制在单业务下
+	bkBizIDs := make([]int, 0, len(b.metrics))
+	b.metricsLock.RLock()
+	for bizID := range b.metrics {
+		bkBizIDs = append(bkBizIDs, bizID)
+	}
+	b.metricsLock.RUnlock()
+
+	for bkBizID := range bkBizIDs {
+		ts := getTsPool()
+		metricsMap := make(map[string]struct{})
+
+		b.metricsLock.RLock()
+		if nodeMap, ok := b.metrics[bkBizID]; ok {
+			for _, nodes := range nodeMap {
+				for _, relationMetric := range nodes.toRelationMetrics() {
+					d := relationMetric.TimeSeries(bkBizID, timestamp)
+					if _, ok = metricsMap[d.String()]; !ok {
+						metricsMap[d.String()] = struct{}{}
+						ts = append(ts, d)
+					}
+				}
+			}
+		}
+		b.metricsLock.RUnlock()
+
+		if len(ts) > 0 {
+			// 上传业务 timeSeries
+			spaceUID := fmt.Sprintf("bkcc__%d", bkBizID)
+			if err := b.spaceReport.Do(ctx, spaceUID, ts...); err != nil {
+				return err
+			}
+			logger.Infof("[cmdb_relation] push %s cmdb relation metrics %d", spaceUID, len(ts))
+		}
+
+		putTsPool(ts)
+	}
+
+	return nil
 }

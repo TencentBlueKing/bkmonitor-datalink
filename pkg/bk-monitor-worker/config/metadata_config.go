@@ -84,6 +84,8 @@ var (
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
+	// BuildInResultTableDetailKey 空间关联内置上报rt详情
+	BuildInResultTableDetailKey string
 
 	// BkdataDefaultBizId 接入计算平台使用的业务 ID
 	BkdataDefaultBizId int
@@ -159,6 +161,7 @@ func initMetadataVariables() {
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
+	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
 
 	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
 	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)

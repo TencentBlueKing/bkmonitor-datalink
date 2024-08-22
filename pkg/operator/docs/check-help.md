@@ -301,7 +301,7 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
     matchLabels:
       app.kubernetes.io/bk-component: bkmonitor-operator
   ```
-  
+
 * 查询 podMonitor 匹配的 pod
   ```shell
   kubectl get pod -n bkmonitor-operator -l app.kubernetes.io/bk-component=bkmonitor-operator -owide

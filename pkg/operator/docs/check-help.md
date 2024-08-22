@@ -271,6 +271,79 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
   ```
   这里的 Endpoints 也就是例子中 bkmonitor-operator-bkmonit-kubelet 这个 serviceMonitor 匹配的 IP:Port 列表。
 
+接下来再来看看 podMonitor 的匹配规则
+
+* 查询 namespace 下所有的 podMonitor 
+  ```shell
+  $ kubectl get podMonitor frost-podmonitor-test -n bkmonitor-operator  -oyaml
+  NAME                    AGE
+  frost-podmonitor-test   167m
+  ```
+
+* 查询 podMonitor 的配置信息
+  ```shell
+  $ kubectl get pod -n bkmonitor-operator -l app.kubernetes.io/bk-component=bkmonitor-operator -owide
+  apiVersion: monitoring.coreos.com/v1
+  kind: PodMonitor
+  metadata:
+    name: frost-podmonitor-test
+    namespace: bkmonitor-operator
+  spec:
+  namespaceSelector:
+    matchNames:
+    - bkmonitor-operator
+  podMetricsEndpoints:
+  - interval: 15s
+    path: /metrics
+    port: http
+  # podMonitor 匹配规则
+  selector:
+    matchLabels:
+      app.kubernetes.io/bk-component: bkmonitor-operator
+  ```
+* 查询 podMonitor 匹配的 pod
+  ```shell
+  kubectl get pod -n bkmonitor-operator -l app.kubernetes.io/bk-component=bkmonitor-operator -owide
+  NAME                           READY   STATUS    RESTARTS   AGE   IP               NODE         NOMINATED NODE   READINESS GATES
+  bkm-operator-9964ccb66-485cs   1/1     Running   0          32m   172.17.174.115   10.0.7.101   <none>           <none>
+  ```
+  podMonitor 匹配到的 pod 就是 bkm-operator-9964ccb66-485cs
+* 查询 pod 暴露的 IP + Port
+  ```shell
+  $ kubectl describe pod bkm-operator-9964ccb66-485cs -n bkmonitor-operator
+  Name:             bkm-operator-9964ccb66-485cs
+  Namespace:        bkmonitor-operator
+  Priority:         0
+  Service Account:  bkmonitor-operator
+  Node:             10.0.7.101/10.0.7.101
+  Labels:           app.kubernetes.io/bk-component=bkmonitor-operator
+  pod-template-hash=9964ccb66
+  Annotations:      tke.cloud.tencent.com/networks-status:
+  [{
+  "name": "tke-bridge",
+  "interface": "eth0",
+  "ips": [
+  "172.17.174.115"
+  ],
+  }]
+  Status:           Running
+  IP:               172.17.174.115
+  IPs:
+  IP:           172.17.174.115
+  Controlled By:  ReplicaSet/bkm-operator-9964ccb66
+  Containers:
+  bkmonitor-operator:
+  Container ID:   docker://2b6bd4ce0bbb70bd9cac9261a5be1da588e2121f677589dec702b852f7e78c36
+  Image:          hub.bktencent.com/dev/blueking/bkmonitor-operator:3.6.2187
+  Image ID:       docker-pullable://hub.bktencent.com/dev/blueking/bkmonitor-operator@sha256:6bae75e9ae440364bc776a09ef3ab79a1f31b2bebc40d2236014144294139b7f
+  Port:           8080/TCP
+  Host Port:      0/TCP
+  State:          Running
+  Started:      Thu, 22 Aug 2024 19:36:41 +0800
+  Ready:          True
+  ```
+  可以看见 podMonitor 匹配到的 IP:Port 是 172.17.174.115:8080。这里的 IP 指的是 PodIP。
+
 ### GET /check/scrape
 
 > 检查采集任务抓取到的指标数量。

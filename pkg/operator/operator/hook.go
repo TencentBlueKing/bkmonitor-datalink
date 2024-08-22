@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/client-go/rest"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -40,6 +39,7 @@ const (
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
+	confEnableEndpointslicePath        = "operator.enable_endpointslice"
 	confKubeletNamespacePath           = "operator.kubelet.namespace"
 	confKubeletNamePath                = "operator.kubelet.name"
 	confKubeletEnablePath              = "operator.kubelet.enable"
@@ -97,11 +97,11 @@ var (
 	ConfEnablePromRule             bool
 	ConfEnableStatefulSetWorker    bool
 	ConfEnableDaemonSetWorker      bool
+	ConfEnableEndpointslice        bool
 	ConfKubeletNamespace           string
 	ConfKubeletName                string
 	ConfKubeletEnable              bool
 	ConfMaxNodeSecretRatio         float64
-	ConfPodName                    string
 	ConfStatefulSetWorkerHpa       bool
 	ConfStatefulSetWorkerFactor    int
 	ConfStatefulSetReplicas        int
@@ -149,7 +149,6 @@ func initConfig() {
 	viper.SetDefault(confMonitorNamespacePath, "bkmonitor-operator")
 	viper.SetDefault(confEnableServiceMonitorPath, true)
 	viper.SetDefault(confEnablePodMonitorPath, true)
-	viper.SetDefault(confEnablePromRulePath, false)
 	viper.SetDefault(confEnableStatefulSetWorkerPath, true)
 	viper.SetDefault(confEnableDaemonSetWorkerPath, true)
 	viper.SetDefault(confKubeletNamePath, "bkmonitor-operator-kubelet")
@@ -181,6 +180,7 @@ func updateConfig() {
 	ConfEnablePromRule = viper.GetBool(confEnablePromRulePath)
 	ConfEnableStatefulSetWorker = viper.GetBool(confEnableStatefulSetWorkerPath)
 	ConfEnableDaemonSetWorker = viper.GetBool(confEnableDaemonSetWorkerPath)
+	ConfEnableEndpointslice = viper.GetBool(confEnableEndpointslicePath)
 	ConfKubeletNamespace = viper.GetString(confKubeletNamespacePath)
 	ConfKubeletName = viper.GetString(confKubeletNamePath)
 	ConfKubeletEnable = viper.GetBool(confKubeletEnablePath)
@@ -191,7 +191,6 @@ func updateConfig() {
 		KeyFile:  viper.GetString(confTLSKeyFilePath),
 		CAFile:   viper.GetString(confTLSCAFilePath),
 	}
-	ConfPodName = viper.GetString(define.EnvPodName)
 	ConfStatefulSetWorkerHpa = viper.GetBool(confStatefulSetWorkerHpaPath)
 	ConfStatefulSetWorkerFactor = viper.GetInt(confStatefulSetWorkerFactorPath)
 	ConfStatefulSetReplicas = viper.GetInt(confStatefulSetReplicasPath)

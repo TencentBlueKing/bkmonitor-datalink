@@ -20,9 +20,7 @@ const (
 	confDefaultPeriodPath = "discover.scrape.default_period"
 )
 
-var (
-	ConfDefaultPeriod string
-)
+var ConfDefaultPeriod string
 
 func initConfig() {
 	viper.SetDefault(confDefaultPeriodPath, "60s")

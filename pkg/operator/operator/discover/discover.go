@@ -37,6 +37,7 @@ import (
 
 	bkv1beta1 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/apis/crd/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
@@ -108,7 +109,7 @@ type ChildConfig struct {
 }
 
 func (c ChildConfig) String() string {
-	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s, Data=%s", c.Node, c.FileName, c.Address, string(c.Data))
+	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s", c.Node, c.FileName, c.Address)
 }
 
 func (c ChildConfig) Hash() uint64 {
@@ -152,6 +153,7 @@ type BaseParams struct {
 	MatchSelector          map[string]string
 	DropSelector           map[string]string
 	LabelJoinMatcher       *feature.LabelJoinMatcherSpec
+	UseEndpointSlice       bool
 }
 
 type BaseDiscover struct {
@@ -273,15 +275,15 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 	for _, label := range origLabels {
 		switch label.Name {
 		// 补充 NodeName
-		case labelEndpointNodeName, labelPodNodeName:
+		case eplabels.EndpointNodeName(d.UseEndpointSlice), labelPodNodeName:
 			metricTarget.NodeName = label.Value
 
 			// 如果 target 类型是 node，则需要特殊处理，此时 endpointNodeName 对应 label 会为空
-		case labelEndpointAddressTargetKind, labelPodAddressTargetKind:
+		case eplabels.EndpointAddressTargetKind(d.UseEndpointSlice), labelPodAddressTargetKind:
 			if label.Value == "Node" {
 				isNodeType = true
 			}
-		case labelEndpointAddressTargetName, labelPodAddressTargetName:
+		case eplabels.EndpointAddressTargetName(d.UseEndpointSlice), labelPodAddressTargetName:
 			targetName = label.Value
 		}
 	}

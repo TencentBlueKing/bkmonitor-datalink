@@ -181,7 +181,7 @@ func TestBaseUsage(t *testing.T) {
 		DB:          "system",
 		Measurement: "disk",
 		OffsetInfo:  OffSetInfo{
-			// Limit: 500,
+			// MaxLimit: 500,
 		},
 	}
 	queryInfo2 := QueryInfo{
@@ -189,7 +189,7 @@ func TestBaseUsage(t *testing.T) {
 		Measurement: "",
 		DataIDList:  []consul.DataID{150002, 150003},
 		OffsetInfo:  OffSetInfo{
-			// Limit: 500,
+			// MaxLimit: 500,
 		},
 	}
 	ctx, err := QueryInfoIntoContext(ctx, "t1", "used", &queryInfo1)
@@ -480,14 +480,14 @@ func BenchmarkBaseUsage(b *testing.B) {
 		Measurement: "disk",
 		// Dimensions:  []string{"bk_target_ip", "bk_target_cloud_id"},
 		OffsetInfo: OffSetInfo{
-			// Limit: 500,
+			// MaxLimit: 500,
 		},
 	}
 	queryInfo2 := QueryInfo{
 		DB:          "system",
 		Measurement: "disk",
 		OffsetInfo:  OffSetInfo{
-			// Limit: 500,
+			// MaxLimit: 500,
 		},
 	}
 	var err error

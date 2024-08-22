@@ -87,7 +87,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		for _, qry := range queryMetric.QueryList {
 			qry.Timezone = timezone
 
-			instance := prometheus.GetInstance(ctx, qry)
+			instance := prometheus.GetTsDbInstance(ctx, qry)
 			if instance != nil {
 				res, err := instance.QueryExemplar(ctx, qList.FieldList, qry, start, end)
 				if err != nil {
@@ -432,6 +432,11 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		log.Errorf(ctx, fmt.Sprintf("check vm query: %s", err.Error()))
 	}
 	if ok {
+		if len(vmExpand.ResultTableList) == 0 {
+			err = fmt.Errorf("result table is empty")
+			return nil, err
+		}
+
 		// 函数替换逻辑有问题、暂时屏蔽
 		// vm 跟 prom 的函数有差异，需要转换一下以完全适配 prometheus。
 		// https://docs.victoriametrics.com/metricsql/#delta
@@ -444,8 +449,8 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		//	return nil, err
 		//}
 		metadata.SetExpand(ctx, vmExpand)
-		instance = prometheus.GetInstance(ctx, &metadata.Query{
-			StorageID: consul.VictoriaMetricsStorageType,
+		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			StorageType: consul.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)

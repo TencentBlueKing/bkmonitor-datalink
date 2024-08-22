@@ -49,45 +49,55 @@ const (
 	MatrixType = "matrix"
 )
 
-// Instance vm 查询实例
-type Instance struct {
-	Ctx context.Context
-
+type Options struct {
+	Address         string
+	Headers         map[string]string
 	MaxConditionNum int
-
-	ContentType string
-
-	Address string
-	UriPath string
-
-	Code   string
-	Secret string
-	Token  string
-
-	AuthenticationMethod string
+	Timeout         time.Duration
+	Curl            curl.Curl
 
 	InfluxCompatible bool
 	UseNativeOr      bool
+}
 
-	Timeout time.Duration
-	Curl    curl.Curl
+// Instance vm 查询实例
+type Instance struct {
+	ctx context.Context
+
+	maxConditionNum int
+
+	url     string
+	headers map[string]string
+
+	influxCompatible bool
+	useNativeOr      bool
+
+	timeout time.Duration
+	curl    curl.Curl
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+	if opt.Address == "" {
+		return nil, fmt.Errorf("address is empty")
+	}
+	instance := &Instance{
+		ctx:              ctx,
+		maxConditionNum:  opt.MaxConditionNum,
+		url:              opt.Address,
+		headers:          opt.Headers,
+		influxCompatible: opt.InfluxCompatible,
+		useNativeOr:      opt.UseNativeOr,
+		timeout:          opt.Timeout,
+		curl:             opt.Curl,
+	}
+	return instance, nil
+}
+
 func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
-}
-
-func (i *Instance) authorization() string {
-	auth := fmt.Sprintf(
-		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
-		BkUserName,
-		i.Code,
-		i.Secret,
-	)
-	return auth
 }
 
 func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
@@ -310,44 +320,38 @@ func (i *Instance) vmQuery(
 		err error
 	)
 
-	address := fmt.Sprintf("%s/%s", i.Address, i.UriPath)
 	user := metadata.GetUser(ctx)
 	params := &Params{
-		SQL:                        sql,
-		BkdataAuthenticationMethod: i.AuthenticationMethod,
-		BkAppCode:                  i.Code,
-		PreferStorage:              PreferStorage,
-		BkdataDataToken:            i.Token,
+		SQL:           sql,
+		PreferStorage: PreferStorage,
 	}
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
 
-	ctx, cancel = context.WithTimeout(ctx, i.Timeout)
+	ctx, cancel = context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 	startAnaylize = time.Now()
 
 	span.Set("query-source", user.Source)
 	span.Set("query-space-uid", user.SpaceUid)
 	span.Set("query-username", user.Name)
-	span.Set("query-address", i.Address)
-	span.Set("query-uri-path", i.UriPath)
+
+	span.Set("query-address", i.headers)
+	span.Set("query-uri-path", i.headers)
 
 	log.Infof(ctx,
 		"victoria metrics query: %s, body: %s, sql: %s",
-		address, body, sql,
+		i.url, body, sql,
 	)
 
-	size, err := i.Curl.Request(
+	size, err := i.curl.Request(
 		ctx, curl.Post,
 		curl.Options{
-			UrlPath: address,
+			UrlPath: i.url,
 			Body:    body,
-			Headers: map[string]string{
-				ContentType:   i.ContentType,
-				Authorization: i.authorization(),
-			},
+			Headers: i.headers,
 		},
 		data,
 	)
@@ -396,12 +400,12 @@ func (i *Instance) QueryRange(
 	ves, _ := json.Marshal(vmExpand)
 	log.Infof(ctx, "vm-expand: %s", ves)
 
-	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
+	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
+		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
 	paramsQueryRange := &ParamsQueryRange{
-		InfluxCompatible: i.InfluxCompatible,
+		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
 			Query string `json:"query"`
@@ -414,7 +418,7 @@ func (i *Instance) QueryRange(
 			End:   end.Unix(),
 			Step:  int64(step.Seconds()),
 		},
-		UseNativeOr:           i.UseNativeOr,
+		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
 	}
@@ -463,12 +467,12 @@ func (i *Instance) Query(
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 
-	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
+	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
+		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
 	paramsQuery := &ParamsQuery{
-		InfluxCompatible: i.InfluxCompatible,
+		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQuery,
 		APIParams: struct {
 			Query   string `json:"query"`
@@ -477,9 +481,9 @@ func (i *Instance) Query(
 		}{
 			Query:   promqlStr,
 			Time:    end.Unix(),
-			Timeout: int64(i.Timeout.Seconds()),
+			Timeout: int64(i.timeout.Seconds()),
 		},
-		UseNativeOr:           i.UseNativeOr,
+		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
 	}
@@ -520,22 +524,22 @@ func (i *Instance) metric(ctx context.Context, name string, matchers ...*labels.
 		return nil, nil
 	}
 
-	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
+	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
+		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 
 	paramsQuery := &ParamsLabelValues{
-		InfluxCompatible: i.InfluxCompatible,
+		InfluxCompatible: i.influxCompatible,
 		APIType:          APILabelValues,
 		APIParams: struct {
 			Label string `json:"label"`
 		}{
 			Label: name,
 		},
-		UseNativeOr:           i.UseNativeOr,
+		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
 	}
@@ -577,8 +581,8 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	ves, _ := json.Marshal(vmExpand)
 	span.Set("vm-expand", string(ves))
 
-	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
+	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
+		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
 	span.Set("query-matchers", fmt.Sprintf("%+v", matchers))
@@ -586,7 +590,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 	span.Set("query-end", end.String())
 
 	paramsQuery := &ParamsSeries{
-		InfluxCompatible: i.InfluxCompatible,
+		InfluxCompatible: i.influxCompatible,
 		APIType:          APILabelNames,
 		APIParams: struct {
 			Match string `json:"match[]"`
@@ -596,7 +600,7 @@ func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start,
 			Start: start.Unix(),
 			End:   end.Unix(),
 		},
-		UseNativeOr:           i.UseNativeOr,
+		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
 	}
@@ -645,8 +649,8 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 		return nil, nil
 	}
 
-	if i.MaxConditionNum > 0 && vmExpand.ConditionNum > i.MaxConditionNum {
-		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.MaxConditionNum)
+	if i.maxConditionNum > 0 && vmExpand.ConditionNum > i.maxConditionNum {
+		return nil, fmt.Errorf("condition length is too long %d > %d", vmExpand.ConditionNum, i.maxConditionNum)
 	}
 
 	ves, _ := json.Marshal(vmExpand)
@@ -674,7 +678,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 	}
 
 	paramsQueryRange := &ParamsQueryRange{
-		InfluxCompatible: i.InfluxCompatible,
+		InfluxCompatible: i.influxCompatible,
 		APIType:          APIQueryRange,
 		APIParams: struct {
 			Query string `json:"query"`
@@ -686,7 +690,7 @@ func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name 
 			End:   end.Unix(),
 			Step:  step,
 		},
-		UseNativeOr:           i.UseNativeOr,
+		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
 		ResultTableList:       vmExpand.ResultTableList,
 	}

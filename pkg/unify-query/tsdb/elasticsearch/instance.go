@@ -27,7 +27,6 @@ import (
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -88,14 +87,14 @@ func (i *Instance) GetInstanceType() string {
 }
 
 type InstanceOption struct {
-	Address    string
-	Username   string
-	Password   string
-	MaxSize    int
-	MaxRouting int
-	Timeout    time.Duration
-	Headers    http.Header
-	SourceType string
+	Address     string
+	Username    string
+	Password    string
+	MaxSize     int
+	MaxRouting  int
+	Timeout     time.Duration
+	Headers     http.Header
+	HealthCheck bool
 }
 
 type queryOption struct {
@@ -136,27 +135,17 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	cliOpts := []elastic.ClientOptionFunc{
 		elastic.SetURL(opt.Address),
 		elastic.SetSniff(false),
+		elastic.SetHealthcheck(opt.HealthCheck),
 	}
+	if len(opt.Headers) > 0 {
+		cliOpts = append(cliOpts, elastic.SetHeaders(opt.Headers))
+	}
+
 	if opt.Username != "" && opt.Password != "" {
 		cliOpts = append(
 			cliOpts,
 			elastic.SetBasicAuth(opt.Username, opt.Password),
 		)
-	}
-
-	if opt.SourceType == structured.BkData {
-		headers := bkapi.GetBkDataApi().Headers(nil)
-		httpHeaders := make(http.Header)
-		for k, v := range headers {
-			httpHeaders[k] = []string{v}
-		}
-
-		cliOpts = append(
-			cliOpts,
-			elastic.SetHealthcheck(false),
-			elastic.SetHeaders(httpHeaders),
-		)
-
 	}
 
 	cli, err := elastic.NewClient(cliOpts...)
@@ -606,6 +595,7 @@ func (i *Instance) QueryRaw(
 		mappings, err1 := i.getMappings(ctx, qo.indexes)
 		// index 不存在，mappings 获取异常直接返回空
 		if len(mappings) == 0 {
+			log.Warnf(ctx, "index is empty with %v", qo.indexes)
 			return
 		}
 

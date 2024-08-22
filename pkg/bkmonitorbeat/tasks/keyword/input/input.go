@@ -451,7 +451,7 @@ func (client *Input) refreshWatchFileAndTasks(newWatchFiles map[string]fileExtra
 		fw, ok := client.WatchFiles.Load(filename)
 		if ok {
 			// if has already tail, update taskList
-			// 这里没有对去掉的task做清理，是因为task的去除是由task.Ctx.Done信号控制
+			// 这里没有对去掉的task做清理，是因为task的去除是由task.ctx.Done信号控制
 			fileWatch := fw.(*FileWatcher)
 			if !isTaskChange {
 				// 如果task没有变更，则不进行任务列表的更新。加快逻辑

@@ -19,6 +19,9 @@ import (
 
 const (
 	BkDataAuthorization = "X-Bkbase-Authorization"
+
+	QuerySync  = "query_sync"
+	QueryAsync = "query_async"
 )
 
 var (
@@ -66,10 +69,22 @@ func (i *BkDataApi) Headers(headers map[string]string) map[string]string {
 	return i.bkApi.Headers(headers)
 }
 
-func (i *BkDataApi) Url(path string) string {
+func (i *BkDataApi) url(path string) string {
 	url := i.bkApi.Url(i.uriPath)
 	if path != "" {
 		url = fmt.Sprintf("%s/%s", url, path)
 	}
 	return url
+}
+
+func (i *BkDataApi) QueryAsyncUrl() string {
+	return i.url(QueryAsync)
+}
+
+func (i *BkDataApi) QuerySyncUrl() string {
+	return i.url(QuerySync)
+}
+
+func (i *BkDataApi) QueryEsUrl() string {
+	return i.url(fmt.Sprintf("%s/es", i.QuerySyncUrl()))
 }

@@ -132,7 +132,7 @@ func MockTsDB(t *testing.T) {
 	tsdb.SetStorage("10", &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
-			Ctx:     context.TODO(),
+			ctx:     context.TODO(),
 			Address: "127.0.0.1",
 			UriPath: "api",
 			Timeout: time.Minute,

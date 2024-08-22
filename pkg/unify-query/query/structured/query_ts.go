@@ -440,7 +440,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 			}
 
 			qry := &metadata.Query{
-				StorageID:      consul.BkSqlStorageType,
+				StorageType:    consul.BkSqlStorageType,
 				DB:             route.DB(),
 				Measurement:    route.Measurement(),
 				Field:          q.FieldName,
@@ -573,7 +573,6 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(queryConditions) > 0 {
-
 		// influxdb 查询特殊处理逻辑
 		influxdbConditions := ConvertToPromBuffer(queryConditions)
 		if len(influxdbConditions) > 0 {
@@ -715,6 +714,11 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageID = consul.OfflineDataArchive
 	} else {
 		query.StorageID = storageID
+	}
+
+	// 判断 rt 是否是 bkdata 的数据源
+	if tsDB.SourceType == BkData {
+		query.StorageType = consul.ElasticsearchStorageType
 	}
 
 	query.TableID = tsDB.TableID

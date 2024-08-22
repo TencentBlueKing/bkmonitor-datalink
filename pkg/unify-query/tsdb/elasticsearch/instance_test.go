@@ -45,7 +45,7 @@ func TestInstance_queryReference(t *testing.T) {
 	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
 
 	if sourceType == "bkdata" {
-		address = bkapi.GetBkDataApi().Url("es")
+		address = bkapi.GetBkDataApi().QueryEsUrl()
 	}
 
 	ins, err := NewInstance(ctx, &InstanceOption{
@@ -54,7 +54,6 @@ func TestInstance_queryReference(t *testing.T) {
 		Password:   password,
 		MaxRouting: maxRouting,
 		MaxSize:    maxSize,
-		SourceType: sourceType,
 	})
 	if err != nil {
 		t.Fatal(err)

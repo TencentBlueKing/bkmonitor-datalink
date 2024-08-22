@@ -100,7 +100,7 @@ func TestTencentCVMPoller(t *testing.T) {
 	version := "2017-03-12"
 	action := "DescribeInstances"
 	region := "ap-guangzhou"
-	body := `{"Limit": 1, "Filters": [{"Values": ["\u672a\u547d\u540d"], "Name": "instance-name"}]}`
+	body := `{"MaxLimit": 1, "Filters": [{"Values": ["\u672a\u547d\u540d"], "Name": "instance-name"}]}`
 
 	plugin := GetTencentPollerPlugin(url, version, region, secretId, secretKey, action, body)
 

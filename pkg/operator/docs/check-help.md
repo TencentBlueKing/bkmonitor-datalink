@@ -282,7 +282,7 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
 
 * 查询 podMonitor 的配置信息
   ```shell
-  $ kubectl get pod -n bkmonitor-operator -l app.kubernetes.io/bk-component=bkmonitor-operator -owide
+  $ kubectl get podMonitor frost-podmonitor-test -n bkmonitor-operator  -oyaml
   apiVersion: monitoring.coreos.com/v1
   kind: PodMonitor
   metadata:

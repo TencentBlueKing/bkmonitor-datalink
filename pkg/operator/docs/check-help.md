@@ -197,7 +197,7 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
 
 `child_config` 是由蓝鲸监控定义的采集器采集配置文件。/check 接口可以查看 serviceMonitor/podMonitor 匹配到哪些采集任务以及采集任务被分配到了哪个 node 上、以及对应的 DataID。
 
-这里我们简单举个例子，介绍一下 serviceMonitor/podMonitor 的匹配规则。
+这里我们简单举个例子，介绍一下 serviceMonitor 的匹配规则。
 
 * 先查询 namespace 下的所有 serviceMonitor
   ```shell
@@ -228,7 +228,7 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
     namespaceSelector:
       matchNames:
       - bkmonitor-operator
-    # servicemonito 匹配规则
+    # servicemonitor 匹配规则
     selector:
       matchLabels:
         app.kubernetes.io/managed-by: bkmonitor-operator

@@ -20,7 +20,7 @@ bkmonitor-operator 整体架构如下：
 * k8seventdataid：内置事件 dataid。
 * k8smetricdataid：内置指标 dataid。
 
-请参考 [dataid介绍](docs/dataId.md) 文档。
+请参考 [dataid 介绍](docs/dataId.md) 文档。
 
 为了管理区分，operator 注入的 serviceMonitor 采集会使用内置 dataid，这个是通过在 `metadata.annotations` 声明 `isSystem: "true"` 指定的。而用户的数据上报会用自定义 dataid。当然，我们也对 dataid 进行了扩展，用户可以在监控这边申请新的 dataid，用于匹配特性维度的 serviceMonitor，以便对数据进行隔离，如果量太大的话，我们会对 dataid 进行存储集群的划分。
 

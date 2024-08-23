@@ -269,7 +269,7 @@ $ kubectl exec -it -n bkmonitor-operator  bkm-operator-79486746f5-n6ztd -- curl 
   Endpoints:         127.0.3.8:4194,127.0.4.6:4194,127.0.4.8:4194 + 21 more...
   Session Affinity:  None
   ```
-  这里的 Endpoints 也就是例子中 bkmonitor-operator-bkmonit-kubelet 这个 serviceMonitor 匹配的 IP:Port 列表。
+  这里的 Endpoints 即例子中 bkmonitor-operator-bkmonit-kubelet 这个 serviceMonitor 匹配的 IP:Port 列表。
 
 接下来再来看看 podMonitor 的匹配规则
 

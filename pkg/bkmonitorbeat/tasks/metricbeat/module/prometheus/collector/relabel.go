@@ -119,33 +119,13 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	}
 
 	if promEvent.Key == "" {
-		logger.Errorf("missing metric key when collect metric: %s", promEvent.Key)
 		return false
 	}
 	return true
 }
 
-func (m *MetricSet) replaceDimensions(promEvent *tasks.PromEvent) {
-	for sourceKey, sourceValue := range promEvent.Labels {
-		if targetKey, ok := m.DimensionReplace[sourceKey]; ok {
-			logger.Debugf("copy dimension: %s to %s in metric: %s", sourceKey, targetKey, promEvent.Key)
-			promEvent.Labels[targetKey] = sourceValue
-		}
-	}
-}
-
-func (m *MetricSet) getTargetMetricKey(promEvent *tasks.PromEvent) string {
-	if m.MetricReplace != nil {
-		if targetKey, ok := m.MetricReplace[promEvent.Key]; ok {
-			logger.Debugf("copy metric: %s to %s", promEvent.Key, targetKey)
-			return targetKey
-		}
-	}
-	return ""
-}
-
-// innerRelabels is the configuration for relabeling of target label sets.
-type stdRelabels struct {
+// promRelabels prometheus 提供的内置 relabels 配置
+type promRelabels struct {
 	// A list of labels from which values are taken and concatenated
 	// with the configured separator in order.
 	SourceLabels []string `yaml:"source_labels,flow,omitempty"`
@@ -164,8 +144,8 @@ type stdRelabels struct {
 	Action string `yaml:"action,omitempty"`
 }
 
-func handleRelabels(configs interface{}) ([]stdRelabels, *ActionConfigs, error) {
-	var relabels []stdRelabels
+func handleRelabels(configs interface{}) ([]promRelabels, *ActionConfigs, error) {
+	var relabels []promRelabels
 	data, err := yaml.Marshal(configs)
 	if err != nil {
 		return nil, nil, err
@@ -174,17 +154,16 @@ func handleRelabels(configs interface{}) ([]stdRelabels, *ActionConfigs, error) 
 		return nil, nil, err
 	}
 
-	dst := make([]stdRelabels, 0)
+	dst := make([]promRelabels, 0)
 	ac := &ActionConfigs{}
 
 	for i := 0; i < len(relabels); i++ {
 		rl := relabels[i]
 		switch rl.Action {
 		case ActionTypeRate:
-			// 只支持 __name__ labels
-			if len(rl.SourceLabels) == 1 && rl.SourceLabels[0] == "__name__" {
+			if len(rl.SourceLabels) == 1 && rl.SourceLabels[0] == model.MetricNameLabel {
 				ac.Rate = append(ac.Rate, ActionRate{
-					Source:      rl.Regex,
+					Source:      rl.Regex, // 借用 Regex 字段，实际并不支持正则
 					Destination: rl.Replacement,
 				})
 			}

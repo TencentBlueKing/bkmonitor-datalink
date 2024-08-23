@@ -27,6 +27,8 @@ import (
 	"github.com/prometheus/prometheus/model/textparse"
 )
 
+var ErrNaN = errors.New("value is NaN or Inf")
+
 // PromEvent store the lines prometheus data
 type PromEvent struct {
 	Key             string
@@ -98,15 +100,35 @@ func hashLabels(lbs labels.Labels) uint64 {
 
 // NewPromEvent 优先使用 V2 作为解析方式 出错再回退到 V1 还出错的话就抛出异常
 func NewPromEvent(line string, ts int64, offsetTime time.Duration, handler TimestampHandler) (PromEvent, error) {
-	pe, err := NewPromEventV2(line, ts, offsetTime, handler)
+	pe, err := newPromEventV2(line, ts, offsetTime, handler, true)
 	if err == nil {
 		return pe, nil
 	}
 
-	return NewPromEventV1(line, ts, offsetTime, handler)
+	// NaN 的话就不再尝试了
+	if errors.Is(err, ErrNaN) {
+		return pe, err
+	}
+
+	return newPromEventV1(line, ts, offsetTime, handler, true)
 }
 
-func NewPromEventV2(line string, ts int64, offsetTime time.Duration, handler TimestampHandler) (PromEvent, error) {
+// NewPromEventFast 同 NewPromEvent 但不计算 PromEvent 哈希值
+func NewPromEventFast(line string, ts int64, offsetTime time.Duration, handler TimestampHandler) (PromEvent, error) {
+	pe, err := newPromEventV2(line, ts, offsetTime, handler, false)
+	if err == nil {
+		return pe, nil
+	}
+
+	// NaN 的话就不再尝试了
+	if errors.Is(err, ErrNaN) {
+		return pe, err
+	}
+
+	return newPromEventV1(line, ts, offsetTime, handler, false)
+}
+
+func newPromEventV2(line string, ts int64, offsetTime time.Duration, handler TimestampHandler, hashKey bool) (PromEvent, error) {
 	// \n 为解析分隔符
 	if !strings.HasSuffix(line, "\n") {
 		line = line + "\n"
@@ -123,7 +145,7 @@ func NewPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 	case textparse.EntrySeries:
 		_, timestamp, val := parser.Series()
 		if math.IsInf(val, 0) || math.IsNaN(val) {
-			return pe, errors.New("value is NaN or Inf")
+			return pe, ErrNaN
 		}
 
 		var lbs labels.Labels
@@ -156,15 +178,18 @@ func NewPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 		pe.TS = peTs
 		pe.AggValue = common.MapStr{}
 
-		// 排序 dimensions
-		pe.DimensionString = HashLabels(newLbs)
+		if hashKey {
+			pe.DimensionString = HashLabels(newLbs) // 排序 dimensions
+		}
 	}
 
-	pe.ProduceHashKey()
+	if hashKey {
+		pe.ProduceHashKey()
+	}
 	return pe, nil
 }
 
-func NewPromEventV1(line string, ts int64, offsetTime time.Duration, handler TimestampHandler) (PromEvent, error) {
+func newPromEventV1(line string, ts int64, offsetTime time.Duration, handler TimestampHandler, hashKey bool) (PromEvent, error) {
 	if !strings.HasSuffix(line, "\n") {
 		line = line + "\n"
 	}
@@ -202,7 +227,7 @@ func NewPromEventV1(line string, ts int64, offsetTime time.Duration, handler Tim
 	}
 
 	if math.IsInf(value, 0) || math.IsNaN(value) {
-		return pe, errors.New("value is NaN or Inf")
+		return pe, ErrNaN
 	}
 
 	pe = PromEvent{
@@ -212,8 +237,11 @@ func NewPromEventV1(line string, ts int64, offsetTime time.Duration, handler Tim
 		AggValue: common.MapStr{},
 		TS:       timestamp,
 	}
-	pe.DimensionString = HashLabels(newLbs)
-	pe.ProduceHashKey()
+
+	if hashKey {
+		pe.DimensionString = HashLabels(newLbs)
+		pe.ProduceHashKey()
+	}
 
 	return pe, nil
 }

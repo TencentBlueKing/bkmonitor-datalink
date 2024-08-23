@@ -165,8 +165,12 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 	}
 
 	// 基于配置进行维度复制
-	if m.DimensionReplace != nil {
-		m.replaceDimensions(promEvent)
+	if len(m.DimensionReplace) > 0 {
+		for k, v := range promEvent.Labels {
+			if targetKey, ok := m.DimensionReplace[k]; ok {
+				promEvent.Labels[targetKey] = v
+			}
+		}
 	}
 
 	// labels 处理
@@ -215,14 +219,15 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 		return nil
 	}
 
-	event["value"] = promEvent.Value
-
 	// 不需要复制指标
 	if newMetric == promEvent.Key {
+		event["value"] = newValue
 		return []common.MapStr{event}
 	}
 
 	// 需要复制指标
+	event["value"] = promEvent.Value // 保留原有 value
+
 	newEvent := event.Clone()
 	newEvent["key"] = newMetric
 	newEvent["value"] = newValue
@@ -275,9 +280,8 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 	milliTs := time.Now().UnixMilli()
 	eventChan := make(chan common.MapStr)
 
-	var total atomic.Int64
-
 	// 补充 up 指标文本
+	var total atomic.Int64
 	markUp := func(failed bool, t0 time.Time) {
 		// 需要减去自监控指标
 		events := m.asEvents(CodeScrapeLine(int(total.Load()-2), m.logkvs()), milliTs)
@@ -292,29 +296,34 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		}
 	}
 
+	// 消费指标文本并生成事件
+	var produceErr atomic.Bool
+	consume := func() {
+		for line := range linesCh {
+			events, err := m.produceEvents(line, milliTs)
+			if err != nil {
+				logger.Warnf("failed to produce events: %v", err)
+				produceErr.Store(true)
+				continue
+			}
+			for j := 0; j < len(events); j++ {
+				eventChan <- events[j]
+				total.Add(1)
+			}
+		}
+	}
+
 	start := time.Now()
 	go func() {
 		defer close(eventChan)
 		defer cleanup()
 
 		wg := sync.WaitGroup{}
-		var produceErr atomic.Bool
 		for i := 0; i < worker; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for line := range linesCh {
-					events, err := m.produceEvents(line, milliTs)
-					if err != nil {
-						logger.Warnf("failed to produce events: %v", err)
-						produceErr.Store(true)
-						continue
-					}
-					for j := 0; j < len(events); j++ {
-						eventChan <- events[j]
-						total.Add(1)
-					}
-				}
+				consume()
 			}()
 		}
 		wg.Wait()
@@ -330,6 +339,19 @@ func normalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }
 
+func keyFunc(m common.MapStr) string {
+	objKey, err := m.GetValue("key")
+	if err != nil {
+		return ""
+	}
+
+	s, ok := objKey.(string)
+	if !ok {
+		return ""
+	}
+	return s
+}
+
 func (m *MetricSet) asEvents(line string, timestamp int64) []common.MapStr {
 	events, _ := m.produceEvents(line, timestamp)
 	return events
@@ -342,7 +364,16 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 
 	timeOffset := 24 * time.Hour * 365 * 2 // 默认可容忍偏移时间为两年
 	tsHandler, _ := tasks.GetTimestampHandler("s")
-	promEvent, err := tasks.NewPromEvent(line, timestamp, timeOffset, tsHandler)
+
+	var promEvent tasks.PromEvent
+	var err error
+	// fastpath: 如果不需要执行额外的 action 则代表不需要计算 hash
+	if m.actionOp == nil {
+		promEvent, err = tasks.NewPromEventFast(line, timestamp, timeOffset, tsHandler)
+	} else {
+		promEvent, err = tasks.NewPromEvent(line, timestamp, timeOffset, tsHandler)
+	}
+
 	if err != nil {
 		return nil, errors.Wrapf(err, "parse line(%s) failed", line)
 	}
@@ -357,16 +388,28 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 		return nil, nil
 	}
 
+	// 不需要指标复制 流程结束
+	if len(m.MetricReplace) == 0 {
+		return events, nil
+	}
+
 	var cloneEvents []common.MapStr
 	for i := 0; i < len(events); i++ {
 		event := events[i]
-		// 基于配置进行指标复制
-		targetMetricKey := m.getTargetMetricKey(&promEvent)
-		if targetMetricKey != "" {
-			targetEvent := event.Clone()
-			targetEvent["key"] = targetMetricKey
-			cloneEvents = append(cloneEvents, targetEvent)
+		key := keyFunc(event)
+
+		// 没找 key 或者 key 不需要复制则跳过
+		if len(key) == 0 {
+			continue
 		}
+		targetKey, ok := m.MetricReplace[key]
+		if !ok {
+			continue
+		}
+
+		targetEvent := event.Clone()
+		targetEvent["key"] = targetKey
+		cloneEvents = append(cloneEvents, targetEvent)
 	}
 
 	events = append(events, cloneEvents...)
@@ -424,6 +467,7 @@ func (m *MetricSet) Fetch() (common.MapStr, error) {
 			return summary, err
 		}
 
+		// 将自监控指标当成普通指标文本处理
 		metricsFile.WriteString("\n" + CodeScrapeSize(int(info.Size()), m.logkvs()))
 		metricsFile.WriteString("\n" + CodeScrapeDuration(time.Since(startTime).Seconds(), m.logkvs()))
 

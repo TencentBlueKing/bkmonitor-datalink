@@ -433,7 +433,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	}
 	if ok {
 		if len(vmExpand.ResultTableList) == 0 {
-			return nil, nil
+			return resp, nil
 		}
 
 		// 函数替换逻辑有问题、暂时屏蔽

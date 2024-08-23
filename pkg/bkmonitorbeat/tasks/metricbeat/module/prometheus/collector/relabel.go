@@ -124,8 +124,8 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	return true
 }
 
-// promRelabels prometheus 提供的内置 relabels 配置
-type promRelabels struct {
+// promRelabel prometheus 提供的内置 relabels 配置
+type promRelabel struct {
 	// A list of labels from which values are taken and concatenated
 	// with the configured separator in order.
 	SourceLabels []string `yaml:"source_labels,flow,omitempty"`
@@ -144,8 +144,8 @@ type promRelabels struct {
 	Action string `yaml:"action,omitempty"`
 }
 
-func handleRelabels(configs interface{}) ([]promRelabels, *ActionConfigs, error) {
-	var relabels []promRelabels
+func handleRelabels(configs interface{}) ([]promRelabel, *ActionConfigs, error) {
+	var relabels []promRelabel
 	data, err := yaml.Marshal(configs)
 	if err != nil {
 		return nil, nil, err
@@ -154,7 +154,7 @@ func handleRelabels(configs interface{}) ([]promRelabels, *ActionConfigs, error)
 		return nil, nil, err
 	}
 
-	dst := make([]promRelabels, 0)
+	dst := make([]promRelabel, 0)
 	ac := &ActionConfigs{}
 
 	for i := 0; i < len(relabels); i++ {

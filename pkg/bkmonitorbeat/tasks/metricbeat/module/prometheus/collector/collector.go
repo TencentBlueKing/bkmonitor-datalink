@@ -93,14 +93,14 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	}
 	logger.Infof("base.metric.set config: %+v", config)
 
-	stdConfigs, actionConfigs, err := handleRelabels(config.MetricRelabelConfigs)
+	promRelabels, actionConfigs, err := handleRelabels(config.MetricRelabelConfigs)
 	if err != nil {
 		logger.Errorf("handle relabels failed: %v", err)
 		return nil, err
 	}
 
 	var relabels []*relabel.Config
-	data, err := yaml.Marshal(stdConfigs)
+	data, err := yaml.Marshal(promRelabels)
 	if err != nil {
 		logger.Errorf("marshal metric relabel config failed: %s", err)
 		return nil, err

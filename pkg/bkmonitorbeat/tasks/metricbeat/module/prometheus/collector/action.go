@@ -62,13 +62,15 @@ func newActionOperator(action string, rateOps []ActionRate, deltaOps ActionDelta
 	}
 }
 
+// GetOrUpdate 获取或者更新数值
+// 如果 bool 为 true 则表示可以直接使用该 value 结果
 func (ao *actionOperator) GetOrUpdate(metric, h string, ts int64, value float64) (string, float64, bool) {
 	if ao.action == ActionTypeDelta {
 		newV, ok := ao.getOrUpdateDelta(metric, h, value)
 		return metric, newV, ok
 	}
 
-	// 如果 bool 为 true 则表示可以直接使用该 value 结果
+	// ActionTypeRate(default)
 	return ao.getOrUpdateRate(metric, h, ts, value)
 }
 

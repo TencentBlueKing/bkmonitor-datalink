@@ -407,7 +407,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	}
 
 	if len(matrix) == 0 {
-		return nil, fmt.Errorf("instance data empty, statement: %s, matcher: %+v", statement, matcher)
+		checkString := instance.Check(ctx, statement, start, end, step)
+		return nil, fmt.Errorf("instance data empty, check: %s", checkString)
 	}
 
 	merged := make(map[int64]cmdb.Matchers)

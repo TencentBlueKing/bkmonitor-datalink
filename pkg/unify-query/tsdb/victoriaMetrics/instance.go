@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -93,6 +94,21 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 		curl:             opt.Curl,
 	}
 	return instance, nil
+}
+
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	var output strings.Builder
+	vmExpand := metadata.GetExpand(ctx)
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
+		output.WriteString(fmt.Sprintf("vm expand is empty with: %+v", vmExpand))
+		return output.String()
+	}
+
+	for k, v := range vmExpand.MetricFilterCondition {
+		promql = strings.Replace(promql, k, v, 1)
+	}
+	output.WriteString(fmt.Sprintf("promql: %s\n", promql))
+	return output.String()
 }
 
 func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {

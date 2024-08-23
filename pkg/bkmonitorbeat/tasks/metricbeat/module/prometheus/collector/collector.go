@@ -215,9 +215,10 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 		return nil
 	}
 
+	event["value"] = newValue
+
 	// 不需要复制指标
 	if newMetric == promEvent.Key {
-		event["value"] = newValue
 		return []common.MapStr{event}
 	}
 

@@ -181,13 +181,14 @@ func handleRelabels(configs interface{}) ([]stdRelabels, *ActionConfigs, error) 
 		rl := relabels[i]
 		switch rl.Action {
 		case ActionTypeRate:
-			if len(rl.SourceLabels) != 1 {
-				continue
+			// 只支持 __name__ labels
+			if len(rl.SourceLabels) == 1 && rl.SourceLabels[0] == "__name__" {
+				ac.Rate = append(ac.Rate, ActionRate{
+					Source:      rl.Regex,
+					Destination: rl.Replacement,
+				})
 			}
-			ac.Rate = append(ac.Rate, ActionRate{
-				Source:      rl.SourceLabels[0],
-				Destination: rl.TargetLabel,
-			})
+
 		case ActionTypeDelta:
 			ac.Delta = append(ac.Delta, rl.SourceLabels...)
 

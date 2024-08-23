@@ -38,7 +38,3 @@
 ### 故障分析
 
 请参考 [check-help](./check-help.md) 文档。
-
-### dataid 介绍
-
-请参考 [dataid](./dataId.md) 文档。

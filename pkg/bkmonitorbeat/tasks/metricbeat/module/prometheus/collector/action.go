@@ -11,22 +11,26 @@ package collector
 
 import "sync"
 
+const (
+	ActionTypeDelta = "delta"
+	ActionTypeRate  = "rate"
+)
+
 type ActionConfigs struct {
 	Rate  []ActionRate
 	Delta ActionDelta
 }
 
+// ActionRate 扩展的 rate action
+// 支持对指标计算 rate 进行并生成新指标
 type ActionRate struct {
-	Source      string
-	Destination string
+	Source      string // 原指标
+	Destination string // 新指标
 }
 
+// ActionDelta 扩展的 delta action
+// 支持对指标进行 delta 计算 并且覆盖原指标 value
 type ActionDelta []string
-
-const (
-	ActionTypeDelta = "delta"
-	ActionTypeRate  = "rate"
-)
 
 type actionOperator struct {
 	action string
@@ -64,7 +68,7 @@ func (ao *actionOperator) GetOrUpdate(metric, h string, ts int64, value float64)
 		return metric, newV, ok
 	}
 
-	// ActionTypeRate
+	// 如果 bool 为 true 则表示可以直接使用该 value 结果
 	return ao.getOrUpdateRate(metric, h, ts, value)
 }
 

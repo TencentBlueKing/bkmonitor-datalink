@@ -433,8 +433,7 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 	}
 	if ok {
 		if len(vmExpand.ResultTableList) == 0 {
-			err = fmt.Errorf("result table is empty")
-			return nil, err
+			return nil, nil
 		}
 
 		// 函数替换逻辑有问题、暂时屏蔽

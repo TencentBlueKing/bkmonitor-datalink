@@ -14,11 +14,6 @@ import (
 	"strconv"
 )
 
-type Params struct {
-	SQL           string `json:"sql"`
-	PreferStorage string `json:"prefer_storage"`
-}
-
 type ParamsQueryRange struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`

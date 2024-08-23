@@ -321,10 +321,10 @@ func (i *Instance) vmQuery(
 	)
 
 	user := metadata.GetUser(ctx)
-	params := &Params{
-		SQL:           sql,
-		PreferStorage: PreferStorage,
-	}
+
+	params := make(map[string]string)
+	params["sql"] = sql
+	params["prefer_storage"] = PreferStorage
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err

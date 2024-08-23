@@ -96,18 +96,18 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 	return instance, nil
 }
 
-func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, step time.Duration) string {
 	var output strings.Builder
+
 	vmExpand := metadata.GetExpand(ctx)
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
 		output.WriteString(fmt.Sprintf("vm expand is empty with: %+v", vmExpand))
 		return output.String()
 	}
 
-	for k, v := range vmExpand.MetricFilterCondition {
-		promql = strings.Replace(promql, k, v, 1)
-	}
-	output.WriteString(fmt.Sprintf("promql: %s\n", promql))
+	output.WriteString(fmt.Sprintf("promql: %s\n", q))
+
+	output.WriteString(fmt.Sprintf("vm_expand: %+v", vmExpand))
 	return output.String()
 }
 

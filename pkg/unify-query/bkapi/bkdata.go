@@ -86,5 +86,5 @@ func (i *BkDataApi) QuerySyncUrl() string {
 }
 
 func (i *BkDataApi) QueryEsUrl() string {
-	return i.url(fmt.Sprintf("%s/es", i.QuerySyncUrl()))
+	return fmt.Sprintf("%s/es", i.QuerySyncUrl())
 }

@@ -32,7 +32,7 @@ type PromEvent struct {
 	Key             string
 	Value           float64
 	Labels          common.MapStr
-	AggreValue      common.MapStr
+	AggValue        common.MapStr
 	DimensionString string // ordered dimension string
 	HashKey         string
 	TS              int64
@@ -47,9 +47,9 @@ func (pe *PromEvent) exemplarString() string {
 	return HashLabels(pe.Exemplar.Labels)
 }
 
-// GetAggreValue get same timestamp and same dimension metrics
-func (pe *PromEvent) GetAggreValue() common.MapStr {
-	return pe.AggreValue
+// GetAggValue get same timestamp and same dimension metrics
+func (pe *PromEvent) GetAggValue() common.MapStr {
+	return pe.AggValue
 }
 
 // GetLabels get dimensions
@@ -154,7 +154,7 @@ func NewPromEventV2(line string, ts int64, offsetTime time.Duration, handler Tim
 		pe.Key = lbs.Get("__name__")
 		pe.Value = val
 		pe.TS = peTs
-		pe.AggreValue = common.MapStr{}
+		pe.AggValue = common.MapStr{}
 
 		// 排序 dimensions
 		pe.DimensionString = HashLabels(newLbs)
@@ -206,11 +206,11 @@ func NewPromEventV1(line string, ts int64, offsetTime time.Duration, handler Tim
 	}
 
 	pe = PromEvent{
-		Key:        familyName,
-		Value:      value,
-		Labels:     labelMap,
-		AggreValue: common.MapStr{},
-		TS:         timestamp,
+		Key:      familyName,
+		Value:    value,
+		Labels:   labelMap,
+		AggValue: common.MapStr{},
+		TS:       timestamp,
 	}
 	pe.DimensionString = HashLabels(newLbs)
 	pe.ProduceHashKey()

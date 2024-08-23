@@ -49,14 +49,11 @@ func init() {
 	mb.Registry.MustAddMetricSet("prometheus", "collector", New, mb.WithHostParser(hostParser))
 }
 
-// MetricSet :
 type MetricSet struct {
 	mb.BaseMetricSet
 	httpClient *HTTPClient
 	namespace  string
-
-	deltaKeys        map[string]struct{}
-	lastDeltaMetrics map[string]map[string]float64 // map[metricName]map[hash]value
+	actionOp   *actionOperator
 
 	useTempFile     bool
 	tempFilePattern string
@@ -96,15 +93,14 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	}
 	logger.Infof("base.metric.set config: %+v", config)
 
-	deltaKeys := map[string]struct{}{}
-	lastDeltaMetrics := make(map[string]map[string]float64)
-	for _, key := range config.DiffMetrics {
-		deltaKeys[key] = struct{}{}
-		lastDeltaMetrics[key] = make(map[string]float64)
+	stdConfigs, actionConfigs, err := handleRelabels(config.MetricRelabelRemote)
+	if err != nil {
+		logger.Errorf("handle relabels failed: %v", err)
+		return nil, err
 	}
 
 	var relabels []*relabel.Config
-	data, err := yaml.Marshal(config.MetricRelabelConfigs)
+	data, err := yaml.Marshal(stdConfigs)
 	if err != nil {
 		logger.Errorf("marshal metric relabel config failed: %s", err)
 		return nil, err
@@ -131,12 +127,21 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		return nil, err
 	}
 
+	// 目前 delta/rate 为互斥，只能支持其一
+	var actionOp *actionOperator
+	if len(config.DiffMetrics) > 0 {
+		actionOp = newActionOperator(ActionTypeDelta, nil, config.DiffMetrics)
+	} else if len(actionConfigs.Rate) > 0 {
+		actionOp = newActionOperator(ActionTypeRate, actionConfigs.Rate, nil)
+	} else if len(actionConfigs.Delta) > 0 {
+		actionOp = newActionOperator(ActionTypeDelta, nil, actionConfigs.Delta)
+	}
+
 	return &MetricSet{
 		BaseMetricSet:          base,
 		httpClient:             httpClient,
 		namespace:              config.Namespace,
-		deltaKeys:              deltaKeys,
-		lastDeltaMetrics:       lastDeltaMetrics,
+		actionOp:               actionOp,
 		useTempFile:            utils.HasTempDir(),
 		tempFilePattern:        config.TempFilePattern,
 		remoteClient:           &http.Client{Timeout: duration},
@@ -151,11 +156,11 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	}, nil
 }
 
-func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) (common.MapStr, *diffKey) {
+func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.MapStr {
 	// 执行 relabels 规则
 	if len(m.MetricRelabelConfigs) != 0 {
 		if !m.metricRelabel(promEvent) {
-			return nil, nil
+			return nil
 		}
 	}
 
@@ -200,24 +205,27 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) (common.Ma
 		}
 	}
 
-	// 差值计算
-	var dk *diffKey
-	lines, ok := m.lastDeltaMetrics[promEvent.Key]
-	if ok {
-		currValue := promEvent.Value
-		lastValue, ok := lines[promEvent.HashKey]
-		if ok {
-			event["value"] = currValue - lastValue
-		}
-		dk = &diffKey{
-			key:   promEvent.Key,
-			hash:  promEvent.HashKey,
-			value: currValue,
-		}
-	} else {
+	if m.actionOp == nil {
 		event["value"] = promEvent.Value
+		return []common.MapStr{event}
 	}
-	return event, dk
+
+	newMetric, newValue, ok := m.actionOp.GetOrUpdate(promEvent.Key, promEvent.HashKey, promEvent.TS, promEvent.Value)
+	if !ok {
+		return nil
+	}
+
+	// 不需要复制指标
+	if newMetric == promEvent.Key {
+		event["value"] = newValue
+		return []common.MapStr{event}
+	}
+
+	// 需要复制指标
+	newEvent := event.Clone()
+	newEvent["key"] = newMetric
+	newEvent["value"] = newValue
+	return []common.MapStr{event, newEvent}
 }
 
 // getEventsFromFile 从文件获取指标
@@ -237,12 +245,6 @@ func (m *MetricSet) getEventsFromFile(fileName string) (<-chan common.MapStr, er
 	}
 	// 如果已经是从文件读取 表示拉取成功
 	return m.getEventsFromReader(f, cleanup, true), nil
-}
-
-type diffKey struct {
-	key   string
-	hash  string
-	value float64
 }
 
 // getEventsFromReader 从 reader 获取指标
@@ -294,12 +296,6 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		defer close(eventChan)
 		defer cleanup()
 
-		var lastDiffMetricMut sync.Mutex
-		lastDiffMetrics := make(map[string]map[string]float64)
-		for key := range m.deltaKeys {
-			lastDiffMetrics[key] = make(map[string]float64)
-		}
-
 		wg := sync.WaitGroup{}
 		var produceErr atomic.Bool
 		for i := 0; i < worker; i++ {
@@ -307,16 +303,11 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 			go func() {
 				defer wg.Done()
 				for line := range linesCh {
-					events, dk, err := m.produceEvents(line, milliTs)
+					events, err := m.produceEvents(line, milliTs)
 					if err != nil {
 						logger.Warnf("failed to produce events: %v", err)
 						produceErr.Store(true)
 						continue
-					}
-					if dk != nil {
-						lastDiffMetricMut.Lock()
-						lastDiffMetrics[dk.key][dk.hash] = dk.value
-						lastDiffMetricMut.Unlock()
 					}
 					for j := 0; j < len(events); j++ {
 						eventChan <- events[j]
@@ -330,7 +321,6 @@ func (m *MetricSet) getEventsFromReader(metricsReader io.ReadCloser, cleanup fun
 		if up {
 			markUp(produceErr.Load(), start) // 一次采集只上报一次状态
 		}
-		m.lastDeltaMetrics = lastDiffMetrics
 	}()
 	return eventChan
 }
@@ -340,20 +330,20 @@ func normalizeName(s string) string {
 }
 
 func (m *MetricSet) asEvents(line string, timestamp int64) []common.MapStr {
-	events, _, _ := m.produceEvents(line, timestamp)
+	events, _ := m.produceEvents(line, timestamp)
 	return events
 }
 
-func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, *diffKey, error) {
+func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr, error) {
 	if len(line) <= 0 || line[0] == '#' {
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	timeOffset := 24 * time.Hour * 365 * 2 // 默认可容忍偏移时间为两年
 	tsHandler, _ := tasks.GetTimestampHandler("s")
 	promEvent, err := tasks.NewPromEvent(line, timestamp, timeOffset, tsHandler)
 	if err != nil {
-		return nil, nil, errors.Wrapf(err, "parse line(%s) failed", line)
+		return nil, errors.Wrapf(err, "parse line(%s) failed", line)
 	}
 
 	if m.normalizeMetricName {
@@ -361,21 +351,25 @@ func (m *MetricSet) produceEvents(line string, timestamp int64) ([]common.MapStr
 	}
 
 	// 生成事件
-	var events []common.MapStr
-	event, dk := m.getEventFromPromEvent(&promEvent)
-	if event == nil {
-		return nil, nil, nil
+	events := m.getEventFromPromEvent(&promEvent)
+	if len(events) == 0 {
+		return nil, nil
 	}
-	events = append(events, event)
 
-	// 基于配置进行指标复制
-	targetMetricKey := m.getTargetMetricKey(&promEvent)
-	if targetMetricKey != "" {
-		targetEvent := event.Clone()
-		targetEvent["key"] = targetMetricKey
-		events = append(events, targetEvent)
+	var cloneEvents []common.MapStr
+	for i := 0; i < len(events); i++ {
+		event := events[i]
+		// 基于配置进行指标复制
+		targetMetricKey := m.getTargetMetricKey(&promEvent)
+		if targetMetricKey != "" {
+			targetEvent := event.Clone()
+			targetEvent["key"] = targetMetricKey
+			cloneEvents = append(cloneEvents, targetEvent)
+		}
 	}
-	return events, dk, nil
+
+	events = append(events, cloneEvents...)
+	return events, nil
 }
 
 func (m *MetricSet) logkvs() []define.LogKV {

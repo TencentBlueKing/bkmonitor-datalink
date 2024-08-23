@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
+	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -141,4 +142,58 @@ func (m *MetricSet) getTargetMetricKey(promEvent *tasks.PromEvent) string {
 		}
 	}
 	return ""
+}
+
+// innerRelabels is the configuration for relabeling of target label sets.
+type stdRelabels struct {
+	// A list of labels from which values are taken and concatenated
+	// with the configured separator in order.
+	SourceLabels []string `yaml:"source_labels,flow,omitempty"`
+	// Separator is the string between concatenated values from the source labels.
+	Separator string `yaml:"separator,omitempty"`
+	// Regex against which the concatenation is matched.
+	Regex string `yaml:"regex,omitempty"`
+	// Modulus to take of the hash of concatenated values from the source labels.
+	Modulus uint64 `yaml:"modulus,omitempty"`
+	// TargetLabel is the label to which the resulting string is written in a replacement.
+	// Regexp interpolation is allowed for the replace action.
+	TargetLabel string `yaml:"target_label,omitempty"`
+	// Replacement is the regex replacement pattern to be used.
+	Replacement string `yaml:"replacement,omitempty"`
+	// Action is the action to be performed for the relabeling.
+	Action string `yaml:"action,omitempty"`
+}
+
+func handleRelabels(configs interface{}) ([]stdRelabels, *ActionConfigs, error) {
+	var relabels []stdRelabels
+	data, err := yaml.Marshal(configs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = yaml.Unmarshal(data, &relabels); err != nil {
+		return nil, nil, err
+	}
+
+	dst := make([]stdRelabels, 0)
+	ac := &ActionConfigs{}
+
+	for i := 0; i < len(relabels); i++ {
+		rl := relabels[i]
+		switch rl.Action {
+		case ActionTypeRate:
+			if len(rl.SourceLabels) != 1 {
+				continue
+			}
+			ac.Rate = append(ac.Rate, ActionRate{
+				Source:      rl.SourceLabels[0],
+				Destination: rl.TargetLabel,
+			})
+		case ActionTypeDelta:
+			ac.Delta = append(ac.Delta, rl.SourceLabels...)
+
+		default: // prometheus 标准 actions
+			dst = append(dst, rl)
+		}
+	}
+	return dst, ac, nil
 }

@@ -338,12 +338,14 @@ func (i *Instance) vmQuery(
 	span.Set("query-space-uid", user.SpaceUid)
 	span.Set("query-username", user.Name)
 
-	span.Set("query-address", i.headers)
-	span.Set("query-uri-path", i.headers)
+	span.Set("query-address", i.url)
+
+	headersString, _ := json.Marshal(i.headers)
+	span.Set("query-headers", headersString)
 
 	log.Infof(ctx,
-		"victoria metrics query: %s, body: %s, sql: %s",
-		i.url, body, sql,
+		"victoria metrics query: %s, headers: %s, body: %s",
+		i.url, headersString, body,
 	)
 
 	size, err := i.curl.Request(

@@ -22,11 +22,9 @@ import (
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -100,16 +98,10 @@ func TestPromQL(t *testing.T) {
 
 	once.Do(func() {
 		instance = &Instance{
-			ContentType:          "application/json",
-			Address:              "http://127.0.0.1",
-			UriPath:              "prod/v3/queryengine/query_sync",
-			Code:                 "bkmonitorv3",
-			Secret:               "",
-			Token:                "",
-			AuthenticationMethod: "token",
-			InfluxCompatible:     true,
-			UseNativeOr:          true,
-			Timeout:              time.Second * 30,
+			ContentType:      "application/json",
+			InfluxCompatible: true,
+			UseNativeOr:      true,
+			Timeout:          time.Second * 30,
 			Curl: &curl.HttpCurl{
 				Log: log.DefaultLogger,
 			},
@@ -180,32 +172,22 @@ func TestPromQL(t *testing.T) {
 
 func TestRealQueryRange(t *testing.T) {
 	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
 
-	ctx := context.Background()
+	vmRT := "2_bcs_prom_computation_result_table"
+	metric := "container_cpu_usage_seconds_total"
+
 	a := "a"
+	metricFilterCondition := map[string]string{
+		a: fmt.Sprintf(`__name__="%s_value", result_table_id="%s"`, metric, vmRT),
+	}
+
 	timeout := time.Minute
 
-	flag := `{"vm-query-or":{"variations":{"vm":true,"influxdb":false},"defaultRule":{"percentage":{"vm":100,"influxdb":0}}}}`
-	featureFlag.MockFeatureFlag(ctx, flag)
-
-	ctx = metadata.InitHashID(ctx)
-	address := viper.GetString("mock.victoria_metrics.address")
-	uriPath := viper.GetString("mock.victoria_metrics.uri_path")
-	code := viper.GetString("mock.victoria_metrics.code")
-	secret := viper.GetString("mock.victoria_metrics.secret")
-	token := viper.GetString("mock.victoria_metrics.token")
-	method := viper.GetString("mock.victoria_metrics.authentication_method")
-
 	ins := &Instance{
-		Ctx:                  ctx,
-		Address:              address,
-		UriPath:              uriPath,
-		Code:                 code,
-		Secret:               secret,
-		AuthenticationMethod: method,
-		Timeout:              timeout,
-		ContentType:          "application/json",
-		Token:                token,
+		ctx:         ctx,
+		Timeout:     timeout,
+		ContentType: "application/json",
 
 		Curl: &curl.HttpCurl{Log: log.DefaultLogger},
 
@@ -221,12 +203,10 @@ func TestRealQueryRange(t *testing.T) {
 			q: `count(a)`,
 			e: &metadata.VmExpand{
 				ResultTableList: []string{
-					"100147_bcs_custom_metric_result_table_40708",
+					vmRT,
 				},
 				// condition 需要进行二次转义
-				MetricFilterCondition: map[string]string{
-					a: `__name__="envoy_listener_manager_worker_0_dispatcher_poll_delay_us_bucket_value", result_table_id="100147_bcs_custom_metric_result_table_40708"`,
-				},
+				MetricFilterCondition: metricFilterCondition,
 			},
 		},
 	}
@@ -306,9 +286,8 @@ func TestInstance_Query_Url(t *testing.T) {
 
 	ctx := metadata.InitHashID(context.Background())
 	ins := &Instance{
-		Ctx:     ctx,
-		Address: "http://127.0.0.1/api",
-		Curl:    mockCurl,
+		ctx:  ctx,
+		Curl: mockCurl,
 	}
 	mockData(ctx)
 
@@ -361,8 +340,7 @@ func TestInstance_QueryRange_Url(t *testing.T) {
 	}, log.DefaultLogger)
 
 	ins := &Instance{
-		Ctx:     ctx,
-		Address: "http://127.0.0.1/api",
+		ctx:     ctx,
 		Timeout: time.Minute,
 		Curl:    mockCurl,
 	}
@@ -415,18 +393,12 @@ func TestInstance_QueryRange_Url(t *testing.T) {
 
 func mockInstance(ctx context.Context) {
 	instance = &Instance{
-		Ctx:                  ctx,
-		ContentType:          "application/json",
-		Address:              "http://127.0.0.1",
-		UriPath:              "query_sync",
-		Code:                 "bkmonitorv3",
-		Secret:               "",
-		Token:                "",
-		AuthenticationMethod: "token",
-		InfluxCompatible:     true,
-		UseNativeOr:          true,
-		Timeout:              time.Minute,
-		Curl:                 &curl.HttpCurl{Log: log.DefaultLogger},
+		ctx:              ctx,
+		ContentType:      "application/json",
+		InfluxCompatible: true,
+		UseNativeOr:      true,
+		Timeout:          time.Minute,
+		Curl:             &curl.HttpCurl{Log: log.DefaultLogger},
 	}
 }
 

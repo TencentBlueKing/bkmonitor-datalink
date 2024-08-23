@@ -80,10 +80,20 @@ func TestQsToDsl(t *testing.T) {
 		},
 		{
 			q:   `"1642903" AND OR NOT "get_proc_status_v2"`,
-			err: fmt.Errorf("syntax error: unexpected tOR"),
+			err: fmt.Errorf("query string parser error syntax error: unexpected tOR"),
 		},
 		{
 			q: `sync_spaces AND -keyword AND -BKLOGAPI`,
+		},
+		{
+			q: "message queue conflict",
+		},
+		{
+			q: "\"message queue conflict\"",
+		},
+		{
+			q:        `"qu?ck br*wn"`,
+			expected: `{"bool":{"must":[{"query_string":{"query":"qu?ck"}},{"query_string":{"query":"br*wn"}}]}}`,
 		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {

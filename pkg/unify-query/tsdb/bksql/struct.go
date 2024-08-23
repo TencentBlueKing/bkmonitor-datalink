@@ -10,11 +10,7 @@
 package bksql
 
 const (
-	QueryAsync = "query_async"
-	QuerySync  = "query_sync"
-
-	BkUserName = "admin"
-	TSpider    = "tspider"
+	TSpider = "tspider"
 
 	StatusOK     = "00"
 	StatusFailed = "-1"

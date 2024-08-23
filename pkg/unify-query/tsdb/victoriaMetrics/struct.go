@@ -14,14 +14,6 @@ import (
 	"strconv"
 )
 
-type Params struct {
-	SQL                        string `json:"sql"`
-	BkdataAuthenticationMethod string `json:"bkdata_authentication_method"`
-	BkAppCode                  string `json:"bk_app_code"`
-	PreferStorage              string `json:"prefer_storage"`
-	BkdataDataToken            string `json:"bkdata_data_token"`
-}
-
 type ParamsQueryRange struct {
 	InfluxCompatible bool   `json:"influx_compatible"`
 	UseNativeOr      bool   `json:"use_native_or"`

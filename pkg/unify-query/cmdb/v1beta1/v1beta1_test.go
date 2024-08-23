@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"sync"
 	"testing"
 	"time"
@@ -62,12 +63,12 @@ func TestModel_Resources(t *testing.T) {
 	resources, err := testModel.resources(ctx)
 
 	assert.Nil(t, err)
-	assert.Equal(t, []cmdb.Resource{"address", "container", "deamonset", "deployment", "domain", "ingress", "job", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
+	assert.Equal(t, []cmdb.Resource{"apm_service", "apm_service_instance", "deamonset", "deployment", "domain", "ingress", "job", "k8s_address", "node", "pod", "replicaset", "service", "statefulset", "system"}, resources)
 }
 
 func TestModel_GetResources(t *testing.T) {
 	ctx := context.Background()
-	index, err := testModel.getResourceIndex(ctx, "address")
+	index, err := testModel.getResourceIndex(ctx, "k8s_address")
 	assert.Nil(t, err)
 	assert.Equal(t, cmdb.Index{"bcs_cluster_id", "address"}, index)
 
@@ -83,9 +84,50 @@ func TestModel_GetPaths(t *testing.T) {
 		matcher      cmdb.Matcher
 		source       cmdb.Resource
 		indexMatcher cmdb.Matcher
+		pathResource []cmdb.Resource
 		expected     string
+		allMatch     bool
 		error        error
 	}{
+		"apm_service to system": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","system"]}]]`,
+		},
+		"apm_service to pod": {
+			target: "pod",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","pod"]}]]`,
+		},
+		"apm_service to system through pod and node": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"pod", "node",
+			},
+			allMatch: false,
+			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
+		},
 		"container to system": {
 			target: "system",
 			matcher: cmdb.Matcher{
@@ -102,6 +144,7 @@ func TestModel_GetPaths(t *testing.T) {
 				"pod":            "pod-1",
 				"container":      "container-1",
 			},
+			allMatch: true,
 			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
 		},
 		"no target resource": {
@@ -117,7 +160,8 @@ func TestModel_GetPaths(t *testing.T) {
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
 			},
-			error: fmt.Errorf("pod => multi_cluster error: target vertex not reachable from source"),
+			allMatch: true,
+			error:    fmt.Errorf("pod => multi_cluster error: target vertex not reachable from source"),
 		},
 		"node to system": {
 			target: "system",
@@ -131,18 +175,44 @@ func TestModel_GetPaths(t *testing.T) {
 				"bcs_cluster_id": "cls",
 				"node":           "node-1",
 			},
+			allMatch: true,
+			expected: `[[{"V":["node","system"]}]]`,
+		},
+		"node to system not all match": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+				"demo":           "1",
+			},
+			source: "node",
+			indexMatcher: cmdb.Matcher{
+				"bcs_cluster_id": "cls",
+			},
+			allMatch: false,
 			expected: `[[{"V":["node","system"]}]]`,
 		},
 	}
 
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
-			source, indexMatcher, err := testModel.getResourceFromMatch(ctx, c.matcher)
-			assert.Nil(t, err)
+			var (
+				source cmdb.Resource
+				err    error
+			)
+			if c.source == "" {
+				source, err = testModel.getResourceFromMatch(ctx, c.matcher)
+				assert.Nil(t, err)
+			} else {
+				source = c.source
+			}
+
+			indexMatcher, allMatch, err := testModel.getIndexMatcher(ctx, source, c.matcher)
 			if err == nil {
+				assert.Equal(t, c.allMatch, allMatch)
 				assert.Equal(t, c.source, source)
 				assert.Equal(t, c.indexMatcher, indexMatcher)
-				paths, err := testModel.getPaths(ctx, source, c.target, c.matcher)
+
+				paths, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
 				if c.error != nil {
 					assert.Equal(t, c.error, err)
 				} else {
@@ -179,29 +249,38 @@ func mockData(ctx context.Context) *curl.TestCurl {
 	influxdbStorageID := "2"
 	influxdbStorageIDInt := int64(2)
 
+	vmInstance, err := victoriaMetrics.NewInstance(ctx, victoriaMetrics.Options{
+		Curl:             mockCurl,
+		InfluxCompatible: true,
+		UseNativeOr:      true,
+	})
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+	}
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			ctx:              ctx,
-			Curl:             mockCurl,
-			InfluxCompatible: true,
-		},
+		Type:     consul.VictoriaMetricsStorageType,
+		Instance: vmInstance,
 	})
 
+	influxInstance, err := tsdbInfluxdb.NewInstance(
+		context.TODO(),
+		tsdbInfluxdb.Options{
+			Host:      "127.0.0.1",
+			Port:      80,
+			Curl:      mockCurl,
+			ChunkSize: 10,
+			MaxSlimit: 1e8,
+			MaxLimit:  1e8,
+			Timeout:   time.Hour,
+		},
+	)
+	if err != nil {
+		log.Fatalf(ctx, err.Error())
+	}
+
 	tsdb.SetStorage(influxdbStorageID, &tsdb.Storage{
-		Type: consul.InfluxDBStorageType,
-		Instance: tsdbInfluxdb.NewInstance(
-			context.TODO(),
-			tsdbInfluxdb.Options{
-				Host:      "127.0.0.1",
-				Port:      80,
-				Curl:      mockCurl,
-				ChunkSize: 10,
-				MaxSlimit: 1e8,
-				MaxLimit:  1e8,
-				Timeout:   time.Hour,
-			},
-		),
+		Type:     consul.InfluxDBStorageType,
+		Instance: influxInstance,
 	})
 	mock.SetRedisClient(ctx, "test_model")
 	mock.SetSpaceTsDbMockData(
@@ -254,9 +333,11 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	mockData(ctx)
 
 	testCases := map[string]struct {
-		spaceUid string
-		target   cmdb.Resource
-		matcher  cmdb.Matcher
+		spaceUid     string
+		source       cmdb.Resource
+		target       cmdb.Resource
+		matcher      cmdb.Matcher
+		pathResource []cmdb.Resource
 
 		expected struct {
 			source     cmdb.Resource
@@ -378,7 +459,7 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
 			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "")
-			source, indexMatcher, matchers, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.matcher)
+			source, indexMatcher, matchers, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.expected.source, source)

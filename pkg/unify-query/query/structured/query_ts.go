@@ -563,6 +563,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
 	span.Set("tsdb-time-field", tsDB.TimeField)
 	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
+	span.Set("tsdb-source-type", tsDB.SourceType)
+	span.Set("tsdb-storage-type", tsDB.StorageType)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)

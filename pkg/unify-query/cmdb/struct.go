@@ -41,10 +41,12 @@ type Paths []Path
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
 	QueryList []struct {
-		Timestamp     int64    `json:"timestamp"`
-		TargetType    Resource `json:"target_type"`
-		SourceInfo    Matcher  `json:"source_info"`
-		LookBackDelta string   `json:"look_back_delta"`
+		Timestamp     int64      `json:"timestamp"`
+		SourceType    Resource   `json:"source_type"`
+		TargetType    Resource   `json:"target_type"`
+		SourceInfo    Matcher    `json:"source_info"`
+		PathResource  []Resource `json:"path_resource"`
+		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
 }
 
@@ -66,12 +68,14 @@ type RelationMultiResourceResponse struct {
 // RelationMultiResourceRangeRequest 请求参数
 type RelationMultiResourceRangeRequest struct {
 	QueryList []struct {
-		StartTs       int64    `json:"start_time"`
-		EndTs         int64    `json:"end_time"`
-		Step          string   `json:"step"`
-		TargetType    Resource `json:"target_type"`
-		SourceInfo    Matcher  `json:"source_info"`
-		LookBackDelta string   `json:"look_back_delta"`
+		StartTs       int64      `json:"start_time"`
+		EndTs         int64      `json:"end_time"`
+		Step          string     `json:"step"`
+		SourceType    Resource   `json:"source_type"`
+		TargetType    Resource   `json:"target_type"`
+		SourceInfo    Matcher    `json:"source_info"`
+		PathResource  []Resource `json:"path_resource"`
+		LookBackDelta string     `json:"look_back_delta"`
 	} `json:"query_list"`
 }
 

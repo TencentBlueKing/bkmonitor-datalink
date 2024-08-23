@@ -70,7 +70,7 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			Code: http.StatusOK,
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUid, qry.Timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest
@@ -141,7 +141,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			continue
 		}
 
-		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceInfo)
+		d.SourceType, d.SourceInfo, d.TargetList, err = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUid, step, qry.StartTs, qry.EndTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.PathResource)
 		if err != nil {
 			d.Message = err.Error()
 			d.Code = http.StatusBadRequest

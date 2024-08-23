@@ -437,8 +437,8 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 
 		span.Set("cluster-name", qry.ClusterName)
-		span.Set("tag-keys", fmt.Sprintf("%+v", qry.TagsKey))
-		span.Set("ins-option", fmt.Sprintf("%+v", opt))
+		span.Set("tag-keys", qry.TagsKey)
+		span.Set("ins-option", opt)
 
 		instance, err = influxdb.NewInstance(ctx, opt)
 	case consul.ElasticsearchStorageType:
@@ -461,9 +461,13 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.Password = stg.Password
 			opt.HealthCheck = true
 		}
+
+		span.Set("query_qry", qry)
+		span.Set("ins_option", opt)
+
 		instance, err = elasticsearch.NewInstance(ctx, opt)
 	case consul.BkSqlStorageType:
-		instance, err = bksql.NewInstance(ctx, bksql.Options{
+		opt := bksql.Options{
 			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
 			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
@@ -473,9 +477,12 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			MaxLimit:     tsDBService.BkSqlLimit,
 			Tolerance:    tsDBService.BkSqlTolerance,
 			Curl:         curlGet,
-		})
+		}
+		instance, err = bksql.NewInstance(ctx, opt)
+
+		span.Set("ins_option", opt)
 	case consul.VictoriaMetricsStorageType:
-		instance, err = victoriaMetrics.NewInstance(ctx, victoriaMetrics.Options{
+		opt := victoriaMetrics.Options{
 			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
 			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
 				victoriaMetrics.ContentType: tsDBService.VmContentType,
@@ -485,7 +492,9 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			InfluxCompatible: tsDBService.VmInfluxCompatible,
 			UseNativeOr:      tsDBService.VmUseNativeOr,
 			Curl:             curlGet,
-		})
+		}
+		instance, err = victoriaMetrics.NewInstance(ctx, opt)
+		span.Set("ins_option", opt)
 	default:
 		err = fmt.Errorf("sotrage type is error %+v", qry)
 		return nil

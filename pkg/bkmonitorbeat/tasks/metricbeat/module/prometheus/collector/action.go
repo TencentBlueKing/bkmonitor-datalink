@@ -17,8 +17,8 @@ type ActionConfigs struct {
 }
 
 type ActionRate struct {
-	Source      string `config:"source"`
-	Destination string `config:"destination"`
+	Source      string
+	Destination string
 }
 
 type ActionDelta []string

@@ -93,7 +93,7 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 	}
 	logger.Infof("base.metric.set config: %+v", config)
 
-	stdConfigs, actionConfigs, err := handleRelabels(config.MetricRelabelRemote)
+	stdConfigs, actionConfigs, err := handleRelabels(config.MetricRelabelConfigs)
 	if err != nil {
 		logger.Errorf("handle relabels failed: %v", err)
 		return nil, err

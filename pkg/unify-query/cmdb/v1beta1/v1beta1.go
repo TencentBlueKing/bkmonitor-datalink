@@ -12,13 +12,13 @@ package v1beta1
 import (
 	"context"
 	"fmt"
-	"github.com/pkg/errors"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dominikbraun/graph"
+	"github.com/pkg/errors"
 	pl "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -163,6 +163,10 @@ func (r *model) getResourceFromMatch(ctx context.Context, matcher cmdb.Matcher) 
 func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool {
 	if len(graphPath) < len(pathResource) {
 		return false
+	}
+
+	if len(pathResource) == 0 {
+		return true
 	}
 
 	hit := 0
@@ -470,22 +474,15 @@ func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, 
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
 				FieldName:     metric,
 				ReferenceName: ref,
-				Conditions:    convertMapToConditions(matcher),
+				Conditions:    convertMapToConditions(matcher, sourceIndex, targetIndex),
 			})
 			queryTs.MetricMerge = fmt.Sprintf(`(count(%s) by (%s))`, ref, groupBy)
 		} else {
 			// 如果查询条件在其他 relation 中也存在，也需要补充，比如（bcs_cluster_id）
-			includeMatcher := make(cmdb.Matcher)
-			for _, index := range targetIndex {
-				if v, ok := matcher[index]; ok {
-					includeMatcher[index] = v
-				}
-			}
-
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
 				FieldName:     metric,
 				ReferenceName: ref,
-				Conditions:    convertMapToConditions(includeMatcher),
+				Conditions:    convertMapToConditions(matcher, sourceIndex, targetIndex),
 			})
 
 			queryTs.MetricMerge = fmt.Sprintf(`count(%s and on(%s) %s) by (%s)`, ref, onConnect, queryTs.MetricMerge, groupBy)
@@ -525,18 +522,35 @@ func getMetric(relation cmdb.Relation) string {
 	return ""
 }
 
-func convertMapToConditions(matcher cmdb.Matcher) structured.Conditions {
+func convertMapToConditions(matcher cmdb.Matcher, sourceIndex, targetIndex cmdb.Index) structured.Conditions {
 	cond := structured.Conditions{}
-	for k, v := range matcher {
-		cond.FieldList = append(cond.FieldList, structured.ConditionField{
-			DimensionName: k,
-			Value:         []string{v},
-			Operator:      structured.ConditionEqual,
-		})
+
+	allIndex := make(map[string]struct{})
+	for _, index := range []cmdb.Index{sourceIndex, targetIndex} {
+		for _, i := range index {
+			allIndex[i] = struct{}{}
+		}
+	}
+
+	for i := range allIndex {
+		// 如果查询条件里面有关键维度，则必须相等，否则必须不为空
+		if v, ok := matcher[i]; ok {
+			cond.FieldList = append(cond.FieldList, structured.ConditionField{
+				DimensionName: i,
+				Value:         []string{v},
+				Operator:      structured.ConditionEqual,
+			})
+		} else {
+			cond.FieldList = append(cond.FieldList, structured.ConditionField{
+				DimensionName: i,
+				Value:         []string{""},
+				Operator:      structured.ConditionNotEqual,
+			})
+		}
 	}
 
 	// 所有条件均为 and 拼接
-	for i := 0; i < len(matcher)-1; i++ {
+	for i := 0; i < len(cond.FieldList)-1; i++ {
 		cond.ConditionList = append(cond.ConditionList, "and")
 	}
 	return cond

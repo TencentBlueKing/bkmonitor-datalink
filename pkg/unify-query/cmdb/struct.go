@@ -57,6 +57,7 @@ type RelationMultiResourceResponseData struct {
 	SourceInfo Matcher  `json:"source_info,omitempty"`
 	TargetType Resource `json:"target_type,omitempty"`
 	TargetList Matchers `json:"target_list,omitempty"`
+	Path       []string `json:"path,omitempty"`
 	Message    string   `json:"message,omitempty"`
 }
 
@@ -86,6 +87,7 @@ type RelationMultiResourceRangeResponseData struct {
 	SourceInfo Matcher                 `json:"source_info,omitempty"`
 	TargetType Resource                `json:"target_type,omitempty"`
 	TargetList []MatchersWithTimestamp `json:"target_list,omitempty"`
+	Path       []string                `json:"path,omitempty"`
 	Message    string                  `json:"message,omitempty"`
 }
 

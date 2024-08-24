@@ -12,6 +12,7 @@ package v1beta1
 import (
 	"context"
 	"fmt"
+	"github.com/pkg/errors"
 	"sort"
 	"strings"
 	"sync"
@@ -164,36 +165,20 @@ func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool
 		return false
 	}
 
-	gpm := make(map[string]struct{}, len(graphPath))
-	for _, gp := range graphPath {
-		gpm[gp] = struct{}{}
-	}
-
+	hit := 0
+	startPath := graphPath
 	for _, pr := range pathResource {
-		if _, ok := gpm[string(pr)]; !ok {
-			return false
+		for idx, sp := range startPath {
+			if sp == string(pr) {
+				startPath = startPath[idx+1:]
+				hit++
+			}
 		}
 	}
-
-	return true
+	return len(pathResource) == hit
 }
 
-func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, pathResource []cmdb.Resource) (cmdb.Paths, error) {
-
-	// 如果不指定经过的路径的话，则使用最短路径
-	if len(pathResource) == 0 {
-		// 获取最短路径
-		p, err := graph.ShortestPath(r.g, string(source), string(target))
-		if err != nil {
-			return nil, fmt.Errorf("%s => %s error: %s", source, target, err)
-		}
-		path, err := pathParser(p)
-		if err != nil {
-			return nil, fmt.Errorf("path parser %v error: %s", p, err)
-		}
-		return cmdb.Paths{path}, nil
-	}
-
+func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, pathResource []cmdb.Resource) ([][]string, error) {
 	// 暂时不使用全路径
 	allGraphPaths, err := graph.AllPathsBetween(r.g, string(source), string(target))
 	if err != nil {
@@ -204,24 +189,23 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 		return len(allGraphPaths[i]) < len(allGraphPaths[j])
 	})
 
-	allPaths := make(cmdb.Paths, 0, len(allGraphPaths))
+	// 兼容原来的节点屏蔽功能，因为没有指定路径，原路径 pod -> node -> system, 最短路径可能会命中：pod -> apm_service_instance -> system，所以需要多路径查询匹配
+	paths := make([][]string, 0)
 	for _, p := range allGraphPaths {
-		if !r.checkPath(p, pathResource) {
-			continue
+		if r.checkPath(p, pathResource) {
+			paths = append(paths, p)
 		}
-
-		paths, err := pathParser(p)
-		if err != nil {
-			continue
-		}
-		allPaths = append(allPaths, paths)
 	}
-	return allPaths, nil
+
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("empty paths with %s => %s through %v", source, target, pathResource)
+	}
+
+	return paths, nil
 }
 
-func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (cmdb.Resource, cmdb.Matcher, []cmdb.MatchersWithTimestamp, error) {
+func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, matcher cmdb.Matcher, paths [][]string, ts []cmdb.MatchersWithTimestamp, err error) {
 	var (
-		err  error
 		user = metadata.GetUser(ctx)
 	)
 
@@ -246,47 +230,58 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	if opt.Source == "" {
 		opt.Source, err = r.getResourceFromMatch(ctx, queryMatcher)
 		if err != nil {
-			return opt.Source, queryMatcher, nil, fmt.Errorf("get resource error: %s", err)
+			err = errors.WithMessage(err, "get resource error")
+			return
 		}
 	}
 
-	indexMatcher, _, err := r.getIndexMatcher(ctx, opt.Source, queryMatcher)
+	source = opt.Source
+	matcher, _, err = r.getIndexMatcher(ctx, opt.Source, queryMatcher)
 	if err != nil {
-		return opt.Source, queryMatcher, nil, fmt.Errorf("get index matcher error: %s", err)
+		err = errors.WithMessagef(err, "get index matcher error")
+		return
 	}
 
 	if opt.SpaceUid == "" {
-		return opt.Source, indexMatcher, nil, fmt.Errorf("space uid is empty")
+		err = errors.New("space uid is empty")
+		return
 	}
 
 	if opt.StartTs == 0 || opt.EndTs == 0 {
-		return opt.Source, indexMatcher, nil, fmt.Errorf("timestamp is empty")
+		err = errors.New("timestamp is empty")
+		return
 	}
 
 	span.Set("source", string(opt.Source))
-	span.Set("index-matcher", fmt.Sprintf("%v", indexMatcher))
+	span.Set("index-matcher", fmt.Sprintf("%v", matcher))
 
-	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
+	paths, err = r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
-		return opt.Source, indexMatcher, nil, fmt.Errorf("get paths error: %s", err)
+		err = errors.WithMessagef(err, "get path error")
+		return
 	}
 
-	span.Set("paths", fmt.Sprintf("%v", paths))
+	span.Set("paths", paths)
 
-	var resultMatchers []cmdb.MatchersWithTimestamp
 	for _, path := range paths {
-		resultMatchers, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, indexMatcher, opt.Instant)
+		cmdbPath, err := pathParser(path)
+		if err != nil {
+			err = errors.WithMessagef(err, "path parser %s", path)
+			continue
+		}
+
+		ts, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, cmdbPath, matcher, opt.Instant)
 		if err != nil {
 			continue
 		}
 
-		if len(resultMatchers) > 0 {
-			span.Set("path", fmt.Sprintf("%v", path))
+		if len(ts) > 0 {
+			span.Set("cmdb_path", cmdbPath)
 			break
 		}
 	}
 
-	return opt.Source, indexMatcher, resultMatchers, err
+	return
 }
 
 type QueryResourceOptions struct {
@@ -302,7 +297,7 @@ type QueryResourceOptions struct {
 	Instant       bool
 }
 
-func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, cmdb.Matchers, error) {
+func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUid string, timestamp int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, [][]string, cmdb.Matchers, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,
@@ -315,15 +310,15 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 		PathResource:  pathResource,
 		Instant:       true,
 	}
-	resource, matcher, ret, err := r.queryResourceMatcher(ctx, opt)
+	resource, matcher, paths, ret, err := r.queryResourceMatcher(ctx, opt)
 	if err != nil {
-		return resource, matcher, nil, err
+		return resource, matcher, paths, nil, err
 	}
 
-	return resource, matcher, shimMatcherWithTimestamp(ret), nil
+	return resource, matcher, paths, shimMatcherWithTimestamp(ret), nil
 }
 
-func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.MatchersWithTimestamp, error) {
+func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step time.Duration, startTs, endTs int64, target, source cmdb.Resource, matcher cmdb.Matcher, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, [][]string, []cmdb.MatchersWithTimestamp, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
 		SpaceUid:      spaceUid,

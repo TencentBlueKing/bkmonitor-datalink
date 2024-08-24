@@ -11,8 +11,8 @@ package v1beta1
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"github.com/pkg/errors"
 	"sync"
 	"testing"
 	"time"
@@ -76,7 +76,7 @@ func TestModel_GetResources(t *testing.T) {
 	assert.Equal(t, fmt.Errorf("resource is empty clb"), err)
 }
 
-func TestModel_GetPaths(t *testing.T) {
+func TestModel_GetPath(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := map[string]struct {
@@ -85,7 +85,7 @@ func TestModel_GetPaths(t *testing.T) {
 		source       cmdb.Resource
 		indexMatcher cmdb.Matcher
 		pathResource []cmdb.Resource
-		expected     string
+		expected     [][]string
 		allMatch     bool
 		error        error
 	}{
@@ -99,7 +99,23 @@ func TestModel_GetPaths(t *testing.T) {
 				"apm_application_name": "name",
 			},
 			allMatch: false,
-			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","system"]}]]`,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "system"},
+				{"apm_service", "apm_service_instance", "pod", "node", "system"},
+			},
+		},
+		"apm_service to system through wrong service": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{"service"},
+			source:       "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			allMatch: false,
+			error:    errors.New("empty paths with apm_service => system through [service]"),
 		},
 		"apm_service to pod": {
 			target: "pod",
@@ -111,7 +127,25 @@ func TestModel_GetPaths(t *testing.T) {
 				"apm_application_name": "name",
 			},
 			allMatch: false,
-			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","pod"]}]]`,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "pod"},
+				{"apm_service", "apm_service_instance", "system", "node", "pod"},
+			},
+		},
+		"apm_service to system through node and pod": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"node", "pod",
+			},
+			allMatch: false,
+			error:    errors.New("empty paths with apm_service => system through [node pod]"),
 		},
 		"apm_service to system through pod and node": {
 			target: "system",
@@ -126,7 +160,9 @@ func TestModel_GetPaths(t *testing.T) {
 				"pod", "node",
 			},
 			allMatch: false,
-			expected: `[[{"V":["apm_service","apm_service_instance"]},{"V":["apm_service_instance","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "pod", "node", "system"},
+			},
 		},
 		"container to system": {
 			target: "system",
@@ -137,15 +173,17 @@ func TestModel_GetPaths(t *testing.T) {
 				"container":      "container-1",
 				"test":           "1",
 			},
-			source: "container",
 			indexMatcher: cmdb.Matcher{
 				"bcs_cluster_id": "cls",
 				"namespace":      "ns-1",
 				"pod":            "pod-1",
-				"container":      "container-1",
 			},
+			source:   "pod",
 			allMatch: true,
-			expected: `[[{"V":["container","pod"]},{"V":["pod","node"]},{"V":["node","system"]}]]`,
+			expected: [][]string{
+				{"pod", "node", "system"},
+				{"pod", "apm_service_instance", "system"},
+			},
 		},
 		"no target resource": {
 			target: "multi_cluster",
@@ -161,7 +199,7 @@ func TestModel_GetPaths(t *testing.T) {
 				"pod":            "pod-1",
 			},
 			allMatch: true,
-			error:    fmt.Errorf("pod => multi_cluster error: target vertex not reachable from source"),
+			error:    fmt.Errorf("empty paths with pod => multi_cluster through []"),
 		},
 		"node to system": {
 			target: "system",
@@ -176,7 +214,10 @@ func TestModel_GetPaths(t *testing.T) {
 				"node":           "node-1",
 			},
 			allMatch: true,
-			expected: `[[{"V":["node","system"]}]]`,
+			expected: [][]string{
+				{"node", "system"},
+				{"node", "pod", "apm_service_instance", "system"},
+			},
 		},
 		"node to system not all match": {
 			target: "system",
@@ -189,7 +230,10 @@ func TestModel_GetPaths(t *testing.T) {
 				"bcs_cluster_id": "cls",
 			},
 			allMatch: false,
-			expected: `[[{"V":["node","system"]}]]`,
+			expected: [][]string{
+				{"node", "system"},
+				{"node", "pod", "apm_service_instance", "system"},
+			},
 		},
 	}
 
@@ -207,23 +251,22 @@ func TestModel_GetPaths(t *testing.T) {
 			}
 
 			indexMatcher, allMatch, err := testModel.getIndexMatcher(ctx, source, c.matcher)
+			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.allMatch, allMatch)
 				assert.Equal(t, c.source, source)
 				assert.Equal(t, c.indexMatcher, indexMatcher)
 
-				paths, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
+				path, err := testModel.getPaths(ctx, source, c.target, c.pathResource)
 				if c.error != nil {
-					assert.Equal(t, c.error, err)
+					assert.Equal(t, c.error.Error(), err.Error())
 				} else {
 					assert.Nil(t, err)
 					if err == nil {
-						actual, _ := json.Marshal(paths)
-						assert.Equal(t, c.expected, string(actual))
+						assert.Equal(t, c.expected, path)
 					}
 				}
 			}
-
 		})
 	}
 }
@@ -342,7 +385,6 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 		expected struct {
 			source     cmdb.Resource
 			sourceInfo cmdb.Matcher
-
 			targetList cmdb.Matchers
 		}
 		error error
@@ -459,12 +501,12 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
 			metadata.SetUser(ctx, c.spaceUid, c.spaceUid, "")
-			source, indexMatcher, matchers, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
+			source, matcher, _, rets, err := testModel.QueryResourceMatcher(ctx, "", c.spaceUid, timestamp, c.target, c.source, c.matcher, c.pathResource)
 			assert.Nil(t, err)
 			if err == nil {
 				assert.Equal(t, c.expected.source, source)
-				assert.Equal(t, c.expected.sourceInfo, indexMatcher)
-				assert.Equal(t, c.expected.targetList, matchers)
+				assert.Equal(t, c.expected.sourceInfo, matcher)
+				assert.Equal(t, c.expected.targetList, rets)
 			}
 		})
 	}

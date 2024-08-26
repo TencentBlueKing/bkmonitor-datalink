@@ -11,9 +11,6 @@ package periodic
 
 import (
 	"context"
-	"sync"
-	"time"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	cmESTask "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/clustermetrics/es"
@@ -23,6 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/worker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"sync"
+	"time"
 )
 
 type PeriodicTask struct {
@@ -63,6 +62,8 @@ func getPeriodicTasks() map[string]PeriodicTask {
 	ReportESClusterMetrics := "periodic:cluster_metrics:report_es"
 	ClearDeprecatedRedisKey := "periodic:metadata:clear_deprecated_redis_key"
 	CleanDataIdConsulPath := "periodic:metadata:clean_data_id_consul_path"
+
+	SloPush := "periodic:metadata:slo_push"
 
 	return map[string]PeriodicTask{
 		refreshTsMetric: {
@@ -175,6 +176,10 @@ func getPeriodicTasks() map[string]PeriodicTask {
 		CleanDataIdConsulPath: {
 			Cron:    "0 2 * * *", // 每天凌晨2点执行
 			Handler: metadataTask.CleanDataIdConsulPath,
+		},
+		SloPush: {
+			Cron:    "*/1 * * * *",
+			Handler: metadataTask.SloPush,
 		},
 	}
 }

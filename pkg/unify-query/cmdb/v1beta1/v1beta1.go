@@ -350,6 +350,19 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		lookBackDelta time.Duration
 		err           error
 	)
+
+	ctx, span := trace.NewSpan(ctx, "query-do-request")
+	defer span.End(&err)
+
+	span.Set("lookBackDeltaStr", lookBackDeltaStr)
+	span.Set("spaceUid", spaceUid)
+	span.Set("startTs", startTs)
+	span.Set("endTs", endTs)
+	span.Set("step", step.String())
+	span.Set("path", path)
+	span.Set("matcher", matcher)
+	span.Set("instant", instant)
+
 	if lookBackDeltaStr != "" {
 		lookBackDelta, err = time.ParseDuration(lookBackDeltaStr)
 		if err != nil {
@@ -366,7 +379,10 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	if err != nil {
 		return nil, err
 	}
-	metadata.SetQueryReference(ctx, queryReference)
+	err = metadata.SetQueryReference(ctx, queryReference)
+	if err != nil {
+		return nil, err
+	}
 
 	var instance tsdb.Instance
 	ok, vmExpand, err := queryReference.CheckVmQuery(ctx)
@@ -388,6 +404,11 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         Timeout,
 		}, lookBackDelta)
+	}
+
+	realPromQL, err := queryTs.ToPromQL(ctx)
+	if err == nil {
+		span.Set("promql", realPromQL)
 	}
 
 	promQL, err := queryTs.ToPromExpr(ctx, nil)

@@ -173,12 +173,12 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 		return
 	}
 
-	promQL, err := q.ToPromExpr(ctx, nil)
+	promQL, err := q.ToPromQL(ctx)
 	if err != nil {
 		r.Error("q.ToPromExpr", err)
 		return
 	}
-	r.Step("query promQL", promQL.String())
+	r.Step("query promQL", promQL)
 
 	// vm query
 	if ok {

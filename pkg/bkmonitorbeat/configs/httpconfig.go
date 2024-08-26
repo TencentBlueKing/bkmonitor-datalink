@@ -34,6 +34,21 @@ type HTTPTaskStepConfig struct {
 	ResponseCodeList []int             `config:"response_code_list"`
 }
 
+func (c *HTTPTaskStepConfig) URLs() []string {
+	if c == nil {
+		return nil
+	}
+
+	var urls []string
+	if c.URL != "" {
+		urls = append(urls, c.URL)
+	}
+	if len(c.URLList) > 0 {
+		urls = c.URLList
+	}
+	return urls
+}
+
 // Clean :
 func (c *HTTPTaskStepConfig) Clean() error {
 	err := c.SimpleMatchParam.CleanParams()

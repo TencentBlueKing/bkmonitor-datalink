@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"io/ioutil"
@@ -311,7 +312,7 @@ func CalculateMetric(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 				for _, t := range errorData {
 					totalErrorSecondsSet[t] = struct{}{} // 将错误时间点加入总错误秒数集合
 				}
-				RecordSloErrorTimeInfo(float64(len(errorData)), fmt.Sprintf("%d", AllStrategyAggInterval[strategyID].BkBizID), fmt.Sprintf("%d", day), fmt.Sprintf("%d", strategyID), AllStrategyAggInterval[strategyID].Name, preName, scene)
+				metrics.RecordSloErrorTimeInfo(float64(len(errorData)), fmt.Sprintf("%d", AllStrategyAggInterval[strategyID].BkBizID), fmt.Sprintf("%d", day), fmt.Sprintf("%d", strategyID), AllStrategyAggInterval[strategyID].Name, preName, scene)
 			}
 
 			velatSloTime := make(map[int64]struct{})
@@ -325,9 +326,9 @@ func CalculateMetric(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 				TotalSloTimeBucketDict[day] = append(TotalSloTimeBucketDict[day], velatSloTime)
 				value := getDivisionVal(int64(len(velatSloTime)), dayTime)
 				totalVelatSloTimeSet = mergeSets(totalVelatSloTimeSet, velatSloTime)
-				RecordSloInfo(value, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), preName, scene)
+				metrics.RecordSloInfo(value, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), preName, scene)
 			} else {
-				RecordSloInfo(100.0, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), preName, scene)
+				metrics.RecordSloInfo(100.0, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), preName, scene)
 			}
 			totalErrorNumber += errorNumber
 		}
@@ -341,8 +342,8 @@ func CalculateMetric(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 			mttrVal = float64(len(totalErrorSecondsSet)) / float64(totalErrorNumber)                // 平均修复时间
 			mtbfVal = float64(dayTime-int64(len(totalVelatSloTimeSet))) / float64(totalErrorNumber) // 平均故障间隔时间
 		}
-		RecordMttr(mttrVal, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
-		RecordMtbf(mtbfVal, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
+		metrics.RecordMttr(mttrVal, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
+		metrics.RecordMtbf(mtbfVal, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
 
 		// 记录 SLO 错误时间和 SLO 值
 		totalTimeLen := 0
@@ -351,9 +352,9 @@ func CalculateMetric(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 				totalTimeLen += len(set)
 			}
 		}
-		RecordSloErrorTime(float64(totalTimeLen), fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
+		metrics.RecordSloErrorTime(float64(totalTimeLen), fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
 		value := getDivisionVal(int64(totalTimeLen), dayTime)
-		RecordSlo(value, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
+		metrics.RecordSlo(value, fmt.Sprintf("%d", BkBizID), fmt.Sprintf("%d", day), scene)
 	}
 }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,7 +26,7 @@ func TestSloPush(t *testing.T) {
 	//fmt.Println(bizID)
 	var wg sync.WaitGroup
 	// 初始化注册表
-	InitGauge(Registry)
+	metrics.InitGauge(Registry)
 	// 定义错误通道
 	errChan := make(chan error, len(bizID))
 	now := time.Now().Unix()

@@ -354,10 +354,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				return
 			}
 
-			targetHost := host
 			for _, ip := range ips {
 				wg.Add(1)
 				resolvedIP := ip
+				targetHost := host
 				go func() {
 					defer wg.Done()
 					doRequest(index, step, targetHost, resolvedIP)

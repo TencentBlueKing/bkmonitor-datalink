@@ -1,4 +1,4 @@
-package http
+package service
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"

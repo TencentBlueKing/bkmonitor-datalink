@@ -339,7 +339,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 		Target:        target,
 		Matcher:       matcher,
 		PathResource:  pathResource,
-		Instant:       true,
+		Instant:       false,
 	}
 	return r.queryResourceMatcher(ctx, opt)
 }

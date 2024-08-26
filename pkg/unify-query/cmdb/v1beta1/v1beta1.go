@@ -287,6 +287,10 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		}
 	}
 
+	if len(ts) == 0 {
+		err = fmt.Errorf("paths %+v data is empty", paths)
+	}
+
 	return
 }
 

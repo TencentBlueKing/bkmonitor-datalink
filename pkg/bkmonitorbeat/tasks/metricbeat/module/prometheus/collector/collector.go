@@ -209,6 +209,7 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 		}
 	}
 
+	// 不需要额外的 action 操作
 	if m.actionOp == nil {
 		event["value"] = promEvent.Value
 		return []common.MapStr{event}

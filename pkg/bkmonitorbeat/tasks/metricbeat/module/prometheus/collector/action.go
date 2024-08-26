@@ -78,6 +78,7 @@ func (ao *actionOperator) getOrUpdateDelta(metric, h string, value float64) (flo
 	ao.mut.Lock()
 	defer ao.mut.Unlock()
 
+	// 没有命中规则
 	if _, ok := ao.deltaKeys[metric]; !ok {
 		return value, true
 	}
@@ -101,19 +102,18 @@ func (ao *actionOperator) getOrUpdateRate(metric, h string, ts int64, value floa
 	ao.mut.Lock()
 	defer ao.mut.Unlock()
 
+	// 没有命中规则
 	newMetric, ok := ao.rateKeys[metric]
 	if !ok {
 		return metric, value, true
 	}
 
+	// values/timestamp 一定同时更新
 	if _, ok := ao.values[metric]; !ok {
 		ao.values[metric] = make(map[string]float64)
-	}
-	if _, ok := ao.timestamps[metric]; !ok {
 		ao.timestamps[metric] = make(map[string]int64)
 	}
 
-	// values/timestamp 一定同时更新
 	v, ok := ao.values[metric][h]
 	if ok {
 		deltaV := value - v

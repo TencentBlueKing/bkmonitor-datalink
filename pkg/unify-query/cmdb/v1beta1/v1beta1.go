@@ -370,7 +370,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}
 	}
 
-	queryTs, err := r.makeQuery(ctx, spaceUid, path, matcher)
+	queryTs, err := r.makeQuery(ctx, spaceUid, path, matcher, step)
 	if err != nil {
 		return nil, err
 	}
@@ -464,11 +464,21 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	return ret, nil
 }
 
-func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, matcher cmdb.Matcher) (*structured.QueryTs, error) {
+func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, matcher cmdb.Matcher, step time.Duration) (*structured.QueryTs, error) {
 	const ascii = 97 // a
 
 	queryTs := &structured.QueryTs{
 		SpaceUid: spaceUid,
+	}
+
+	timeAggregation := structured.TimeAggregation{}
+	if step.Seconds() > 0 {
+		if step < time.Minute {
+			step = time.Minute
+		}
+
+		timeAggregation.Function = structured.CountOT
+		timeAggregation.Window = structured.Window(step.String())
 	}
 
 	for i, p := range path {
@@ -497,17 +507,19 @@ func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, 
 
 		if i == 0 {
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
-				FieldName:     metric,
-				ReferenceName: ref,
-				Conditions:    convertMapToConditions(matcher, sourceIndex, targetIndex),
+				TimeAggregation: timeAggregation,
+				FieldName:       metric,
+				ReferenceName:   ref,
+				Conditions:      convertMapToConditions(matcher, sourceIndex, targetIndex),
 			})
 			queryTs.MetricMerge = fmt.Sprintf(`(count(%s) by (%s))`, ref, groupBy)
 		} else {
 			// 如果查询条件在其他 relation 中也存在，也需要补充，比如（bcs_cluster_id）
 			queryTs.QueryList = append(queryTs.QueryList, &structured.Query{
-				FieldName:     metric,
-				ReferenceName: ref,
-				Conditions:    convertMapToConditions(matcher, sourceIndex, targetIndex),
+				TimeAggregation: timeAggregation,
+				FieldName:       metric,
+				ReferenceName:   ref,
+				Conditions:      convertMapToConditions(matcher, sourceIndex, targetIndex),
 			})
 
 			queryTs.MetricMerge = fmt.Sprintf(`count(%s and on(%s) %s) by (%s)`, ref, onConnect, queryTs.MetricMerge, groupBy)

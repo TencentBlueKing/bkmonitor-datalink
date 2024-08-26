@@ -353,13 +353,14 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 				logger.Errorf("semaphore acquire failed for task http task id: %d", g.TaskConfig.GetTaskID())
 				return
 			}
-			// 按照代理IP列表逐个请求
+
+			targetHost := host
 			for _, ip := range ips {
 				wg.Add(1)
 				resolvedIP := ip
 				go func() {
 					defer wg.Done()
-					doRequest(index, step, host, resolvedIP)
+					doRequest(index, step, targetHost, resolvedIP)
 				}()
 			}
 		}

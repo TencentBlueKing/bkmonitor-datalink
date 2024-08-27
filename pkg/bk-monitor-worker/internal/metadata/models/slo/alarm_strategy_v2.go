@@ -6,6 +6,8 @@ import (
 
 const TableNameAlarmStrategyV2 = "alarm_strategy_v2"
 
+//go:generate goqueryset -in alarm_strategy_v2.go -out qs_alarm_strategy_v2_gen.go
+
 // AlarmStrategyV2 mapped from table <alarm_strategy_v2>
 type AlarmStrategyV2 struct {
 	ID               int32     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`

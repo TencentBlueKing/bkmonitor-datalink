@@ -329,7 +329,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 		doRequest := func(arg Arg) {
 			event := NewEvent(g)
-			event.ToStep(index+1, step.Method, arg.url)
+			event.ToStep(index+1, arg.stepConfig.Method, arg.url)
 			event.ResolvedIP = arg.resolvedIP
 			subCtx, cancelFunc := context.WithTimeout(ctx, conf.GetTimeout())
 			defer func() {
@@ -341,13 +341,11 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			g.GatherURL(subCtx, event, arg.stepConfig, arg.url, arg.resolvedIP)
 		}
 
-		// 获取子配置代理配置
 		var wg sync.WaitGroup
 		for host, ips := range resolvedIPs {
-			// 获取并发限制信号量
 			err := g.GetSemaphore().Acquire(ctx, int64(len(ips)))
 			if err != nil {
-				logger.Errorf("semaphore acquire failed for task http task id: %d", g.TaskConfig.GetTaskID())
+				logger.Errorf("task(%d) semaphore acquire failed", g.TaskConfig.GetTaskID())
 				return
 			}
 

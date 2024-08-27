@@ -39,14 +39,10 @@ func (c *HTTPTaskStepConfig) URLs() []string {
 		return nil
 	}
 
-	var urls []string
-	if c.URL != "" {
-		urls = append(urls, c.URL)
-	}
 	if len(c.URLList) > 0 {
-		urls = c.URLList
+		return c.URLList
 	}
-	return urls
+	return []string{c.URL}
 }
 
 // Clean :

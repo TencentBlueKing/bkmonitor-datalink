@@ -96,14 +96,10 @@ func (c *SimpleTaskParam) Hosts() []string {
 		return nil
 	}
 
-	var hosts []string
-	if c.TargetHost != "" {
-		hosts = append(hosts, c.TargetHost)
-	}
 	if len(c.TargetHostList) > 0 {
-		hosts = c.TargetHostList
+		return c.TargetHostList
 	}
-	return hosts
+	return []string{c.TargetHost}
 }
 
 // CleanParams :

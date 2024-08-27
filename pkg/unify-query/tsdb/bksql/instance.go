@@ -22,24 +22,29 @@ import (
 	"github.com/prometheus/prometheus/storage/remote"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
 type Instance struct {
-	Ctx context.Context
+	ctx context.Context
 
-	Timeout      time.Duration
-	IntervalTime time.Duration
+	querySyncUrl  string
+	queryAsyncUrl string
 
-	Limit     int
-	Tolerance int
+	headers map[string]string
 
-	Client *Client
+	timeout      time.Duration
+	intervalTime time.Duration
+
+	maxLimit  int
+	tolerance int
+
+	client *Client
 }
 
 func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, start int64, end int64) (*prompb.QueryResult, error) {
@@ -48,6 +53,33 @@ func (i *Instance) QueryReference(ctx context.Context, query *metadata.Query, st
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+type Options struct {
+	Address string
+	Headers map[string]string
+
+	Timeout      time.Duration
+	IntervalTime time.Duration
+	MaxLimit     int
+	Tolerance    int
+
+	Curl curl.Curl
+}
+
+func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+	if opt.Address == "" {
+		return nil, fmt.Errorf("address is empty")
+	}
+	instance := &Instance{
+		ctx:          ctx,
+		timeout:      opt.Timeout,
+		intervalTime: opt.IntervalTime,
+		maxLimit:     opt.MaxLimit,
+		tolerance:    opt.Tolerance,
+		client:       (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+	}
+	return instance, nil
+}
 
 func (i *Instance) checkResult(res *Result) error {
 	if !res.Result {
@@ -80,109 +112,23 @@ func (i *Instance) sqlQuery(ctx context.Context, sql string, span *trace.Span) (
 	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
 	span.Set("query-sql", sql)
 
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
+	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
 	// 发起异步查询
-	res := i.Client.QuerySync(ctx, sql, span)
+	res := i.client.QuerySync(ctx, sql, span)
 	if err = i.checkResult(res); err != nil {
 		return data, err
 	}
 
-	span.Set("query-timeout", i.Timeout.String())
-	span.Set("query-interval-time", i.IntervalTime.String())
+	span.Set("query-timeout", i.timeout.String())
+	span.Set("query-interval-time", i.intervalTime.String())
 
 	if data, ok = res.Data.(*QuerySyncResultData); !ok {
 		return data, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
 	}
 
 	return data, nil
-}
-
-func (i *Instance) queryAsync(ctx context.Context, sql string, span *trace.Span) (*QueryAsyncResultData, error) {
-	var (
-		data       *QueryAsyncData
-		stateData  *QueryAsyncStateData
-		resultData *QueryAsyncResultData
-
-		startAnaylize time.Time
-
-		ok  bool
-		err error
-	)
-
-	log.Infof(ctx, "%s: %s", i.GetInstanceType(), sql)
-	span.Set("query-sql", sql)
-
-	ctx, cancel := context.WithTimeout(ctx, i.Timeout)
-	defer cancel()
-
-	user := metadata.GetUser(ctx)
-	startAnaylize = time.Now()
-
-	// 发起异步查询
-	res := i.Client.QueryAsync(ctx, sql, span)
-	if err = i.checkResult(res); err != nil {
-		return resultData, err
-	}
-
-	queryCost := time.Since(startAnaylize)
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
-	)
-
-	if data, ok = res.Data.(*QueryAsyncData); !ok {
-		return resultData, fmt.Errorf("queryAsyncData type is error: %T", res.Data)
-	}
-
-	if data == nil || data.QueryId == "" {
-		return resultData, fmt.Errorf("queryAsyncData queryID is emtpy: %+v", data)
-	}
-
-	span.Set("query-timeout", i.Timeout.String())
-	span.Set("query-interval-time", i.IntervalTime.String())
-	span.Set("data-query-id", data.QueryId)
-
-	err = func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("queryAsyncState %s timeout %s", data.QueryId, i.Timeout.String())
-			default:
-				stateRes := i.Client.QueryAsyncState(ctx, data.QueryId, span)
-				if err = i.checkResult(res); err != nil {
-					return err
-				}
-				if stateData, ok = stateRes.Data.(*QueryAsyncStateData); !ok {
-					return fmt.Errorf("queryAsyncState type is error: %T", res.Data)
-				}
-				switch stateData.State {
-				case RUNNING:
-					time.Sleep(i.IntervalTime)
-					continue
-				case FINISHED:
-					return nil
-				default:
-					return fmt.Errorf("queryAsyncState error %+v", stateData)
-				}
-			}
-		}
-	}()
-
-	if err != nil {
-		return resultData, err
-	}
-
-	resultRes := i.Client.QueryAsyncResult(ctx, data.QueryId, span)
-	if err = i.checkResult(res); err != nil {
-		return resultData, err
-	}
-
-	if resultData, ok = resultRes.Data.(*QueryAsyncResultData); !ok {
-		return resultData, fmt.Errorf("queryAsyncResult type is error: %T", res.Data)
-	}
-
-	return resultData, nil
 }
 
 func (i *Instance) dims(dims []string, field string) []string {
@@ -329,7 +275,7 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 	ctx, span := trace.NewSpan(ctx, "bksql-make-sqlBuilder")
 	defer span.End(&err)
 
-	maxLimit := i.Limit + i.Tolerance
+	maxLimit := i.maxLimit + i.tolerance
 	limit := query.Size
 	if limit == 0 || limit > maxLimit {
 		limit = maxLimit
@@ -405,14 +351,14 @@ func (i *Instance) query(
 	ctx, span := trace.NewSpan(ctx, "bk-sql-query")
 	defer span.End(&err)
 
-	if i.Client == nil {
+	if i.client == nil {
 		return nil, fmt.Errorf("es client is nil")
 	}
 
-	if i.Limit > 0 {
-		maxLimit := i.Limit + i.Tolerance
+	if i.maxLimit > 0 {
+		maxLimit := i.maxLimit + i.tolerance
 		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.Limit {
+		if query.Size == 0 || query.Size > i.maxLimit {
 			query.Size = maxLimit
 		}
 	}
@@ -443,10 +389,10 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, e
 		return storage.ErrSeriesSet(fmt.Errorf("range time is error, start: %s, end: %s ", start, end))
 	}
 
-	if i.Limit > 0 {
-		maxLimit := i.Limit + i.Tolerance
+	if i.maxLimit > 0 {
+		maxLimit := i.maxLimit + i.tolerance
 		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.Limit {
+		if query.Size == 0 || query.Size > i.maxLimit {
 			query.Size = maxLimit
 		}
 	}
@@ -468,8 +414,8 @@ func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, e
 	span.Set("data-total-records", data.TotalRecords)
 	log.Infof(ctx, "total records: %d", data.TotalRecords)
 
-	if i.Limit > 0 && data.TotalRecords > i.Limit {
-		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.Limit))
+	if i.maxLimit > 0 && data.TotalRecords > i.maxLimit {
+		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
 	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)

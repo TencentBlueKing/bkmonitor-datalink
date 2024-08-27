@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/model/relabel"
+	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -118,27 +119,61 @@ func (m *MetricSet) metricRelabel(promEvent *tasks.PromEvent) bool {
 	}
 
 	if promEvent.Key == "" {
-		logger.Errorf("missing metric key when collect metric: %s", promEvent.Key)
 		return false
 	}
 	return true
 }
 
-func (m *MetricSet) replaceDimensions(promEvent *tasks.PromEvent) {
-	for sourceKey, sourceValue := range promEvent.Labels {
-		if targetKey, ok := m.DimensionReplace[sourceKey]; ok {
-			logger.Debugf("copy dimension: %s to %s in metric: %s", sourceKey, targetKey, promEvent.Key)
-			promEvent.Labels[targetKey] = sourceValue
-		}
-	}
+// promRelabel prometheus 提供的内置 relabels 配置
+type promRelabel struct {
+	// A list of labels from which values are taken and concatenated
+	// with the configured separator in order.
+	SourceLabels []string `yaml:"source_labels,flow,omitempty"`
+	// Separator is the string between concatenated values from the source labels.
+	Separator string `yaml:"separator,omitempty"`
+	// Regex against which the concatenation is matched.
+	Regex string `yaml:"regex,omitempty"`
+	// Modulus to take of the hash of concatenated values from the source labels.
+	Modulus uint64 `yaml:"modulus,omitempty"`
+	// TargetLabel is the label to which the resulting string is written in a replacement.
+	// Regexp interpolation is allowed for the replace action.
+	TargetLabel string `yaml:"target_label,omitempty"`
+	// Replacement is the regex replacement pattern to be used.
+	Replacement string `yaml:"replacement,omitempty"`
+	// Action is the action to be performed for the relabeling.
+	Action string `yaml:"action,omitempty"`
 }
 
-func (m *MetricSet) getTargetMetricKey(promEvent *tasks.PromEvent) string {
-	if m.MetricReplace != nil {
-		if targetKey, ok := m.MetricReplace[promEvent.Key]; ok {
-			logger.Debugf("copy metric: %s to %s", promEvent.Key, targetKey)
-			return targetKey
+func handleRelabels(configs interface{}) ([]promRelabel, *ActionConfigs, error) {
+	var relabels []promRelabel
+	data, err := yaml.Marshal(configs)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = yaml.Unmarshal(data, &relabels); err != nil {
+		return nil, nil, err
+	}
+
+	dst := make([]promRelabel, 0)
+	ac := &ActionConfigs{}
+
+	for i := 0; i < len(relabels); i++ {
+		rl := relabels[i]
+		switch rl.Action {
+		case ActionTypeRate:
+			if len(rl.SourceLabels) == 1 && rl.SourceLabels[0] == model.MetricNameLabel {
+				ac.Rate = append(ac.Rate, ActionRate{
+					Source:      rl.Regex, // 借用 Regex 字段，实际并不支持正则
+					Destination: rl.Replacement,
+				})
+			}
+
+		case ActionTypeDelta:
+			ac.Delta = append(ac.Delta, rl.SourceLabels...)
+
+		default: // prometheus 标准 actions
+			dst = append(dst, rl)
 		}
 	}
-	return ""
+	return dst, ac, nil
 }

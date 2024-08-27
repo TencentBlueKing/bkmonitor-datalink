@@ -42,6 +42,8 @@ type aggFormat struct {
 	toEs   func(k string) string
 	toProm func(k string) string
 
+	timeFormat func(i int64) int64
+
 	dims  []string
 	item  item
 	items items
@@ -132,7 +134,13 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 					}
 
 					// 时间和值也是不同层级，需要暂存在 a.sample 里
-					a.item.timestamp = int64(bucket.Key)
+					timestamp := int64(bucket.Key)
+					if a.timeFormat != nil {
+						a.item.timestamp = a.timeFormat(timestamp)
+					} else {
+						a.item.timestamp = timestamp
+					}
+
 					if err := a.ts(idx, bucket.Aggregations); err != nil {
 						return err
 					}

@@ -20,16 +20,7 @@ import (
 )
 
 func TestGetEventFromPromEvent(t *testing.T) {
-	deltaKeys := map[string]struct{}{}
-	lastDeltaMetrics := make(map[string]map[string]float64)
-	for _, key := range []string{"metric1", "metric2"} {
-		deltaKeys[key] = struct{}{}
-		lastDeltaMetrics[key] = make(map[string]float64)
-	}
-
 	mb := &MetricSet{
-		deltaKeys:           deltaKeys,
-		lastDeltaMetrics:    lastDeltaMetrics,
 		normalizeMetricName: true,
 	}
 

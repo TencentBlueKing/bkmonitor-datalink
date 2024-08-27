@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
@@ -92,7 +93,10 @@ func TestInstance_MakeSQL(t *testing.T) {
 	for n, c := range testCases {
 		t.Run(n, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			instance := NewInstance(ctx, option)
+			instance, err := NewInstance(ctx, option)
+			if err != nil {
+				log.Fatalf(ctx, err.Error())
+			}
 			if c.query.DB == "" {
 				c.query.DB = db
 			}

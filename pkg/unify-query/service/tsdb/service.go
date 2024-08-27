@@ -14,13 +14,9 @@ import (
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/offlineDataArchive"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
 type Service struct {
@@ -133,10 +129,6 @@ func (s *Service) reloadStorage() error {
 	}
 
 	options := &inner.Options{
-		VM: &inner.VMOption{
-			UriPath: "select/0/prometheus/api/v1",
-			Timeout: VmTimeout,
-		},
 		InfluxDB: &inner.InfluxDBOption{
 			Timeout:        InfluxDBTimeout,
 			ContentType:    InfluxDBContentType,
@@ -161,68 +153,6 @@ func (s *Service) reloadStorage() error {
 		log.Errorf(context.TODO(), "reload storage failed,error:%s", err)
 		return err
 	}
-
-	inner.SetStorage(consul.OfflineDataArchive, &inner.Storage{
-		Type: consul.OfflineDataArchive,
-		Instance: &offlineDataArchive.Instance{
-			Ctx:                    s.ctx,
-			Address:                OfflineDataArchiveAddress,
-			Timeout:                OfflineDataArchiveTimeout,
-			MaxLimit:               InfluxDBMaxLimit,
-			MaxSLimit:              InfluxDBMaxSLimit,
-			Toleration:             InfluxDBTolerance,
-			ReadRateLimit:          InfluxDBQueryReadRateLimit,
-			GrpcMaxCallRecvMsgSize: OfflineDataArchiveGrpcMaxCallRecvMsgSize,
-			GrpcMaxCallSendMsgSize: OfflineDataArchiveGrpcMaxCallSendMsgSize,
-		},
-	})
-
-	// 增加全局 vm storage 查询
-	inner.SetStorage(consul.VictoriaMetricsStorageType, &inner.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			Ctx:                  s.ctx,
-			ContentType:          VmContentType,
-			Address:              VmAddress,
-			UriPath:              VmUriPath,
-			Code:                 VmCode,
-			Secret:               VmSecret,
-			Token:                VmToken,
-			AuthenticationMethod: VmAuthenticationMethod,
-			Timeout:              VmTimeout,
-			// 是否开启 influxdb 正则匹配
-			MaxConditionNum:  VmMaxConditionNum,
-			InfluxCompatible: VmInfluxCompatible,
-			UseNativeOr:      VmUseNativeOr,
-			Curl:             &curl.HttpCurl{Log: log.DefaultLogger},
-		},
-	})
-
-	// 增加 bksql tspider storage 查询
-	inner.SetStorage(consul.BkSqlStorageType, &inner.Storage{
-		Type: consul.BkSqlStorageType,
-		Instance: &bksql.Instance{
-			Ctx:          s.ctx,
-			Timeout:      BkSqlTimeout,
-			IntervalTime: BkSqlIntervalTime,
-			Limit:        BkSqlLimit,
-			Tolerance:    BkSqlTolerance,
-			Client: &bksql.Client{
-				Address:                    BkSqlAddress,
-				BkdataAuthenticationMethod: BkSqlAuthenticationMethod,
-				BkUsername:                 bksql.BkUserName,
-				BkAppCode:                  BkSqlCode,
-				BkdataDataToken:            BkSqlToken,
-				BkAppSecret:                BkSqlSecret,
-				ContentType:                BkSqlContentType,
-				Log:                        log.DefaultLogger,
-				Timeout:                    BkSqlTimeout,
-				Curl: &curl.HttpCurl{
-					Log: log.DefaultLogger,
-				},
-			},
-		},
-	})
 
 	return nil
 }

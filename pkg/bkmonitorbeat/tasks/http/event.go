@@ -34,6 +34,19 @@ type Event struct {
 	ResolvedIP    string
 }
 
+func NewEvent(g *Gather) *Event {
+	conf := g.GetConfig().(*configs.HTTPTaskConfig)
+	evt := tasks.NewEvent(g)
+	evt.StartAt = time.Now()
+
+	event := &Event{
+		Event: evt,
+		Steps: len(conf.Steps),
+		Index: 1,
+	}
+	return event
+}
+
 func (e *Event) AsMapStr() common.MapStr {
 	mapStr := e.Event.AsMapStr()
 	mapStr["url"] = e.URL
@@ -48,10 +61,9 @@ func (e *Event) AsMapStr() common.MapStr {
 	return mapStr
 }
 
-// ToStep 按照采集子配置填写事件信息
-func (e *Event) ToStep(index int, step *configs.HTTPTaskStepConfig, url string) {
+func (e *Event) ToStep(index int, method, url string) {
 	e.URL = url
-	e.Method = step.Method
+	e.Method = method
 	e.Index = index
 }
 
@@ -74,17 +86,4 @@ func (e *Event) FailFromError(err error) {
 			e.Fail(define.CodeResponseFailed)
 		}
 	}
-}
-
-func NewEvent(g *Gather) *Event {
-	conf := g.GetConfig().(*configs.HTTPTaskConfig)
-	evt := tasks.NewEvent(g)
-	evt.StartAt = time.Now()
-
-	event := &Event{
-		Event: evt,
-		Steps: len(conf.Steps),
-		Index: 1,
-	}
-	return event
 }

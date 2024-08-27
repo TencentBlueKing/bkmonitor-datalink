@@ -290,7 +290,6 @@ var NewClient = func(conf *configs.HTTPTaskConfig, proxyMap map[string]string) C
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	conf := g.GetConfig().(*configs.HTTPTaskConfig)
-
 	for _, c := range conf.Steps {
 		validateConfig(c)
 		logger.Debugf("validated step config: %#v", c)
@@ -299,54 +298,52 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 
-	resolvedHost := make(map[string][]string)
 	for index, step := range conf.Steps {
-		// 1. 获取 URLList 如果 url 和 urlList 均为空，则直接返回空结果，并且错误码为 success
-		// 2. 遍历 URLList 逐个 url 判断是 ip 还是域名
-		//   1) 是 ip 则直接测试连接获取测试结果
-		//   2) 是域名则解析域名，获取 ip 列表：
-		// dns_check_mode: all
-		//  1) target_ip_type:0 所有 ip 都测试
-		//	2) target_ip_type:4 只测试 ipv4 的ip 若无，则返回错误码 3011
-		//	3) target_ip_type:6 只测试 ipv6 的ip 若无，则返回错误码 3012
-		// dns_check_mode: single
-		//	1) target_ip_type:0 取 ip 列表第一个 ip 做测试
-		//	2) target_ip_type:4 从 ip 列表中查找是否存在 ipv4 的 ip，存在则取第一个测试，不存在则返回错误码 3011
-		//	3) target_ip_type:6 从 ip 列表中查找是否存在 ipv6 的 ip，存在则取第一个测试，不存在则返回错误码 3012
 		urls := step.URLs()
 		if len(urls) == 0 {
-			return
+			continue
 		}
 
+		// dns_check_mode
+		// - all: 检查域名解析出来的所有 ip
+		// - single: 检查域名解析出来的随机一个 ip
+		resolvedIPs := make(map[string][]string)
 		hostsInfo := tasks.GetHostsInfo(ctx, urls, conf.DNSCheckMode, conf.TargetIPType, configs.Http)
 		for _, h := range hostsInfo {
 			if h.Errno != define.CodeOK {
 				event := NewEvent(g)
-				event.ToStep(1, step, h.Host)
+				event.ToStep(index, step.Method, h.Host)
 				event.Fail(h.Errno)
 				e <- event
 			} else {
-				resolvedHost[h.Host] = h.Ips
+				resolvedIPs[h.Host] = h.Ips
 			}
 		}
 
-		doRequest := func(index int, stepConfig *configs.HTTPTaskStepConfig, url, resolvedIP string) {
+		type Arg struct {
+			index      int
+			stepConfig *configs.HTTPTaskStepConfig
+			url        string
+			resolvedIP string
+		}
+
+		doRequest := func(arg Arg) {
 			event := NewEvent(g)
-			event.ToStep(index+1, step, url)
-			event.ResolvedIP = resolvedIP
-			gCtx, cancelFunc := context.WithTimeout(ctx, conf.GetTimeout())
+			event.ToStep(index+1, step.Method, arg.url)
+			event.ResolvedIP = arg.resolvedIP
+			subCtx, cancelFunc := context.WithTimeout(ctx, conf.GetTimeout())
 			defer func() {
 				cancelFunc()
 				event.EndAt = time.Now()
 				g.GetSemaphore().Release(1)
 				e <- event
 			}()
-			g.GatherURL(gCtx, event, stepConfig, url, resolvedIP)
+			g.GatherURL(subCtx, event, arg.stepConfig, arg.url, arg.resolvedIP)
 		}
 
 		// 获取子配置代理配置
 		var wg sync.WaitGroup
-		for host, ips := range resolvedHost {
+		for host, ips := range resolvedIPs {
 			// 获取并发限制信号量
 			err := g.GetSemaphore().Acquire(ctx, int64(len(ips)))
 			if err != nil {
@@ -356,11 +353,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 			for _, ip := range ips {
 				wg.Add(1)
-				resolvedIP := ip
-				targetHost := host
+				arg := Arg{index: index, stepConfig: step, url: host, resolvedIP: ip}
 				go func() {
 					defer wg.Done()
-					doRequest(index, step, targetHost, resolvedIP)
+					doRequest(arg)
 				}()
 			}
 		}

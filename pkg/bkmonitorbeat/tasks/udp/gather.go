@@ -145,23 +145,14 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	ctx, cancel := context.WithTimeout(ctx, g.config.Timeout)
 	defer cancel()
-	hosts := make([]string, 0)
 	resultMap := make(map[string][]string)
 	start := time.Now()
 
-	if g.config.TargetHost == "" && len(g.config.TargetHostList) == 0 {
-		// 不上报任何数据
-		logger.Debugf("udp TargetHostList is empty.")
+	hosts := g.config.Hosts()
+	if len(hosts) == 0 {
 		return
 	}
 
-	// 获取配置的host列表
-	if g.config.TargetHost != "" {
-		hosts = append(hosts, g.config.TargetHost)
-	}
-	if len(g.config.TargetHostList) > 0 {
-		hosts = g.config.TargetHostList
-	}
 	hostsInfo := tasks.GetHostsInfo(ctx, hosts, g.config.DNSCheckMode, g.config.TargetIPType, configs.Udp)
 	for _, h := range hostsInfo {
 		if h.Errno != define.CodeOK {
@@ -177,7 +168,6 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	// 解析目标为ip列表
 	var wg sync.WaitGroup
 	for taskHost, result := range resultMap {
-		// 循环列表检测
 		for _, targetHost := range result {
 			// 获取并发限制信号量
 			err := g.GetSemaphore().Acquire(ctx, 1)
@@ -275,7 +265,6 @@ func (g *Gather) detect(conn net.Conn) ([]byte, define.NamedCode) {
 	return body[:n], define.CodeOK
 }
 
-// New :
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather := &Gather{}
 	gather.GlobalConfig = globalConfig

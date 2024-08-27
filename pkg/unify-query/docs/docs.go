@@ -1255,7 +1255,7 @@ const docTemplate = `{
                     "example": false
                 },
                 "limit": {
-                    "description": "Limit 点数限制数量",
+                    "description": "MaxLimit 点数限制数量",
                     "type": "integer",
                     "example": 0
                 },

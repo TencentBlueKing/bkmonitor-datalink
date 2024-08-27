@@ -86,3 +86,11 @@ metadata:
   druid_query:
     raw_suffix: "_raw"
     cmdb_suffix: "_cmdb"
+bk_api:
+  code:
+  secret:
+bk_data:
+  host:
+  uri_path:
+  authentication_method:
+  token:

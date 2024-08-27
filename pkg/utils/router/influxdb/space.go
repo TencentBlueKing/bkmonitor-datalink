@@ -52,6 +52,7 @@ type ResultTableDetail struct {
 	DataLabel       string   `json:"data_label"`
 	TagsKey         []string `json:"tags_key"`
 	DataId          int64    `json:"bk_data_id"`
+	SourceType      string   `json:"source_type"`
 	Options         struct {
 		// 自定义时间聚合字段
 		TimeField struct {

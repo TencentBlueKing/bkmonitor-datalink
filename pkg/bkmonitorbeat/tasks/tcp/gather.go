@@ -160,9 +160,10 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			// 获取并发限制信号量
 			err := g.GetSemaphore().Acquire(ctx, 1)
 			if err != nil {
-				logger.Errorf("Semaphore Acquire failed for task tcp task id: %d", g.TaskConfig.GetTaskID())
+				logger.Errorf("task(%d) semaphore acquire failed", g.TaskConfig.GetTaskID())
 				return
 			}
+
 			wg.Add(1)
 			go func(tHost, host string) {
 				event := g.newEvent(taskConf, tHost)

@@ -329,7 +329,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 		doRequest := func(arg Arg) {
 			event := NewEvent(g)
-			event.ToStep(index+1, arg.stepConfig.Method, arg.url)
+			event.ToStep(arg.index+1, arg.stepConfig.Method, arg.url)
 			event.ResolvedIP = arg.resolvedIP
 			subCtx, cancelFunc := context.WithTimeout(ctx, conf.GetTimeout())
 			defer func() {

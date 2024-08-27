@@ -381,7 +381,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
-			Ctx:                  ctx,
+			ctx:                  ctx,
 			Address:              "victoria_metric",
 			UriPath:              "api",
 			Curl:                 mockCurl,
@@ -393,7 +393,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 	tsdb.SetStorage(strconv.FormatInt(victoriaMetricsStorageId, 10), &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
-			Ctx:                  ctx,
+			ctx:                  ctx,
 			Address:              "victoria_metric",
 			UriPath:              "api",
 			Curl:                 mockCurl,

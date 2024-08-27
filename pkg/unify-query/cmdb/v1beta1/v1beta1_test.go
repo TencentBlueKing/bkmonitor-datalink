@@ -182,14 +182,12 @@ func mockData(ctx context.Context) *curl.TestCurl {
 	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
 		Type: consul.VictoriaMetricsStorageType,
 		Instance: &victoriaMetrics.Instance{
-			Ctx:                  ctx,
-			Address:              "victoria_metric",
-			UriPath:              "api",
-			Curl:                 mockCurl,
-			InfluxCompatible:     true,
-			AuthenticationMethod: "token",
+			ctx:              ctx,
+			Curl:             mockCurl,
+			InfluxCompatible: true,
 		},
 	})
+
 	tsdb.SetStorage(influxdbStorageID, &tsdb.Storage{
 		Type: consul.InfluxDBStorageType,
 		Instance: tsdbInfluxdb.NewInstance(

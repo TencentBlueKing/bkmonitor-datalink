@@ -41,6 +41,7 @@ func NewPromData(dimensions []string) *PromData {
 	}
 	return &PromData{
 		dimensions: dimensionsMap,
+		Tables:     make([]*TablesItem, 0),
 	}
 }
 

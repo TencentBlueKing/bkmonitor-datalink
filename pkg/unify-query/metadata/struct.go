@@ -351,7 +351,6 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			span.Set(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList))
 
 			vmConditions := make(map[string]struct{})
-
 			for _, query := range reference.QueryList {
 
 				span.Set(fmt.Sprintf("query-%s-is-single-metric", query.TableID), query.IsSingleMetric)

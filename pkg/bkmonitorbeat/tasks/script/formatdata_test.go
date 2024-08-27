@@ -42,10 +42,10 @@ func (s *ScriptFormatSuite) TestFormat() {
 		s.Equal(now.Unix(), timestamp)
 		s.Equal(len(eventData), 1)
 		for _, pe := range eventData {
-			s.Equal(len(pe.GetAggreValue()), 1)
+			s.Equal(len(pe.GetAggValue()), 1)
 			s.Equal(len(pe.GetLabels()), 1)
 			s.Equal(pe.GetLabels()["mountpoint"], "/usr/local")
-			s.Equal(pe.GetAggreValue()["sys_disk_size"], 8.52597957704355)
+			s.Equal(pe.GetAggValue()["sys_disk_size"], 8.52597957704355)
 		}
 	}
 }
@@ -56,7 +56,7 @@ func (s *ScriptFormatSuite) TestNewProm() {
 	s.Equal(err, nil)
 	pe, err := tasks.NewPromEvent(testData, 123, 365*24*time.Hour*10, handler)
 	s.Equal(err, nil)
-	value := pe.GetAggreValue()
+	value := pe.GetAggValue()
 	s.Equal(len(value), 0)
 	labels := pe.GetLabels()
 	s.Equal(len(labels), 2)
@@ -71,7 +71,7 @@ func (s *ScriptFormatSuite) TestTimeStampProm() {
 	ts := now.UnixMilli()
 	pe, err := tasks.NewPromEvent(testData, ts, 365*24*time.Hour, handler)
 	s.Equal(err, nil)
-	value := pe.GetAggreValue()
+	value := pe.GetAggValue()
 	s.Equal(len(value), 0)
 	labels := pe.GetLabels()
 	s.Equal(len(labels), 2)

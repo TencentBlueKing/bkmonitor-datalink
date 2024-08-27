@@ -64,7 +64,7 @@ var (
 )
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, opt Options) *Instance {
+func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 	headers := map[string]string{}
 	if opt.Accept != "" {
 		headers[ContentType] = opt.Accept
@@ -73,7 +73,11 @@ func NewInstance(ctx context.Context, opt Options) *Instance {
 		headers[ContentEncoding] = opt.AcceptEncoding
 	}
 
-	return &Instance{
+	if opt.Host == "" {
+		return nil, fmt.Errorf("host is empty %+v", opt)
+	}
+
+	inst := &Instance{
 		ctx:      ctx,
 		host:     opt.Host,
 		port:     opt.Port,
@@ -98,6 +102,7 @@ func NewInstance(ctx context.Context, opt Options) *Instance {
 		timeout: opt.Timeout,
 		curl:    opt.Curl,
 	}
+	return inst, nil
 }
 
 var _ tsdb.Instance = (*Instance)(nil)

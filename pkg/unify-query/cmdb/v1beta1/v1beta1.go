@@ -271,8 +271,8 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 		}
 
 		metadata.SetExpand(ctx, vmExpand)
-		instance = prometheus.GetInstance(ctx, &metadata.Query{
-			StorageID: consul.VictoriaMetricsStorageType,
+		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			StorageType: consul.VictoriaMetricsStorageType,
 		})
 		if instance == nil {
 			err = fmt.Errorf("%s storage get error", consul.VictoriaMetricsStorageType)

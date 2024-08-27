@@ -33,6 +33,7 @@ name: event_collect
 version: "1"
 task_id: 1
 dataid: 123
+upmetrics_dataid: 0
 interval: 1m
 event_span: 2h
 tail_files:

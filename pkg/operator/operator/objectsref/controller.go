@@ -223,13 +223,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		cancel: cancel,
 	}
 
-	version, err := client.Discovery().ServerVersion()
-	if err != nil {
-		return nil, err
-	}
-	KubernetesServerVersion = version.String()
-	setClusterVersion(KubernetesServerVersion)
-
+	var err error
 	resources := listServerPreferredResources(client.Discovery())
 
 	sharedInformer := informers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, informers.WithNamespace(metav1.NamespaceAll))

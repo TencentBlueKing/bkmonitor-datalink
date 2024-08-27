@@ -166,10 +166,14 @@ func (m *MetricSet) getEventFromPromEvent(promEvent *tasks.PromEvent) []common.M
 
 	// 基于配置进行维度复制
 	if len(m.DimensionReplace) > 0 {
+		newDims := make(map[string]interface{})
 		for k, v := range promEvent.Labels {
 			if targetKey, ok := m.DimensionReplace[k]; ok {
-				promEvent.Labels[targetKey] = v
+				newDims[targetKey] = v
 			}
+		}
+		for k, v := range newDims {
+			promEvent.Labels[k] = v
 		}
 	}
 

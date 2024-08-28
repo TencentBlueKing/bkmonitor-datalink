@@ -39,7 +39,7 @@ type Alert struct {
 	Status           string `json:"status"`
 }
 
-func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrategy, map[int]map[string]map[string][]int64, map[int][]map[int64]struct{}) {
+func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrategy, map[int]map[string]map[string][]int64, map[int][]map[int64]struct{}, error) {
 	Now = now
 
 	TrueSloName := make(map[string][]BkBizStrategy)
@@ -49,7 +49,10 @@ func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrateg
 	db := mysql.GetDBSession().DB
 	prefix := "/slo/"
 	for _, sloName := range SloName {
-		allBkBizStrategies, _ := QueryAndDeduplicateStrategies(db, prefix, scene, sloName, bkBizId)
+		allBkBizStrategies, err := QueryAndDeduplicateStrategies(db, prefix, scene, sloName, bkBizId)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to query and deduplicate strategies for sloName %s: %w", sloName, err)
+		}
 		if len(allBkBizStrategies) > 0 {
 			TrueSloName[sloName] = allBkBizStrategies
 		}
@@ -60,20 +63,22 @@ func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrateg
 		TotalAlertTimeBucket[day] = make(map[string]map[string][]int64)
 		TotalSloTimeBucketDict[day] = make([]map[int64]struct{}, 0)
 	}
-	return TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict
+	return TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, nil
 }
 
-func FindAllBiz() map[int32][]string {
+func FindAllBiz() (map[int32][]string, error) {
 	db := mysql.GetDBSession().DB
 	//标签前缀
 	prefix := "/slo/"
 	//标签后缀
 	suffixes := SloName //{"volume", "error", "latency", "availability"}
 
-	var allBizIds map[int32][]string
-	//寻找符合标签规范的全部策略。然后统计其上层全部业务
-	allBizIds, _ = QueryBizV2(db, prefix, suffixes)
-	return allBizIds
+	// 寻找符合标签规范的全部策略。然后统计其上层全部业务
+	allBizIds, err := QueryBizV2(db, prefix, suffixes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query business IDs: %w", err)
+	}
+	return allBizIds, nil
 }
 
 func getStrategyAggInterval(strategyIDs []BkBizStrategy, AllStrategyAggInterval map[int32]StrategyDetail) {
@@ -104,9 +109,9 @@ func extractStrategyIDs(strategies []BkBizStrategy) []int32 {
 	return strategyIDs
 }
 
-func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, AllStrategyAggInterval map[int32]StrategyDetail, BkBizID int32) []Alert {
+func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, AllStrategyAggInterval map[int32]StrategyDetail, BkBizID int32) ([]Alert, error) {
 	if len(strategyIDs) == 0 {
-		return []Alert{}
+		return []Alert{}, nil
 	}
 
 	// 数据清洗，conditions
@@ -119,18 +124,26 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, AllStrategyAggIn
 	}
 
 	// 获取告警全量数据和总数
-	total, alerts := getFatalAlerts(conditions, startTime, 1, 1, BkBizID)
+	total, alerts, err := getFatalAlerts(conditions, startTime, 1, 1, BkBizID)
+	if err != nil {
+		logger.Errorf("getFatalAlerts failed: %v", err)
+		return []Alert{}, err
+	}
 	totalPages := total / MaxPageSize
 	alertList := []Alert{}
 	for page := 1; page <= totalPages+1; page++ {
 		// 分页获取告警数据
-		_, alerts = getFatalAlerts(conditions, startTime, page, MaxPageSize, BkBizID)
+		_, alerts, err = getFatalAlerts(conditions, startTime, page, MaxPageSize, BkBizID)
+		if err != nil {
+			logger.Errorf("getFatalAlerts failed: %v", err)
+			return []Alert{}, err
+		}
 		alertList = append(alertList, alerts...)
 	}
-	return alertList
+	return alertList, nil
 }
 
-func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert) {
+func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert, error) {
 	url := "https://bkmonitorv3.apigw.o.woa.com/prod/search_alert/"
 	payload := map[string]interface{}{
 		"bk_app_code":   config.BkApiAppCode,
@@ -148,7 +161,7 @@ func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
 		logger.Error("Error creating request:", err)
-		return 0, []Alert{}
+		return 0, []Alert{}, err
 	}
 
 	// 设置请求头
@@ -165,20 +178,19 @@ func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, 
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Error("Error querying alerts:", err)
-		return 0, []Alert{}
+		return 0, []Alert{}, err
 	}
-	//resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
-	//if err != nil {
-	//	fmt.Println("Error querying alerts:", err)
-	//	return 0, []Alert{}
-	//}
 	defer resp.Body.Close()
 
 	data, _ := ioutil.ReadAll(resp.Body)
 	var result map[string]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
 		logger.Error("Error unmarshalling alerts:", err)
-		return 0, []Alert{}
+		return 0, []Alert{}, err
+	}
+	if result["data"] == nil {
+		logger.Error("Error finding data in alerts :", conditions, " startTime:", startTime, " BkBizID:", BkBizID)
+		return 0, []Alert{}, err
 	}
 
 	alertData := result["data"].(map[string]interface{})
@@ -197,7 +209,7 @@ func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, 
 			Status:           alertMap["status"].(string),
 		})
 	}
-	return total, alerts
+	return total, alerts, nil
 }
 
 func addSloTimeIntoDict(day int, sloKey string, strategyID int32, beginTime, endTime int64, TotalAlertTimeBucket map[int]map[string]map[string][]int64) {
@@ -242,7 +254,7 @@ func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 			// 每个方法论进行获取数据
 
 			// 获取当前起始时间、当前方法论名称下策略、当前bizid下的告警数据，同时数据放到 AllStrategyAggInterval
-			alertList := getAllAlerts(startTime, sloStrategyList, AllStrategyAggInterval, BkBizID)
+			alertList, _ := getAllAlerts(startTime, sloStrategyList, AllStrategyAggInterval, BkBizID)
 			sloKey := sloName + "_alert_time"
 			if TotalAlertTimeBucket[day][sloKey] == nil {
 				// 若当前时间周期，方法论下时间数据为空则新建map

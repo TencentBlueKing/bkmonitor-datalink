@@ -25,9 +25,11 @@ func SloPush(ctx context.Context, t *t.Task) error {
 	//注册全局Registry
 	var Registry = prometheus.NewRegistry()
 
-	var bizID map[int32][]string
 	//检索所有满足标签的业务
-	bizID = service.FindAllBiz()
+	bizID, err := service.FindAllBiz()
+	if err != nil {
+		logger.Errorf("find all biz_id for slo failed, %v", err)
+	}
 	logger.Info("Biz and scenes: ", bizID)
 	var wg sync.WaitGroup
 	//初始化注册表
@@ -54,7 +56,11 @@ func SloPush(ctx context.Context, t *t.Task) error {
 			}()
 			for _, scene := range scenes {
 				// 初始化
-				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict := service.InitStraID(int(bkBizID), scene, now)
+				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, err := service.InitStraID(int(bkBizID), scene, now)
+				if err != nil {
+					logger.Errorf("slo init failed: %v", err)
+					continue
+				}
 				// 获取告警数据
 				AllStrategyAggInterval := service.GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID)
 				// 计算指标
@@ -73,7 +79,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 	}
 	metricFamilies, err := Registry.Gather()
 	if err != nil {
-		logger.Fatalf("Could not gather metrics: %v", err)
+		logger.Errorf("Could not gather metrics: %v", err)
 	}
 
 	// 遍历并打印收集到的度量指标

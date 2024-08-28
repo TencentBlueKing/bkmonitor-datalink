@@ -21,7 +21,7 @@ func TestSloPush(t *testing.T) {
 	logger.Info("start auto SloPush task")
 	var Registry = prometheus.NewRegistry()
 	var bizID map[int32][]string
-	bizID = FindAllBiz()
+	bizID, _ = FindAllBiz()
 	logger.Info("Biz and scenes: ", bizID)
 	//fmt.Println(bizID)
 	var wg sync.WaitGroup
@@ -48,7 +48,7 @@ func TestSloPush(t *testing.T) {
 			}()
 			for _, scene := range scenes {
 				// 初始化
-				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict := InitStraID(int(bkBizID), scene, now)
+				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, _ := InitStraID(int(bkBizID), scene, now)
 				// 获取告警数据
 				AllStrategyAggInterval := GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID)
 				// 计算指标

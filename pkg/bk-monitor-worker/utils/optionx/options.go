@@ -93,7 +93,6 @@ func (o *Options) GetDuration(key string) (time.Duration, bool) {
 func (o *Options) GetStringSlice(key string) ([]string, bool) {
 	value, ok := o.params[key]
 	if !ok {
-		logger.Errorf("Invalid type for key %s, slice failed", key)
 		return nil, false
 	}
 

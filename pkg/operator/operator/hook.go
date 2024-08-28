@@ -53,6 +53,7 @@ const (
 	confStatefulSetWorkerRegexPath     = "operator.statefulset_worker_regex"
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
+	confPromSdConfigsPath              = "operator.prom_sd_configs"
 )
 
 const (
@@ -68,6 +69,13 @@ type StatefulSetMatchRule struct {
 	Kind      string `mapstructure:"kind"`
 	Name      string `mapstructure:"name"`
 	Namespace string `mapstructure:"namespace"`
+}
+
+// PromSDConfig prometheus 提供的 sdconfigs
+// 需要同时指定 namespace 以及 name
+type PromSDConfig struct {
+	Namespace string `mapstructure:"namespace"`
+	Name      string `mapstructure:"name"`
 }
 
 // MonitorBlacklistMatchRule monitor 黑名单匹配规则
@@ -111,6 +119,7 @@ var (
 	ConfStatefulSetWorkerRegex     string
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
 	ConfHttpPort                   int
+	ConfPromSdConfigs              []PromSDConfig
 )
 
 // IfRejectServiceMonitor 判断是否拒绝 serviceMonitor
@@ -202,20 +211,23 @@ func updateConfig() {
 	target.ConfServicePort = ConfHttpPort
 
 	// reload 时状态需要置空
+	ConfStatefulSetMatchRules = []StatefulSetMatchRule{}
 	if viper.IsSet(confStatefulSetMatchRulesPath) {
 		if err := viper.UnmarshalKey(confStatefulSetMatchRulesPath, &ConfStatefulSetMatchRules); err != nil {
 			logger.Errorf("failed to unmarshal ConfStatefulSetMatchRules, err: %v", err)
 		}
-	} else {
-		ConfStatefulSetMatchRules = []StatefulSetMatchRule{}
 	}
-
+	ConfMonitorBlacklistMatchRules = []MonitorBlacklistMatchRule{}
 	if viper.IsSet(confMonitorBlacklistMatchRulesPath) {
 		if err := viper.UnmarshalKey(confMonitorBlacklistMatchRulesPath, &ConfMonitorBlacklistMatchRules); err != nil {
 			logger.Errorf("failed to unmarshal ConfMonitorBlacklistMatchRules, err: %v", err)
 		}
-	} else {
-		ConfMonitorBlacklistMatchRules = []MonitorBlacklistMatchRule{}
+	}
+	ConfPromSdConfigs = []PromSDConfig{}
+	if viper.IsSet(confPromSdConfigsPath) {
+		if err := viper.UnmarshalKey(confPromSdConfigsPath, &ConfPromSdConfigs); err != nil {
+			logger.Errorf("failed to unmarshal ConfPromSdConfigs, err: %v", err)
+		}
 	}
 }
 

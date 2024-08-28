@@ -11,13 +11,12 @@ package discover
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
-	promdiscover "github.com/prometheus/prometheus/discovery/kubernetes"
+	httpsd "github.com/prometheus/prometheus/discovery/http"
+	k8ssd "github.com/prometheus/prometheus/discovery/kubernetes"
 	"github.com/prometheus/prometheus/discovery/targetgroup"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logconf"
@@ -45,15 +44,18 @@ func Deactivate() {
 	gWg.Wait()
 }
 
+type discoveryRunner interface {
+	Run(ctx context.Context, ch chan<- []*targetgroup.Group)
+}
+
 type sharedDiscovery struct {
-	id         string
-	namespaces []string
-	ctx        context.Context
-	discovery  *promdiscover.Discovery
-	ch         chan []*targetgroup.Group
-	mut        sync.RWMutex
-	store      map[string]*tgWithTime
-	mm         *metricMonitor
+	id        string
+	ctx       context.Context
+	discovery discoveryRunner
+	ch        chan []*targetgroup.Group
+	mut       sync.RWMutex
+	store     map[string]*tgWithTime
+	mm        *metricMonitor
 }
 
 type tgWithTime struct {
@@ -61,15 +63,14 @@ type tgWithTime struct {
 	updatedAt int64
 }
 
-func newSharedDiscovery(ctx context.Context, id string, namespaces []string, discovery *promdiscover.Discovery) *sharedDiscovery {
+func newSharedDiscovery(ctx context.Context, id string, discovery discoveryRunner) *sharedDiscovery {
 	return &sharedDiscovery{
-		ctx:        ctx,
-		id:         id,
-		namespaces: namespaces,
-		discovery:  discovery,
-		ch:         make(chan []*targetgroup.Group),
-		store:      map[string]*tgWithTime{},
-		mm:         newMetricMonitor(id),
+		ctx:       ctx,
+		id:        id,
+		discovery: discovery,
+		ch:        make(chan []*targetgroup.Group),
+		store:     map[string]*tgWithTime{},
+		mm:        newMetricMonitor(id),
 	}
 }
 
@@ -136,28 +137,15 @@ func (sd *sharedDiscovery) fetch() ([]*targetgroup.Group, int64) {
 	return ret, maxTs
 }
 
-type SharedDiscoveryInfo struct {
-	Role       string   `json:"role"`
-	Namespaces []string `json:"namespaces"`
-}
-
-func (si SharedDiscoveryInfo) ID() string {
-	return fmt.Sprintf("%s/%s", si.Role, strings.Join(si.Namespaces, "/"))
-}
-
-func GetActiveSharedDiscovery() []SharedDiscoveryInfo {
+func GetActiveSharedDiscovery() []string {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
-	info := make([]SharedDiscoveryInfo, 0)
+	names := make([]string, 0, len(sharedDiscoveryMap))
 	for k := range sharedDiscoveryMap {
-		parts := strings.Split(k, "/")
-		info = append(info, SharedDiscoveryInfo{
-			Role:       parts[0],
-			Namespaces: parts[1:],
-		})
+		names = append(names, k)
 	}
-	return info
+	return names
 }
 
 func GetSharedDiscoveryCount() int {
@@ -167,29 +155,25 @@ func GetSharedDiscoveryCount() int {
 	return len(sharedDiscoveryMap)
 }
 
-func getUniqueKey(role string, namespaces []string) string {
-	return fmt.Sprintf("%s/%s", role, strings.Join(namespaces, "/"))
-}
-
-// RegisterSharedDiscover 注册 sharedDiscovery
+// RegisterK8sSdDiscover 注册 kubernetes_sd sharedDiscovery
 // 共享 Discovery 实例可以减少 API Server 请求压力 同时也可以减少进程内存开销
-func RegisterSharedDiscover(role, kubeConfig string, namespaces []string) {
+func RegisterK8sSdDiscover(uk, role, kubeConfig string, namespaces []string) {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
-	uniqueKey := getUniqueKey(role, namespaces)
-	if _, ok := sharedDiscoveryMap[uniqueKey]; !ok {
-		cfg := promdiscover.DefaultSDConfig
-		cfg.Role = promdiscover.Role(role)
+	if _, ok := sharedDiscoveryMap[uk]; !ok {
+		cfg := k8ssd.DefaultSDConfig
+		cfg.Role = k8ssd.Role(role)
 		cfg.NamespaceDiscovery.Names = namespaces
 		cfg.KubeConfig = kubeConfig
 
-		discovery, err := promdiscover.New(new(logconf.Logger), &cfg)
+		discovery, err := k8ssd.New(new(logconf.Logger), &cfg)
 		if err != nil {
-			logger.Errorf("failed to create promdiscover: %v", err)
+			logger.Errorf("failed to create kubernetes_sd: %v", err)
 			return
 		}
-		sd := newSharedDiscovery(gCtx, uniqueKey, namespaces, discovery)
+
+		sd := newSharedDiscovery(gCtx, uk, discovery)
 		gWg.Add(2)
 		go func() {
 			defer gWg.Done()
@@ -199,16 +183,41 @@ func RegisterSharedDiscover(role, kubeConfig string, namespaces []string) {
 			defer gWg.Done()
 			sd.start()
 		}()
-		sharedDiscoveryMap[uniqueKey] = sd
+		sharedDiscoveryMap[uk] = sd
 	}
 }
 
-func GetTargetGroups(role string, namespaces []string) ([]*targetgroup.Group, int64) {
+// RegisterHttpSdDiscover 注册 http_sd sharedDiscovery
+func RegisterHttpSdDiscover(uk string, config *httpsd.SDConfig) {
 	sharedDiscoveryLock.Lock()
 	defer sharedDiscoveryLock.Unlock()
 
-	uniqueKey := getUniqueKey(role, namespaces)
-	if d, ok := sharedDiscoveryMap[uniqueKey]; ok {
+	if _, ok := sharedDiscoveryMap[uk]; !ok {
+		discovery, err := httpsd.NewDiscovery(config, new(logconf.Logger), nil)
+		if err != nil {
+			logger.Errorf("failed to create http_sd: %v", err)
+			return
+		}
+
+		sd := newSharedDiscovery(gCtx, uk, discovery)
+		gWg.Add(2)
+		go func() {
+			defer gWg.Done()
+			sd.watch()
+		}()
+		go func() {
+			defer gWg.Done()
+			sd.start()
+		}()
+		sharedDiscoveryMap[uk] = sd
+	}
+}
+
+func GetTargetGroups(uk string) ([]*targetgroup.Group, int64) {
+	sharedDiscoveryLock.Lock()
+	defer sharedDiscoveryLock.Unlock()
+
+	if d, ok := sharedDiscoveryMap[uk]; ok {
 		return d.fetch()
 	}
 

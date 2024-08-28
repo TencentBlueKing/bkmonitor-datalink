@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"hash/fnv"
 	"net"
 	"net/url"
 	"regexp"
@@ -47,10 +46,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	Base64Protocol = "base64://"
-)
-
 var bus = notifier.NewDefaultRateBus()
 
 func Publish() { bus.Publish() }
@@ -59,10 +54,13 @@ func Notify() <-chan struct{} { return bus.Subscribe() }
 
 // Discover 是监控资源监视器
 type Discover interface {
-	// Name 实例名称 discover 唯一标识
+	// Name 实例名称
 	Name() string
 
-	// Type 实例类型 目前有 endpoints、pod，ingress
+	// UK 唯一标识
+	UK() string
+
+	// Type 实例类型
 	Type() string
 
 	// IsSystem 是否为系统内置资源
@@ -93,39 +91,13 @@ type Discover interface {
 	StatefulSetChildConfigs() []*ChildConfig
 }
 
-// ChildConfig 子任务配置文件信息
-type ChildConfig struct {
-	Meta         define.MonitorMeta
-	Node         string
-	FileName     string
-	Address      string
-	Data         []byte
-	Scheme       string
-	Path         string
-	Mask         string
-	TaskType     string
-	Namespace    string
-	AntiAffinity bool
-}
-
-func (c ChildConfig) String() string {
-	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s", c.Node, c.FileName, c.Address)
-}
-
-func (c ChildConfig) Hash() uint64 {
-	h := fnv.New64a()
-	h.Write([]byte(c.Node))
-	h.Write(c.Data)
-	h.Write([]byte(c.Mask))
-	return h.Sum64()
-}
-
-func EncodeBase64(s string) string {
-	return Base64Protocol + base64.StdEncoding.EncodeToString([]byte(s))
+func encodeBase64(s string) string {
+	return "base64://" + base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 type BaseParams struct {
 	Client                 kubernetes.Interface
+	Meta                   define.MonitorMeta
 	RelabelRule            string
 	RelabelIndex           string
 	NormalizeMetricName    bool
@@ -162,27 +134,25 @@ type BaseDiscover struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	wg                sync.WaitGroup
-	role              string
 	monitorMeta       define.MonitorMeta
 	mm                *metricMonitor
 	checkIfNodeExists define.CheckFunc
 	fetched           bool
-	cache             *Cache
+	cache             *hashCache
 
 	// 任务配置文件信息 通过 source 进行分组 使用 hash 进行唯一校验
 	childConfigMut    sync.RWMutex
 	childConfigGroups map[string]map[uint64]*ChildConfig // map[targetGroup.Source]map[hash]*ChildConfig
 }
 
-func NewBaseDiscover(ctx context.Context, role string, monitorMeta define.MonitorMeta, checkFn define.CheckFunc, params *BaseParams) *BaseDiscover {
+func NewBaseDiscover(ctx context.Context, checkFn define.CheckFunc, params *BaseParams) *BaseDiscover {
 	return &BaseDiscover{
 		parentCtx:         ctx,
-		role:              role,
 		BaseParams:        params,
 		checkIfNodeExists: checkFn,
-		monitorMeta:       monitorMeta,
+		monitorMeta:       params.Meta,
 		mm:                newMetricMonitor(params.Name),
-		cache:             NewCache(params.Name, time.Minute*10),
+		cache:             newHashCache(params.Name, time.Minute*10),
 	}
 }
 
@@ -370,7 +340,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 			if err != nil {
 				return nil, errors.Wrap(err, "get TLS CA from secret failed")
 			}
-			metricTarget.TLSConfig.CAs = []string{EncodeBase64(ca)}
+			metricTarget.TLSConfig.CAs = []string{encodeBase64(ca)}
 		}
 
 		if d.TLSConfig.CertFile != "" {
@@ -381,7 +351,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 			if err != nil {
 				return nil, errors.Wrap(err, "get TLS Cert from secret failed")
 			}
-			metricTarget.TLSConfig.Certificate.Certificate = EncodeBase64(cert)
+			metricTarget.TLSConfig.Certificate.Certificate = encodeBase64(cert)
 		}
 
 		if d.TLSConfig.KeyFile != "" {
@@ -392,7 +362,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 			if err != nil {
 				return nil, errors.Wrap(err, "get TLS Key from secret failed")
 			}
-			metricTarget.TLSConfig.Certificate.Key = EncodeBase64(key)
+			metricTarget.TLSConfig.Certificate.Key = encodeBase64(key)
 		}
 	}
 
@@ -474,6 +444,10 @@ func (d *BaseDiscover) Mask() string {
 	return mask
 }
 
+func (d *BaseDiscover) UK() string {
+	panic("must be implemented")
+}
+
 // loopHandleTargetGroup 持续处理来自 k8s 的 targets
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
@@ -492,7 +466,7 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 
 		case <-ticker.C:
 			counter++
-			tgList, updatedAt := GetTargetGroups(d.role, d.getNamespaces())
+			tgList, updatedAt := GetTargetGroups(d.UK())
 			logger.Debugf("%s updated at: %v", d.Name(), time.Unix(updatedAt, 0))
 			if time.Now().Unix()-updatedAt > duration*2 && counter%resync != 0 && d.fetched {
 				logger.Debugf("%s found nothing changed, skip targetgourps handled", d.Name())

@@ -12,48 +12,49 @@ package discover
 import (
 	"context"
 	"fmt"
-	"strings"
 
-	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	httpsd "github.com/prometheus/prometheus/discovery/http"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
 const (
-	discoverTypePod = "pod"
+	discoverTypeHttpSd = "httpsd"
 )
 
-type PodParams struct {
+type HttpSdParams struct {
 	*BaseParams
-	TLSConfig *promv1.PodMetricsEndpointTLSConfig
+	SDConfig *httpsd.SDConfig
 }
 
-type PodDiscover struct {
+type HttpSdDiscover struct {
 	*BaseDiscover
+	sdConfig *httpsd.SDConfig
 }
 
-func NewPodDiscover(ctx context.Context, checkFn define.CheckFunc, params *PodParams) Discover {
-	return &PodDiscover{
+func NewHttpSdDiscover(ctx context.Context, checkFn define.CheckFunc, params *HttpSdParams) Discover {
+	return &HttpSdDiscover{
 		BaseDiscover: NewBaseDiscover(ctx, checkFn, params.BaseParams),
+		sdConfig:     params.SDConfig,
 	}
 }
 
-func (d *PodDiscover) Type() string {
-	return discoverTypePod
+func (d *HttpSdDiscover) Type() string {
+	return discoverTypeHttpSd
 }
 
-func (d *PodDiscover) UK() string {
-	return fmt.Sprintf("%s:%s", d.Type(), strings.Join(d.getNamespaces(), "/"))
+func (d *HttpSdDiscover) UK() string {
+	return fmt.Sprintf("%s:%s", d.Type(), d.BaseParams.Name)
 }
 
-func (d *PodDiscover) Reload() error {
+func (d *HttpSdDiscover) Reload() error {
 	d.Stop()
 	return d.Start()
 }
 
-func (d *PodDiscover) Start() error {
+func (d *HttpSdDiscover) Start() error {
 	d.PreStart()
-	RegisterK8sSdDiscover(d.Name(), discoverTypePod, d.KubeConfig, d.getNamespaces())
+	RegisterHttpSdDiscover(d.Name(), d.sdConfig)
 
 	d.wg.Add(1)
 	go func() {

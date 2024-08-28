@@ -22,6 +22,8 @@ import (
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
+	"github.com/prometheus/prometheus/config"
+	httpsd "github.com/prometheus/prometheus/discovery/http"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +45,7 @@ import (
 const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
+	monitorKindHttpSd         = "HttpSd"
 )
 
 var (
@@ -86,6 +89,8 @@ type Operator struct {
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
 	scrapeUpdated        time.Time
+
+	promSdConfigsBytes map[string][]byte // 无并发读写
 }
 
 func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -402,6 +407,7 @@ func (c *Operator) Run() error {
 		go c.reconcileNodeEndpoints(c.ctx)
 	}
 
+	go c.loopHandlePromSdConfigs()
 	c.cleanupInvalidSecrets()
 	return nil
 }
@@ -568,7 +574,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 		metricRelabelings := make([]yaml.MapSlice, 0)
 		if len(endpoint.MetricRelabelConfigs) != 0 {
 			for _, cfg := range endpoint.MetricRelabelConfigs {
-				relabeling := generateRelabelConfig(cfg)
+				relabeling := generatePromv1RelabelConfig(cfg)
 				metricRelabelings = append(metricRelabelings, relabeling)
 			}
 		}
@@ -582,9 +588,10 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 			proxyURL = *endpoint.ProxyURL
 		}
 
-		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
+		endpointDiscover := discover.NewEndpointDiscover(c.ctx, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
 				Client:                 c.client,
+				Meta:                   monitorMeta,
 				RelabelRule:            feature.RelabelRule(serviceMonitor.Annotations),
 				RelabelIndex:           feature.RelabelIndex(serviceMonitor.Annotations),
 				NormalizeMetricName:    feature.IfNormalizeMetricName(serviceMonitor.Annotations),
@@ -592,6 +599,7 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
 				LabelJoinMatcher:       feature.LabelJoinMatcher(serviceMonitor.Annotations),
+				ForwardLocalhost:       feature.IfForwardLocalhost(serviceMonitor.Annotations),
 				UseEndpointSlice:       useEndpointslice,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
@@ -608,7 +616,6 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 				ProxyURL:               proxyURL,
 				Timeout:                string(endpoint.ScrapeTimeout),
 				ExtraLabels:            specLabels,
-				ForwardLocalhost:       feature.IfForwardLocalhost(serviceMonitor.Annotations),
 				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
@@ -763,7 +770,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		metricRelabelings := make([]yaml.MapSlice, 0)
 		if len(endpoint.MetricRelabelConfigs) != 0 {
 			for _, cfg := range endpoint.MetricRelabelConfigs {
-				relabeling := generateRelabelConfig(cfg)
+				relabeling := generatePromv1RelabelConfig(cfg)
 				metricRelabelings = append(metricRelabelings, relabeling)
 			}
 		}
@@ -784,9 +791,10 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
 
-		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
+		podDiscover := discover.NewPodDiscover(c.ctx, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
 				Client:                 c.client,
+				Meta:                   monitorMeta,
 				RelabelRule:            feature.RelabelRule(podMonitor.Annotations),
 				RelabelIndex:           feature.RelabelIndex(podMonitor.Annotations),
 				NormalizeMetricName:    feature.IfNormalizeMetricName(podMonitor.Annotations),
@@ -794,6 +802,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
 				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
 				LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
+				ForwardLocalhost:       feature.IfForwardLocalhost(podMonitor.Annotations),
 				UseEndpointSlice:       useEndpointslice,
 				Name:                   monitorMeta.ID(),
 				DataID:                 dataID,
@@ -809,7 +818,6 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 				Timeout:                string(endpoint.ScrapeTimeout),
 				ProxyURL:               proxyURL,
 				ExtraLabels:            specLabels,
-				ForwardLocalhost:       feature.IfForwardLocalhost(podMonitor.Annotations),
 				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
 				System:                 systemResource,
 				UrlValues:              endpoint.Params,
@@ -920,6 +928,101 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
+	}
+}
+
+func (c *Operator) createHttpSdDiscover(sc config.ScrapeConfig, httpSd *httpsd.SDConfig) (discover.Discover, error) {
+	metricRelabelings := make([]yaml.MapSlice, 0)
+	if len(sc.MetricRelabelConfigs) != 0 {
+		for _, cfg := range sc.MetricRelabelConfigs {
+			relabeling := generatePromRelabelConfig(cfg)
+			metricRelabelings = append(metricRelabelings, relabeling)
+		}
+	}
+
+	meta := define.MonitorMeta{
+		Name: sc.JobName,
+		Kind: monitorKindHttpSd,
+	}
+	dataID, err := c.dw.MatchMetricDataID(meta, false)
+	if err != nil {
+		return nil, err
+	}
+
+	specLabels := dataID.Spec.Labels
+	httpSdDiscover := discover.NewHttpSdDiscover(c.ctx, c.objectsController.NodeNameExists, &discover.HttpSdParams{
+		BaseParams: &discover.BaseParams{
+			Client:                 c.client,
+			Meta:                   meta,
+			Name:                   meta.ID(),
+			DataID:                 dataID,
+			KubeConfig:             ConfKubeConfig,
+			Relabels:               sc.RelabelConfigs,
+			Path:                   sc.MetricsPath,
+			Scheme:                 sc.Scheme,
+			BearerTokenFile:        sc.HTTPClientConfig.BearerTokenFile,
+			Period:                 sc.ScrapeInterval.String(),
+			Timeout:                sc.ScrapeTimeout.String(),
+			DisableCustomTimestamp: !ifHonorTimestamps(&sc.HonorTimestamps),
+			UrlValues:              sc.Params,
+			ExtraLabels:            specLabels,
+			MetricRelabelConfigs:   metricRelabelings,
+		},
+		SDConfig: httpSd,
+	})
+
+	logger.Infof("create httpsd discover: %v", meta.ID())
+	return httpSdDiscover, nil
+}
+
+func (c *Operator) createOrUpdatePromSdDiscovers() []discover.Discover {
+	scrapeConfigs, ok := c.GetPromScrapeConfigs()
+	if !ok {
+		return nil
+	}
+
+	logger.Infof("update prom scrapeConfigs, count=%d", len(scrapeConfigs))
+	var discovers []discover.Discover
+	for i := 0; i < len(scrapeConfigs); i++ {
+		scrapeConfig := scrapeConfigs[i]
+		for _, rc := range scrapeConfig.ServiceDiscoveryConfigs {
+			switch obj := rc.(type) {
+			case *httpsd.SDConfig:
+				httpSdDiscover, err := c.createHttpSdDiscover(scrapeConfig, obj)
+				if err != nil {
+					logger.Errorf("failed to create httpsd discover: %v", err)
+					continue
+				}
+				discovers = append(discovers, httpSdDiscover)
+			}
+		}
+	}
+	return discovers
+}
+
+func (c *Operator) loopHandlePromSdConfigs() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	fn := func() {
+		discovers := c.createOrUpdatePromSdDiscovers()
+		for _, dis := range discovers {
+			if err := c.addOrUpdateDiscover(dis); err != nil {
+				logger.Errorf("add or update httpsd discover %s failed, err: %s", dis, err)
+			}
+		}
+	}
+
+	fn() // 启动即执行
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-ticker.C:
+			fn()
+		}
 	}
 }
 

@@ -11,6 +11,8 @@ package optionx
 
 import (
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // Options 用于传递动态参数
@@ -87,9 +89,31 @@ func (o *Options) GetDuration(key string) (time.Duration, bool) {
 	return value, ok
 }
 
+// GetStringSlice retrieves a string slice from the options
 func (o *Options) GetStringSlice(key string) ([]string, bool) {
-	value, ok := o.params[key].([]string)
-	return value, ok
+	value, ok := o.params[key]
+	if !ok {
+		return nil, false
+	}
+
+	switch v := value.(type) {
+	case []string:
+		return v, true
+	case []interface{}:
+		strSlice := make([]string, len(v))
+		for i, item := range v {
+			str, ok := item.(string)
+			if !ok {
+				logger.Errorf("Invalid type for key %s, slice failed", key)
+				return nil, false
+			}
+			strSlice[i] = str
+		}
+		return strSlice, true
+	default:
+		logger.Errorf("Invalid type for key %s, slice failed", key)
+		return nil, false
+	}
 }
 
 func (o *Options) GetInterfaceSliceWithString(key string) ([]string, bool) {

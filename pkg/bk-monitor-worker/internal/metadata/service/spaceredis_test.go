@@ -71,7 +71,7 @@ func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
                           {"cluster_id": "BCS-K8S-00003", "namespace": [], "cluster_type": "shared"}]`
 	spaceResource := space.SpaceResource{
 		Id:              207,
-		SpaceTypeId:     "bkci",
+		SpaceTypeId:     models.SpaceTypeBKCI,
 		SpaceId:         "monitor",
 		ResourceType:    "bcs",
 		ResourceId:      &resourceId,
@@ -760,11 +760,12 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	assert.NoError(t, rtOp3.Create(db))
 
 	// 获取正常数据
-	data := SpacePusher{}.composeEsTableIdOptions([]string{rt1, rt2, rt3})
+	spacePusher := NewSpacePusher()
+	data := spacePusher.composeEsTableIdOptions([]string{rt1, rt2, rt3})
 	assert.Equal(t, 3, len(data))
 	assert.Equal(t, map[string]interface{}{"name": "v1"}, data[rt1][rtOp1.Name])
 
 	// 获取不存在的rt数据
-	data = SpacePusher{}.composeEsTableIdOptions([]string{"not_exist"})
+	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
 	assert.Equal(t, 0, len(data))
 }

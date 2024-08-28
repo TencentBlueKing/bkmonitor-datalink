@@ -95,6 +95,10 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 	if !ok {
 		return nil, false
 	}
+	// 针对Single集群，namespace存在为None的场景
+	if value == nil {
+		return nil, true
+	}
 
 	switch v := value.(type) {
 	case []string:
@@ -104,14 +108,14 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 		for i, item := range v {
 			str, ok := item.(string)
 			if !ok {
-				logger.Errorf("Invalid type for key %s, slice failed", key)
+				logger.Errorf("Invalid type for key %s, got %T; overall value: %#v", key, item, v)
 				return nil, false
 			}
 			strSlice[i] = str
 		}
 		return strSlice, true
 	default:
-		logger.Errorf("Invalid type for key %s, slice failed", key)
+		logger.Errorf("Invalid type for key %s, got %T", key, value)
 		return nil, false
 	}
 }

@@ -134,6 +134,13 @@ func TestMakeRouteFromMetricName(t *testing.T) {
 				metricName: "usage",
 			}, nil,
 		},
+		"custom +  metric": {
+			"custom:tars_devcloud_1:tars_requests_total", &Route{
+				dataSource: "custom",
+				db:         "tars_devcloud_1",
+				metricName: "tars_requests_total",
+			}, nil,
+		},
 	}
 
 	for name, testCase := range testCases {

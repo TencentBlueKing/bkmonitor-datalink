@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/prometheus/model/relabel"
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 )
 
 func sanitizeLabelName(name string) string {
@@ -149,7 +151,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	if ep.Port != "" {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_port_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointPortName(useEndpointslice)}},
 			{Key: "regex", Value: ep.Port},
 		})
 	} else if ep.TargetPort != nil {
@@ -171,14 +173,14 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	// Relabel namespace and pod and service labels into proper labels.
 	relabelings = append(relabelings, []yaml.MapSlice{
 		{ // Relabel node labels for pre v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Node;(.*)"},
 			{Key: "replacement", Value: "${1}"},
 			{Key: "target_label", Value: "node"},
 		},
 		{ // Relabel pod labels for >=v2.3 meta labels
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_endpoint_address_target_kind", "__meta_kubernetes_endpoint_address_target_name"}},
+			{Key: "source_labels", Value: []string{eplabels.EndpointAddressTargetKind(useEndpointslice), eplabels.EndpointAddressTargetName(useEndpointslice)}},
 			{Key: "separator", Value: ";"},
 			{Key: "regex", Value: "Pod;(.*)"},
 			{Key: "replacement", Value: "${1}"},
@@ -261,9 +263,6 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the
 	// relabel_configs as the last relabeling, to ensure it overrides any other relabelings.
 	relabelings = enforceNamespaceLabel(relabelings, m.Namespace, "")
-
-	// 一个基于hash的label过滤，由于operator不做这个，所以跳过
-	// relabelings = generateAddressShardingRelabelingRules(relabelings, 0)
 
 	return relabelings
 }

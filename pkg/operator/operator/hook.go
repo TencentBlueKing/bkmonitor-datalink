@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/viper"
 	"k8s.io/client-go/rest"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -40,7 +39,7 @@ const (
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
-	confDisableMetricsPusherPath       = "operator.disable_metrics_pusher"
+	confEnableEndpointslicePath        = "operator.enable_endpointslice"
 	confKubeletNamespacePath           = "operator.kubelet.namespace"
 	confKubeletNamePath                = "operator.kubelet.name"
 	confKubeletEnablePath              = "operator.kubelet.enable"
@@ -51,6 +50,7 @@ const (
 	confStatefulSetMaxReplicasPath     = "operator.statefulset_max_replicas"
 	confStatefulSetMatchRulesPath      = "operator.statefulset_match_rules"
 	confStatefulSetDispatchTypePath    = "operator.statefulset_dispatch_type"
+	confStatefulSetWorkerRegexPath     = "operator.statefulset_worker_regex"
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
 )
@@ -97,18 +97,18 @@ var (
 	ConfEnablePromRule             bool
 	ConfEnableStatefulSetWorker    bool
 	ConfEnableDaemonSetWorker      bool
-	ConfDisableMetricsPusher       bool
+	ConfEnableEndpointslice        bool
 	ConfKubeletNamespace           string
 	ConfKubeletName                string
 	ConfKubeletEnable              bool
 	ConfMaxNodeSecretRatio         float64
-	ConfPodName                    string
 	ConfStatefulSetWorkerHpa       bool
 	ConfStatefulSetWorkerFactor    int
 	ConfStatefulSetReplicas        int
 	ConfStatefulSetMaxReplicas     int
 	ConfStatefulSetMatchRules      []StatefulSetMatchRule
 	ConfStatefulSetDispatchType    string
+	ConfStatefulSetWorkerRegex     string
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
 	ConfHttpPort                   int
 )
@@ -149,7 +149,6 @@ func initConfig() {
 	viper.SetDefault(confMonitorNamespacePath, "bkmonitor-operator")
 	viper.SetDefault(confEnableServiceMonitorPath, true)
 	viper.SetDefault(confEnablePodMonitorPath, true)
-	viper.SetDefault(confEnablePromRulePath, false)
 	viper.SetDefault(confEnableStatefulSetWorkerPath, true)
 	viper.SetDefault(confEnableDaemonSetWorkerPath, true)
 	viper.SetDefault(confKubeletNamePath, "bkmonitor-operator-kubelet")
@@ -161,6 +160,7 @@ func initConfig() {
 	viper.SetDefault(confStatefulSetReplicasPath, 1)
 	viper.SetDefault(confStatefulSetMaxReplicasPath, 10)
 	viper.SetDefault(confStatefulSetDispatchTypePath, dispatchTypeHash)
+	viper.SetDefault(confStatefulSetWorkerRegexPath, "bkmonitor-operator/bkm-statefulset-worker")
 
 	// 同步端口给到 target
 	viper.SetDefault(confHttpPortPath, 8080)
@@ -180,10 +180,10 @@ func updateConfig() {
 	ConfEnablePromRule = viper.GetBool(confEnablePromRulePath)
 	ConfEnableStatefulSetWorker = viper.GetBool(confEnableStatefulSetWorkerPath)
 	ConfEnableDaemonSetWorker = viper.GetBool(confEnableDaemonSetWorkerPath)
+	ConfEnableEndpointslice = viper.GetBool(confEnableEndpointslicePath)
 	ConfKubeletNamespace = viper.GetString(confKubeletNamespacePath)
 	ConfKubeletName = viper.GetString(confKubeletNamePath)
 	ConfKubeletEnable = viper.GetBool(confKubeletEnablePath)
-	ConfDisableMetricsPusher = viper.GetBool(confDisableMetricsPusherPath)
 	ConfMaxNodeSecretRatio = viper.GetFloat64(confMaxNodeSecretRatioPath)
 	ConfTLSConfig = &rest.TLSClientConfig{
 		Insecure: viper.GetBool(confTLSInsecurePath),
@@ -191,12 +191,12 @@ func updateConfig() {
 		KeyFile:  viper.GetString(confTLSKeyFilePath),
 		CAFile:   viper.GetString(confTLSCAFilePath),
 	}
-	ConfPodName = viper.GetString(define.EnvPodName)
 	ConfStatefulSetWorkerHpa = viper.GetBool(confStatefulSetWorkerHpaPath)
 	ConfStatefulSetWorkerFactor = viper.GetInt(confStatefulSetWorkerFactorPath)
 	ConfStatefulSetReplicas = viper.GetInt(confStatefulSetReplicasPath)
 	ConfStatefulSetMaxReplicas = viper.GetInt(confStatefulSetMaxReplicasPath)
 	ConfStatefulSetDispatchType = viper.GetString(confStatefulSetDispatchTypePath)
+	ConfStatefulSetWorkerRegex = viper.GetString(confStatefulSetWorkerRegexPath)
 
 	ConfHttpPort = viper.GetInt(confHttpPortPath)
 	target.ConfServicePort = ConfHttpPort

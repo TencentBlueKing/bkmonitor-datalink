@@ -27,7 +27,7 @@ const (
 // ModulesConfig modules结构体，只用于获取ident过程
 type ModulesConfig struct {
 	Task   BaseTaskParam
-	Module string //将modules序列化成json后存储
+	Module string // 将modules序列化成json后存储
 }
 
 // MetricBeatConfig :
@@ -36,8 +36,9 @@ type MetricBeatConfig struct {
 
 	Module *common.Config `config:"module"`
 	// 是否使用自定义指标格式上报
-	CustomReport bool `config:"custom_report"`
-	Workers      int
+	CustomReport  bool `config:"custom_report"`
+	Workers       int
+	EnableAlignTs bool
 }
 
 // InitIdent 覆盖BaseTaskParam的同名方法，因为metricbeat直接调用原方法会panic

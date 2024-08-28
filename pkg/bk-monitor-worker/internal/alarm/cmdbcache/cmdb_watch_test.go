@@ -22,7 +22,6 @@
 
 package cmdbcache
 
-//
 //import (
 //	"context"
 //	"encoding/json"
@@ -82,7 +81,7 @@ package cmdbcache
 //			Redis:                redisOptions,
 //			Prefix:               prefix,
 //			EventHandleInterval:  60,
-//			CacheTypes:           []string{"service_instance", "host_topo"},
+//			CacheTypes:           []string{"host_topo"},
 //			FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800, "service_instance": 60},
 //		}
 //		payload, _ := json.Marshal(params)

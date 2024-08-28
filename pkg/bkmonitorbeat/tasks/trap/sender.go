@@ -76,7 +76,7 @@ func (s *Sender) SetInput(input chan *Event) {
 }
 
 func (s *Sender) SetOutput(output chan define.Event) {
-	//s.output = output
+	// s.output = output
 }
 
 func (s *Sender) sendTrap(event *Event) {

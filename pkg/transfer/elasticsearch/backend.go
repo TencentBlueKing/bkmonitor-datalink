@@ -48,6 +48,7 @@ func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 
 	for _, key := range b.uniqueField {
 		buf.WriteString(conv.String(values[key]))
+		buf.WriteString("/")
 	}
 	n := xxhash.Sum64(buf.Bytes())
 	return strconv.FormatUint(n, 10)
@@ -194,7 +195,7 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 
 		// 处理跨时间间隔
 		if index != lastIndex && lastIndex != "" {
-			cnt, err := b.flush(ctx, index, records)
+			cnt, err := b.flush(ctx, lastIndex, records)
 			records = records[:0]
 			count += cnt
 			errs.Add(err)

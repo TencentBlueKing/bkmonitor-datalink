@@ -37,7 +37,7 @@ import (
 
 var (
 	NewKafkaConsumerGroup  = sarama.NewConsumerGroup
-	NewKafkaConsumerConfig = func(conf define.Configuration) (*sarama.Config, error) {
+	NewKafkaConsumerConfig = func(conf define.Configuration, opts map[string]interface{}) (*sarama.Config, error) {
 		c, err := NewKafkaConfig(conf)
 		if err != nil {
 			return nil, err
@@ -50,6 +50,25 @@ var (
 		c.Version = version
 		if conf.IsSet(ConfKafkaConsumerOffsetInitial) {
 			c.Consumer.Offsets.Initial = conf.GetInt64(ConfKafkaConsumerOffsetInitial)
+		}
+
+		m := utils.NewMapHelper(opts)
+		offset, ok := m.GetInt(config.PipelineConfigOptKafkaInitialOffset)
+		if ok && offset < 0 {
+			// OffsetNewest stands for the log head offset, i.e. the offset that will be
+			// assigned to the next message that will be produced to the partition. You
+			// can send this to a client's GetOffset method to get this offset, or when
+			// calling ConsumePartition to start consuming new messages.
+			//
+			// OffsetNewest int64 = -1
+
+			// OffsetOldest stands for the oldest offset available on the broker for a
+			// partition. You can send this to a client's GetOffset method to get this
+			// offset, or when calling ConsumePartition to start consuming from the
+			// oldest offset that is still available on the broker.
+			//
+			// OffsetOldest int64 = -2
+			c.Consumer.Offsets.Initial = int64(offset)
 		}
 
 		return c, c.Validate()
@@ -382,7 +401,8 @@ func (f *Frontend) init() error {
 	// 所以使用时间作为其 values 值，这样查询的时候可以使用 max 语法查询出来
 	define.MonitorFrontendKafka.WithLabelValues(dataID, define.ConfClusterID, kafkaConfig.GetDomain(), kafkaConfig.GetTopic()).Set(float64(time.Now().UnixMilli()))
 
-	c, err := NewKafkaConsumerConfig(conf)
+	pipelineConfig := config.PipelineConfigFromContext(f.ctx)
+	c, err := NewKafkaConsumerConfig(conf, pipelineConfig.Option)
 	if err != nil {
 		logging.Errorf("frontend %v make config error %v", f, err)
 		return err

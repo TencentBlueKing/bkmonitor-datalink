@@ -17,7 +17,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tasks"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -43,11 +42,10 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 		for ipStr, v := range vMap {
 			// 内部逻辑通过 ipStr 为空，将异常信息透传出来
 			if ipStr == "" {
-				errUpEvent := tasks.NewGatherUpEventWithDims(g, define.BeatErrorCode(v.Code), common.MapStr{"bk_target_ip": v.Name})
-				// 目前将拨测状态异常的事件通过日志的方式记录下来，后续考虑上报独立的DataID
-				logger.Errorf("Fail to gather ping result, up = %v+", errUpEvent.AsMapStr())
+				logger.Errorf("fail to gather ping result, ip=%v", v.Name)
 				continue
 			}
+
 			logger.Debugf("resMap item:%v", v)
 			event := tasks.NewPingEvent(g.GetConfig())
 			now := time.Now()
@@ -65,7 +63,7 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 				resolvedIP = ipStr
 			}
 			dimensions := map[string]string{
-				"target":      v.Name, //实际ping的目标地址
+				"target":      v.Name, // 实际ping的目标地址
 				"target_type": v.Type, // 目标类型
 				"error_code":  "0",
 				"bk_biz_id":   string(g.TaskConfig.GetBizID()),
@@ -76,7 +74,7 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 			metrics := map[string]interface{}{
 				"available":    1 - lossPercent,
 				"loss_percent": lossPercent,
-				"max_rtt":      v.MaxRTT, //最大时延
+				"max_rtt":      v.MaxRTT, // 最大时延
 				"min_rtt":      v.MinRTT,
 			}
 			if v.RecvCount != 0 {
@@ -97,9 +95,7 @@ func (g *Gather) analyzeResult(resMap map[string]map[string]*Info, dataID int32,
 
 // Run :
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
-	var (
-		taskConf = g.TaskConfig.(*configs.PingTaskConfig)
-	)
+	taskConf := g.TaskConfig.(*configs.PingTaskConfig)
 	// 预处理
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
@@ -119,7 +115,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	dnsCheckMode := taskConf.DNSCheckMode
 
 	if len(targetList) == 0 {
-		//目标为空则直接返回空
+		// 目标为空则直接返回空
 		logger.Debugf("icmp targetList is empty")
 		return
 	}
@@ -136,7 +132,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	resultCount := 0
 
 	// doFunc提供一个回调函数给pingTool，提供处理ping结果的能力
-	var doFunc = func(resMap map[string]map[string]*Info, wg *sync.WaitGroup) {
+	doFunc := func(resMap map[string]map[string]*Info, wg *sync.WaitGroup) {
 		defer func() {
 			wg.Done()
 			g.GetSemaphore().Release(1)

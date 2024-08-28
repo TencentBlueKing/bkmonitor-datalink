@@ -31,7 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/filewatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -42,7 +42,7 @@ type Reloader struct {
 	client    kubernetes.Interface
 	wg        sync.WaitGroup
 	secrInfs  *informers.ForResource
-	reloadBus *kits.RateBus
+	reloadBus *notifier.RateBus
 }
 
 func NewReloader(ctx context.Context) (*Reloader, error) {
@@ -57,7 +57,7 @@ func NewReloader(ctx context.Context) (*Reloader, error) {
 	reloader := new(Reloader)
 	reloader.ctx, reloader.cancel = context.WithCancel(ctx)
 	reloader.client = client
-	reloader.reloadBus = kits.NewDefaultRateBus()
+	reloader.reloadBus = notifier.NewDefaultRateBus()
 
 	return reloader, nil
 }

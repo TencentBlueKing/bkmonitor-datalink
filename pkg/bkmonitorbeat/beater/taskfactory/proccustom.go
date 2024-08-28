@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build linux || proccustom || basetask
-// +build linux proccustom basetask
 
 package taskfactory
 

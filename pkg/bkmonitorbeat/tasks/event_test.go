@@ -23,11 +23,11 @@ func TestEventStatus(t *testing.T) {
 	ev := new(Event)
 	ev.Success()
 	assert.Equal(t, define.GatherStatusOK, int(ev.Status))
-	assert.Equal(t, define.BeatErrCodeOK, int(ev.ErrorCode))
+	assert.Equal(t, define.CodeOK, ev.ErrorCode)
 
-	ev.Fail(define.BeatErrCodeUnknown)
+	ev.Fail(define.CodeUnknown)
 	assert.Equal(t, define.GatherStatusError, int(ev.Status))
-	assert.Equal(t, define.BeatErrCodeUnknown, int(ev.ErrorCode))
+	assert.Equal(t, define.CodeUnknown, ev.ErrorCode)
 }
 
 func TestBaseEvent(t *testing.T) {
@@ -42,7 +42,6 @@ func TestBaseEvent(t *testing.T) {
 	assert.NotNil(t, res["error_code"])
 	assert.NotNil(t, res["available"])
 	assert.NotNil(t, res["task_duration"])
-
 }
 
 func TestStatusEvent(t *testing.T) {

@@ -38,7 +38,7 @@ func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(namespace, monitor string) chan string {
+func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -55,16 +55,26 @@ func (c *Operator) scrapeForce(namespace, monitor string) chan string {
 
 	out := make(chan string, 8)
 	if len(cfgs) == 0 {
-		out <- "warning: no monitor targets found"
+		out <- fmt.Sprintf("warning: no monitor targets found, namespace=%s, monitor=%s", namespace, monitor)
 		close(out)
 		return out
 	}
 
+	if workers <= 0 {
+		workers = 8 // 默认 workers 数
+	}
+	sem := make(chan struct{}, workers)
+	logger.Infof("scrape task: namespace=%s, monitor=%s, workers=%d", namespace, monitor, workers)
+
 	wg := sync.WaitGroup{}
+	wg.Add(len(cfgs))
 	for _, cfg := range cfgs {
-		wg.Add(1)
 		go func(cfg *discover.ChildConfig) {
-			defer wg.Done()
+			sem <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-sem
+			}()
 			client, err := scraper.New(cfg.Data)
 			if err != nil {
 				logger.Warnf("failed to crate scraper http client: %v", err)
@@ -85,7 +95,7 @@ func (c *Operator) scrapeForce(namespace, monitor string) chan string {
 	return out
 }
 
-func (c *Operator) scrapeAll() *scrapeStats {
+func (c *Operator) scrapeAll(workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -106,11 +116,20 @@ func (c *Operator) scrapeAll() *scrapeStats {
 		stop <- struct{}{}
 	}()
 
+	if workers <= 0 {
+		workers = 8 // 默认 workers 数
+	}
+	sem := make(chan struct{}, workers)
+
 	wg := sync.WaitGroup{}
 	for _, cfg := range childConfigs {
 		wg.Add(1)
 		go func(cfg *discover.ChildConfig) {
-			defer wg.Done()
+			sem <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-sem
+			}()
 			client, err := scraper.New(cfg.Data)
 			if err != nil {
 				logger.Warnf("failed to crate scraper http client: %v", err)

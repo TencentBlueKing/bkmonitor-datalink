@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris zos
 
 package collector
 
@@ -57,7 +56,8 @@ func GetUname() (string, error) {
 				return "", nil
 			}
 			fields := [][]byte{
-				uname.Sysname[:], uname.Nodename[:], uname.Release[:], uname.Version[:], uname.Machine[:]}
+				uname.Sysname[:], uname.Nodename[:], uname.Release[:], uname.Version[:], uname.Machine[:],
+			}
 			parts := make([]string, 0, len(fields))
 			for _, field := range fields {
 				parts = append(parts, string(field))

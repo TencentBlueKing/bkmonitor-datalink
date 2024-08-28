@@ -15,7 +15,6 @@ import (
 
 	"github.com/elastic/beats/libbeat/common"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 )
@@ -179,12 +178,10 @@ func (g *GlobalHeartBeatEvent) AsMapStr() common.MapStr {
 	}
 }
 
-// GetType :
 func (g *GlobalHeartBeatEvent) GetType() string {
 	return define.ModuleGlobalHeartBeat
 }
 
-// NewGlobalHeartBeatEvent :
 func NewGlobalHeartBeatEvent(bt *MonitorBeater) define.Event {
 	ce := bt.configEngine
 	hasChildPath := ce.HasChildPath()
@@ -243,17 +240,4 @@ func (c *ChildTaskHeartbeatEvent) AsMapStr() common.MapStr {
 // GetType :
 func (c ChildTaskHeartbeatEvent) GetType() string {
 	return define.ModuleChildHeartBeat
-}
-
-// NewChildTaskHeartbeatEvent :
-func NewChildTaskHeartbeatEvent(bt *MonitorBeater, childMetaTask *configs.ChildTaskMetaConfig, task define.TaskConfig) define.Event {
-	beatState := bt.beaterState.config
-	event := new(ChildTaskHeartbeatEvent)
-	event.DataID = beatState.HeartBeat.ChildDataID
-	event.Version = childMetaTask.Version
-	event.TaskID = task.GetTaskID()
-	event.Name = childMetaTask.Name
-	event.Path = childMetaTask.Path
-	event.ConfigErrorCode = 0
-	return event
 }

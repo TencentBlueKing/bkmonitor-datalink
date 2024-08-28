@@ -9,6 +9,11 @@
 
 package objectsref
 
+import (
+	"strings"
+	"unicode"
+)
+
 // RelabelConfig relabel 配置 遵循 prometheus 规则
 type RelabelConfig struct {
 	SourceLabels []string `json:"sourceLabels"`
@@ -20,18 +25,7 @@ type RelabelConfig struct {
 	NodeName     string   `json:"nodeName"`
 }
 
-// WorkloadsRelabelConfigs 返回所有 workload relabel 配置
-func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
-	pods := oc.podObjs.GetAll()
-	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
-}
-
-// WorkloadsRelabelConfigsByNodeName 根据节点名称获取 workload relabel 配置
-func (oc *ObjectsController) WorkloadsRelabelConfigsByNodeName(nodeName string) []RelabelConfig {
-	pods := oc.podObjs.GetByNodeName(nodeName)
-	return getWorkloadRelabelConfigs(oc.getWorkloadRefs(pods))
-}
-
+// WorkloadRef 是 Pod 与 Workload 的关联关系
 type WorkloadRef struct {
 	Name      string   `json:"name"`
 	Namespace string   `json:"namespace"`
@@ -39,21 +33,136 @@ type WorkloadRef struct {
 	NodeName  string   `json:"nodeName"`
 }
 
-func (oc *ObjectsController) getWorkloadRefs(pods []Object) []WorkloadRef {
-	refs := make([]WorkloadRef, 0, len(pods))
+type WorkloadRefs []WorkloadRef
+
+func (wr WorkloadRefs) AsRelabelConfigs() []RelabelConfig {
+	configs := make([]RelabelConfig, 0, len(wr)*2)
+
+	for _, ref := range wr {
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"namespace", "pod_name"},
+			Separator:    ";",
+			Regex:        ref.Namespace + ";" + ref.Name,
+			TargetLabel:  "workload_kind",
+			Replacement:  ref.Ref.Kind,
+			Action:       "replace",
+			NodeName:     ref.NodeName,
+		})
+		configs = append(configs, RelabelConfig{
+			SourceLabels: []string{"namespace", "pod_name"},
+			Separator:    ";",
+			Regex:        ref.Namespace + ";" + ref.Name,
+			TargetLabel:  "workload_name",
+			Replacement:  ref.Ref.Name,
+			Action:       "replace",
+			NodeName:     ref.NodeName,
+		})
+	}
+	return configs
+}
+
+// PodInfoRef 是 Pod 额外补充维度
+type PodInfoRef struct {
+	Name       string
+	Namespace  string
+	Dimensions map[string]string
+}
+
+type PodInfoRefs []PodInfoRef
+
+func (pr PodInfoRefs) AsRelabelConfigs() []RelabelConfig {
+	configs := make([]RelabelConfig, 0)
+
+	for _, ref := range pr {
+		for name, value := range ref.Dimensions {
+			configs = append(configs, RelabelConfig{
+				SourceLabels: []string{"namespace", "pod_name"},
+				Separator:    ";",
+				Regex:        ref.Namespace + ";" + ref.Name,
+				TargetLabel:  normalizeName(name),
+				Replacement:  value,
+				Action:       "replace",
+			})
+		}
+	}
+	return configs
+}
+
+// WorkloadsRelabelConfigs 返回所有 workload relabel 配置
+func (oc *ObjectsController) WorkloadsRelabelConfigs() []RelabelConfig {
+	pods := oc.podObjs.GetAll()
+	return oc.getWorkloadRelabelConfigs(pods, "")
+}
+
+// WorkloadsRelabelConfigsByPodName 根据节点名称和 pod 名称获取 workload relabel 配置
+func (oc *ObjectsController) WorkloadsRelabelConfigsByPodName(nodeName, podName string, annotations, labels []string) []RelabelConfig {
+	pods := oc.podObjs.GetByNodeName(nodeName)
+
+	var configs []RelabelConfig
+	configs = append(configs, oc.getWorkloadRelabelConfigs(pods, podName)...)
+	configs = append(configs, oc.getPodRelabelConfigs(pods, podName, annotations, labels)...)
+	return configs
+}
+
+// PodsRelabelConfigs 获取 Pods Relabels 规则
+func (oc *ObjectsController) PodsRelabelConfigs(annotations, labels []string) []RelabelConfig {
+	pods := oc.podObjs.GetAll()
+	// TODO(mando): 暂不支持指定 podname
+	return oc.getPodRelabelConfigs(pods, "", annotations, labels)
+}
+
+func (oc *ObjectsController) getWorkloadRelabelConfigs(pods []Object, podName string) []RelabelConfig {
+	workloadRefs := make(WorkloadRefs, 0, len(pods))
+
 	for _, pod := range pods {
 		ownerRef := Lookup(pod.ID, oc.podObjs, oc.objsMap())
 		if ownerRef == nil {
 			continue
 		}
-		refs = append(refs, WorkloadRef{
-			Name:      pod.ID.Name,
-			Namespace: pod.ID.Namespace,
-			Ref:       *ownerRef,
-			NodeName:  pod.NodeName,
-		})
+
+		// 1) 没有 podname 则命中所有
+		// 2) 存在则需要精准匹配
+		if podName == "" || podName == pod.ID.Name {
+			workloadRefs = append(workloadRefs, WorkloadRef{
+				Name:      pod.ID.Name,
+				Namespace: pod.ID.Namespace,
+				Ref:       *ownerRef,
+				NodeName:  pod.NodeName,
+			})
+		}
 	}
-	return refs
+	return workloadRefs.AsRelabelConfigs()
+}
+
+func (oc *ObjectsController) getPodRelabelConfigs(pods []Object, podName string, annotations, labels []string) []RelabelConfig {
+	podInfoRefs := make(PodInfoRefs, 0)
+
+	for _, pod := range pods {
+		// 1) 没有 podname 则命中所有
+		// 2) 存在则需要精准匹配
+		if podName == "" || podName == pod.ID.Name {
+			extra := make(map[string]string)
+			for _, name := range annotations {
+				if v, ok := pod.Annotations[name]; ok {
+					extra["annotation_"+name] = v
+				}
+			}
+			for _, name := range labels {
+				if v, ok := pod.Labels[name]; ok {
+					extra["label_"+name] = v
+				}
+			}
+			// 按需补充维度
+			if len(extra) > 0 {
+				podInfoRefs = append(podInfoRefs, PodInfoRef{
+					Name:       pod.ID.Name,
+					Namespace:  pod.ID.Namespace,
+					Dimensions: extra,
+				})
+			}
+		}
+	}
+	return podInfoRefs.AsRelabelConfigs()
 }
 
 func (oc *ObjectsController) objsMap() map[string]*Objects {
@@ -75,28 +184,6 @@ func (oc *ObjectsController) objsMap() map[string]*Objects {
 	return om
 }
 
-func getWorkloadRelabelConfigs(refs []WorkloadRef) []RelabelConfig {
-	configs := make([]RelabelConfig, 0, len(refs)*2)
-
-	for _, ref := range refs {
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"namespace", "pod_name"},
-			Separator:    ";",
-			Regex:        ref.Namespace + ";" + ref.Name,
-			TargetLabel:  "workload_kind",
-			Replacement:  ref.Ref.Kind,
-			Action:       "replace",
-			NodeName:     ref.NodeName,
-		})
-		configs = append(configs, RelabelConfig{
-			SourceLabels: []string{"namespace", "pod_name"},
-			Separator:    ";",
-			Regex:        ref.Namespace + ";" + ref.Name,
-			TargetLabel:  "workload_name",
-			Replacement:  ref.Ref.Name,
-			Action:       "replace",
-			NodeName:     ref.NodeName,
-		})
-	}
-	return configs
+func normalizeName(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' }), "_")
 }

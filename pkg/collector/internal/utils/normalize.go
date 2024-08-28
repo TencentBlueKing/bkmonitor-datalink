@@ -17,3 +17,17 @@ import (
 func NormalizeName(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != ':' }), "_")
 }
+
+// IsNameNormalized 判断是否为合法指标名称
+// 此方式会比 regexp 方式要更快 参见 benchmark
+func IsNameNormalized(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i, b := range s {
+		if !((b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_' || (b >= '0' && b <= '9' && i > 0)) {
+			return false
+		}
+	}
+	return true
+}

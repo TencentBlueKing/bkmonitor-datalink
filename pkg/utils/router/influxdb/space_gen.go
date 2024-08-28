@@ -434,6 +434,82 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "DataId")
 				return
 			}
+		case "SourceType":
+			z.SourceType, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
+		case "Options":
+			var zb0004 uint32
+			zb0004, err = dc.ReadMapHeader()
+			if err != nil {
+				err = msgp.WrapError(err, "Options")
+				return
+			}
+			for zb0004 > 0 {
+				zb0004--
+				field, err = dc.ReadMapKeyPtr()
+				if err != nil {
+					err = msgp.WrapError(err, "Options")
+					return
+				}
+				switch msgp.UnsafeString(field) {
+				case "TimeField":
+					var zb0005 uint32
+					zb0005, err = dc.ReadMapHeader()
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "TimeField")
+						return
+					}
+					for zb0005 > 0 {
+						zb0005--
+						field, err = dc.ReadMapKeyPtr()
+						if err != nil {
+							err = msgp.WrapError(err, "Options", "TimeField")
+							return
+						}
+						switch msgp.UnsafeString(field) {
+						case "Name":
+							z.Options.TimeField.Name, err = dc.ReadString()
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Name")
+								return
+							}
+						case "Type":
+							z.Options.TimeField.Type, err = dc.ReadString()
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Type")
+								return
+							}
+						case "Unit":
+							z.Options.TimeField.Unit, err = dc.ReadString()
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Unit")
+								return
+							}
+						default:
+							err = dc.Skip()
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField")
+								return
+							}
+						}
+					}
+				case "NeedAddTime":
+					z.Options.NeedAddTime, err = dc.ReadBool()
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "NeedAddTime")
+						return
+					}
+				default:
+					err = dc.Skip()
+					if err != nil {
+						err = msgp.WrapError(err, "Options")
+						return
+					}
+				}
+			}
 		default:
 			err = dc.Skip()
 			if err != nil {
@@ -447,9 +523,9 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 13
+	// map header, size 15
 	// write "StorageId"
-	err = en.Append(0x8d, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	err = en.Append(0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	if err != nil {
 		return
 	}
@@ -592,15 +668,77 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "DataId")
 		return
 	}
+	// write "SourceType"
+	err = en.Append(0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.SourceType)
+	if err != nil {
+		err = msgp.WrapError(err, "SourceType")
+		return
+	}
+	// write "Options"
+	err = en.Append(0xa7, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73)
+	if err != nil {
+		return
+	}
+	// map header, size 2
+	// write "TimeField"
+	err = en.Append(0x82, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
+	if err != nil {
+		return
+	}
+	// map header, size 3
+	// write "Name"
+	err = en.Append(0x83, 0xa4, 0x4e, 0x61, 0x6d, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.Options.TimeField.Name)
+	if err != nil {
+		err = msgp.WrapError(err, "Options", "TimeField", "Name")
+		return
+	}
+	// write "Type"
+	err = en.Append(0xa4, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.Options.TimeField.Type)
+	if err != nil {
+		err = msgp.WrapError(err, "Options", "TimeField", "Type")
+		return
+	}
+	// write "Unit"
+	err = en.Append(0xa4, 0x55, 0x6e, 0x69, 0x74)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.Options.TimeField.Unit)
+	if err != nil {
+		err = msgp.WrapError(err, "Options", "TimeField", "Unit")
+		return
+	}
+	// write "NeedAddTime"
+	err = en.Append(0xab, 0x4e, 0x65, 0x65, 0x64, 0x41, 0x64, 0x64, 0x54, 0x69, 0x6d, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteBool(z.Options.NeedAddTime)
+	if err != nil {
+		err = msgp.WrapError(err, "Options", "NeedAddTime")
+		return
+	}
 	return
 }
 
 // MarshalMsg implements msgp.Marshaler
 func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 13
+	// map header, size 15
 	// string "StorageId"
-	o = append(o, 0x8d, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	o = append(o, 0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.StorageId)
 	// string "StorageName"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x4e, 0x61, 0x6d, 0x65)
@@ -644,6 +782,27 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "DataId"
 	o = append(o, 0xa6, 0x44, 0x61, 0x74, 0x61, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.DataId)
+	// string "SourceType"
+	o = append(o, 0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.SourceType)
+	// string "Options"
+	o = append(o, 0xa7, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73)
+	// map header, size 2
+	// string "TimeField"
+	o = append(o, 0x82, 0xa9, 0x54, 0x69, 0x6d, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64)
+	// map header, size 3
+	// string "Name"
+	o = append(o, 0x83, 0xa4, 0x4e, 0x61, 0x6d, 0x65)
+	o = msgp.AppendString(o, z.Options.TimeField.Name)
+	// string "Type"
+	o = append(o, 0xa4, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.Options.TimeField.Type)
+	// string "Unit"
+	o = append(o, 0xa4, 0x55, 0x6e, 0x69, 0x74)
+	o = msgp.AppendString(o, z.Options.TimeField.Unit)
+	// string "NeedAddTime"
+	o = append(o, 0xab, 0x4e, 0x65, 0x65, 0x64, 0x41, 0x64, 0x64, 0x54, 0x69, 0x6d, 0x65)
+	o = msgp.AppendBool(o, z.Options.NeedAddTime)
 	return
 }
 
@@ -769,6 +928,82 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "DataId")
 				return
 			}
+		case "SourceType":
+			z.SourceType, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
+		case "Options":
+			var zb0004 uint32
+			zb0004, bts, err = msgp.ReadMapHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Options")
+				return
+			}
+			for zb0004 > 0 {
+				zb0004--
+				field, bts, err = msgp.ReadMapKeyZC(bts)
+				if err != nil {
+					err = msgp.WrapError(err, "Options")
+					return
+				}
+				switch msgp.UnsafeString(field) {
+				case "TimeField":
+					var zb0005 uint32
+					zb0005, bts, err = msgp.ReadMapHeaderBytes(bts)
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "TimeField")
+						return
+					}
+					for zb0005 > 0 {
+						zb0005--
+						field, bts, err = msgp.ReadMapKeyZC(bts)
+						if err != nil {
+							err = msgp.WrapError(err, "Options", "TimeField")
+							return
+						}
+						switch msgp.UnsafeString(field) {
+						case "Name":
+							z.Options.TimeField.Name, bts, err = msgp.ReadStringBytes(bts)
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Name")
+								return
+							}
+						case "Type":
+							z.Options.TimeField.Type, bts, err = msgp.ReadStringBytes(bts)
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Type")
+								return
+							}
+						case "Unit":
+							z.Options.TimeField.Unit, bts, err = msgp.ReadStringBytes(bts)
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField", "Unit")
+								return
+							}
+						default:
+							bts, err = msgp.Skip(bts)
+							if err != nil {
+								err = msgp.WrapError(err, "Options", "TimeField")
+								return
+							}
+						}
+					}
+				case "NeedAddTime":
+					z.Options.NeedAddTime, bts, err = msgp.ReadBoolBytes(bts)
+					if err != nil {
+						err = msgp.WrapError(err, "Options", "NeedAddTime")
+						return
+					}
+				default:
+					bts, err = msgp.Skip(bts)
+					if err != nil {
+						err = msgp.WrapError(err, "Options")
+						return
+					}
+				}
+			}
 		default:
 			bts, err = msgp.Skip(bts)
 			if err != nil {
@@ -791,7 +1026,7 @@ func (z *ResultTableDetail) Msgsize() (s int) {
 	for za0002 := range z.TagsKey {
 		s += msgp.StringPrefixSize + len(z.TagsKey[za0002])
 	}
-	s += 7 + msgp.Int64Size
+	s += 7 + msgp.Int64Size + 11 + msgp.StringPrefixSize + len(z.SourceType) + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit) + 12 + msgp.BoolSize
 	return
 }
 

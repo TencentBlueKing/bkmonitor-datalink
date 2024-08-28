@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -131,11 +132,12 @@ host_with_system_relation{bk_cloud_id="3",bk_target_ip="127.1.0.1",host_id="3100
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			rmb := newRelationMetricsBuilder()
 			for _, bh := range c.bkBizIDHosts {
-				_ = GetRelationMetricsBuilder().BuildMetrics(context.Background(), bh.bkBizID, bh.hosts)
+				_ = rmb.BuildMetrics(context.Background(), bh.bkBizID, bh.hosts)
 			}
 
-			metrics := strings.Split(strings.Trim(GetRelationMetricsBuilder().String(), "\n"), "\n")
+			metrics := strings.Split(strings.Trim(rmb.String(), "\n"), "\n")
 			sort.Strings(metrics)
 			assert.Equal(t, c.expected, strings.Join(metrics, "\n"))
 		})
@@ -372,14 +374,19 @@ module_with_set_relation{module_id="2003",set_id="3001",bk_biz_id="2"} 1`,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_ = GetRelationMetricsBuilder().BuildMetrics(context.Background(), c.bkBizID, c.hosts)
-			GetRelationMetricsBuilder().ClearMetricsWithHostID(c.clearHosts...)
+			ctx := context.Background()
+			rmb := newRelationMetricsBuilder()
+			_ = rmb.BuildMetrics(ctx, c.bkBizID, c.hosts)
+			rmb.ClearMetricsWithHostID(c.clearHosts...)
 
-			metrics := strings.Split(strings.Trim(GetRelationMetricsBuilder().String(), "\n"), "\n")
+			metrics := strings.Split(strings.Trim(rmb.String(), "\n"), "\n")
 			sort.Strings(metrics)
 
 			actual := strings.Join(metrics, "\n")
 			assert.Equal(t, c.expected, actual)
+
+			err := rmb.PushAll(ctx, time.Now())
+			assert.Nil(t, err)
 		})
 
 	}

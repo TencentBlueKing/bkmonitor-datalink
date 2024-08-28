@@ -13,11 +13,11 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	tkexversiond "github.com/Tencent/bk-bcs/bcs-scenarios/kourse/pkg/client/clientset/versioned"
+	"github.com/blang/semver/v4"
 	"github.com/pkg/errors"
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
@@ -30,26 +30,24 @@ import (
 
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/kits"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/promsli"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/pusher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
 	monitorKindServiceMonitor = "ServiceMonitor"
 	monitorKindPodMonitor     = "PodMonitor"
+)
 
-	annotationRelabelRule  = "relabelRule"
-	annotationRelabelIndex = "relabelIndex"
-
-	annotationMonitorMatchSelector = "monitorMatchSelector"
-	annotationMonitorDropSelector  = "monitorDropSelector"
+var (
+	kubernetesVersion string
+	useEndpointslice  bool
 )
 
 // Operator 负责部署和调度任务
@@ -87,9 +85,7 @@ type Operator struct {
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
-
-	pusher        *pusher.MetricsPusher
-	scrapeUpdated time.Time
+	scrapeUpdated        time.Time
 }
 
 func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
@@ -98,7 +94,6 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		err      error
 	)
 
-	operator.pusher = pusher.New(ctx, ConfDisableMetricsPusher)
 	operator.buildInfo = buildInfo
 	operator.ctx, operator.cancel = context.WithCancel(ctx)
 	if err = os.Setenv("KUBECONFIG", ConfKubeConfig); err != nil {
@@ -138,6 +133,25 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	denyTargetNamespaces := make(map[string]struct{})
 	for _, namespace := range ConfDenyTargetNamespaces {
 		denyTargetNamespaces[namespace] = struct{}{}
+	}
+
+	version, err := operator.client.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+	kubernetesVersion = version.String()
+	operator.mm.SetKubernetesVersion(kubernetesVersion)
+
+	parsedVersion, err := semver.ParseTolerant(kubernetesVersion)
+	if err != nil {
+		parsedVersion = semver.MustParse("1.12.0") // 最低支持的 k8s 版本
+		logger.Errorf("parse kubernetes version failed, instead of '%v', err: %v", parsedVersion, err)
+	}
+
+	// 1.21.0 开始 endpointslice 正式成为 v1
+	useEndpointslice = parsedVersion.GTE(semver.MustParse("1.21.0")) && ConfEnableEndpointslice
+	if useEndpointslice {
+		logger.Info("use 'endpointslice' instead of 'endpoint'")
 	}
 
 	if ConfEnableServiceMonitor {
@@ -190,7 +204,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "create PrometheusRule informer failed")
 		}
-		operator.promsliController = promsli.NewController(operator.ctx, operator.client)
+		operator.promsliController = promsli.NewController(operator.ctx, operator.client, useEndpointslice)
 	}
 
 	operator.objectsController, err = objectsref.NewController(operator.ctx, operator.client, operator.tkexclient)
@@ -204,6 +218,16 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	operator.statefulSetSecretMap = map[string]struct{}{}
 
 	return operator, nil
+}
+
+func (c *Operator) getAllDiscover() []define.MonitorMeta {
+	var ret []define.MonitorMeta
+	c.discoversMut.Lock()
+	for _, dis := range c.discovers {
+		ret = append(ret, dis.MonitorMeta())
+	}
+	c.discoversMut.Unlock()
+	return ret
 }
 
 func (c *Operator) reloadAllDiscovers() {
@@ -240,9 +264,11 @@ func (c *Operator) recordMetrics() {
 		case <-ticker.C:
 			c.mm.UpdateUptime(5)
 			c.mm.SetAppBuildInfo(c.buildInfo)
-			c.updateActiveConfigMetrics()
-			c.updateMonitorResourceMetrics()
-			c.updateActiveSharedDiscoveryMetrics()
+			c.updateNodeConfigMetrics()
+			c.updateMonitorEndpointMetrics()
+			c.updateWorkloadMetrics()
+			c.updateNodeMetrics()
+			c.updateSharedDiscoveryMetrics()
 
 		case <-c.ctx.Done():
 			return
@@ -250,36 +276,44 @@ func (c *Operator) recordMetrics() {
 	}
 }
 
-func (c *Operator) updateActiveSharedDiscoveryMetrics() {
-	c.mm.SetActiveSharedDiscoveryCount(discover.GetSharedDiscoveryCount())
+func (c *Operator) updateSharedDiscoveryMetrics() {
+	c.mm.SetSharedDiscoveryCount(discover.GetSharedDiscoveryCount())
+	c.mm.SetDiscoverCount(len(c.getAllDiscover()))
 }
 
-func (c *Operator) updateActiveConfigMetrics() {
-	cfgs := c.recorder.getActiveConfigFile()
+func (c *Operator) updateNodeConfigMetrics() {
+	cfgs := c.recorder.getActiveConfigFiles()
 	set := make(map[string]int)
 	for _, cfg := range cfgs {
 		set[cfg.Node]++
 	}
 
 	for k, v := range set {
-		c.mm.SetActiveChildConfigCount(k, v)
+		c.mm.SetNodeConfigCount(k, v)
 	}
 }
 
-func (c *Operator) updateMonitorResourceMetrics() {
-	res := c.recorder.getMonitorResources()
-	set := make(map[string]int)
-	for _, r := range res {
-		set[r.Kind]++
+func (c *Operator) updateMonitorEndpointMetrics() {
+	endpoints := c.recorder.getActiveEndpoints()
+	for name, count := range endpoints {
+		c.mm.SetMonitorEndpointCount(name, count)
 	}
+}
 
-	for k, v := range set {
-		c.mm.SetActiveMonitorResourceCount(k, v)
+func (c *Operator) updateWorkloadMetrics() {
+	workloads, _ := objectsref.GetWorkloadInfo()
+	for resource, count := range workloads {
+		c.mm.SetWorkloadCount(resource, count)
 	}
+}
+
+func (c *Operator) updateNodeMetrics() {
+	nodes, _ := objectsref.GetClusterNodeInfo()
+	c.mm.SetNodeCount(nodes)
 }
 
 func (c *Operator) Run() error {
-	discover.Init()
+	discover.Activate()
 	errChan := make(chan error, 2)
 	c.wg.Add(1)
 	go func() {
@@ -403,10 +437,9 @@ func (c *Operator) Stop() {
 	}
 	c.wg.Wait()
 
-	c.pusher.Stop()
 	c.dw.Stop()
 	c.objectsController.Stop()
-	discover.StopAllSharedDiscovery()
+	discover.Deactivate()
 }
 
 // waitForCacheSync waits for the informers' caches to be synced.
@@ -489,26 +522,13 @@ func ifHonorTimestamps(b *bool) bool {
 	return *b
 }
 
-func parseSelector(s string) map[string]string {
-	selector := make(map[string]string)
-	parts := strings.Split(s, ",")
-	for _, part := range parts {
-		kv := strings.Split(strings.TrimSpace(part), "=")
-		if len(kv) != 2 {
-			continue
-		}
-		selector[kv[0]] = kv[1]
-	}
-	return selector
-}
-
 func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceMonitor) []discover.Discover {
 	var (
 		namespaces []string
 		discovers  []discover.Discover
 	)
 
-	systemResource := kits.CheckIfSystemResource(serviceMonitor.Annotations)
+	systemResource := feature.IfSystemResource(serviceMonitor.Annotations)
 	meta := define.MonitorMeta{
 		Name:      serviceMonitor.Name,
 		Kind:      monitorKindServiceMonitor,
@@ -564,32 +584,35 @@ func (c *Operator) createServiceMonitorDiscovers(serviceMonitor *promv1.ServiceM
 
 		endpointDiscover := discover.NewEndpointDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.EndpointParams{
 			BaseParams: &discover.BaseParams{
-				Client:                  c.client,
-				RelabelRule:             serviceMonitor.Annotations[annotationRelabelRule],
-				RelabelIndex:            serviceMonitor.Annotations[annotationRelabelIndex],
-				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(serviceMonitor.Annotations),
-				AnnotationMatchSelector: parseSelector(serviceMonitor.Annotations[annotationMonitorMatchSelector]),
-				AnnotationDropSelector:  parseSelector(serviceMonitor.Annotations[annotationMonitorDropSelector]),
-				Name:                    monitorMeta.ID(),
-				DataID:                  dataID,
-				KubeConfig:              ConfKubeConfig,
-				Namespaces:              namespaces,
-				Relabels:                resultLabels,
-				Path:                    endpoint.Path,
-				Scheme:                  endpoint.Scheme,
-				TLSConfig:               endpoint.TLSConfig.DeepCopy(),
-				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
-				BearerTokenFile:         endpoint.BearerTokenFile,
-				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
-				Period:                  string(endpoint.Interval),
-				ProxyURL:                proxyURL,
-				Timeout:                 string(endpoint.ScrapeTimeout),
-				ExtraLabels:             specLabels,
-				ForwardLocalhost:        kits.CheckIfForwardLocalhost(serviceMonitor.Annotations),
-				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                  systemResource,
-				UrlValues:               endpoint.Params,
-				MetricRelabelConfigs:    metricRelabelings,
+				Client:                 c.client,
+				RelabelRule:            feature.RelabelRule(serviceMonitor.Annotations),
+				RelabelIndex:           feature.RelabelIndex(serviceMonitor.Annotations),
+				NormalizeMetricName:    feature.IfNormalizeMetricName(serviceMonitor.Annotations),
+				AntiAffinity:           feature.IfAntiAffinity(serviceMonitor.Annotations),
+				MatchSelector:          feature.MonitorMatchSelector(serviceMonitor.Annotations),
+				DropSelector:           feature.MonitorDropSelector(serviceMonitor.Annotations),
+				LabelJoinMatcher:       feature.LabelJoinMatcher(serviceMonitor.Annotations),
+				UseEndpointSlice:       useEndpointslice,
+				Name:                   monitorMeta.ID(),
+				DataID:                 dataID,
+				KubeConfig:             ConfKubeConfig,
+				Namespaces:             namespaces,
+				Relabels:               resultLabels,
+				Path:                   endpoint.Path,
+				Scheme:                 endpoint.Scheme,
+				TLSConfig:              endpoint.TLSConfig.DeepCopy(),
+				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
+				BearerTokenFile:        endpoint.BearerTokenFile,
+				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
+				Period:                 string(endpoint.Interval),
+				ProxyURL:               proxyURL,
+				Timeout:                string(endpoint.ScrapeTimeout),
+				ExtraLabels:            specLabels,
+				ForwardLocalhost:       feature.IfForwardLocalhost(serviceMonitor.Annotations),
+				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                 systemResource,
+				UrlValues:              endpoint.Params,
+				MetricRelabelConfigs:   metricRelabelings,
 			},
 		})
 
@@ -616,14 +639,12 @@ func (c *Operator) handleServiceMonitorAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	discovers := c.createServiceMonitorDiscovers(serviceMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interface{}) {
@@ -643,7 +664,7 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		logger.Debugf("serviceMonitor %+v does not change", old)
+		logger.Debugf("serviceMonitor '%s/%s' does not change", old.Namespace, old.Name)
 		return
 	}
 
@@ -656,7 +677,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getServiceMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -665,7 +685,6 @@ func (c *Operator) handleServiceMonitorUpdate(oldObj interface{}, newObj interfa
 			logger.Errorf("add or update serviceMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
@@ -679,11 +698,9 @@ func (c *Operator) handleServiceMonitorDelete(obj interface{}) {
 		c.promsliController.DeleteServiceMonitor(serviceMonitor)
 	}
 
-	now := time.Now()
 	for _, name := range c.getServiceMonitorDiscoversName(serviceMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.ObserveHandledEventDuration(now, serviceMonitor.Kind, define.ActionDelete)
 }
 
 func (c *Operator) getPodMonitorDiscoversName(podMonitor *promv1.PodMonitor) []string {
@@ -706,7 +723,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		discovers  []discover.Discover
 	)
 
-	systemResource := kits.CheckIfSystemResource(podMonitor.Annotations)
+	systemResource := feature.IfSystemResource(podMonitor.Annotations)
 	meta := define.MonitorMeta{
 		Name:      podMonitor.Name,
 		Kind:      monitorKindPodMonitor,
@@ -766,33 +783,37 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		if tlsConfig != nil {
 			safeTlsConfig = tlsConfig.SafeTLSConfig
 		}
+
 		podDiscover := discover.NewPodDiscover(c.ctx, monitorMeta, c.objectsController.NodeNameExists, &discover.PodParams{
 			BaseParams: &discover.BaseParams{
-				Client:                  c.client,
-				RelabelRule:             podMonitor.Annotations[annotationRelabelRule],
-				RelabelIndex:            podMonitor.Annotations[annotationRelabelIndex],
-				NormalizeMetricName:     kits.CheckIfNormalizeMetricName(podMonitor.Annotations),
-				AnnotationMatchSelector: parseSelector(podMonitor.Annotations[annotationMonitorMatchSelector]),
-				AnnotationDropSelector:  parseSelector(podMonitor.Annotations[annotationMonitorDropSelector]),
-				Name:                    monitorMeta.ID(),
-				DataID:                  dataID,
-				KubeConfig:              ConfKubeConfig,
-				Namespaces:              namespaces,
-				Relabels:                resultLabels,
-				Path:                    endpoint.Path,
-				Scheme:                  endpoint.Scheme,
-				BasicAuth:               endpoint.BasicAuth.DeepCopy(),
-				BearerTokenSecret:       endpoint.BearerTokenSecret.DeepCopy(),
-				TLSConfig:               &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
-				Period:                  string(endpoint.Interval),
-				Timeout:                 string(endpoint.ScrapeTimeout),
-				ProxyURL:                proxyURL,
-				ExtraLabels:             specLabels,
-				ForwardLocalhost:        kits.CheckIfForwardLocalhost(podMonitor.Annotations),
-				DisableCustomTimestamp:  !ifHonorTimestamps(endpoint.HonorTimestamps),
-				System:                  systemResource,
-				UrlValues:               endpoint.Params,
-				MetricRelabelConfigs:    metricRelabelings,
+				Client:                 c.client,
+				RelabelRule:            feature.RelabelRule(podMonitor.Annotations),
+				RelabelIndex:           feature.RelabelIndex(podMonitor.Annotations),
+				NormalizeMetricName:    feature.IfNormalizeMetricName(podMonitor.Annotations),
+				AntiAffinity:           feature.IfAntiAffinity(podMonitor.Annotations),
+				MatchSelector:          feature.MonitorMatchSelector(podMonitor.Annotations),
+				DropSelector:           feature.MonitorDropSelector(podMonitor.Annotations),
+				LabelJoinMatcher:       feature.LabelJoinMatcher(podMonitor.Annotations),
+				UseEndpointSlice:       useEndpointslice,
+				Name:                   monitorMeta.ID(),
+				DataID:                 dataID,
+				KubeConfig:             ConfKubeConfig,
+				Namespaces:             namespaces,
+				Relabels:               resultLabels,
+				Path:                   endpoint.Path,
+				Scheme:                 endpoint.Scheme,
+				BasicAuth:              endpoint.BasicAuth.DeepCopy(),
+				BearerTokenSecret:      endpoint.BearerTokenSecret.DeepCopy(),
+				TLSConfig:              &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
+				Period:                 string(endpoint.Interval),
+				Timeout:                string(endpoint.ScrapeTimeout),
+				ProxyURL:               proxyURL,
+				ExtraLabels:            specLabels,
+				ForwardLocalhost:       feature.IfForwardLocalhost(podMonitor.Annotations),
+				DisableCustomTimestamp: !ifHonorTimestamps(endpoint.HonorTimestamps),
+				System:                 systemResource,
+				UrlValues:              endpoint.Params,
+				MetricRelabelConfigs:   metricRelabelings,
 			},
 			TLSConfig: endpoint.TLSConfig,
 		})
@@ -810,9 +831,7 @@ func (c *Operator) handlePrometheusRuleAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
@@ -822,9 +841,7 @@ func (c *Operator) handlePrometheusRuleUpdate(_ interface{}, obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.UpdatePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
@@ -834,9 +851,7 @@ func (c *Operator) handlePrometheusRuleDelete(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	c.promsliController.DeletePrometheusRule(promRule)
-	c.mm.ObserveHandledEventDuration(now, promRule.Kind, define.ActionDelete)
 }
 
 func (c *Operator) handlePodMonitorAdd(obj interface{}) {
@@ -852,14 +867,12 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	discovers := c.createPodMonitorDiscovers(podMonitor)
 	for _, dis := range discovers {
 		if err := c.addOrUpdateDiscover(dis); err != nil {
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionAdd)
 }
 
 func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}) {
@@ -875,7 +888,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 
 	if old.ResourceVersion == cur.ResourceVersion {
-		logger.Debugf("podMonitor %+v does not change", old)
+		logger.Debugf("podMonitor '%s/%s' does not change", old.Namespace, old.Name)
 		return
 	}
 
@@ -888,7 +901,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getPodMonitorDiscoversName(old) {
 		c.deleteDiscoverByName(name)
 	}
@@ -897,7 +909,6 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 			logger.Errorf("add or update podMonitor discover %s failed, err: %s", dis, err)
 		}
 	}
-	c.mm.ObserveHandledEventDuration(now, old.Kind, define.ActionUpdate)
 }
 
 func (c *Operator) handlePodMonitorDelete(obj interface{}) {
@@ -907,29 +918,47 @@ func (c *Operator) handlePodMonitorDelete(obj interface{}) {
 		return
 	}
 
-	now := time.Now()
 	for _, name := range c.getPodMonitorDiscoversName(podMonitor) {
 		c.deleteDiscoverByName(name)
 	}
-	c.mm.ObserveHandledEventDuration(now, podMonitor.Kind, define.ActionDelete)
 }
 
 func (c *Operator) handleDiscoverNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 
-	timer := time.NewTicker(define.ReSyncPeriod) // 水平触发机制
+	var last int64
+	dispatch := func(trigger string) {
+		now := time.Now()
+		c.mm.IncDispatchedTaskCounter(trigger)
+		c.dispatchTasks()
+		c.mm.ObserveDispatchedTaskDuration(trigger, now)
+		last = now.Unix() // 更新最近一次调度的时间
+	}
+
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
 
 		case <-discover.Notify():
-			c.mm.IncHandledDiscoverNotifyCounter()
-			c.dispatchTasks()
+			// 1min 内最多只能进行 2 次调度
+			if time.Now().Unix()-last <= 30 {
+				timer.Reset(time.Second * 30) // 保证信号不被丢弃
+				continue
+			}
+			dispatch("notify")
 
-		case <-timer.C:
-			c.dispatchTasks()
+		case <-ticker.C: // 兜底检查
+			dispatch("ticker")
+
+		case <-timer.C: // 信号再收敛
+			dispatch("timer")
 		}
 	}
 }
@@ -937,13 +966,6 @@ func (c *Operator) handleDiscoverNotify() {
 func (c *Operator) handleDataIDNotify() {
 	c.wg.Add(1)
 	defer c.wg.Done()
-
-	info, err := c.dw.GetClusterInfo()
-	if err != nil {
-		logger.Errorf("failed to get cluster info: %v", err)
-	} else {
-		c.pusher.StartOrUpdate(*info, ConfPodName)
-	}
 
 	var count int
 	for {
@@ -955,13 +977,6 @@ func (c *Operator) handleDataIDNotify() {
 			start := time.Now()
 			count++
 			c.reloadAllDiscovers()
-
-			info, err := c.dw.GetClusterInfo()
-			if err != nil {
-				logger.Errorf("failed to get cluster info: %v", err)
-			} else {
-				c.pusher.StartOrUpdate(*info, ConfPodName)
-			}
 			logger.Infof("reload discovers, count=%d, take: %v", count, time.Since(start))
 		}
 	}

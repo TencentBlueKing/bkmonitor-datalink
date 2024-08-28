@@ -21,4 +21,5 @@ bk-collector
 logs/
 data/
 coverage.out
+coverage.tmp
 build/

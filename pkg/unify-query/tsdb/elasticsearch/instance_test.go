@@ -18,7 +18,9 @@ import (
 
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
@@ -35,11 +37,16 @@ func TestInstance_queryReference(t *testing.T) {
 	timeout := viper.GetDuration("mock.es.timeout")
 	maxSize := viper.GetInt("mock.es.max_size")
 	maxRouting := viper.GetInt("mock.es.max_routing")
+	sourceType := viper.GetString("mock.es.source_type")
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
+
+	if sourceType == "bkdata" {
+		address = bkapi.GetBkDataApi().QueryEsUrl()
+	}
 
 	ins, err := NewInstance(ctx, &InstanceOption{
 		Address:    address,
@@ -53,11 +60,18 @@ func TestInstance_queryReference(t *testing.T) {
 		return
 	}
 
-	defaultStart := time.UnixMilli(1717027200000)
-	defaultEnd := time.UnixMilli(1717027230000)
+	defaultEnd := time.Now()
+	defaultStart := defaultEnd.Add(time.Hour * -1)
 
-	db := "2_bklog_bkapigateway_esb_container1_*_read"
-	field := "gseIndex"
+	//db := "2_bklog_bk_unify_query_*_read"
+	//field := "gseIndex"
+
+	// bkdata db
+	defaultEnd = time.UnixMilli(1722527999000)
+	defaultStart = time.UnixMilli(1717171200000)
+
+	db := "39_bklog_bkaudit_plugin_20240723_66b8acde57_202407*"
+	field := "dtEventTimeStamp"
 
 	for idx, c := range map[string]struct {
 		query *metadata.Query
@@ -88,8 +102,8 @@ func TestInstance_queryReference(t *testing.T) {
 				},
 				QueryString: "fields.field_name: bk-dev-3",
 			},
-			start: time.UnixMilli(1717482000000),
-			end:   time.UnixMilli(1717482160000),
+			start: defaultStart,
+			end:   defaultEnd,
 		},
 		"nested aggregate + query 测试": {
 			query: &metadata.Query{
@@ -201,6 +215,11 @@ func TestInstance_queryReference(t *testing.T) {
 				Field: field,
 				From:  0,
 				Size:  10,
+				TimeField: metadata.TimeField{
+					Name: "dtEventTimeStamp",
+					Type: TimeFieldTypeTime,
+					Unit: Millisecond,
+				},
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
@@ -340,6 +359,107 @@ func TestInstance_queryReference(t *testing.T) {
 
 			fmt.Println("output:")
 			fmt.Println(output.String())
+		})
+	}
+}
+
+func TestInstance_getAlias(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	inst, err := NewInstance(ctx, &InstanceOption{
+		Timeout: time.Minute,
+	})
+	if err != nil {
+		log.Panicf(ctx, err.Error())
+	}
+
+	for name, c := range map[string]struct {
+		start       time.Time
+		end         time.Time
+		timezone    string
+		db          string
+		needAddTime bool
+
+		expected []string
+	}{
+		"3d with UTC": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			expected:    []string{"db_test_20240101*", "db_test_20240102*", "db_test_20240103*"},
+		},
+		"change month with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 25, 7, 10, 5, 0, time.UTC),
+			end:         time.Date(2024, 2, 2, 6, 1, 4, 10, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_20240125*", "db_test_20240126*", "db_test_20240127*", "db_test_20240128*", "db_test_20240129*", "db_test_20240130*", "db_test_20240131*", "db_test_20240201*", "db_test_20240202*"},
+		},
+		"2d with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 1, 3, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*"},
+		},
+		"14d with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_20240102*", "db_test_20240103*", "db_test_20240104*", "db_test_20240105*", "db_test_20240106*", "db_test_20240107*", "db_test_20240108*", "db_test_20240109*", "db_test_20240110*", "db_test_20240111*", "db_test_20240112*", "db_test_20240113*", "db_test_20240114*", "db_test_20240115*", "db_test_20240116*"},
+		},
+		"16d with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 2, 10, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_202401*", "db_test_202402*"},
+		},
+		"15d with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 1, 16, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_202401*"},
+		},
+		"6m with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 7, 1, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_202401*", "db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*"},
+		},
+		"7m with Asia/ShangHai": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 8, 1, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			timezone:    "Asia/ShangHai",
+			expected:    []string{"db_test_202402*", "db_test_202403*", "db_test_202404*", "db_test_202405*", "db_test_202406*", "db_test_202407*", "db_test_202408*"},
+		},
+		"2m and db": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 3, 1, 20, 0, 0, 0, time.UTC),
+			needAddTime: true,
+			db:          "db_test,db_test_clone",
+			expected:    []string{"db_test_202401*", "db_test_clone_202401*", "db_test_202402*", "db_test_clone_202402*", "db_test_202403*", "db_test_clone_202403*"},
+		},
+		"2m and db and not need add time": {
+			start:       time.Date(2024, 1, 1, 20, 0, 0, 0, time.UTC),
+			end:         time.Date(2024, 3, 1, 20, 0, 0, 0, time.UTC),
+			needAddTime: false,
+			db:          "db_test,db_test_clone",
+			expected:    []string{"db_test", "db_test_clone"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if c.db == "" {
+				c.db = "db_test"
+			}
+			ctx = metadata.InitHashID(ctx)
+			actual, err := inst.getAlias(ctx, c.db, c.needAddTime, c.start, c.end, c.timezone)
+			assert.Nil(t, err)
+			assert.Equal(t, c.expected, actual)
 		})
 	}
 }

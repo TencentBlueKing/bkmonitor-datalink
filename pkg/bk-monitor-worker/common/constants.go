@@ -75,3 +75,12 @@ const (
 	KafkaSaslProtocol  = "SASL_PLAINTEXT"
 	KafkaSaslMechanism = "SCRAM-SHA-512"
 )
+
+const (
+	// 数据源 ID 来源 bkgse
+	DataIdFromBkGse = "bkgse"
+	// 数据源 ID 来源 bkdata
+	DataIdFromBkData = "bkdata"
+	// 访问 gse 接口使用的平台名称
+	AccessGseApiPlatName = "bkmonitor"
+)

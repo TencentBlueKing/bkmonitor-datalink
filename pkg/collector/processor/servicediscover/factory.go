@@ -131,7 +131,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				p.matcher.Match(span, mappings)
+				p.matcher.Match(span, mappings, rule.ReplaceType)
 				break loop
 			case processor.DimensionFromMethod:
 				// 1) 先判断是否有 predicateKey
@@ -155,7 +155,7 @@ func (p *serviceDiscover) processTraces(record *define.Record) {
 					continue
 				}
 
-				p.matcher.Match(span, mappings)
+				p.matcher.Match(span, mappings, rule.ReplaceType)
 				break loop
 			}
 		}

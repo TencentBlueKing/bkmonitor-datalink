@@ -18,12 +18,11 @@ import (
 	bkcommon "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/common"
 )
 
-// Event script event
 type Event struct {
 	DataID    int32
 	TaskID    int32
 	TaskType  string
-	ErrorCode define.BeatErrorCode
+	ErrorCode define.NamedCode
 	BizID     int32
 	StartAt   time.Time
 	EndAt     time.Time
@@ -38,16 +37,32 @@ type Event struct {
 	Exemplar  common.MapStr
 }
 
-// IgnoreCMDBLevel :
-func (e *Event) IgnoreCMDBLevel() bool { return false }
+func NewEvent(t define.Task) *Event {
+	taskConf := t.GetConfig()
+	return &Event{
+		DataID:    taskConf.GetDataID(),
+		BizID:     taskConf.GetBizID(),
+		TaskID:    t.GetTaskID(),
+		TaskType:  taskConf.GetType(),
+		StartAt:   time.Now().UTC(),
+		ErrorCode: define.CodeUnknown,
+		Dimension: common.MapStr{},
+		Metric:    common.MapStr{},
+		Exemplar:  common.MapStr{},
+		UserTime:  time.Now().UTC().Format(bkcommon.TimeFormat),
+		Labels:    taskConf.GetLabels(),
+	}
+}
 
-// AsMapStr :
+func (e *Event) IgnoreCMDBLevel() bool {
+	return false
+}
+
 func (e *Event) AsMapStr() common.MapStr {
 	groupInfo := make([]map[string]string, 0)
 
 	// label注入进dimension
 	if e.Labels != nil {
-
 		for _, labelInfo := range e.Labels {
 			tempGroup := make(map[string]string)
 			for key, value := range labelInfo {
@@ -56,7 +71,6 @@ func (e *Event) AsMapStr() common.MapStr {
 
 			groupInfo = append(groupInfo, tempGroup)
 		}
-
 	}
 	e.Dimension["bk_biz_id"] = e.BizID
 
@@ -83,32 +97,13 @@ func (e *Event) GetType() string {
 	return define.ModuleScript
 }
 
-// TaskDuration :
 func (e *Event) TaskDuration() time.Duration {
 	return e.EndAt.Sub(e.StartAt)
 }
 
-// NewEvent :
-func NewEvent(t define.Task) *Event {
-	taskConf := t.GetConfig()
-	return &Event{
-		DataID:    taskConf.GetDataID(),
-		BizID:     taskConf.GetBizID(),
-		TaskID:    t.GetTaskID(),
-		TaskType:  taskConf.GetType(),
-		StartAt:   time.Now().UTC(),
-		ErrorCode: define.BeatErrCodeUnknown,
-		Dimension: common.MapStr{},
-		Metric:    common.MapStr{},
-		Exemplar:  common.MapStr{},
-		UserTime:  time.Now().UTC().Format(bkcommon.TimeFormat),
-		Labels:    taskConf.GetLabels(),
-	}
-}
-
 // Success 普通指标事件正常结束
 func (e *Event) Success() {
-	e.ErrorCode = define.BeatErrCodeOK
+	e.ErrorCode = define.CodeOK
 	e.EndAt = time.Now()
 	e.Message = "success"
 }

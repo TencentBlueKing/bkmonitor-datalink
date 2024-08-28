@@ -10,11 +10,15 @@
 package define
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
+	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
+	"github.com/TarsCloud/TarsGo/tars/util/current"
 	"github.com/google/pprof/profile"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
@@ -39,6 +43,7 @@ const (
 	SourceProxy       = "proxy"
 	SourceSkywalking  = "skywalking"
 	SourceBeat        = "beat"
+	SourceTars        = "tars"
 
 	KeyToken    = "X-BK-TOKEN"
 	KeyDataID   = "X-BK-DATA-ID"
@@ -66,6 +71,7 @@ const (
 	RecordProxy          RecordType = "proxy"
 	RecordPingserver     RecordType = "pingserver"
 	RecordBeat           RecordType = "beat"
+	RecordTars           RecordType = "tars"
 )
 
 // IntoRecordType 将字符串描述转换为 RecordType 并返回是否为 Derived 类型
@@ -98,6 +104,8 @@ func IntoRecordType(s string) (RecordType, bool) {
 		t = RecordFta
 	case RecordBeat.S():
 		t = RecordBeat
+	case RecordTars.S():
+		t = RecordTars
 	default:
 		t = RecordUndefined
 	}
@@ -114,6 +122,7 @@ const (
 	RequestGrpc    RequestType = "grpc"
 	RequestICMP    RequestType = "icmp"
 	RequestDerived RequestType = "derived"
+	RequestTars    RequestType = "tars"
 )
 
 type RequestClient struct {
@@ -149,6 +158,43 @@ type PushGatewayData struct {
 
 type RemoteWriteData struct {
 	Timeseries []prompb.TimeSeries
+}
+
+const (
+	TarsStatType     = "stat"
+	TarsPropertyType = "property"
+)
+
+type TarsAdapter struct {
+	Name     string
+	Servant  string
+	Endpoint string
+}
+
+type TarsServerConfig struct {
+	App      string
+	Server   string
+	LogPath  string
+	LogLevel string
+	Adapters []TarsAdapter
+}
+
+type TarsData struct {
+	// 标识为 TarsStatType 或者 ProxyEvent
+	Type      string
+	Timestamp int64
+	Data      interface{}
+}
+
+// TarsPropertyData 属性统计数据
+type TarsPropertyData struct {
+	Props map[propertyf.StatPropMsgHead]propertyf.StatPropMsgBody
+}
+
+// TarsStatData 服务指标数据
+type TarsStatData struct {
+	FromClient bool
+	Stats      map[statf.StatMicMsgHead]statf.StatMicMsgBody
 }
 
 type ProxyData struct {
@@ -253,7 +299,7 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 	switch rtype {
 	case RecordTraces, RecordTracesDerived:
 		return t.TracesDataId
-	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta:
+	case RecordMetrics, RecordMetricsDerived, RecordPushGateway, RecordRemoteWrite, RecordPingserver, RecordFta, RecordTars:
 		return t.MetricsDataId
 	case RecordLogs, RecordLogsDerived:
 		return t.LogsDataId
@@ -319,6 +365,31 @@ func TokenFromGrpcMetadata(md metadata.MD) string {
 		return token[0]
 	}
 	return ""
+}
+
+// TokenFromTarsCtx 从 Tars ctx（类似 gPRC MetaData）中提取 token
+func TokenFromTarsCtx(ctx context.Context) string {
+	rc, ok := current.GetRequestContext(ctx)
+	if !ok {
+		return ""
+	}
+	token, ok := rc[KeyToken]
+	if !ok {
+		return ""
+	}
+	return token
+}
+
+// TokenFromString 从 {KeyToken}:{token}:value 中提取 token
+func TokenFromString(s string) (string, string) {
+	if !strings.HasPrefix(s, KeyToken) {
+		return s, ""
+	}
+	parts := strings.SplitN(s, ":", 3)
+	if len(parts) != 3 {
+		return s, ""
+	}
+	return parts[2], parts[1]
 }
 
 const (

@@ -46,7 +46,7 @@ func (c *SimpleMatchParam) CleanParams() error {
 			_, err = utils.ConvertHexStringToBytes(c.Request)
 			if err != nil {
 				logger.Errorf("ConvertHexStringToBytes error:%v", err)
-				return define.ErrTypeConvertError
+				return define.ErrTypeConvert
 			}
 		}
 	}
@@ -56,7 +56,7 @@ func (c *SimpleMatchParam) CleanParams() error {
 			_, err = utils.ConvertHexStringToBytes(c.Response)
 			if err != nil {
 				logger.Errorf("ConvertHexStringToBytes error:%v", err)
-				return define.ErrTypeConvertError
+				return define.ErrTypeConvert
 			}
 		}
 	}
@@ -89,6 +89,17 @@ type SimpleTaskParam struct {
 	// 支持多个目标，当配置多个目标时忽略单个目标配置
 	TargetHostList []string `config:"target_host_list"`
 	TargetPort     int      `config:"target_port" validate:"required,min=1"`
+}
+
+func (c *SimpleTaskParam) Hosts() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.TargetHostList) > 0 {
+		return c.TargetHostList
+	}
+	return []string{c.TargetHost}
 }
 
 // CleanParams :

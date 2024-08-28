@@ -28,6 +28,13 @@ const (
 	UUID = "query_uuid"
 )
 
+type TimeField struct {
+	Name     string
+	Type     string
+	Unit     string
+	UnitRate int64
+}
+
 // Aggregate 聚合方法
 type Aggregate struct {
 	Name       string
@@ -72,13 +79,14 @@ type Query struct {
 	IsSingleMetric bool
 
 	// 兼容 InfluxDB 结构体
-	RetentionPolicy string   // 存储 RP
-	DB              string   // 存储 DB
-	Measurement     string   // 存储 Measurement
-	Field           string   // 存储 Field
-	Timezone        string   // 存储 Timezone
-	Fields          []string // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
-	Measurements    []string // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
+	RetentionPolicy string    // 存储 RP
+	DB              string    // 存储 DB
+	Measurement     string    // 存储 Measurement
+	Field           string    // 存储 Field
+	TimeField       TimeField // 时间字段
+	Timezone        string    // 存储 Timezone
+	Fields          []string  // 存储命中的 Field 列表，一般情况下为一个，当 Field 为模糊匹配时，解析为多个
+	Measurements    []string  // 存储命中的 Measurement 列表，一般情况下为一个，当 Measurement 为模糊匹配时，解析为多个
 
 	// 用于 promql 查询
 	IsHasOr bool // 标记是否有 or 条件
@@ -108,6 +116,7 @@ type Query struct {
 	From          int
 	Size          int
 	Orders        Orders
+	NeedAddTime   bool
 }
 
 type Orders map[string]bool
@@ -323,6 +332,10 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 	druidQueryStatus := qRef.CheckDruidCheck(ctx)
 	mustVmQueryStatus := qRef.CheckMustVmQuery(ctx)
 
+	span.Set("vm-query-feature-flag", vmQueryFeatureFlag)
+	span.Set("druid-query-status", druidQueryStatus)
+	span.Set("must-vm-query-status", mustVmQueryStatus)
+
 	// 未开启 vm-query 特性开关 并且 不是 druid-query ，则不使用 vm 查询能力
 	if !vmQueryFeatureFlag && !druidQueryStatus && !mustVmQueryStatus {
 		return ok, nil, err
@@ -338,13 +351,16 @@ func (qRef QueryReference) CheckVmQuery(ctx context.Context) (bool, *VmExpand, e
 			span.Set(fmt.Sprintf("result_table_%s_num", referenceName), len(reference.QueryList))
 
 			vmConditions := make(map[string]struct{})
-
 			for _, query := range reference.QueryList {
+
+				span.Set(fmt.Sprintf("query-%s-is-single-metric", query.TableID), query.IsSingleMetric)
 
 				// 该字段表示为是否查 VM
 				if !query.IsSingleMetric {
 					return ok, nil, err
 				}
+
+				span.Set(fmt.Sprintf("query-%s-vm-rt", query.TableID), query.VmRt)
 
 				// 开启 vm rt 才进行 vm 查询
 				if query.VmRt != "" {

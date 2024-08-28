@@ -17,7 +17,8 @@ MODULE=bk-collector
 TEST_COVERAGE_THRESHOLD=75
 
 function unittest() {
-  go test ./... -coverprofile coverage.out -covermode count
+  go test ./... -coverprofile coverage.tmp -covermode count
+  cat coverage.tmp | grep -v '/gen/' | grep -v '_gen.go' > coverage.out
   go tool cover -func coverage.out
   echo "Quality Gate: checking test coverage is above threshold ..."
   echo "Threshold             : $TEST_COVERAGE_THRESHOLD%"
@@ -47,6 +48,7 @@ function package() {
   mkdir -p ${dir}/{etc,bin}
 
   # 构建二进制
+  go mod tidy
   GOOS=${goos} GOARCH=${goarch} \
     go build -ldflags " \
   	-s -w \
@@ -65,6 +67,7 @@ function sidecar() {
     local version=${1:-'v0.0.0'}
     local dist=${2:-'./dist'}
     # 构建二进制
+    go mod tidy
     GOOS=linux GOARCH=amd64 \
       go build -ldflags " \
     	-s -w \

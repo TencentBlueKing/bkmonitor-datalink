@@ -10,6 +10,7 @@
 package logger
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,9 @@ type Options struct {
 	// Stdout sets the writer as stdout if it is true.
 	Stdout bool `yaml:"stdout"`
 
+	// DevNull sets the writer as /dev/null if it is true.
+	DevNull bool `yaml:"devnull"`
+
 	// logger ouput format, Valid values are "json", "console" and "logfmt", default is logfmt
 	Format string `yaml:"format"`
 
@@ -99,6 +103,9 @@ type Options struct {
 
 	// Level is a logging priority. Higher levels are more important.
 	Level string `yaml:"level"`
+
+	// DisableCaller specifies whether to display caller info or not.
+	DisableCaller bool
 }
 
 type RateCall struct {
@@ -275,9 +282,12 @@ func New(opt Options) Logger {
 	}
 
 	var w zapcore.WriteSyncer
-	if opt.Stdout {
+	switch {
+	case opt.Stdout:
 		w = zapcore.AddSync(os.Stdout)
-	} else {
+	case opt.DevNull:
+		w = zapcore.AddSync(io.Discard)
+	default:
 		// 初始化日志目录
 		if err := os.MkdirAll(filepath.Dir(opt.Filename), os.ModePerm); err != nil {
 			panic(err)
@@ -296,7 +306,14 @@ func New(opt Options) Logger {
 	level := loggerLevelMap[opt.Level]
 
 	core := zapcore.NewCore(encoder, w, zapcore.Level(level))
-	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+
+	var logger *zap.Logger
+	if opt.DisableCaller {
+		logger = zap.New(core)
+	} else {
+		logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
+	}
+
 	return Logger{
 		sugared:   logger.Sugar(),
 		warnRate:  NewRateCall(),

@@ -12,16 +12,20 @@ package task
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Shopify/sarama"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
+	consulSvc "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
@@ -184,7 +188,6 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 
 	logger.Infof("start to refresh data source, start_time: %s", time.Now().Truncate(time.Second))
 
-	time.Sleep(1 * time.Minute)
 	db := mysql.GetDBSession().DB
 	// 过滤满足条件的记录
 	var dataSourceRtList []resulttable.DataSourceResultTable
@@ -192,16 +195,17 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		logger.Errorf("query datasourceresulttable record error, %v", err)
 		return err
 	}
+	if len(dataSourceRtList) == 0 {
+		logger.Infof("no data source need update, skip")
+		return nil
+	}
+
 	// 过滤到结果表
 	var rtList []string
 	for _, dsrt := range dataSourceRtList {
 		rtList = append(rtList, dsrt.TableId)
 	}
-	// 如果全部不可用，则直接返回
-	if len(rtList) == 0 {
-		logger.Infof("not enabled result table by data_source_result_table, skip")
-		return nil
-	}
+
 	// 过滤状态为启用的结果表
 	var enabledResultTableList []resulttable.ResultTable
 	// 拆分查询
@@ -215,7 +219,7 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 		enabledResultTableList = append(enabledResultTableList, tempList...)
 	}
 	// 组装可用的结果表
-	var enabledRtList []string
+	enabledRtList := rtList[:0]
 	for _, rt := range enabledResultTableList {
 		enabledRtList = append(enabledRtList, rt.TableId)
 	}
@@ -226,23 +230,19 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 	// 过滤到可用的数据源
 	var dataIdList []uint
+	// 用作重复数据的移除
+	uniqueMap := make(map[uint]bool)
 	for _, dsrt := range dataSourceRtList {
-		if stringx.StringInSlice(dsrt.TableId, enabledRtList) {
+		// 如果结果表可用，并且数据源ID还没有追加过，则追加数据；否则，跳过
+		if stringx.StringInSlice(dsrt.TableId, enabledRtList) && !uniqueMap[dsrt.BkDataId] {
 			dataIdList = append(dataIdList, dsrt.BkDataId)
+			uniqueMap[dsrt.BkDataId] = true
 		}
 	}
-	// 如果为空，则认为所有数据源不可用
-	if len(dataIdList) == 0 {
-		logger.Warn("not found data source by enabled result table")
-		return nil
-	}
-
-	// 移除重复的数据源
-	dataIdList = slicex.RemoveDuplicate(&dataIdList)
 
 	var dataSourceList []resulttable.DataSource
-	// data id 数量可控，先不拆分
-	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).
+	// data id 数量可控，先不拆分；仅刷新未迁移到计算平台的数据源 ID 及通过 gse 创建的数据源 ID
+	if err := resulttable.NewDataSourceQuerySet(db).CreatedFromEq(common.DataIdFromBkGse).IsEnableEq(true).
 		BkDataIdIn(dataIdList...).OrderDescByLastModifyTime().All(&dataSourceList); err != nil {
 		logger.Errorf("query datasource record error, %v", err)
 		return err
@@ -254,11 +254,11 @@ func RefreshDatasource(ctx context.Context, t *t.Task) error {
 	}
 
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	ch := make(chan struct{}, GetGoroutineLimit("refresh_datasource"))
 	wg.Add(len(dataSourceList))
 	for _, dataSource := range dataSourceList {
-		ch <- true
-		go func(ds resulttable.DataSource, wg *sync.WaitGroup, ch chan bool) {
+		ch <- struct{}{}
+		go func(ds resulttable.DataSource, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
@@ -337,32 +337,159 @@ func RefreshKafkaTopicInfo(ctx context.Context, t *t.Task) error {
 		}
 	}()
 	db := mysql.GetDBSession().DB
+	// 获取可用的且来源于 gse 的 data_id
+	var dataIdObjList []resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).CreatedFromEq(common.DataIdFromBkGse).Select(resulttable.DataSourceDBSchema.BkDataId, resulttable.DataSourceDBSchema.MqClusterId).All(&dataIdObjList); err != nil {
+		return errors.Wrapf(err, "RefreshKafkaTopicInfo query data source error")
+	}
+	// 组装 data_id 和 对应的集群 id
+	var dataIdList, mqClusterIdList []uint
+	dataIdClusterId := make(map[uint]uint)
+	for _, obj := range dataIdObjList {
+		dataIdList = append(dataIdList, obj.BkDataId)
+		mqClusterIdList = append(mqClusterIdList, obj.MqClusterId)
+		dataIdClusterId[obj.BkDataId] = obj.MqClusterId
+	}
+	// 查询对应 kafka topic
 	var kafkaTopicInfoList []storage.KafkaTopicInfo
-	if err := storage.NewKafkaTopicInfoQuerySet(db).All(&kafkaTopicInfoList); err != nil {
-		return errors.Wrapf(err, "query RefreshKafkaTopicInfo failed")
+	for _, chunkDataIds := range slicex.ChunkSlice(dataIdList, 0) {
+		var tempList []storage.KafkaTopicInfo
+		if err := storage.NewKafkaTopicInfoQuerySet(db).BkDataIdIn(chunkDataIds...).All(&tempList); err != nil {
+			logger.Errorf("query kafka topic info record error, %s", err)
+			continue
+		}
+		kafkaTopicInfoList = append(kafkaTopicInfoList, tempList...)
+	}
+
+	// 移除重复的集群 ID
+	uniqueClusterIdList := slicex.RemoveDuplicate(&mqClusterIdList)
+
+	// 通过 kafka 集群 ID, 获取集群信息；集群不会太多，直接查询
+	var mqClusterList []storage.ClusterInfo
+	if err := storage.NewClusterInfoQuerySet(db).ClusterIDIn(uniqueClusterIdList...).All(&mqClusterList); err != nil {
+		logger.Errorf("query cluster info record error, %s", err)
+		return err
+	}
+
+	// 组装 kafka 集群信息
+	kafkaClientInfoMap := make(map[uint]sarama.Client)
+	clusterInfoMap := make(map[uint]storage.ClusterInfo)
+	for _, cluster := range mqClusterList {
+		kafkaClient, err := service.NewClusterInfoSvc(&cluster).GetKafkaClient()
+		if err != nil {
+			logger.Errorf("get kafka cluster client failed, %s", err)
+			continue
+		}
+		kafkaClientInfoMap[cluster.ClusterID] = kafkaClient
+		clusterInfoMap[cluster.ClusterID] = cluster
 	}
 
 	wg := &sync.WaitGroup{}
-	ch := make(chan bool, GetGoroutineLimit("refresh_datasource"))
+	ch := make(chan struct{}, GetGoroutineLimit("refresh_kafka_topic_info"))
 	wg.Add(len(kafkaTopicInfoList))
 	// 遍历所有的ES存储并创建index, 并执行完整的es生命周期操作
 	for _, info := range kafkaTopicInfoList {
-		ch <- true
-		go func(info storage.KafkaTopicInfo, wg *sync.WaitGroup, ch chan bool) {
+		// 获取 cluster id
+		clusterId, ok := dataIdClusterId[info.BkDataId]
+		if !ok {
+			logger.Infof("data_id [%v] not found in data_id_cluster_id map, skip", info.BkDataId)
+			wg.Done()
+			continue
+		}
+		// 获取 kafka 集群信息
+		kafkaClient, ok := kafkaClientInfoMap[clusterId]
+		if !ok {
+			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			kafkaClient = nil
+		}
+		clusterInfo, ok := clusterInfoMap[clusterId]
+		if !ok && kafkaClient == nil {
+			logger.Infof("data_id [%v] and cluster_id [%s] not found cluster info, skip", info.BkDataId, clusterId)
+			wg.Done()
+			continue
+		}
+
+		ch <- struct{}{}
+		go func(info storage.KafkaTopicInfo, clusterInfo storage.ClusterInfo, kafkaClient sarama.Client, wg *sync.WaitGroup, ch chan struct{}) {
 			defer func() {
 				<-ch
 				wg.Done()
 			}()
 			svc := service.NewKafkaTopicInfoSvc(&info)
-			if err := svc.RefreshTopicInfo(); err != nil {
+			if err := svc.RefreshTopicInfo(clusterInfo, kafkaClient); err != nil {
 				logger.Errorf("refresh kafka topic info [%v] failed, %v", svc.Topic, err)
 			} else {
 				logger.Infof("refresh kafka topic info [%v] success", svc.Topic)
 			}
-		}(info, wg, ch)
+		}(info, clusterInfo, kafkaClient, wg, ch)
 
 	}
 	wg.Wait()
 
+	// 关闭kafka client
+	for _, client := range kafkaClientInfoMap {
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			logger.Errorf("close kafka client failed, %s", err)
+		}
+	}
+
+	return nil
+}
+
+// CleanDataIdConsulPath clean consul path of data_id
+// data id cna
+func CleanDataIdConsulPath(ctx context.Context, t *t.Task) error {
+	logger.Info("start to clean consul path of data_id")
+	db := mysql.GetDBSession().DB
+	// 仅获来源为直接通过gse创建的数据源ID
+	var dataIdObjList []resulttable.DataSource
+	if err := resulttable.NewDataSourceQuerySet(db).IsEnableEq(true).CreatedFromEq(common.DataIdFromBkGse).All(&dataIdObjList); err != nil {
+		logger.Errorf("query data source error, %s", err)
+		return err
+	}
+	// 如果为空，则直接返回
+	if len(dataIdObjList) == 0 {
+		logger.Infof("query data source is null")
+		return nil
+	}
+
+	// 组装 dataid 的 consul 路径
+	var dataIdConsulPaths []string
+	for _, ds := range dataIdObjList {
+		dataIdConsulPaths = append(dataIdConsulPaths, service.NewDataSourceSvc(&ds).ConsulConfigPath())
+	}
+
+	// 获取 consul 中存在的数据源 ID
+	consulClient, err := consulSvc.GetInstance()
+	if err != nil {
+		logger.Errorf("get consul client failed, %s", err)
+		return err
+	}
+	// 按照前缀，获取所有路径
+	consulKeys, err := consulClient.ListKeysWithPrefix(fmt.Sprintf(models.DataSourceConsulPathTemplate+"/", config.StorageConsulPathPrefix))
+	if err != nil {
+		logger.Errorf("list consul key with prefix error, %s", err)
+		return err
+	}
+
+	// 过滤出全路径的内容
+	var consulPaths []string
+	for _, key := range consulKeys {
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
+		consulPaths = append(consulPaths, key)
+	}
+
+	// 清理路径
+	if err := service.CleanConsulPath(consulClient, &dataIdConsulPaths, &consulPaths); err != nil {
+		logger.Errorf("clean consul path of data_id error, %s", err)
+		return err
+	}
+
+	logger.Info("clean consul path of data_id end")
 	return nil
 }

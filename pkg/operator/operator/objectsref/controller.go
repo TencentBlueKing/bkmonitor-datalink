@@ -45,8 +45,10 @@ type Object struct {
 	OwnerRefs []OwnerRef
 
 	// Pod 属性
-	NodeName string
-	Labels   map[string]string
+	NodeName    string
+	PodIP       string
+	Labels      map[string]string
+	Annotations map[string]string
 
 	// Containers
 	Containers []string
@@ -221,13 +223,7 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 		cancel: cancel,
 	}
 
-	version, err := client.Discovery().ServerVersion()
-	if err != nil {
-		return nil, err
-	}
-	KubernetesServerVersion = version.String()
-	setClusterVersion(KubernetesServerVersion)
-
+	var err error
 	resources := listServerPreferredResources(client.Discovery())
 
 	sharedInformer := informers.NewSharedInformerFactoryWithOptions(client, define.ReSyncPeriod, informers.WithNamespace(metav1.NamespaceAll))
@@ -358,10 +354,12 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs:  toRefs(pod.OwnerReferences),
-				NodeName:   pod.Spec.NodeName,
-				Labels:     pod.Labels,
-				Containers: toContainers(pod.Spec.Containers),
+				OwnerRefs:   toRefs(pod.OwnerReferences),
+				NodeName:    pod.Spec.NodeName,
+				Labels:      pod.Labels,
+				Annotations: pod.Annotations,
+				PodIP:       pod.Status.PodIP,
+				Containers:  toContainers(pod.Spec.Containers),
 			})
 		},
 		UpdateFunc: func(_, newObj interface{}) {
@@ -375,10 +373,12 @@ func newPodObjects(ctx context.Context, sharedInformer informers.SharedInformerF
 					Name:      pod.Name,
 					Namespace: pod.Namespace,
 				},
-				OwnerRefs:  toRefs(pod.OwnerReferences),
-				NodeName:   pod.Spec.NodeName,
-				Labels:     pod.Labels,
-				Containers: toContainers(pod.Spec.Containers),
+				OwnerRefs:   toRefs(pod.OwnerReferences),
+				NodeName:    pod.Spec.NodeName,
+				Labels:      pod.Labels,
+				Annotations: pod.Annotations,
+				PodIP:       pod.Status.PodIP,
+				Containers:  toContainers(pod.Spec.Containers),
 			})
 		},
 		DeleteFunc: func(obj interface{}) {

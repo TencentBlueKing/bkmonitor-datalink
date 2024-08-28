@@ -231,6 +231,8 @@ var (
 	BkApiBkssmUrl string
 	// BkApiBcsCcApiUrl bk-api bcs cc url
 	BkApiBcsCcApiUrl string
+	// BkApiGseApiGwUrl bk-apigw bkgse base url
+	BkApiGseApiGwUrl string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
@@ -401,6 +403,7 @@ func initVariables() {
 	BkApiBkdataApiBaseUrl = GetValue("taskConfig.common.bkapi.bkdataApiBaseUrl", "")
 	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
 	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
+	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 
@@ -496,6 +499,7 @@ func InitConfig() {
 	initMetadataVariables()
 	initClusterMetricVariables()
 	initApmVariables()
+	initAlarmConfig()
 
 	prettyPrintSettings()
 }

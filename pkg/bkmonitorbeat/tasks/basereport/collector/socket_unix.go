@@ -8,7 +8,6 @@
 // specific language governing permissions and limitations under the License.
 
 //go:build aix || darwin || dragonfly || linux || netbsd || openbsd || solaris || zos
-// +build aix darwin dragonfly linux netbsd openbsd solaris zos
 
 package collector
 
@@ -63,7 +62,7 @@ func GetTcp4SocketStatusCountByNetlink() (SocketStatusCount, error) {
 
 	rawcount := make([]uint, TCP_MAX_STATES)
 	for _, m := range msgs {
-		var req = *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
+		req := *(**InetDiagMsg)(unsafe.Pointer(&m.Data))
 		rawcount[int(req.State)]++
 	}
 

@@ -231,7 +231,8 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 				"bk_host_id":      float64(host.BkHostId),
 				"bk_host_innerip": host.BkHostInnerip,
 				"bk_cloud_id":     float64(host.BkCloudId),
-				"bk_agent_id":     host.BkAgentId,
+				// 测试agent_id变化后是否会被删除
+				"bk_agent_id": fmt.Sprintf("%s-change", host.BkAgentId),
 			})
 		}
 
@@ -242,6 +243,15 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 			return
+		}
+
+		// 判断agent_id是否被删除
+		for _, event := range events {
+			agentID := event["bk_agent_id"].(string)
+			oldAgentID := agentID[:len(agentID)-7]
+			host := client.HGet(ctx, cacheManager.GetCacheKey(hostCacheKey), strconv.Itoa(int(event["bk_host_id"].(float64)))).Val()
+			assert.NotEmpty(t, host)
+			assert.False(t, client.HExists(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey), oldAgentID).Val())
 		}
 
 		// 基于事件清理缓存

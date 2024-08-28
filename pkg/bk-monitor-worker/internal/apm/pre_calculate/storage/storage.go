@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	remotewrite "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -149,9 +150,9 @@ func SaveEsConfig(opts ...EsOption) ProxyOption {
 	}
 }
 
-func PrometheusWriterConfig(opts ...PrometheusWriterOption) ProxyOption {
+func PrometheusWriterConfig(opts ...remotewrite.PrometheusWriterOption) ProxyOption {
 	return func(options *ProxyOptions) {
-		writerOpts := PrometheusWriterOptions{}
+		writerOpts := remotewrite.PrometheusWriterOptions{}
 		for _, setter := range opts {
 			setter(&writerOpts)
 		}

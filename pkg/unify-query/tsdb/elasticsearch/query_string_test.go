@@ -28,6 +28,7 @@ func TestQsToDsl(t *testing.T) {
 	for i, c := range []struct {
 		q        string
 		expected string
+		err      error
 	}{
 		{
 			q:        `log: "ERROR MSG"`,
@@ -73,6 +74,27 @@ func TestQsToDsl(t *testing.T) {
 			q:        `log: /data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py`,
 			expected: `{"match_phrase":{"log":{"query":"/data/bkee/bknodeman/nodeman/apps/backend/subscription/tasks.py"}}}`,
 		},
+		{
+			q:        `"1642903" AND NOT "get_proc_status_v2" AND NOT "list_service_instance_detail" AND NOT "list_hosts_without_biz"`,
+			expected: `{"bool":{"must":[{"query_string":{"query":"1642903"}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"get_proc_status_v2"}}}},{"bool":{"must":[{"bool":{"must_not":{"query_string":{"query":"list_service_instance_detail"}}}},{"bool":{"must_not":{"query_string":{"query":"list_hosts_without_biz"}}}}]}}]}}]}}`,
+		},
+		{
+			q:   `"1642903" AND OR NOT "get_proc_status_v2"`,
+			err: fmt.Errorf("query string parser error syntax error: unexpected tOR"),
+		},
+		{
+			q: `sync_spaces AND -keyword AND -BKLOGAPI`,
+		},
+		{
+			q: "message queue conflict",
+		},
+		{
+			q: "\"message queue conflict\"",
+		},
+		{
+			q:        `"qu?ck br*wn"`,
+			expected: `{"bool":{"must":[{"query_string":{"query":"qu?ck"}},{"query_string":{"query":"br*wn"}}]}}`,
+		},
 	} {
 		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
@@ -83,12 +105,13 @@ func TestQsToDsl(t *testing.T) {
 				return ""
 			})
 			query, err := qs.Parser()
-			assert.Nil(t, err)
 			if err == nil {
 				body, _ := query.Source()
 				bodyJson, _ := json.Marshal(body)
 				bodyString := string(bodyJson)
 				assert.Equal(t, c.expected, bodyString)
+			} else {
+				assert.Equal(t, c.err, err)
 			}
 		})
 	}

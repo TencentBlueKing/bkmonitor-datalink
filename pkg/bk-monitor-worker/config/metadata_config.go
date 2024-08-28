@@ -84,6 +84,8 @@ var (
 	SpaceToResultTableKey string
 	// SpaceToResultTableChannel 空间关联的结果表channel
 	SpaceToResultTableChannel string
+	// BuildInResultTableDetailKey 空间关联内置上报rt详情
+	BuildInResultTableDetailKey string
 
 	// BkdataDefaultBizId 接入计算平台使用的业务 ID
 	BkdataDefaultBizId int
@@ -117,6 +119,10 @@ var (
 	BkdataProjectMaintainer string
 	// BkdataIsAllowAllCmdbLevel 是否允许所有数据源配置CMDB聚合
 	BkdataIsAllowAllCmdbLevel bool
+	// 跳过写入influxdb的结果表列表
+	SkipInfluxdbTableIds []string
+	// 是否可以删除 consul 路径
+	CanDeleteConsulPath bool
 )
 
 func initMetadataVariables() {
@@ -155,6 +161,7 @@ func initMetadataVariables() {
 	ResultTableDetailChannel = GetValue("taskConfig.metadata.space.resultTableDetailChannel", fmt.Sprintf("%s:result_table_detail:channel", SpaceRedisKey))
 	SpaceToResultTableKey = GetValue("taskConfig.metadata.space.spaceToResultTableKey", fmt.Sprintf("%s:space_to_result_table", SpaceRedisKey))
 	SpaceToResultTableChannel = GetValue("taskConfig.metadata.space.spaceToResultTableChannel", fmt.Sprintf("%s:space_to_result_table:channel", SpaceRedisKey))
+	BuildInResultTableDetailKey = GetValue("taskConfig.metadata.space.buildInResultTableDetailKey", fmt.Sprintf("%s:built_in_result_table_detail", SpaceRedisKey))
 
 	BkdataDefaultBizId = GetValue("taskConfig.metadata.bkdata.defaultBizId", 0)
 	BkdataProjectId = GetValue("taskConfig.metadata.bkdata.projectId", 1)
@@ -172,4 +179,6 @@ func initMetadataVariables() {
 	BkdataFlowClusterGroup = GetValue("taskConfig.metadata.bkdata.flowClusterGroup", "default_inland")
 	BkdataProjectMaintainer = GetValue("taskConfig.metadata.bkdata.projectMaintainer", "admin")
 	BkdataIsAllowAllCmdbLevel = GetValue("taskConfig.metadata.bkdata.isAllowAllCmdbLevel", false)
+	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
+	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 }

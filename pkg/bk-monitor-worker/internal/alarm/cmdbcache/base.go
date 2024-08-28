@@ -28,16 +28,48 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/bkapi"
 	"github.com/pkg/errors"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
 const (
 	cmdbApiPageSize = 500
 )
+
+var (
+	cmdbApiClient     *cmdb.Client
+	cmdbApiClientOnce sync.Once
+)
+
+// getCmdbApi Get cmdb api client instance with lock
+func getCmdbApi() *cmdb.Client {
+	cmdbApiClientOnce.Do(func() {
+		config := bkapi.ClientConfig{
+			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/cc/", cfg.BkApiUrl),
+			AuthorizationParams: map[string]string{"bk_username": "admin", "bk_supplier_account": "0"},
+			AppCode:             cfg.BkApiAppCode,
+			AppSecret:           cfg.BkApiAppSecret,
+			JsonMarshaler:       jsonx.Marshal,
+		}
+
+		var err error
+		cmdbApiClient, err = cmdb.New(
+			config,
+			bkapi.OptJsonBodyProvider(),
+			OptRateLimitResultProvider(cfg.CmdbApiRateLimitQPS, cfg.CmdbApiRateLimitBurst, cfg.CmdbApiRateLimitTimeout),
+		)
+		if err != nil {
+			panic(err)
+		}
+	})
+	return cmdbApiClient
+}
 
 // Manager 缓存管理器接口
 type Manager interface {
@@ -240,6 +272,8 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, 
 		cacheManager, err = NewSetCacheManager(prefix, opt, concurrentLimit)
 	case "service_instance":
 		cacheManager, err = NewServiceInstanceCacheManager(prefix, opt, concurrentLimit)
+	case "dynamic_group":
+		cacheManager, err = NewDynamicGroupCacheManager(prefix, opt, concurrentLimit)
 	default:
 		err = errors.Errorf("unsupported cache type: %s", cacheType)
 	}
@@ -251,12 +285,9 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	// 判断是否启用业务缓存刷新
 	if cacheManager.useBiz() {
 		// 获取业务列表
-		cmdbApi, err := api.GetCmdbApi()
-		if err != nil {
-			return errors.Wrap(err, "get cmdb api client failed")
-		}
+		cmdbApi := getCmdbApi()
 		var result cmdb.SearchBusinessResp
-		_, err = cmdbApi.SearchBusiness().SetResult(&result).Request()
+		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
 		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
 			return err
 		}

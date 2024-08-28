@@ -34,7 +34,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 		IntervalTime: 3e2 * time.Millisecond,
 		Timeout:      3e1 * time.Second,
 		Client:       cli,
-		Limit:        1e4,
+		MaxLimit:     1e4,
 		Tolerance:    5,
 	}
 	end := time.Now()
@@ -179,7 +179,7 @@ func TestInstance_bkSql(t *testing.T) {
 	}
 
 	ins := Instance{
-		Limit:     2e5,
+		MaxLimit:  2e5,
 		Tolerance: 5,
 	}
 

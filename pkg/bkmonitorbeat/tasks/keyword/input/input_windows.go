@@ -27,7 +27,6 @@ func getFileInode(filename string, _ os.FileInfo) (uint64, error) {
 		windows.OPEN_EXISTING,
 		0,
 		0)
-
 	if err != nil {
 		return 0, err
 	}

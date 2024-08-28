@@ -86,7 +86,7 @@ func (p *FlatBatchHandler) Process(d define.Payload, outputChan chan<- define.Pa
 	err := d.To(&originMap)
 	if err != nil {
 		p.CounterFails.Inc()
-		logging.Errorf("%v convert payload %#v error %v", p, d, err)
+		logging.MinuteErrorfSampling(p.String(), "%v convert payload %#v error %v", p, d, err)
 		return
 	}
 

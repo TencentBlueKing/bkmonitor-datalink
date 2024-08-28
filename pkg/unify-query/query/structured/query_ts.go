@@ -256,6 +256,12 @@ func (q *QueryTs) ToPromExpr(
 	return result, nil
 }
 
+type TimeField struct {
+	Name string `json:"name,omitempty"`
+	Type string `json:"type,omitempty"`
+	Unit string `json:"unit,omitempty"`
+}
+
 type Query struct {
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
@@ -317,7 +323,7 @@ type Query struct {
 	// QueryString es 专用关键字查询
 	QueryString string `json:"query_string"`
 
-	// IsReference 是否使用 PromQL 查询
+	// IsReference 是否使用非时间聚合查询
 	IsReference bool `json:"-" swaggerignore:"true"`
 }
 
@@ -421,15 +427,22 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 		// 如果是 BkSql 查询无需获取 tsdb 路由关系
 		if q.DataSource == BkData {
-			allConditions, err := q.Conditions.AnalysisConditions()
-			if err != nil {
-				return nil, err
+			allConditions, bkDataErr := q.Conditions.AnalysisConditions()
+			if bkDataErr != nil {
+				err = bkDataErr
+				return nil, bkDataErr
+			}
+
+			route, bkDataErr := MakeRouteFromTableID(q.TableID)
+			if bkDataErr != nil {
+				err = bkDataErr
+				return nil, bkDataErr
 			}
 
 			qry := &metadata.Query{
-				StorageID:      consul.BkSqlStorageType,
-				DB:             string(q.TableID),
-				Measurement:    string(q.TableID),
+				StorageType:    consul.BkSqlStorageType,
+				DB:             route.DB(),
+				Measurement:    route.Measurement(),
 				Field:          q.FieldName,
 				Aggregates:     aggregates,
 				BkSqlCondition: allConditions.BkSql(),
@@ -548,6 +561,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-vm-rt", vmRt)
 	span.Set("tsdb-db", db)
 	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
+	span.Set("tsdb-time-field", tsDB.TimeField)
+	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -558,7 +573,6 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	if len(queryConditions) > 0 {
-
 		// influxdb 查询特殊处理逻辑
 		influxdbConditions := ConvertToPromBuffer(queryConditions)
 		if len(influxdbConditions) > 0 {
@@ -702,6 +716,11 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageID = storageID
 	}
 
+	// 判断 rt 是否是 bkdata 的数据源
+	if tsDB.SourceType == BkData {
+		query.StorageType = consul.ElasticsearchStorageType
+	}
+
 	query.TableID = tsDB.TableID
 	query.ClusterName = clusterName
 	query.TagsKey = tagKeys
@@ -713,6 +732,9 @@ func (q *Query) BuildMetadataQuery(
 	query.Timezone = timezone
 	query.Fields = fields
 	query.Measurements = measurements
+	query.TimeField = tsDB.TimeField
+	query.NeedAddTime = tsDB.NeedAddTime
+	query.SourceType = tsDB.SourceType
 
 	query.Condition = whereList.String()
 	query.VmCondition, query.VmConditionNum = allCondition.VMString(vmRt, vmMetric, q.IsRegexp)
@@ -769,6 +791,7 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("query-cluster-name", query.ClusterName)
 	span.Set("query-tag-keys", query.TagsKey)
 	span.Set("query-vm-rt", query.VmRt)
+	span.Set("query-need-add-time", query.NeedAddTime)
 
 	return query, nil
 }
@@ -794,7 +817,14 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 			// 是否需要忽略时间聚合函数
 			if q.IsDomSampled {
 				if q.AggregateMethodList != nil {
-					q.TimeAggregation = TimeAggregation{}
+					// 由于表达式经过存储引擎的时间聚合（就是存储引擎已经计算过一次了），所以二次计算需要把计算移除，例如：sum(count_over_time(metric[1d])) => metric
+					// 移除该计算会导致计算周期消失，导致开始时间不会根据计算周期来进行扩展，这里解决方案有两种：
+					// 1. 使用 last_over_time 代替原时间聚合 函数，sum(count_over_time(metric[1d])) => last_over_time(metric[1d])，以扩展时间区间；
+					// 2. 通过 window 更改 start 的时间，把开始时间往左边扩展一个计算周期，以满足计算范围，因为涉及到多指标，还需要遍历多指标之后，取最大的聚合时间，已知影响是：
+					//	  1. 最终计算结果会导致多出一个起始点；
+					//    2. 因为多指标共用一个最大的计算周期，会增加较小计算周期的数据量，例如：sum(count_over_time(metric[1d]))  + sum(count_over_time(metric[1m]))，都会使用 1d 来计算；
+					// 这里选用方案一，使用 last_over_time 来扩展计算周期，如果因为增加 last_over_time 函数可能会引起的未知问题，需要考虑方案二；
+					q.TimeAggregation.Function = LastOT
 					q.AggregateMethodList = q.AggregateMethodList[1:]
 				}
 			}

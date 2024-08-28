@@ -15,14 +15,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/objectsref"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -85,8 +87,11 @@ func (c *Operator) checkDataIdRoute() []checkDataId {
 }
 
 // CheckScrapeRoute 查看拉取指标信息
-func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.scrapeAll())
+func (c *Operator) CheckScrapeRoute(w http.ResponseWriter, r *http.Request) {
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+
+	writeResponse(w, c.scrapeAll(i))
 }
 
 // CheckScrapeNamespaceMonitorRoute 根据命名空间查看拉取指标信息
@@ -103,7 +108,9 @@ func (c *Operator) CheckScrapeNamespaceMonitorRoute(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ch := c.scrapeForce(namespace, monitor)
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
+	ch := c.scrapeForce(namespace, monitor, i)
 	const batch = 1000
 	n := 0
 	for line := range ch {
@@ -122,22 +129,12 @@ func (c *Operator) CheckDataIdRoute(w http.ResponseWriter, _ *http.Request) {
 	writeResponse(w, c.checkDataIdRoute())
 }
 
-func (c *Operator) checkActiveDiscoverRoute() []define.MonitorMeta {
-	var ret []define.MonitorMeta
-	c.discoversMut.Lock()
-	for _, dis := range c.discovers {
-		ret = append(ret, dis.MonitorMeta())
-	}
-	c.discoversMut.Unlock()
-	return ret
-}
-
 func (c *Operator) CheckActiveDiscoverRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.checkActiveDiscoverRoute())
+	writeResponse(w, c.getAllDiscover())
 }
 
 func (c *Operator) CheckActiveChildConfigRoute(w http.ResponseWriter, _ *http.Request) {
-	writeResponse(w, c.recorder.getActiveConfigFile())
+	writeResponse(w, c.recorder.getActiveConfigFiles())
 }
 
 func (c *Operator) CheckActiveSharedDiscoveryRoute(w http.ResponseWriter, _ *http.Request) {
@@ -174,7 +171,7 @@ const (
 	formatCheckDataIDFailedMsg = `
 [x] check dataids
 - Description: 期待 dataids 数量应大于等于 3 个，目前发现 %d 个
-- Suggestion: dataid 是由 metadata 组件注入，请确定接入流程是否规范。同时检查 metadata 日志，确定是否出现异常（必要时携带日志联系开发或者运维同学）
+- Suggestion: dataid 由 metadata 组件注入，请确定接入流程是否规范。同时检查 metadata 日志，确定是否出现异常。
   * operator 从启动到监听 dataids 资源可能存在约 20s 的延迟
   * 监控后台为传统部署，日志路径为 /data/bkee/logs/bkmonitorv3/kernel_metadata.log
   * 监控后台为容器部署，请查看 bkmonitor-alarm-cron-worker pod 的日志
@@ -192,7 +189,7 @@ const (
 [√] check namespaces
 - Description: 监测 namespace 白名单列表 %v，namespace 黑名单列表 %v
 - Suggestion: 请检查所需监控资源是否位于监测命名空间列表下，黑名单只在白名单列表为空时生效
-  * 如若发现所需命名空间没有在监测列表中，请修改 values.yaml 中的 denyTargetNamespaces 或者 targetNamespaces，并 'helm upgrade' 到集群中
+  * 如若发现所需命名空间没有在监测列表中，请修改 values.yaml 中的 denyTargetNamespaces 或者 targetNamespaces，并更新到集群中
 `
 	formatCheckNamespaceFailedMsg = `
 [x] check namespaces
@@ -217,7 +214,8 @@ const (
 	formatScrapeMsg = `
 [√] check scrape stats
 - Description: 总共发现 %d 个 monitor 资源，抓取数据行数为 %d，采集共出现 %d 次错误，更新时间 %s
-- Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。部分指标会有黑白名单机制，此抓取数据不做任何过滤
+- Suggestion: 错误可能由 forwardLocal 导致（可忽略），可过滤 'scrape error' 关键字查看详细错误信息。
+* 部分指标会有黑白名单机制，此抓取数据不做任何过滤。
 * TOP%d 数据量如下，详细情况可访问 /check/scrape 路由。%s
 %s
 `
@@ -248,19 +246,17 @@ const (
 `
 	formatOperatorLogMsg = `
 [o] bkmonitor-operator logs
-- Description: 使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息
-- Suggestion: 检查 ERROR 日志是否有明显的报错信息，必要时携带日志联系开发或者运维同学
+- Description: 使用 'kubectl logs -n ${.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息。
 `
 	formatBkmonitorbeatTroubleshootingMsg = `
 [o] bkmonitorbeat troubleshooting
 - Description: 如若上述检查无发现异常问题，则考虑排查 bkmonitorbeat 本身的采集是否出现异常
-- Suggestion: 使用 strace 命令抓取 bkmonitorbeat write syscall 数据
-  1）根据上述检查得到采集任务所在节点，并使用 'kubectl get pods -n ${.Release.Namespace} -owide' 确定对应的 bkmonitorbeat pod
-  2）使用 'kubectl logs -n ${.Release.Namespace} ${bkm-operator-pod}' 查看是否有 ERROR 信息
-  3）使用 'kubectl exec it -n ${.Release.Namespace} ${bkmonitorbeat-pod}' 命令查看 bkmonitorbeat 所在进程 pid
-  4）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/bkmonitorbeat.strace' 等待一分钟导出 strace 数据
-  5）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说明 bkmonitorbeat 本身没问题，需要排查链路问题
-  6）链路排查可按照二进制部署排查思路 kafka -> transfer -> influxdb-proxy -> influxdb（必要时携带日志联系开发或者运维同学）
+- Suggestion: 优先检查采集器日志是否有异常，采集器会在每次采集记录日志流水
+  1）根据上述检查得到采集任务所在节点，并使用 'kubectl get pods -n ${.Namespace} -owide' 确定对应的采集器 pod
+  2）使用 'kubectl exec it -n ${.Namespace} ${worker-pod}' 命令查看 bkmonitorbeat 所在进程 pid
+  3）使用 'kubectl exec' 执行 'strace -p ${pid} -s 1024000 -f -e write 2>&1 > /tmp/strace' 等待一分钟导出 strace 数据
+  4）过滤 *.strace 文件查看是否有采集任务指标对应的关键字，判断数据是否有写入到 gse sockets，如若有写到 gse 则说采集工作正常，需要排查链路问题
+  5）链路排查可按照二进制部署排查思路 kafka -> transfer -> influxdb-proxy -> influxdb
 `
 )
 
@@ -283,10 +279,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	var b []byte
 
 	// 检查 kubernetes 版本信息
-	if objectsref.KubernetesServerVersion == "" {
+	if kubernetesVersion == "" {
 		buf.WriteString(formatKubernetesVersionFailedMsg)
 	} else {
-		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, objectsref.KubernetesServerVersion))
+		buf.WriteString(fmt.Sprintf(formatKubernetesVersionSuccessMsg, kubernetesVersion))
 	}
 
 	// 检查 bkmonitor-operator 版本信息
@@ -338,18 +334,20 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString(fmt.Sprintf(formatWorkloadMsg, workloadUpdated.Format(time.RFC3339), string(b)))
 
 	// 检查 Endpoint 数量
-	counts := c.recorder.getMonitorActiveConfigCount()
-	b, _ = json.MarshalIndent(counts, "", "  ")
+	endpoints := c.recorder.getActiveEndpoints()
+	b, _ = json.MarshalIndent(endpoints, "", "  ")
 	var total int
-	for _, v := range counts {
+	for _, v := range endpoints {
 		total += v
 	}
 	buf.WriteString(fmt.Sprintf(formatMonitorEndpointMsg, total, string(b)))
 
 	// 检查采集指标数据量
 	onScrape := r.URL.Query().Get("scrape")
+	worker := r.URL.Query().Get("workers")
+	i, _ := strconv.Atoi(worker)
 	if onScrape == "true" {
-		stats := c.scrapeAll()
+		stats := c.scrapeAll(i)
 		n = 5
 		if n > stats.MonitorCount {
 			n = stats.MonitorCount
@@ -387,7 +385,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		monitorResourcesContent, _ := json.MarshalIndent(monitorResources, "", "  ")
 
 		var childConfigs []ConfigFileRecord
-		for _, cf := range c.recorder.getActiveConfigFile() {
+		for _, cf := range c.recorder.getActiveConfigFiles() {
 			if strings.Contains(cf.Service, monitorKeyword) {
 				childConfigs = append(childConfigs, cf)
 			}
@@ -468,17 +466,52 @@ func (c *Operator) WorkloadRoute(w http.ResponseWriter, _ *http.Request) {
 func (c *Operator) WorkloadNodeRoute(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeName := vars["node"]
-	writeResponse(w, c.objectsController.WorkloadsRelabelConfigsByNodeName(nodeName))
+
+	query := r.URL.Query()
+	podName := query.Get("podName")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	var configs []objectsref.RelabelConfig
+	configs = append(configs, c.objectsController.WorkloadsRelabelConfigsByPodName(nodeName, podName, annotations, labels)...)
+
+	// kind/rules 是为了让 workload 同时能够支持其他 labeljoin 等其他规则
+	kind := query.Get("kind")
+	rules := query.Get("rules")
+	if rules == "labeljoin" {
+		switch kind {
+		case "Pod":
+			configs = append(configs, c.objectsController.PodsRelabelConfigs(annotations, labels)...)
+		}
+	}
+
+	writeResponse(w, configs)
+}
+
+func (c *Operator) LabelJoinRoute(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	kind := query.Get("kind")
+	annotations := utils.SplitTrim(query.Get("annotations"), ",")
+	labels := utils.SplitTrim(query.Get("labels"), ",")
+
+	switch kind {
+	case "Pod":
+		writeResponse(w, c.objectsController.PodsRelabelConfigs(annotations, labels))
+	default:
+		writeResponse(w, nil)
+	}
 }
 
 func (c *Operator) RelationMetricsRoute(w http.ResponseWriter, _ *http.Request) {
-	var lines []byte
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetNodeRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetServieRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetPodRelations())...)
-	lines = append(lines, objectsref.RelationToPromFormat(c.objectsController.GetReplicasetRelations())...)
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
 
-	w.Write(lines)
+	c.objectsController.GetNodeRelations(buf)
+	c.objectsController.GetServiceRelations(buf)
+	c.objectsController.GetPodRelations(buf)
+	c.objectsController.GetReplicasetRelations(buf)
+
+	w.Write(buf.Bytes())
 }
 
 func (c *Operator) RuleMetricsRoute(w http.ResponseWriter, _ *http.Request) {
@@ -508,11 +541,11 @@ func (c *Operator) IndexRoute(w http.ResponseWriter, _ *http.Request) {
 
 # Check Routes
 --------------
-* GET /check?monitor=${monitor}&scrape=true|false
+* GET /check?monitor=${monitor}&scrape=true|false&workers=N
 * GET /check/dataid
-* GET /check/scrape
-* GET /check/scrape/{namespace}
-* GET /check/scrape/{namespace}/{monitor}
+* GET /check/scrape?workers=N
+* GET /check/scrape/{namespace}?workers=N
+* GET /check/scrape/{namespace}/{monitor}?workers=N
 * GET /check/namespace
 * GET /check/monitor_blacklist
 * GET /check/active_discover
@@ -547,6 +580,7 @@ func (c *Operator) ListenAndServe() error {
 	router.HandleFunc("/cluster_info", c.ClusterInfoRoute)
 	router.HandleFunc("/workload", c.WorkloadRoute)
 	router.HandleFunc("/workload/node/{node}", c.WorkloadNodeRoute)
+	router.HandleFunc("/labeljoin", c.LabelJoinRoute)
 	router.HandleFunc("/relation/metrics", c.RelationMetricsRoute)
 	router.HandleFunc("/rule/metrics", c.RuleMetricsRoute)
 

@@ -10,16 +10,10 @@
 package schedulerfactory
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
-)
-
-// Errors
-var (
-	ErrSchedulerTypeNotFound = errors.New("scheduler type not found")
 )
 
 type schedulerNew func(define.Beater, define.Config) define.Scheduler

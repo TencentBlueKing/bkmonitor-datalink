@@ -31,8 +31,9 @@ const (
 	FieldValue = "_value"
 	FieldTime  = "_time"
 
-	Timestamp  = "dtEventTimeStamp"
-	TimeFormat = "epoch_millis"
+	DefaultTimeFieldName = "dtEventTimeStamp"
+	DefaultTimeFieldType = TimeFieldTypeTime
+	DefaultTimeFieldUnit = Millisecond
 
 	Type       = "type"
 	Properties = "properties"
@@ -57,6 +58,23 @@ const (
 	Integer = "integer"
 	Long    = "long"
 	Date    = "date"
+)
+
+const (
+	TimeFieldTypeTime = "date"
+	TimeFieldTypeInt  = "long"
+)
+
+const (
+	Second      = "second"
+	Millisecond = "millisecond"
+	Microsecond = "microsecond"
+	Nanosecond  = "nanosecond"
+
+	EpochSecond       = "epoch_second"
+	EpochMillis       = "epoch_millis"
+	EpochMicroseconds = "epoch_microseconds"
+	EpochNanoseconds  = "epoch_nanoseconds"
 )
 
 type TimeSeriesResult struct {
@@ -126,10 +144,13 @@ type aggInfoList []any
 type FormatFactory struct {
 	ctx context.Context
 
-	valueKey string
+	valueField string
+	timeField  metadata.TimeField
 
 	toEs   func(k string) string
 	toProm func(k string) string
+
+	timeFormat func(i int64) int64
 
 	mapping map[string]string
 	data    map[string]any
@@ -143,6 +164,8 @@ type FormatFactory struct {
 
 	start int64
 	end   int64
+
+	isReference bool
 }
 
 func NewFormatFactory(ctx context.Context) *FormatFactory {
@@ -155,13 +178,50 @@ func NewFormatFactory(ctx context.Context) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, start, end int64, timezone string, from, size int) *FormatFactory {
-	f.valueKey = valueKey
+func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
+	f.isReference = isReference
+	return f
+}
+
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
+	if timeField.Name == "" {
+		timeField.Name = DefaultTimeFieldName
+	}
+	if timeField.Type == "" {
+		timeField.Type = DefaultTimeFieldType
+	}
+	if timeField.Unit == "" {
+		timeField.Unit = DefaultTimeFieldUnit
+	}
+
+	timeField.UnitRate = int64(1)
+	switch timeField.Unit {
+	case Millisecond:
+		timeField.UnitRate = 1e3
+	case Microsecond:
+		timeField.UnitRate = 1e6
+	case Nanosecond:
+		timeField.UnitRate = 1e9
+	default:
+		timeField.UnitRate = 1
+	}
+
+	// 如果是 long 类型的话，需要转换为毫秒格式
+	if timeField.Type == TimeFieldTypeInt {
+		f.timeFormat = func(i int64) int64 {
+			return i / timeField.UnitRate * 1e3
+		}
+	}
+
+	// 根据时间单位把考试时间和结束实践转换为对应值
 	f.start = start
 	f.end = end
-	f.timezone = timezone
+
+	f.valueField = valueKey
+	f.timeField = timeField
 	f.from = from
 	f.size = size
+
 	return f
 }
 
@@ -176,9 +236,30 @@ func (f *FormatFactory) WithOrders(orders map[string]bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithMapping(mapping map[string]any) *FormatFactory {
-	mapProperties("", mapping, f.mapping)
+// WithMappings 合并 mapping，后面的合并前面的
+func (f *FormatFactory) WithMappings(mappings ...map[string]any) *FormatFactory {
+	for _, mapping := range mappings {
+		mapProperties("", mapping, f.mapping)
+	}
 	return f
+}
+
+func (f *FormatFactory) RangeQuery() (elastic.Query, error) {
+	var err error
+	fieldName := f.timeField.Name
+	fieldType := f.timeField.Type
+	unitRate := f.timeField.UnitRate
+
+	var query elastic.Query
+	switch fieldType {
+	case TimeFieldTypeInt:
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start * unitRate).Lt(f.end * unitRate)
+	case TimeFieldTypeTime:
+		query = elastic.NewRangeQuery(fieldName).Gte(f.start).Lt(f.end).Format(EpochSecond)
+	default:
+		err = fmt.Errorf("time field type is error %s", fieldType)
+	}
+	return query, err
 }
 
 func (f *FormatFactory) timeAgg(name string, window, timezone string) {
@@ -241,12 +322,24 @@ func (f *FormatFactory) nestedAgg(key string) {
 	return
 }
 
+// AggDataFormat 解析 es 的聚合计算
 func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
+	if data == nil {
+		return nil, nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf(f.ctx, fmt.Sprintf("agg data format %v", r))
+		}
+	}()
+
 	af := &aggFormat{
 		aggInfoList: f.aggInfoList,
 		items:       make(items, 0),
 		toEs:        f.toEs,
 		toProm:      f.toProm,
+		timeFormat:  f.timeFormat,
 	}
 
 	af.get()
@@ -282,13 +375,8 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 			}
 		}
 
-		// 移除空算的点
-		if tsLabels == nil && im.timestamp == 0 && im.value == 0 {
-			continue
-		}
-
 		if im.timestamp == 0 {
-			im.timestamp = f.start
+			im.timestamp = f.start * 1e3
 		}
 
 		timeSeriesMap[seriesKey].Labels = tsLabels
@@ -319,7 +407,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			switch info.FuncType {
 			case Min:
 				curName := FieldValue
-				curAgg := elastic.NewMinAggregation().Field(f.valueKey)
+				curAgg := elastic.NewMinAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -328,7 +416,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Max:
 				curName := FieldValue
-				curAgg := elastic.NewMaxAggregation().Field(f.valueKey)
+				curAgg := elastic.NewMaxAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -337,7 +425,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Avg:
 				curName := FieldValue
-				curAgg := elastic.NewAvgAggregation().Field(f.valueKey)
+				curAgg := elastic.NewAvgAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -346,7 +434,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Sum:
 				curName := FieldValue
-				curAgg := elastic.NewSumAggregation().Field(f.valueKey)
+				curAgg := elastic.NewSumAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -355,7 +443,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Count:
 				curName := FieldValue
-				curAgg := elastic.NewValueCountAggregation().Field(f.valueKey)
+				curAgg := elastic.NewValueCountAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -364,7 +452,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				name = curName
 			case Cardinality:
 				curName := FieldValue
-				curAgg := elastic.NewCardinalityAggregation().Field(f.valueKey)
+				curAgg := elastic.NewCardinalityAggregation().Field(f.valueField)
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
 				}
@@ -390,7 +478,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 					percents = append(percents, percent)
 				}
 
-				curAgg := elastic.NewPercentilesAggregation().Field(f.valueKey).Percentiles(percents...)
+				curAgg := elastic.NewPercentilesAggregation().Field(f.valueField).Percentiles(percents...)
 				curName := FieldValue
 				if agg != nil {
 					curAgg = curAgg.SubAggregation(name, agg)
@@ -404,9 +492,14 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			}
 		case TimeAgg:
 			curName := info.Name
+
 			curAgg := elastic.NewDateHistogramAggregation().
-				Field(Timestamp).FixedInterval(info.Window).TimeZone(info.Timezone).
-				MinDocCount(0).ExtendedBounds(f.start, f.end)
+				Field(f.timeField.Name).FixedInterval(info.Window).MinDocCount(0).
+				ExtendedBounds(f.start*f.timeField.UnitRate, f.end*f.timeField.UnitRate)
+			// https://github.com/elastic/elasticsearch/issues/42270 非date类型不支持timezone, time format也无效
+			if f.timeField.Type == TimeFieldTypeTime {
+				curAgg = curAgg.TimeZone(info.Timezone)
+			}
 			if agg != nil {
 				curAgg = curAgg.SubAggregation(name, agg)
 			}
@@ -446,14 +539,14 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 	for _, am := range aggregates {
 		switch am.Name {
 		case DateHistogram:
-			f.timeAgg(Timestamp, shortDur(am.Window), f.timezone)
+			f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
 		case Max, Min, Avg, Sum, Count, Cardinality, Percentiles:
 			f.valueAgg(FieldValue, am.Name, am.Args...)
-			f.nestedAgg(f.valueKey)
+			f.nestedAgg(f.valueField)
 
 			if am.Window > 0 && !am.Without {
 				// 增加时间函数
-				f.timeAgg(Timestamp, shortDur(am.Window), am.TimeZone)
+				f.timeAgg(f.timeField.Name, shortDur(am.Window), am.TimeZone)
 			}
 
 			for idx, dim := range am.Dimensions {
@@ -478,9 +571,9 @@ func (f *FormatFactory) Order() map[string]bool {
 	order := make(map[string]bool)
 	for name, asc := range f.orders {
 		if name == FieldValue {
-			name = f.valueKey
+			name = f.valueField
 		} else if name == FieldTime {
-			name = Timestamp
+			name = f.timeField.Name
 		}
 
 		if _, ok := f.mapping[name]; ok {
@@ -593,7 +686,13 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 
 		sample = prompb.Sample{}
 	)
-	if value, ok = f.data[f.valueKey]; ok {
+
+	// 如果是非 prom 计算场景，则提前退出
+	if f.isReference {
+		return sample, nil
+	}
+
+	if value, ok = f.data[f.valueField]; ok {
 		switch value.(type) {
 		case float64:
 			sample.Value = value.(float64)
@@ -607,25 +706,32 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 				return sample, err
 			}
 		default:
-			return sample, fmt.Errorf("value key %s type is error: %T, %v", f.valueKey, value, value)
+			return sample, fmt.Errorf("value key %s type is error: %T, %v", f.valueField, value, value)
 		}
 	} else {
 		sample.Value = 0
 	}
 
-	if timestamp, ok = f.data[Timestamp]; ok {
+	if timestamp, ok = f.data[f.timeField.Name]; ok {
+		fact := 1e3 / f.timeField.UnitRate
 		switch timestamp.(type) {
 		case int64:
-			sample.Timestamp = timestamp.(int64) * 1e3
+			sample.Timestamp = timestamp.(int64) * fact
 		case int:
-			sample.Timestamp = int64(timestamp.(int) * 1e3)
+			sample.Timestamp = int64(timestamp.(int)) * fact
+		case float64:
+			sample.Timestamp = int64(timestamp.(float64)) * fact
 		case string:
-			sample.Timestamp, err = strconv.ParseInt(timestamp.(string), 10, 64)
+			v, parseErr := strconv.ParseInt(timestamp.(string), 10, 64)
+			if parseErr != nil {
+				return sample, parseErr
+			}
+			sample.Timestamp = v * fact
 		default:
 			return sample, fmt.Errorf("timestamp key type is error: %T, %v", timestamp, timestamp)
 		}
 	} else {
-		return sample, fmt.Errorf("timestamp is empty %s", Timestamp)
+		return sample, fmt.Errorf("timestamp is empty %s", f.timeField.Name)
 	}
 
 	return sample, nil
@@ -634,11 +740,14 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	lbl := make([]string, 0)
 	for k := range f.data {
-		if k == f.valueKey {
-			continue
-		}
-		if k == Timestamp {
-			continue
+		// 只有 promEngine 查询的场景需要跳过该字段
+		if !f.isReference {
+			if k == f.valueField {
+				continue
+			}
+			if k == f.timeField.Name {
+				continue
+			}
 		}
 
 		lbl = append(lbl, k)
@@ -653,6 +762,11 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 	for _, k := range lbl {
 		var value string
 		d := f.data[k]
+
+		if d == nil {
+			continue
+		}
+
 		switch d.(type) {
 		case string:
 			value = fmt.Sprintf("%s", d)

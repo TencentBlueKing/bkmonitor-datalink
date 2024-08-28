@@ -58,6 +58,147 @@ func TestSpacePusher_getMeasurementType(t *testing.T) {
 	}
 }
 
+func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
+	// 初始化测试数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 创建一个真实的SpaceResource数据
+	resourceId := "monitor"
+	dimensionValues := `[{"cluster_id": "BCS-K8S-00000", "namespace": null, "cluster_type": "single"},
+                          {"cluster_id": "BCS-K8S-00001", "namespace": ["bkm-test-4"], "cluster_type": "shared"},
+                          {"cluster_id": "BCS-K8S-00002", "namespace": ["bkm-test-1", "bkm-test-2", "bkm-test-3"], "cluster_type": "shared"},
+                          {"cluster_id": "BCS-K8S-00003", "namespace": [], "cluster_type": "shared"}]`
+	spaceResource := space.SpaceResource{
+		Id:              207,
+		SpaceTypeId:     models.SpaceTypeBKCI,
+		SpaceId:         "monitor",
+		ResourceType:    "bcs",
+		ResourceId:      &resourceId,
+		DimensionValues: dimensionValues,
+	}
+	db.Delete(&spaceResource)
+	err := db.Create(&spaceResource).Error
+	assert.NoError(t, err)
+
+	// 创建 BCSClusterInfo 数据
+	clusterInfos := []bcs.BCSClusterInfo{
+		{
+			ClusterID:          "BCS-K8S-00000",
+			K8sMetricDataID:    1001,
+			CustomMetricDataID: 2001,
+		},
+		{
+			ClusterID:          "BCS-K8S-00001",
+			K8sMetricDataID:    1002,
+			CustomMetricDataID: 2002,
+		},
+		{
+			ClusterID:          "BCS-K8S-00002",
+			K8sMetricDataID:    1003,
+			CustomMetricDataID: 2003,
+		},
+		{
+			ClusterID:          "BCS-K8S-00003",
+			K8sMetricDataID:    1004,
+			CustomMetricDataID: 2004,
+		},
+	}
+	db.Delete(&bcs.BCSClusterInfo{})
+	for _, ci := range clusterInfos {
+		err = db.Create(&ci).Error
+		assert.NoError(t, err)
+	}
+
+	// 创建 DataSourceResultTable 数据
+	dataSourceResultTables := []resulttable.DataSourceResultTable{
+		{
+			BkDataId: 1001,
+			TableId:  "table1",
+		},
+		{
+			BkDataId: 2001,
+			TableId:  "table2",
+		},
+		{
+			BkDataId: 1002,
+			TableId:  "table3",
+		},
+		{
+			BkDataId: 2002,
+			TableId:  "table4",
+		},
+		{
+			BkDataId: 1003,
+			TableId:  "table5",
+		},
+		{
+			BkDataId: 2003,
+			TableId:  "table6",
+		},
+		{
+			BkDataId: 1004,
+			TableId:  "table7",
+		},
+		{
+			BkDataId: 2004,
+			TableId:  "table8",
+		},
+	}
+	db.Delete(&resulttable.DataSourceResultTable{})
+	for _, dsrt := range dataSourceResultTables {
+		err = db.Create(&dsrt).Error
+		assert.NoError(t, err)
+	}
+
+	// 执行被测试的方法
+	spacePusher := NewSpacePusher()
+	result, err := spacePusher.composeBcsSpaceClusterTableIds("bkci", "monitor")
+	assert.NoError(t, err)
+
+	// 输出调试信息
+	fmt.Printf("Result: %+v\n", result)
+
+	expectedResults := map[string]map[string]interface{}{
+		"table1": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
+			},
+		},
+		"table2": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
+			},
+		},
+		"table3": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
+			},
+		},
+		"table4": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
+			},
+		},
+		"table5": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
+			},
+		},
+		"table6": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
+			},
+		},
+	}
+
+	assert.Equal(t, expectedResults, result)
+}
+
 func TestSpacePusher_refineTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -104,22 +245,6 @@ func TestSpacePusher_refineEsTableIds(t *testing.T) {
 
 	ids, err := NewSpacePusher().refineTableIds([]string{itableName, itableName1, notExistTable})
 	assert.ElementsMatch(t, []string{itableName, itableName1}, ids)
-}
-
-func TestDbfieldIsNull(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	db := mysql.GetDBSession().DB
-
-	var esStorage storage.ESStorage
-	storage.NewESStorageQuerySet(db).
-		Select(storage.ESStorageDBSchema.TableID, storage.ESStorageDBSchema.StorageClusterID, storage.ESStorageDBSchema.SourceType, storage.ESStorageDBSchema.IndexSet).
-		TableIDEq("system.net").One(&esStorage)
-
-	s := &SpacePusher{}
-	t.Run("TestDbfieldIsNull", func(t *testing.T) {
-		_, detailStr, _ := s.composeEsTableIdDetail("system.net", 3, "log", esStorage.IndexSet)
-		assert.Equal(t, `{"storage_id": 3,"db":"system_net_*_read","measurement": "__default__"}`, detailStr)
-	})
 }
 
 func TestSpacePusher_GetBizIdBySpace(t *testing.T) {
@@ -195,30 +320,6 @@ func TestSpacePusher_ComposeEsTableIds(t *testing.T) {
 		t.Run(tt.spaceType+tt.spaceId, func(t *testing.T) {
 			datavalues, _ := s.ComposeEsTableIds(tt.spaceType, tt.spaceId)
 			assert.Equal(t, tt.want, datavalues)
-		})
-	}
-}
-
-func TestSpacePusher_composeEsTableIdDetail(t *testing.T) {
-	tests := []struct {
-		tableId          string
-		storageClusterId uint
-		sourceType       string
-		indexSet         string
-		want             string
-	}{
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index_1_*_read,index_2_*_read,index_3_*_read","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "log", indexSet: "", want: `{"storage_id": 3,"db":"apache_net_*_read","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "bkdata", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1_*,index.2_*,index.3_*","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "es", indexSet: "index.1,index.2,index.3", want: `{"storage_id": 3,"db":"index.1,index.2,index.3","measurement": "__default__"}`},
-		{tableId: "apache.net", storageClusterId: 3, sourceType: "es1234", indexSet: "index.1,index.2,index.3", want: ""},
-	}
-
-	s := &SpacePusher{}
-	for _, tt := range tests {
-		t.Run(tt.tableId+tt.sourceType, func(t *testing.T) {
-			_, detailStr, _ := s.composeEsTableIdDetail(tt.tableId, tt.storageClusterId, tt.sourceType, tt.indexSet)
-			assert.Equal(t, tt.want, detailStr)
 		})
 	}
 }
@@ -437,38 +538,6 @@ func TestSpaceRedisSvc_getCachedClusterDataIdList(t *testing.T) {
 	assert.Equal(t, []uint{100001, 100002}, dataList.([]uint))
 }
 
-func TestComposeEsTableIdDetail(t *testing.T) {
-	defaultStorageClusterId := 1
-	sourceType := "es"
-	indexSet := "system"
-	tests := []struct {
-		name            string
-		tableId         string
-		expectedTableId string
-	}{
-		{"table_id_with_dot", "test.demo", "test.demo"},
-		{"table_id_without_dot", "test_demo", "test_demo.__default__"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actualTableId, _, _ := NewSpacePusher().composeEsTableIdDetail(tt.tableId, uint(defaultStorageClusterId), sourceType, indexSet)
-			assert.Equal(t, tt.expectedTableId, actualTableId)
-		})
-	}
-
-	// 检验 key
-	_, detailStr, _ := NewSpacePusher().composeEsTableIdDetail("test.demo", uint(defaultStorageClusterId), sourceType, indexSet)
-	var detail map[string]any
-	err := jsonx.UnmarshalString(detailStr, &detail)
-	assert.NoError(t, err)
-	expectedKey := mapset.NewSet[string]("storage_id", "db", "measurement")
-	actualKey := mapset.NewSet[string]()
-	for key, _ := range detail {
-		actualKey.Add(key)
-	}
-	assert.True(t, expectedKey.Equal(actualKey))
-}
-
 func TestGetDataLabelByTableId(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	// 初始数据
@@ -657,4 +726,46 @@ func TestClearRtDetail(t *testing.T) {
 
 	assert.Equal(t, 1, len(redisClient.HKeysValue))
 	assert.Equal(t, slicex.StringList2Set([]string{"demo.test1"}), slicex.StringList2Set(redisClient.HKeysValue))
+}
+
+func TestComposeEsTableIdOptions(t *testing.T) {
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	// 初始数据
+	db := mysql.GetDBSession().DB
+	// 创建rt
+	rt1, rt2, rt3 := "demo.test1", "demo.test2", "demo.test3"
+	rtObj1 := resulttable.ResultTable{TableId: rt1, IsDeleted: false, IsEnable: true}
+	rtObj2 := resulttable.ResultTable{TableId: rt2, IsDeleted: true, IsEnable: false}
+	rtObj3 := resulttable.ResultTable{TableId: rt3, IsDeleted: false, IsEnable: true}
+	db.Delete(rtObj1, "table_id=?", rtObj1.TableId)
+	db.Delete(rtObj2, "table_id=?", rtObj2.TableId)
+	db.Delete(rtObj3, "table_id=?", rtObj3.TableId)
+	assert.NoError(t, rtObj1.Create(db))
+	assert.NoError(t, rtObj2.Create(db))
+	assert.NoError(t, rtObj3.Create(db))
+	// 创建选项
+	op1, op2, op3 := "op1", "op2", "op3"
+	val1, val2, val3 := `{"name": "v1"}`, `{"name": "v2"}`, `{"name": "v3"}`
+	opVal1 := models.OptionBase{Value: val1, ValueType: "dict", Creator: "system"}
+	rtOp1 := resulttable.ResultTableOption{OptionBase: opVal1, TableID: rt1, Name: op1}
+	opVal2 := models.OptionBase{Value: val2, ValueType: "dict", Creator: "system"}
+	rtOp2 := resulttable.ResultTableOption{OptionBase: opVal2, TableID: rt2, Name: op2}
+	opVal3 := models.OptionBase{Value: val3, ValueType: "dict", Creator: "system"}
+	rtOp3 := resulttable.ResultTableOption{OptionBase: opVal3, TableID: rt3, Name: op3}
+	db.Delete(rtOp1, "table_id=? AND name=?", rtOp1.TableID, rtOp1.Name)
+	db.Delete(rtOp2, "table_id=? AND name=?", rtOp2.TableID, rtOp2.Name)
+	db.Delete(rtOp3, "table_id=? AND name=?", rtOp3.TableID, rtOp3.Name)
+	assert.NoError(t, rtOp1.Create(db))
+	assert.NoError(t, rtOp2.Create(db))
+	assert.NoError(t, rtOp3.Create(db))
+
+	// 获取正常数据
+	spacePusher := NewSpacePusher()
+	data := spacePusher.composeEsTableIdOptions([]string{rt1, rt2, rt3})
+	assert.Equal(t, 3, len(data))
+	assert.Equal(t, map[string]interface{}{"name": "v1"}, data[rt1][rtOp1.Name])
+
+	// 获取不存在的rt数据
+	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
+	assert.Equal(t, 0, len(data))
 }

@@ -95,7 +95,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 			ev.UTCTime = originEvent.UTCTime
 
 			ev.UserTime = time.Unix(ev.Timestamp, 0).UTC().Format(bkcommon.TimeFormat)
-			for aggKey, aggValue := range pe.AggreValue {
+			for aggKey, aggValue := range pe.AggValue {
 				ev.Metric[aggKey] = aggValue
 			}
 			if len(pe.Labels) > 0 {
@@ -163,7 +163,7 @@ func (g *Gather) KeepOneDimension(data map[int64]map[string]tasks.PromEvent) {
 			dimFieldNames = append(dimFieldNames, "") // 先占个空位
 
 			newAggValue := make(common.MapStr)
-			for aggKey, aggValue := range pe.AggreValue {
+			for aggKey, aggValue := range pe.AggValue {
 				dimFieldNames[dimensionNamesLen] = aggKey
 				hashKey := utils.GeneratorHashKey(dimFieldNames)
 				if !keySet.Has(hashKey) {
@@ -171,7 +171,7 @@ func (g *Gather) KeepOneDimension(data map[int64]map[string]tasks.PromEvent) {
 					newAggValue[aggKey] = aggValue
 				}
 			}
-			pe.AggreValue = newAggValue
+			pe.AggValue = newAggValue
 
 			// 如果该维度下的还有指标未被清理。则保留这个维度的数据
 			if len(newAggValue) > 0 {

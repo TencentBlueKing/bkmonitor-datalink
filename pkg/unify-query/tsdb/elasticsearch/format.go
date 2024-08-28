@@ -150,6 +150,8 @@ type FormatFactory struct {
 	toEs   func(k string) string
 	toProm func(k string) string
 
+	timeFormat func(i int64) int64
+
 	mapping map[string]string
 	data    map[string]any
 
@@ -204,6 +206,13 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 		timeField.UnitRate = 1
 	}
 
+	// 如果是 long 类型的话，需要转换为毫秒格式
+	if timeField.Type == TimeFieldTypeInt {
+		f.timeFormat = func(i int64) int64 {
+			return i / timeField.UnitRate * 1e3
+		}
+	}
+
 	// 根据时间单位把考试时间和结束实践转换为对应值
 	f.start = start
 	f.end = end
@@ -212,6 +221,7 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	f.timeField = timeField
 	f.from = from
 	f.size = size
+
 	return f
 }
 
@@ -329,6 +339,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 		items:       make(items, 0),
 		toEs:        f.toEs,
 		toProm:      f.toProm,
+		timeFormat:  f.timeFormat,
 	}
 
 	af.get()
@@ -702,13 +713,20 @@ func (f *FormatFactory) Sample() (prompb.Sample, error) {
 	}
 
 	if timestamp, ok = f.data[f.timeField.Name]; ok {
+		fact := 1e3 / f.timeField.UnitRate
 		switch timestamp.(type) {
 		case int64:
-			sample.Timestamp = timestamp.(int64) * 1e3
+			sample.Timestamp = timestamp.(int64) * fact
 		case int:
-			sample.Timestamp = int64(timestamp.(int) * 1e3)
+			sample.Timestamp = int64(timestamp.(int)) * fact
+		case float64:
+			sample.Timestamp = int64(timestamp.(float64)) * fact
 		case string:
-			sample.Timestamp, err = strconv.ParseInt(timestamp.(string), 10, 64)
+			v, parseErr := strconv.ParseInt(timestamp.(string), 10, 64)
+			if parseErr != nil {
+				return sample, parseErr
+			}
+			sample.Timestamp = v * fact
 		default:
 			return sample, fmt.Errorf("timestamp key type is error: %T, %v", timestamp, timestamp)
 		}

@@ -21,8 +21,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var (
@@ -44,19 +44,8 @@ func mockClient() *Client {
 		token = viper.GetString("mock.bk_sql.token")
 
 		client = &Client{
-			Address:                    address,
-			BkdataAuthenticationMethod: "token",
-			BkUsername:                 BkUserName,
-			BkAppCode:                  code,
-			PreferStorage:              TSpider,
-			BkdataDataToken:            token,
-			BkAppSecret:                secret,
-			Timeout:                    time.Second * 30,
-			Log:                        log.DefaultLogger,
-			ContentType:                "application/json",
-			Curl: &curl.HttpCurl{
-				Log: log.DefaultLogger,
-			},
+			url:  address,
+			curl: &curl.HttpCurl{Log: log.DefaultLogger},
 		}
 	})
 	return client
@@ -68,7 +57,7 @@ func TestClient_QuerySync(t *testing.T) {
 	mock.Init()
 	mockClient()
 
-	ctx, span := trace.NewSpan(ctx, "test_client")
+	ctx = metadata.InitHashID(ctx)
 
 	end := time.Now()
 	start := end.Add(time.Minute * -5)
@@ -80,97 +69,11 @@ func TestClient_QuerySync(t *testing.T) {
 			start.UnixMilli(),
 			end.UnixMilli(),
 		),
-		span,
+		nil,
 	)
 
 	assert.Equal(t, StatusOK, res.Code)
 	d, ok := res.Data.(*QuerySyncResultData)
-	assert.True(t, ok)
-
-	if d != nil {
-		assert.NotEmpty(t, d.List)
-		log.Infof(ctx, "%+v", d)
-	}
-}
-
-func TestClient_QueryAsync(t *testing.T) {
-	ctx := context.Background()
-
-	mock.Init()
-	mockClient()
-
-	ctx, span := trace.NewSpan(ctx, "test_client")
-
-	end := time.Now()
-	start := end.Add(time.Minute * -5)
-
-	res := client.QueryAsync(
-		ctx,
-		fmt.Sprintf(
-			`SELECT * FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 10`,
-			start.UnixMilli(),
-			end.UnixMilli(),
-		),
-		span,
-	)
-
-	assert.Equal(t, StatusOK, res.Code)
-	d, ok := res.Data.(*QueryAsyncData)
-	assert.True(t, ok)
-
-	if d != nil {
-		assert.NotEmpty(t, d.QueryId)
-		log.Infof(ctx, "%+v", d)
-	}
-}
-
-func TestClient_QueryAsyncState(t *testing.T) {
-	ctx := context.Background()
-
-	mock.Init()
-	mockClient()
-
-	ctx, span := trace.NewSpan(ctx, "test_client")
-
-	end := time.Now()
-	start := end.Add(time.Minute * -5)
-
-	res := client.QueryAsync(
-		ctx,
-		fmt.Sprintf(
-			`SELECT * FROM 132_hander_opmon_avg WHERE dtEventTimeStamp >= %d AND dtEventTimeStamp < %d LIMIT 10`,
-			start.UnixMilli(),
-			end.UnixMilli(),
-		),
-		span,
-	)
-
-	assert.Equal(t, StatusOK, res.Code)
-	data := res.Data.(*QueryAsyncData)
-	if data != nil {
-		r := client.QueryAsyncState(ctx, data.QueryId, span)
-
-		assert.Equal(t, r.Code, StatusOK)
-		d, ok := r.Data.(*QueryAsyncStateData)
-		assert.True(t, ok)
-
-		if d != nil {
-			assert.NotEmpty(t, d.State)
-			log.Infof(ctx, "%+v", d)
-		}
-	}
-}
-
-func TestClient_QueryAsyncResult(t *testing.T) {
-	ctx := context.Background()
-
-	mock.Init()
-	mockClient()
-
-	res := client.QueryAsyncResult(ctx, "BK912760164455546880", nil)
-
-	assert.Equal(t, res.Code, StatusOK)
-	d, ok := res.Data.(*QueryAsyncResultData)
 	assert.True(t, ok)
 
 	if d != nil {

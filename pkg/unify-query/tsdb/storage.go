@@ -39,9 +39,6 @@ func ReloadTsDBStorage(_ context.Context, tsDBs map[string]*consul.Storage, opt 
 		}
 
 		switch tsDB.Type {
-		case consul.VictoriaMetricsStorageType:
-			storage.UriPath = opt.VM.UriPath
-			storage.Timeout = opt.VM.Timeout
 		case consul.ElasticsearchStorageType:
 			storage.Timeout = opt.Es.Timeout
 			storage.MaxRouting = opt.Es.MaxRouting

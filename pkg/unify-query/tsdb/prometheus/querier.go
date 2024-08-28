@@ -461,13 +461,9 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.Password = stg.Password
 			opt.HealthCheck = true
 		}
-
-		span.Set("query_qry", qry)
-		span.Set("ins_option", opt)
-
 		instance, err = elasticsearch.NewInstance(ctx, opt)
 	case consul.BkSqlStorageType:
-		opt := bksql.Options{
+		instance, err = bksql.NewInstance(ctx, bksql.Options{
 			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
 			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
@@ -477,12 +473,9 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			MaxLimit:     tsDBService.BkSqlLimit,
 			Tolerance:    tsDBService.BkSqlTolerance,
 			Curl:         curlGet,
-		}
-		instance, err = bksql.NewInstance(ctx, opt)
-
-		span.Set("ins_option", opt)
+		})
 	case consul.VictoriaMetricsStorageType:
-		opt := victoriaMetrics.Options{
+		instance, err = victoriaMetrics.NewInstance(ctx, victoriaMetrics.Options{
 			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
 			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
 				victoriaMetrics.ContentType: tsDBService.VmContentType,
@@ -492,9 +485,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			InfluxCompatible: tsDBService.VmInfluxCompatible,
 			UseNativeOr:      tsDBService.VmUseNativeOr,
 			Curl:             curlGet,
-		}
-		instance, err = victoriaMetrics.NewInstance(ctx, opt)
-		span.Set("ins_option", opt)
+		})
 	default:
 		err = fmt.Errorf("sotrage type is error %+v", qry)
 		return nil

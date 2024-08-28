@@ -41,12 +41,12 @@ func FormatOutput(out []byte, ts int64, offsetTime time.Duration, handler tasks.
 			continue
 		}
 
-		promEvent.AggreValue[promEvent.Key] = promEvent.Value
+		promEvent.AggValue[promEvent.Key] = promEvent.Value
 		subRst, tsExist := aggRst[promEvent.TS]
 		if tsExist {
 			p, dmExist := subRst[promEvent.HashKey]
 			if dmExist {
-				p.AggreValue[promEvent.Key] = promEvent.Value
+				p.AggValue[promEvent.Key] = promEvent.Value
 				subRst[promEvent.HashKey] = p
 			} else {
 				subRst[promEvent.HashKey] = promEvent

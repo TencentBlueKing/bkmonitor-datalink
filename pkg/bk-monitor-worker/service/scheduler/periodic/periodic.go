@@ -178,7 +178,7 @@ func getPeriodicTasks() map[string]PeriodicTask {
 			Handler: metadataTask.CleanDataIdConsulPath,
 		},
 		SloPush: {
-			Cron:    "*/1 * * * *",
+			Cron:    "*/2 * * * *",
 			Handler: metadataTask.SloPush,
 		},
 	}

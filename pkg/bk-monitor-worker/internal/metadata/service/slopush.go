@@ -1,18 +1,29 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package service
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"io/ioutil"
 	"math/big"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
 
 var (
@@ -22,12 +33,14 @@ var (
 	SloName     = []string{"volume", "error", "latency", "availability"}
 )
 
+// StrategyDetail 策略信息
 type StrategyDetail struct {
 	Interval int32
 	Name     string
 	BkBizID  int32
 }
 
+// Alert 告警信息
 type Alert struct {
 	BkBizID          int32  `json:"bk_biz_id"`
 	BkBizName        string `json:"bk_biz_name"`
@@ -39,6 +52,7 @@ type Alert struct {
 	Status           string `json:"status"`
 }
 
+// InitStraID 初始化
 func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrategy, map[int]map[string]map[string][]int64, map[int][]map[int64]struct{}, error) {
 	Now = now
 
@@ -66,6 +80,7 @@ func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrateg
 	return TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, nil
 }
 
+// FindAllBiz 找到符合标准的biz
 func FindAllBiz() (map[int32][]string, error) {
 	db := mysql.GetDBSession().DB
 	//标签前缀
@@ -81,11 +96,11 @@ func FindAllBiz() (map[int32][]string, error) {
 	return allBizIds, nil
 }
 
-func getStrategyAggInterval(strategyIDs []BkBizStrategy, AllStrategyAggInterval map[int32]StrategyDetail) {
+func getStrategyAggInterval(strategyIDs []BkBizStrategy, allStrategyAggInterval map[int32]StrategyDetail) {
 	// Filter new strategy IDs
 	newStrategyIDs := []int32{}
 	for _, id := range strategyIDs {
-		if _, exists := AllStrategyAggInterval[id.StrategyID]; !exists {
+		if _, exists := allStrategyAggInterval[id.StrategyID]; !exists {
 			newStrategyIDs = append(newStrategyIDs, id.StrategyID)
 		}
 	}
@@ -94,7 +109,7 @@ func getStrategyAggInterval(strategyIDs []BkBizStrategy, AllStrategyAggInterval 
 	}
 
 	for _, strategy := range strategyIDs {
-		AllStrategyAggInterval[strategy.StrategyID] = StrategyDetail{
+		allStrategyAggInterval[strategy.StrategyID] = StrategyDetail{
 			Interval: strategy.Interval,
 			Name:     strategy.Name,
 			BkBizID:  strategy.BkBizID,
@@ -242,6 +257,8 @@ func addSloTimeIntoDict(day int, sloKey string, strategyID int32, beginTime, end
 	}
 	TotalAlertTimeBucket[day][sloKey]["error_number"][0]++
 }
+
+// GetAllAlertTime 获取告警事件
 func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64, TrueSloName map[string][]BkBizStrategy, BkBizID int32) map[int32]StrategyDetail {
 	//定义策略详细信息
 	AllStrategyAggInterval := make(map[int32]StrategyDetail)
@@ -291,6 +308,7 @@ func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 	return AllStrategyAggInterval
 }
 
+// CalculateMetric 计算指标数据
 func CalculateMetric(TotalAlertTimeBucket map[int]map[string]map[string][]int64, TrueSloName map[string][]BkBizStrategy, AllStrategyAggInterval map[int32]StrategyDetail, TotalSloTimeBucketDict map[int][]map[int64]struct{}, BkBizID int32, scene string) {
 	// 遍历 TotalAlertTimeBucket 中的每一天
 	for day := range TotalAlertTimeBucket {

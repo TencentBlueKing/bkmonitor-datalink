@@ -268,21 +268,15 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("paths", paths)
 
 	for _, path := range paths {
-		cmdbPath, err := pathParser(path)
+		ts, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, path, matcher, opt.Instant)
 		if err != nil {
-			err = errors.WithMessagef(err, "path parser %s", path)
-			continue
-		}
-
-		ts, err = r.doRequest(ctx, opt.LookBackDelta, opt.SpaceUid, opt.StartTs, opt.EndTs, opt.Step, cmdbPath, matcher, opt.Instant)
-		if err != nil {
+			err = errors.WithMessagef(err, "path [%v] do request error", path)
 			continue
 		}
 
 		if len(ts) > 0 {
 			hitPath = path
 			span.Set("hit_path", hitPath)
-			span.Set("cmdb_path", cmdbPath)
 			break
 		}
 	}
@@ -344,7 +338,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 	return r.queryResourceMatcher(ctx, opt)
 }
 
-func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string, startTs, endTs int64, step time.Duration, path cmdb.Path, matcher cmdb.Matcher, instant bool) ([]cmdb.MatchersWithTimestamp, error) {
+func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string, startTs, endTs int64, step time.Duration, path []string, matcher map[string]string, instant bool) ([]cmdb.MatchersWithTimestamp, error) {
 	// 按照关联路径遍历查询
 	var (
 		lookBackDelta time.Duration
@@ -464,7 +458,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	return ret, nil
 }
 
-func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, matcher cmdb.Matcher, step time.Duration) (*structured.QueryTs, error) {
+func (r *model) makeQuery(ctx context.Context, spaceUid string, path []string, matcher map[string]string, step time.Duration) (*structured.QueryTs, error) {
 	const ascii = 97 // a
 
 	queryTs := &structured.QueryTs{
@@ -481,7 +475,13 @@ func (r *model) makeQuery(ctx context.Context, spaceUid string, path cmdb.Path, 
 		timeAggregation.Window = structured.Window(step.String())
 	}
 
-	for i, p := range path {
+	cmdbPath, err := pathParser(path)
+	if err != nil {
+		err = errors.WithMessagef(err, "path parser %s", path)
+		return nil, err
+	}
+
+	for i, p := range cmdbPath {
 		if len(p.V) < 2 {
 			return nil, fmt.Errorf("path format is wrong %v", p)
 		}

@@ -513,8 +513,8 @@ func TestModel_GetResourceMatcher(t *testing.T) {
 func TestMakeQuery(t *testing.T) {
 	type Case struct {
 		Name    string
-		Path    cmdb.Path
-		Matcher cmdb.Matcher
+		Path    []string
+		Matcher map[string]string
 		promQL  string
 		step    time.Duration
 	}
@@ -522,9 +522,7 @@ func TestMakeQuery(t *testing.T) {
 	cases := []Case{
 		{
 			Name: "level1 and 1m",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-			},
+			Path: []string{"pod", "node"},
 			Matcher: map[string]string{
 				"pod":            "pod1",
 				"namespace":      "ns1",
@@ -535,9 +533,7 @@ func TestMakeQuery(t *testing.T) {
 		},
 		{
 			Name: "level1",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-			},
+			Path: []string{"pod", "node"},
 			Matcher: map[string]string{
 				"pod":            "pod1",
 				"namespace":      "ns1",
@@ -547,10 +543,7 @@ func TestMakeQuery(t *testing.T) {
 		},
 		{
 			Name: "level2",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"pod", "node"}},
-				{V: []cmdb.Resource{"node", "system"}},
-			},
+			Path: []string{"pod", "node", "system"},
 			Matcher: map[string]string{
 				"pod":            "pod1",
 				"namespace":      "ns1",
@@ -560,11 +553,7 @@ func TestMakeQuery(t *testing.T) {
 		},
 		{
 			Name: "level3",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"node", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
+			Path: []string{"node", "pod", "replicaset", "deployment"},
 			Matcher: map[string]string{
 				"node":           "node1",
 				"bcs_cluster_id": "cluster1",
@@ -573,12 +562,7 @@ func TestMakeQuery(t *testing.T) {
 		},
 		{
 			Name: "level4",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"system", "node"}},
-				{V: []cmdb.Resource{"node", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
+			Path: []string{"system", "node", "pod", "replicaset", "deployment"},
 			Matcher: map[string]string{
 				"bk_target_ip": "127.0.0.1",
 			},

@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -282,20 +282,6 @@ func (m *BusinessCacheManager) CleanByEvents(ctx context.Context, resourceType s
 	// 删除缓存
 	if len(bizIds) > 0 {
 		m.RedisClient.HDel(ctx, m.GetCacheKey(businessCacheKey), bizIds...)
-	}
-
-	return nil
-}
-
-// UpdateByEvents 根据事件更新缓存
-func (m *BusinessCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if resourceType != "biz" || len(events) == 0 {
-		return nil
-	}
-
-	// 如果有更新就直接刷新全局缓存
-	if err := m.RefreshGlobal(ctx); err != nil {
-		return err
 	}
 
 	return nil

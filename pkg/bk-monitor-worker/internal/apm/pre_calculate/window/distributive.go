@@ -20,10 +20,11 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/semaphore"
 
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/runtimex"
-	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // DistributiveWindowOptions all configs
@@ -214,7 +215,7 @@ loop:
 			}
 			metrics.RecordApmPreCalcLocateSpanDuration(w.dataId, start)
 		case <-w.ctx.Done():
-			w.logger.Infof("Handle span stopped.")
+			w.logger.Infof("Run span stopped.")
 			// clear data
 			for _, subWindow := range w.subWindows {
 				subWindow.m = &sync.Map{}

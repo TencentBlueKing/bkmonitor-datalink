@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -90,11 +90,6 @@ type Manager interface {
 	useBiz() bool
 	// GetConcurrentLimit 并发限制
 	GetConcurrentLimit() int
-
-	// CleanByEvents 根据事件清理缓存
-	CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
-	// UpdateByEvents 根据事件更新缓存
-	UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error
 }
 
 // BaseCacheManager 基础缓存管理器
@@ -355,6 +350,63 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	err = cacheManager.CleanGlobal(ctx)
 	if err != nil {
 		return errors.Wrapf(err, "clean global %s cache failed", cacheManager.Type())
+	}
+
+	return nil
+}
+
+// RefreshByBizList 按业务列表刷新缓存
+func RefreshByBizList(ctx context.Context, cacheManager Manager, bizIDs []int, concurrentLimit int) error {
+	// 并发控制
+	wg := sync.WaitGroup{}
+	limitChan := make(chan struct{}, concurrentLimit)
+
+	// 按业务刷新缓存
+	errChan := make(chan error, len(bizIDs))
+	for _, bizId := range bizIDs {
+		limitChan <- struct{}{}
+		wg.Add(1)
+		go func(bizId int) {
+			defer func() {
+				wg.Done()
+				<-limitChan
+			}()
+			err := cacheManager.RefreshByBiz(ctx, bizId)
+			if err != nil {
+				errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
+			}
+		}(bizId)
+	}
+
+	// 等待所有任务完成
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		return err
+	}
+
+	// 按业务清理缓存
+	errChan = make(chan error, len(bizIDs))
+	for _, bizId := range bizIDs {
+		limitChan <- struct{}{}
+		wg.Add(1)
+		go func(bizId int) {
+			defer func() {
+				wg.Done()
+				<-limitChan
+			}()
+			err := cacheManager.CleanByBiz(ctx, bizId)
+			if err != nil {
+				errChan <- errors.Wrapf(err, "clean %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
+			}
+		}(bizId)
+	}
+
+	// 等待所有任务完成
+	wg.Wait()
+	close(errChan)
+	for err := range errChan {
+		return err
 	}
 
 	return nil

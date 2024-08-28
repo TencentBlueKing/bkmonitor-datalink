@@ -1,6 +1,6 @@
 // MIT License
 
-// Copyright (c) 2021~2022 腾讯蓝鲸
+// Copyright (c) 2021~2024 腾讯蓝鲸
 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,10 +30,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -231,15 +232,5 @@ func (m *DynamicGroupCacheManager) CleanGlobal(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to clean global dynamic group cache")
 	}
-	return nil
-}
-
-// CleanByEvents 清除事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	return nil
-}
-
-// UpdateByEvents 更新事件相关的动态分组缓存
-func (m *DynamicGroupCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
 	return nil
 }

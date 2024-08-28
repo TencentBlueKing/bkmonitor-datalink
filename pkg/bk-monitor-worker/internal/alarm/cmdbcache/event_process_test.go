@@ -21,26 +21,3 @@
 // SOFTWARE.
 
 package cmdbcache
-
-import (
-	"testing"
-
-	"github.com/alicebob/miniredis/v2"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
-)
-
-var testRedisAddr string
-
-func TestMain(m *testing.M) {
-	config.FilePath = "../../../dist/bmw.yaml"
-	config.InitConfig()
-
-	run, err := miniredis.Run()
-	if err != nil {
-		panic(err)
-	}
-	testRedisAddr = run.Addr()
-
-	m.Run()
-}

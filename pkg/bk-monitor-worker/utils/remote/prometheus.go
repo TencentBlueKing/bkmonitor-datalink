@@ -14,85 +14,53 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
-	"sort"
-	"sync"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
-const (
-	PromRelationMetric = iota
-	PromFlowMetric
 )
 
 const (
 	tokenKey = "X-BK-TOKEN"
 )
 
-type PrometheusStorageDataList []PrometheusStorageData
-
-type PrometheusStorageData struct {
-	Kind int
-	// Kind -> Relation Value -> []string
-	// Kind -> Flow Value -> map[string]FlowMetricRecordStats
-	Value any
-}
-
 type PrometheusWriterOption func(options *PrometheusWriterOptions)
 
 type PrometheusWriterOptions struct {
-	url     string
-	headers map[string]string
+	Url     string
+	Headers map[string]string
 }
 
 func PrometheusWriterUrl(u string) PrometheusWriterOption {
 	return func(options *PrometheusWriterOptions) {
-		options.url = u
+		options.Url = u
 	}
 }
 
 func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	return func(options *PrometheusWriterOptions) {
-		options.headers = h
+		options.Headers = h
 	}
 }
 
 type PrometheusWriter struct {
-	dataId  string
 	url     string
 	headers map[string]string
 
-	client  *http.Client
-	isValid bool
-	logger  monitorLogger.Logger
+	client       *http.Client
+	isValid      bool
+	logger       monitorLogger.Logger
+	responseHook func(bool)
 }
 
-func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
-	if d == nil {
-		return nil
-	}
-	var ts []prompb.TimeSeries
-	for _, item := range d {
-		ts = append(ts, item.Value...)
-	}
-	return ts
-}
-
-func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList []prompb.TimeSeries) error {
+func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
 	if !p.isValid || len(writeReq.Timeseries) == 0 {
 		return nil
 	}
@@ -120,29 +88,24 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList 
 		req.Header.Set(tokenKey, token)
 	}
 
-	metrics.RecordApmPreCalcOperateStorageCount(p.dataId, metrics.StoragePrometheus, metrics.OperateSave)
-	metrics.RecordApmPreCalcSaveStorageTotal(p.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
 	resp, err := p.client.Do(req)
 
-	p.logger.Debugf("[RemoteWrite] push %d series to host: %s (headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
 	if err != nil {
-		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
 	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
-		metrics.RecordApmPreCalcOperateStorageFailedTotal(p.dataId, metrics.SavePrometheusFailed)
 		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
 	}
 
-	logger.Infof("prom remote wirte ts: %d", len(tsList))
+	p.logger.Infof("[RemoteWrite] push %d series to host: %s (Headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
 
 	return nil
 }
 
-func NewPrometheusWriterClient(dataId, token, url string, headers map[string]string) *prometheusWriter {
+func NewPrometheusWriterClient(token, url string, headers map[string]string) *PrometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
@@ -154,136 +117,22 @@ func NewPrometheusWriterClient(dataId, token, url string, headers map[string]str
 	h := make(map[string]string, len(headers))
 	maps.Copy(h, headers)
 	if _, exist := h["x-bk-token"]; !exist {
-		if _, oExist := h["X-BK-TOKEN"]; !oExist {
-			h["X-BK-TOKEN"] = token
+		if _, oExist := h[tokenKey]; !oExist {
+			h[tokenKey] = token
 		}
 	} else {
-		h["X-BK-TOKEN"] = h["x-bk-token"]
+		h[tokenKey] = h["x-bk-token"]
 	}
 	isValid := false
-	if v, _ := h["X-BK-TOKEN"]; v != "" {
+	if v, _ := h[tokenKey]; v != "" {
 		isValid = true
 	}
 
-	return &prometheusWriter{
-		dataId:  dataId,
+	return &PrometheusWriter{
 		url:     url,
 		headers: h,
 		client:  client,
 		isValid: isValid,
-		logger:  monitorLogger.With(zap.String("name", "prometheus"), zap.String("dataId", dataId)),
+		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
-}
-
-type MetricConfigOption func(options *MetricConfigOptions)
-
-type MetricConfigOptions struct {
-	relationMetricMemDuration time.Duration
-	flowMetricMemDuration     time.Duration
-	flowMetricBuckets         []float64
-}
-
-func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		options.relationMetricMemDuration = m
-	}
-}
-
-func MetricFlowMemDuration(m time.Duration) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		options.flowMetricMemDuration = m
-	}
-}
-
-func MetricFlowBuckets(b []float64) MetricConfigOption {
-	return func(options *MetricConfigOptions) {
-		sort.Float64s(b)
-		res := make([]float64, 0, len(b)+1)
-		for i := 0; i < len(b); i++ {
-			res = append(res, b[i]*1e6)
-		}
-		res = append(res, math.MaxFloat64)
-		options.flowMetricBuckets = res
-	}
-}
-
-type MetricDimensionsHandler struct {
-	ctx context.Context
-	mu  sync.Mutex
-
-	relationMetricDimensions *relationMetricsCollector
-	flowMetricCollector      *flowMetricsCollector
-
-	promClient *prometheusWriter
-	logger     monitorLogger.Logger
-}
-
-func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	switch data.Kind {
-	case PromRelationMetric:
-		m.relationMetricDimensions.Observe(data.Value)
-	case PromFlowMetric:
-		m.flowMetricCollector.Observe(data.Value)
-	default:
-		m.logger.Warnf("[MetricDimensionHandler] receive not support kind: %d", data.Kind)
-	}
-}
-
-func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if err := m.promClient.WriteBatch(c.Collect()); err != nil {
-		m.logger.Errorf("[TraceMetricsReport] report to %s failed, error: %s", m.promClient.url, err)
-	}
-}
-
-func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
-	ticker := time.NewTicker(c.Ttl())
-	m.logger.Infof("[MetricReport] start loop, listen for metrics, interval: %s", c.Ttl())
-
-	for {
-		select {
-		case <-ticker.C:
-			m.cleanUpAndReport(c)
-		case <-m.ctx.Done():
-			ticker.Stop()
-			m.logger.Infof("[MetricReport] stop report metrics")
-			return
-		}
-	}
-}
-
-func (m *MetricDimensionsHandler) Close() {
-	m.cleanUpAndReport(m.relationMetricDimensions)
-	m.cleanUpAndReport(m.flowMetricCollector)
-}
-
-func NewMetricDimensionHandler(ctx context.Context, dataId string,
-	config PrometheusWriterOptions,
-	metricsConfig MetricConfigOptions,
-) *MetricDimensionsHandler {
-
-	token := core.GetMetadataCenter().GetToken(dataId)
-	monitorLogger.Infof(
-		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) -> token: %s \n"+
-			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		config.url, config.headers, dataId, token,
-		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
-	)
-
-	h := &MetricDimensionsHandler{
-		promClient:               newPrometheusWriterClient(dataId, token, config.url, config.headers),
-		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
-		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
-		ctx:                      ctx,
-		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
-	}
-	go h.LoopCollect(h.relationMetricDimensions)
-	go h.LoopCollect(h.flowMetricCollector)
-	return h
 }

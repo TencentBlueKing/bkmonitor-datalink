@@ -19,6 +19,7 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
@@ -364,7 +365,6 @@ func (p *RunInstance) startStorageBackend() (chan<- storage.SaveRequest, error) 
 				storage.EsIndexName(saveEsConfig.IndexName),
 			),
 			storage.PrometheusWriterConfig(
-				remote.PrometheusWriterEnabled(config.PromRemoteWriteEnabled),
 				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
 				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 			),

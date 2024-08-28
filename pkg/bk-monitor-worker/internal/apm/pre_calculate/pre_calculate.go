@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -82,8 +83,8 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 			),
 			storage.SaveReqBufferSize(config.StorageSaveRequestBufferSize),
 			storage.PrometheusWriterConfig(
-				storage.PrometheusWriterUrl(config.PromRemoteWriteUrl),
-				storage.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
+				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
 			),
 			storage.MetricsConfig(
 				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),

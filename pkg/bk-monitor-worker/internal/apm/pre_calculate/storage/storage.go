@@ -66,7 +66,7 @@ type ProxyOptions struct {
 	traceEsConfig EsOptions
 	saveEsConfig  EsOptions
 
-	prometheusWriterConfig PrometheusWriterOptions
+	prometheusWriterConfig remotewrite.PrometheusWriterOptions
 	metricsConfig          MetricConfigOptions
 
 	// saveReqBufferSize Number of queue capacity that hold SaveRequest

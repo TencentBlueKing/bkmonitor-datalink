@@ -71,7 +71,7 @@ func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
                           {"cluster_id": "BCS-K8S-00003", "namespace": [], "cluster_type": "shared"}]`
 	spaceResource := space.SpaceResource{
 		Id:              207,
-		SpaceTypeId:     "bkci",
+		SpaceTypeId:     models.SpaceTypeBKCI,
 		SpaceId:         "monitor",
 		ResourceType:    "bcs",
 		ResourceId:      &resourceId,

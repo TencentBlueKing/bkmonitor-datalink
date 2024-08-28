@@ -1,15 +1,26 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package service
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/slo"
+
 	"github.com/jinzhu/gorm"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/slo"
 )
 
 // 导入内置 fmt
 
-// 定义只存储 BkBizID 和 StrategyID 的结构体
+// BkBizStrategy 定义只存储 BkBizID 和 StrategyID 的结构体
 type BkBizStrategy struct {
 	Middle     string
 	BkBizID    int32
@@ -18,11 +29,12 @@ type BkBizStrategy struct {
 	Interval   int32
 }
 
+// Config 配置信息
 type Config struct {
 	AggInterv int32 `json:"agg_interval"`
 }
 
-// 查询并去重的方法
+// QueryAndDeduplicateStrategies 查询并去重的方法
 func QueryAndDeduplicateStrategies(db *gorm.DB, prefix string, middleParts string, suffixes string, bkBizId int) ([]BkBizStrategy, error) {
 	var allBkBizStrategies []BkBizStrategy
 	//uniqueMap := make(map[string]struct{})
@@ -73,11 +85,13 @@ func QueryAndDeduplicateStrategies(db *gorm.DB, prefix string, middleParts strin
 	return allBkBizStrategies, nil
 }
 
+// Result 结果
 type Result struct {
 	BkBizID int32
 	Middle  string
 }
 
+// QueryBizV2 全量检索业务
 func QueryBizV2(db *gorm.DB, prefix string, suffixes []string) (map[int32][]string, error) {
 	//检索biz和场景
 	bkBizIDToMiddleMap := make(map[int32]map[string]struct{})

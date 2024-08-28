@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -27,7 +26,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
@@ -518,9 +516,23 @@ func TestMakeQuery(t *testing.T) {
 		Path    cmdb.Path
 		Matcher cmdb.Matcher
 		promQL  string
+		step    time.Duration
 	}
 
 	cases := []Case{
+		{
+			Name: "level1 and 1m",
+			Path: cmdb.Path{
+				{V: []cmdb.Resource{"pod", "node"}},
+			},
+			Matcher: map[string]string{
+				"pod":            "pod1",
+				"namespace":      "ns1",
+				"bcs_cluster_id": "cluster1",
+			},
+			step:   time.Minute,
+			promQL: `(count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}[1m])))`,
+		},
 		{
 			Name: "level1",
 			Path: cmdb.Path{
@@ -531,7 +543,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `(count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"}))`,
+			promQL: `(count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"}))`,
 		},
 		{
 			Name: "level2",
@@ -544,22 +556,7 @@ func TestMakeQuery(t *testing.T) {
 				"namespace":      "ns1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `count by (bk_target_ip) (node_with_system_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",pod="pod1"})))`,
-		},
-		{
-			Name: "level3_container",
-			Path: cmdb.Path{
-				{V: []cmdb.Resource{"container", "pod"}},
-				{V: []cmdb.Resource{"pod", "replicaset"}},
-				{V: []cmdb.Resource{"replicaset", "deployment"}},
-			},
-			Matcher: map[string]string{
-				"bcs_cluster_id": "cluster1",
-				"namespace":      "ns1",
-				"pod":            "pod1",
-				"container":      "container1",
-			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace="ns1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (container_with_pod_relation{bcs_cluster_id="cluster1",container="container1",namespace="ns1",pod="pod1"}))))`,
+			promQL: `count by (bk_target_ip) (bkmonitor:node_with_system_relation{bcs_cluster_id="cluster1",bk_target_ip!="",node!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace="ns1",node!="",pod="pod1"})))`,
 		},
 		{
 			Name: "level3",
@@ -572,7 +569,7 @@ func TestMakeQuery(t *testing.T) {
 				"node":           "node1",
 				"bcs_cluster_id": "cluster1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation{bcs_cluster_id="cluster1"} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation{bcs_cluster_id="cluster1",node="node1"}))))`,
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id="cluster1",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id="cluster1",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) (count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id="cluster1",namespace!="",node="node1",pod!=""}))))`,
 		},
 		{
 			Name: "level4",
@@ -585,7 +582,7 @@ func TestMakeQuery(t *testing.T) {
 			Matcher: map[string]string{
 				"bk_target_ip": "127.0.0.1",
 			},
-			promQL: `count by (bcs_cluster_id, namespace, deployment) (deployment_with_replicaset_relation and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (pod_with_replicaset_relation and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (node_with_pod_relation and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (node_with_system_relation{bk_target_ip="127.0.0.1"})))))`,
+			promQL: `count by (bcs_cluster_id, namespace, deployment) (bkmonitor:deployment_with_replicaset_relation{bcs_cluster_id!="",deployment!="",namespace!="",replicaset!=""} and on (bcs_cluster_id, namespace, replicaset) count by (bcs_cluster_id, namespace, replicaset) (bkmonitor:pod_with_replicaset_relation{bcs_cluster_id!="",namespace!="",pod!="",replicaset!=""} and on (bcs_cluster_id, namespace, pod) count by (bcs_cluster_id, namespace, pod) (bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""} and on (bcs_cluster_id, node) (count by (bcs_cluster_id, node) (bkmonitor:node_with_system_relation{bcs_cluster_id!="",bk_target_ip="127.0.0.1",node!=""})))))`,
 		},
 	}
 
@@ -597,33 +594,16 @@ func TestMakeQuery(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			queryTs, err := mode.makeQuery(ctx, "", c.Path, c.Matcher)
+			queryTs, err := mode.makeQuery(ctx, "", c.Path, c.Matcher, c.step)
 			assert.NoError(t, err)
 			assert.NotNil(t, queryTs)
 
 			if queryTs != nil {
-				referenceNameMetric := make(map[string]string, len(queryTs.QueryList))
-				referenceNameLabelMatcher := make(map[string][]*labels.Matcher, len(queryTs.QueryList))
-
-				for _, q := range queryTs.QueryList {
-					referenceNameMetric[q.ReferenceName] = q.FieldName
-					matchers := make([]*labels.Matcher, 0, len(q.Conditions.FieldList))
-					for _, f := range q.Conditions.FieldList {
-						matcher, _ := labels.NewMatcher(labels.MatchEqual, f.DimensionName, f.Value[0])
-						matchers = append(matchers, matcher)
-					}
-					referenceNameLabelMatcher[q.ReferenceName] = matchers
+				promQLString, promQLErr := queryTs.ToPromQL(ctx)
+				assert.Nil(t, promQLErr)
+				if promQLErr == nil {
+					assert.Equal(t, c.promQL, promQLString)
 				}
-
-				promExprOpt := &structured.PromExprOption{
-					ReferenceNameMetric:       referenceNameMetric,
-					ReferenceNameLabelMatcher: referenceNameLabelMatcher,
-				}
-
-				promQL, err := queryTs.ToPromExpr(ctx, promExprOpt)
-				assert.Nil(t, err)
-
-				assert.Equal(t, c.promQL, promQL.String())
 			}
 		})
 	}

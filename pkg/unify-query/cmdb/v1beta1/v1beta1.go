@@ -572,6 +572,11 @@ func convertMapToConditions(matcher cmdb.Matcher, sourceIndex, targetIndex cmdb.
 	for i := range allIndex {
 		// 如果查询条件里面有关键维度，则必须相等，否则必须不为空
 		if v, ok := matcher[i]; ok {
+			// 为空的条件不加入过滤判断
+			if v == "" {
+				continue
+			}
+
 			cond.FieldList = append(cond.FieldList, structured.ConditionField{
 				DimensionName: i,
 				Value:         []string{v},

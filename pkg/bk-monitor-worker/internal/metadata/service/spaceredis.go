@@ -1658,8 +1658,10 @@ func (s *SpacePusher) composeBcsSpaceClusterTableIds(spaceType, spaceId string) 
 		if !ok {
 			clusterType = models.BcsClusterTypeSingle
 		}
+		logger.Infof("parse space resource dimension values failed, %v", res)
 		namespaceList, nsOk := resOptions.GetStringSlice("namespace")
 		if !nsOk {
+			logger.Errorf("parse space resource dimension values failed, %v", res)
 			namespaceList = []string{}
 		}
 

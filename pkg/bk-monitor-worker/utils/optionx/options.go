@@ -104,14 +104,14 @@ func (o *Options) GetStringSlice(key string) ([]string, bool) {
 		for i, item := range v {
 			str, ok := item.(string)
 			if !ok {
-				logger.Errorf("Invalid type for key %s, slice failed", key)
+				logger.Errorf("Invalid type for key %s, got %T", key, value)
 				return nil, false
 			}
 			strSlice[i] = str
 		}
 		return strSlice, true
 	default:
-		logger.Errorf("Invalid type for key %s, slice failed", key)
+		logger.Errorf("Invalid type for key %s, got %T", key, value)
 		return nil, false
 	}
 }

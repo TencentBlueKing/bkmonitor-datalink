@@ -12,11 +12,11 @@ package v1beta1
 import (
 	"context"
 	"fmt"
-	"github.com/pkg/errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"

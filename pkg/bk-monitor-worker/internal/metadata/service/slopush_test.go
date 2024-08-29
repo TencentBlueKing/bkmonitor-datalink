@@ -10,85 +10,74 @@
 package service
 
 import (
-	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-	"github.com/prometheus/client_golang/prometheus"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/slo"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
 )
 
 func TestSloPush(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	defer func() {
-		if err := recover(); err != nil {
-			logger.Errorf("SloPush Runtime panic caught: %v", err)
-		}
-	}()
-	logger.Info("start auto SloPush task")
-	var Registry = prometheus.NewRegistry()
-	var bizID map[int32][]string
-	bizID, _ = FindAllBiz()
-	logger.Info("Biz and scenes: ", bizID)
-	//fmt.Println(bizID)
-	var wg sync.WaitGroup
-	// 初始化注册表
-	metrics.InitGauge(Registry)
-	// 定义错误通道
-	errChan := make(chan error, len(bizID))
+	db := mysql.GetDBSession().DB
+	labels := slo.AlarmStrategyLabel{
+		LabelName:  "/slo/场景2/volume/",
+		StrategyID: 100,
+		BkBizID:    5000140,
+	}
+	db.Delete(&labels, "strategy_id = ?", 99)
+	err := labels.Create(db)
+	assert.NoError(t, err)
+
+	alarmStrategy := slo.AlarmStrategyV2{
+		ID:               100,
+		Name:             "Test Strategy",
+		BkBizID:          5000140,
+		Source:           "test_source",
+		Scenario:         "test_scenario",
+		Type:             "test_type",
+		IsEnabled:        true,
+		CreateUser:       "test_user",
+		CreateTime:       time.Now(),
+		UpdateUser:       "test_user",
+		UpdateTime:       time.Now(),
+		IsInvalid:        false,
+		InvalidType:      "none",
+		App:              "test_app",
+		Hash:             "test_hash",
+		Path:             "/test/path",
+		Snippet:          "test_snippet",
+		Priority:         1,
+		PriorityGroupKey: "test_key",
+	}
+	db.Delete(&alarmStrategy, "id = ?", 100)
+	err2 := alarmStrategy.Create(db)
+	assert.NoError(t, err2)
+
+	//检索所有满足标签的业务
+	bizID, err := FindAllBiz()
+	// 创建一个 map，键为 int 类型，值为 []string 类型
+	alarmMap := make(map[int32][]string)
+	// 初始化键 5000140 对应的值为 [“场景1”]
+	alarmMap[5000140] = []string{"场景2"}
+	assert.Equal(t, alarmMap, bizID)
 	now := time.Now().Unix()
-	logger.Info("Now time:", now)
-	for bkBizID, scenes := range bizID {
-		// 根据每个业务进行数据上报
-		wg.Add(1)
-		scenes := scenes
-		bkBizID := bkBizID
-		// 开启协程完成数据计算和注册
-		go func() {
-			defer wg.Done()
-			// 错误处理
-			defer func() {
-				if err := recover(); err != nil {
-					// 将错误发送到错误通道
-					errChan <- fmt.Errorf("goroutine panic caught: %v", err)
-				}
-			}()
-			for _, scene := range scenes {
-				// 初始化
-				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, _ := InitStraID(int(bkBizID), scene, now)
-				// 获取告警数据
-				AllStrategyAggInterval := GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID)
-				// 计算指标
-				CalculateMetric(TotalAlertTimeBucket, TrueSloName, AllStrategyAggInterval, TotalSloTimeBucketDict, bkBizID, scene)
-			}
-		}()
+	_, _, _, err = InitStraID(5000140, "场景2", now)
+	assert.NoError(t, err)
+	conditions := []map[string]interface{}{
+		{
+			"key":   "severity",
+			"value": []int{1, 2, 3},
+		},
+		{
+			"key":       "strategy_id",
+			"value":     []int{1},
+			"condition": "and",
+		},
 	}
-	//// 等待所有 goroutine 执行完毕
-	wg.Wait()
-	close(errChan)
-	// 处理错误
-	for err := range errChan {
-		if err != nil {
-			logger.Errorf("SloPush task encountered error: %v", err)
-		}
-	}
-	//logger.Info(Registry.Gather())
-	//slo.PushRes(Registry)
-	// 从注册表中收集度量指标
-	metricFamilies, err := Registry.Gather()
-	if err != nil {
-		logger.Fatalf("Could not gather metrics: %v", err)
-	}
-
-	// 遍历并打印收集到的度量指标
-	for _, mf := range metricFamilies {
-		fmt.Printf("Metric Family: %s\n", mf.GetName())
-		for _, m := range mf.GetMetric() {
-			fmt.Printf("  Metric: %v\n", m)
-		}
-	}
-
-	logger.Info("auto deploy SloPush successfully")
+	_, _, err = getFatalAlerts(conditions, 1709100660, 1, 5000, 5000140)
+	assert.NoError(t, err)
 }

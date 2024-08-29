@@ -153,9 +153,25 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, AllStrategyAggIn
 }
 
 func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert, error) {
-	alertData, _ := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, BkBizID)
+	// 调用外部服务以获取告警数据
+	alertData, err := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, BkBizID)
+	if err != nil {
+		// 处理调用错误
+		return 0, nil, fmt.Errorf("failed to search alerts: %v", err)
+	}
+
+	// 检查返回的数据是否为空或格式不正确
+	if alertData == nil {
+		return 0, nil, fmt.Errorf("alert data is nil")
+	}
+
+	// 获取总数
 	total := alertData.Total
+
+	// 初始化告警列表
 	alerts := make([]Alert, 0, len(alertData.Alerts))
+
+	// 遍历告警数据并转换为内部结构
 	for _, alertInfo := range alertData.Alerts {
 		alerts = append(alerts, Alert{
 			BkBizID:          alertInfo.BkBizID,
@@ -168,6 +184,8 @@ func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, 
 			Status:           alertInfo.Status,
 		})
 	}
+
+	// 返回结果和 nil 错误
 	return total, alerts, nil
 }
 

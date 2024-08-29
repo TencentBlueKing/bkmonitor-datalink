@@ -174,11 +174,6 @@ var configData = &Config{
 				"ingress", "service",
 			},
 		},
-		//{
-		//	Resources: []cmdb.Resource{
-		//		"container", "pod",
-		//	},
-		//},
 		{
 			Resources: []cmdb.Resource{
 				"k8s_address", "service",
@@ -191,12 +186,12 @@ var configData = &Config{
 		},
 		{
 			Resources: []cmdb.Resource{
-				"apm_service_instance", "k8s_address",
+				"apm_service_instance", "system",
 			},
 		},
 		{
 			Resources: []cmdb.Resource{
-				"apm_service_instance", "system",
+				"apm_service_instance", "pod",
 			},
 		},
 		{

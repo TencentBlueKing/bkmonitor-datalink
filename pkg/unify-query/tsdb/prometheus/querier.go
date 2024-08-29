@@ -437,8 +437,8 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 
 		span.Set("cluster-name", qry.ClusterName)
-		span.Set("tag-keys", fmt.Sprintf("%+v", qry.TagsKey))
-		span.Set("ins-option", fmt.Sprintf("%+v", opt))
+		span.Set("tag-keys", qry.TagsKey)
+		span.Set("ins-option", opt)
 
 		instance, err = influxdb.NewInstance(ctx, opt)
 	case consul.ElasticsearchStorageType:

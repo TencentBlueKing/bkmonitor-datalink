@@ -81,6 +81,10 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 	return instance, nil
 }
 
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
 func (i *Instance) checkResult(res *Result) error {
 	if !res.Result {
 		return fmt.Errorf(

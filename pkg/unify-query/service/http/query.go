@@ -555,34 +555,14 @@ func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured
 		return nil, nil
 	}
 
-	promExprOpt := &structured.PromExprOption{}
-
-	promExprOpt.ReferenceNameMetric = make(map[string]string, len(query.QueryList))
-	promExprOpt.ReferenceNameLabelMatcher = make(map[string][]*labels.Matcher, len(query.QueryList))
-
-	for _, q := range query.QueryList {
-		// 保留查询条件
-		matcher, _, err := q.Conditions.ToProm()
-		if err != nil {
-			return nil, err
-		}
-		promExprOpt.ReferenceNameLabelMatcher[q.ReferenceName] = matcher
-
-		router, err := q.ToRouter()
-		if err != nil {
-			return nil, err
-		}
-		promExprOpt.ReferenceNameMetric[q.ReferenceName] = router.RealMetricName()
-	}
-
-	promQL, err := query.ToPromExpr(ctx, promExprOpt)
+	promQL, err := query.ToPromQL(ctx)
 	if err != nil {
 		log.Errorf(ctx, err.Error())
 		return nil, err
 	}
 
 	return &structured.QueryPromQL{
-		PromQL: promQL.String(),
+		PromQL: promQL,
 		Start:  query.Start,
 		End:    query.End,
 		Step:   query.Step,

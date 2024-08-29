@@ -34,11 +34,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+var _ tsdb.Instance = (*Instance)(nil)
+
 // Instance redis 查询实例
 type Instance struct {
 	Ctx                 context.Context
 	Timeout             time.Duration
 	ClusterMetricPrefix string
+}
+
+func (instance *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (instance *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {

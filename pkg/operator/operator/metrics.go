@@ -19,6 +19,15 @@ import (
 )
 
 var (
+	clusterVersion = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "cluster_version",
+			Help:      "kubernetes server version",
+		},
+		[]string{"version"},
+	)
+
 	appUptime = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
@@ -239,4 +248,8 @@ func (m *metricMonitor) IncScaledStatefulSetSuccessCounter() {
 
 func (m *metricMonitor) SetStatefulSetWorkerCount(count int) {
 	statefulSetWorkerCount.Set(float64(count))
+}
+
+func (m *metricMonitor) SetKubernetesVersion(v string) {
+	clusterVersion.WithLabelValues(v).Set(1)
 }

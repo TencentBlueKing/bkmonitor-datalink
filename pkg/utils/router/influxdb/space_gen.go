@@ -434,6 +434,12 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 				err = msgp.WrapError(err, "DataId")
 				return
 			}
+		case "SourceType":
+			z.SourceType, err = dc.ReadString()
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
 		case "Options":
 			var zb0004 uint32
 			zb0004, err = dc.ReadMapHeader()
@@ -517,9 +523,9 @@ func (z *ResultTableDetail) DecodeMsg(dc *msgp.Reader) (err error) {
 
 // EncodeMsg implements msgp.Encodable
 func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
-	// map header, size 14
+	// map header, size 15
 	// write "StorageId"
-	err = en.Append(0x8e, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	err = en.Append(0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	if err != nil {
 		return
 	}
@@ -662,6 +668,16 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 		err = msgp.WrapError(err, "DataId")
 		return
 	}
+	// write "SourceType"
+	err = en.Append(0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	if err != nil {
+		return
+	}
+	err = en.WriteString(z.SourceType)
+	if err != nil {
+		err = msgp.WrapError(err, "SourceType")
+		return
+	}
 	// write "Options"
 	err = en.Append(0xa7, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73)
 	if err != nil {
@@ -720,9 +736,9 @@ func (z *ResultTableDetail) EncodeMsg(en *msgp.Writer) (err error) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// map header, size 14
+	// map header, size 15
 	// string "StorageId"
-	o = append(o, 0x8e, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
+	o = append(o, 0x8f, 0xa9, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.StorageId)
 	// string "StorageName"
 	o = append(o, 0xab, 0x53, 0x74, 0x6f, 0x72, 0x61, 0x67, 0x65, 0x4e, 0x61, 0x6d, 0x65)
@@ -766,6 +782,9 @@ func (z *ResultTableDetail) MarshalMsg(b []byte) (o []byte, err error) {
 	// string "DataId"
 	o = append(o, 0xa6, 0x44, 0x61, 0x74, 0x61, 0x49, 0x64)
 	o = msgp.AppendInt64(o, z.DataId)
+	// string "SourceType"
+	o = append(o, 0xaa, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x54, 0x79, 0x70, 0x65)
+	o = msgp.AppendString(o, z.SourceType)
 	// string "Options"
 	o = append(o, 0xa7, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73)
 	// map header, size 2
@@ -909,6 +928,12 @@ func (z *ResultTableDetail) UnmarshalMsg(bts []byte) (o []byte, err error) {
 				err = msgp.WrapError(err, "DataId")
 				return
 			}
+		case "SourceType":
+			z.SourceType, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SourceType")
+				return
+			}
 		case "Options":
 			var zb0004 uint32
 			zb0004, bts, err = msgp.ReadMapHeaderBytes(bts)
@@ -1001,7 +1026,7 @@ func (z *ResultTableDetail) Msgsize() (s int) {
 	for za0002 := range z.TagsKey {
 		s += msgp.StringPrefixSize + len(z.TagsKey[za0002])
 	}
-	s += 7 + msgp.Int64Size + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit) + 12 + msgp.BoolSize
+	s += 7 + msgp.Int64Size + 11 + msgp.StringPrefixSize + len(z.SourceType) + 8 + 1 + 10 + 1 + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Name) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Type) + 5 + msgp.StringPrefixSize + len(z.Options.TimeField.Unit) + 12 + msgp.BoolSize
 	return
 }
 

@@ -187,7 +187,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 	} else {
 		for _, qm := range qr {
 			for _, qry := range qm.QueryList {
-				instance := prometheus.GetInstance(ctx, qry)
+				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					r.Error("prometheus.GetInstance", fmt.Errorf("instance is null, with storageID %s", qry.StorageID))
 					continue

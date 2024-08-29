@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -86,12 +87,14 @@ func (i *Instance) GetInstanceType() string {
 }
 
 type InstanceOption struct {
-	Address    string
-	Username   string
-	Password   string
-	MaxSize    int
-	MaxRouting int
-	Timeout    time.Duration
+	Address     string
+	Username    string
+	Password    string
+	MaxSize     int
+	MaxRouting  int
+	Timeout     time.Duration
+	Headers     http.Header
+	HealthCheck bool
 }
 
 type queryOption struct {
@@ -117,7 +120,6 @@ var TimeSeriesResultPool = sync.Pool{
 }
 
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
-
 	ins := &Instance{
 		ctx:     ctx,
 		timeout: opt.Timeout,
@@ -133,9 +135,17 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	cliOpts := []elastic.ClientOptionFunc{
 		elastic.SetURL(opt.Address),
 		elastic.SetSniff(false),
+		elastic.SetHealthcheck(opt.HealthCheck),
 	}
+	if len(opt.Headers) > 0 {
+		cliOpts = append(cliOpts, elastic.SetHeaders(opt.Headers))
+	}
+
 	if opt.Username != "" && opt.Password != "" {
-		cliOpts = append(cliOpts, elastic.SetBasicAuth(opt.Username, opt.Password))
+		cliOpts = append(
+			cliOpts,
+			elastic.SetBasicAuth(opt.Username, opt.Password),
+		)
 	}
 
 	cli, err := elastic.NewClient(cliOpts...)
@@ -170,7 +180,7 @@ func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[str
 	}()
 
 	span.Set("alias", aliases)
-	mappingMap, err := i.client.GetMapping().Index(aliases...).Do(ctx)
+	mappingMap, err := i.client.GetMapping().Index(aliases...).Type("").Do(ctx)
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -585,6 +595,7 @@ func (i *Instance) QueryRaw(
 		mappings, err1 := i.getMappings(ctx, qo.indexes)
 		// index 不存在，mappings 获取异常直接返回空
 		if len(mappings) == 0 {
+			log.Warnf(ctx, "index is empty with %v", qo.indexes)
 			return
 		}
 

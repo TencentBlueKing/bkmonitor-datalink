@@ -48,6 +48,11 @@ type instance struct {
 
 var _ tsdb.Instance = (*instance)(nil)
 
+func (i instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i instance) LabelNames(ctx context.Context, query *metadata.Query, start time.Time, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	panic("implement me")
 }

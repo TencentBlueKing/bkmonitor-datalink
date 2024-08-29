@@ -32,7 +32,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -378,44 +377,21 @@ func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
 `,
 	}, log.DefaultLogger)
 
-	tsdb.SetStorage(consul.VictoriaMetricsStorageType, &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			ctx:                  ctx,
-			Address:              "victoria_metric",
-			UriPath:              "api",
-			Curl:                 mockCurl,
-			InfluxCompatible:     true,
-			UseNativeOr:          true,
-			AuthenticationMethod: "token",
+	inst, _ := tsdbInfluxdb.NewInstance(
+		context.TODO(),
+		tsdbInfluxdb.Options{
+			Host:      "127.0.0.1",
+			Port:      80,
+			Curl:      mockCurl,
+			ChunkSize: 10,
+			MaxSlimit: 1e8,
+			MaxLimit:  1e8,
+			Timeout:   time.Hour,
 		},
-	})
-	tsdb.SetStorage(strconv.FormatInt(victoriaMetricsStorageId, 10), &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			ctx:                  ctx,
-			Address:              "victoria_metric",
-			UriPath:              "api",
-			Curl:                 mockCurl,
-			InfluxCompatible:     true,
-			UseNativeOr:          true,
-			AuthenticationMethod: "token",
-		},
-	})
+	)
 	tsdb.SetStorage(strconv.FormatInt(influxdbStorageId, 10), &tsdb.Storage{
-		Type: consul.InfluxDBStorageType,
-		Instance: tsdbInfluxdb.NewInstance(
-			context.TODO(),
-			tsdbInfluxdb.Options{
-				Host:      "127.0.0.1",
-				Port:      80,
-				Curl:      mockCurl,
-				ChunkSize: 10,
-				MaxSlimit: 1e8,
-				MaxLimit:  1e8,
-				Timeout:   time.Hour,
-			},
-		),
+		Type:     consul.InfluxDBStorageType,
+		Instance: inst,
 	})
 
 	mock.SetRedisClient(context.TODO(), "test")
@@ -1255,13 +1231,13 @@ func TestVmQueryParams(t *testing.T) {
 					if len(mockCurl.Params) == 0 {
 						assert.Nil(t, err)
 					}
-					var vmParams *victoriaMetrics.Params
+					var vmParams map[string]string
 					if mockCurl.Params != nil {
 						err = json.Unmarshal(mockCurl.Params, &vmParams)
 						assert.Nil(t, err)
 					}
 					if vmParams != nil {
-						assert.Equal(t, c.params, vmParams.SQL)
+						assert.Equal(t, c.params, vmParams["sql"])
 					}
 				}
 			}
@@ -1804,10 +1780,10 @@ func TestStructAndPromQLConvert(t *testing.T) {
 				Step:   `1m`,
 			},
 		},
-		"promql to struct with 1m:2m": {
+		"promql to struct with 1m": {
 			queryStruct: true,
 			promql: &structured.QueryPromQL{
-				PromQL: `count_over_time(bkmonitor:metric[1m:2m] @ start() offset -59s999ms)`,
+				PromQL: `count_over_time(bkmonitor:metric[1m] @ start() offset -29s999ms)`,
 				Start:  `1691132705`,
 				End:    `1691136305`,
 				Step:   `30s`,
@@ -1819,19 +1795,19 @@ func TestStructAndPromQLConvert(t *testing.T) {
 						DataSource:          `bkmonitor`,
 						FieldName:           `metric`,
 						StartOrEnd:          parser.START,
+						//Offset:              "59s999ms",
+						OffsetForward: true,
 						TimeAggregation: structured.TimeAggregation{
-							Function:   "count_over_time",
-							Window:     "1m0s",
-							IsSubQuery: true,
-							Step:       "2m0s",
-							NodeIndex:  2,
+							Function:  "count_over_time",
+							Window:    "1m0s",
+							NodeIndex: 2,
 						},
 						Conditions: structured.Conditions{
 							FieldList:     []structured.ConditionField{},
 							ConditionList: []string{},
 						},
 						ReferenceName: `a`,
-						Offset:        "0s",
+						Step:          `30s`,
 					},
 				},
 				MetricMerge: "a",

@@ -58,6 +58,147 @@ func TestSpacePusher_getMeasurementType(t *testing.T) {
 	}
 }
 
+func TestSpacePusher_composeBcsSpaceClusterTableIds(t *testing.T) {
+	// 初始化测试数据库配置
+	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	db := mysql.GetDBSession().DB
+
+	// 创建一个真实的SpaceResource数据
+	resourceId := "monitor"
+	dimensionValues := `[{"cluster_id": "BCS-K8S-00000", "namespace": null, "cluster_type": "single"},
+                          {"cluster_id": "BCS-K8S-00001", "namespace": ["bkm-test-4"], "cluster_type": "shared"},
+                          {"cluster_id": "BCS-K8S-00002", "namespace": ["bkm-test-1", "bkm-test-2", "bkm-test-3"], "cluster_type": "shared"},
+                          {"cluster_id": "BCS-K8S-00003", "namespace": [], "cluster_type": "shared"}]`
+	spaceResource := space.SpaceResource{
+		Id:              207,
+		SpaceTypeId:     models.SpaceTypeBKCI,
+		SpaceId:         "monitor",
+		ResourceType:    "bcs",
+		ResourceId:      &resourceId,
+		DimensionValues: dimensionValues,
+	}
+	db.Delete(&spaceResource)
+	err := db.Create(&spaceResource).Error
+	assert.NoError(t, err)
+
+	// 创建 BCSClusterInfo 数据
+	clusterInfos := []bcs.BCSClusterInfo{
+		{
+			ClusterID:          "BCS-K8S-00000",
+			K8sMetricDataID:    1001,
+			CustomMetricDataID: 2001,
+		},
+		{
+			ClusterID:          "BCS-K8S-00001",
+			K8sMetricDataID:    1002,
+			CustomMetricDataID: 2002,
+		},
+		{
+			ClusterID:          "BCS-K8S-00002",
+			K8sMetricDataID:    1003,
+			CustomMetricDataID: 2003,
+		},
+		{
+			ClusterID:          "BCS-K8S-00003",
+			K8sMetricDataID:    1004,
+			CustomMetricDataID: 2004,
+		},
+	}
+	db.Delete(&bcs.BCSClusterInfo{})
+	for _, ci := range clusterInfos {
+		err = db.Create(&ci).Error
+		assert.NoError(t, err)
+	}
+
+	// 创建 DataSourceResultTable 数据
+	dataSourceResultTables := []resulttable.DataSourceResultTable{
+		{
+			BkDataId: 1001,
+			TableId:  "table1",
+		},
+		{
+			BkDataId: 2001,
+			TableId:  "table2",
+		},
+		{
+			BkDataId: 1002,
+			TableId:  "table3",
+		},
+		{
+			BkDataId: 2002,
+			TableId:  "table4",
+		},
+		{
+			BkDataId: 1003,
+			TableId:  "table5",
+		},
+		{
+			BkDataId: 2003,
+			TableId:  "table6",
+		},
+		{
+			BkDataId: 1004,
+			TableId:  "table7",
+		},
+		{
+			BkDataId: 2004,
+			TableId:  "table8",
+		},
+	}
+	db.Delete(&resulttable.DataSourceResultTable{})
+	for _, dsrt := range dataSourceResultTables {
+		err = db.Create(&dsrt).Error
+		assert.NoError(t, err)
+	}
+
+	// 执行被测试的方法
+	spacePusher := NewSpacePusher()
+	result, err := spacePusher.composeBcsSpaceClusterTableIds("bkci", "monitor")
+	assert.NoError(t, err)
+
+	// 输出调试信息
+	fmt.Printf("Result: %+v\n", result)
+
+	expectedResults := map[string]map[string]interface{}{
+		"table1": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
+			},
+		},
+		"table2": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00000", "namespace": nil},
+			},
+		},
+		"table3": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
+			},
+		},
+		"table4": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00001", "namespace": "bkm-test-4"},
+			},
+		},
+		"table5": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
+			},
+		},
+		"table6": {
+			"filters": []map[string]interface{}{
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-1"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-2"},
+				{"bcs_cluster_id": "BCS-K8S-00002", "namespace": "bkm-test-3"},
+			},
+		},
+	}
+
+	assert.Equal(t, expectedResults, result)
+}
+
 func TestSpacePusher_refineTableIds(t *testing.T) {
 	mocker.InitTestDBConfig("../../../bmw_test.yaml")
 	db := mysql.GetDBSession().DB
@@ -619,11 +760,12 @@ func TestComposeEsTableIdOptions(t *testing.T) {
 	assert.NoError(t, rtOp3.Create(db))
 
 	// 获取正常数据
-	data := SpacePusher{}.composeEsTableIdOptions([]string{rt1, rt2, rt3})
+	spacePusher := NewSpacePusher()
+	data := spacePusher.composeEsTableIdOptions([]string{rt1, rt2, rt3})
 	assert.Equal(t, 3, len(data))
 	assert.Equal(t, map[string]interface{}{"name": "v1"}, data[rt1][rtOp1.Name])
 
 	// 获取不存在的rt数据
-	data = SpacePusher{}.composeEsTableIdOptions([]string{"not_exist"})
+	data = spacePusher.composeEsTableIdOptions([]string{"not_exist"})
 	assert.Equal(t, 0, len(data))
 }

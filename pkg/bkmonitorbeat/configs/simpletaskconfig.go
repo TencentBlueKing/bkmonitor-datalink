@@ -91,6 +91,17 @@ type SimpleTaskParam struct {
 	TargetPort     int      `config:"target_port" validate:"required,min=1"`
 }
 
+func (c *SimpleTaskParam) Hosts() []string {
+	if c == nil {
+		return nil
+	}
+
+	if len(c.TargetHostList) > 0 {
+		return c.TargetHostList
+	}
+	return []string{c.TargetHost}
+}
+
 // CleanParams :
 func (c *SimpleTaskParam) CleanParams() error {
 	if len(c.TargetHostList) > 0 {

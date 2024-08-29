@@ -31,7 +31,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/cartesian"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -128,28 +127,17 @@ func MockTsDB(t *testing.T) {
 		`http://127.0.0.1:80/query?db=system&q=select+mean%28%22metric%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1629820739999000000+and+time+%3C+1630252859999000000+and+dim_0%3D%271%27++group+by+time%282m0s%29`:                                                                                                                                                                                                                                               generateData("metric", 0, "dim", 5, 1629861029, 1629861329, 2*time.Minute),
 	}, log.DefaultLogger)
 
-	// 加载实例
-	tsdb.SetStorage("10", &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			ctx:     context.TODO(),
-			Address: "127.0.0.1",
-			UriPath: "api",
-			Timeout: time.Minute,
-			Curl:    mockCurl,
+	inst, _ := tsdbInfluxdb.NewInstance(
+		context.TODO(),
+		tsdbInfluxdb.Options{
+			Host: "127.0.0.1",
+			Port: 80,
+			Curl: mockCurl,
 		},
-	})
-
+	)
 	tsdb.SetStorage("0", &tsdb.Storage{
-		Type: consul.InfluxDBStorageType,
-		Instance: tsdbInfluxdb.NewInstance(
-			context.TODO(),
-			tsdbInfluxdb.Options{
-				Host: "127.0.0.1",
-				Port: 80,
-				Curl: mockCurl,
-			},
-		),
+		Type:     consul.InfluxDBStorageType,
+		Instance: inst,
 	})
 }
 

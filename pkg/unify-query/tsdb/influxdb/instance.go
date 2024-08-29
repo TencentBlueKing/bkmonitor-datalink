@@ -107,6 +107,10 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
 // GetInstanceType 获取引擎类型
 func (i *Instance) GetInstanceType() string {
 	return consul.InfluxDBStorageType

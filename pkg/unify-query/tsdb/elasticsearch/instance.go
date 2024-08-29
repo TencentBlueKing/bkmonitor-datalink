@@ -35,7 +35,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
+
+var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
 	ctx    context.Context
@@ -162,6 +165,10 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 
 	ins.client = cli
 	return ins, nil
+}
+
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
 }
 
 func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[string]any, error) {

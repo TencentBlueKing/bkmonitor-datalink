@@ -232,6 +232,12 @@ var (
 	BkApiBcsCcApiUrl string
 	// BkApiGseApiGwUrl bk-apigw bkgse base url
 	BkApiGseApiGwUrl string
+	// SloPushGatewayApi 是否启用监控的apiGateway
+	BkMonitorApiGatewayEnabled bool
+	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
+	BkMonitorApiGatewayBaseUrl string
+	// BkMonitorApiGatewayStage 监控的apiGateway的环境
+	BkMonitorApiGatewayStage string
 
 	// GoroutineLimit max size of task goroutine
 	GoroutineLimit map[string]string
@@ -403,6 +409,13 @@ func initVariables() {
 	BkApiBkssmUrl = GetValue("taskConfig.common.bkapi.bkssmUrl", "")
 	BkApiBcsCcApiUrl = GetValue("taskConfig.common.bkapi.bcsCcApiUrl", "")
 	BkApiGseApiGwUrl = GetValue("taskConfig.common.bkapi.bkgseApiGwUrl", "")
+
+	// SloPushGatewayApi 是否启用监控的apiGateway
+	BkMonitorApiGatewayEnabled = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayEnabled", false)
+	// BkMonitorApiGatewayBaseUrl 监控的apiGateway
+	BkMonitorApiGatewayBaseUrl = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayBaseUrl", BkApiUrl)
+	// BkMonitorApiGatewayStage 监控的apiGateway的环境
+	BkMonitorApiGatewayStage = GetValue("taskConfig.common.bkapi.bkmonitorApiGatewayStage", "stag")
 
 	GoroutineLimit = GetValue("taskConfig.common.goroutineLimit", map[string]string{}, viper.GetStringMapString)
 

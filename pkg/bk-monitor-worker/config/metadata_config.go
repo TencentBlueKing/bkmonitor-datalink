@@ -124,8 +124,6 @@ var (
 	// 是否可以删除 consul 路径
 	CanDeleteConsulPath bool
 
-	// SloPushGatewayApi slo数据上报api
-	SloPushGatewayApi string
 	// SloPushGatewayToken slo数据上报Token
 	SloPushGatewayToken string
 )
@@ -187,6 +185,5 @@ func initMetadataVariables() {
 	SkipInfluxdbTableIds = GetValue("taskConfig.metadata.global.skipInfluxdbTableIds", []string{})
 	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 
-	SloPushGatewayApi = GetValue("taskConfig.metadata.slo.sloPushGatewayApi", BkApiUrl)
 	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
 }

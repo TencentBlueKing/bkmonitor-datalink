@@ -10,18 +10,13 @@
 package service
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"math/big"
-	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/apiservice"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/mysql"
 )
@@ -71,7 +66,6 @@ func InitStraID(bkBizId int, scene string, now int64) (map[string][]BkBizStrateg
 			TrueSloName[sloName] = allBkBizStrategies
 		}
 	}
-	//logger.Info("Velta and strategy:", TrueSloName)
 
 	for _, day := range RangeDay {
 		TotalAlertTimeBucket[day] = make(map[string]map[string][]int64)
@@ -159,69 +153,19 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, AllStrategyAggIn
 }
 
 func getFatalAlerts(conditions []map[string]interface{}, startTime int64, page, pageSize int, BkBizID int32) (int, []Alert, error) {
-	url := "https://bkmonitorv3.apigw.o.woa.com/prod/search_alert/"
-	payload := map[string]interface{}{
-		"bk_app_code":   config.BkApiAppCode,
-		"bk_app_secret": config.BkApiAppSecret,
-		"bk_biz_ids":    []int{int(BkBizID)},
-		"start_time":    startTime,
-		"end_time":      Now,
-		"page":          page,
-		"page_size":     pageSize,
-		"conditions":    conditions,
-	}
-	body, _ := json.Marshal(payload)
-
-	// 创建请求
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	if err != nil {
-		logger.Error("Error creating request:", err)
-		return 0, []Alert{}, err
-	}
-
-	// 设置请求头
-	req.Header.Set("Content-Type", "application/json")
-	authHeader := map[string]string{
-		"bk_app_code":   config.BkApiAppCode,
-		"bk_app_secret": config.BkApiAppSecret,
-	}
-	authHeaderJson, _ := json.Marshal(authHeader)
-	req.Header.Set("X-Bkapi-Authorization", string(authHeaderJson))
-
-	// 发送请求
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("Error querying alerts:", err)
-		return 0, []Alert{}, err
-	}
-	defer resp.Body.Close()
-
-	data, _ := ioutil.ReadAll(resp.Body)
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		logger.Error("Error unmarshalling alerts:", err)
-		return 0, []Alert{}, err
-	}
-	if result["data"] == nil {
-		logger.Error("Error finding data in alerts :", conditions, " startTime:", startTime, " BkBizID:", BkBizID)
-		return 0, []Alert{}, err
-	}
-
-	alertData := result["data"].(map[string]interface{})
-	total := int(alertData["total"].(float64))
-	alerts := []Alert{}
-	for _, alert := range alertData["alerts"].([]interface{}) {
-		alertMap := alert.(map[string]interface{})
+	alertData, _ := apiservice.Monitor.SearchAlert(conditions, startTime, Now, page, pageSize, BkBizID)
+	total := alertData.Total
+	alerts := make([]Alert, 0, len(alertData.Alerts))
+	for _, alertInfo := range alertData.Alerts {
 		alerts = append(alerts, Alert{
-			BkBizID:          int32(alertMap["bk_biz_id"].(float64)),
-			BkBizName:        alertMap["bk_biz_name"].(string),
-			StrategyID:       int32(alertMap["strategy_id"].(float64)),
-			StrategyName:     alertMap["strategy_name"].(string),
-			FirstAnomalyTime: int64(alertMap["first_anomaly_time"].(float64)),
-			LatestTime:       int64(alertMap["latest_time"].(float64)),
-			EventID:          alertMap["event_id"].(string),
-			Status:           alertMap["status"].(string),
+			BkBizID:          alertInfo.BkBizID,
+			BkBizName:        alertInfo.BkBizName,
+			StrategyID:       alertInfo.StrategyID,
+			StrategyName:     alertInfo.StrategyName,
+			FirstAnomalyTime: alertInfo.FirstAnomalyTime,
+			LatestTime:       alertInfo.LatestTime,
+			EventID:          alertInfo.EventID,
+			Status:           alertInfo.Status,
 		})
 	}
 	return total, alerts, nil

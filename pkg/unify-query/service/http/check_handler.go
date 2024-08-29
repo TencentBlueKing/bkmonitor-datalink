@@ -175,7 +175,7 @@ func checkQueryTs(ctx context.Context, q *structured.QueryTs, r *CheckResponse) 
 
 	promQL, err := q.ToPromQL(ctx)
 	if err != nil {
-		r.Error("q.ToPromExpr", err)
+		r.Error("q.ToPromQL", err)
 		return
 	}
 	r.Step("query promQL", promQL)

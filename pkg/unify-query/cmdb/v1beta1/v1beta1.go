@@ -427,8 +427,7 @@ func (r *model) doRequest(ctx context.Context, lookBackDeltaStr, spaceUid string
 	}
 
 	if len(matrix) == 0 {
-		checkString := instance.Check(ctx, statement, start, end, step)
-		return nil, fmt.Errorf("instance data empty, check: %s", checkString)
+		return nil, fmt.Errorf("instance data empty, promql: %s", realPromQL)
 	}
 
 	merged := make(map[int64]cmdb.Matchers)

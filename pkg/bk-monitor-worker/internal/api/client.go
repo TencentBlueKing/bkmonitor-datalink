@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	apiDefine "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/nodeman"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
@@ -42,6 +43,7 @@ var (
 	muForNodemanApi        sync.Mutex
 	muForBkdataApi         sync.Mutex
 	muForMetadataApi       sync.Mutex
+	muForMonitorApi        sync.Mutex
 )
 
 var (
@@ -54,6 +56,7 @@ var (
 	nodemanApi        *nodeman.Client
 	bkdataApi         *bkdata.Client
 	metadataApi       *metadata.Client
+	monitorApi        *monitor.Client
 )
 
 // GetGseApi 获取GseApi客户端
@@ -270,6 +273,41 @@ func GetMetadataApi() (*metadata.Client, error) {
 		return nil, err
 	}
 	return metadataApi, nil
+}
+
+// GetMonitorApi 获取metadataApi客户端
+func GetMonitorApi() (*monitor.Client, error) {
+	muForMonitorApi.Lock()
+	defer muForMonitorApi.Unlock()
+	if monitorApi != nil {
+		return monitorApi, nil
+	}
+	var config define.ClientConfigProvider
+	useBkMonitorApigw := cfg.BkMonitorApiGatewayEnabled
+	if useBkMonitorApigw {
+		config = bkapi.ClientConfig{
+			Endpoint:      cfg.BkMonitorApiGatewayBaseUrl,
+			Stage:         cfg.BkMonitorApiGatewayStage,
+			AppCode:       cfg.BkApiAppCode,
+			AppSecret:     cfg.BkApiAppSecret,
+			JsonMarshaler: jsonx.Marshal,
+		}
+	} else {
+		config = bkapi.ClientConfig{
+			Endpoint:            fmt.Sprintf("%s/api/c/compapi/v2/monitor_v3/", cfg.BkApiUrl),
+			Stage:               cfg.BkApiStage,
+			AppCode:             cfg.BkApiAppCode,
+			AppSecret:           cfg.BkApiAppSecret,
+			JsonMarshaler:       jsonx.Marshal,
+			AuthorizationParams: map[string]string{"bk_username": "admin"},
+		}
+	}
+	var err error
+	monitorApi, err = monitor.New(useBkMonitorApigw, config, bkapi.OptJsonResultProvider(), bkapi.OptJsonBodyProvider())
+	if err != nil {
+		return nil, err
+	}
+	return monitorApi, nil
 }
 
 // HeaderProvider provide request header.

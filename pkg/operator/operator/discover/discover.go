@@ -227,16 +227,19 @@ func (d *BaseDiscover) MonitorMeta() define.MonitorMeta {
 	return d.monitorMeta
 }
 
-func (d *BaseDiscover) PreStart() {
-	d.mm.IncStartedCounter()
-	d.ctx, d.cancel = context.WithCancel(d.parentCtx)
-	d.childConfigGroups = make(map[string]map[uint64]*ChildConfig)
-	logger.Infof("starting discover %s", d.Name())
-}
-
 func (d *BaseDiscover) SetDataID(dataID *bkv1beta1.DataID) {
 	d.BaseParams.DataID = dataID
 	d.BaseParams.ExtraLabels = dataID.Spec.Labels
+}
+
+func (d *BaseDiscover) PreStart() {
+	d.mm.IncStartedCounter()
+
+	// 状态重置
+	d.ctx, d.cancel = context.WithCancel(d.parentCtx)
+	d.childConfigGroups = make(map[string]map[uint64]*ChildConfig)
+	d.cache = NewCache(d.BaseParams.Name, time.Minute*10)
+	logger.Infof("starting discover %s", d.Name())
 }
 
 func (d *BaseDiscover) String() string {

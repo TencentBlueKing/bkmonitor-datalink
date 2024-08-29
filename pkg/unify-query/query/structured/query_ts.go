@@ -213,6 +213,39 @@ type PromExprOption struct {
 	IgnoreTimeAggregationEnable bool
 }
 
+func (q *QueryTs) ToPromQL(ctx context.Context) (promQLString string, checkErr error) {
+	var (
+		promExprOpt = &PromExprOption{
+			ReferenceNameMetric:       make(map[string]string),
+			ReferenceNameLabelMatcher: make(map[string][]*labels.Matcher),
+		}
+	)
+	for _, ql := range q.QueryList {
+		// 保留查询条件
+		matcher, _, err := ql.Conditions.ToProm()
+		if err != nil {
+			checkErr = err
+			return
+		}
+		promExprOpt.ReferenceNameLabelMatcher[ql.ReferenceName] = matcher
+
+		router, err := ql.ToRouter()
+		if err != nil {
+			checkErr = err
+			return
+		}
+		promExprOpt.ReferenceNameMetric[ql.ReferenceName] = router.RealMetricName()
+	}
+
+	promExpr, err := q.ToPromExpr(ctx, promExprOpt)
+	if err != nil {
+		checkErr = err
+		return
+	}
+
+	return promExpr.String(), nil
+}
+
 func (q *QueryTs) ToPromExpr(
 	ctx context.Context,
 	promExprOpt *PromExprOption,
@@ -563,6 +596,8 @@ func (q *Query) BuildMetadataQuery(
 	span.Set("tsdb-measurements", fmt.Sprintf("%+v", measurements))
 	span.Set("tsdb-time-field", tsDB.TimeField)
 	span.Set("tsdb-need-add-time", tsDB.NeedAddTime)
+	span.Set("tsdb-source-type", tsDB.SourceType)
+	span.Set("tsdb-storage-type", tsDB.StorageType)
 
 	if q.Offset != "" {
 		dTmp, err := model.ParseDuration(q.Offset)
@@ -856,7 +891,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 	if q.AlignInfluxdbResult && q.TimeAggregation.Window != "" {
 		dTmp, err = model.ParseDuration(q.Step)
 		if err != nil {
-			log.Errorf(ctx, "parse step err->[%s]", err)
+			err = errors.WithMessagef(err, "step parse error")
+			log.Errorf(ctx, err.Error())
 			return nil, err
 		}
 		step = time.Duration(dTmp)

@@ -212,7 +212,7 @@ func RecordSloErrorEventTimeInfo(value float64, bk_biz_id string, range_time str
 
 func PushRes(Registry *prometheus.Registry) {
 	// 创建一个新的 Pusher
-	pusher := push.New("bk-report-1.woa.com:4318", "slo").Gatherer(Registry)
+	pusher := push.New(config.SloPushGatewayEndpoint, "slo").Gatherer(Registry)
 
 	// 设置自定义客户端
 	pusher.Client(&bkClient{})

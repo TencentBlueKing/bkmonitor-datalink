@@ -126,6 +126,8 @@ var (
 
 	// SloPushGatewayToken slo数据上报Token
 	SloPushGatewayToken string
+	// SloPushGatewayEndpoint slo数据上报端点
+	SloPushGatewayEndpoint string
 )
 
 func initMetadataVariables() {
@@ -186,4 +188,5 @@ func initMetadataVariables() {
 	CanDeleteConsulPath = GetValue("taskConfig.metadata.global.CanDeleteConsulPath", false)
 
 	SloPushGatewayToken = GetValue("taskConfig.metadata.slo.sloPushGatewayToken", "")
+	SloPushGatewayEndpoint = GetValue("taskConfig.metadata.slo.sloPushGatewayEndpoint", "localhost:4318")
 }

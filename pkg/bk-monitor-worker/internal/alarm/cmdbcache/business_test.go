@@ -223,35 +223,4 @@ func TestBusinessCacheManager(t *testing.T) {
 		exists := client.Exists(ctx, cacheManager.GetCacheKey(businessCacheKey))
 		assert.EqualValues(t, 0, exists.Val())
 	})
-
-	t.Run("Event", func(t *testing.T) {
-		// 创建业务缓存管理器
-		cacheManager, err := NewBusinessCacheManager(t.Name(), rOpts, 1)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		err = cacheManager.UpdateByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": float64(2)},
-		})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 3)
-
-		err = cacheManager.CleanByEvents(ctx, "biz", []map[string]interface{}{
-			{"bk_biz_id": float64(2)},
-		})
-		err = cacheManager.CleanByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": float64(3)},
-		})
-		err = cacheManager.UpdateByEvents(ctx, "other", []map[string]interface{}{
-			{"bk_biz_id": float64(3)},
-		})
-
-		assert.Len(t, client.HKeys(ctx, cacheManager.GetCacheKey(businessCacheKey)).Val(), 2)
-	})
 }

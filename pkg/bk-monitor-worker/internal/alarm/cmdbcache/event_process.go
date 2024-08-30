@@ -30,11 +30,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // CmdbEventHandler cmdb资源变更事件处理器
@@ -109,15 +109,17 @@ func (h *CmdbEventHandler) Close() {
 	GetRelationMetricsBuilder().ClearAllMetrics()
 }
 
+// getEventKey 获取资源变更事件key
+func (h *CmdbEventHandler) getEventKey(resourceType CmdbResourceType) string {
+	return fmt.Sprintf("%s.cmdb_resource_watch_event.%s", h.prefix, resourceType)
+}
+
 // getEvents 获取资源变更事件
 func (h *CmdbEventHandler) getEvents(ctx context.Context, resourceType CmdbResourceType) ([]cmdb.ResourceWatchEvent, error) {
-	// 获取资源变更事件
-	bkEventKey := fmt.Sprintf("%s.cmdb_resource_watch_event.%s", h.prefix, resourceType)
-
 	// 从redis中获取该资源类型的所有事件
 	eventStrings := make([]string, 0)
 	for {
-		result, err := h.redisClient.LPop(ctx, bkEventKey).Result()
+		result, err := h.redisClient.LPop(ctx, h.getEventKey(resourceType)).Result()
 		if err != nil {
 			if !errors.Is(err, redis.Nil) {
 				logger.Errorf("get cmdb resource(%s) watch event error: %v", resourceType, err)
@@ -221,8 +223,33 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 				h.cleanModuleKeys.Store(int(bkModuleId), struct{}{})
 			}
 		case CmdbResourceTypeHost:
-			// todo: implement this
-			continue
+			ip, _ := event.BkDetail["bk_host_innerip"].(string)
+			cloudId, _ := event.BkDetail["bk_cloud_id"].(float64)
+			agentId, _ := event.BkDetail["bk_agent_id"].(string)
+
+			// 尝试将主机关联字段加入待清理列表，如果刷新业务时发现这些字段不存在，将会进行清理
+			if ip != "" {
+				h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", ip, int(cloudId)), struct{}{})
+			}
+			if agentId != "" {
+				h.cleanHostKeys.Store(agentId, struct{}{})
+			}
+
+			// 如果是删除事件，将主机ID加入待清理列表
+			if event.BkEventType == "delete" {
+				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
+			}
+
+			// 将主机所属业务加入待刷新列表
+			if host != nil {
+				h.refreshBizHostTopo.Store(host.BkBizId, struct{}{})
+				if host.BkAgentId != "" {
+					h.cleanHostKeys.Store(host.BkAgentId, struct{}{})
+				}
+				if host.BkHostInnerip != "" {
+					h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId), struct{}{})
+				}
+			}
 		case CmdbResourceTypeHostRelation:
 			bkBizId, ok := event.BkDetail["bk_biz_id"].(float64)
 			if !ok {
@@ -232,7 +259,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			// 如果拉不到主机信息，直接刷新业务并清理主机ID
 			if host == nil {
 				h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
-				h.cleanHostKeys.Store(int(bkHostId), struct{}{})
+				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
 				continue
 			}
 
@@ -246,7 +273,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 
 			if event.BkEventType == "delete" || host.BkBizId != int(bkBizId) {
 				// 如果是删除事件，将主机ID加入待清理列表
-				h.cleanHostKeys.Store(int(bkHostId), struct{}{})
+				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
 				// 如果是删除事件，将业务ID加入待刷新列表
 				h.refreshBizHostTopo.Store(host.BkBizId, struct{}{})
 				h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
@@ -300,21 +327,31 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 	return nil
 }
 
+// getLastUpdateTime 获取最后一次全量刷新时间
+func (h *CmdbEventHandler) getLastUpdateTimeKey(cacheType string) string {
+	return fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheType)
+}
+
 // getFullRefreshInterval 获取全量刷新间隔时间
 func (h *CmdbEventHandler) getFullRefreshInterval(cacheType string) time.Duration {
 	fullRefreshInterval, ok := h.fullRefreshIntervals[cacheType]
-	// 最低600秒的间隔
+	// 默认全量刷新间隔时间为10分钟
 	if !ok {
-		fullRefreshInterval = time.Second * 300
+		fullRefreshInterval = time.Second * 600
 	}
+
+	// 最低全量刷新间隔时间为1分钟
+	if fullRefreshInterval < time.Minute {
+		fullRefreshInterval = time.Minute
+	}
+
 	return fullRefreshInterval
 }
 
 // ifRunRefreshAll 判断是否执行全量刷新
-func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string) bool {
+func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string, now int64) bool {
 	// 获取最后一次全量刷新时间
-	lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheType)
-	lastUpdateTime, err := h.redisClient.Get(ctx, lastUpdateTimeKey).Result()
+	lastUpdateTime, err := h.redisClient.Get(ctx, h.getLastUpdateTimeKey(cacheType)).Result()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			logger.Errorf("get last update time error: %v", err)
@@ -329,7 +366,7 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 	}
 
 	// 如果超过全量刷新间隔时间，执行全量刷新
-	if time.Now().Unix()-lastUpdateTimestamp > int64(h.getFullRefreshInterval(cacheType).Seconds()) {
+	if now-lastUpdateTimestamp > int64(h.getFullRefreshInterval(cacheType).Seconds()) {
 		return true
 	}
 
@@ -351,7 +388,7 @@ func (h *CmdbEventHandler) Run(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 
-			if h.ifRunRefreshAll(ctx, cacheManager.Type()) {
+			if h.ifRunRefreshAll(ctx, cacheManager.Type(), time.Now().Unix()) {
 				// 全量刷新
 				err := RefreshAll(ctx, cacheManager, cacheManager.GetConcurrentLimit())
 				if err != nil {
@@ -361,8 +398,12 @@ func (h *CmdbEventHandler) Run(ctx context.Context) {
 				logger.Infof("refresh all cmdb resource(%s) cache", cacheManager.Type())
 
 				// 记录全量刷新时间
-				lastUpdateTimeKey := fmt.Sprintf("%s.cmdb_last_refresh_all_time.%s", h.prefix, cacheManager.Type())
-				_, err = h.redisClient.Set(ctx, lastUpdateTimeKey, strconv.FormatInt(time.Now().Unix(), 10), 24*time.Hour).Result()
+				_, err = h.redisClient.Set(
+					ctx,
+					h.getLastUpdateTimeKey(cacheManager.Type()),
+					strconv.FormatInt(time.Now().Unix(), 10),
+					24*time.Hour,
+				).Result()
 				if err != nil {
 					logger.Errorf("set last update time error: %v", err)
 				}

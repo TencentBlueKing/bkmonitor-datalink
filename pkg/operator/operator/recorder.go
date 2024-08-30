@@ -11,6 +11,7 @@ package operator
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
@@ -95,6 +96,10 @@ func (r *Recorder) getActiveConfigFiles() []ConfigFileRecord {
 	for _, cfg := range r.activeConfigFile {
 		cfgs = append(cfgs, cfg)
 	}
+
+	sort.Slice(cfgs, func(i, j int) bool {
+		return cfgs[i].Meta.ID() < cfgs[j].Meta.ID()
+	})
 	return cfgs
 }
 

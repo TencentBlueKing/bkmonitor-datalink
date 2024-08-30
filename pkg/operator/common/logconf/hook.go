@@ -19,34 +19,18 @@ import (
 )
 
 const (
-	confStdoutPath    = "log.stdout"
-	confFormatPath    = "log.format"
-	confFileNamePath  = "log.filename"
-	confMaxAgePath    = "log.max_age"
-	confMaxSizePath   = "log.max_size"
-	confMaxBackupPath = "log.max_backup"
-	confLogLevelPath  = "log.level"
+	confLoggerLevelPath = "logger.level"
 )
 
 func initConfig() {
-	viper.SetDefault(confStdoutPath, false)
-	viper.SetDefault(confFormatPath, "logfmt")
-	viper.SetDefault(confFileNamePath, "bkmonitor-operator.log")
-	viper.SetDefault(confMaxAgePath, 3)
-	viper.SetDefault(confMaxSizePath, 512)
-	viper.SetDefault(confMaxBackupPath, 5)
-	viper.SetDefault(confLogLevelPath, "error")
+	viper.SetDefault(confLoggerLevelPath, "info")
 }
 
 func updateConfig() {
 	logger.SetOptions(logger.Options{
-		Stdout:     viper.GetBool(confStdoutPath),
-		Format:     viper.GetString(confFormatPath),
-		Filename:   viper.GetString(confFileNamePath),
-		MaxAge:     viper.GetInt(confMaxAgePath),
-		MaxSize:    viper.GetInt(confMaxSizePath),
-		MaxBackups: viper.GetInt(confMaxBackupPath),
-		Level:      viper.GetString(confLogLevelPath),
+		Stdout: true,
+		Format: "logfmt",
+		Level:  viper.GetString(confLoggerLevelPath),
 	})
 }
 

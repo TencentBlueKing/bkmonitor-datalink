@@ -34,6 +34,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/cespare/xxhash/v2 v2.2.0
 	github.com/ghodss/yaml v1.0.0
+	github.com/go-kit/log v0.2.1
 	github.com/valyala/bytebufferpool v1.0.0
 )
 
@@ -74,7 +75,6 @@ require (
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/garyburd/redigo v1.6.2 // indirect
-	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

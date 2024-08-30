@@ -53,7 +53,7 @@ func TestServiceMonitorRelabel(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, content, string(data))
 
-	_, err = convertYamlRelabels(yamlSlice)
+	_, err = yamlToRelabels(yamlSlice)
 	assert.Nil(t, err)
 }
 
@@ -82,6 +82,6 @@ func TestPodMonitorRelabel(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, content, string(data))
 
-	_, err = convertYamlRelabels(yamlSlice)
+	_, err = yamlToRelabels(yamlSlice)
 	assert.Nil(t, err)
 }

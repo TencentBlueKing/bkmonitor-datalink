@@ -20,8 +20,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
@@ -155,7 +155,7 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	c.eventTaskCache = string(b)
 
 	secret := newSecret(secretName, tasks.TaskTypeEvent)
-	compressed, err := compressor.Compress(b)
+	compressed, err := gzip.Compress(b)
 	if err != nil {
 		logger.Errorf("failed to compress config content, err: %v", err)
 		return
@@ -221,7 +221,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		bytesTotal := 0
 		secret := newSecret(secretName, tasks.TaskTypeDaemonSet)
 		for _, config := range configs {
-			compressed, err := compressor.Compress(config.Data)
+			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
 				continue
@@ -294,7 +294,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 	// 如果 node 已经不存在了 也需要删除采集配置
 	for secret := range existSecrets {
 		// 只处理 daemonset secrets
-		if !strings.HasPrefix(secret, tasks.DaemonSetTaskSecretPrefix) {
+		if !strings.HasPrefix(secret, tasks.PrefixDaemonSetTaskSecret) {
 			continue
 		}
 
@@ -444,7 +444,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		bytesTotal := 0
 		secret := newSecret(tasks.GetStatefulSetTaskSecretName(idx), tasks.TaskTypeStatefulSet)
 		for _, config := range configs {
-			compressed, err := compressor.Compress(config.Data)
+			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
 				continue
@@ -529,6 +529,30 @@ func (c *Operator) collectChildConfigs() ([]*discover.ChildConfig, []*discover.C
 	c.discoversMut.Unlock()
 	c.recorder.updateConfigFiles(records)
 	return statefulset, daemonset
+}
+
+func (c *Operator) cleanupInvalidSecrets() {
+	secretClient := c.client.CoreV1().Secrets(ConfMonitorNamespace)
+	secrets, err := secretClient.List(c.ctx, metav1.ListOptions{
+		LabelSelector: "createdBy=bkmonitor-operator",
+	})
+	if err != nil {
+		logger.Errorf("failed to list secrets, err: %v", err)
+		return
+	}
+
+	// 清理不合法的 secrets
+	for _, secret := range secrets.Items {
+		if _, ok := secret.Labels[tasks.LabelTaskType]; !ok {
+			if err := secretClient.Delete(c.ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
+				c.mm.IncHandledSecretFailedCounter(secret.Name, define.ActionDelete)
+				logger.Errorf("failed to delete secret %s, err: %v", secret.Name, err)
+				continue
+			}
+			c.mm.IncHandledSecretSuccessCounter(secret.Name, define.ActionDelete)
+			logger.Infof("remove invalid secret %s", secret.Name)
+		}
+	}
 }
 
 func (c *Operator) dispatchTasks() {

@@ -31,9 +31,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -302,7 +302,7 @@ func (c *Controller) CreateOrUpdatePromScrapeSecret() error {
 		return errors.Wrap(err, "yaml unmarshal failed")
 	}
 
-	compressed, err := compressor.Compress(b)
+	compressed, err := gzip.Compress(b)
 	if err != nil {
 		return errors.Wrap(err, "compress data failed")
 	}

@@ -45,8 +45,10 @@ type Object struct {
 	OwnerRefs []OwnerRef
 
 	// Pod 属性
-	NodeName    string
-	PodIP       string
+	NodeName string
+	PodIP    string
+
+	// Metadata 属性
 	Labels      map[string]string
 	Annotations map[string]string
 

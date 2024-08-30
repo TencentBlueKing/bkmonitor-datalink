@@ -77,7 +77,7 @@ func NewTkexClient(host string, tlsConfig *rest.TLSClientConfig) (tkexversiond.I
 }
 
 func WaitForNamedCacheSync(ctx context.Context, controllerName string, inf cache.SharedIndexInformer) bool {
-	return operator.WaitForNamedCacheSync(ctx, controllerName, new(logconf.Logger), inf)
+	return operator.WaitForNamedCacheSync(ctx, controllerName, logconf.New(controllerName), inf)
 }
 
 func CreateOrUpdateSecret(ctx context.Context, secretClient clientv1.SecretInterface, desired *corev1.Secret) error {

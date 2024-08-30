@@ -45,8 +45,13 @@ func InitConfig() error {
 		return err
 	}
 
-	fmt.Printf("using config file: %s\n", viper.ConfigFileUsed())
-	fmt.Printf("settings: %+v\n", viper.AllSettings())
+	fmt.Printf("config file: %s\n", viper.ConfigFileUsed())
+	fmt.Println("-----------")
+	settings := viper.AllSettings()
+	for k, v := range settings {
+		fmt.Printf("- %s: %+v\n", k, v)
+	}
+	fmt.Println()
 	EventBus.Publish(EventConfigPostParse)
 	return nil
 }

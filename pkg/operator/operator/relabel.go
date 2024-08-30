@@ -28,7 +28,7 @@ func sanitizeLabelName(name string) string {
 	return regex.ReplaceAllString(name, "_")
 }
 
-func convertYamlRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
+func yamlToRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
 	var confs []*relabel.Config
 	data, err := yaml.Marshal(relabels)
 	if err != nil {

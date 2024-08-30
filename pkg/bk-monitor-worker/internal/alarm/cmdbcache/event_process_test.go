@@ -47,7 +47,7 @@ func TestGetEvents(t *testing.T) {
 		"{\"bk_cursor\":\"124\",\"bk_resource\":\"host_relation\",\"bk_event_type\":\"create\",\"bk_detail\":{\"bk_biz_id\":2,\"bk_host_id\":2,\"bk_module_id\":2,\"bk_set_id\":2,\"bk_supplier_account\":\"0\"}}",
 	}
 
-	handler, err := NewCmdbEventHandler(t.Name(), rOpts, []string{"host_topo"}, map[string]time.Duration{"host_topo": 61 * time.Second, "set": time.Second}, 1)
+	handler, err := NewCmdbEventHandler(t.Name(), rOpts, map[string]time.Duration{"host_topo": 61 * time.Second, "set": time.Second}, 1)
 	if err != nil {
 		t.Fatalf("failed to create handler: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestIfRunRefreshAll(t *testing.T) {
 	ctx := context.Background()
 
 	cacheType := "host_topo"
-	handler, err := NewCmdbEventHandler(t.Name(), rOpts, []string{cacheType}, map[string]time.Duration{cacheType: 61 * time.Second}, 1)
+	handler, err := NewCmdbEventHandler(t.Name(), rOpts, map[string]time.Duration{cacheType: 61 * time.Second}, 1)
 	if err != nil {
 		t.Fatalf("failed to create handler: %v", err)
 	}

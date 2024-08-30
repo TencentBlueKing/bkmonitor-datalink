@@ -30,11 +30,10 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -208,7 +207,7 @@ func (m *DynamicGroupCacheManager) RefreshByBiz(ctx context.Context, bizID int) 
 	}
 
 	// 更新动态分组缓存
-	err = m.UpdateHashMapCache(ctx, m.GetCacheKey(DynamicGroupCacheKey), dataMap)
+	err = m.UpdateHashMapCache(ctx, DynamicGroupCacheKey, dataMap)
 	if err != nil {
 		return errors.Wrap(err, "failed to update dynamic group cache")
 	}
@@ -218,17 +217,15 @@ func (m *DynamicGroupCacheManager) RefreshByBiz(ctx context.Context, bizID int) 
 
 // RefreshGlobal 更新全局动态分组缓存
 func (m *DynamicGroupCacheManager) RefreshGlobal(ctx context.Context) error {
-	result := m.RedisClient.Expire(ctx, m.GetCacheKey(DynamicGroupCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set dynamic group cache expire failed")
+	if err := m.UpdateExpire(ctx, DynamicGroupCacheKey); err != nil {
+		logger.Errorf("failed to update dynamic group cache expire time: %v", err)
 	}
 	return nil
 }
 
 // CleanGlobal 清除全局动态分组缓存
 func (m *DynamicGroupCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey(DynamicGroupCacheKey)
-	err := m.DeleteMissingHashMapFields(ctx, key)
+	err := m.DeleteMissingHashMapFields(ctx, DynamicGroupCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to clean global dynamic group cache")
 	}

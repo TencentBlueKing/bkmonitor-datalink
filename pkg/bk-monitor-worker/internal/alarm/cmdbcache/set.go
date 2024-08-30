@@ -34,10 +34,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -146,8 +147,7 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 	// 更新集群缓存
 	if len(setCacheData) > 0 {
-		key := m.GetCacheKey(setCacheKey)
-		err = m.UpdateHashMapCache(ctx, key, setCacheData)
+		err = m.UpdateHashMapCache(ctx, setCacheKey, setCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh set cache by biz: %d failed", bizID)
 		}
@@ -156,12 +156,11 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 	// 更新服务模板关联的模块缓存
 	if len(templateToSets) > 0 {
-		key := m.GetCacheKey(setTemplateCacheKey)
 		setTemplateCacheData := make(map[string]string)
 		for templateID, setIDs := range templateToSets {
 			setTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(setIDs, ","))
 		}
-		err = m.UpdateHashMapCache(ctx, key, setTemplateCacheData)
+		err = m.UpdateHashMapCache(ctx, setTemplateCacheKey, setTemplateCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh set template cache by biz: %d failed", bizID)
 		}
@@ -173,26 +172,23 @@ func (m *SetCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
 
 // RefreshGlobal 刷新全局模块缓存
 func (m *SetCacheManager) RefreshGlobal(ctx context.Context) error {
-	result := m.RedisClient.Expire(ctx, m.GetCacheKey(setCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set module cache expire time failed")
-	}
-
-	result = m.RedisClient.Expire(ctx, m.GetCacheKey(setTemplateCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set template module cache expire time failed")
+	keys := []string{setCacheKey, setTemplateCacheKey}
+	for _, key := range keys {
+		if err := m.UpdateExpire(ctx, key); err != nil {
+			logger.Errorf("expire hashmap failed, key: %s, err: %v", key, err)
+		}
 	}
 	return nil
 }
 
 // CleanGlobal 清理全局模块缓存
 func (m *SetCacheManager) CleanGlobal(ctx context.Context) error {
-	err := m.DeleteMissingHashMapFields(ctx, m.GetCacheKey(setCacheKey))
+	err := m.DeleteMissingHashMapFields(ctx, setCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
 
-	err = m.DeleteMissingHashMapFields(ctx, m.GetCacheKey(setTemplateCacheKey))
+	err = m.DeleteMissingHashMapFields(ctx, setTemplateCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
@@ -269,7 +265,7 @@ func (m *SetCacheManager) CleanByEvents(ctx context.Context, resourceType string
 
 	// 更新集群模板关联的集群缓存
 	if len(setTemplateCacheData) > 0 {
-		err := m.UpdateHashMapCache(ctx, m.GetCacheKey(setTemplateCacheKey), setTemplateCacheData)
+		err := m.UpdateHashMapCache(ctx, setTemplateCacheKey, setTemplateCacheData)
 		if err != nil {
 			return errors.Wrap(err, "failed to update set template hashmap cache")
 		}

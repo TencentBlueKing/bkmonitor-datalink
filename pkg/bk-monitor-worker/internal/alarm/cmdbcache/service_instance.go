@@ -197,7 +197,6 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 	}
 
 	// 刷新服务实例缓存
-	key := m.GetCacheKey(serviceInstanceCacheKey)
 	serviceInstanceMap := make(map[string]string)
 	for _, instance := range serviceInstances {
 		value, err := json.Marshal(instance)
@@ -206,13 +205,12 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 		}
 		serviceInstanceMap[strconv.Itoa(instance.ID)] = string(value)
 	}
-	err = m.UpdateHashMapCache(ctx, key, serviceInstanceMap)
+	err = m.UpdateHashMapCache(ctx, serviceInstanceCacheKey, serviceInstanceMap)
 	if err != nil {
 		return errors.Wrap(err, "update hashmap cmdb service instance cache failed")
 	}
 
 	// 刷新主机到服务实例缓存
-	key = m.GetCacheKey(hostToServiceInstanceCacheKey)
 	hostToServiceInstances := make(map[string][]string)
 	for _, instance := range serviceInstances {
 		hostToServiceInstances[strconv.Itoa(instance.BkHostId)] = append(hostToServiceInstances[strconv.Itoa(instance.BkHostId)], strconv.Itoa(instance.ID))
@@ -221,7 +219,7 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 	for hostId, instances := range hostToServiceInstances {
 		hostToServiceInstancesStr[hostId] = fmt.Sprintf("[%s]", strings.Join(instances, ","))
 	}
-	err = m.UpdateHashMapCache(ctx, key, hostToServiceInstancesStr)
+	err = m.UpdateHashMapCache(ctx, hostToServiceInstanceCacheKey, hostToServiceInstancesStr)
 	if err != nil {
 		return errors.Wrap(err, "update hashmap host to service instance cache failed")
 	}
@@ -231,13 +229,11 @@ func (m *ServiceInstanceCacheManager) RefreshByBiz(ctx context.Context, bkBizId 
 
 // CleanGlobal 清理全局缓存
 func (m *ServiceInstanceCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey(serviceInstanceCacheKey)
-	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, serviceInstanceCacheKey); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 
-	key = m.GetCacheKey(hostToServiceInstanceCacheKey)
-	if err := m.DeleteMissingHashMapFields(ctx, key); err != nil {
+	if err := m.DeleteMissingHashMapFields(ctx, hostToServiceInstanceCacheKey); err != nil {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 

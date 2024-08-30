@@ -163,7 +163,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 
 	// 更新模块缓存
 	if moduleCacheData != nil {
-		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(moduleCacheKey), moduleCacheData)
+		err = m.UpdateHashMapCache(ctx, moduleCacheKey, moduleCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh module cache by biz: %d failed", bizID)
 		}
@@ -176,7 +176,7 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 		for templateID, moduleIDs := range templateToModules {
 			serviceTemplateCacheData[templateID] = fmt.Sprintf("[%s]", strings.Join(moduleIDs, ","))
 		}
-		err = m.UpdateHashMapCache(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateCacheData)
+		err = m.UpdateHashMapCache(ctx, serviceTemplateCacheKey, serviceTemplateCacheData)
 		if err != nil {
 			return errors.Wrapf(err, "refresh service_template cache by biz: %d failed", bizID)
 		}
@@ -188,29 +188,23 @@ func (m *ModuleCacheManager) RefreshByBiz(ctx context.Context, bizID int) error 
 
 // RefreshGlobal 刷新全局模块缓存
 func (m *ModuleCacheManager) RefreshGlobal(ctx context.Context) error {
-	result := m.RedisClient.Expire(ctx, m.GetCacheKey(moduleCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set module cache expire time failed")
+	keys := []string{moduleCacheKey, serviceTemplateCacheKey}
+	for _, key := range keys {
+		if err := m.UpdateExpire(ctx, key); err != nil {
+			logger.Errorf("failed to update %s cache expire time: %v", key, err)
+		}
 	}
-
-	result = m.RedisClient.Expire(ctx, m.GetCacheKey(serviceTemplateCacheKey), m.Expire)
-	if err := result.Err(); err != nil {
-		return errors.Wrap(err, "set service_template cache expire time failed")
-	}
-
 	return nil
 }
 
 // CleanGlobal 清理全局模块缓存
 func (m *ModuleCacheManager) CleanGlobal(ctx context.Context) error {
-	key := m.GetCacheKey(moduleCacheKey)
-	err := m.DeleteMissingHashMapFields(ctx, key)
+	err := m.DeleteMissingHashMapFields(ctx, moduleCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
 
-	key = m.GetCacheKey(serviceTemplateCacheKey)
-	err = m.DeleteMissingHashMapFields(ctx, key)
+	err = m.DeleteMissingHashMapFields(ctx, serviceTemplateCacheKey)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete missing hashmap fields")
 	}
@@ -283,7 +277,7 @@ func (m *ModuleCacheManager) CleanByEvents(ctx context.Context, resourceType str
 
 	// 更新服务模板关联的模块缓存
 	if len(serviceTemplateCacheData) > 0 {
-		err := m.UpdateHashMapCache(ctx, m.GetCacheKey(serviceTemplateCacheKey), serviceTemplateCacheData)
+		err := m.UpdateHashMapCache(ctx, serviceTemplateCacheKey, serviceTemplateCacheData)
 		if err != nil {
 			return errors.Wrap(err, "failed to update service_template hashmap cache")
 		}

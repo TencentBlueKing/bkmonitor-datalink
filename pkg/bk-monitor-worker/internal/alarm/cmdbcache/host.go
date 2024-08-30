@@ -239,8 +239,8 @@ func NewAlarmHostInfoByListBizHostsTopoDataInfo(info *cmdb.ListBizHostsTopoDataI
 	return host
 }
 
-// HostAndTopoCacheManager 主机及拓扑缓存管理器
-type HostAndTopoCacheManager struct {
+// HostTopoCacheManager 主机及拓扑缓存管理器
+type HostTopoCacheManager struct {
 	*BaseCacheManager
 
 	hostIpMap     map[string]map[string]struct{}
@@ -248,26 +248,26 @@ type HostAndTopoCacheManager struct {
 }
 
 // NewHostAndTopoCacheManager 创建主机及拓扑缓存管理器
-func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*HostAndTopoCacheManager, error) {
+func NewHostAndTopoCacheManager(prefix string, opt *redis.Options, concurrentLimit int) (*HostTopoCacheManager, error) {
 	manager, err := NewBaseCacheManager(prefix, opt, concurrentLimit)
 	if err != nil {
 		return nil, errors.Wrap(err, "new cache Manager failed")
 	}
 
 	manager.initUpdatedFieldSet(hostCacheKey, hostAgentIDCacheKey, hostIPCacheKey, topoCacheKey)
-	return &HostAndTopoCacheManager{
+	return &HostTopoCacheManager{
 		BaseCacheManager: manager,
 		hostIpMap:        make(map[string]map[string]struct{}),
 	}, nil
 }
 
 // Type 缓存类型
-func (m *HostAndTopoCacheManager) Type() string {
+func (m *HostTopoCacheManager) Type() string {
 	return "host_topo"
 }
 
 // RefreshByBiz 按业务刷新缓存
-func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
+func (m *HostTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int) error {
 	logger.Infof("start refresh cmdb cache by biz: %d", bkBizId)
 	startTime := time.Now()
 	defer func() {
@@ -337,9 +337,8 @@ func (m *HostAndTopoCacheManager) RefreshByBiz(ctx context.Context, bkBizId int)
 }
 
 // RefreshGlobal 刷新全局缓存
-func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
+func (m *HostTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 	// 刷新主机IP映射缓存
-	key := m.GetCacheKey(hostIPCacheKey)
 	data := make(map[string]string)
 	for ip, hostIdMapping := range m.hostIpMap {
 		hostIds := make([]string, 0, len(hostIdMapping))
@@ -349,15 +348,15 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 		data[ip] = fmt.Sprintf("[%s]", strings.Join(hostIds, ","))
 	}
 
-	err := m.UpdateHashMapCache(ctx, key, data)
+	err := m.UpdateHashMapCache(ctx, hostIPCacheKey, data)
 	if err != nil {
 		return errors.Wrap(err, "update host ip cache failed")
 	}
 
 	// 刷新缓存过期时间
 	for _, key := range []string{hostCacheKey, topoCacheKey, hostAgentIDCacheKey, hostIPCacheKey} {
-		if err := m.RedisClient.Expire(ctx, m.GetCacheKey(key), m.Expire).Err(); err != nil {
-			logger.Error("set cache expire time failed, key: %s, err: %v", key, err)
+		if err := m.UpdateExpire(ctx, key); err != nil {
+			logger.Errorf("update expire failed, key: %s, err: %v", key, err)
 		}
 	}
 
@@ -365,18 +364,18 @@ func (m *HostAndTopoCacheManager) RefreshGlobal(ctx context.Context) error {
 }
 
 // Reset 重置
-func (m *HostAndTopoCacheManager) Reset() {
+func (m *HostTopoCacheManager) Reset() {
 	m.BaseCacheManager.Reset()
 	m.hostIpMap = make(map[string]map[string]struct{})
 }
 
 // CleanGlobal 清理全局缓存
-func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
+func (m *HostTopoCacheManager) CleanGlobal(ctx context.Context) error {
 	keys := []string{
-		m.GetCacheKey(hostIPCacheKey),
-		m.GetCacheKey(hostCacheKey),
-		m.GetCacheKey(topoCacheKey),
-		m.GetCacheKey(hostAgentIDCacheKey),
+		hostIPCacheKey,
+		hostCacheKey,
+		topoCacheKey,
+		hostAgentIDCacheKey,
 	}
 
 	for _, key := range keys {
@@ -389,9 +388,7 @@ func (m *HostAndTopoCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // 刷新拓扑缓存
-func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId int, topo *cmdb.SearchBizInstTopoData) error {
-	key := m.GetCacheKey(topoCacheKey)
-
+func (m *HostTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId int, topo *cmdb.SearchBizInstTopoData) error {
 	topoNodes := make(map[string]string)
 	topo.Traverse(func(node *cmdb.SearchBizInstTopoData) {
 		value, _ := json.Marshal(map[string]interface{}{
@@ -403,7 +400,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId 
 		topoNodes[node.GetId()] = string(value)
 	})
 
-	err := m.UpdateHashMapCache(ctx, key, topoNodes)
+	err := m.UpdateHashMapCache(ctx, topoCacheKey, topoNodes)
 	if err != nil {
 		return errors.Wrap(err, "update cmdb topo hashmap cache failed")
 	}
@@ -413,8 +410,7 @@ func (m *HostAndTopoCacheManager) refreshTopoCache(ctx context.Context, bkBizId 
 }
 
 // 刷新主机信息缓存
-func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId int, hosts []*AlarmHostInfo) error {
-	key := m.GetCacheKey(hostCacheKey)
+func (m *HostTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId int, hosts []*AlarmHostInfo) error {
 	hostMapping := make(map[string]string)
 	for _, host := range hosts {
 		value, _ := json.Marshal(host)
@@ -426,7 +422,7 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId 
 		}
 	}
 
-	err := m.UpdateHashMapCache(ctx, key, hostMapping)
+	err := m.UpdateHashMapCache(ctx, hostCacheKey, hostMapping)
 	if err != nil {
 		return errors.Wrap(err, "update cmdb host hashmap cache failed")
 	}
@@ -436,9 +432,7 @@ func (m *HostAndTopoCacheManager) refreshHostCache(ctx context.Context, bkBizId 
 }
 
 // 刷新主机AgentID缓存
-func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, bkBizId int, hosts []*AlarmHostInfo) error {
-	key := m.GetCacheKey(hostAgentIDCacheKey)
-
+func (m *HostTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, bkBizId int, hosts []*AlarmHostInfo) error {
 	agentIDs := make(map[string]string)
 	for _, host := range hosts {
 		if host.BkAgentId != "" {
@@ -446,7 +440,7 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 		}
 	}
 
-	err := m.UpdateHashMapCache(ctx, key, agentIDs)
+	err := m.UpdateHashMapCache(ctx, hostAgentIDCacheKey, agentIDs)
 	if err != nil {
 		return errors.Wrap(err, "update hashmap cmdb host agent id cache failed")
 	}
@@ -574,7 +568,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkBizID int) ([]*AlarmHostInfo, *c
 }
 
 // CleanByEvents 通过变更事件清理缓存
-func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostTopoCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -659,7 +653,7 @@ func (m *HostAndTopoCacheManager) CleanByEvents(ctx context.Context, resourceTyp
 }
 
 // UpdateByEvents 通过变更事件更新缓存
-func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
+func (m *HostTopoCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -721,7 +715,6 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 			}
 		}
 	case "mainline_instance":
-		key := m.GetCacheKey(topoCacheKey)
 		topoNodes := make(map[string]string)
 		for _, event := range events {
 			bkObjId := event["bk_obj_id"].(string)
@@ -735,9 +728,9 @@ func (m *HostAndTopoCacheManager) UpdateByEvents(ctx context.Context, resourceTy
 			value, _ := json.Marshal(topo)
 			topoNodes[fmt.Sprintf("%s|%d", bkObjId, int(bkInstId))] = string(value)
 		}
-		err := m.UpdateHashMapCache(ctx, key, topoNodes)
+		err := m.UpdateHashMapCache(ctx, topoCacheKey, topoNodes)
 		if err != nil {
-			return errors.Wrapf(err, "update hashmap cache failed, key: %s", key)
+			return errors.Wrapf(err, "update hashmap cache failed, key: %s", topoCacheKey)
 		}
 	case "host_relation":
 		for _, event := range events {

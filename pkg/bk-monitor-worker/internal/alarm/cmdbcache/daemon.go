@@ -17,10 +17,11 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // WatchCmdbResourceChangeEventTaskParams 监听cmdb资源变更任务参数
@@ -160,7 +161,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 		defer wg.Done()
 
 		// 创建资源变更事件处理器
-		handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, cacheTypes, fullRefreshIntervals, bizConcurrent)
+		handler, err := NewCmdbEventHandler(params.Prefix, &params.Redis, fullRefreshIntervals, bizConcurrent)
 		if err != nil {
 			logger.Errorf("[cmdb_relation] new cmdb event handler failed: %v", err)
 			cancel()

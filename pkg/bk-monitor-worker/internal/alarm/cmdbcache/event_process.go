@@ -33,6 +33,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -45,11 +46,14 @@ type CmdbEventHandler struct {
 	// redis client
 	redisClient redis.UniversalClient
 
-	// 缓存管理器
-	cacheManagers []Manager
-
 	// 全量刷新间隔时间
 	fullRefreshIntervals map[string]time.Duration
+
+	// 全量刷新间隔时间
+	concurrentLimit int
+
+	// 缓存管理器
+	cacheManagers map[string]Manager
 
 	// 预处理结果
 	// 是否刷新业务列表
@@ -58,6 +62,8 @@ type CmdbEventHandler struct {
 	refreshBizHostTopo sync.Map
 	// 待清理主机相关key
 	cleanHostKeys sync.Map
+	// 待清理AgentId相关key
+	cleanAgentIdKeys sync.Map
 	// 待刷新服务实例业务列表
 	refreshBizServiceInstance sync.Map
 	// 待清理服务实例相关key
@@ -79,7 +85,7 @@ type CmdbEventHandler struct {
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
-func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheTypes []string, fullRefreshIntervals map[string]time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
+func NewCmdbEventHandler(prefix string, rOpt *redis.Options, fullRefreshIntervals map[string]time.Duration, concurrentLimit int) (*CmdbEventHandler, error) {
 	// 创建redis client
 	redisClient, err := redis.GetClient(rOpt)
 	if err != nil {
@@ -87,20 +93,21 @@ func NewCmdbEventHandler(prefix string, rOpt *redis.Options, cacheTypes []string
 	}
 
 	// 创建缓存管理器
-	cacheManagers := make([]Manager, 0, len(cacheTypes))
-	for _, cacheType := range cacheTypes {
+	cacheManagers := make(map[string]Manager)
+	for _, cacheType := range cmdbCacheTypes {
 		cacheManager, err := NewCacheManagerByType(rOpt, prefix, cacheType, concurrentLimit)
 		if err != nil {
 			return nil, errors.Wrap(err, "new cache Manager failed")
 		}
-		cacheManagers = append(cacheManagers, cacheManager)
+		cacheManagers[cacheType] = cacheManager
 	}
 
 	return &CmdbEventHandler{
 		prefix:               prefix,
 		redisClient:          redisClient,
-		cacheManagers:        cacheManagers,
 		fullRefreshIntervals: fullRefreshIntervals,
+		concurrentLimit:      concurrentLimit,
+		cacheManagers:        cacheManagers,
 	}, nil
 }
 
@@ -154,6 +161,7 @@ func (h *CmdbEventHandler) resetPreprocessResults() {
 	h.refreshBiz = false
 	h.refreshBizHostTopo = sync.Map{}
 	h.cleanHostKeys = sync.Map{}
+	h.cleanAgentIdKeys = sync.Map{}
 	h.refreshBizServiceInstance = sync.Map{}
 	h.cleanServiceInstanceKeys = sync.Map{}
 	h.refreshTopoNode = sync.Map{}
@@ -232,7 +240,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 				h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", ip, int(cloudId)), struct{}{})
 			}
 			if agentId != "" {
-				h.cleanHostKeys.Store(agentId, struct{}{})
+				h.cleanAgentIdKeys.Store(agentId, struct{}{})
 			}
 
 			// 如果是删除事件，将主机ID加入待清理列表
@@ -244,7 +252,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			if host != nil {
 				h.refreshBizHostTopo.Store(host.BkBizId, struct{}{})
 				if host.BkAgentId != "" {
-					h.cleanHostKeys.Store(host.BkAgentId, struct{}{})
+					h.cleanAgentIdKeys.Store(host.BkAgentId, struct{}{})
 				}
 				if host.BkHostInnerip != "" {
 					h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId), struct{}{})
@@ -265,7 +273,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 
 			// 尝试将主机关联字段加入待清理列表，如果刷新业务时发现这些字段不存在，将会进行清理
 			if host.BkAgentId != "" {
-				h.cleanHostKeys.Store(host.BkAgentId, struct{}{})
+				h.cleanAgentIdKeys.Store(host.BkAgentId, struct{}{})
 			}
 			if host.BkHostInnerip != "" {
 				h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId), struct{}{})
@@ -323,7 +331,85 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 
 // refreshEvents 刷新资源变更事件
 func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
-	// todo: implement this
+	wg := sync.WaitGroup{}
+
+	// 刷新业务列表
+	if h.refreshBiz {
+		businessCacheManager := h.cacheManagers["business"]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			err := RefreshAll(ctx, businessCacheManager, h.concurrentLimit)
+			if err != nil {
+				logger.Errorf("refresh all business cache failed: %v", err)
+			}
+		}()
+	}
+
+	// 刷新主机拓扑业务列表
+	hostTopoBizIds := make([]int, 0)
+	h.refreshBizHostTopo.Range(func(key, value interface{}) bool {
+		bizId, _ := key.(int)
+		hostTopoBizIds = append(hostTopoBizIds, bizId)
+		return true
+	})
+	if len(hostTopoBizIds) > 0 {
+		hostTopoCacheManager := h.cacheManagers["host_topo"]
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// 刷新主机拓扑缓存
+			if err := hostTopoCacheManager.RefreshByBizIds(ctx, hostTopoBizIds, h.concurrentLimit); err != nil {
+				logger.Errorf("refresh host topo cache by biz failed: %v", err)
+			}
+
+			// 清理hostCacheKey缓存
+			cleanFields := make([]string, 0)
+			h.cleanHostKeys.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, key.(string))
+				return true
+			})
+			if err := hostTopoCacheManager.CleanPartial(ctx, hostCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean host topo cache partial failed: %v", err)
+			}
+
+			// 清理hostAgentIDCacheKey缓存
+			cleanFields = make([]string, 0)
+			h.cleanAgentIdKeys.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, key.(string))
+				return true
+			})
+			if err := hostTopoCacheManager.CleanPartial(ctx, hostAgentIDCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean host agentId cache partial failed: %v", err)
+			}
+
+			// 清理topoCacheKey缓存
+			cleanFields = make([]string, 0)
+			h.cleanTopoNode.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, key.(string))
+				return true
+			})
+			if err := hostTopoCacheManager.CleanPartial(ctx, topoCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean topo cache partial failed: %v", err)
+			}
+		}()
+	}
+
+	// 刷新服务实例业务列表
+	serviceInstanceBizIds := make([]int, 0)
+	h.refreshBizServiceInstance.Range(func(key, value interface{}) bool {
+		bizId, _ := key.(int)
+		serviceInstanceBizIds = append(serviceInstanceBizIds, bizId)
+		return true
+	})
+
+	if len(serviceInstanceBizIds) > 0 {
+
+	}
+
 	return nil
 }
 
@@ -443,4 +529,60 @@ func (h *CmdbEventHandler) Run(ctx context.Context) {
 	if err != nil {
 		logger.Errorf("refresh cmdb resource event error: %v", err)
 	}
+}
+
+// RefreshAll 执行缓存管理器
+func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) error {
+	// 判断是否启用业务缓存刷新
+	if cacheManager.useBiz() {
+		// 获取业务列表
+		cmdbApi := getCmdbApi()
+		var result cmdb.SearchBusinessResp
+		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
+		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
+			return err
+		}
+
+		// 并发控制
+		wg := sync.WaitGroup{}
+		limitChan := make(chan struct{}, concurrentLimit)
+
+		// 按业务刷新缓存
+		errChan := make(chan error, len(result.Data.Info))
+		for _, biz := range result.Data.Info {
+			limitChan <- struct{}{}
+			wg.Add(1)
+			go func(bizId int) {
+				defer func() {
+					wg.Done()
+					<-limitChan
+				}()
+				err := cacheManager.RefreshByBiz(ctx, bizId)
+				if err != nil {
+					errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
+				}
+			}(biz.BkBizId)
+		}
+
+		// 等待所有任务完成
+		wg.Wait()
+		close(errChan)
+		for err := range errChan {
+			return err
+		}
+	}
+
+	// 刷新全局缓存
+	err := cacheManager.RefreshGlobal(ctx)
+	if err != nil {
+		return errors.Wrapf(err, "refresh global %s cache failed", cacheManager.Type())
+	}
+
+	// 清理全局缓存
+	err = cacheManager.CleanGlobal(ctx)
+	if err != nil {
+		return errors.Wrapf(err, "clean global %s cache failed", cacheManager.Type())
+	}
+
+	return nil
 }

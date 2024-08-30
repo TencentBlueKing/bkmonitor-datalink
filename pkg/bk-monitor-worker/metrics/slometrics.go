@@ -84,6 +84,14 @@ var (
 		[]string{"bk_biz_id", "range_time", "scene"},
 	)
 
+	sloErrorEventTimeInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "slo_error_event_time_info",
+			Help: "Total slo_error_event_time_info",
+		},
+		[]string{"bk_biz_id", "range_time", "strategy_id", "scene", "start_time", "end_time", "event_id", "event_status"},
+	)
+
 	sloMonitor = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "slo_monitor",
@@ -103,6 +111,7 @@ func InitGauge(Registry *prometheus.Registry) {
 		sloMetric,
 		sloErrorTime,
 		sloMonitor,
+		sloErrorEventTimeInfo,
 	)
 }
 
@@ -186,6 +195,18 @@ func RecordSloErrorTime(value float64, bk_biz_id string, range_time string, scen
 		return
 	}
 	RecordSloMonitor(bk_biz_id, scene, "SloErrorTime", "1", "")
+	metric.Set(value)
+}
+
+// RecordSloErrorEventTimeInfo updates the sloErrorEventTimeInfo metric with the provided values
+func RecordSloErrorEventTimeInfo(value float64, bk_biz_id string, range_time string, strategy_id string, scene string, start_time string, end_time string, event_id string, event_status string) {
+	metric, err := sloErrorEventTimeInfo.GetMetricWithLabelValues(bk_biz_id, range_time, strategy_id, scene, start_time, end_time, event_id, event_status)
+	if err != nil {
+		log.Printf("prom get [sloErrorEventTimeInfo] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "0", err.Error())
+		return
+	}
+	RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "1", "")
 	metric.Set(value)
 }
 

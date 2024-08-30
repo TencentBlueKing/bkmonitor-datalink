@@ -73,7 +73,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 					continue
 				}
 				// 获取告警数据
-				AllStrategyAggInterval := service.GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID)
+				AllStrategyAggInterval := service.GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID, scene)
 				// 计算指标
 				service.CalculateMetric(TotalAlertTimeBucket, TrueSloName, AllStrategyAggInterval,
 					TotalSloTimeBucketDict, bkBizID, scene)

@@ -221,7 +221,7 @@ func addSloTimeIntoDict(day int, sloKey string, strategyID int32, beginTime, end
 }
 
 // GetAllAlertTime 获取告警事件
-func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64, TrueSloName map[string][]BkBizStrategy, BkBizID int32) map[int32]StrategyDetail {
+func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64, TrueSloName map[string][]BkBizStrategy, BkBizID int32, scene string) map[int32]StrategyDetail {
 	//定义策略详细信息
 	AllStrategyAggInterval := make(map[int32]StrategyDetail)
 	for day := range TotalAlertTimeBucket {
@@ -264,6 +264,9 @@ func GetAllAlertTime(TotalAlertTimeBucket map[int]map[string]map[string][]int64,
 				}
 				// 往TotalAlertTimeBucket添加时间数据。时间周期，方法论名，策略，起始时间，终止时间，存储桶
 				addSloTimeIntoDict(day, sloKey, strategyID, maxForSlo(alert.FirstAnomalyTime, startTime), endTime, TotalAlertTimeBucket)
+				metricSlo := endTime - maxForSlo(alert.FirstAnomalyTime, startTime)
+				metrics.RecordSloErrorEventTimeInfo(float64(metricSlo), fmt.Sprintf("%d", BkBizID), strconv.Itoa(day), fmt.Sprintf("%d", strategyID), scene,
+					strconv.FormatInt(maxForSlo(alert.FirstAnomalyTime, startTime), 10), strconv.FormatInt(endTime, 10), alert.EventID, alert.Status)
 			}
 		}
 	}

@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	"github.com/mitchellh/mapstructure"
@@ -37,7 +36,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -231,58 +229,5 @@ func (m *ServiceInstanceCacheManager) CleanGlobal(ctx context.Context) error {
 		return errors.Wrap(err, "delete missing fields failed")
 	}
 
-	return nil
-}
-
-// CleanByEvents 根据事件清理缓存
-func (m *ServiceInstanceCacheManager) CleanByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	return nil
-}
-
-// UpdateByEvents 根据事件更新缓存
-func (m *ServiceInstanceCacheManager) UpdateByEvents(ctx context.Context, resourceType string, events []map[string]interface{}) error {
-	if len(events) == 0 {
-		return nil
-	}
-
-	needUpdateBizIds := make(map[int]struct{})
-	switch resourceType {
-	case "process":
-		for _, event := range events {
-			bkBizID, ok := event["bk_biz_id"].(float64)
-			if !ok {
-				continue
-			}
-			needUpdateBizIds[int(bkBizID)] = struct{}{}
-		}
-	}
-
-	// 记录需要更新的业务ID
-	needUpdateBizIdSlice := make([]string, 0, len(needUpdateBizIds))
-	for bizID := range needUpdateBizIds {
-		needUpdateBizIdSlice = append(needUpdateBizIdSlice, strconv.Itoa(bizID))
-	}
-	logger.Infof("need update service instance cache biz ids: %v", strings.Join(needUpdateBizIdSlice, ","))
-
-	// 按业务刷新缓存
-	wg := sync.WaitGroup{}
-	limitChan := make(chan struct{}, m.ConcurrentLimit)
-	for bizID := range needUpdateBizIds {
-		wg.Add(1)
-		limitChan <- struct{}{}
-
-		go func(bizId int) {
-			defer func() {
-				<-limitChan
-				wg.Done()
-			}()
-			err := m.RefreshByBiz(ctx, bizId)
-			if err != nil {
-				logger.Errorf("failed to refresh service instance cache by biz: %d, err: %v", bizId, err)
-			}
-		}(bizID)
-	}
-
-	wg.Wait()
 	return nil
 }

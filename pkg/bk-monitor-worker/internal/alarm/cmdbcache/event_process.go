@@ -32,10 +32,9 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const DefaultFullRefreshInterval = time.Second * 600
@@ -66,22 +65,30 @@ type CmdbEventHandler struct {
 	cleanHostKeys sync.Map
 	// 待清理AgentId相关key
 	cleanAgentIdKeys sync.Map
-	// 待刷新服务实例业务列表
-	refreshBizServiceInstance sync.Map
-	// 待清理服务实例相关key
-	cleanServiceInstanceKeys sync.Map
+
 	// 待更新拓扑节点
 	refreshTopoNode sync.Map
 	// 待删除拓扑节点
 	cleanTopoNode sync.Map
+
+	// 待刷新服务实例业务列表
+	refreshBizServiceInstance sync.Map
+	// 待清理服务实例相关key
+	cleanServiceInstanceKeys sync.Map
+
 	// 待刷新集群业务列表
 	refreshBizSet sync.Map
 	// 待清理集群相关key
 	cleanSetKeys sync.Map
+	// 待清理集群模板相关key
+	cleanSetTemplateIds sync.Map
+
 	// 待刷新模块业务列表
 	refreshBizModule sync.Map
 	// 待清理模块相关key
 	cleanModuleKeys sync.Map
+	// 待清理服务模板相关key
+	cleanServiceTemplateIds sync.Map
 }
 
 // NewCmdbEventHandler 创建cmdb资源变更事件处理器
@@ -211,11 +218,17 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			if !ok1 || !ok2 {
 				continue
 			}
+
+			// 将业务ID加入待刷新列表
 			h.refreshBizSet.Store(int(bizId), struct{}{})
 
 			// 如果是删除事件，将集群ID加入待清理列表
 			if event.BkEventType == "delete" {
 				h.cleanSetKeys.Store(int(bkSetId), struct{}{})
+				setTemplateId, _ := event.BkDetail["set_template_id"].(float64)
+				if int(setTemplateId) != 0 {
+					h.cleanSetTemplateIds.Store(int(setTemplateId), struct{}{})
+				}
 			}
 		case CmdbResourceTypeModule:
 			bizId, ok1 := event.BkDetail["bk_biz_id"].(float64)
@@ -223,11 +236,17 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			if !ok1 || !ok2 {
 				continue
 			}
+
+			// 将业务ID加入待刷新列表
 			h.refreshBizModule.Store(int(bizId), struct{}{})
 
 			// 如果是删除事件，将模块ID加入待清理列表
 			if event.BkEventType == "delete" {
 				h.cleanModuleKeys.Store(int(bkModuleId), struct{}{})
+				serviceInstanceTemplateId, _ := event.BkDetail["service_template_id"].(float64)
+				if int(serviceInstanceTemplateId) != 0 {
+					h.cleanServiceTemplateIds.Store(int(serviceInstanceTemplateId), struct{}{})
+				}
 			}
 		case CmdbResourceTypeHost:
 			ip, _ := event.BkDetail["bk_host_innerip"].(string)
@@ -328,7 +347,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 }
 
 // refreshEvents 刷新资源变更事件
-func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
+func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 	wg := sync.WaitGroup{}
 
 	// 刷新业务列表
@@ -427,6 +446,14 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 		serviceInstanceBizIds = append(serviceInstanceBizIds, bizId)
 		return true
 	})
+	h.refreshBizHostTopo.Range(func(key, value interface{}) bool {
+		bizId, _ := key.(int)
+		_, ok := h.refreshBizServiceInstance.Load(bizId)
+		if !ok {
+			serviceInstanceBizIds = append(serviceInstanceBizIds, bizId)
+		}
+		return true
+	})
 	if len(serviceInstanceBizIds) > 0 {
 		serviceInstanceCacheManager := h.cacheManagers["service_instance"]
 
@@ -485,7 +512,15 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 				logger.Errorf("clean set cache partial failed: %v", err)
 			}
 
-			// todo: 清理setTemplateCacheKey缓存
+			// 清理setTemplateCacheKey缓存
+			cleanFields = make([]string, 0)
+			h.cleanSetTemplateIds.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
+				return true
+			})
+			if err := setCacheManager.CleanPartial(ctx, setTemplateCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean set template cache partial failed: %v", err)
+			}
 
 			// 重置
 			setCacheManager.Reset()
@@ -520,7 +555,15 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 				logger.Errorf("clean module cache partial failed: %v", err)
 			}
 
-			// todo: 清理serviceTemplateCacheKey缓存
+			// 清理serviceTemplateCacheKey缓存
+			cleanFields = make([]string, 0)
+			h.cleanServiceTemplateIds.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
+				return true
+			})
+			if err := moduleCacheManager.CleanPartial(ctx, serviceTemplateCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean service template cache partial failed: %v", err)
+			}
 
 			// 重置
 			moduleCacheManager.Reset()
@@ -655,7 +698,7 @@ func (h *CmdbEventHandler) Run(ctx context.Context) {
 	wg.Wait()
 
 	// 根据预处理结果，执行缓存变更动作
-	err := h.refreshEvents(ctx)
+	err := h.refreshByEvents(ctx)
 	if err != nil {
 		logger.Errorf("refresh cmdb resource event error: %v", err)
 	}

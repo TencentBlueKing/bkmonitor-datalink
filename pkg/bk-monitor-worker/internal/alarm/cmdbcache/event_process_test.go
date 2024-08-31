@@ -275,9 +275,9 @@ func TestPreprocessEvent(t *testing.T) {
 			name:         "Set",
 			resourceType: CmdbResourceTypeSet,
 			events: []string{
-				`{"bk_cursor":"1","bk_resource":"set","bk_event_type":"update","bk_detail":{"bk_biz_id":1,"bk_set_id":10}}`,
-				`{"bk_cursor":"2","bk_resource":"set","bk_event_type":"create","bk_detail":{"bk_biz_id":2,"bk_set_id":11}}`,
-				`{"bk_cursor":"3","bk_resource":"set","bk_event_type":"delete","bk_detail":{"bk_biz_id":2,"bk_set_id":12}}`,
+				`{"bk_cursor":"1","bk_resource":"set","bk_event_type":"update","bk_detail":{"bk_biz_id":1,"bk_set_id":10, "set_template_id":1}}`,
+				`{"bk_cursor":"2","bk_resource":"set","bk_event_type":"create","bk_detail":{"bk_biz_id":2,"bk_set_id":11, "set_template_id":2}}`,
+				`{"bk_cursor":"3","bk_resource":"set","bk_event_type":"delete","bk_detail":{"bk_biz_id":2,"bk_set_id":12, "set_template_id":3}}`,
 			},
 			checkFunc: func(t *testing.T, handler *CmdbEventHandler) {
 				_, ok := handler.refreshBizSet.Load(1)
@@ -294,15 +294,18 @@ func TestPreprocessEvent(t *testing.T) {
 
 				_, ok = handler.cleanSetKeys.Load(11)
 				assert.False(t, ok)
+
+				_, ok = handler.cleanSetTemplateIds.Load(3)
+				assert.True(t, ok)
 			},
 		},
 		{
 			name:         "Module",
 			resourceType: CmdbResourceTypeModule,
 			events: []string{
-				`{"bk_cursor":"1","bk_resource":"module","bk_event_type":"update","bk_detail":{"bk_biz_id":1,"bk_module_id":10}}`,
-				`{"bk_cursor":"2","bk_resource":"module","bk_event_type":"create","bk_detail":{"bk_biz_id":2,"bk_module_id":11}}`,
-				`{"bk_cursor":"3","bk_resource":"module","bk_event_type":"delete","bk_detail":{"bk_biz_id":2,"bk_module_id":12}}`,
+				`{"bk_cursor":"1","bk_resource":"module","bk_event_type":"update","bk_detail":{"bk_biz_id":1,"bk_module_id":10, "service_template_id":1}}`,
+				`{"bk_cursor":"2","bk_resource":"module","bk_event_type":"create","bk_detail":{"bk_biz_id":2,"bk_module_id":11, "service_template_id":2}}`,
+				`{"bk_cursor":"3","bk_resource":"module","bk_event_type":"delete","bk_detail":{"bk_biz_id":2,"bk_module_id":12, "service_template_id":3}}`,
 			},
 			checkFunc: func(t *testing.T, handler *CmdbEventHandler) {
 				_, ok := handler.refreshBizModule.Load(1)
@@ -319,6 +322,9 @@ func TestPreprocessEvent(t *testing.T) {
 
 				_, ok = handler.cleanModuleKeys.Load(11)
 				assert.False(t, ok)
+
+				_, ok = handler.cleanServiceTemplateIds.Load(3)
+				assert.True(t, ok)
 			},
 		},
 		{
@@ -452,4 +458,42 @@ func TestPreprocessEvent(t *testing.T) {
 			tc.checkFunc(t, handler)
 		})
 	}
+}
+
+func TestRefreshByEvents(t *testing.T) {
+	rOpts := &redis.Options{
+		Mode:  "standalone",
+		Addrs: []string{testRedisAddr},
+	}
+
+	ctx := context.Background()
+
+	handler, err := NewCmdbEventHandler(t.Name(), rOpts, map[string]time.Duration{}, 1)
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	t.Run("Biz", func(t *testing.T) {
+		refreshAllCount := 0
+		patchRefreshAll := gomonkey.ApplyFunc(RefreshAll, func(ctx context.Context, cacheManager Manager, concurrentLimit int) error {
+			refreshAllCount++
+			return nil
+		})
+		defer patchRefreshAll.Reset()
+
+		handler.refreshBiz = true
+
+		err := handler.refreshByEvents(ctx)
+		if err != nil {
+			t.Fatalf("failed to refresh by events: %v", err)
+		}
+
+		assert.Equal(t, refreshAllCount, 1)
+	})
+
+	t.Run("Host", func(t *testing.T) {
+		handler.refreshBizHostTopo.Store(1, struct{}{})
+		handler.cleanHostKeys.Store("1", struct{}{})
+		handler.cleanAgentIdKeys.Store("xxx1", struct{}{})
+	})
 }

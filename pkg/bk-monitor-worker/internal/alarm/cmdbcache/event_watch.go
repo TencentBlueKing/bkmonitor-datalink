@@ -64,10 +64,13 @@ var CmdbResourceTypes = []CmdbResourceType{
 
 // CmdbResourceTypeFields cmdb资源类型对应的监听字段
 var CmdbResourceTypeFields = map[CmdbResourceType][]string{
-	CmdbResourceTypeHost:   {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
-	CmdbResourceTypeBiz:    {"bk_biz_id"},
-	CmdbResourceTypeSet:    {"bk_biz_id", "bk_set_id", "set_template_id"},
-	CmdbResourceTypeModule: {"bk_module_id", "bk_biz_id", "service_template_id"},
+	CmdbResourceTypeHost:             {"bk_host_id", "bk_host_innerip", "bk_cloud_id", "bk_agent_id"},
+	CmdbResourceTypeHostRelation:     {"bk_host_id", "bk_biz_id", "bk_module_id", "bk_set_id"},
+	CmdbResourceTypeBiz:              {"bk_biz_id"},
+	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "set_template_id"},
+	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id", "service_template_id"},
+	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
+	CmdbResourceTypeProcess:          {"bk_biz_id"},
 }
 
 // CmdbResourceWatcher cmdb资源监听器

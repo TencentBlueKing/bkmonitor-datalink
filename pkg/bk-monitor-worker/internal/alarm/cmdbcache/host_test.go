@@ -24,7 +24,6 @@ package cmdbcache
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -211,82 +210,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		assert.EqualValues(t, expectedHostIpKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
-
-		// 生成变更事件数据
-		allResult := client.HGetAll(ctx, cacheManager.GetCacheKey(hostCacheKey))
-		if allResult.Err() != nil {
-			t.Error(allResult.Err())
-			return
-		}
-		events := make([]map[string]interface{}, 0, len(allResult.Val()))
-		for _, v := range allResult.Val() {
-			var host *AlarmHostInfo
-			err := json.Unmarshal([]byte(v), &host)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			events = append(events, map[string]interface{}{
-				"bk_host_id":      float64(host.BkHostId),
-				"bk_host_innerip": host.BkHostInnerip,
-				"bk_cloud_id":     float64(host.BkCloudId),
-				// 测试agent_id变化后是否会被删除
-				"bk_agent_id": fmt.Sprintf("%s-change", host.BkAgentId),
-			})
-		}
-
-		fmt.Printf(client.HGet(ctx, cacheManager.GetCacheKey(hostCacheKey), "1").Val())
-
-		// 基于事件更新缓存
-		err = cacheManager.UpdateByEvents(ctx, "host", events)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		// 判断agent_id是否被删除
-		for _, event := range events {
-			agentID := event["bk_agent_id"].(string)
-			oldAgentID := agentID[:len(agentID)-7]
-			host := client.HGet(ctx, cacheManager.GetCacheKey(hostCacheKey), strconv.Itoa(int(event["bk_host_id"].(float64)))).Val()
-			assert.NotEmpty(t, host)
-			assert.False(t, client.HExists(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey), oldAgentID).Val())
-		}
-
-		// 基于事件清理缓存
-		err = cacheManager.CleanByEvents(ctx, "host", events)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		topoEvent := map[string]interface{}{
-			"bk_obj_id":    "module",
-			"bk_inst_id":   float64(6),
-			"bk_inst_name": "测试模块",
-			"bk_obj_name":  "模块",
-		}
-
-		err = cacheManager.CleanByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.False(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
-
-		err = cacheManager.UpdateByEvents(ctx, "mainline_instance", []map[string]interface{}{topoEvent})
-		if err != nil {
-			t.Error(err)
-			return
-		}
-
-		assert.True(t, client.HExists(ctx, cacheManager.GetCacheKey(topoCacheKey), "module|6").Val())
-
-		// 判断清理后是否为空
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
+		assert.EqualValues(t, expectedHostIpKeys, client.HKeys(ctx, cacheManager.GetCacheKey(hostIpCacheKey)).Val())
 	})
 
 	t.Run("Clean", func(t *testing.T) {
@@ -313,11 +237,11 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		// 判断是否存在所有的缓存键
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
-		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
+		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIpCacheKey)).Val())
 		assert.NotEmpty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 
 		// 清理缓存
-		cacheManager.initUpdatedFieldSet(hostAgentIDCacheKey, hostCacheKey, hostIPCacheKey, topoCacheKey)
+		cacheManager.initUpdatedFieldSet(hostAgentIDCacheKey, hostCacheKey, hostIpCacheKey, topoCacheKey)
 		err = cacheManager.CleanGlobal(ctx)
 		if err != nil {
 			t.Error(err)
@@ -327,7 +251,7 @@ func TestHostAndTopoCacheManager(t *testing.T) {
 		// 判断清理后是否为空
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostAgentIDCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostCacheKey)).Val())
-		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIPCacheKey)).Val())
+		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(hostIpCacheKey)).Val())
 		assert.Empty(t, client.HKeys(ctx, cacheManager.GetCacheKey(topoCacheKey)).Val())
 	})
 }

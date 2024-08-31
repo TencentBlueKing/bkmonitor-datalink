@@ -32,11 +32,13 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 )
+
+const DefaultFullRefreshInterval = time.Second * 600
 
 // CmdbEventHandler cmdb资源变更事件处理器
 type CmdbEventHandler struct {
@@ -72,8 +74,6 @@ type CmdbEventHandler struct {
 	refreshTopoNode sync.Map
 	// 待删除拓扑节点
 	cleanTopoNode sync.Map
-	// 待刷新动态分组业务列表
-	refreshBizDynamicGroup sync.Map
 	// 待刷新集群业务列表
 	refreshBizSet sync.Map
 	// 待清理集群相关key
@@ -166,7 +166,6 @@ func (h *CmdbEventHandler) resetPreprocessResults() {
 	h.cleanServiceInstanceKeys = sync.Map{}
 	h.refreshTopoNode = sync.Map{}
 	h.cleanTopoNode = sync.Map{}
-	h.refreshBizDynamicGroup = sync.Map{}
 	h.refreshBizSet = sync.Map{}
 	h.cleanSetKeys = sync.Map{}
 	h.refreshBizModule = sync.Map{}
@@ -235,17 +234,21 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			cloudId, _ := event.BkDetail["bk_cloud_id"].(float64)
 			agentId, _ := event.BkDetail["bk_agent_id"].(string)
 
+			if event.BkEventType == "create" {
+				continue
+			}
+
+			if event.BkEventType == "delete" {
+				// 如果是删除事件，将主机ID加入待清理列表
+				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
+			}
+
 			// 尝试将主机关联字段加入待清理列表，如果刷新业务时发现这些字段不存在，将会进行清理
 			if ip != "" {
 				h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", ip, int(cloudId)), struct{}{})
 			}
 			if agentId != "" {
 				h.cleanAgentIdKeys.Store(agentId, struct{}{})
-			}
-
-			// 如果是删除事件，将主机ID加入待清理列表
-			if event.BkEventType == "delete" {
-				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
 			}
 
 			// 将主机所属业务加入待刷新列表
@@ -264,30 +267,25 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 				continue
 			}
 
-			// 如果拉不到主机信息，直接刷新业务并清理主机ID
-			if host == nil {
-				h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
-				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
-				continue
-			}
+			// 将主机所属业务加入待刷新列表
+			h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
 
-			// 尝试将主机关联字段加入待清理列表，如果刷新业务时发现这些字段不存在，将会进行清理
-			if host.BkAgentId != "" {
-				h.cleanAgentIdKeys.Store(host.BkAgentId, struct{}{})
-			}
-			if host.BkHostInnerip != "" {
-				h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId), struct{}{})
-			}
-
-			if event.BkEventType == "delete" || host.BkBizId != int(bkBizId) {
-				// 如果是删除事件，将主机ID加入待清理列表
+			// 如果是删除事件或业务与主机业务不一致，将主机相关加入待清理列表
+			if event.BkEventType == "delete" || (host != nil && host.BkBizId != int(bkBizId)) {
+				// 如果是删除事件，将主机相关加入待清理列表
 				h.cleanHostKeys.Store(strconv.Itoa(int(bkHostId)), struct{}{})
-				// 如果是删除事件，将业务ID加入待刷新列表
-				h.refreshBizHostTopo.Store(host.BkBizId, struct{}{})
-				h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
-			} else {
-				// 如果是更新事件，将业务ID加入待刷新列表
-				h.refreshBizHostTopo.Store(int(bkBizId), struct{}{})
+
+				if host != nil {
+					if host.BkAgentId != "" {
+						h.cleanAgentIdKeys.Store(host.BkAgentId, struct{}{})
+					}
+					if host.BkHostInnerip != "" {
+						h.cleanHostKeys.Store(fmt.Sprintf("%s|%d", host.BkHostInnerip, host.BkCloudId), struct{}{})
+					}
+					// 如果是删除事件，将业务ID加入待刷新列表
+					h.refreshBizHostTopo.Store(host.BkBizId, struct{}{})
+				}
+
 			}
 		case CmdbResourceTypeMainlineInstance:
 			bkObjId := event.BkDetail["bk_obj_id"].(string)
@@ -295,7 +293,7 @@ func (h *CmdbEventHandler) preprocessEvents(ctx context.Context, resourceType Cm
 			if !ok {
 				continue
 			}
-			topoNodeKey := fmt.Sprintf("%s.%d", bkObjId, int(bkInstId))
+			topoNodeKey := fmt.Sprintf("%s|%d", bkObjId, int(bkInstId))
 			if event.BkEventType == "delete" {
 				// 如果是删除事件，将拓扑节点ID加入待清理列表
 				h.cleanTopoNode.Store(topoNodeKey, struct{}{})
@@ -345,6 +343,9 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 				logger.Errorf("refresh all business cache failed: %v", err)
 			}
 		}()
+
+		// 重置
+		businessCacheManager.Reset()
 	}
 
 	// 刷新主机拓扑业务列表
@@ -364,6 +365,8 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 			// 刷新主机拓扑缓存
 			if err := hostTopoCacheManager.RefreshByBizIds(ctx, hostTopoBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh host topo cache by biz failed: %v", err)
+				// 如果刷新不顺利，后续清理操作也不执行，否则可能会清理掉正常的缓存
+				return
 			}
 
 			// 清理hostCacheKey缓存
@@ -395,6 +398,25 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 			if err := hostTopoCacheManager.CleanPartial(ctx, topoCacheKey, cleanFields); err != nil {
 				logger.Errorf("clean topo cache partial failed: %v", err)
 			}
+
+			// todo: 清理hostIpCacheKey缓存
+
+			// 重置
+			hostTopoCacheManager.Reset()
+		}()
+
+		// 刷新动态分组业务列表
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			dynamicGroupCacheManager := h.cacheManagers["dynamic_group"]
+			if err := dynamicGroupCacheManager.RefreshByBizIds(ctx, hostTopoBizIds, h.concurrentLimit); err != nil {
+				logger.Errorf("refresh dynamic group cache by biz failed: %v", err)
+			}
+
+			// 重置
+			dynamicGroupCacheManager.Reset()
 		}()
 	}
 
@@ -405,10 +427,107 @@ func (h *CmdbEventHandler) refreshEvents(ctx context.Context) error {
 		serviceInstanceBizIds = append(serviceInstanceBizIds, bizId)
 		return true
 	})
-
 	if len(serviceInstanceBizIds) > 0 {
+		serviceInstanceCacheManager := h.cacheManagers["service_instance"]
 
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// 刷新服务实例缓存
+			if err := serviceInstanceCacheManager.RefreshByBizIds(ctx, serviceInstanceBizIds, h.concurrentLimit); err != nil {
+				logger.Errorf("refresh service instance cache by biz failed: %v", err)
+			}
+
+			// 清理serviceInstanceCacheKey缓存
+			cleanFields := make([]string, 0)
+			h.cleanServiceInstanceKeys.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
+				return true
+			})
+			if err := serviceInstanceCacheManager.CleanPartial(ctx, serviceInstanceCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean service instance cache partial failed: %v", err)
+			}
+
+			// todo: 清理hostToServiceInstanceCacheKey缓存
+
+			// 重置
+			serviceInstanceCacheManager.Reset()
+		}()
 	}
+
+	// 刷新集群业务列表
+	setBizIds := make([]int, 0)
+	h.refreshBizSet.Range(func(key, value interface{}) bool {
+		bizId, _ := key.(int)
+		setBizIds = append(setBizIds, bizId)
+		return true
+	})
+	if len(setBizIds) > 0 {
+		setCacheManager := h.cacheManagers["set"]
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// 刷新集群缓存
+			if err := setCacheManager.RefreshByBizIds(ctx, setBizIds, h.concurrentLimit); err != nil {
+				logger.Errorf("refresh set cache by biz failed: %v", err)
+			}
+
+			// 清理setCacheKey缓存
+			cleanFields := make([]string, 0)
+			h.cleanSetKeys.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
+				return true
+			})
+			if err := setCacheManager.CleanPartial(ctx, setCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean set cache partial failed: %v", err)
+			}
+
+			// todo: 清理setTemplateCacheKey缓存
+
+			// 重置
+			setCacheManager.Reset()
+		}()
+	}
+
+	// 刷新模块业务列表
+	moduleBizIds := make([]int, 0)
+	h.refreshBizModule.Range(func(key, value interface{}) bool {
+		bizId, _ := key.(int)
+		moduleBizIds = append(moduleBizIds, bizId)
+		return true
+	})
+	if len(moduleBizIds) > 0 {
+		moduleCacheManager := h.cacheManagers["module"]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// 刷新模块缓存
+			if err := moduleCacheManager.RefreshByBizIds(ctx, moduleBizIds, h.concurrentLimit); err != nil {
+				logger.Errorf("refresh module cache by biz failed: %v", err)
+			}
+
+			// 清理moduleCacheKey缓存
+			cleanFields := make([]string, 0)
+			h.cleanModuleKeys.Range(func(key, value interface{}) bool {
+				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
+				return true
+			})
+			if err := moduleCacheManager.CleanPartial(ctx, moduleCacheKey, cleanFields); err != nil {
+				logger.Errorf("clean module cache partial failed: %v", err)
+			}
+
+			// todo: 清理serviceTemplateCacheKey缓存
+
+			// 重置
+			moduleCacheManager.Reset()
+		}()
+	}
+
+	wg.Wait()
 
 	return nil
 }
@@ -423,7 +542,7 @@ func (h *CmdbEventHandler) getFullRefreshInterval(cacheType string) time.Duratio
 	fullRefreshInterval, ok := h.fullRefreshIntervals[cacheType]
 	// 默认全量刷新间隔时间为10分钟
 	if !ok {
-		fullRefreshInterval = time.Second * 600
+		fullRefreshInterval = DefaultFullRefreshInterval
 	}
 
 	// 最低全量刷新间隔时间为1分钟
@@ -459,14 +578,9 @@ func (h *CmdbEventHandler) ifRunRefreshAll(ctx context.Context, cacheType string
 	return false
 }
 
-// Run 处理cmdb资源变更事件
-// 1. 遍历所有缓存类型，如果超过全量刷新间隔时间，先执行全量刷新
-// 2. 从缓存中获取资源变更并进行预处理
-// 3. 根据预处理结果，执行缓存变更动作
-func (h *CmdbEventHandler) Run(ctx context.Context) {
+// runRefreshAll 判断所有的缓存类型，如果超过全量刷新间隔时间，先执行全量刷新
+func (h *CmdbEventHandler) runRefreshAll(ctx context.Context) {
 	wg := sync.WaitGroup{}
-
-	// 如果超过全量刷新间隔时间，先执行全量刷新
 	for _, cacheManager := range h.cacheManagers {
 		wg.Add(1)
 
@@ -474,34 +588,50 @@ func (h *CmdbEventHandler) Run(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 
-			if h.ifRunRefreshAll(ctx, cacheManager.Type(), time.Now().Unix()) {
-				// 全量刷新
-				err := RefreshAll(ctx, cacheManager, cacheManager.GetConcurrentLimit())
-				if err != nil {
-					logger.Errorf("refresh all cache failed: %v", err)
-				}
+			// 判断是否执行全量刷新
+			if !h.ifRunRefreshAll(ctx, cacheManager.Type(), time.Now().Unix()) {
+				return
+			}
 
-				logger.Infof("refresh all cmdb resource(%s) cache", cacheManager.Type())
+			// 全量刷新
+			err := RefreshAll(ctx, cacheManager, cacheManager.GetConcurrentLimit())
+			if err != nil {
+				logger.Errorf("refresh all cache failed: %v", err)
+			}
 
-				// 记录全量刷新时间
-				_, err = h.redisClient.Set(
-					ctx,
-					h.getLastUpdateTimeKey(cacheManager.Type()),
-					strconv.FormatInt(time.Now().Unix(), 10),
-					24*time.Hour,
-				).Result()
-				if err != nil {
-					logger.Errorf("set last update time error: %v", err)
-				}
+			// 重置
+			cacheManager.Reset()
+
+			logger.Infof("refresh all cmdb resource(%s) cache", cacheManager.Type())
+
+			// 记录全量刷新时间
+			_, err = h.redisClient.Set(
+				ctx,
+				h.getLastUpdateTimeKey(cacheManager.Type()),
+				strconv.FormatInt(time.Now().Unix(), 10),
+				24*time.Hour,
+			).Result()
+			if err != nil {
+				logger.Errorf("set last update time error: %v", err)
 			}
 		}()
 	}
 	wg.Wait()
+}
+
+// Run 处理cmdb资源变更事件
+// 1. 遍历所有缓存类型，如果超过全量刷新间隔时间，先执行全量刷新
+// 2. 从缓存中获取资源变更并进行预处理
+// 3. 根据预处理结果，执行缓存变更动作
+func (h *CmdbEventHandler) Run(ctx context.Context) {
+	// 如果超过全量刷新间隔时间，先执行全量刷新
+	h.runRefreshAll(ctx)
 
 	// 重置预处理结果
 	h.resetPreprocessResults()
 
 	// 从缓存中获取资源变更并进行预处理
+	wg := sync.WaitGroup{}
 	for _, resourceType := range CmdbResourceTypes {
 		wg.Add(1)
 		resourceType := resourceType
@@ -536,11 +666,9 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 	// 判断是否启用业务缓存刷新
 	if cacheManager.useBiz() {
 		// 获取业务列表
-		cmdbApi := getCmdbApi()
-		var result cmdb.SearchBusinessResp
-		_, err := cmdbApi.SearchBusiness().SetResult(&result).Request()
-		if err = api.HandleApiResultError(result.ApiCommonRespMeta, err, "search business failed"); err != nil {
-			return err
+		businesses, err := getBusinessList(ctx)
+		if err != nil {
+			return errors.Wrap(err, "get business list failed")
 		}
 
 		// 并发控制
@@ -548,8 +676,8 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 		limitChan := make(chan struct{}, concurrentLimit)
 
 		// 按业务刷新缓存
-		errChan := make(chan error, len(result.Data.Info))
-		for _, biz := range result.Data.Info {
+		errChan := make(chan error, len(businesses))
+		for _, biz := range businesses {
 			limitChan <- struct{}{}
 			wg.Add(1)
 			go func(bizId int) {
@@ -561,7 +689,7 @@ func RefreshAll(ctx context.Context, cacheManager Manager, concurrentLimit int) 
 				if err != nil {
 					errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 				}
-			}(biz.BkBizId)
+			}(int(biz["bk_biz_id"].(float64)))
 		}
 
 		// 等待所有任务完成

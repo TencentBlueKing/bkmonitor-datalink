@@ -34,11 +34,10 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -84,11 +83,6 @@ func NewServiceInstanceCacheManager(prefix string, opt *redis.Options, concurren
 // Type 缓存类型
 func (m *ServiceInstanceCacheManager) Type() string {
 	return "service_instance"
-}
-
-// UseBiz 是否按业务执行
-func (m *ServiceInstanceCacheManager) useBiz() bool {
-	return true
 }
 
 // getServiceInstances 获取服务实例列表

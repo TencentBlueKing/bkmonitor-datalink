@@ -23,7 +23,6 @@ import (
 	promversioned "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	prominformers "github.com/prometheus-operator/prometheus-operator/pkg/informers"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
@@ -162,9 +161,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 				denyTargetNamespaces,
 				operator.promclient,
 				define.ReSyncPeriod,
-				func(options *metav1.ListOptions) {
-					options.LabelSelector = ConfTargetLabelsSelector
-				},
+				nil,
 			),
 			promv1.SchemeGroupVersion.WithResource(promv1.ServiceMonitorName),
 		)
@@ -180,9 +177,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 				denyTargetNamespaces,
 				operator.promclient,
 				define.ReSyncPeriod,
-				func(options *metav1.ListOptions) {
-					options.LabelSelector = ConfTargetLabelsSelector
-				},
+				nil,
 			),
 			promv1.SchemeGroupVersion.WithResource(promv1.PodMonitorName),
 		)

@@ -92,34 +92,86 @@ func (r MonitorBlacklistMatchRule) Validate() bool {
 }
 
 var (
-	ConfDryRun                     bool
-	ConfKubeConfig                 string // operator 连接 k8s 使用的 kubeconfig 文件路径
-	ConfMonitorNamespace           string // operator 所处 namespace
-	ConfTargetNamespaces           []string
-	ConfDenyTargetNamespaces       []string
-	ConfTargetLabelsSelector       string
-	ConfAPIServerHost              string
-	ConfTLSConfig                  *rest.TLSClientConfig
-	ConfEnableServiceMonitor       bool
-	ConfEnablePodMonitor           bool
-	ConfEnablePromRule             bool
-	ConfEnableStatefulSetWorker    bool
-	ConfEnableDaemonSetWorker      bool
-	ConfEnableEndpointslice        bool
-	ConfKubeletNamespace           string
-	ConfKubeletName                string
-	ConfKubeletEnable              bool
-	ConfMaxNodeSecretRatio         float64
-	ConfStatefulSetWorkerHpa       bool
-	ConfStatefulSetWorkerFactor    int
-	ConfStatefulSetReplicas        int
-	ConfStatefulSetMaxReplicas     int
-	ConfStatefulSetMatchRules      []StatefulSetMatchRule
-	ConfStatefulSetDispatchType    string
-	ConfStatefulSetWorkerRegex     string
+	// ConfDryRun 是否使用 dryrun 模式 该模式只匹配 不执行真实的调度逻辑
+	ConfDryRun bool
+
+	// ConfKubeConfig 连接 kubernetes 使用的 kubeconfig 文件路径
+	ConfKubeConfig string
+
+	// ConfAPIServerHost 链接 kubernetes 使用的 API host
+	ConfAPIServerHost string
+
+	// ConfTLSConfig 链接 kubernetes 的 TLS 配置
+	ConfTLSConfig *rest.TLSClientConfig
+
+	// ConfMonitorNamespace 程序运行所处 namespace
+	ConfMonitorNamespace string
+
+	// ConfTargetNamespaces namespace 匹配白名单
+	ConfTargetNamespaces []string
+
+	// ConfDenyTargetNamespaces namespace 匹配黑名单
+	ConfDenyTargetNamespaces []string
+
+	// ConfEnableServiceMonitor 是否启用 servicemonitor
+	ConfEnableServiceMonitor bool
+
+	// ConfEnablePodMonitor 是否启用 podmonitor
+	ConfEnablePodMonitor bool
+
+	// ConfEnablePromRule 是否启用 promrules 自监控专用
+	ConfEnablePromRule bool
+
+	// ConfEnableStatefulSetWorker 是否启用 statefulset worker 调度
+	ConfEnableStatefulSetWorker bool
+
+	// ConfEnableDaemonSetWorker 是否启用 daemonset worker 调度
+	ConfEnableDaemonSetWorker bool
+
+	// ConfEnableEndpointslice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
+	ConfEnableEndpointslice bool
+
+	// ConfKubeletNamespace kubelet 组件所在 namespace
+	ConfKubeletNamespace string
+
+	// ConfKubeletName kubelet 组件 endpoints 名称
+	ConfKubeletName string
+
+	// ConfKubeletEnable 是否启用 kubelet 特性
+	ConfKubeletEnable bool
+
+	// ConfMaxNodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
+	ConfMaxNodeSecretRatio float64
+
+	// ConfStatefulSetWorkerHpa 是否开启 statefulset worker HPA 特性
+	ConfStatefulSetWorkerHpa bool
+
+	// ConfStatefulSetWorkerFactor statefulset worker 调度因子 即单 worker 最多支持的 secrets 数量
+	ConfStatefulSetWorkerFactor int
+
+	// ConfStatefulSetReplicas statefulset worker 最小副本数
+	ConfStatefulSetReplicas int
+
+	// ConfStatefulSetMaxReplicas statefulset worker 最大副本数
+	ConfStatefulSetMaxReplicas int
+
+	// ConfStatefulSetMatchRules statefulset worker 匹配规则
+	ConfStatefulSetMatchRules []StatefulSetMatchRule
+
+	// ConfStatefulSetDispatchType statefulset worker 调度算法
+	ConfStatefulSetDispatchType string
+
+	// ConfStatefulSetWorkerRegex statefulset worker 名称匹配规则 用于锁定具体 worker 索引
+	ConfStatefulSetWorkerRegex string
+
+	// ConfMonitorBlacklistMatchRules monitor 黑名单匹配规则
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
-	ConfHttpPort                   int
-	ConfPromSdConfigs              []PromSDConfig
+
+	// ConfHttpPort http 服务监听端口
+	ConfHttpPort int
+
+	// ConfPromSdConfigs promethues sdconfigs secrets 资源
+	ConfPromSdConfigs []PromSDConfig
 )
 
 // IfRejectServiceMonitor 判断是否拒绝 serviceMonitor
@@ -183,7 +235,6 @@ func updateConfig() {
 	ConfMonitorNamespace = viper.GetString(confMonitorNamespacePath)
 	ConfDenyTargetNamespaces = viper.GetStringSlice(confDenyTargetNamespacesPath)
 	ConfTargetNamespaces = viper.GetStringSlice(confTargetNamespacesPath)
-	ConfTargetLabelsSelector = viper.GetString(confTargetLabelSelectorPath)
 	ConfEnableServiceMonitor = viper.GetBool(confEnableServiceMonitorPath)
 	ConfEnablePodMonitor = viper.GetBool(confEnablePodMonitorPath)
 	ConfEnablePromRule = viper.GetBool(confEnablePromRulePath)

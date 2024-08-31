@@ -30,10 +30,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -194,6 +195,7 @@ func getDynamicGroupList(ctx context.Context, bizID int) (map[string]map[string]
 
 // RefreshByBiz 更新业务下的动态分组缓存
 func (m *DynamicGroupCacheManager) RefreshByBiz(ctx context.Context, bizID int) error {
+	logger.Infof("refresh dynamic group cache by biz: %d", bizID)
 	dynamicGroupToRelatedIDs, err := getDynamicGroupList(ctx, bizID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get dynamic group list")

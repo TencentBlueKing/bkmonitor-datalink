@@ -70,7 +70,7 @@ var CmdbResourceTypeFields = map[CmdbResourceType][]string{
 	CmdbResourceTypeSet:              {"bk_biz_id", "bk_set_id", "set_template_id"},
 	CmdbResourceTypeModule:           {"bk_module_id", "bk_biz_id", "service_template_id"},
 	CmdbResourceTypeMainlineInstance: {"bk_obj_id", "bk_inst_id", "bk_obj_name", "bk_inst_name"},
-	CmdbResourceTypeProcess:          {"bk_biz_id"},
+	//CmdbResourceTypeProcess:          {"bk_biz_id", "service_instance_id"},
 }
 
 // CmdbResourceWatcher cmdb资源监听器

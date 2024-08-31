@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -78,14 +79,12 @@ type Manager interface {
 	GetCacheKey(key string) string
 	// RefreshByBiz 按业务刷新缓存
 	RefreshByBiz(ctx context.Context, bizID int) error
-	// RefreshByBizIds 按业务列表刷新缓存，并清理指定的缓存
-	RefreshByBizIds(ctx context.Context, bizIds []int, concurrentLimit int) error
 	// RefreshGlobal 刷新全局缓存
 	RefreshGlobal(ctx context.Context) error
 	// CleanGlobal 清理全局缓存
 	CleanGlobal(ctx context.Context) error
 	// CleanPartial 清理部分缓存
-	CleanPartial(ctx context.Context, cacheKey string, cleanFields []string) error
+	CleanPartial(ctx context.Context, cacheKey string, cleanFields []string)
 	// Reset 重置
 	Reset()
 
@@ -254,19 +253,24 @@ func (c *BaseCacheManager) CleanGlobal(ctx context.Context) error {
 }
 
 // CleanPartial 清理部分缓存
-func (c *BaseCacheManager) CleanPartial(ctx context.Context, key string, cleanFields []string) error {
+func (c *BaseCacheManager) CleanPartial(ctx context.Context, key string, cleanFields []string) {
+	if len(cleanFields) == 0 {
+		return
+	}
+
 	cacheKey := c.GetCacheKey(key)
 	needCleanFields := make([]string, 0)
 	for _, field := range cleanFields {
-		if _, ok := c.updatedFieldSet[cacheKey][field]; ok {
+		if _, ok := c.updatedFieldSet[cacheKey][field]; !ok {
 			needCleanFields = append(needCleanFields, field)
 		}
 	}
 
-	if len(needCleanFields) == 0 {
-		c.RedisClient.HDel(ctx, cacheKey, cleanFields...)
+	logger.Info(fmt.Sprintf("clean partial cache, key: %s, expect clean fields: %v, actual clean fields: %v", key, cleanFields, needCleanFields))
+
+	if len(needCleanFields) != 0 {
+		c.RedisClient.HDel(ctx, cacheKey, needCleanFields...)
 	}
-	return nil
 }
 
 // UseBiz 是否按业务执行
@@ -298,7 +302,7 @@ func NewCacheManagerByType(opt *redis.Options, prefix string, cacheType string, 
 }
 
 // RefreshByBizIds 按业务列表刷新缓存，并清理指定的缓存
-func (c *BaseCacheManager) RefreshByBizIds(ctx context.Context, bizIds []int, concurrentLimit int) error {
+func RefreshByBizIds(ctx context.Context, cacheManager Manager, bizIds []int, concurrentLimit int) error {
 	// 并发控制
 	wg := sync.WaitGroup{}
 	limitChan := make(chan struct{}, concurrentLimit)
@@ -313,9 +317,9 @@ func (c *BaseCacheManager) RefreshByBizIds(ctx context.Context, bizIds []int, co
 				wg.Done()
 				<-limitChan
 			}()
-			err := c.RefreshByBiz(ctx, bizId)
+			err := cacheManager.RefreshByBiz(ctx, bizId)
 			if err != nil {
-				errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", c.Type(), bizId)
+				errChan <- errors.Wrapf(err, "refresh %s cache by biz failed, biz: %d", cacheManager.Type(), bizId)
 			}
 		}(bizId)
 	}

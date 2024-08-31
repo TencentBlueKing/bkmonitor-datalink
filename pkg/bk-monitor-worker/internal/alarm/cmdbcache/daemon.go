@@ -82,8 +82,6 @@ type RefreshTaskParams struct {
 
 	// 业务执行并发数
 	BizConcurrent int `json:"biz_concurrent" mapstructure:"biz_concurrent"`
-
-	CacheTypes []string `json:"cache_types" mapstructure:"cache_types"`
 }
 
 // CacheRefreshTask cmdb缓存刷新任务
@@ -111,12 +109,6 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	fullRefreshIntervals := make(map[string]time.Duration, len(params.FullRefreshIntervals))
 	for cacheType, interval := range params.FullRefreshIntervals {
 		fullRefreshIntervals[cacheType] = time.Second * time.Duration(interval)
-	}
-
-	// 需要刷新的缓存类型
-	cacheTypes := params.CacheTypes
-	if len(cacheTypes) == 0 {
-		cacheTypes = cmdbCacheTypes
 	}
 
 	wg := sync.WaitGroup{}

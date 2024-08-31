@@ -359,7 +359,9 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 
 			err := RefreshAll(ctx, businessCacheManager, h.concurrentLimit)
 			if err != nil {
-				logger.Errorf("refresh all business cache failed: %v", err)
+				logger.Errorf("refresh all business cache by event failed: %v", err)
+			} else {
+				logger.Infof("refresh all business cache by event success")
 			}
 		}()
 
@@ -382,10 +384,12 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			defer wg.Done()
 
 			// 刷新主机拓扑缓存
-			if err := hostTopoCacheManager.RefreshByBizIds(ctx, hostTopoBizIds, h.concurrentLimit); err != nil {
+			if err := RefreshByBizIds(ctx, hostTopoCacheManager, hostTopoBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh host topo cache by biz failed: %v", err)
 				// 如果刷新不顺利，后续清理操作也不执行，否则可能会清理掉正常的缓存
 				return
+			} else {
+				logger.Infof("refresh host topo cache by event success, biz count: %d", len(hostTopoBizIds))
 			}
 
 			// 清理hostCacheKey缓存
@@ -394,9 +398,8 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, key.(string))
 				return true
 			})
-			if err := hostTopoCacheManager.CleanPartial(ctx, hostCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean host topo cache partial failed: %v", err)
-			}
+
+			hostTopoCacheManager.CleanPartial(ctx, hostCacheKey, cleanFields)
 
 			// 清理hostAgentIDCacheKey缓存
 			cleanFields = make([]string, 0)
@@ -404,9 +407,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, key.(string))
 				return true
 			})
-			if err := hostTopoCacheManager.CleanPartial(ctx, hostAgentIDCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean host agentId cache partial failed: %v", err)
-			}
+			hostTopoCacheManager.CleanPartial(ctx, hostAgentIDCacheKey, cleanFields)
 
 			// 清理topoCacheKey缓存
 			cleanFields = make([]string, 0)
@@ -414,9 +415,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, key.(string))
 				return true
 			})
-			if err := hostTopoCacheManager.CleanPartial(ctx, topoCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean topo cache partial failed: %v", err)
-			}
+			hostTopoCacheManager.CleanPartial(ctx, topoCacheKey, cleanFields)
 
 			// todo: 清理hostIpCacheKey缓存
 
@@ -430,7 +429,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			defer wg.Done()
 
 			dynamicGroupCacheManager := h.cacheManagers["dynamic_group"]
-			if err := dynamicGroupCacheManager.RefreshByBizIds(ctx, hostTopoBizIds, h.concurrentLimit); err != nil {
+			if err := RefreshByBizIds(ctx, dynamicGroupCacheManager, hostTopoBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh dynamic group cache by biz failed: %v", err)
 			}
 
@@ -462,7 +461,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			defer wg.Done()
 
 			// 刷新服务实例缓存
-			if err := serviceInstanceCacheManager.RefreshByBizIds(ctx, serviceInstanceBizIds, h.concurrentLimit); err != nil {
+			if err := RefreshByBizIds(ctx, serviceInstanceCacheManager, serviceInstanceBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh service instance cache by biz failed: %v", err)
 			}
 
@@ -472,11 +471,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
 				return true
 			})
-			if err := serviceInstanceCacheManager.CleanPartial(ctx, serviceInstanceCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean service instance cache partial failed: %v", err)
-			}
-
-			// todo: 清理hostToServiceInstanceCacheKey缓存
+			serviceInstanceCacheManager.CleanPartial(ctx, serviceInstanceCacheKey, cleanFields)
 
 			// 重置
 			serviceInstanceCacheManager.Reset()
@@ -498,7 +493,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			defer wg.Done()
 
 			// 刷新集群缓存
-			if err := setCacheManager.RefreshByBizIds(ctx, setBizIds, h.concurrentLimit); err != nil {
+			if err := RefreshByBizIds(ctx, setCacheManager, setBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh set cache by biz failed: %v", err)
 			}
 
@@ -508,9 +503,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
 				return true
 			})
-			if err := setCacheManager.CleanPartial(ctx, setCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean set cache partial failed: %v", err)
-			}
+			setCacheManager.CleanPartial(ctx, setCacheKey, cleanFields)
 
 			// 清理setTemplateCacheKey缓存
 			cleanFields = make([]string, 0)
@@ -518,9 +511,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
 				return true
 			})
-			if err := setCacheManager.CleanPartial(ctx, setTemplateCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean set template cache partial failed: %v", err)
-			}
+			setCacheManager.CleanPartial(ctx, setTemplateCacheKey, cleanFields)
 
 			// 重置
 			setCacheManager.Reset()
@@ -541,7 +532,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			defer wg.Done()
 
 			// 刷新模块缓存
-			if err := moduleCacheManager.RefreshByBizIds(ctx, moduleBizIds, h.concurrentLimit); err != nil {
+			if err := RefreshByBizIds(ctx, moduleCacheManager, moduleBizIds, h.concurrentLimit); err != nil {
 				logger.Errorf("refresh module cache by biz failed: %v", err)
 			}
 
@@ -551,9 +542,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
 				return true
 			})
-			if err := moduleCacheManager.CleanPartial(ctx, moduleCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean module cache partial failed: %v", err)
-			}
+			moduleCacheManager.CleanPartial(ctx, moduleCacheKey, cleanFields)
 
 			// 清理serviceTemplateCacheKey缓存
 			cleanFields = make([]string, 0)
@@ -561,9 +550,7 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 				cleanFields = append(cleanFields, strconv.Itoa(key.(int)))
 				return true
 			})
-			if err := moduleCacheManager.CleanPartial(ctx, serviceTemplateCacheKey, cleanFields); err != nil {
-				logger.Errorf("clean service template cache partial failed: %v", err)
-			}
+			moduleCacheManager.CleanPartial(ctx, serviceTemplateCacheKey, cleanFields)
 
 			// 重置
 			moduleCacheManager.Reset()

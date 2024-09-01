@@ -417,8 +417,6 @@ func (h *CmdbEventHandler) refreshByEvents(ctx context.Context) error {
 			})
 			hostTopoCacheManager.CleanPartial(ctx, topoCacheKey, cleanFields)
 
-			// todo: 清理hostIpCacheKey缓存
-
 			// 重置
 			hostTopoCacheManager.Reset()
 		}()

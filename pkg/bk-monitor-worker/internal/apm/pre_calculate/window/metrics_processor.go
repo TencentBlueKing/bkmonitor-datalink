@@ -28,6 +28,8 @@ import (
 const (
 	VirtualSvrCallee = "bk_vServiceCallee"
 	VirtualSvrCaller = "bk_vServiceCaller"
+
+	VirtualSpan = "bk_vSpan"
 )
 
 var (
@@ -146,6 +148,9 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		cService := pair[0].GetFieldValue(core.ServiceNameField)
 		sService := pair[1].GetFieldValue(core.ServiceNameField)
 
+		cServiceSpanName := pair[0].GetFieldValue(core.SpanNameField)
+		sServiceSpanName := pair[1].GetFieldValue(core.SpanNameField)
+
 		cSpanKind := pair[0].Kind
 		sSpanKind := pair[1].Kind
 		// unit: μs
@@ -161,13 +166,15 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
+				"from_span_name", cServiceSpanName,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryHttp,
 				"from_apm_service_kind", storage.KindService,
 				"from_apm_service_span_kind", cSpanKind,
+				"to_span_name", sServiceSpanName,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryHttp,
@@ -188,9 +195,10 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		if parentIp != "" {
 			// ----> Find system -> service relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.SystemApmServiceFlow,
 				"from_bk_target_ip", parentIp,
+				"to_span_name", sServiceSpanName,
 				"to_apm_service_name", sService,
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryHttp,
@@ -205,8 +213,9 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		if childIp != "" {
 			// ----> Find service -> system relation
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceSystemFlow,
+				"from_span_name", cServiceSpanName,
 				"from_apm_service_name", cService,
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryHttp,
@@ -240,16 +249,20 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		}
 		// 在这个 trace 里面它是孤独节点 此次调用就需要记录而不需要理会这个节点是否发生了调用关系
 		serviceName := aloneNode.GetFieldValue(core.ServiceNameField)
+		spanName := aloneNode.GetFieldValue(core.SpanNameField)
+
 		if slices.Contains(CallerKinds, aloneNode.Kind) {
 			// fill callee
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
+				"from_span_name", spanName,
 				"from_apm_service_name", serviceName,
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryHttp,
 				"from_apm_service_kind", storage.KindService,
 				"from_apm_service_span_kind", aloneNode.Kind,
+				"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
 				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee),
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryHttp,
@@ -264,13 +277,15 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		}
 		if slices.Contains(CalleeKinds, aloneNode.Kind) {
 			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
+				"from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
 				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller),
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryHttp,
 				"from_apm_service_kind", storage.KindVirtualService,
 				"from_apm_service_span_kind", m.getOppositeSpanKind(aloneNode.Kind),
+				"to_span_name", spanName,
 				"to_apm_service_name", serviceName,
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryHttp,
@@ -319,17 +334,20 @@ func (m *MetricProcessor) findComponentFlowMetric(
 	}
 	discoverSpanIds = append(discoverSpanIds, span.SpanId)
 	serviceName := span.GetFieldValue(core.ServiceNameField)
+	spanName := span.GetFieldValue(core.SpanNameField)
 
 	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {
 		// service (caller) -> db (callee)
 		dbFlowLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 			"__name__", storage.ApmServiceFlow,
+			"from_span_name", spanName,
 			"from_apm_service_name", serviceName,
 			"from_apm_application_name", m.appName,
 			"from_apm_service_category", storage.CategoryHttp,
 			"from_apm_service_kind", storage.KindService,
 			"from_apm_service_span_kind", span.Kind,
+			"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
 			"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem),
 			"to_apm_application_name", m.appName,
 			"to_apm_service_category", storage.CategoryDb,
@@ -347,13 +365,15 @@ func (m *MetricProcessor) findComponentFlowMetric(
 		if slices.Contains(CallerKinds, span.Kind) {
 			// service (caller) -> messageQueue (callee)
 			messageCalleeFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
+				"from_span_name", spanName,
 				"from_apm_service_name", serviceName,
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryHttp,
 				"from_apm_service_kind", storage.KindService,
 				"from_apm_service_span_kind", span.Kind,
+				"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
 				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryMessaging,
@@ -368,13 +388,15 @@ func (m *MetricProcessor) findComponentFlowMetric(
 		}
 		if slices.Contains(CalleeKinds, span.Kind) {
 			messageCallerFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 				"__name__", storage.ApmServiceFlow,
+				"from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
 				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
 				"from_apm_application_name", m.appName,
 				"from_apm_service_category", storage.CategoryMessaging,
 				"from_apm_service_kind", storage.KindComponent,
 				"from_apm_service_span_kind", m.getOppositeSpanKind(span.Kind),
+				"to_span_name", spanName,
 				"to_apm_service_name", serviceName,
 				"to_apm_application_name", m.appName,
 				"to_apm_service_category", storage.CategoryHttp,
@@ -402,6 +424,7 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 	metricCount map[string]int,
 ) (discoverSpanIds []string) {
 	serviceName := span.GetFieldValue(core.ServiceNameField)
+	spanName := span.GetFieldValue(core.SpanNameField)
 	var peerService string
 	var peerServiceType string
 	if m.customServiceDiscoverType == MatchFromSpan {
@@ -434,13 +457,16 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 		return
 	}
 	customServiceLabelKey := fmt.Sprintf(
-		"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
+		"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
 		"__name__", storage.ApmServiceFlow,
+		"from_span_name", spanName,
 		"from_apm_service_name", serviceName,
 		"from_apm_application_name", m.appName,
 		"from_apm_service_category", storage.CategoryHttp,
 		"from_apm_service_kind", storage.KindService,
 		"from_apm_service_span_kind", span.Kind,
+		// 自定义服务 flow span_name 两边都一致
+		"to_span_name", spanName,
 		"to_apm_service_name", fmt.Sprintf("%s:%s", peerServiceType, peerService),
 		"to_apm_application_name", m.appName,
 		"to_apm_service_category", storage.CategoryHttp,

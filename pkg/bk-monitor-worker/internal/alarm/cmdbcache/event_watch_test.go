@@ -22,6 +22,18 @@
 
 package cmdbcache
 
+//import (
+//	"context"
+//	"encoding/json"
+//	"os"
+//	"os/signal"
+//	"sync"
+//	"syscall"
+//	"testing"
+//
+//	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+//)
+//
 //func TestResourceWatch(t *testing.T) {
 //	redisOptions := redis.Options{
 //		Mode:  "standalone",
@@ -30,7 +42,7 @@ package cmdbcache
 //
 //	// 系统信号
 //	signalChan := make(chan os.Signal, 1)
-//	signal.Notify(signalChan, os.Interrupt, os.Kill)
+//	signal.Notify(signalChan, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
 //
 //	//调用cancel函数取消
 //	ctx, cancel := context.WithCancel(context.Background())
@@ -45,8 +57,8 @@ package cmdbcache
 //	prefix := t.Name()
 //
 //	wg := &sync.WaitGroup{}
-//	wg.Add(1)
 //
+//	wg.Add(1)
 //	go func() {
 //		defer cancel()
 //		defer wg.Done()
@@ -61,24 +73,31 @@ package cmdbcache
 //			return
 //		}
 //	}()
-
-//go func() {
-//	defer cancel()
-//	defer wg.Done()
 //
-//	params := &RefreshTaskParams{
-//		Redis:                redisOptions,
-//		Prefix:               prefix,
-//		EventHandleInterval:  60,
-//		CacheTypes:           []string{"host_topo"},
-//		FullRefreshIntervals: map[string]int{"host_topo": 1800, "business": 1800, "module": 1800, "set": 1800, "service_instance": 60},
-//	}
-//	payload, _ := json.Marshal(params)
-//	if err := CacheRefreshTask(ctx, payload); err != nil {
-//		t.Errorf("TestHandle failed, err: %v", err)
-//		return
-//	}
-//}()
-
-//wg.Wait()
+//	wg.Add(1)
+//	go func() {
+//		defer cancel()
+//		defer wg.Done()
+//
+//		params := &RefreshTaskParams{
+//			Redis:               redisOptions,
+//			Prefix:              prefix,
+//			EventHandleInterval: 60,
+//			FullRefreshIntervals: map[string]int{
+//				"host_topo":        3600 * 24,
+//				"business":         3600 * 24,
+//				"module":           3600 * 24,
+//				"set":              3600 * 24,
+//				"service_instance": 3600 * 24,
+//				"dynamic_group":    3600 * 24,
+//			},
+//		}
+//		payload, _ := json.Marshal(params)
+//		if err := CacheRefreshTask(ctx, payload); err != nil {
+//			t.Errorf("TestHandle failed, err: %v", err)
+//			return
+//		}
+//	}()
+//
+//	wg.Wait()
 //}

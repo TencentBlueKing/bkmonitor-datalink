@@ -449,7 +449,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		}
 		if qry.SourceType == structured.BkData {
 			opt.Address = bkapi.GetBkDataApi().QueryEsUrl()
-			opt.Headers = bkapi.GetBkDataApi().HttpHeaders(nil)
+			opt.Headers = bkapi.GetBkDataApi().Headers(nil)
 			opt.HealthCheck = false
 		} else {
 			if stg == nil {
@@ -468,11 +468,10 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
-			Timeout:      tsDBService.BkSqlTimeout,
-			IntervalTime: tsDBService.BkSqlIntervalTime,
-			MaxLimit:     tsDBService.BkSqlLimit,
-			Tolerance:    tsDBService.BkSqlTolerance,
-			Curl:         curlGet,
+			Timeout:   tsDBService.BkSqlTimeout,
+			MaxLimit:  tsDBService.BkSqlLimit,
+			Tolerance: tsDBService.BkSqlTolerance,
+			Curl:      curlGet,
 		})
 	case consul.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, victoriaMetrics.Options{

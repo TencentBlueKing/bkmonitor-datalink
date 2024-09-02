@@ -65,14 +65,6 @@ var (
 
 // NewInstance 初始化引擎
 func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
-	headers := map[string]string{}
-	if opt.Accept != "" {
-		headers[ContentType] = opt.Accept
-	}
-	if opt.AcceptEncoding != "" {
-		headers[ContentEncoding] = opt.AcceptEncoding
-	}
-
 	if opt.Host == "" {
 		return nil, fmt.Errorf("host is empty %+v", opt)
 	}
@@ -204,9 +196,9 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		ctx, curl.Get,
 		curl.Options{
 			UrlPath: urlPath,
-			Headers: map[string]string{
+			Headers: metadata.Headers(ctx, map[string]string{
 				ContentType: i.contentType,
-			},
+			}),
 			UserName: i.username,
 			Password: i.password,
 		},

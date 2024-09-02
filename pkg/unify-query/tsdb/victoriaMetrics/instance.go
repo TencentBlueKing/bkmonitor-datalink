@@ -356,8 +356,10 @@ func (i *Instance) vmQuery(
 
 	span.Set("query-address", i.url)
 
-	headersString, _ := json.Marshal(i.headers)
-	span.Set("query-headers", headersString)
+	headers := metadata.Headers(ctx, i.headers)
+
+	headersString, _ := json.Marshal(headers)
+	span.Set("query-headers", string(headersString))
 
 	log.Infof(ctx,
 		"victoria metrics query: %s, headers: %s, body: %s",
@@ -369,7 +371,7 @@ func (i *Instance) vmQuery(
 		curl.Options{
 			UrlPath: i.url,
 			Body:    body,
-			Headers: i.headers,
+			Headers: headers,
 		},
 		data,
 	)

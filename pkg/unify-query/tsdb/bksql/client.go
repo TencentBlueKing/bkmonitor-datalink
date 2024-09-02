@@ -44,6 +44,7 @@ func (c *Client) WithHeader(headers map[string]string) *Client {
 }
 
 func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, span *trace.Span) error {
+
 	if method == "" {
 		method = curl.Post
 	}
@@ -64,7 +65,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		curl.Options{
 			UrlPath: c.url,
 			Body:    body,
-			Headers: c.headers,
+			Headers: metadata.Headers(ctx, c.headers),
 		},
 		res,
 	)

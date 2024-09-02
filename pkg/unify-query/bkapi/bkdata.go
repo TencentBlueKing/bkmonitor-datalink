@@ -11,7 +11,6 @@ package bkapi
 
 import (
 	"fmt"
-	"net/http"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -49,22 +48,13 @@ func GetBkDataApi() *BkDataApi {
 	return defaultBkDataApi
 }
 
-func (i *BkDataApi) HttpHeaders(headers map[string]string) http.Header {
-	headers = i.Headers(headers)
-	netHeaders := make(http.Header, len(headers))
-	for k, v := range headers {
-		netHeaders[k] = []string{v}
-	}
-	return netHeaders
-}
-
 func (i *BkDataApi) Headers(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
 	headers[BkDataAuthorization] = fmt.Sprintf(
-		`{"bkdata_authentication_method": "%s", "bkdata_data_token": "%s", "bk_username": "%s"}`,
-		i.authenticationMethod, i.token, AdminUserName,
+		`{"bkdata_authentication_method": "%s", "bkdata_data_token": "%s", "bk_username": "%s", "bk_app_code"}`,
+		i.authenticationMethod, i.token, AdminUserName, i.bkApi.GetCode(),
 	)
 	return i.bkApi.Headers(headers)
 }

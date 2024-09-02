@@ -45,6 +45,10 @@ func GetBkApi() *BkApi {
 	return defaultBkApi
 }
 
+func (i *BkApi) GetCode() string {
+	return i.code
+}
+
 func (i *BkApi) Headers(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)

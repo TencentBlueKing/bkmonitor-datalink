@@ -58,10 +58,9 @@ type Options struct {
 	Address string
 	Headers map[string]string
 
-	Timeout      time.Duration
-	IntervalTime time.Duration
-	MaxLimit     int
-	Tolerance    int
+	Timeout   time.Duration
+	MaxLimit  int
+	Tolerance int
 
 	Curl curl.Curl
 }
@@ -71,12 +70,11 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 		return nil, fmt.Errorf("address is empty")
 	}
 	instance := &Instance{
-		ctx:          ctx,
-		timeout:      opt.Timeout,
-		intervalTime: opt.IntervalTime,
-		maxLimit:     opt.MaxLimit,
-		tolerance:    opt.Tolerance,
-		client:       (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
+		ctx:       ctx,
+		timeout:   opt.Timeout,
+		maxLimit:  opt.MaxLimit,
+		tolerance: opt.Tolerance,
+		client:    (&Client{}).WithUrl(opt.Address).WithHeader(opt.Headers).WithCurl(opt.Curl),
 	}
 	return instance, nil
 }

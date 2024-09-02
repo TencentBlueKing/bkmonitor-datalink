@@ -410,7 +410,7 @@ func forwardAddress(addr string) (string, error) {
 
 func tgSourceNamespace(s string) string {
 	parts := strings.Split(s, "/")
-	if len(parts) == 3 {
+	if len(parts) == 3 && parts[1] != "" {
 		return parts[1]
 	}
 	return "-"

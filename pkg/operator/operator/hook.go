@@ -32,10 +32,8 @@ const (
 	confMonitorNamespacePath           = "operator.monitor_namespace"
 	confDenyTargetNamespacesPath       = "operator.deny_target_namespaces"
 	confTargetNamespacesPath           = "operator.target_namespaces"
-	confTargetLabelSelectorPath        = "operator.target_label_selector"
 	confEnableServiceMonitorPath       = "operator.enable_service_monitor"
 	confEnablePodMonitorPath           = "operator.enable_pod_monitor"
-	confEnableProbePath                = "operator.enable_probe" // TODO(mando): 待支持
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
@@ -54,6 +52,8 @@ const (
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
 	confPromSdConfigsPath              = "operator.prom_sd_configs"
+
+	// confEnableProbePath                = "operator.enable_probe" // TODO(mando): 待支持
 )
 
 const (

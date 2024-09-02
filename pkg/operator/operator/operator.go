@@ -297,14 +297,14 @@ func (c *Operator) updateMonitorEndpointMetrics() {
 }
 
 func (c *Operator) updateWorkloadMetrics() {
-	workloads, _ := objectsref.GetWorkloadInfo()
+	workloads := objectsref.GetWorkloadCount()
 	for resource, count := range workloads {
 		c.mm.SetWorkloadCount(resource, count)
 	}
 }
 
 func (c *Operator) updateNodeMetrics() {
-	nodes, _ := objectsref.GetClusterNodeInfo()
+	nodes := objectsref.GetClusterNodeCount()
 	c.mm.SetNodeCount(nodes)
 }
 

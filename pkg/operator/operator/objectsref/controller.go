@@ -200,7 +200,6 @@ type ObjectsController struct {
 	cancel context.CancelFunc
 
 	client kubernetes.Interface
-	mm     *metricMonitor
 
 	podObjs             *Objects
 	replicaSetObjs      *Objects
@@ -291,7 +290,6 @@ func NewController(ctx context.Context, client kubernetes.Interface, tkexClient 
 	controller.gameStatefulSetObjs = tkexObjs.gamestatefulset
 	controller.gameDeploymentsObjs = tkexObjs.gamedeployment
 
-	controller.mm = newMetricMonitor()
 	go controller.recordMetrics()
 
 	return controller, nil
@@ -323,14 +321,16 @@ func (oc *ObjectsController) recordMetrics() {
 			return
 
 		case <-ticker.C:
-			for ns, count := range oc.podObjs.Counter() {
-				oc.mm.SetWorkloadCount(count, ns, kindPod)
+			stats := make(map[string]int)
+			for _, count := range oc.podObjs.Counter() {
+				stats[kindPod] += count
 			}
 			for kind, objs := range oc.objsMap() {
-				for ns, count := range objs.Counter() {
-					oc.mm.SetWorkloadCount(count, ns, kind)
+				for _, count := range objs.Counter() {
+					stats[kind] += count
 				}
 			}
+			setWorkloadCount(stats)
 		}
 	}
 }

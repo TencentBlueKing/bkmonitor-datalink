@@ -10,7 +10,6 @@
 package operator
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -202,7 +201,7 @@ const (
 `
 	formatWorkload = `
 [√] check workload
-- Description: 集群各类型工作负载数量如下，最近一次更新时间 %v
+- Description: 集群各类型工作负载数量
 %s
 `
 	formatMonitorEndpoint = `
@@ -217,10 +216,6 @@ const (
 * 部分指标会有黑白名单机制，此抓取数据不做任何过滤。
 * TOP%d 数据量如下，详细情况可访问 /check/scrape 路由。%s
 %s
-`
-	formatListNode = `
-[√] check nodes
-- Description: 获取集群节点列表成功，节点数量为 %d，最近一次更新时间 %v
 `
 	formatHandleSecretFailed = `
 [x] check kubernetes secrets operation
@@ -260,12 +255,11 @@ const (
 // 检查黑名单匹配规则
 // 检查集群负载情况
 // 检查采集指标数据量
-// 检查节点列表
 // 检查处理 secrets 是否有问题
 // 检查给定关键字监测资源
 func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
-	buf := &bytes.Buffer{}
-	var b []byte
+	buf := bytebufferpool.Get()
+	defer bytebufferpool.Put(buf)
 
 	// 检查 kubernetes 版本信息
 	if kubernetesVersion == "" {
@@ -275,7 +269,7 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查 bkmonitor-operator 版本信息
-	b, _ = json.MarshalIndent(c.buildInfo, "", "  ")
+	b, _ := json.MarshalIndent(c.buildInfo, "", "  ")
 	buf.WriteString(fmt.Sprintf(formatOperatorVersion, string(b)))
 
 	// 检查 dataids 是否符合预期
@@ -318,9 +312,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString(fmt.Sprintf(formatCheckMonitorBlacklist, string(b)))
 
 	// 检查集群工作负载数量
-	workloadInfo, workloadUpdated := objectsref.GetWorkloadInfo()
+	workloadInfo := objectsref.GetWorkloadCount()
+	workloadInfo["Node"] = objectsref.GetClusterNodeCount() // 顺便补充 node 数量
 	b, _ = json.MarshalIndent(workloadInfo, "", "  ")
-	buf.WriteString(fmt.Sprintf(formatWorkload, workloadUpdated.Format(time.RFC3339), string(b)))
+	buf.WriteString(fmt.Sprintf(formatWorkload, string(b)))
 
 	// 检查 Endpoint 数量
 	endpoints := c.recorder.getActiveEndpoints()
@@ -350,10 +345,6 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 		scrapeUpdated := c.scrapeUpdated.Format(time.RFC3339)
 		buf.WriteString(fmt.Sprintf(formatScrapeStats, stats.MonitorCount, stats.LinesTotal, stats.ErrorsTotal, scrapeUpdated, n, warning, string(b)))
 	}
-
-	// 检查节点列表
-	nodeCount, nodeUpdated := objectsref.GetClusterNodeInfo()
-	buf.WriteString(fmt.Sprintf(formatListNode, nodeCount, nodeUpdated.Format(time.RFC3339)))
 
 	// 检查处理 secrets 是否有问题
 	if c.mm.handledSecretFailed <= 0 || c.mm.handledSecretSuccessTime.After(c.mm.handledSecretFailedTime) {

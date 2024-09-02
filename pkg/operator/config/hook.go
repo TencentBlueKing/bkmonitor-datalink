@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -45,13 +46,12 @@ func InitConfig() error {
 		return err
 	}
 
-	fmt.Printf("config file: %s\n", viper.ConfigFileUsed())
-	fmt.Println("-----------")
-	settings := viper.AllSettings()
-	for k, v := range settings {
-		fmt.Printf("- %s: %+v\n", k, v)
+	b, err := json.Marshal(viper.AllSettings())
+	if err != nil {
+		fmt.Printf("marshal setting failed: %v\n", err)
+	} else {
+		fmt.Println("settings:", string(b))
 	}
-	fmt.Println()
 	EventBus.Publish(EventConfigPostParse)
 	return nil
 }

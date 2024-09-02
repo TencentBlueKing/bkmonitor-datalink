@@ -62,6 +62,10 @@ type StreamSeriesSetOption struct {
 	Timeout time.Duration
 }
 
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
 // getLimitAndSlimit 获取真实的 limit 和 slimit
 func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
 	var (

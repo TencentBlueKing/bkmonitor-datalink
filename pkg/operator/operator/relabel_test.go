@@ -50,11 +50,11 @@ func TestServiceMonitorRelabel(t *testing.T) {
 	content := "- source_labels:\n  - job\n  target_label: monitor_type\n  regex: (.+?)/.*\n  replacement: ${1}\n- action: keep\n  source_labels:\n  - __meta_kubernetes_service_label_testa\n  regex: a\n- action: keep\n  source_labels:\n  - __meta_kubernetes_service_label_testb\n  regex: b\n- action: keep\n  source_labels:\n  - __meta_kubernetes_endpoint_port_name\n  regex: http\n- source_labels:\n  - __meta_kubernetes_endpoint_address_target_kind\n  - __meta_kubernetes_endpoint_address_target_name\n  separator: ;\n  regex: Node;(.*)\n  replacement: ${1}\n  target_label: node\n- source_labels:\n  - __meta_kubernetes_endpoint_address_target_kind\n  - __meta_kubernetes_endpoint_address_target_name\n  separator: ;\n  regex: Pod;(.*)\n  replacement: ${1}\n  target_label: pod\n- source_labels:\n  - __meta_kubernetes_namespace\n  target_label: namespace\n- source_labels:\n  - __meta_kubernetes_service_name\n  target_label: service\n- source_labels:\n  - __meta_kubernetes_pod_name\n  target_label: pod\n- source_labels:\n  - __meta_kubernetes_pod_container_name\n  target_label: container\n- source_labels:\n  - __meta_kubernetes_service_label_a\n  target_label: a\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_service_label_b\n  target_label: b\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_service_label_c\n  target_label: c\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_pod_label_e\n  target_label: e\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_pod_label_f\n  target_label: f\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_pod_label_g\n  target_label: g\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_service_name\n  target_label: job\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_service_label_job\n  target_label: job\n  regex: (.+)\n  replacement: ${1}\n- target_label: endpoint\n  replacement: http\n- source_labels:\n  - from\n  target_label: to\n"
 	yamlSlice := getServiceMonitorRelabels(m, ep)
 	data, err := yaml.Marshal(yamlSlice)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, content, string(data))
 
-	_, err = convertYamlRelabels(yamlSlice)
-	assert.Nil(t, err)
+	_, err = yamlToRelabels(yamlSlice)
+	assert.NoError(t, err)
 }
 
 func TestPodMonitorRelabel(t *testing.T) {
@@ -79,9 +79,9 @@ func TestPodMonitorRelabel(t *testing.T) {
 	content := "- source_labels:\n  - job\n  target_label: monitor_type\n  regex: (.+?)/.*\n  replacement: ${1}\n- action: keep\n  source_labels:\n  - __meta_kubernetes_pod_label_testa\n  regex: a\n- action: keep\n  source_labels:\n  - __meta_kubernetes_pod_label_testb\n  regex: b\n- action: keep\n  source_labels:\n  - __meta_kubernetes_pod_container_port_name\n  regex: http\n- source_labels:\n  - __meta_kubernetes_namespace\n  target_label: namespace\n- source_labels:\n  - __meta_kubernetes_pod_container_name\n  target_label: container\n- source_labels:\n  - __meta_kubernetes_pod_name\n  target_label: pod\n- source_labels:\n  - __meta_kubernetes_pod_label_e\n  target_label: e\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_pod_label_f\n  target_label: f\n  regex: (.+)\n  replacement: ${1}\n- source_labels:\n  - __meta_kubernetes_pod_label_g\n  target_label: g\n  regex: (.+)\n  replacement: ${1}\n- target_label: job\n  replacement: testnamespace/test\n- source_labels:\n  - __meta_kubernetes_pod_label_job\n  target_label: job\n  regex: (.+)\n  replacement: ${1}\n- target_label: endpoint\n  replacement: http\n"
 	yamlSlice := getPodMonitorRelabels(m, ep)
 	data, err := yaml.Marshal(yamlSlice)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Equal(t, content, string(data))
 
-	_, err = convertYamlRelabels(yamlSlice)
-	assert.Nil(t, err)
+	_, err = yamlToRelabels(yamlSlice)
+	assert.NoError(t, err)
 }

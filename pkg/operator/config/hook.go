@@ -45,8 +45,6 @@ func InitConfig() error {
 		return err
 	}
 
-	fmt.Printf("using config file: %s\n", viper.ConfigFileUsed())
-	fmt.Printf("settings: %+v\n", viper.AllSettings())
 	EventBus.Publish(EventConfigPostParse)
 	return nil
 }

@@ -32,10 +32,8 @@ const (
 	confMonitorNamespacePath           = "operator.monitor_namespace"
 	confDenyTargetNamespacesPath       = "operator.deny_target_namespaces"
 	confTargetNamespacesPath           = "operator.target_namespaces"
-	confTargetLabelSelectorPath        = "operator.target_label_selector"
 	confEnableServiceMonitorPath       = "operator.enable_service_monitor"
 	confEnablePodMonitorPath           = "operator.enable_pod_monitor"
-	confEnableProbePath                = "operator.enable_probe" // TODO(mando): 待支持
 	confEnablePromRulePath             = "operator.enable_prometheus_rule"
 	confEnableStatefulSetWorkerPath    = "operator.enable_statefulset_worker"
 	confEnableDaemonSetWorkerPath      = "operator.enable_daemonset_worker"
@@ -53,6 +51,9 @@ const (
 	confStatefulSetWorkerRegexPath     = "operator.statefulset_worker_regex"
 	confMonitorBlacklistMatchRulesPath = "operator.monitor_blacklist_match_rules"
 	confHttpPortPath                   = "operator.http.port"
+	confPromSdConfigsPath              = "operator.prom_sd_configs"
+
+	// confEnableProbePath                = "operator.enable_probe" // TODO(mando): 待支持
 )
 
 const (
@@ -70,6 +71,13 @@ type StatefulSetMatchRule struct {
 	Namespace string `mapstructure:"namespace"`
 }
 
+// PromSDConfig prometheus 提供的 sdconfigs
+// 需要同时指定 namespace 以及 name
+type PromSDConfig struct {
+	Namespace string `mapstructure:"namespace"`
+	Name      string `mapstructure:"name"`
+}
+
 // MonitorBlacklistMatchRule monitor 黑名单匹配规则
 // 在 monitor namespace 黑名单机制外再提供一种 name 级别的屏蔽机制
 // 要求 kind/name/namespace 三者同时不为空 且此配置项优先级最高
@@ -84,33 +92,86 @@ func (r MonitorBlacklistMatchRule) Validate() bool {
 }
 
 var (
-	ConfDryRun                     bool
-	ConfKubeConfig                 string // operator 连接 k8s 使用的 kubeconfig 文件路径
-	ConfMonitorNamespace           string // operator 所处 namespace
-	ConfTargetNamespaces           []string
-	ConfDenyTargetNamespaces       []string
-	ConfTargetLabelsSelector       string
-	ConfAPIServerHost              string
-	ConfTLSConfig                  *rest.TLSClientConfig
-	ConfEnableServiceMonitor       bool
-	ConfEnablePodMonitor           bool
-	ConfEnablePromRule             bool
-	ConfEnableStatefulSetWorker    bool
-	ConfEnableDaemonSetWorker      bool
-	ConfEnableEndpointslice        bool
-	ConfKubeletNamespace           string
-	ConfKubeletName                string
-	ConfKubeletEnable              bool
-	ConfMaxNodeSecretRatio         float64
-	ConfStatefulSetWorkerHpa       bool
-	ConfStatefulSetWorkerFactor    int
-	ConfStatefulSetReplicas        int
-	ConfStatefulSetMaxReplicas     int
-	ConfStatefulSetMatchRules      []StatefulSetMatchRule
-	ConfStatefulSetDispatchType    string
-	ConfStatefulSetWorkerRegex     string
+	// ConfDryRun 是否使用 dryrun 模式 该模式只匹配 不执行真实的调度逻辑
+	ConfDryRun bool
+
+	// ConfKubeConfig 连接 kubernetes 使用的 kubeconfig 文件路径
+	ConfKubeConfig string
+
+	// ConfAPIServerHost 链接 kubernetes 使用的 API host
+	ConfAPIServerHost string
+
+	// ConfTLSConfig 链接 kubernetes 的 TLS 配置
+	ConfTLSConfig *rest.TLSClientConfig
+
+	// ConfMonitorNamespace 程序运行所处 namespace
+	ConfMonitorNamespace string
+
+	// ConfTargetNamespaces namespace 匹配白名单
+	ConfTargetNamespaces []string
+
+	// ConfDenyTargetNamespaces namespace 匹配黑名单
+	ConfDenyTargetNamespaces []string
+
+	// ConfEnableServiceMonitor 是否启用 servicemonitor
+	ConfEnableServiceMonitor bool
+
+	// ConfEnablePodMonitor 是否启用 podmonitor
+	ConfEnablePodMonitor bool
+
+	// ConfEnablePromRule 是否启用 promrules 自监控专用
+	ConfEnablePromRule bool
+
+	// ConfEnableStatefulSetWorker 是否启用 statefulset worker 调度
+	ConfEnableStatefulSetWorker bool
+
+	// ConfEnableDaemonSetWorker 是否启用 daemonset worker 调度
+	ConfEnableDaemonSetWorker bool
+
+	// ConfEnableEndpointslice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
+	ConfEnableEndpointslice bool
+
+	// ConfKubeletNamespace kubelet 组件所在 namespace
+	ConfKubeletNamespace string
+
+	// ConfKubeletName kubelet 组件 endpoints 名称
+	ConfKubeletName string
+
+	// ConfKubeletEnable 是否启用 kubelet 特性
+	ConfKubeletEnable bool
+
+	// ConfMaxNodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
+	ConfMaxNodeSecretRatio float64
+
+	// ConfStatefulSetWorkerHpa 是否开启 statefulset worker HPA 特性
+	ConfStatefulSetWorkerHpa bool
+
+	// ConfStatefulSetWorkerFactor statefulset worker 调度因子 即单 worker 最多支持的 secrets 数量
+	ConfStatefulSetWorkerFactor int
+
+	// ConfStatefulSetReplicas statefulset worker 最小副本数
+	ConfStatefulSetReplicas int
+
+	// ConfStatefulSetMaxReplicas statefulset worker 最大副本数
+	ConfStatefulSetMaxReplicas int
+
+	// ConfStatefulSetMatchRules statefulset worker 匹配规则
+	ConfStatefulSetMatchRules []StatefulSetMatchRule
+
+	// ConfStatefulSetDispatchType statefulset worker 调度算法
+	ConfStatefulSetDispatchType string
+
+	// ConfStatefulSetWorkerRegex statefulset worker 名称匹配规则 用于锁定具体 worker 索引
+	ConfStatefulSetWorkerRegex string
+
+	// ConfMonitorBlacklistMatchRules monitor 黑名单匹配规则
 	ConfMonitorBlacklistMatchRules []MonitorBlacklistMatchRule
-	ConfHttpPort                   int
+
+	// ConfHttpPort http 服务监听端口
+	ConfHttpPort int
+
+	// ConfPromSdConfigs promethues sdconfigs secrets 资源
+	ConfPromSdConfigs []PromSDConfig
 )
 
 // IfRejectServiceMonitor 判断是否拒绝 serviceMonitor
@@ -174,7 +235,6 @@ func updateConfig() {
 	ConfMonitorNamespace = viper.GetString(confMonitorNamespacePath)
 	ConfDenyTargetNamespaces = viper.GetStringSlice(confDenyTargetNamespacesPath)
 	ConfTargetNamespaces = viper.GetStringSlice(confTargetNamespacesPath)
-	ConfTargetLabelsSelector = viper.GetString(confTargetLabelSelectorPath)
 	ConfEnableServiceMonitor = viper.GetBool(confEnableServiceMonitorPath)
 	ConfEnablePodMonitor = viper.GetBool(confEnablePodMonitorPath)
 	ConfEnablePromRule = viper.GetBool(confEnablePromRulePath)
@@ -202,20 +262,23 @@ func updateConfig() {
 	target.ConfServicePort = ConfHttpPort
 
 	// reload 时状态需要置空
+	ConfStatefulSetMatchRules = []StatefulSetMatchRule{}
 	if viper.IsSet(confStatefulSetMatchRulesPath) {
 		if err := viper.UnmarshalKey(confStatefulSetMatchRulesPath, &ConfStatefulSetMatchRules); err != nil {
 			logger.Errorf("failed to unmarshal ConfStatefulSetMatchRules, err: %v", err)
 		}
-	} else {
-		ConfStatefulSetMatchRules = []StatefulSetMatchRule{}
 	}
-
+	ConfMonitorBlacklistMatchRules = []MonitorBlacklistMatchRule{}
 	if viper.IsSet(confMonitorBlacklistMatchRulesPath) {
 		if err := viper.UnmarshalKey(confMonitorBlacklistMatchRulesPath, &ConfMonitorBlacklistMatchRules); err != nil {
 			logger.Errorf("failed to unmarshal ConfMonitorBlacklistMatchRules, err: %v", err)
 		}
-	} else {
-		ConfMonitorBlacklistMatchRules = []MonitorBlacklistMatchRule{}
+	}
+	ConfPromSdConfigs = []PromSDConfig{}
+	if viper.IsSet(confPromSdConfigsPath) {
+		if err := viper.UnmarshalKey(confPromSdConfigsPath, &ConfPromSdConfigs); err != nil {
+			logger.Errorf("failed to unmarshal ConfPromSdConfigs, err: %v", err)
+		}
 	}
 }
 

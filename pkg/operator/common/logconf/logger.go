@@ -9,11 +9,38 @@
 
 package logconf
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+import (
+	"bytes"
 
-type Logger struct{}
+	"github.com/go-kit/log"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+type Logger struct {
+	prefix string
+	w      log.Logger
+}
+
+func New(prefix string) *Logger {
+	l := &Logger{
+		w: log.NewLogfmtLogger(writer{
+			prefix: prefix,
+		}),
+	}
+	return l
+}
 
 func (l *Logger) Log(keyvals ...interface{}) error {
-	logger.Debug(keyvals...)
-	return nil
+	return l.w.Log(keyvals...)
+}
+
+type writer struct {
+	prefix string
+}
+
+func (w writer) Write(b []byte) (int, error) {
+	s := string(bytes.TrimSpace(b))
+	logger.Infof("%s\t%s", w.prefix, s)
+	return len(s), nil
 }

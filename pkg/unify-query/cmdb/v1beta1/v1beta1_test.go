@@ -269,7 +269,7 @@ func TestModel_GetPath(t *testing.T) {
 	}
 }
 
-func mockData(ctx context.Context) *curl.TestCurl {
+func mockData(ctx context.Context) *curl.MockCurl {
 	mockCurl := curl.NewMockCurl(map[string]string{
 		`http://127.0.0.1:80/query?chunk_size=10&chunked=true&db=2_bkmonitor_time_series_1572864&q=select+%22value%22+as+_value%2C+time+as+_time%2C%2A%3A%3Atag+from+node_with_system_relation+where+time+%3E+1693973867000000000+and+time+%3C+1693973987000000000+and+%28bcs_cluster_id%3D%27BCS-K8S-00000%27+and+node%3D%27node-127-0-0-1%27%29++limit+100000000+slimit+100000000+tz%28%27UTC%27%29`: `{"results":[{"series":[{"name":"node_with_system_relation","columns":["_time","_value","bcs_cluster_id","bk_biz_id","bk_endpoint_index","bk_endpoint_url","bk_instance","bk_job","bk_monitor_name","bk_monitor_namespace","bk_target_ip","endpoint","instance","job","monitor_type","namespace","node","pod","service"],"values":[[1693973874000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"],[1693973934000000000,1,"BCS-K8S-00000","2","0","http://127.0.0.1:8080/relation/metrics","127.0.0.1:8080","bkmonitor-operator-operator","bkmonitor-operator-operator","bkmonitor-operator","127.0.0.1","http","127.0.0.1:8080","bkmonitor-operator-operator","ServiceMonitor","bkmonitor-operator","node-127-0-0-1","bkm-operator-6b4768bb58-lxhnr","bkmonitor-operator-operator"]]}]}]}
 `,

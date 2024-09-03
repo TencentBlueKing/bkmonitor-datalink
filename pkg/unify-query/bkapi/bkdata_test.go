@@ -9,14 +9,15 @@
 
 package bkapi
 
-const (
-	// BKDATA 配置
-	BkDataUriPathConfigPath              = "bk_data.uri_path"
-	BkDataAuthenticationMethodConfigPath = "bk_data.authentication_method"
-	BkDataTokenConfigPath                = "bk_data.token"
-
-	// BKAPI 配置
-	BkAPIAddressConfigPath = "bk_api.address"
-	BkAPICodeConfigPath    = "bk_api.code"
-	BkAPISecretConfigPath  = "bk_api.secret"
+import (
+	"context"
+	"testing"
 )
+
+func mockData(ctx context.Context) {
+
+}
+
+func TestGetDataAuth(t *testing.T) {
+
+}

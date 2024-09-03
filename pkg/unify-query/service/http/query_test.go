@@ -36,7 +36,7 @@ import (
 )
 
 // mockData comment lint rebel
-func mockData(ctx context.Context, path, bucket string) *curl.TestCurl {
+func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 	featureFlag.MockFeatureFlag(ctx, `{
     	"vm-query-or": {
     		"variations": {

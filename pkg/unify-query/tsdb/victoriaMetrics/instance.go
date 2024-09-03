@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"strings"
 	"time"
 
@@ -341,6 +342,12 @@ func (i *Instance) vmQuery(
 	params := make(map[string]string)
 	params["sql"] = sql
 	params["prefer_storage"] = PreferStorage
+
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
+	}
+
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err

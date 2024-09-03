@@ -10,6 +10,7 @@
 package bkapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -21,60 +22,73 @@ const (
 
 	QuerySync  = "query_sync"
 	QueryAsync = "query_async"
+
+	BkDataAuthenticationMethodKey = "bkdata_authentication_method"
+	BkDataDataTokenKey            = "bkdata_data_token"
 )
 
 var (
-	onceBkDataApi    sync.Once
-	defaultBkDataApi *BkDataApi
+	onceBkDataAPI    sync.Once
+	defaultBkDataAPI *BkDataAPI
 )
 
-type BkDataApi struct {
-	bkApi *BkApi
+const ()
 
-	uriPath              string
-	token                string
-	authenticationMethod string
+type BkDataAPI struct {
+	bkAPI *BkAPI
+
+	uriPath string
+
+	authConfig map[string]string
 }
 
-func GetBkDataApi() *BkDataApi {
-	onceBkDataApi.Do(func() {
-		defaultBkDataApi = &BkDataApi{
-			bkApi:                GetBkApi(),
-			token:                viper.GetString(BkDataTokenConfigPath),
-			authenticationMethod: viper.GetString(BkDataAuthenticationMethodConfigPath),
-			uriPath:              viper.GetString(BkDataUriPathConfigPath),
+func GetBkDataAPI() *BkDataAPI {
+	onceBkDataAPI.Do(func() {
+		bkAPI := GetBkAPI()
+		defaultBkDataAPI = &BkDataAPI{
+			bkAPI:   bkAPI,
+			uriPath: viper.GetString(BkDataUriPathConfigPath),
+			authConfig: map[string]string{
+				BkDataDataTokenKey:            viper.GetString(BkDataTokenConfigPath),
+				BkDataAuthenticationMethodKey: viper.GetString(BkDataAuthenticationMethodConfigPath),
+				BkUserNameKey:                 AdminUserName,
+				BkAppCodeKey:                  bkAPI.GetCode(),
+			},
 		}
 	})
-	return defaultBkDataApi
+	return defaultBkDataAPI
 }
 
-func (i *BkDataApi) Headers(headers map[string]string) map[string]string {
+func (i *BkDataAPI) GetDataAuth() map[string]string {
+	return i.authConfig
+}
+
+func (i *BkDataAPI) Headers(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
-	headers[BkDataAuthorization] = fmt.Sprintf(
-		`{"bkdata_authentication_method": "%s", "bkdata_data_token": "%s", "bk_username": "%s", "bk_app_code"}`,
-		i.authenticationMethod, i.token, AdminUserName, i.bkApi.GetCode(),
-	)
-	return i.bkApi.Headers(headers)
+
+	auth, _ := json.Marshal(i.authConfig)
+	headers[BkDataAuthorization] = string(auth)
+	return i.bkAPI.Headers(headers)
 }
 
-func (i *BkDataApi) url(path string) string {
-	url := i.bkApi.Url(i.uriPath)
+func (i *BkDataAPI) url(path string) string {
+	url := i.bkAPI.Url(i.uriPath)
 	if path != "" {
 		url = fmt.Sprintf("%s/%s", url, path)
 	}
 	return url
 }
 
-func (i *BkDataApi) QueryAsyncUrl() string {
+func (i *BkDataAPI) QueryAsyncUrl() string {
 	return i.url(QueryAsync)
 }
 
-func (i *BkDataApi) QuerySyncUrl() string {
+func (i *BkDataAPI) QuerySyncUrl() string {
 	return i.url(QuerySync)
 }
 
-func (i *BkDataApi) QueryEsUrl() string {
+func (i *BkDataAPI) QueryEsUrl() string {
 	return fmt.Sprintf("%s/es", i.QuerySyncUrl())
 }

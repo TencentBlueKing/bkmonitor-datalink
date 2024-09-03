@@ -10,14 +10,16 @@
 package bkapi
 
 import (
-	"context"
+	"fmt"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
-func mockData(ctx context.Context) {
-
-}
-
 func TestGetDataAuth(t *testing.T) {
+	mock.Path = `../dist/local/unify-query.yaml`
+	mock.Init()
 
+	headers := GetBkDataAPI().Headers(nil)
+	fmt.Println(headers)
 }

@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -80,7 +80,7 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Address == "" {
 		return nil, fmt.Errorf("address is empty")
 	}

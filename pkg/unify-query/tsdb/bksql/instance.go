@@ -65,7 +65,7 @@ type Options struct {
 	Curl curl.Curl
 }
 
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Address == "" {
 		return nil, fmt.Errorf("address is empty")
 	}

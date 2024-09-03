@@ -64,7 +64,7 @@ var (
 )
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Host == "" {
 		return nil, fmt.Errorf("host is empty %+v", opt)
 	}

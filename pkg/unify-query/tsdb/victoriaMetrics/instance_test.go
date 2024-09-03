@@ -12,7 +12,6 @@ package victoriaMetrics
 import (
 	"context"
 	"encoding/json"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"testing"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
 const (
@@ -43,7 +43,7 @@ var (
 func mockInstance(ctx context.Context, mockCurl *curl.MockCurl) *Instance {
 	headers := map[string]string{}
 
-	instance, _ := NewInstance(ctx, Options{
+	instance, _ := NewInstance(ctx, &Options{
 		Address:          url,
 		Timeout:          time.Minute,
 		Curl:             mockCurl,

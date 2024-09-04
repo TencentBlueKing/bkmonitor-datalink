@@ -48,6 +48,20 @@ func (mr *MockBackendMockRecorder) Exist(req interface{}) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Exist", reflect.TypeOf((*MockBackend)(nil).Exist), req)
 }
 
+// GetClient mocks base method.
+func (m *MockBackend) GetClient(t Target) any {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetClient", t)
+	ret0, _ := ret[0].(any)
+	return ret0
+}
+
+// GetClient indicates an expected call of GetClient.
+func (mr *MockBackendMockRecorder) GetClient(t interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetClient", reflect.TypeOf((*MockBackend)(nil).GetClient), t)
+}
+
 // Query mocks base method.
 func (m *MockBackend) Query(queryRequest QueryRequest) (any, error) {
 	m.ctrl.T.Helper()

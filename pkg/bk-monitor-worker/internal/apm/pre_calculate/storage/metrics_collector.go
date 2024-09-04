@@ -58,13 +58,12 @@ func dimensionKeyToNameAndLabel(dimensionKey string, ignoreName bool) (string, [
 	for _, pair := range pairs {
 		composition := strings.Split(pair, "=")
 		if len(composition) == 2 {
+			label := prompb.Label{Name: composition[0], Value: composition[1]}
+			if !ignoreName || composition[0] != "__name__" {
+				labels = append(labels, label)
+			}
 			if composition[0] == "__name__" {
 				name = composition[1]
-				if !ignoreName {
-					labels = append(labels, prompb.Label{Name: composition[0], Value: composition[1]})
-				}
-			} else {
-				labels = append(labels, prompb.Label{Name: composition[0], Value: composition[1]})
 			}
 		}
 	}
@@ -146,7 +145,7 @@ func (c *flowMetricsCollector) convert() prompb.WriteRequest {
 	var series []prompb.TimeSeries
 	var metricsName []string
 
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	ts := time.Now().UnixMilli()
 	for key, stats := range c.data {
 		name, labels := dimensionKeyToNameAndLabel(key, true)
 
@@ -243,7 +242,7 @@ func (r *relationMetricsCollector) convert(dimensionKeys []string) prompb.WriteR
 	var series []prompb.TimeSeries
 	metricName := make(map[string]int, len(dimensionKeys))
 
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	ts := time.Now().UnixMilli()
 	for _, key := range dimensionKeys {
 		name, labels := dimensionKeyToNameAndLabel(key, false)
 		series = append(series, prompb.TimeSeries{

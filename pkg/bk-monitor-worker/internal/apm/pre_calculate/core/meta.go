@@ -103,7 +103,7 @@ func CreateMockMetadataCenter() error {
 		Mapping: &sync.Map{},
 		Consul:  store.CreateDummyStore(),
 	}
-	logger.Warnf("😱 Create fake consulClient, make sure you guys are not in production!!!")
+	logger.Warnf("Create fake consulClient, make sure you guys are not in production!!!")
 	return nil
 }
 

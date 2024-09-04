@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/exp/slices"
@@ -74,13 +75,16 @@ func (m *MetricProcessor) findSpanMetric(
 	for _, span := range fullTreeGraph.StandardSpans() {
 
 		// apm_service_with_apm_service_instance_relation
-		serviceInstanceRelationLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s",
-			"__name__", storage.ApmServiceInstanceRelation,
-			"apm_service_name", span.GetFieldValue(core.ServiceNameField),
-			"apm_application_name", m.appName,
-			"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
+		serviceInstanceRelationLabelKey := strings.Join(
+			[]string{
+				pair("__name__", storage.ApmServiceInstanceRelation),
+				pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+				pair("apm_application_name", m.appName),
+				pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+			},
+			",",
 		)
+
 		if !slices.Contains(labels, serviceInstanceRelationLabelKey) {
 			labels = append(labels, serviceInstanceRelationLabelKey)
 			metricCount[storage.ApmServiceInstanceRelation]++
@@ -93,15 +97,17 @@ func (m *MetricProcessor) findSpanMetric(
 				podName = span.GetFieldValue(core.NetHostnameField)
 			}
 			// apm_service_instance_with_pod_address_relation
-			servicePodRelationLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
-				"__name__", storage.ApmServicePodRelation,
-				"apm_service_name", span.GetFieldValue(core.ServiceNameField),
-				"apm_application_name", m.appName,
-				"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
-				"bcs_cluster_id", bcsClusterId,
-				"namespace", span.GetFieldValue(core.K8sNamespace),
-				"pod", podName,
+			servicePodRelationLabelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServicePodRelation),
+					pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+					pair("apm_application_name", m.appName),
+					pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+					pair("bcs_cluster_id", bcsClusterId),
+					pair("namespace", span.GetFieldValue(core.K8sNamespace)),
+					pair("pod", podName),
+				},
+				",",
 			)
 			if !slices.Contains(labels, servicePodRelationLabelKey) {
 				labels = append(labels, servicePodRelationLabelKey)
@@ -109,14 +115,17 @@ func (m *MetricProcessor) findSpanMetric(
 			}
 		} else {
 			// apm_service_instance_with_system_relation
-			serviceSystemRelationLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s",
-				"__name__", storage.ApmServiceSystemRelation,
-				"apm_service_name", span.GetFieldValue(core.ServiceNameField),
-				"apm_application_name", m.appName,
-				"apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField),
-				"bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField),
+			serviceSystemRelationLabelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceSystemRelation),
+					pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+					pair("apm_application_name", m.appName),
+					pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+					pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField)),
+				},
+				",",
 			)
+
 			if !slices.Contains(labels, serviceSystemRelationLabelKey) {
 				labels = append(labels, serviceSystemRelationLabelKey)
 				metricCount[storage.ApmServiceSystemRelation]++
@@ -151,44 +160,46 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 	metricCount := make(map[string]int)
 
 	parentChildPairs, aloneNodes := fullTreeGraph.FindDirectParentChildParisAndAloneNodes(CallerKinds, CalleeKinds)
-	for _, pair := range parentChildPairs {
-		cService := pair[0].GetFieldValue(core.ServiceNameField)
-		sService := pair[1].GetFieldValue(core.ServiceNameField)
+	for _, pairs := range parentChildPairs {
+		cService := pairs[0].GetFieldValue(core.ServiceNameField)
+		sService := pairs[1].GetFieldValue(core.ServiceNameField)
 
-		cServiceSpanName := pair[0].GetFieldValue(core.SpanNameField)
-		sServiceSpanName := pair[1].GetFieldValue(core.SpanNameField)
+		cServiceSpanName := pairs[0].GetFieldValue(core.SpanNameField)
+		sServiceSpanName := pairs[1].GetFieldValue(core.SpanNameField)
 
-		cSpanKind := pair[0].Kind
-		sSpanKind := pair[1].Kind
+		cSpanKind := pairs[0].Kind
+		sSpanKind := pairs[1].Kind
 		// unit: μs
 		var duration int
 		if cSpanKind == int(core.KindClient) {
 			// sync
-			duration = pair[0].EndTime - pair[0].StartTime
+			duration = pairs[0].EndTime - pairs[0].StartTime
 		} else {
 			// async
-			duration = int(math.Abs(float64(pair[1].StartTime - pair[0].StartTime)))
+			duration = int(math.Abs(float64(pairs[1].StartTime - pairs[0].StartTime)))
 		}
 
 		if cService != "" && sService != "" {
 			// --> Find service -> service relation
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceFlow,
-				"from_span_name", cServiceSpanName,
-				"from_apm_service_name", cService,
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryHttp,
-				"from_apm_service_kind", storage.KindService,
-				"from_apm_service_span_kind", cSpanKind,
-				"to_span_name", sServiceSpanName,
-				"to_apm_service_name", sService,
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryHttp,
-				"to_apm_service_kind", storage.KindService,
-				"to_apm_service_span_kind", sSpanKind,
-				"from_span_error", pair[0].IsError(),
-				"to_span_error", pair[1].IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceFlow),
+					pair("from_span_name", cServiceSpanName),
+					pair("from_apm_service_name", cService),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryHttp),
+					pair("from_apm_service_kind", storage.KindService),
+					pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
+					pair("to_span_name", sServiceSpanName),
+					pair("to_apm_service_name", sService),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryHttp),
+					pair("to_apm_service_kind", storage.KindService),
+					pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
+					pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+					pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
@@ -197,53 +208,59 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		if !m.enabledLayer4Report {
 			continue
 		}
-		parentIp := pair[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
-		childIp := pair[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
+		parentIp := pairs[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
+		childIp := pairs[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
 		if parentIp != "" {
 			// ----> Find system -> service relation
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.SystemApmServiceFlow,
-				"from_bk_target_ip", parentIp,
-				"to_span_name", sServiceSpanName,
-				"to_apm_service_name", sService,
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryHttp,
-				"to_apm_service_kind", storage.KindService,
-				"to_apm_service_span_kind", sSpanKind,
-				"from_span_error", pair[0].IsError(),
-				"to_span_error", pair[1].IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.SystemApmServiceFlow),
+					pair("from_bk_target_ip", parentIp),
+					pair("to_span_name", sServiceSpanName),
+					pair("to_apm_service_name", sService),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryHttp),
+					pair("to_apm_service_kind", storage.KindService),
+					pair("to_apm_service_span_kind", strconv.Itoa(sSpanKind)),
+					pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+					pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.SystemApmServiceFlow]++
 		}
 		if childIp != "" {
 			// ----> Find service -> system relation
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceSystemFlow,
-				"from_span_name", cServiceSpanName,
-				"from_apm_service_name", cService,
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryHttp,
-				"from_apm_service_kind", storage.KindService,
-				"from_apm_service_span_kind", cSpanKind,
-				"to_bk_target_ip", childIp,
-				"from_span_error", pair[0].IsError(),
-				"to_span_error", pair[1].IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceSystemFlow),
+					pair("from_span_name", cServiceSpanName),
+					pair("from_apm_service_name", cService),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryHttp),
+					pair("from_apm_service_kind", storage.KindService),
+					pair("from_apm_service_span_kind", strconv.Itoa(cSpanKind)),
+					pair("to_bk_target_ip", childIp),
+					pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+					pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.ApmServiceSystemFlow]++
 		}
 		if parentIp != "" && childIp != "" {
 			// ----> find system -> system relation
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%v,%s=%v",
-				"__name__", storage.SystemFlow,
-				"from_bk_target_ip", parentIp,
-				"to_bk_target_ip", childIp,
-				"from_span_error", pair[0].IsError(),
-				"to_span_error", pair[1].IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.SystemFlow),
+					pair("from_bk_target_ip", parentIp),
+					pair("to_bk_target_ip", childIp),
+					pair("from_span_error", strconv.FormatBool(pairs[0].IsError())),
+					pair("to_span_error", strconv.FormatBool(pairs[1].IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.SystemFlow]++
@@ -260,46 +277,50 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 
 		if slices.Contains(CallerKinds, aloneNode.Kind) {
 			// fill callee
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceFlow,
-				"from_span_name", spanName,
-				"from_apm_service_name", serviceName,
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryHttp,
-				"from_apm_service_kind", storage.KindService,
-				"from_apm_service_span_kind", aloneNode.Kind,
-				"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
-				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee),
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryHttp,
-				"to_apm_service_kind", storage.KindVirtualService,
-				"to_apm_service_span_kind", m.getOppositeSpanKind(aloneNode.Kind),
-				"from_span_error", aloneNode.IsError(),
-				"to_span_error", aloneNode.IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceFlow),
+					pair("from_span_name", spanName),
+					pair("from_apm_service_name", serviceName),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryHttp),
+					pair("from_apm_service_kind", storage.KindService),
+					pair("from_apm_service_span_kind", strconv.Itoa(aloneNode.Kind)),
+					pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee)),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryHttp),
+					pair("to_apm_service_kind", storage.KindVirtualService),
+					pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(aloneNode.Kind))),
+					pair("from_span_error", strconv.FormatBool(aloneNode.IsError())),
+					pair("to_span_error", strconv.FormatBool(aloneNode.IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, aloneNode.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			continue
 		}
 		if slices.Contains(CalleeKinds, aloneNode.Kind) {
-			labelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceFlow,
-				"from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
-				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller),
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryHttp,
-				"from_apm_service_kind", storage.KindVirtualService,
-				"from_apm_service_span_kind", m.getOppositeSpanKind(aloneNode.Kind),
-				"to_span_name", spanName,
-				"to_apm_service_name", serviceName,
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryHttp,
-				"to_apm_service_kind", storage.KindService,
-				"to_apm_service_span_kind", aloneNode.Kind,
-				"from_span_error", aloneNode.IsError(),
-				"to_span_error", aloneNode.IsError(),
+			labelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceFlow),
+					pair("from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller)),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryHttp),
+					pair("from_apm_service_kind", storage.KindVirtualService),
+					pair("from_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(aloneNode.Kind))),
+					pair("to_span_name", spanName),
+					pair("to_apm_service_name", serviceName),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryHttp),
+					pair("to_apm_service_kind", storage.KindService),
+					pair("to_apm_service_span_kind", strconv.Itoa(aloneNode.Kind)),
+					pair("from_span_error", strconv.FormatBool(aloneNode.IsError())),
+					pair("to_apm_service_span_kind", strconv.FormatBool(aloneNode.IsError())),
+				},
+				",",
 			)
 			m.addToStats(labelKey, aloneNode.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
@@ -345,23 +366,25 @@ func (m *MetricProcessor) findComponentFlowMetric(
 
 	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {
 		// service (caller) -> db (callee)
-		dbFlowLabelKey := fmt.Sprintf(
-			"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-			"__name__", storage.ApmServiceFlow,
-			"from_span_name", spanName,
-			"from_apm_service_name", serviceName,
-			"from_apm_application_name", m.appName,
-			"from_apm_service_category", storage.CategoryHttp,
-			"from_apm_service_kind", storage.KindService,
-			"from_apm_service_span_kind", span.Kind,
-			"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
-			"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem),
-			"to_apm_application_name", m.appName,
-			"to_apm_service_category", storage.CategoryDb,
-			"to_apm_service_kind", storage.KindComponent,
-			"to_apm_service_span_kind", m.getOppositeSpanKind(span.Kind),
-			"from_span_error", span.IsError(),
-			"to_span_error", span.IsError(),
+		dbFlowLabelKey := strings.Join(
+			[]string{
+				pair("__name__", storage.ApmServiceFlow),
+				pair("from_span_name", spanName),
+				pair("from_apm_service_name", serviceName),
+				pair("from_apm_application_name", m.appName),
+				pair("from_apm_service_category", storage.CategoryHttp),
+				pair("from_apm_service_kind", storage.KindService),
+				pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
+				pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+				pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem)),
+				pair("to_apm_application_name", m.appName),
+				pair("to_apm_service_category", storage.CategoryDb),
+				pair("to_apm_service_kind", storage.KindComponent),
+				pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
+				pair("from_span_error", strconv.FormatBool(span.IsError())),
+				pair("to_span_error", strconv.FormatBool(span.IsError())),
+			},
+			",",
 		)
 		m.addToStats(dbFlowLabelKey, span.Elapsed(), metricRecordMapping)
 		metricCount[storage.ApmServiceFlow]++
@@ -371,46 +394,50 @@ func (m *MetricProcessor) findComponentFlowMetric(
 	if messageSystem != "" {
 		if slices.Contains(CallerKinds, span.Kind) {
 			// service (caller) -> messageQueue (callee)
-			messageCalleeFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceFlow,
-				"from_span_name", spanName,
-				"from_apm_service_name", serviceName,
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryHttp,
-				"from_apm_service_kind", storage.KindService,
-				"from_apm_service_span_kind", span.Kind,
-				"to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
-				"to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryMessaging,
-				"to_apm_service_kind", storage.KindComponent,
-				"to_apm_service_span_kind", m.getOppositeSpanKind(span.Kind),
-				"from_span_error", span.IsError(),
-				"to_span_error", span.IsError(),
+			messageCalleeFlowLabelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceFlow),
+					pair("from_span_name", spanName),
+					pair("from_apm_service_name", serviceName),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryHttp),
+					pair("from_apm_service_kind", storage.KindService),
+					pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
+					pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryMessaging),
+					pair("to_apm_service_kind", storage.KindComponent),
+					pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
+					pair("from_span_error", strconv.FormatBool(span.IsError())),
+					pair("to_span_error", strconv.FormatBool(span.IsError())),
+				},
+				",",
 			)
 			m.addToStats(messageCalleeFlowLabelKey, span.Elapsed(), metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
 			return
 		}
 		if slices.Contains(CalleeKinds, span.Kind) {
-			messageCallerFlowLabelKey := fmt.Sprintf(
-				"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-				"__name__", storage.ApmServiceFlow,
-				"from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan),
-				"from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem),
-				"from_apm_application_name", m.appName,
-				"from_apm_service_category", storage.CategoryMessaging,
-				"from_apm_service_kind", storage.KindComponent,
-				"from_apm_service_span_kind", m.getOppositeSpanKind(span.Kind),
-				"to_span_name", spanName,
-				"to_apm_service_name", serviceName,
-				"to_apm_application_name", m.appName,
-				"to_apm_service_category", storage.CategoryHttp,
-				"to_apm_service_kind", storage.KindService,
-				"to_apm_service_span_kind", span.Kind,
-				"from_span_error", span.IsError(),
-				"to_span_error", span.IsError(),
+			messageCallerFlowLabelKey := strings.Join(
+				[]string{
+					pair("__name__", storage.ApmServiceFlow),
+					pair("from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
+					pair("from_apm_application_name", m.appName),
+					pair("from_apm_service_category", storage.CategoryMessaging),
+					pair("from_apm_service_kind", storage.KindComponent),
+					pair("from_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
+					pair("to_span_name", spanName),
+					pair("to_apm_service_name", serviceName),
+					pair("to_apm_application_name", m.appName),
+					pair("to_apm_service_category", storage.CategoryHttp),
+					pair("to_apm_service_kind", storage.KindService),
+					pair("to_apm_service_span_kind", strconv.Itoa(span.Kind)),
+					pair("from_span_error", strconv.FormatBool(span.IsError())),
+					pair("to_span_error", strconv.FormatBool(span.IsError())),
+				},
+				",",
 			)
 			// For ot-kafka SDK generation span,
 			// the time consumption is the time spent receiving the message,
@@ -463,24 +490,26 @@ func (m *MetricProcessor) findCustomServiceFlowMetric(
 	if peerService == "" {
 		return
 	}
-	customServiceLabelKey := fmt.Sprintf(
-		"%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%s,%s=%s,%s=%s,%s=%s,%s=%s,%s=%d,%s=%v,%s=%v",
-		"__name__", storage.ApmServiceFlow,
-		"from_span_name", spanName,
-		"from_apm_service_name", serviceName,
-		"from_apm_application_name", m.appName,
-		"from_apm_service_category", storage.CategoryHttp,
-		"from_apm_service_kind", storage.KindService,
-		"from_apm_service_span_kind", span.Kind,
-		// 自定义服务 flow span_name 两边都一致
-		"to_span_name", spanName,
-		"to_apm_service_name", fmt.Sprintf("%s:%s", peerServiceType, peerService),
-		"to_apm_application_name", m.appName,
-		"to_apm_service_category", storage.CategoryHttp,
-		"to_apm_service_kind", storage.KindCustomService,
-		"to_apm_service_span_kind", m.getOppositeSpanKind(span.Kind),
-		"from_span_error", span.IsError(),
-		"to_span_error", span.IsError(),
+	customServiceLabelKey := strings.Join(
+		[]string{
+			pair("__name__", storage.ApmServiceFlow),
+			pair("from_span_name", spanName),
+			pair("from_apm_service_name", serviceName),
+			pair("from_apm_application_name", m.appName),
+			pair("from_apm_service_category", storage.CategoryHttp),
+			pair("from_apm_service_kind", storage.KindService),
+			pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
+			// 自定义服务 flow span_name 两边都一致
+			pair("to_span_name", spanName),
+			pair("to_apm_service_name", fmt.Sprintf("%s:%s", peerServiceType, peerService)),
+			pair("to_apm_application_name", m.appName),
+			pair("to_apm_service_category", storage.CategoryHttp),
+			pair("to_apm_service_kind", storage.KindCustomService),
+			pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
+			pair("from_span_error", strconv.FormatBool(span.IsError())),
+			pair("to_span_error", strconv.FormatBool(span.IsError())),
+		},
+		",",
 	)
 	m.addToStats(customServiceLabelKey, span.Elapsed(), metricRecordMapping)
 	metricCount[storage.ApmServiceFlow]++
@@ -540,6 +569,10 @@ func (m *MetricProcessor) refreshCustomService() {
 			return
 		}
 	}
+}
+
+func pair(k, v string) string {
+	return k + "=" + v
 }
 
 func newMetricProcessor(ctx context.Context, dataId string, enabledLayer4Metric bool) *MetricProcessor {

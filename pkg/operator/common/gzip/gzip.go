@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package compressor
+package gzip
 
 import (
 	"bytes"
@@ -15,36 +15,19 @@ import (
 	"io"
 )
 
-type Compressor interface {
-	Compress(b []byte) ([]byte, error)
-	Uncompress(b []byte) ([]byte, error)
-}
-
 func Compress(b []byte) ([]byte, error) {
-	return defaultCompressor.Compress(b)
-}
-
-func Uncompress(b []byte) ([]byte, error) {
-	return defaultCompressor.Uncompress(b)
-}
-
-var defaultCompressor = gzipCompressor{}
-
-type gzipCompressor struct{}
-
-func (gzipCompressor) Compress(b []byte) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	w := gzip.NewWriter(buf)
 	if _, err := w.Write(b); err != nil {
-		w.Close()
+		_ = w.Close()
 		return nil, err
 	}
-	w.Close()
+	_ = w.Close()
 	return buf.Bytes(), nil
 }
 
-func (gzipCompressor) Uncompress(conf []byte) ([]byte, error) {
-	reader := bytes.NewReader(conf)
+func Uncompress(b []byte) ([]byte, error) {
+	reader := bytes.NewReader(b)
 	r, err := gzip.NewReader(reader)
 	if err != nil {
 		return nil, err

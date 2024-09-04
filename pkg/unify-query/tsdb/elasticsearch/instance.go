@@ -41,52 +41,23 @@ import (
 var _ tsdb.Instance = (*Instance)(nil)
 
 type Instance struct {
-	ctx    context.Context
-	wg     sync.WaitGroup
-	client *elastic.Client
+	ctx context.Context
+	wg  sync.WaitGroup
 
 	lock sync.Mutex
+
+	address     string
+	username    string
+	password    string
+	healthCheck bool
+
+	headers map[string]string
 
 	timeout time.Duration
 	maxSize int
 
 	toEs   func(string) string
 	toProm func(string) string
-}
-
-// QueryRange 使用 es 直接查询引擎
-func (i *Instance) QueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (i *Instance) GetInstanceType() string {
-	return consul.ElasticsearchStorageType
 }
 
 type InstanceOption struct {
@@ -96,7 +67,7 @@ type InstanceOption struct {
 	MaxSize     int
 	MaxRouting  int
 	Timeout     time.Duration
-	Headers     http.Header
+	Headers     map[string]string
 	HealthCheck bool
 }
 
@@ -125,46 +96,59 @@ var TimeSeriesResultPool = sync.Pool{
 func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	ins := &Instance{
 		ctx:     ctx,
-		timeout: opt.Timeout,
 		maxSize: opt.MaxSize,
-		toEs:    structured.QueryRawFormat(ctx),
-		toProm:  structured.PromQueryFormat(ctx),
+
+		address:     opt.Address,
+		username:    opt.Username,
+		password:    opt.Password,
+		headers:     opt.Headers,
+		healthCheck: opt.HealthCheck,
+		timeout:     opt.Timeout,
+
+		toEs:   structured.QueryRawFormat(ctx),
+		toProm: structured.PromQueryFormat(ctx),
 	}
 
 	if opt.Address == "" {
 		return ins, errors.New("empty es client options")
 	}
 
-	cliOpts := []elastic.ClientOptionFunc{
-		elastic.SetURL(opt.Address),
-		elastic.SetSniff(false),
-		elastic.SetHealthcheck(opt.HealthCheck),
-	}
-	if len(opt.Headers) > 0 {
-		cliOpts = append(cliOpts, elastic.SetHeaders(opt.Headers))
-	}
-
-	if opt.Username != "" && opt.Password != "" {
-		cliOpts = append(
-			cliOpts,
-			elastic.SetBasicAuth(opt.Username, opt.Password),
-		)
-	}
-
-	cli, err := elastic.NewClient(cliOpts...)
-	if err != nil {
-		return ins, err
-	}
-
 	if opt.MaxRouting > 0 {
-		err = pool.Tune(opt.MaxRouting)
+		err := pool.Tune(opt.MaxRouting)
 		if err != nil {
 			return ins, err
 		}
 	}
 
-	ins.client = cli
 	return ins, nil
+}
+
+func (i *Instance) getClient(ctx context.Context) (*elastic.Client, error) {
+	cliOpts := []elastic.ClientOptionFunc{
+		elastic.SetURL(i.address),
+		elastic.SetSniff(false),
+		elastic.SetHealthcheck(i.healthCheck),
+	}
+	ctx, cancel := context.WithTimeout(ctx, i.timeout)
+	defer cancel()
+
+	headers := metadata.Headers(ctx, i.headers)
+	if len(headers) > 0 {
+		httpHeaders := make(http.Header, len(headers))
+		for k, v := range headers {
+			httpHeaders[k] = []string{v}
+		}
+		cliOpts = append(cliOpts, elastic.SetHeaders(httpHeaders))
+	}
+
+	if i.username != "" && i.password != "" {
+		cliOpts = append(
+			cliOpts,
+			elastic.SetBasicAuth(i.username, i.password),
+		)
+	}
+
+	return elastic.DialContext(ctx, cliOpts...)
 }
 
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
@@ -187,7 +171,11 @@ func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[str
 	}()
 
 	span.Set("alias", aliases)
-	mappingMap, err := i.client.GetMapping().Index(aliases...).Type("").Do(ctx)
+	client, err := i.getClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mappingMap, err := client.GetMapping().Index(aliases...).Type("").Do(ctx)
 
 	indexes := make([]string, 0, len(mappingMap))
 	for index := range mappingMap {
@@ -294,8 +282,12 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	log.Infof(ctx, "elasticsearch-query indexes: %s", qo.indexes)
 	log.Infof(ctx, "elasticsearch-query body: %s", bodyString)
 
-	startAnaylize := time.Now()
-	search := i.client.Search().Index(qo.indexes...).SearchSource(source)
+	startAnalyze := time.Now()
+	client, err := i.getClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	search := client.Search().Index(qo.indexes...).SearchSource(source)
 
 	res, err := search.Do(ctx)
 
@@ -314,7 +306,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 		}
 	}
 
-	queryCost := time.Since(startAnaylize)
+	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, consul.ElasticsearchStorageType,
@@ -397,7 +389,11 @@ func (i *Instance) queryWithoutAgg(ctx context.Context, qo *queryOption, fact *F
 }
 
 func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string, error) {
-	catAlias, err := i.client.CatAliases().Alias(aliases...).Do(ctx)
+	client, err := i.getClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	catAlias, err := client.CatAliases().Alias(aliases...).Do(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +414,11 @@ func (i *Instance) getIndexes(ctx context.Context, aliases ...string) ([]string,
 }
 
 func (i *Instance) indexOption(ctx context.Context, index string) (docCount int64, storeSize int64, err error) {
-	cats, err := i.client.CatIndices().Index(index).Do(ctx)
+	client, err := i.getClient(ctx)
+	if err != nil {
+		return
+	}
+	cats, err := client.CatIndices().Index(index).Do(ctx)
 	if err != nil {
 		return
 	}
@@ -573,10 +573,6 @@ func (i *Instance) QueryRaw(
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
 
-	if i.client == nil {
-		return storage.ErrSeriesSet(fmt.Errorf("es client is nil"))
-	}
-
 	rets := make(chan *TimeSeriesResult, 1)
 
 	go func() {
@@ -657,4 +653,39 @@ func (i *Instance) QueryRaw(
 	}
 
 	return remote.FromQueryResult(false, qr)
+}
+
+// QueryRange 使用 es 直接查询引擎
+func (i *Instance) QueryRange(ctx context.Context, referenceName string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) GetInstanceType() string {
+	return consul.ElasticsearchStorageType
 }

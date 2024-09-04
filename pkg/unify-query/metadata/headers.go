@@ -7,16 +7,18 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package bkapi
+package metadata
 
-const (
-	// BKDATA 配置
-	BkDataUriPathConfigPath              = "bk_data.uri_path"
-	BkDataAuthenticationMethodConfigPath = "bk_data.authentication_method"
-	BkDataTokenConfigPath                = "bk_data.token"
+import "context"
 
-	// BKAPI 配置
-	BkAPIAddressConfigPath = "bk_api.address"
-	BkAPICodeConfigPath    = "bk_api.code"
-	BkAPISecretConfigPath  = "bk_api.secret"
-)
+// Headers 统一注入请求 header 头信息
+func Headers(ctx context.Context, headers map[string]string) map[string]string {
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	user := GetUser(ctx)
+	headers[BkQuerySourceHeader] = user.Key
+	headers[SpaceUIDHeader] = user.SpaceUid
+	return headers
+}

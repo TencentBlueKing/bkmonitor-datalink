@@ -449,6 +449,8 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (inte
 		//}
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			// 兼容 storage 结构体，用于单元测试
+			StorageID:   consul.VictoriaMetricsStorageType,
 			StorageType: consul.VictoriaMetricsStorageType,
 		})
 		if instance == nil {

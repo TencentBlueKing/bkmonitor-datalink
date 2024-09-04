@@ -20,21 +20,10 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
-	baseInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
-	tsDBService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/tsdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
-	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 const (
@@ -376,120 +365,4 @@ func (q *Querier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.War
 // Close 释放查询器的所有资源
 func (q *Querier) Close() error {
 	return nil
-}
-
-func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
-	var (
-		instance tsdb.Instance
-		err      error
-	)
-
-	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
-	defer func() {
-		if err != nil {
-			log.Errorf(ctx, err.Error())
-		}
-		span.End(&err)
-	}()
-
-	span.Set("storage-id", qry.StorageID)
-
-	// 兼容原逻辑，storageType 通过 storageMap 获取
-	stg, err := tsdb.GetStorage(qry.StorageID)
-	if stg != nil {
-		qry.StorageType = stg.Type
-	}
-
-	span.Set("storage-type", qry.StorageType)
-	curlGet := &curl.HttpCurl{Log: log.DefaultLogger}
-
-	switch qry.StorageType {
-	case consul.InfluxDBStorageType:
-		opt := influxdb.Options{
-			Timeout:        tsDBService.InfluxDBTimeout,
-			ContentType:    tsDBService.InfluxDBContentType,
-			ChunkSize:      tsDBService.InfluxDBChunkSize,
-			RawUriPath:     tsDBService.InfluxDBQueryRawUriPath,
-			Accept:         tsDBService.InfluxDBQueryRawAccept,
-			AcceptEncoding: tsDBService.InfluxDBQueryRawAcceptEncoding,
-			MaxLimit:       tsDBService.InfluxDBMaxLimit,
-			MaxSlimit:      tsDBService.InfluxDBMaxSLimit,
-			Tolerance:      tsDBService.InfluxDBTolerance,
-			ReadRateLimit:  tsDBService.InfluxDBQueryReadRateLimit,
-			Curl:           curlGet,
-		}
-		var host *routerInfluxdb.Host
-		host, err = baseInfluxdb.GetInfluxDBRouter().GetInfluxDBHost(
-			ctx, qry.TagsKey, qry.ClusterName, qry.DB, qry.Measurement, qry.Condition,
-		)
-		if err != nil {
-			return nil
-		}
-		opt.Host = host.DomainName
-		opt.Port = host.Port
-		opt.GrpcPort = host.GrpcPort
-		opt.Protocol = host.Protocol
-		opt.Username = host.Username
-		opt.Password = host.Password
-		// 如果 host 有单独配置，则替换默认限速配置
-		if host.ReadRateLimit > 0 {
-			opt.ReadRateLimit = host.ReadRateLimit
-		}
-
-		span.Set("cluster-name", qry.ClusterName)
-		span.Set("tag-keys", qry.TagsKey)
-		span.Set("ins-option", opt)
-
-		instance, err = influxdb.NewInstance(ctx, opt)
-	case consul.ElasticsearchStorageType:
-		opt := &elasticsearch.InstanceOption{
-			MaxSize:    tsDBService.EsMaxSize,
-			Timeout:    tsDBService.EsTimeout,
-			MaxRouting: tsDBService.EsMaxRouting,
-		}
-		if qry.SourceType == structured.BkData {
-			opt.Address = bkapi.GetBkDataApi().QueryEsUrl()
-			opt.Headers = bkapi.GetBkDataApi().HttpHeaders(nil)
-			opt.HealthCheck = false
-		} else {
-			if stg == nil {
-				err = fmt.Errorf("%s storage is nil in %s", consul.ElasticsearchStorageType, qry.StorageID)
-				return nil
-			}
-			opt.Address = stg.Address
-			opt.Username = stg.Username
-			opt.Password = stg.Password
-			opt.HealthCheck = true
-		}
-		instance, err = elasticsearch.NewInstance(ctx, opt)
-	case consul.BkSqlStorageType:
-		instance, err = bksql.NewInstance(ctx, bksql.Options{
-			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
-			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
-				bksql.ContentType: tsDBService.BkSqlContentType,
-			}),
-			Timeout:      tsDBService.BkSqlTimeout,
-			IntervalTime: tsDBService.BkSqlIntervalTime,
-			MaxLimit:     tsDBService.BkSqlLimit,
-			Tolerance:    tsDBService.BkSqlTolerance,
-			Curl:         curlGet,
-		})
-	case consul.VictoriaMetricsStorageType:
-		instance, err = victoriaMetrics.NewInstance(ctx, victoriaMetrics.Options{
-			Address: bkapi.GetBkDataApi().QuerySyncUrl(),
-			Headers: bkapi.GetBkDataApi().Headers(map[string]string{
-				victoriaMetrics.ContentType: tsDBService.VmContentType,
-			}),
-			MaxConditionNum:  tsDBService.VmMaxConditionNum,
-			Timeout:          tsDBService.VmTimeout,
-			InfluxCompatible: tsDBService.VmInfluxCompatible,
-			UseNativeOr:      tsDBService.VmUseNativeOr,
-			Curl:             curlGet,
-		})
-	default:
-		err = fmt.Errorf("sotrage type is error %+v", qry)
-		return nil
-	}
-
-	return instance
 }

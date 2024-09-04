@@ -27,9 +27,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/compressor"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/filewatcher"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/gzip"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
@@ -217,7 +217,7 @@ func (r *Reloader) syncSecretToFiles(secret *corev1.Secret) error {
 		logger.Infof("start add or update file '%s'", filePath)
 
 		// 如果存在无法解压缩的数据则直接使用原始数据
-		uncompressed, err := compressor.Uncompress(data)
+		uncompressed, err := gzip.Uncompress(data)
 		if err != nil {
 			logger.Errorf("failed to uncompress config content: %v", err)
 			continue

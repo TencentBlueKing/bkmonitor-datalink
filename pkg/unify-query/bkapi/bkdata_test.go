@@ -9,14 +9,17 @@
 
 package bkapi
 
-const (
-	// BKDATA 配置
-	BkDataUriPathConfigPath              = "bk_data.uri_path"
-	BkDataAuthenticationMethodConfigPath = "bk_data.authentication_method"
-	BkDataTokenConfigPath                = "bk_data.token"
+import (
+	"fmt"
+	"testing"
 
-	// BKAPI 配置
-	BkAPIAddressConfigPath = "bk_api.address"
-	BkAPICodeConfigPath    = "bk_api.code"
-	BkAPISecretConfigPath  = "bk_api.secret"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
+
+func TestGetDataAuth(t *testing.T) {
+	mock.Path = `../dist/local/unify-query.yaml`
+	mock.Init()
+
+	headers := GetBkDataAPI().Headers(nil)
+	fmt.Println(headers)
+}

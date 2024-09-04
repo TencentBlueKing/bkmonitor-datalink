@@ -28,7 +28,7 @@ func sanitizeLabelName(name string) string {
 	return regex.ReplaceAllString(name, "_")
 }
 
-func convertYamlRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
+func yamlToRelabels(relabels []yaml.MapSlice) ([]*relabel.Config, error) {
 	var confs []*relabel.Config
 	data, err := yaml.Marshal(relabels)
 	if err != nil {
@@ -63,7 +63,7 @@ func enforceNamespaceLabel(relabelings []yaml.MapSlice, namespace, enforcedNames
 	})
 }
 
-func generateRelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
+func generatePromv1RelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
 	relabeling := yaml.MapSlice{}
 
 	if len(c.SourceLabels) > 0 {
@@ -80,6 +80,40 @@ func generateRelabelConfig(c *promv1.RelabelConfig) yaml.MapSlice {
 
 	if c.Regex != "" {
 		relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
+	}
+
+	if c.Modulus != uint64(0) {
+		relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
+	}
+
+	if c.Replacement != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
+	}
+
+	if c.Action != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+	}
+
+	return relabeling
+}
+
+func generatePromRelabelConfig(c *relabel.Config) yaml.MapSlice {
+	relabeling := yaml.MapSlice{}
+
+	if len(c.SourceLabels) > 0 {
+		relabeling = append(relabeling, yaml.MapItem{Key: "source_labels", Value: c.SourceLabels})
+	}
+
+	if c.Separator != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
+	}
+
+	if c.TargetLabel != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
+	}
+
+	if c.Regex.String() != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex.String()})
 	}
 
 	if c.Modulus != uint64(0) {
@@ -257,7 +291,7 @@ func getServiceMonitorRelabels(m *promv1.ServiceMonitor, ep *promv1.Endpoint) []
 
 	if ep.RelabelConfigs != nil {
 		for _, c := range ep.RelabelConfigs {
-			relabelings = append(relabelings, generateRelabelConfig(c))
+			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
 	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the
@@ -399,7 +433,7 @@ func getPodMonitorRelabels(m *promv1.PodMonitor, ep *promv1.PodMetricsEndpoint) 
 
 	if ep.RelabelConfigs != nil {
 		for _, c := range ep.RelabelConfigs {
-			relabelings = append(relabelings, generateRelabelConfig(c))
+			relabelings = append(relabelings, generatePromv1RelabelConfig(c))
 		}
 	}
 	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the

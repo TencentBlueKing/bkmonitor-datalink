@@ -12,8 +12,10 @@ package bksql
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -44,13 +46,19 @@ func (c *Client) WithHeader(headers map[string]string) *Client {
 }
 
 func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, span *trace.Span) error {
+	if sql == "" {
+		return fmt.Errorf("query sql is empty")
+	}
+
 	if method == "" {
 		method = curl.Post
 	}
-	params := &Params{}
+	params := make(map[string]string)
+	params["sql"] = sql
 
-	if sql != "" {
-		params.SQL = sql
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
 	}
 
 	body, err := json.Marshal(params)
@@ -64,7 +72,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		curl.Options{
 			UrlPath: c.url,
 			Body:    body,
-			Headers: c.headers,
+			Headers: metadata.Headers(ctx, c.headers),
 		},
 		res,
 	)

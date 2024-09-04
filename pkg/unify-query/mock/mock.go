@@ -29,11 +29,15 @@ import (
 
 var (
 	once sync.Once
+	Path string
 )
 
 func Init() {
 	once.Do(func() {
-		config.CustomConfigFilePath = `../../dist/local/unify-query.yaml`
+		if Path == "" {
+			Path = `../../dist/local/unify-query.yaml`
+		}
+		config.CustomConfigFilePath = Path
 		config.InitConfig()
 		log.InitTestLogger()
 

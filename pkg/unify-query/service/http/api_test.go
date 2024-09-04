@@ -188,9 +188,9 @@ func TestQueryInfo(t *testing.T) {
 				assert.Equal(t, c.err, err)
 			} else {
 				if c.spaceUid == consul.VictoriaMetricsStorageType {
-					assert.Equal(t, c.data, string(mockCurl.Params))
+					assert.Equal(t, c.data, string(mockCurl.Opts.Body))
 				} else {
-					assert.Equal(t, c.data, mockCurl.Url)
+					assert.Equal(t, c.data, mockCurl.Opts.Body)
 				}
 			}
 		})

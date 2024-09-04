@@ -10,49 +10,35 @@
 package discover
 
 import (
-	"context"
-
-	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"fmt"
+	"hash/fnv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 )
 
-const (
-	discoverTypePod = "pod"
-)
-
-type PodParams struct {
-	*BaseParams
-	TLSConfig *promv1.PodMetricsEndpointTLSConfig
+// ChildConfig 子任务配置文件信息
+type ChildConfig struct {
+	Meta         define.MonitorMeta
+	Node         string
+	FileName     string
+	Address      string
+	Data         []byte
+	Scheme       string
+	Path         string
+	Mask         string
+	TaskType     string
+	Namespace    string
+	AntiAffinity bool
 }
 
-type Pod struct {
-	*BaseDiscover
+func (c ChildConfig) String() string {
+	return fmt.Sprintf("Node=%s, FileName=%s, Address=%s", c.Node, c.FileName, c.Address)
 }
 
-func NewPodDiscover(ctx context.Context, meta define.MonitorMeta, checkFn define.CheckFunc, params *PodParams) Discover {
-	return &Pod{
-		BaseDiscover: NewBaseDiscover(ctx, discoverTypePod, meta, checkFn, params.BaseParams),
-	}
-}
-
-func (d *Pod) Type() string {
-	return discoverTypePod
-}
-
-func (d *Pod) Reload() error {
-	d.Stop()
-	return d.Start()
-}
-
-func (d *Pod) Start() error {
-	d.PreStart()
-	RegisterSharedDiscover(discoverTypePod, d.KubeConfig, d.getNamespaces())
-
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		d.loopHandleTargetGroup()
-	}()
-	return nil
+func (c ChildConfig) Hash() uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(c.Node))
+	h.Write(c.Data)
+	h.Write([]byte(c.Mask))
+	return h.Sum64()
 }

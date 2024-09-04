@@ -25,7 +25,7 @@ import (
 
 var seps = []byte{'\xff'}
 
-type Cache struct {
+type hashCache struct {
 	name    string
 	mut     sync.Mutex
 	cache   map[uint64]int64
@@ -33,8 +33,8 @@ type Cache struct {
 	done    chan struct{}
 }
 
-func NewCache(name string, expired time.Duration) *Cache {
-	c := &Cache{
+func newHashCache(name string, expired time.Duration) *hashCache {
+	c := &hashCache{
 		name:    name,
 		cache:   make(map[uint64]int64),
 		expired: expired,
@@ -45,11 +45,11 @@ func NewCache(name string, expired time.Duration) *Cache {
 	return c
 }
 
-func (c *Cache) Clean() {
+func (c *hashCache) Clean() {
 	close(c.done)
 }
 
-func (c *Cache) gc() {
+func (c *hashCache) gc() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
@@ -77,7 +77,7 @@ func (c *Cache) gc() {
 	}
 }
 
-func (c *Cache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
+func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
 	h := c.hash(namespace, tlset, tglbs)
 
 	c.mut.Lock()
@@ -90,7 +90,7 @@ func (c *Cache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
 	return ok
 }
 
-func (c *Cache) Set(namespace string, tlset, tglbs model.LabelSet) {
+func (c *hashCache) Set(namespace string, tlset, tglbs model.LabelSet) {
 	h := c.hash(namespace, tlset, tglbs)
 
 	c.mut.Lock()
@@ -99,7 +99,7 @@ func (c *Cache) Set(namespace string, tlset, tglbs model.LabelSet) {
 	c.cache[h] = time.Now().Unix()
 }
 
-func (c *Cache) hash(namespace string, tlset, tglbs model.LabelSet) uint64 {
+func (c *hashCache) hash(namespace string, tlset, tglbs model.LabelSet) uint64 {
 	lbs := labelspool.Get()
 	defer labelspool.Put(lbs)
 

@@ -257,8 +257,7 @@ func (w *dataIDWatcher) deleteDataID(dataID *bkv1beta1.DataID) {
 		return
 	}
 
-	logger.Infof("delete DataID, name=%v, id=%v, labels=%v", dataID.Name, dataID.Spec.DataID, dataID.Labels)
-	Publish()
+	Publish() // 发布信号
 }
 
 func (w *dataIDWatcher) deleteMetricDataID(dataID *bkv1beta1.DataID) {

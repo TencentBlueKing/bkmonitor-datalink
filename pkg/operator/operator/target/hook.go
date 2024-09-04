@@ -19,7 +19,6 @@ import (
 const (
 	confMaxTimeoutPath          = "discover.scrape.max_timeout"
 	confMinPeriodPath           = "discover.scrape.min_period"
-	confDefaultPeriodPath       = "discover.scrape.default_period"
 	confEventScrapeMaxSpanPath  = "operator.event.max_span"
 	confEventScrapeIntervalPath = "operator.event.scrape_interval"
 	confEventScrapeFilesPath    = "operator.event.scrape_path"
@@ -30,7 +29,6 @@ const (
 var (
 	ConfMaxTimeout          string
 	ConfMinPeriod           string
-	ConfDefaultPeriod       string
 	ConfEventScrapeInterval string
 	ConfEventScrapeFiles    []string
 	ConfEventMaxSpan        string
@@ -42,7 +40,6 @@ var (
 func initConfig() {
 	viper.SetDefault(confMaxTimeoutPath, "100s")
 	viper.SetDefault(confMinPeriodPath, "3s")
-	viper.SetDefault(confDefaultPeriodPath, "60s")
 	viper.SetDefault(confEventScrapeMaxSpanPath, "2h")
 	viper.SetDefault(confEventScrapeIntervalPath, "60s")
 	viper.SetDefault(confEventScrapeFilesPath, []string{"/var/log/gse/events.log"})
@@ -52,7 +49,6 @@ func initConfig() {
 func updateConfig() {
 	ConfMaxTimeout = viper.GetString(confMaxTimeoutPath)
 	ConfMinPeriod = viper.GetString(confMinPeriodPath)
-	ConfDefaultPeriod = viper.GetString(confDefaultPeriodPath)
 	ConfEventMaxSpan = viper.GetString(confEventScrapeMaxSpanPath)
 	ConfEventScrapeInterval = viper.GetString(confEventScrapeIntervalPath)
 	ConfEventScrapeFiles = viper.GetStringSlice(confEventScrapeFilesPath)

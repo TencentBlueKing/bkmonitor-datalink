@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package discover
+package shareddiscovery
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
@@ -90,42 +90,42 @@ var (
 	)
 )
 
-func newMetricMonitor(name string) *metricMonitor {
-	return &metricMonitor{name: name}
+func NewMetricMonitor(name string) *MetricMonitor {
+	return &MetricMonitor{name: name}
 }
 
-type metricMonitor struct {
+type MetricMonitor struct {
 	name string
 }
 
-func (m *metricMonitor) IncStartedCounter() {
+func (m *MetricMonitor) IncStartedCounter() {
 	discoverStartedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncStoppedCounter() {
+func (m *MetricMonitor) IncStoppedCounter() {
 	discoverStoppedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncCreatedChildConfigSuccessCounter() {
+func (m *MetricMonitor) IncCreatedChildConfigSuccessCounter() {
 	discoverCreatedChildConfigSuccessTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncCreatedChildConfigFailedCounter() {
+func (m *MetricMonitor) IncCreatedChildConfigFailedCounter() {
 	discoverCreatedChildConfigFailedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncCreatedChildConfigCachedCounter() {
+func (m *MetricMonitor) IncCreatedChildConfigCachedCounter() {
 	discoverCreatedChildConfigCachedTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncHandledTgCounter() {
+func (m *MetricMonitor) IncHandledTgCounter() {
 	discoverHandledTgTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) IncDeletedTgSourceCounter() {
+func (m *MetricMonitor) IncDeletedTgSourceCounter() {
 	discoverDeletedTgSourceTotal.WithLabelValues(m.name).Inc()
 }
 
-func (m *metricMonitor) SetMonitorScrapeInterval(v float64) {
+func (m *MetricMonitor) SetMonitorScrapeInterval(v float64) {
 	monitorScrapeIntervalSeconds.WithLabelValues(m.name).Set(v)
 }

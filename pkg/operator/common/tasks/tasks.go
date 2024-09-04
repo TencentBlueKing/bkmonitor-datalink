@@ -14,13 +14,11 @@ import (
 )
 
 const (
-	StatefulSetTaskSecretPrefix = "statefulset-worker"
-	DaemonSetTaskSecretPrefix   = "daemonset-worker"
-	EventTaskSecretPrefix       = "event-worker"
-)
-
-const (
 	LabelTaskType = "taskType"
+
+	PrefixStatefulSetTaskSecret = "statefulset-worker"
+	PrefixDaemonSetTaskSecret   = "daemonset-worker"
+	PrefixEventTaskSecret       = "event-worker"
 
 	TaskTypeDaemonSet   = "daemonset"
 	TaskTypeEvent       = "event"
@@ -36,15 +34,15 @@ func ValidateTaskType(t string) bool {
 }
 
 func GetDaemonSetTaskSecretName(s string) string {
-	return fmt.Sprintf("%s-%s", DaemonSetTaskSecretPrefix, s)
+	return fmt.Sprintf("%s-%s", PrefixDaemonSetTaskSecret, s)
 }
 
 func GetStatefulSetTaskSecretName(i int) string {
-	return fmt.Sprintf("%s-%d", StatefulSetTaskSecretPrefix, i)
+	return fmt.Sprintf("%s-%d", PrefixStatefulSetTaskSecret, i)
 }
 
 func GetEventTaskSecretName() string {
-	return fmt.Sprintf("%s-0", EventTaskSecretPrefix)
+	return fmt.Sprintf("%s-0", PrefixEventTaskSecret)
 }
 
 func GetTaskLabelSelector(s string) string {

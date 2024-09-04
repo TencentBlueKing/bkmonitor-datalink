@@ -32,8 +32,6 @@ var (
 	defaultBkDataAPI *BkDataAPI
 )
 
-const ()
-
 type BkDataAPI struct {
 	bkAPI *BkAPI
 

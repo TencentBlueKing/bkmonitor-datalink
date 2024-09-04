@@ -47,8 +47,7 @@ func (c *Client) WithHeader(headers map[string]string) *Client {
 
 func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, span *trace.Span) error {
 	if sql == "" {
-		err := fmt.Errorf("query sql is empty")
-		return err
+		return fmt.Errorf("query sql is empty")
 	}
 
 	if method == "" {

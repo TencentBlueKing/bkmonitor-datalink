@@ -110,7 +110,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	}
 
 	if opt.Address == "" {
-		return ins, errors.New("empty es getClient options")
+		return ins, errors.New("empty es client options")
 	}
 
 	if opt.MaxRouting > 0 {

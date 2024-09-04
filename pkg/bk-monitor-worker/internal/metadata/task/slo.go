@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/prometheus/client_golang/prometheus"
 
+	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
@@ -30,6 +31,10 @@ func SloPush(ctx context.Context, t *t.Task) error {
 			logger.Errorf("SloPush Runtime panic caught: %v", err)
 		}
 	}()
+
+	if !confirmSloConfig() {
+		return nil
+	}
 
 	logger.Info("start auto SloPush task")
 
@@ -96,12 +101,22 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 	// 遍历并打印收集到的度量指标
 	for _, mf := range metricFamilies {
-		logger.Infof("Metric Family: %s", mf.GetName())
+		logger.Debugf("Metric Family: %s", mf.GetName())
 		for _, m := range mf.GetMetric() {
-			logger.Infof("  Metric: %v", m)
+			logger.Debugf("  Metric: %v", m)
 		}
 	}
 	metrics.PushRes(Registry)
 	logger.Info("auto deploy SloPush successfully")
 	return nil
+}
+
+// confirmSloConfig 判断是否开启任务
+func confirmSloConfig() bool {
+	if cfg.SloPushGatewayEndpoint == "" && cfg.SloPushGatewayToken == "" {
+		logger.Info("Both SloPushGatewayToken and SloPushGatewayEndpoint are empty")
+		return false
+	} else {
+		return true
+	}
 }

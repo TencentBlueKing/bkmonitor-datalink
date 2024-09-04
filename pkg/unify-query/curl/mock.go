@@ -10,74 +10,37 @@
 package curl
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
-	"net/http"
-
-	"github.com/pkg/errors"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-func NewMockCurl(data map[string]string, log *log.Logger) *TestCurl {
-	return &TestCurl{
-		log:  log,
-		data: data,
-	}
+type MockCurl struct {
+	f    func(opt Options) []byte
+	Opts Options
 }
 
-type TestCurl struct {
-	log  *log.Logger
-	data map[string]string
+var _ Curl = &MockCurl{}
 
-	Url    string
-	Params []byte
-}
-
-func (c *TestCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp interface{}) (int, error)) {
+func (c *MockCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error)) {
 	return
 }
 
-func (c *TestCurl) hashOption(opt Options) string {
-	s := opt.UrlPath + string(opt.Body)
-	return s
+func (c *MockCurl) WithF(f func(opt Options) []byte) {
+	c.f = f
 }
 
-func (c *TestCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (int, error) {
-	c.log.Infof(ctx, "http %s: %s", method, opt.UrlPath)
+func (c *MockCurl) Request(ctx context.Context, method string, opt Options, res interface{}) (int, error) {
+	c.Opts = opt
 
-	c.Url = opt.UrlPath
-	c.Params = opt.Body
-
-	var (
-		err error
-		out string
-		ok  bool
-	)
-
-	hashKey := c.hashOption(opt)
-	if out, ok = c.data[hashKey]; ok {
-		err = json.Unmarshal([]byte(out), res)
-	} else {
-		err = errors.New("mock data is not exists: " + hashKey)
+	var out []byte
+	if c.f != nil {
+		out = c.f(opt)
 	}
 
-	return len(out), err
-}
-
-var _ Curl = &TestCurl{}
-
-func (c *TestCurl) resp(body string) *http.Response {
-	return &http.Response{
-		Status:        "200 OK",
-		StatusCode:    200,
-		Proto:         "HTTP/1.1",
-		ProtoMajor:    1,
-		ProtoMinor:    1,
-		Body:          io.NopCloser(bytes.NewBufferString(body)),
-		ContentLength: int64(len(body)),
-		Header:        make(http.Header, 0),
+	if len(out) > 0 {
+		err := json.Unmarshal(out, res)
+		return len(out), err
 	}
+	return 0, nil
 }

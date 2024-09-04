@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -79,7 +80,7 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Address == "" {
 		return nil, fmt.Errorf("address is empty")
 	}
@@ -341,6 +342,12 @@ func (i *Instance) vmQuery(
 	params := make(map[string]string)
 	params["sql"] = sql
 	params["prefer_storage"] = PreferStorage
+
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
+	}
+
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -356,8 +363,10 @@ func (i *Instance) vmQuery(
 
 	span.Set("query-address", i.url)
 
-	headersString, _ := json.Marshal(i.headers)
-	span.Set("query-headers", headersString)
+	headers := metadata.Headers(ctx, i.headers)
+
+	headersString, _ := json.Marshal(headers)
+	span.Set("query-headers", string(headersString))
 
 	log.Infof(ctx,
 		"victoria metrics query: %s, headers: %s, body: %s",
@@ -369,7 +378,7 @@ func (i *Instance) vmQuery(
 		curl.Options{
 			UrlPath: i.url,
 			Body:    body,
-			Headers: i.headers,
+			Headers: headers,
 		},
 		data,
 	)

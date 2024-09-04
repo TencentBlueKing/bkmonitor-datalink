@@ -10,6 +10,7 @@
 package bkapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -18,45 +19,53 @@ import (
 
 const (
 	AdminUserName      = "admin"
-	BkApiAuthorization = "X-Bkapi-Authorization"
+	BkAPIAuthorization = "X-Bkapi-Authorization"
+
+	BkUserNameKey = "bk_username"
+	BkAppCodeKey  = "bk_app_code"
+	BkSecretKey   = "bk_app_secret"
 )
 
-type BkApi struct {
+type BkAPI struct {
 	address string
 
-	code   string
-	secret string
+	authConfig map[string]string
 }
 
 var (
-	onceBkApi    sync.Once
-	defaultBkApi *BkApi
+	onceBkAPI    sync.Once
+	defaultBkAPI *BkAPI
 )
 
-func GetBkApi() *BkApi {
-	onceBkApi.Do(func() {
-		defaultBkApi = &BkApi{
-			address: viper.GetString(BkApiAddressConfigPath),
-			code:    viper.GetString(BkApiCodeConfigPath),
-			secret:  viper.GetString(BkApiSecretConfigPath),
+func GetBkAPI() *BkAPI {
+	onceBkAPI.Do(func() {
+		defaultBkAPI = &BkAPI{
+			address: viper.GetString(BkAPIAddressConfigPath),
+			authConfig: map[string]string{
+				BkAppCodeKey:  viper.GetString(BkAPICodeConfigPath),
+				BkSecretKey:   viper.GetString(BkAPISecretConfigPath),
+				BkUserNameKey: AdminUserName,
+			},
 		}
 	})
 
-	return defaultBkApi
+	return defaultBkAPI
 }
 
-func (i *BkApi) Headers(headers map[string]string) map[string]string {
+func (i *BkAPI) GetCode() string {
+	return i.authConfig[BkAppCodeKey]
+}
+
+func (i *BkAPI) Headers(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		headers = make(map[string]string)
 	}
-	headers[BkApiAuthorization] = fmt.Sprintf(
-		`{"bk_username": "%s", "bk_app_code": "%s", "bk_app_secret": "%s"}`,
-		AdminUserName, i.code, i.secret,
-	)
+	auth, _ := json.Marshal(i.authConfig)
+	headers[BkAPIAuthorization] = string(auth)
 	return headers
 }
 
-func (i *BkApi) Url(path string) string {
+func (i *BkAPI) Url(path string) string {
 	url := i.address
 	if path != "" {
 		url = fmt.Sprintf("%s/%s", i.address, path)

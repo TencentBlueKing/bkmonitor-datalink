@@ -41,6 +41,7 @@ type ResultTableList []string
 type ResultTableDetail struct {
 	StorageId       int64    `json:"storage_id"`
 	StorageName     string   `json:"storage_name"`
+	StorageType     string   `json:"storage_type"`
 	ClusterName     string   `json:"cluster_name"`
 	DB              string   `json:"db"`
 	TableId         string   `json:"table_id"`

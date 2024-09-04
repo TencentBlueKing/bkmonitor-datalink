@@ -62,8 +62,18 @@ func (i *Instance) GetInstanceType() string {
 	}
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context,
+	query *metadata.Query,
+	start time.Time,
+	end time.Time,
+	dataCh <-chan map[string]any,
+) error {
+	return nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start, end time.Time,

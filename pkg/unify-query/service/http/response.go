@@ -41,3 +41,9 @@ func (r *response) success(ctx context.Context, data interface{}) {
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUid, user.Source)
 	r.c.JSON(http.StatusOK, data)
 }
+
+// ListData 数据返回格式
+type ListData struct {
+	List   []map[string]any `json:"list,omitempty"`
+	Status *metadata.Status `json:"status,omitempty"`
+}

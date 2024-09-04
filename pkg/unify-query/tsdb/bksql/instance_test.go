@@ -86,7 +86,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 			if c.query.Field == "" {
 				c.query.Field = field
 			}
-			ss := ins.QueryRaw(ctx, c.query, start, end)
+			ss := ins.QuerySeriesSet(ctx, c.query, start, end)
 			for ss.Next() {
 				series := ss.At()
 				lbs := series.Labels()

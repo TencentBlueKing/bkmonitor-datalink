@@ -149,62 +149,54 @@ func MockTsDB(t *testing.T) {
 
 func MockSpace(t *testing.T) {
 	ctx := context.Background()
-	mock.SetRedisClient(context.TODO(), "test")
-	path := "tsquery_test.db"
-	bucketName := "tsquery_test"
+	mock.SetRedisClient(context.TODO())
 	spaceId := "bkcc__2"
-	mock.SetSpaceTsDbMockData(
-		ctx, path, bucketName,
-		ir.SpaceInfo{
-			spaceId: ir.Space{
-				"system.cpu_summary": &ir.SpaceResultTable{
-					TableId: "system.cpu_summary",
-					Filters: []map[string]string{},
-				},
-				"2_bkmonitor_time_series_1582626.__default__": &ir.SpaceResultTable{
-					TableId: "2_bkmonitor_time_series_1582626.__default__",
-					Filters: []map[string]string{
-						{"bcs_cluster_id": "BCS-K8S-40949"},
-					},
-				},
-				"64_bkmonitor_time_series_1573412.__default__": &ir.SpaceResultTable{
-					TableId: "64_bkmonitor_time_series_1573412.__default__",
-					Filters: []map[string]string{},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceId: ir.Space{
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{},
+			},
+			"2_bkmonitor_time_series_1582626.__default__": &ir.SpaceResultTable{
+				TableId: "2_bkmonitor_time_series_1582626.__default__",
+				Filters: []map[string]string{
+					{"bcs_cluster_id": "BCS-K8S-40949"},
 				},
 			},
-		},
-		ir.ResultTableDetailInfo{
-			"system.cpu_summary": &ir.ResultTableDetail{
-				TableId:         "system.cpu_summary",
-				Fields:          []string{"metric", "metric2"},
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       0,
-				DB:              "system",
-				Measurement:     "cpu_summary",
-			},
-			"2_bkmonitor_time_series_1582626.__default__": &ir.ResultTableDetail{
-				TableId:         "2_bkmonitor_time_series_1582626.__default__",
-				Fields:          []string{"bkbcs_workqueue_adds_total", "container_cpu_usage_seconds_total_value", "container_cpu_system_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       0,
-				DB:              "2_bkmonitor_time_series_1582626",
-				Measurement:     "__default__",
-			},
-			"64_bkmonitor_time_series_1573412.__default__": &ir.ResultTableDetail{
-				TableId:         "64_bkmonitor_time_series_1573412.__default__",
-				Fields:          []string{"jvm_memory_bytes_used", "jvm_memory_bytes_max"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       0,
-				DB:              "64_bkmonitor_time_series_1573412",
-				Measurement:     "__default__",
-				ClusterName:     "default",
+			"64_bkmonitor_time_series_1573412.__default__": &ir.SpaceResultTable{
+				TableId: "64_bkmonitor_time_series_1573412.__default__",
+				Filters: []map[string]string{},
 			},
 		},
-		ir.FieldToResultTable{
-			"container_cpu_system_seconds_total": ir.ResultTableList{"2_bkmonitor_time_series_1582626.__default__"},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_summary": &ir.ResultTableDetail{
+			TableId:         "system.cpu_summary",
+			Fields:          []string{"metric", "metric2"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       0,
+			DB:              "system",
+			Measurement:     "cpu_summary",
 		},
-		nil,
-	)
+		"2_bkmonitor_time_series_1582626.__default__": &ir.ResultTableDetail{
+			TableId:         "2_bkmonitor_time_series_1582626.__default__",
+			Fields:          []string{"bkbcs_workqueue_adds_total", "container_cpu_usage_seconds_total_value", "container_cpu_system_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       0,
+			DB:              "2_bkmonitor_time_series_1582626",
+			Measurement:     "__default__",
+		},
+		"64_bkmonitor_time_series_1573412.__default__": &ir.ResultTableDetail{
+			TableId:         "64_bkmonitor_time_series_1573412.__default__",
+			Fields:          []string{"jvm_memory_bytes_used", "jvm_memory_bytes_max"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       0,
+			DB:              "64_bkmonitor_time_series_1573412",
+			Measurement:     "__default__",
+			ClusterName:     "default",
+		},
+	}, ir.FieldToResultTable{
+		"container_cpu_system_seconds_total": ir.ResultTableList{"2_bkmonitor_time_series_1582626.__default__"},
+	}, nil)
 }
 
 // TestPromQueryBasic

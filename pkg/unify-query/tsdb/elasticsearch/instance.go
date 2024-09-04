@@ -553,8 +553,21 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	return newAliases, nil
 }
 
-// QueryRaw 给 PromEngine 提供查询接口
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context,
+	query *metadata.Query,
+	start time.Time,
+	end time.Time,
+	dataCh <-chan map[string]any,
+) error {
+
+	fmt.Println("query raw data", query)
+
+	return nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start time.Time,

@@ -198,15 +198,23 @@ func HandlerQueryExemplar(c *gin.Context) {
 // @Router   /query/raw [post]
 func HandlerQueryRaw(c *gin.Context) {
 	var (
-		ctx  = c.Request.Context()
-		resp = &response{c: c}
-		user = metadata.GetUser(ctx)
-		err  error
-		span *trace.Span
+		ctx      = c.Request.Context()
+		resp     = &response{c: c}
+		user     = metadata.GetUser(ctx)
+		err      error
+		span     *trace.Span
+		listData ListData
 	)
 
 	ctx, span = trace.NewSpan(ctx, "handler-query-raw")
-	defer span.End(&err)
+	defer func() {
+		if err != nil {
+			log.Errorf(ctx, err.Error())
+			resp.failed(ctx, err)
+		}
+
+		span.End(&err)
+	}()
 
 	span.Set("request-url", c.Request.URL.String())
 	span.Set("request-header", fmt.Sprintf("%+v", c.Request.Header))
@@ -215,33 +223,29 @@ func HandlerQueryRaw(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUid)
 
 	// 解析请求 body
-	query := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(query)
+	queryTs := &structured.QueryTs{}
+	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
 	if err != nil {
-		log.Errorf(ctx, err.Error())
-		resp.failed(ctx, err)
 		return
 	}
 
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUid != "" {
-		query.SpaceUid = user.SpaceUid
+		queryTs.SpaceUid = user.SpaceUid
 	}
 
-	queryStr, _ := json.Marshal(query)
+	queryStr, _ := json.Marshal(queryTs)
 	span.Set("query-body", string(queryStr))
-	span.Set("query-body-size", len(queryStr))
 
-	log.Infof(ctx, fmt.Sprintf("header: %+v, body: %s", c.Request.Header, queryStr))
-
-	res, err := queryRawWithInstance(ctx, query)
+	listData.List, err = queryRawWithInstance(ctx, queryTs)
 	if err != nil {
-		resp.failed(ctx, err)
+		listData.Status = &metadata.Status{
+			Code:    metadata.QueryRawError,
+			Message: err.Error(),
+		}
 		return
 	}
-
-	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
-	resp.success(ctx, res)
+	resp.success(ctx, listData)
 }
 
 // HandlerQueryTs

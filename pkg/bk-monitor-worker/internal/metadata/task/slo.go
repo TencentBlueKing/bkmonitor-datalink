@@ -113,7 +113,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 // confirmSloConfig 判断是否开启任务
 func confirmSloConfig() bool {
-	if cfg.SloPushGatewayEndpoint == "" && cfg.SloPushGatewayToken == "" {
+	if cfg.SloPushGatewayEndpoint == "" || cfg.SloPushGatewayToken == "" {
 		logger.Info("Both SloPushGatewayToken and SloPushGatewayEndpoint are empty")
 		return false
 	} else {

@@ -22,6 +22,7 @@ type SearchAlertData struct {
 	Total  int                   `json:"total"`
 	Alerts []SearchAlertDataInfo `json:"alerts"`
 }
+
 type SearchAlertDataInfo struct {
 	BkBizID          int32  `json:"bk_biz_id"`
 	BkBizName        string `json:"bk_biz_name"`

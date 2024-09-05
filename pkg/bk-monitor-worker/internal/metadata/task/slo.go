@@ -48,7 +48,6 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 	// 将业务ID按批次分割，每批5个
 	chunks := chunkBizID(bizID, 5)
-
 	for _, bizChunk := range chunks {
 		var wg sync.WaitGroup
 		//注册全局Registry
@@ -98,7 +97,6 @@ func SloPush(ctx context.Context, t *t.Task) error {
 		for err := range errChan {
 			if err != nil {
 				logger.Errorf("SloPush task encountered error: %v", err)
-				continue
 			}
 		}
 		metrics.PushRes(sloRegistry)

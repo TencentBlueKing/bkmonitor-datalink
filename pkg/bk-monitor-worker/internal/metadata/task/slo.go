@@ -38,75 +38,71 @@ func SloPush(ctx context.Context, t *t.Task) error {
 
 	logger.Info("start auto SloPush task")
 
-	//注册全局Registry
-	var Registry = prometheus.NewRegistry()
-
 	//检索所有满足标签的业务
 	bizID, err := service.FindAllBiz()
 	if err != nil {
 		logger.Errorf("find all biz_id for slo failed, %v", err)
+		return nil
 	}
 	logger.Info("Biz and scenes: ", bizID)
-	var wg sync.WaitGroup
-	//初始化注册表
-	metrics.InitGauge(Registry)
-	//获取当前时间
-	now := time.Now().Unix()
-	logger.Info("Now time:", now)
-	// 定义错误通道
-	errChan := make(chan error, len(bizID))
-	for bkBizID, scenes := range bizID {
-		//按照业务数据上报
-		wg.Add(1)
-		scenes := scenes
-		bkBizID := bkBizID
-		// 开启协程完成数据计算和注册
-		go func() {
-			defer wg.Done()
-			// 错误处理
-			defer func() {
-				if err := recover(); err != nil {
-					// 将错误发送到错误通道
-					errChan <- fmt.Errorf("goroutine panic caught: %v", err)
+
+	// 将业务ID按批次分割，每批5个
+	chunks := chunkBizID(bizID, 5)
+
+	for _, bizChunk := range chunks {
+		var wg sync.WaitGroup
+		//注册全局Registry
+		var sloRegistry = prometheus.NewRegistry()
+		//初始化注册表
+		metrics.InitGauge(sloRegistry)
+		//获取当前时间
+		now := time.Now().Unix()
+		// 定义错误通道
+		errChan := make(chan error, len(bizChunk))
+
+		for bkBizID, scenes := range bizChunk {
+			//按照业务数据上报
+			wg.Add(1)
+			scenes := scenes
+			bkBizID := bkBizID
+			// 开启协程完成数据计算和注册
+			go func() {
+				defer wg.Done()
+				// 错误处理
+				defer func() {
+					if err := recover(); err != nil {
+						// 将错误发送到错误通道
+						errChan <- fmt.Errorf("goroutine panic caught: %v", err)
+					}
+				}()
+				for _, scene := range scenes {
+					// 初始化
+					trueSloName, totalAlertTimeBucket, totalSloTimeBucketDict, err := service.InitStraID(int(bkBizID), scene, now)
+					if err != nil {
+						logger.Errorf("slo init failed: %v", err)
+						continue
+					}
+					// 获取告警数据
+					allStrategyAggInterval := service.GetAllAlertTime(totalAlertTimeBucket, trueSloName, bkBizID, scene)
+					// 计算指标
+					service.CalculateMetric(totalAlertTimeBucket, trueSloName, allStrategyAggInterval,
+						totalSloTimeBucketDict, bkBizID, scene)
 				}
 			}()
-			for _, scene := range scenes {
-				// 初始化
-				TrueSloName, TotalAlertTimeBucket, TotalSloTimeBucketDict, err := service.InitStraID(int(bkBizID), scene, now)
-				if err != nil {
-					logger.Errorf("slo init failed: %v", err)
-					continue
-				}
-				// 获取告警数据
-				AllStrategyAggInterval := service.GetAllAlertTime(TotalAlertTimeBucket, TrueSloName, bkBizID, scene)
-				// 计算指标
-				service.CalculateMetric(TotalAlertTimeBucket, TrueSloName, AllStrategyAggInterval,
-					TotalSloTimeBucketDict, bkBizID, scene)
-			}
-		}()
-	}
-	// 等待所有 goroutine 执行完毕
-	wg.Wait()
-	close(errChan)
-	// 处理错误
-	for err := range errChan {
-		if err != nil {
-			logger.Errorf("SloPush task encountered error: %v", err)
 		}
-	}
-	metricFamilies, err := Registry.Gather()
-	if err != nil {
-		logger.Errorf("Could not gather metrics: %v", err)
-	}
 
-	// 遍历并打印收集到的度量指标
-	for _, mf := range metricFamilies {
-		logger.Debugf("Metric Family: %s", mf.GetName())
-		for _, m := range mf.GetMetric() {
-			logger.Debugf("  Metric: %v", m)
+		// 等待所有 goroutine 执行完毕
+		wg.Wait()
+		close(errChan)
+		// 处理错误
+		for err := range errChan {
+			if err != nil {
+				logger.Errorf("SloPush task encountered error: %v", err)
+				return nil
+			}
 		}
+		metrics.PushRes(sloRegistry)
 	}
-	metrics.PushRes(Registry)
 	logger.Info("auto deploy SloPush successfully")
 	return nil
 }
@@ -119,4 +115,27 @@ func confirmSloConfig() bool {
 	} else {
 		return true
 	}
+}
+
+// chunkBizID 拆分
+func chunkBizID(bizID map[int32][]string, size int) []map[int32][]string {
+	var chunks []map[int32][]string
+	keys := make([]int32, 0, len(bizID))
+	for k := range bizID {
+		keys = append(keys, k)
+	}
+
+	for i := 0; i < len(keys); i += size {
+		end := i + size
+		if end > len(keys) {
+			end = len(keys)
+		}
+		chunk := make(map[int32][]string)
+		for _, k := range keys[i:end] {
+			chunk[k] = bizID[k]
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks
 }

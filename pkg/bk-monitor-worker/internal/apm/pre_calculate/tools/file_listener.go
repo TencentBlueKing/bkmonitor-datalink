@@ -7,44 +7,24 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pre_calculate
+package tools
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
-	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
-const dataIdFilePath = "./connections_test.yaml"
-
-func TestApmPreCalculateViaFile(t *testing.T) {
-
-	ctx, cancel := context.WithCancel(context.Background())
-	op, err := Initial(ctx)
+func StartListenerFromFile(ctx context.Context, filePath string) error {
+	processor, err := pre_calculate.Initial(ctx)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	errChan := make(chan error, 1)
-	go op.Run(errChan)
-	runErr := <-errChan
-	if runErr != nil {
-		logger.Fatal("failed to run")
+	if err := core.CreateMockMetadataCenter(); err != nil {
+		return err
 	}
-	close(errChan)
-	go op.WatchConnections(dataIdFilePath)
 
-	s := make(chan os.Signal)
-	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
-	for {
-		switch <-s {
-		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			cancel()
-			logger.Infof("Bye")
-			os.Exit(0)
-		}
-	}
+	processor.RunWithStandLone(filePath)
+	return nil
 }

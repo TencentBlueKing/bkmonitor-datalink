@@ -17,6 +17,7 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/patrickmn/go-cache"
 
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
@@ -199,7 +200,7 @@ func newRedisCache(ctx context.Context, options RedisCacheOptions) (*RedisCache,
 		return nil, fmt.Errorf("failed to create redis client. %+v. error: %s", options, err)
 	}
 
-	logger.Infof("create Redis Client successfully")
+	monitorLogger.Infof("create Redis Client successfully")
 	return &RedisCache{client: client, ctx: ctx}, nil
 }
 

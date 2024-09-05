@@ -44,12 +44,7 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		return nil, fmt.Errorf("failed to create redis client")
 	}
 
-	writer := NewPrometheusWriterClient(
-		GetPrometheusWriteOptions(
-			PrometheusWriterEnabled(true),
-			PrometheusWriterUrl(writerUrl),
-		),
-	)
+	writer := NewPrometheusWriterClient("", writerUrl, map[string]string{})
 
 	report := &reporter{
 		client: inst.Client,
@@ -95,7 +90,7 @@ func (r *reporter) Do(ctx context.Context, spaceUID string, tsList ...prompb.Tim
 	}
 
 	// 上报数据
-	err = r.writer.WriteBatch(ctx, resultTableDetail.Token, tsList)
+	err = r.writer.WriteBatch(ctx, resultTableDetail.Token, prompb.WriteRequest{Timeseries: tsList})
 	if err != nil {
 		return err
 	}

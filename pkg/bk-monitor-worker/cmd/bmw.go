@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/viper"
 	_ "go.uber.org/automaxprocs"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/cmd/apm"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 )
 
@@ -38,6 +39,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(
 		&config.FilePath, "config", "./bmw.yaml", "path of project service config files",
 	)
+	rootCmd.AddCommand(apm.StartFromFileCmd())
 }
 
 func addFlag(configLoc string, flagName string, addVarFunc func()) {

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cast"
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
@@ -469,6 +470,26 @@ func GetValue[T any](key string, def T, getter ...func(string) T) T {
 	}
 
 	return value.(T)
+}
+
+func GetFloatSlice(key string) []float64 {
+	items, err := cast.ToSliceE(viper.Get(key))
+	if err != nil {
+		panic(fmt.Sprintf("failed to get float slice of key: %s, error: %s", key, err))
+	}
+	var res []float64
+	for index, item := range items {
+		switch item.(type) {
+		case float64:
+			res = append(res, item.(float64))
+		case int:
+			res = append(res, float64(item.(int)))
+		default:
+			panic(fmt.Sprintf("config: %s[%d] type not supported", key, index))
+		}
+	}
+
+	return res
 }
 
 // InitConfig This method is used to refresh the configuration

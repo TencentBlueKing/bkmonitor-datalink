@@ -20,3 +20,17 @@ type Store interface {
 	Delete(key string) error                             // 删除 key
 	Close() error                                        // 关闭连接
 }
+
+type DummyStore struct{}
+
+func (*DummyStore) Open() error { return nil }
+
+func (*DummyStore) Put(key, val string, expiration time.Duration) error { return nil }
+
+func (*DummyStore) Get(key string) ([]byte, error) { return nil, nil }
+
+func (*DummyStore) Delete(key string) error { return nil }
+
+func (*DummyStore) Close() error { return nil }
+
+func CreateDummyStore() Store { return &DummyStore{} }

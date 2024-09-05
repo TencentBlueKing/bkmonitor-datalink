@@ -9,6 +9,7 @@
 
 connections:
   - dataId: 999
+    token: ""
     bkBizId: 2
     bkBizName: 测试业务名称
     appId: 1

@@ -10,18 +10,40 @@
 package pre_calculate
 
 import (
+	"context"
 	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-// Connection 测试类 用于监听文件变化来启动一个应用的预计算
+type PreCalculateProcessorStandLone interface {
+	RunWithStandLone(filePath string)
+	WatchConnections(filePath string)
+}
+
+func (p *Precalculate) RunWithStandLone(filePath string) {
+	go p.WatchConnections(filePath)
+	// consul is disabled in stand-lone
+	for {
+		select {
+		case signal := <-p.readySignalChan:
+			apmLogger.Infof("Pre-calculation with dataId: %s was received.", signal.startInfo.DataId)
+			p.launch(signal.ctx, signal.startInfo, signal.config, signal.errorReceiveChan)
+		case <-p.ctx.Done():
+			apmLogger.Info("Precalculate[MAIN] received the stop signal.")
+			return
+		}
+	}
+}
+
 type Connection struct {
 	DataId           string `yaml:"dataId"`
+	Token            string `yaml:"token"`
 	BkBizId          string `yaml:"bkBizId"`
 	BkBizName        string `yaml:"bkBizName"`
 	AppId            string `yaml:"appId"`
@@ -45,32 +67,34 @@ type ConnectionList struct {
 }
 
 func (p *Precalculate) WatchConnections(filePath string) {
-
 	logger.Infof("Listening for connections file: %s", filePath)
 
 	lastConnectionList, err := checkNewConnection(filePath)
 	if err != nil {
-		logger.Errorf("open connections file: %s failed, error: %s", filePath, err)
+		logger.Errorf("Open connections file: %s failed, error: %s", filePath, err)
+		return
 	}
 
 	for _, c := range lastConnectionList.Connections {
+		logger.Infof("🥛 Add BkBizId: %s AppName: %s to task", c.BkBizId, c.AppName)
 		p.StartByConnection(c)
 	}
+	logger.Infof("Started %d connections", len(lastConnectionList.Connections))
 
 	for {
 		newConnectionList, err := checkNewConnection(filePath)
 		if err != nil {
-			logger.Errorf("open connections file: %s failed, error: %s", filePath, err)
+			logger.Errorf("Open connections file: %s failed, error: %s", filePath, err)
 		} else if len(newConnectionList.Connections) > len(lastConnectionList.Connections) {
 			newConnection := newConnectionList.Connections[len(newConnectionList.Connections)-1]
 			logger.Infof(
-				"connections: kafkaHost: %s kafkaTopic: %s has been added to the file.",
-				newConnection.KafkaHost, newConnection.KafkaTopic,
+				"🌳 Detect new connection! bkBizId: %s appName: %s",
+				newConnection.BkBizId, newConnection.AppName,
 			)
 			go p.StartByConnection(newConnection)
 			lastConnectionList = newConnectionList
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(time.Minute)
 	}
 }
 
@@ -93,6 +117,7 @@ func (p *Precalculate) StartByConnection(conn Connection, _ ...PrecalculateOptio
 	center := core.GetMetadataCenter()
 	center.AddDataIdAndInfo(
 		conn.DataId,
+		conn.Token,
 		core.DataIdInfo{
 			BaseInfo: core.BaseInfo{
 				BkBizId:   conn.BkBizId,
@@ -120,5 +145,27 @@ func (p *Precalculate) StartByConnection(conn Connection, _ ...PrecalculateOptio
 			},
 		},
 	)
-	p.readySignalChan <- readySignal{startInfo: StartInfo{DataId: conn.DataId}, config: p.defaultConfig}
+	config := p.MergeConfig(p.defaultConfig, PrecalculateOption{
+		storageConfig: []storage.ProxyOption{storage.CacheBackend(storage.CacheTypeMemory)},
+	})
+	c := make(chan error)
+	ctx, cancel := context.WithCancel(context.Background())
+	go p.checkError(conn.BkBizId, conn.AppName, c, cancel)
+	p.readySignalChan <- readySignal{
+		startInfo:        StartInfo{DataId: conn.DataId},
+		config:           config,
+		errorReceiveChan: c,
+		ctx:              ctx,
+	}
+}
+
+func (p *Precalculate) checkError(bkBizId, appName string, errorReceiveChan chan error, cancel context.CancelFunc) {
+	for {
+		select {
+		case msg := <-errorReceiveChan:
+			logger.Warnf("💥 Receive error from chan, bkBizId: %s appName: %s error: %s", bkBizId, appName, msg)
+			cancel()
+			return
+		}
+	}
 }

@@ -19,8 +19,10 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"go.uber.org/zap"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type Converter func(io.ReadCloser) (any, error)
@@ -67,6 +69,7 @@ type EsStorageData struct {
 }
 
 type EsQueryData struct {
+	IndexName string
 	Body      map[string]any
 	Converter Converter
 }
@@ -128,6 +131,7 @@ type esStorage struct {
 
 	indexName string
 	client    *elasticsearch.Client
+	logger    monitorLogger.Logger
 }
 
 func (e *esStorage) Save(data EsStorageData) error {
@@ -139,7 +143,7 @@ func (e *esStorage) Save(data EsStorageData) error {
 		if res != nil {
 			err = res.Body.Close()
 			if err != nil {
-				logger.Warnf("[Save] failed to close the body")
+				e.logger.Warnf("[Save] failed to close the body")
 			}
 		}
 	}()
@@ -185,7 +189,7 @@ func (e *esStorage) Query(data any) (any, error) {
 
 	res, err := e.client.Search(
 		e.client.Search.WithContext(e.ctx),
-		e.client.Search.WithIndex(e.indexName),
+		e.client.Search.WithIndex(body.IndexName),
 		e.client.Search.WithBody(&buf),
 		e.client.Search.WithTrackTotalHits(false),
 	)
@@ -215,6 +219,11 @@ func newEsStorage(ctx context.Context, options EsOptions) (*esStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	logger.Infof("create ES Client successfully")
-	return &esStorage{ctx: ctx, client: c, indexName: options.indexName}, nil
+	monitorLogger.Infof("create ES Client successfully")
+	return &esStorage{
+		ctx:       ctx,
+		client:    c,
+		indexName: options.indexName,
+		logger:    monitorLogger.With(zap.String("name", "es")),
+	}, nil
 }

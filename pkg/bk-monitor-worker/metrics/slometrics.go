@@ -10,7 +10,6 @@
 package metrics
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -89,7 +88,7 @@ var (
 			Name: "slo_error_event_time_info",
 			Help: "Total slo_error_event_time_info",
 		},
-		[]string{"bk_biz_id", "range_time", "strategy_id", "scene", "start_time", "end_time", "event_id", "event_status"},
+		[]string{"bk_biz_id", "range_time", "strategy_id", "scene", "event_id", "event_status"},
 	)
 
 	sloMonitor = prometheus.NewCounterVec(
@@ -97,7 +96,7 @@ var (
 			Name: "slo_monitor",
 			Help: "Total slo_monitor",
 		},
-		[]string{"bk_biz_id", "scene", "name", "status", "error"},
+		[]string{"bk_biz_id", "scene", "name", "status"},
 	)
 )
 
@@ -115,9 +114,9 @@ func InitGauge(Registry *prometheus.Registry) {
 	)
 }
 
-// RecordSloErrorTimeInfo updates the sloErrorTimeInfo metric with the provided values
-func RecordSloMonitor(bk_biz_id string, scene string, name string, flag string, errString string) {
-	metric, err := sloMonitor.GetMetricWithLabelValues(bk_biz_id, scene, name, flag, errString)
+// RecordSloMonitor updates the RecordSloMonitor metric with the provided values
+func RecordSloMonitor(bk_biz_id string, scene string, name string, flag string) {
+	metric, err := sloMonitor.GetMetricWithLabelValues(bk_biz_id, scene, name, flag)
 	if err != nil {
 		logger.Errorf("prom get [sloMonitor] right metric failed: %s", err)
 		return
@@ -131,10 +130,10 @@ func RecordSloErrorTimeInfo(value float64, bk_biz_id string, range_time string, 
 
 	if err != nil {
 		logger.Errorf("prom get [sloErrorTimeInfo] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "SloErrorTimeInfo", "0", err.Error())
+		RecordSloMonitor(bk_biz_id, scene, "SloErrorTimeInfo", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "SloErrorTimeInfo", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "SloErrorTimeInfo", "1")
 	metric.Set(value)
 }
 
@@ -142,11 +141,11 @@ func RecordSloErrorTimeInfo(value float64, bk_biz_id string, range_time string, 
 func RecordSloInfo(value float64, bk_biz_id string, range_time string, velat string, scene string) {
 	metric, err := sloInfo.GetMetricWithLabelValues(bk_biz_id, range_time, velat, scene)
 	if err != nil {
-		log.Printf("prom get [sloInfo] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "SloInfo", "0", err.Error())
+		logger.Errorf("prom get [sloInfo] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "SloInfo", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "SloInfo", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "SloInfo", "1")
 	metric.Set(value)
 }
 
@@ -154,11 +153,11 @@ func RecordSloInfo(value float64, bk_biz_id string, range_time string, velat str
 func RecordMttr(value float64, bk_biz_id string, range_time string, scene string) {
 	metric, err := mttr.GetMetricWithLabelValues(bk_biz_id, range_time, scene)
 	if err != nil {
-		log.Printf("prom get [mttr] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "Mttr", "0", err.Error())
+		logger.Errorf("prom get [mttr] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "Mttr", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "Mttr", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "Mttr", "1")
 	metric.Set(value)
 }
 
@@ -166,11 +165,11 @@ func RecordMttr(value float64, bk_biz_id string, range_time string, scene string
 func RecordMtbf(value float64, bk_biz_id string, range_time string, scene string) {
 	metric, err := mtbf.GetMetricWithLabelValues(bk_biz_id, range_time, scene)
 	if err != nil {
-		log.Printf("prom get [mtbf] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "Mtbf", "0", err.Error())
+		logger.Errorf("prom get [mtbf] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "Mtbf", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "Mtbf", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "Mtbf", "1")
 	metric.Set(value)
 }
 
@@ -178,11 +177,11 @@ func RecordMtbf(value float64, bk_biz_id string, range_time string, scene string
 func RecordSlo(value float64, bk_biz_id string, range_time string, scene string) {
 	metric, err := sloMetric.GetMetricWithLabelValues(bk_biz_id, range_time, scene)
 	if err != nil {
-		log.Printf("prom get [slo] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "Slo", "0", err.Error())
+		logger.Errorf("prom get [slo] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "Slo", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "Slo", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "Slo", "1")
 	metric.Set(value)
 }
 
@@ -190,23 +189,23 @@ func RecordSlo(value float64, bk_biz_id string, range_time string, scene string)
 func RecordSloErrorTime(value float64, bk_biz_id string, range_time string, scene string) {
 	metric, err := sloErrorTime.GetMetricWithLabelValues(bk_biz_id, range_time, scene)
 	if err != nil {
-		log.Printf("prom get [sloErrorTime] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "SloErrorTime", "0", err.Error())
+		logger.Errorf("prom get [sloErrorTime] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "SloErrorTime", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "SloErrorTime", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "SloErrorTime", "1")
 	metric.Set(value)
 }
 
 // RecordSloErrorEventTimeInfo updates the sloErrorEventTimeInfo metric with the provided values
-func RecordSloErrorEventTimeInfo(value float64, bk_biz_id string, range_time string, strategy_id string, scene string, start_time string, end_time string, event_id string, event_status string) {
-	metric, err := sloErrorEventTimeInfo.GetMetricWithLabelValues(bk_biz_id, range_time, strategy_id, scene, start_time, end_time, event_id, event_status)
+func RecordSloErrorEventTimeInfo(value float64, bk_biz_id string, range_time string, strategy_id string, scene string, event_id string, event_status string) {
+	metric, err := sloErrorEventTimeInfo.GetMetricWithLabelValues(bk_biz_id, range_time, strategy_id, scene, event_id, event_status)
 	if err != nil {
-		log.Printf("prom get [sloErrorEventTimeInfo] metric failed: %s", err)
-		RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "0", err.Error())
+		logger.Errorf("prom get [sloErrorEventTimeInfo] metric failed: %s", err)
+		RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "0")
 		return
 	}
-	RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "1", "")
+	RecordSloMonitor(bk_biz_id, scene, "SloErrorEventTimeInfo", "1")
 	metric.Set(value)
 }
 
@@ -219,7 +218,7 @@ func PushRes(Registry *prometheus.Registry) {
 
 	// 推送指标数据
 	if err := pusher.Push(); err != nil {
-		log.Printf("failed to push metric: %v", err)
+		logger.Errorf("failed to push metric: %v", err)
 		return
 	}
 

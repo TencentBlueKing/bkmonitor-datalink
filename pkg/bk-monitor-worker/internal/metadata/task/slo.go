@@ -15,13 +15,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/prometheus/client_golang/prometheus"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/service"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/metrics"
 	t "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // SloPush 上报slo数据指标

@@ -13,11 +13,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 type bkClient struct{}

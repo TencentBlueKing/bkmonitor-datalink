@@ -42,7 +42,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 	bizID, err := service.FindAllBiz()
 	if err != nil {
 		logger.Errorf("find all biz_id for slo failed, %v", err)
-		return nil
+		return err
 	}
 	logger.Info("Biz and scenes: ", bizID)
 
@@ -98,7 +98,7 @@ func SloPush(ctx context.Context, t *t.Task) error {
 		for err := range errChan {
 			if err != nil {
 				logger.Errorf("SloPush task encountered error: %v", err)
-				return nil
+				continue
 			}
 		}
 		metrics.PushRes(sloRegistry)

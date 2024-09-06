@@ -95,6 +95,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithMetricReport(
 			EnabledProfileReport(config.ProfileEnabled),
 			ProfileAddress(config.ProfileHost),
+			ProfileToken(config.ProfileToken),
 			ProfileAppIdx(config.ProfileAppIdx),
 			MetricReportInterval(config.SemaphoreReportInterval),
 		).

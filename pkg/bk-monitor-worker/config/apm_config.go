@@ -95,6 +95,8 @@ var (
 	ProfileEnabled bool
 	// ProfileHost profile report host
 	ProfileHost string
+	// ProfileToken profile report token
+	ProfileToken string
 	// ProfileAppIdx app name of profile
 	ProfileAppIdx string
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
@@ -160,6 +162,7 @@ func initApmVariables() {
 	*/
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
+	ProfileToken = GetValue("taskConfig.apmPreCalculate.metrics.profile.token", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
 	/*
 	   Metric Config

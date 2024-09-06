@@ -10,9 +10,10 @@
 package apiservice
 
 import (
+	"github.com/pkg/errors"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/monitor"
-	"github.com/pkg/errors"
 )
 
 var Monitor MonitorService

@@ -37,8 +37,6 @@ type Config struct {
 // QueryAndDeduplicateStrategies 查询并去重的方法
 func QueryAndDeduplicateStrategies(db *gorm.DB, prefix string, middleParts string, suffixes string, bkBizId int) ([]BkBizStrategy, error) {
 	var allBkBizStrategies []BkBizStrategy
-	//uniqueMap := make(map[string]struct{})
-	//bkBizIDSet := make(map[int32]struct{})
 
 	pattern := fmt.Sprintf("%s%s/%s/", prefix, middleParts, suffixes)
 	var results []struct {

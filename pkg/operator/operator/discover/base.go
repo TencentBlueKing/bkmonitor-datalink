@@ -35,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/tasks"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/target"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -271,7 +272,7 @@ func (d *BaseDiscover) makeMetricTarget(lbls, origLabels labels.Labels, namespac
 
 	period := d.opts.Period
 	if period == "" {
-		period = ConfDefaultPeriod
+		period = configs.G().DefaultPeriod
 	}
 	timeout := d.opts.Timeout
 	if timeout == "" {
@@ -303,30 +304,30 @@ func (d *BaseDiscover) StatefulSetChildConfigs() []*ChildConfig {
 	d.childConfigMut.RLock()
 	defer d.childConfigMut.RUnlock()
 
-	configs := make([]*ChildConfig, 0)
+	cfgs := make([]*ChildConfig, 0)
 	for _, group := range d.childConfigGroups {
 		for _, cfg := range group {
 			if cfg.TaskType == tasks.TaskTypeStatefulSet {
-				configs = append(configs, cfg)
+				cfgs = append(cfgs, cfg)
 			}
 		}
 	}
-	return configs
+	return cfgs
 }
 
 func (d *BaseDiscover) DaemonSetChildConfigs() []*ChildConfig {
 	d.childConfigMut.RLock()
 	defer d.childConfigMut.RUnlock()
 
-	configs := make([]*ChildConfig, 0)
+	cfgs := make([]*ChildConfig, 0)
 	for _, group := range d.childConfigGroups {
 		for _, cfg := range group {
 			if cfg.TaskType == tasks.TaskTypeDaemonSet {
-				configs = append(configs, cfg)
+				cfgs = append(cfgs, cfg)
 			}
 		}
 	}
-	return configs
+	return cfgs
 }
 
 func (d *BaseDiscover) Mask() string {

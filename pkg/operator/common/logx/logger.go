@@ -7,39 +7,40 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package logconf
+package logx
 
 import (
-	"fmt"
+	"bytes"
 
-	"github.com/spf13/viper"
+	"github.com/go-kit/log"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
-const (
-	confLoggerLevelPath = "logger.level"
-)
-
-func initConfig() {
-	viper.SetDefault(confLoggerLevelPath, "info")
+type Logger struct {
+	prefix string
+	w      log.Logger
 }
 
-func updateConfig() {
-	logger.SetOptions(logger.Options{
-		Stdout: true,
-		Format: "logfmt",
-		Level:  viper.GetString(confLoggerLevelPath),
-	})
+func New(prefix string) *Logger {
+	l := &Logger{
+		w: log.NewLogfmtLogger(writer{
+			prefix: prefix,
+		}),
+	}
+	return l
 }
 
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPreParse, initConfig); err != nil {
-		fmt.Printf("failed to subscribe event %s, err: %v\n", config.EventConfigPreParse, err)
-	}
+func (l *Logger) Log(keyvals ...interface{}) error {
+	return l.w.Log(keyvals...)
+}
 
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		fmt.Printf("failed to subscribe event %s, err: %v\n", config.EventConfigPostParse, err)
-	}
+type writer struct {
+	prefix string
+}
+
+func (w writer) Write(b []byte) (int, error) {
+	s := string(bytes.TrimSpace(b))
+	logger.Infof("%s\t%s", w.prefix, s)
+	return len(s), nil
 }

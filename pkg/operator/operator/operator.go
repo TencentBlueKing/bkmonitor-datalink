@@ -29,6 +29,7 @@ import (
 	bkversioned "github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/client/clientset/versioned"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/dataidwatcher"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
@@ -88,7 +89,7 @@ type Operator struct {
 	promSdConfigsBytes map[string][]byte // 无并发读写
 }
 
-func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
+func New(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	var (
 		operator = new(Operator)
 		err      error
@@ -96,42 +97,42 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 
 	operator.buildInfo = buildInfo
 	operator.ctx, operator.cancel = context.WithCancel(ctx)
-	if err = os.Setenv("KUBECONFIG", ConfKubeConfig); err != nil {
+	if err = os.Setenv("KUBECONFIG", configs.G().KubeConfig); err != nil {
 		return nil, err
 	}
 
-	operator.client, err = k8sutils.NewK8SClient(ConfAPIServerHost, ConfTLSConfig)
+	operator.client, err = k8sutils.NewK8SClient(configs.G().APIServerHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.promclient, err = k8sutils.NewPromClient(ConfAPIServerHost, ConfTLSConfig)
+	operator.promclient, err = k8sutils.NewPromClient(configs.G().APIServerHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.bkclient, err = k8sutils.NewBKClient(ConfAPIServerHost, ConfTLSConfig)
+	operator.bkclient, err = k8sutils.NewBKClient(configs.G().APIServerHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
-	operator.tkexclient, err = k8sutils.NewTkexClient(ConfAPIServerHost, ConfTLSConfig)
+	operator.tkexclient, err = k8sutils.NewTkexClient(configs.G().APIServerHost, configs.G().GetTLS())
 	if err != nil {
 		return nil, err
 	}
 
 	operator.discovers = make(map[string]discover.Discover)
 	allNamespaces := map[string]struct{}{}
-	if len(ConfTargetNamespaces) == 0 {
+	if len(configs.G().TargetNamespaces) == 0 {
 		allNamespaces = map[string]struct{}{corev1.NamespaceAll: {}}
 	} else {
-		for _, namespace := range ConfTargetNamespaces {
+		for _, namespace := range configs.G().TargetNamespaces {
 			allNamespaces[namespace] = struct{}{}
 		}
 	}
 
 	denyTargetNamespaces := make(map[string]struct{})
-	for _, namespace := range ConfDenyTargetNamespaces {
+	for _, namespace := range configs.G().DenyTargetNamespaces {
 		denyTargetNamespaces[namespace] = struct{}{}
 	}
 
@@ -149,12 +150,12 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 	}
 
 	// 1.21.0 开始 endpointslice 正式成为 v1
-	useEndpointslice = parsedVersion.GTE(semver.MustParse("1.21.0")) && ConfEnableEndpointslice
+	useEndpointslice = parsedVersion.GTE(semver.MustParse("1.21.0")) && configs.G().EnableEndpointSlice
 	if useEndpointslice {
 		logger.Info("use 'endpointslice' instead of 'endpoint'")
 	}
 
-	if ConfEnableServiceMonitor {
+	if configs.G().EnableServiceMonitor {
 		operator.serviceMonitorInformer, err = prominformers.NewInformersForResource(
 			prominformers.NewMonitoringInformerFactories(
 				allNamespaces,
@@ -170,7 +171,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		}
 	}
 
-	if ConfEnablePodMonitor {
+	if configs.G().EnablePodMonitor {
 		operator.podMonitorInformer, err = prominformers.NewInformersForResource(
 			prominformers.NewMonitoringInformerFactories(
 				allNamespaces,
@@ -186,7 +187,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		}
 	}
 
-	if ConfEnablePromRule {
+	if configs.G().EnablePromRule {
 		operator.promRuleInformer, err = prominformers.NewInformersForResource(
 			prominformers.NewMonitoringInformerFactories(
 				map[string]struct{}{corev1.NamespaceAll: {}},
@@ -208,7 +209,7 @@ func NewOperator(ctx context.Context, buildInfo BuildInfo) (*Operator, error) {
 		return nil, errors.Wrap(err, "create objectsController failed")
 	}
 
-	operator.recorder = NewRecorder()
+	operator.recorder = newRecorder()
 	operator.dw = dataidwatcher.New(operator.ctx, operator.bkclient)
 	operator.mm = newMetricMonitor()
 	operator.statefulSetSecretMap = map[string]struct{}{}
@@ -352,7 +353,7 @@ func (c *Operator) Run() error {
 	go c.handleDiscoverNotify()
 	go c.handleDataIDNotify()
 
-	if ConfEnableServiceMonitor {
+	if configs.G().EnableServiceMonitor {
 		c.serviceMonitorInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.handleServiceMonitorAdd,
 			UpdateFunc: c.handleServiceMonitorUpdate,
@@ -361,7 +362,7 @@ func (c *Operator) Run() error {
 		c.serviceMonitorInformer.Start(c.ctx.Done())
 	}
 
-	if ConfEnablePodMonitor {
+	if configs.G().EnablePodMonitor {
 		c.podMonitorInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.handlePodMonitorAdd,
 			UpdateFunc: c.handlePodMonitorUpdate,
@@ -370,7 +371,7 @@ func (c *Operator) Run() error {
 		c.podMonitorInformer.Start(c.ctx.Done())
 	}
 
-	if ConfEnablePromRule {
+	if configs.G().EnablePromRule {
 		c.promRuleInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    c.handlePrometheusRuleAdd,
 			UpdateFunc: c.handlePrometheusRuleUpdate,
@@ -385,7 +386,7 @@ func (c *Operator) Run() error {
 
 	// 如果启动了 StatefulSetWorker 则需要监听 statefulset secrets 的变化以及 statefulset 本身的变化
 	// 该资源只存在于 ConfMonitorNamespace namespace
-	if ConfEnableStatefulSetWorker {
+	if configs.G().EnableStatefulSetWorker {
 		if err := c.listWatchStatefulSetWorker(); err != nil {
 			return err
 		}
@@ -394,7 +395,7 @@ func (c *Operator) Run() error {
 		}
 	}
 
-	if ConfKubeletEnable {
+	if configs.G().Kubelet.Enable {
 		go c.reconcileNodeEndpoints(c.ctx)
 	}
 

@@ -77,7 +77,9 @@ func (w *Watcher) AddPath(file string) (<-chan struct{}, error) {
 
 	ch := make(chan struct{}, 1)
 	subCtx, cancel := context.WithCancel(w.ctx)
-	w.startWatch(subCtx, file, ch)
+
+	w.wg.Add(1)
+	go w.startWatch(subCtx, file, ch)
 	w.watcherCancel[file] = cancel
 
 	logger.Infof("watcher add new path %s", file)
@@ -97,7 +99,7 @@ func (w *Watcher) RemovePath(file string) error {
 	return nil
 }
 
-func (w *Watcher) getModTime(file string) (time.Time, error) {
+func fileModTime(file string) (time.Time, error) {
 	fileInfo, err := os.Stat(file)
 	if err != nil {
 		return time.Now(), err
@@ -106,33 +108,30 @@ func (w *Watcher) getModTime(file string) (time.Time, error) {
 }
 
 func (w *Watcher) startWatch(ctx context.Context, file string, ch chan<- struct{}) {
-	w.wg.Add(1)
-	go func() {
-		defer w.wg.Done()
+	defer w.wg.Done()
 
-		ticker := time.NewTicker(defaultPeriod)
-		defer ticker.Stop()
+	ticker := time.NewTicker(defaultPeriod)
+	defer ticker.Stop()
 
-		var updatedAt time.Time
-		for {
-			select {
-			case <-ctx.Done():
-				logger.Infof("watcher task %s stopped", file)
-				return
+	var updatedAt time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Infof("watcher task %s stopped", file)
+			return
 
-			case <-ticker.C:
-				modTime, err := w.getModTime(file)
-				if err != nil {
-					logger.Errorf("watcher get mod time failed, file=%s, err: %s", file, err)
-					continue
-				}
+		case <-ticker.C:
+			modTime, err := fileModTime(file)
+			if err != nil {
+				logger.Errorf("watcher get mod time failed, file=%s, err: %s", file, err)
+				continue
+			}
 
-				if modTime != updatedAt {
-					logger.Infof("watcher file %s changed, publish signal", file)
-					ch <- struct{}{}
-					updatedAt = modTime
-				}
+			if modTime != updatedAt {
+				logger.Infof("watcher file %s changed, publish signal", file)
+				ch <- struct{}{}
+				updatedAt = modTime
 			}
 		}
-	}()
+	}
 }

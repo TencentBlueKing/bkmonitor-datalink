@@ -21,7 +21,6 @@ import (
 )
 
 func TestMetricsTarget(t *testing.T) {
-	ConfBuiltinLabels = []string{"job"}
 	target := MetricTarget{
 		Meta: define.MonitorMeta{
 			Name:      "monitor-name",
@@ -54,8 +53,8 @@ func TestMetricsTarget(t *testing.T) {
 name: http://localhost:8080/metrics
 version: "1"
 dataid: 12345
-max_timeout: ""
-min_period: ""
+max_timeout: 100s
+min_period: 3s
 tasks:
 - task_id: 715974526
   bk_biz_id: 2
@@ -65,7 +64,6 @@ tasks:
   labels:
   - label1: value1
     label2: value2
-    bk_job: my-job
     job: my-job
     bk_endpoint_url: http://localhost:8080/metrics
     bk_endpoint_index: "0"

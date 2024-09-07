@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
 var (
@@ -51,7 +52,7 @@ func (m *metricMonitor) SetDataIDInfo(id int, name, usage string, system, common
 		}
 		return "false"
 	}
-	dataIDInfo.WithLabelValues(fmt.Sprintf("%d", id), name, usage, conv(system), conv(common), ConfBkEnv).Set(1)
+	dataIDInfo.WithLabelValues(fmt.Sprintf("%d", id), name, usage, conv(system), conv(common), configs.G().BkEnv).Set(1)
 }
 
 func (m *metricMonitor) IncHandledCounter(action string) {

@@ -10,6 +10,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -38,7 +39,7 @@ func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan string {
+func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -81,7 +82,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 				return
 			}
 
-			for text := range client.StringCh() {
+			for text := range client.StringCh(ctx) {
 				out <- text
 			}
 		}(cfg)
@@ -95,7 +96,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 	return out
 }
 
-func (c *Operator) scrapeAll(workers int) *scrapeStats {
+func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -135,7 +136,7 @@ func (c *Operator) scrapeAll(workers int) *scrapeStats {
 				logger.Warnf("failed to crate scraper http client: %v", err)
 				return
 			}
-			lines, errs := client.Lines()
+			lines, errs := client.Lines(ctx)
 			for _, err := range errs {
 				logger.Warnf("failed to scrape target, namespace=%s, monitor=%s, err: %v", cfg.Meta.Namespace, cfg.Meta.Name, err)
 			}

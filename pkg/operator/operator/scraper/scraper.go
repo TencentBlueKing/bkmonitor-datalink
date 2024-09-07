@@ -92,7 +92,7 @@ func (c *Scraper) StringCh(ctx context.Context) chan string {
 			scanner := bufio.NewScanner(resp.Body)
 			for scanner.Scan() {
 				line := scanner.Text()
-				if strings.HasPrefix(line, "#") || line == "" {
+				if line == "" || strings.HasPrefix(line, "#") {
 					continue
 				}
 				ch <- line

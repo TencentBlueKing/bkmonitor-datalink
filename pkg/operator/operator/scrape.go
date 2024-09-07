@@ -21,6 +21,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+const (
+	defaultConcurrency = 16
+)
+
 type scrapeStats struct {
 	MonitorCount int          `json:"monitor_count"`
 	LinesTotal   int          `json:"lines_total"`
@@ -54,7 +58,7 @@ func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, w
 		}
 	}
 
-	out := make(chan string, 8)
+	out := make(chan string, defaultConcurrency)
 	if len(cfgs) == 0 {
 		out <- fmt.Sprintf("warning: no monitor targets found, namespace=%s, monitor=%s", namespace, monitor)
 		close(out)
@@ -62,7 +66,7 @@ func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, w
 	}
 
 	if workers <= 0 {
-		workers = 8 // 默认 workers 数
+		workers = defaultConcurrency
 	}
 	sem := make(chan struct{}, workers)
 	logger.Infof("scrape task: namespace=%s, monitor=%s, workers=%d", namespace, monitor, workers)
@@ -118,7 +122,7 @@ func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
 	}()
 
 	if workers <= 0 {
-		workers = 8 // 默认 workers 数
+		workers = defaultConcurrency
 	}
 	sem := make(chan struct{}, workers)
 

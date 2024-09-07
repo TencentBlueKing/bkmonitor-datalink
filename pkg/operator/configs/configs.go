@@ -84,9 +84,9 @@ func setupHTTP(c *Config) {
 
 // Event kubernetes 事件采集配置
 type Event struct {
-	MaxSpan   string   `yaml:"max_span"`        // 事件最大允许时间跨度
-	Interval  string   `yaml:"scrape_interval"` // 事件上报周期
-	TailFiles []string `yaml:"scrape_path"`     // 事件监听路径
+	MaxSpan   string   `yaml:"max_span"`   // 事件最大允许时间跨度
+	Interval  string   `yaml:"interval"`   // 事件上报周期
+	TailFiles []string `yaml:"tail_files"` // 事件监听路径
 }
 
 func setupEvent(c *Config) {
@@ -95,9 +95,6 @@ func setupEvent(c *Config) {
 	}
 	if c.Event.Interval == "" {
 		c.Event.Interval = "60s" // 默认事件上报周期为 60s
-	}
-	if len(c.Event.TailFiles) == 0 {
-		c.Event.TailFiles = []string{"/var/log/gse/events.log"} // 内置路径
 	}
 }
 

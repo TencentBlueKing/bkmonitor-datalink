@@ -27,9 +27,6 @@ service_name: bkmonitor-operator-stack-operator
 monitor_namespace: bkmonitor-operator
 deny_target_namespaces:
  - "thanos"
- - "ieg-blueking-monitor-prod"
-
-target_label_selector: 
 
 enable_probe: false
 enable_service_monitor: true

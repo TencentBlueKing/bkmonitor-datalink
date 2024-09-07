@@ -10,6 +10,7 @@
 package operator
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -178,9 +179,8 @@ func newMetricMonitor() *metricMonitor {
 }
 
 type metricMonitor struct {
-	handledSecretFailed      int       // 记录 secrets 处理失败次数
-	handledSecretFailedTime  time.Time // 记录 secrets 处理失败时间
-	handledSecretSuccessTime time.Time // 记录 secrets 处理成功时间
+	secretFailedCounter int    // 记录 secrets 处理失败次数
+	secretLastError     string // 记录 secrets 处理 error
 }
 
 func (m *metricMonitor) UpdateUptime(n int) {
@@ -216,13 +216,12 @@ func (m *metricMonitor) SetDiscoverCount(n int) {
 }
 
 func (m *metricMonitor) IncHandledSecretSuccessCounter(name, action string) {
-	m.handledSecretSuccessTime = time.Now()
 	handledSecretSuccessTotal.WithLabelValues(name, action).Inc()
 }
 
-func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string) {
-	m.handledSecretFailed++
-	m.handledSecretFailedTime = time.Now()
+func (m *metricMonitor) IncHandledSecretFailedCounter(name, action string, err error) {
+	m.secretFailedCounter++
+	m.secretLastError = fmt.Sprintf("%s\t%s", time.Now().Format(time.RFC3339), err)
 	handledSecretFailedTotal.WithLabelValues(name, action).Inc()
 }
 

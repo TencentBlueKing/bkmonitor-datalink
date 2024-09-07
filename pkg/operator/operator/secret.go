@@ -167,7 +167,7 @@ func (c *Operator) createOrUpdateEventTaskSecrets() {
 	logger.Infof("event secret %s add file %s", secret.Name, eventTarget.FileName())
 
 	if err = k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-		c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate)
+		c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 		logger.Errorf("failed to create or update event secret %s, err: %v", secret.Name, err)
 		return
 	}
@@ -237,7 +237,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 		logger.Infof("daemonset secret %s contains %d files", secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate)
+			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 			delete(currTasksCache, node)
 			logger.Errorf("failed to create or update secret: %v", err)
 			continue
@@ -316,7 +316,7 @@ func (c *Operator) cleanupDaemonSetChildSecret(childConfigs []*discover.ChildCon
 		logger.Infof("remove secret %s", secretName)
 		if err := secretClient.Delete(c.ctx, secretName, metav1.DeleteOptions{}); err != nil {
 			if !errors.IsNotFound(err) {
-				c.mm.IncHandledSecretFailedCounter(secretName, action.Delete)
+				c.mm.IncHandledSecretFailedCounter(secretName, action.Delete, err)
 				logger.Errorf("failed to delete secret %s, err: %s", secretName, err)
 			}
 			continue
@@ -465,7 +465,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 		logger.Infof("statefulset secret %s contains %d files", secret.Name, len(secret.Data))
 
 		if err := k8sutils.CreateOrUpdateSecret(c.ctx, secretClient, secret); err != nil {
-			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate)
+			c.mm.IncHandledSecretFailedCounter(secret.Name, action.CreateOrUpdate, err)
 			logger.Errorf("failed to create or update secret: %v", err)
 			delete(currTasksCache, idx)
 			continue
@@ -506,7 +506,7 @@ func (c *Operator) cleanupStatefulSetChildSecret() {
 			logger.Infof("remove secret %s", prev)
 			if err := secretClient.Delete(c.ctx, prev, metav1.DeleteOptions{}); err != nil {
 				if !errors.IsNotFound(err) {
-					c.mm.IncHandledSecretFailedCounter(prev, action.Delete)
+					c.mm.IncHandledSecretFailedCounter(prev, action.Delete, err)
 					logger.Errorf("failed to delete secret %s, err: %s", prev, err)
 				}
 				continue
@@ -552,7 +552,7 @@ func (c *Operator) cleanupInvalidSecrets() {
 	for _, secret := range secrets.Items {
 		if _, ok := secret.Labels[tasks.LabelTaskType]; !ok {
 			if err := secretClient.Delete(c.ctx, secret.Name, metav1.DeleteOptions{}); err != nil {
-				c.mm.IncHandledSecretFailedCounter(secret.Name, action.Delete)
+				c.mm.IncHandledSecretFailedCounter(secret.Name, action.Delete, err)
 				logger.Errorf("failed to delete secret %s, err: %v", secret.Name, err)
 				continue
 			}

@@ -78,7 +78,6 @@ func (w *Watcher) AddPath(file string) (<-chan struct{}, error) {
 	ch := make(chan struct{}, 1)
 	subCtx, cancel := context.WithCancel(w.ctx)
 
-	w.wg.Add(1)
 	go w.startWatch(subCtx, file, ch)
 	w.watcherCancel[file] = cancel
 
@@ -99,7 +98,7 @@ func (w *Watcher) RemovePath(file string) error {
 	return nil
 }
 
-func fileModTime(file string) (time.Time, error) {
+func getfileModTime(file string) (time.Time, error) {
 	fileInfo, err := os.Stat(file)
 	if err != nil {
 		return time.Now(), err
@@ -108,6 +107,7 @@ func fileModTime(file string) (time.Time, error) {
 }
 
 func (w *Watcher) startWatch(ctx context.Context, file string, ch chan<- struct{}) {
+	w.wg.Add(1)
 	defer w.wg.Done()
 
 	ticker := time.NewTicker(defaultPeriod)
@@ -121,14 +121,14 @@ func (w *Watcher) startWatch(ctx context.Context, file string, ch chan<- struct{
 			return
 
 		case <-ticker.C:
-			modTime, err := fileModTime(file)
+			modTime, err := getfileModTime(file)
 			if err != nil {
 				logger.Errorf("watcher get mod time failed, file=%s, err: %s", file, err)
 				continue
 			}
 
 			if modTime != updatedAt {
-				logger.Infof("watcher file %s changed, publish signal", file)
+				logger.Infof("watcher found file %s changed", file)
 				ch <- struct{}{}
 				updatedAt = modTime
 			}

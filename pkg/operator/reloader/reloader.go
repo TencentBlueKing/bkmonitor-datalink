@@ -223,7 +223,7 @@ func (r *Reloader) syncSecretToFiles(secret *corev1.Secret) error {
 		// 如果存在无法解压缩的数据则直接使用原始数据
 		uncompressed, err := gzip.Uncompress(data)
 		if err != nil {
-			logger.Errorf("failed to uncompress config(%s) content: %v", filePath, err)
+			logger.Errorf("failed to uncompress config (%s): %v", filePath, err)
 			continue
 		}
 
@@ -242,12 +242,12 @@ func (r *Reloader) syncSecretToFiles(secret *corev1.Secret) error {
 
 	// 遍历目标文件夹，删除 secret 中不存在的目标文件
 	var deleted bool
-	alreadyExists, err := os.ReadDir(configs.G().ChildConfigPath)
+	dirs, err := os.ReadDir(configs.G().ChildConfigPath)
 	if err != nil {
 		return err
 	}
 
-	for _, f := range alreadyExists {
+	for _, f := range dirs {
 		if _, ok := set[f.Name()]; !ok {
 			filePath := filepath.Join(configs.G().ChildConfigPath, f.Name())
 			logger.Infof("remove file '%s'", filePath)

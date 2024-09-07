@@ -222,12 +222,13 @@ const (
 `
 	formatHandleSecretFailed = `
 [x] check kubernetes secrets operation
-- Description: 操作 secrets 资源出现错误
-- Suggestion: 请检查 apiserver 是否处于异常状态，最近一次操作时间 %v，考虑重启 %s
+- Description: 操作 secrets 资源曾出现错误
+- Suggestion: 请检查 apiserver 是否处于异常状态，考虑重启 Pod %s/%s
+  * Log: %s
 `
 	formatHandleSecretSuccess = `
 [√] check kubernetes secrets operation
-- Description: 操作 secrets 资源未出现错误，最近一次操作时间 %v
+- Description: 操作 secrets 资源未出现错误
 `
 	formatMonitorResources = `
 [√] check monitor resources
@@ -356,10 +357,10 @@ func (c *Operator) CheckRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查处理 secrets 是否有问题
-	if c.mm.handledSecretFailed <= 0 || c.mm.handledSecretSuccessTime.After(c.mm.handledSecretFailedTime) {
-		writef(formatHandleSecretSuccess, c.mm.handledSecretSuccessTime.Format(time.RFC3339))
+	if c.mm.secretFailedCounter <= 0 {
+		writef(formatHandleSecretSuccess)
 	} else {
-		writef(formatHandleSecretFailed, c.mm.handledSecretFailedTime.Format(time.RFC3339), metaEnv.PodName)
+		writef(formatHandleSecretFailed, metaEnv.Namespace, metaEnv.PodName, c.mm.secretLastError)
 	}
 
 	// 检查给定关键字监测资源
@@ -515,7 +516,7 @@ func (c *Operator) ConfigsRoute(w http.ResponseWriter, _ *http.Request) {
 	buf := bytebufferpool.Get()
 	defer bytebufferpool.Put(buf)
 
-	buf.WriteString(fmt.Sprintf("======= %s =======", define.ConfigFilePath))
+	buf.WriteString("# " + define.ConfigFilePath)
 	buf.WriteString("\n")
 	buf.Write(b)
 

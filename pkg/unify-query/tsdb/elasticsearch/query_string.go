@@ -40,24 +40,25 @@ func (s *QueryString) NestedFields() []string {
 }
 
 func (s *QueryString) Parser() (elastic.Query, error) {
-	if s.q == "" {
-		return s.query, nil
+	if s.q == "" || s.q == "*" {
+		return nil, nil
 	}
+
+	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
+	qs := elastic.NewQueryStringQuery(s.q).AnalyzeWildcard(true)
+
 	ast, err := parser.Parse(s.q)
 	if err != nil {
-		err = fmt.Errorf("query string parser error %s", err)
-		return s.query, err
+		return qs, nil
 	}
 
 	conditionQuery, err := s.walk(ast)
 	if err != nil {
-		err = fmt.Errorf("query string walk error %s", err)
-		return s.query, err
+		return qs, nil
 	}
 
 	// 如果 nestedFields 不存在则直接使用 queryString 透传
 	if len(s.nestedFields) == 0 {
-		qs := elastic.NewQueryStringQuery(s.q).AnalyzeWildcard(true)
 		return qs, nil
 	}
 
@@ -112,7 +113,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
-			leftQ = elastic.NewQueryStringQuery(fmt.Sprintf(`"%s"`, c.Value))
+			leftQ = elastic.NewQueryStringQuery(fmt.Sprintf(`"%s"`, c.Value)).AnalyzeWildcard(true)
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)

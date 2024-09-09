@@ -99,7 +99,10 @@ func mapData(prefix string, data map[string]any, res map[string]any) {
 func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if prefix != "" {
 		if t, ok := data[Type]; ok {
-			res[prefix] = t.(string)
+			switch ts := t.(type) {
+			case string:
+				res[prefix] = ts
+			}
 		}
 	}
 

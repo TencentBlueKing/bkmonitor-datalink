@@ -23,7 +23,7 @@ import (
 
 type Instance interface {
 	Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string
-	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) error
+	QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error)
 	QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet
 	QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error)
 	Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error)

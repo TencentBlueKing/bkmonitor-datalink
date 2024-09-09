@@ -1169,6 +1169,29 @@ func TestQueryRawWithInstance(t *testing.T) {
 						DataSource:  structured.BkLog,
 						TableID:     structured.TableID(tableID),
 						From:        1,
+						Limit:       10,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
+					},
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        20,
+						Limit:       10,
+						KeepColumns: []string{"__ext.io_kubernetes_pod", "dtEventTimeStamp"},
+					},
+				},
+				Start: start,
+				End:   end,
+			},
+		},
+		"query_bk_base_es_with_errors": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
 						Limit:       1,
 						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
 					},
@@ -1181,13 +1204,14 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
-			res, err := queryRawWithInstance(ctx, c.queryTs)
-			fmt.Println(err)
+			total, list, err := queryRawWithInstance(ctx, c.queryTs)
 			if err != nil {
 				panic(err.Error())
 			}
-
-			fmt.Println(res)
+			fmt.Printf("total: %d \nlength: %d \n", total, len(list))
+			for _, l := range list {
+				fmt.Printf("%v\n", l)
+			}
 		})
 	}
 }

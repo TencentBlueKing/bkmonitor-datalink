@@ -548,7 +548,7 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) error {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
 	var (
 		err error
 	)
@@ -564,15 +564,15 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	mappings, err := i.getMappings(ctx, aliases)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(mappings) == 0 {
 		err = fmt.Errorf("index is empty with %v，url: %s", aliases, i.address)
-		return err
+		return 0, err
 	}
 
 	if query.Size == 0 || query.Size > i.maxSize {
@@ -595,7 +595,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	for _, d := range sr.Hits.Hits {
 		data := make(map[string]any)
 		if err = json.Unmarshal(d.Source, &data); err != nil {
-			return err
+			return 0, err
 		}
 
 		fact.SetData(data)
@@ -607,7 +607,16 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		dataCh <- fact.data
 	}
 
-	return nil
+	var total int64
+	if sr != nil {
+		if sr.Hits != nil {
+			if sr.Hits.TotalHits != nil {
+				total = sr.Hits.TotalHits.Value
+			}
+		}
+	}
+
+	return total, nil
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口

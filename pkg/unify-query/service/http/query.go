@@ -140,14 +140,9 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
-func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (list []map[string]any, err error) {
+func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, err error) {
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
-
-	queryReference, qrErr := queryTs.ToQueryReference(ctx)
-	if qrErr != nil {
-		return
-	}
 
 	start, end, timeErr := queryTs.GetTime()
 	if timeErr != nil {
@@ -158,20 +153,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (lis
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
-		errCh     = make(chan error)
 
 		message strings.Builder
 	)
 
-	receiveWg.Add(2)
+	receiveWg.Add(1)
 	list = make([]map[string]any, 0)
 	// 启动合并数据
-	go func() {
-		defer receiveWg.Done()
-		for e := range errCh {
-			message.WriteString(e.Error())
-		}
-	}()
 	go func() {
 		defer receiveWg.Done()
 		for d := range dataCh {
@@ -182,37 +170,56 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (lis
 	// 多协程查询数据
 	var sendWg sync.WaitGroup
 	p, _ := ants.NewPool(QueryMaxRouting)
-	for _, ref := range queryReference {
-		for _, qry := range ref.QueryList {
-			sendWg.Add(1)
-			err = p.Submit(func() {
-				defer func() {
-					sendWg.Done()
-				}()
+	go func() {
+		defer func() {
+			sendWg.Wait()
+			close(dataCh)
+		}()
 
-				instance := prometheus.GetTsDbInstance(ctx, qry)
-				if instance == nil {
-					log.Warnf(ctx, "not instance in %s", qry.StorageID)
-					return
-				}
+		for _, ql := range queryTs.QueryList {
+			// 时间复用
+			ql.Timezone = queryTs.Timezone
+			ql.Start = queryTs.Start
+			ql.End = queryTs.End
 
-				queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
-				if queryErr != nil {
-					errCh <- fmt.Errorf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error())
-				}
-			})
-			if err != nil {
-				errCh <- err
+			// 排序复用
+			ql.OrderBy = queryTs.OrderBy
+
+			// 如果 qry.Step 不存在去外部统一的 step
+			if ql.Step == "" {
+				ql.Step = queryTs.Step
+			}
+			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+			if qmErr != nil {
+				err = qmErr
+				return
+			}
+
+			for _, qry := range qm.QueryList {
+				sendWg.Add(1)
+				err = p.Submit(func() {
+					defer func() {
+						sendWg.Done()
+					}()
+
+					instance := prometheus.GetTsDbInstance(ctx, qry)
+					if instance == nil {
+						log.Warnf(ctx, "not instance in %s", qry.StorageID)
+						return
+					}
+
+					size, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+					if queryErr != nil {
+						message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+					}
+					total += size
+				})
 			}
 		}
-	}
-	sendWg.Wait()
-	close(errCh)
-	close(dataCh)
+	}()
 
 	// 等待数据组装完毕
 	receiveWg.Wait()
-
 	if message.Len() > 0 {
 		err = errors.New(message.String())
 	}

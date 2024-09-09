@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 )
 
 func TestFixedDecoder(t *testing.T) {
@@ -127,7 +128,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 		assert.Equal(t, decoderTypeProxy, decoder.Type())
 		assert.False(t, decoder.Skip())
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{
 			Original:    "test_proxy_token",
 			ProxyDataId: 999,
 		}))
@@ -143,7 +144,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 			ProxyToken:  "test_proxy_token",
 		})
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{}))
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{}))
 		assert.Equal(t, "reject empty token", err.Error())
 		assert.Equal(t, int32(0), token.ProxyDataId)
 		assert.Equal(t, "", token.Original)
@@ -156,7 +157,7 @@ func TestProxyTokenDecoder(t *testing.T) {
 			ProxyToken:  "test_proxy_token",
 		})
 
-		token, err := decoder.Decode(define.WrapProxyToken(define.Token{
+		token, err := decoder.Decode(tokenparser.WrapProxyToken(define.Token{
 			Original:    "invalid",
 			ProxyDataId: 999,
 		}))

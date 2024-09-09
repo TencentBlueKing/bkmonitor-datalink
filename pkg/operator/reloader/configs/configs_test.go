@@ -7,15 +7,34 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package config
+package configs
 
 import (
-	eb "github.com/asaskevich/EventBus"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-var EventBus = eb.New()
+const content = `
+logger:
+ level: info
+task_type: daemonset
+pid_path: /data/pid/bkmonitorbeat.pid
+child_config_path: /data/bkmonitorbeat/config/child_configs
+watch_path: ["/data/bkmonitorbeat/config/bkmonitorbeat.conf", "/data/bkmonitorbeat/config/child_configs"]
+`
 
-const (
-	EventConfigPreParse  = "sys:config:pre-parse"
-	EventConfigPostParse = "sys:config:post-parse"
-)
+func TestConfig(t *testing.T) {
+	f, err := os.CreateTemp("", "reloader-configs.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(f.Name())
+
+	_, err = f.Write([]byte(content))
+	assert.NoError(t, err)
+	assert.NoError(t, Load(f.Name()))
+
+	t.Logf("configs: %#v", G())
+
+	assert.Equal(t, "daemonset", G().TaskType)
+}

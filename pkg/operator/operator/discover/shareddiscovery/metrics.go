@@ -88,6 +88,15 @@ var (
 		},
 		[]string{"name"},
 	)
+
+	discoverTargetsCount = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: define.MonitorNamespace,
+			Name:      "discover_targets_count",
+			Help:      "discover targets count",
+		},
+		[]string{"name"},
+	)
 )
 
 func NewMetricMonitor(name string) *MetricMonitor {
@@ -128,4 +137,8 @@ func (m *MetricMonitor) IncDeletedTgSourceCounter() {
 
 func (m *MetricMonitor) SetMonitorScrapeInterval(v float64) {
 	monitorScrapeIntervalSeconds.WithLabelValues(m.name).Set(v)
+}
+
+func (m *MetricMonitor) SetTargetCount(n int) {
+	discoverTargetsCount.WithLabelValues(m.name).Set(float64(n))
 }

@@ -7,27 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package env
 
-import (
-	"github.com/spf13/viper"
+import "os"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
-const (
-	confBkEnvPath = "operator.bk_env"
-)
-
-var ConfBkEnv string
-
-func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
+type Metadata struct {
+	NodeName  string `yaml:"node_name"`
+	PodName   string `yaml:"pod_name"`
+	Namespace string `yaml:"namespace"`
 }
 
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
+func Load() Metadata {
+	return Metadata{
+		NodeName:  os.Getenv("BKMONITOR_NODE_NAME"),
+		PodName:   os.Getenv("BKMONITOR_POD"),
+		Namespace: os.Getenv("BKMONITOR_NAMESPACE"),
 	}
 }

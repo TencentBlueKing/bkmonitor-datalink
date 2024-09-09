@@ -21,22 +21,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/httpd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 func (c *Operator) getPromScrapeConfigs() ([]config.ScrapeConfig, bool) {
-	if len(ConfPromSdConfigs) == 0 {
+	if len(configs.G().PromSDSecrets) == 0 {
 		return nil, false
 	}
 
-	var configs []config.ScrapeConfig
+	var cfgs []config.ScrapeConfig
 	round := make(map[string][]byte) // 本轮获取到的数据
-	for _, conf := range ConfPromSdConfigs {
-		m, err := c.getPromSdConfigs(conf)
+	for _, secret := range configs.G().PromSDSecrets {
+		m, err := c.getPromSDSecretData(secret)
 		if err != nil {
-			logger.Errorf("get secrets sesource failed, config=(%+v), err: %v", conf, err)
+			logger.Errorf("get secrets sesource failed, config=(%+v), err: %v", secret, err)
 			continue
 		}
 
@@ -48,35 +49,35 @@ func (c *Operator) getPromScrapeConfigs() ([]config.ScrapeConfig, bool) {
 			}
 
 			round[k] = v
-			configs = append(configs, sdc...)
+			cfgs = append(cfgs, sdc...)
 		}
 	}
 
 	eq := reflect.DeepEqual(c.promSdConfigsBytes, round) // 对比是否需要更新操作
 	c.promSdConfigsBytes = round
-	return configs, !eq // changed
+	return cfgs, !eq // changed
 }
 
-func (c *Operator) getPromSdConfigs(sdConfig PromSDConfig) (map[string][]byte, error) {
+func (c *Operator) getPromSDSecretData(secret configs.PromSDSecret) (map[string][]byte, error) {
 	// 需要同时指定 namespace/name
-	if sdConfig.Namespace == "" || sdConfig.Name == "" {
+	if secret.Namespace == "" || secret.Name == "" {
 		return nil, errors.New("empty sdconfig namespace/name")
 	}
-	secretClient := c.client.CoreV1().Secrets(sdConfig.Namespace)
-	secret, err := secretClient.Get(c.ctx, sdConfig.Name, metav1.GetOptions{})
+	secretClient := c.client.CoreV1().Secrets(secret.Namespace)
+	obj, err := secretClient.Get(c.ctx, secret.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 
 	ret := make(map[string][]byte)
-	for file, data := range secret.Data {
-		ret[sdConfigsKeyFunc(sdConfig, file)] = data
+	for file, data := range obj.Data {
+		ret[secretKeyFunc(secret, file)] = data
 	}
 	return ret, nil
 }
 
-func sdConfigsKeyFunc(sdConfig PromSDConfig, file string) string {
-	return fmt.Sprintf("%s/%s/%s", sdConfig.Namespace, sdConfig.Name, file)
+func secretKeyFunc(secret configs.PromSDSecret, file string) string {
+	return fmt.Sprintf("%s/%s/%s", secret.Namespace, secret.Name, file)
 }
 
 func unmarshalPromSdConfigs(b []byte) ([]config.ScrapeConfig, error) {

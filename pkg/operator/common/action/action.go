@@ -7,41 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package target
+package action
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
+const (
+	Add            = "Add"
+	Delete         = "Delete"
+	Update         = "Update"
+	CreateOrUpdate = "CreateOrUpdate"
+	Skip           = "Skip"
 )
-
-func TestEventTarget(t *testing.T) {
-	target := EventTarget{
-		DataID: 123,
-		Labels: map[string]string{"event": "normal"},
-	}
-
-	ConfEventScrapeFiles = []string{"/path/to/file"}
-	ConfEventScrapeInterval = "1m"
-	ConfEventMaxSpan = "2h"
-
-	b, err := target.YamlBytes()
-	assert.NoError(t, err)
-
-	excepted := `type: kubeevent
-name: event_collect
-version: "1"
-task_id: 1
-dataid: 123
-upmetrics_dataid: 0
-interval: 1m
-event_span: 2h
-tail_files:
-- /path/to/file
-labels:
-- event: normal
-`
-
-	assert.Equal(t, excepted, string(b))
-	assert.Equal(t, "kubernetes-event.conf", target.FileName())
-}

@@ -20,16 +20,23 @@ type QueryString struct {
 	q     string
 	query elastic.Query
 
-	nestedField func(string) string
+	checkNestedField func(string) string
+
+	nestedFields []string
 }
 
 // NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
-func NewQueryString(q string, nestedField func(string) string) *QueryString {
+func NewQueryString(q string, checkNestedField func(string) string) *QueryString {
 	return &QueryString{
-		q:           q,
-		query:       elastic.NewBoolQuery(),
-		nestedField: nestedField,
+		q:                q,
+		query:            elastic.NewBoolQuery(),
+		checkNestedField: checkNestedField,
+		nestedFields:     make([]string, 0),
 	}
+}
+
+func (s *QueryString) NestedFields() []string {
+	return s.nestedFields
 }
 
 func (s *QueryString) Parser() (elastic.Query, error) {
@@ -42,7 +49,29 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 		return s.query, err
 	}
 
-	return s.walk(ast)
+	conditionQuery, err := s.walk(ast)
+	if err != nil {
+		err = fmt.Errorf("query string walk error %s", err)
+		return s.query, err
+	}
+
+	// 如果 nestedFields 不存在则直接使用 queryString 透传
+	if len(s.nestedFields) == 0 {
+		qs := elastic.NewQueryStringQuery(s.q).AnalyzeWildcard(true)
+		return qs, nil
+	}
+
+	for _, nestedKey := range s.nestedFields {
+		conditionQuery = elastic.NewNestedQuery(nestedKey, conditionQuery)
+	}
+
+	return conditionQuery, nil
+}
+
+func (s *QueryString) check(field string) {
+	if key := s.checkNestedField(field); key != "" {
+		s.nestedFields = append(s.nestedFields, key)
+	}
 }
 
 func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
@@ -81,9 +110,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 	case *parser.MatchCondition:
 		if c.Field != "" {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
-			if key := s.nestedField(c.Field); key != "" {
-				leftQ = elastic.NewNestedQuery(key, leftQ)
-			}
+			s.check(c.Field)
 		} else {
 			leftQ = elastic.NewQueryStringQuery(fmt.Sprintf(`"%s"`, c.Value))
 		}
@@ -99,16 +126,12 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 		} else {
 			q.Lt(*c.End)
 		}
-		if key := s.nestedField(c.Field); key != "" {
-			leftQ = elastic.NewNestedQuery(key, q)
-		}
+		s.check(c.Field)
 		leftQ = q
 	case *parser.WildcardCondition:
 		if c.Field != "" {
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
-			if key := s.nestedField(c.Field); key != "" {
-				leftQ = elastic.NewNestedQuery(key, leftQ)
-			}
+			s.check(c.Field)
 		} else {
 			leftQ = elastic.NewQueryStringQuery(c.Value).AnalyzeWildcard(true)
 		}

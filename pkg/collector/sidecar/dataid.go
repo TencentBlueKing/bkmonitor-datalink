@@ -113,12 +113,12 @@ func (w *Watcher) upsertDataID(dataID *bkv1beta1.DataID) {
 	// 只处理 collector 用途且 privileged scope 的 dataid
 	usage := dataID.Labels[keyUsage]
 	if !strings.HasPrefix(usage, usagePrefix) {
-		logger.Warnf("want collector dataid, but go '%s', skipped", usage)
+		logger.Warnf("want collector dataid, but got '%s', skipped", usage)
 		return
 	}
 	scope := dataID.Labels[keyScope]
 	if scope != define.ConfigTypePrivileged {
-		logger.Warnf("want privileged scope, but go '%s'", scope)
+		logger.Warnf("want privileged scope, but got '%s'", scope)
 		return
 	}
 
@@ -220,5 +220,5 @@ func (w *Watcher) HandleDataIDUpdate(oldObj interface{}, newObj interface{}) {
 }
 
 func newDataIDTypeError(obj interface{}) error {
-	return fmt.Errorf("unexpected DataID type, got %T", obj)
+	return fmt.Errorf("expected DataID type, but got %T", obj)
 }

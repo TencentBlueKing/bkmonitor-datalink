@@ -575,7 +575,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 		return 0, err
 	}
 
-	if query.Size == 0 || query.Size > i.maxSize {
+	if query.Size > i.maxSize {
 		query.Size = i.maxSize
 	}
 
@@ -675,7 +675,7 @@ func (i *Instance) QuerySeriesSet(
 			return
 		}
 		var size int
-		if query.Size > 0 || query.Size > i.maxSize {
+		if query.Size > 0 && query.Size < i.maxSize {
 			size = query.Size
 		} else {
 			size = i.maxSize

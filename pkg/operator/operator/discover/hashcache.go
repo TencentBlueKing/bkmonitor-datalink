@@ -20,6 +20,7 @@ import (
 	"github.com/valyala/bytebufferpool"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/labelspool"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/fasttime"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -85,7 +86,7 @@ func (c *hashCache) Check(namespace string, tlset, tglbs model.LabelSet) bool {
 
 	_, ok := c.cache[h]
 	if ok {
-		c.cache[h] = time.Now().Unix()
+		c.cache[h] = fasttime.UnixTimestamp()
 	}
 	return ok
 }
@@ -96,7 +97,7 @@ func (c *hashCache) Set(namespace string, tlset, tglbs model.LabelSet) {
 	c.mut.Lock()
 	defer c.mut.Unlock()
 
-	c.cache[h] = time.Now().Unix()
+	c.cache[h] = fasttime.UnixTimestamp()
 }
 
 func (c *hashCache) hash(namespace string, tlset, tglbs model.LabelSet) uint64 {

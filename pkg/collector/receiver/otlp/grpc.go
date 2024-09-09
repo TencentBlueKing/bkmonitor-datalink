@@ -21,6 +21,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/prettyprint"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -62,7 +63,7 @@ func (s tracesService) Export(ctx context.Context, req ptraceotlp.Request) (ptra
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := define.TokenFromGrpcMetadata(md)
+		tk := tokenparser.FromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}
@@ -110,7 +111,7 @@ func (s metricsService) Export(ctx context.Context, req pmetricotlp.Request) (pm
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := define.TokenFromGrpcMetadata(md)
+		tk := tokenparser.FromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}
@@ -158,7 +159,7 @@ func (s logsService) Export(ctx context.Context, req plogotlp.Request) (plogotlp
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if ok {
-		tk := define.TokenFromGrpcMetadata(md)
+		tk := tokenparser.FromGrpcMetadata(md)
 		if len(tk) > 0 {
 			r.Token = define.Token{Original: tk}
 		}

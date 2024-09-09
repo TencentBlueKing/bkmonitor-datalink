@@ -10,6 +10,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -18,6 +19,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/scraper"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+)
+
+const (
+	defaultConcurrency = 16
 )
 
 type scrapeStats struct {
@@ -38,7 +43,7 @@ func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan string {
+func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -53,7 +58,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 		}
 	}
 
-	out := make(chan string, 8)
+	out := make(chan string, defaultConcurrency)
 	if len(cfgs) == 0 {
 		out <- fmt.Sprintf("warning: no monitor targets found, namespace=%s, monitor=%s", namespace, monitor)
 		close(out)
@@ -61,7 +66,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 	}
 
 	if workers <= 0 {
-		workers = 8 // 默认 workers 数
+		workers = defaultConcurrency
 	}
 	sem := make(chan struct{}, workers)
 	logger.Infof("scrape task: namespace=%s, monitor=%s, workers=%d", namespace, monitor, workers)
@@ -81,7 +86,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 				return
 			}
 
-			for text := range client.StringCh() {
+			for text := range client.StringCh(ctx) {
 				out <- text
 			}
 		}(cfg)
@@ -95,7 +100,7 @@ func (c *Operator) scrapeForce(namespace, monitor string, workers int) chan stri
 	return out
 }
 
-func (c *Operator) scrapeAll(workers int) *scrapeStats {
+func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -117,7 +122,7 @@ func (c *Operator) scrapeAll(workers int) *scrapeStats {
 	}()
 
 	if workers <= 0 {
-		workers = 8 // 默认 workers 数
+		workers = defaultConcurrency
 	}
 	sem := make(chan struct{}, workers)
 
@@ -135,7 +140,7 @@ func (c *Operator) scrapeAll(workers int) *scrapeStats {
 				logger.Warnf("failed to crate scraper http client: %v", err)
 				return
 			}
-			lines, errs := client.Lines()
+			lines, errs := client.Lines(ctx)
 			for _, err := range errs {
 				logger.Warnf("failed to scrape target, namespace=%s, monitor=%s, err: %v", cfg.Meta.Namespace, cfg.Meta.Name, err)
 			}

@@ -7,27 +7,29 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package dataidwatcher
+package monitor
 
 import (
-	"github.com/spf13/viper"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/define"
 )
 
-const (
-	confBkEnvPath = "operator.bk_env"
-)
-
-var ConfBkEnv string
-
-func updateConfig() {
-	ConfBkEnv = viper.GetString(confBkEnvPath)
+type SearchAlertResp struct {
+	define.ApiCommonRespMeta
+	Data SearchAlertData `json:"data"`
 }
 
-func init() {
-	if err := config.EventBus.Subscribe(config.EventConfigPostParse, updateConfig); err != nil {
-		logger.Errorf("failed to subscribe event %s, err: %v", config.EventConfigPostParse, err)
-	}
+type SearchAlertData struct {
+	Total  int                   `json:"total"`
+	Alerts []SearchAlertDataInfo `json:"alerts"`
+}
+
+type SearchAlertDataInfo struct {
+	BkBizID          int32  `json:"bk_biz_id"`
+	BkBizName        string `json:"bk_biz_name"`
+	StrategyID       int32  `json:"strategy_id"`
+	StrategyName     string `json:"strategy_name"`
+	FirstAnomalyTime int64  `json:"first_anomaly_time"`
+	LatestTime       int64  `json:"latest_time"`
+	EventID          string `json:"event_id"`
+	Status           string `json:"status"`
 }

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 )
 
 func TestCalcShouldStatefulSetWorker(t *testing.T) {
@@ -42,9 +44,9 @@ func TestCalcShouldStatefulSetWorker(t *testing.T) {
 		},
 	}
 
-	ConfStatefulSetWorkerHpa = true
-	ConfStatefulSetMaxReplicas = 10
-	ConfStatefulSetWorkerFactor = 200
+	configs.G().StatefulSetWorkerHpa = true
+	configs.G().StatefulSetMaxReplicas = 10
+	configs.G().StatefulSetWorkerFactor = 200
 
 	for _, arg := range args {
 		assert.Equal(t, arg.Output, calcShouldStatefulSetWorker(arg.Input))

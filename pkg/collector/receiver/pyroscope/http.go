@@ -26,6 +26,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/pipeline"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver"
@@ -190,7 +191,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	token := define.TokenFromHttpRequest(req)
+	token := tokenparser.FromHttpRequest(req)
 	if token == "" {
 		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordProfiles)
 		logger.Warnf("failed to get profiles token, ip=%s, err: %v", ip, err)
@@ -253,7 +254,7 @@ func (s HttpService) ProfilesIngest(w http.ResponseWriter, req *http.Request) {
 	s.Publish(r)
 	logger.Debugf("record published, ip=%s, token=%s", ip, r.Token.Original)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte("OK"))
-	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, len(buf.Bytes()), start)
+	receiver.RecordHandleMetrics(metricMonitor, r.Token, define.RequestHttp, define.RecordProfiles, buf.Len(), start)
 }
 
 func parseForm(req *http.Request, body []byte) (*multipart.Form, error) {

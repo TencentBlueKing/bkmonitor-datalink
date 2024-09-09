@@ -14,20 +14,24 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/store/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 )
 
-// MetadataCenter The configuration center uses dataId as the key and stores basic information,
+// MetadataCenter The configuration center uses DataId as the key and stores basic information,
 // including app_name, bk_biz_name, app_id, etc...
 type MetadataCenter struct {
-	mapping *sync.Map
-	consul  consul.Instance
+	Mapping *sync.Map
+	Consul  store.Store
 }
 
-// ConsulInfo info of consul
+// ConsulInfo info of Consul
 type ConsulInfo struct {
+	Token       string           `json:"token"`
 	BkBizId     int              `json:"bk_biz_id"`
 	BkBizName   any              `json:"bk_biz_name"`
 	AppId       int              `json:"app_id"`
@@ -37,9 +41,11 @@ type ConsulInfo struct {
 	SaveEsInfo  TraceEsConfig    `json:"save_es_info"`
 }
 
-// DataIdInfo global dataId info in pre-calculate
+// DataIdInfo global DataId info in pre-calculate
 type DataIdInfo struct {
-	dataId string
+	// DataId of trace datasource
+	DataId string
+	Token  string
 
 	BaseInfo BaseInfo
 
@@ -80,41 +86,57 @@ var (
 func CreateMetadataCenter() error {
 	consulClient, err := consul.GetInstance()
 	if err != nil {
-		logger.Errorf("Failed to create consul client. error: %s", err)
+		logger.Errorf("Failed to create Consul client. error: %s", err)
 		return err
 	}
 	centerInstance = &MetadataCenter{
-		mapping: &sync.Map{},
-		consul:  *consulClient,
+		Mapping: &sync.Map{},
+		Consul:  consulClient,
 	}
 	logger.Infof("Create metadata-center successfully")
 	return nil
 }
 
-// AddDataIdAndInfo manually specify the configuration of dataid for testing
-func (c *MetadataCenter) AddDataIdAndInfo(dataId string, info DataIdInfo) {
-	info.dataId = dataId
-	c.mapping.Store(dataId, info)
+// CreateMockMetadataCenter create fake client
+func CreateMockMetadataCenter() error {
+	centerInstance = &MetadataCenter{
+		Mapping: &sync.Map{},
+		Consul:  store.CreateDummyStore(),
+	}
+	logger.Warnf("Create fake consulClient, make sure you guys are not in production!!!")
+	return nil
 }
 
-// AddDataId get the configuration of this dataId from consul.
-// If this configuration does not exist in consul, ignored.
+// InitMetadataCenter only for tests
+func InitMetadataCenter(c *MetadataCenter) {
+	centerInstance = c
+}
+
+// AddDataIdAndInfo manually specify the configuration of dataid for testing
+func (c *MetadataCenter) AddDataIdAndInfo(dataId, token string, info DataIdInfo) {
+	info.DataId = dataId
+	info.Token = token
+	c.Mapping.Store(dataId, info)
+}
+
+// AddDataId get the configuration of this DataId from Consul.
+// If this configuration does not exist in Consul, ignored.
 func (c *MetadataCenter) AddDataId(dataId string) error {
-	info := DataIdInfo{dataId: dataId}
+	info := DataIdInfo{DataId: dataId}
 	if err := c.fillInfo(dataId, &info); err != nil {
 		return err
 	}
 
-	c.mapping.Store(dataId, info)
-	logger.Infof("get dataId info successfully, dataId: %s, info: %+v", dataId, info)
+	c.Mapping.Store(dataId, info)
+	logger.Infof("get DataId info successfully, DataId: %s, info: %+v", dataId, info)
 	return nil
 }
 
 func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	key := fmt.Sprintf("%s/apm/data_id/%s", config.StorageConsulPathPrefix, dataId)
-	bytesData, err := c.consul.Get(key)
+	bytesData, err := c.Consul.Get(key)
 	if err != nil {
-		return fmt.Errorf("failed to get key: %s from consul. error: %s", key, err)
+		return fmt.Errorf("failed to get key: %s from Consul. error: %s", key, err)
 	}
 	if bytesData == nil {
 		return fmt.Errorf("failed to get value as key: %s maybe not exist", key)
@@ -134,6 +156,7 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 		bizName = apmInfo.BkBizName.(string)
 	}
 
+	info.Token = apmInfo.Token
 	info.BaseInfo = BaseInfo{
 		BkBizId:   strconv.Itoa(apmInfo.BkBizId),
 		BkBizName: bizName,
@@ -146,28 +169,54 @@ func (c *MetadataCenter) fillInfo(dataId string, info *DataIdInfo) error {
 	return nil
 }
 
-// GetKafkaConfig get kafka config of dataId
+// CheckUpdate check the info whether updated
+func (c *MetadataCenter) CheckUpdate(dataId string) (bool, string) {
+	info := DataIdInfo{DataId: dataId}
+	if err := c.fillInfo(dataId, &info); err != nil {
+		logger.Warnf("Check DataId updated failed, error: %s", err)
+		return false, ""
+	}
+	v, exist := c.Mapping.Load(dataId)
+	if !exist {
+		logger.Warnf("Check DataId updated but not found in Mapping!")
+		return true, "DataId not found in mapping"
+	}
+
+	diff := cmp.Diff(v, info)
+	if diff != "" {
+		return true, diff
+	}
+	return false, ""
+}
+
+// GetKafkaConfig get kafka config of DataId
 func (c *MetadataCenter) GetKafkaConfig(dataId string) TraceKafkaConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).TraceKafka
 }
 
-// GetTraceEsConfig get trace es config of dataId
+// GetTraceEsConfig get trace es config of DataId
 func (c *MetadataCenter) GetTraceEsConfig(dataId string) TraceEsConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).TraceEs
 }
 
-// GetSaveEsConfig get save es config of dataId
+// GetSaveEsConfig get save es config of DataId
 func (c *MetadataCenter) GetSaveEsConfig(dataId string) TraceEsConfig {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).SaveEs
 }
 
-// GetBaseInfo get biz info of dataId
+// GetBaseInfo get biz info of DataId
 func (c *MetadataCenter) GetBaseInfo(dataId string) BaseInfo {
-	v, _ := c.mapping.Load(dataId)
+	v, _ := c.Mapping.Load(dataId)
 	return v.(DataIdInfo).BaseInfo
+}
+
+// GetToken of DataId
+func (c *MetadataCenter) GetToken(dataId string) string {
+	v, _ := c.Mapping.Load(dataId)
+	return v.(DataIdInfo).Token
 }
 
 // GetMetadataCenter return a global metadata provider

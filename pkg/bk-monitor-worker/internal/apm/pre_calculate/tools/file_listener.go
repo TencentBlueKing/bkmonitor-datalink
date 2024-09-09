@@ -7,41 +7,24 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package target
+package tools
 
 import (
-	"testing"
+	"context"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/core"
 )
 
-func TestEventTarget(t *testing.T) {
-	target := EventTarget{
-		DataID: 123,
-		Labels: map[string]string{"event": "normal"},
+func StartListenerFromFile(ctx context.Context, filePath string) error {
+	processor, err := pre_calculate.Initial(ctx)
+	if err != nil {
+		return err
+	}
+	if err := core.CreateMockMetadataCenter(); err != nil {
+		return err
 	}
 
-	ConfEventScrapeFiles = []string{"/path/to/file"}
-	ConfEventScrapeInterval = "1m"
-	ConfEventMaxSpan = "2h"
-
-	b, err := target.YamlBytes()
-	assert.NoError(t, err)
-
-	excepted := `type: kubeevent
-name: event_collect
-version: "1"
-task_id: 1
-dataid: 123
-upmetrics_dataid: 0
-interval: 1m
-event_span: 2h
-tail_files:
-- /path/to/file
-labels:
-- event: normal
-`
-
-	assert.Equal(t, excepted, string(b))
-	assert.Equal(t, "kubernetes-event.conf", target.FileName())
+	processor.RunWithStandLone(filePath)
+	return nil
 }

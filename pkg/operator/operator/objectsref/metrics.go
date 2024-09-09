@@ -37,9 +37,7 @@ func setWorkloadCount(counts map[string]int) {
 	workloadMap = counts
 }
 
-var (
-	clusterNode atomic.Int64
-)
+var clusterNode atomic.Int64
 
 func GetClusterNodeCount() int {
 	return int(clusterNode.Load())

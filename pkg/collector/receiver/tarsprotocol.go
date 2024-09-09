@@ -68,13 +68,13 @@ func (s *TarsProtocol) Invoke(ctx context.Context, req []byte) []byte {
 	rspPackage.IRequestId = reqPackage.IRequestId
 	rspPackage.CPacketType = reqPackage.CPacketType
 	if ok := current.SetPacketTypeFromContext(ctx, rspPackage.CPacketType); !ok {
-		logger.Errorf("SetPacketType in context fail, packetType=%v", rspPackage.CPacketType)
+		logger.Errorf("failed to set packet type (%v)", rspPackage.CPacketType)
 	}
 	if ok := current.SetRequestContext(ctx, reqPackage.Context); !ok {
-		logger.Errorf("SetRequestContext fail, ctx=%v", reqPackage.Context)
+		logger.Errorf("failed to set request context (%v)", reqPackage.Context)
 	}
 	if ok := current.SetRequestStatus(ctx, reqPackage.Status); !ok {
-		logger.Errorf("SetRequestStatus fail, status=%v", reqPackage.Status)
+		logger.Errorf("failed to set request status (%v)", reqPackage.Status)
 	}
 
 	servant, ok := s.servants[reqPackage.SServantName]

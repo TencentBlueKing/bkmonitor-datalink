@@ -28,12 +28,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 	mocker.InitTestDBConfig("../../dist/bmw.yaml")
 
 	metric := fmt.Sprintf("prometheus_%s", time.Now().Format("2006010215"))
-	options := GetPrometheusWriteOptions(
-		PrometheusWriterEnabled(true),
-		PrometheusWriterUrl(config.PromRemoteWriteUrl),
-		PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
-	)
-	prometheusWriter := NewPrometheusWriterClient(options)
+	prometheusWriter := NewPrometheusWriterClient("", config.PromRemoteWriteUrl, config.PromRemoteWriteHeaders)
 	ts := append([]prompb.TimeSeries{
 
 		{
@@ -142,7 +137,7 @@ func TestPrometheusWriter_WriteBatch(t *testing.T) {
 		},
 	})
 
-	err := prometheusWriter.WriteBatch(ctx, "", ts)
+	err := prometheusWriter.WriteBatch(ctx, "", prompb.WriteRequest{Timeseries: ts})
 	if err != nil {
 		log.Fatal(err)
 	}

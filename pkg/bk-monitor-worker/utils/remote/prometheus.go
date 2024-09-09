@@ -21,89 +21,65 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
+	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
 	tokenKey = "X-BK-TOKEN"
 )
 
-type PrometheusStorageDataList []PrometheusStorageData
-
-type PrometheusStorageData struct {
-	Value []prompb.TimeSeries
-}
-
 type PrometheusWriterOption func(options *PrometheusWriterOptions)
 
 type PrometheusWriterOptions struct {
-	enabled bool
-	url     string
-	headers map[string]string
-}
-
-func PrometheusWriterEnabled(b bool) PrometheusWriterOption {
-	return func(options *PrometheusWriterOptions) {
-		options.enabled = b
-	}
+	Url     string
+	Headers map[string]string
 }
 
 func PrometheusWriterUrl(u string) PrometheusWriterOption {
 	return func(options *PrometheusWriterOptions) {
-		options.url = u
+		options.Url = u
 	}
 }
 
 func PrometheusWriterHeaders(h map[string]string) PrometheusWriterOption {
 	return func(options *PrometheusWriterOptions) {
-		options.headers = h
+		options.Headers = h
 	}
 }
 
 type PrometheusWriter struct {
-	config PrometheusWriterOptions
+	url     string
+	headers map[string]string
 
-	client *http.Client
+	client       *http.Client
+	isValid      bool
+	logger       monitorLogger.Logger
+	responseHook func(bool)
 }
 
-func GetPrometheusWriteOptions(opts ...PrometheusWriterOption) PrometheusWriterOptions {
-	var res PrometheusWriterOptions
-	for _, opt := range opts {
-		opt(&res)
-	}
-	return res
-}
-
-func (d PrometheusStorageDataList) ToTimeSeries() []prompb.TimeSeries {
-	if d == nil {
-		return nil
-	}
-	var ts []prompb.TimeSeries
-	for _, item := range d {
-		ts = append(ts, item.Value...)
-	}
-	return ts
-}
-
-func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList []prompb.TimeSeries) error {
-	if !p.config.enabled {
+func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
+	if !p.isValid || len(writeReq.Timeseries) == 0 {
 		return nil
 	}
 
-	reqBytes, err := proto.Marshal(&prompb.WriteRequest{Timeseries: tsList})
+	// TODO 补充指标的元数据信息
+	reqBytes, err := proto.Marshal(&writeReq)
 	if err != nil {
 		return err
 	}
 	compressedData := snappy.Encode(nil, reqBytes)
-	req, err := http.NewRequestWithContext(ctx, "POST", p.config.url, bytes.NewBuffer(compressedData))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.url, bytes.NewBuffer(compressedData))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	req.Header.Set("Content-Encoding", "snappy")
 	req.Header.Set("X-Prometheus-Remote-Write-Version", "0.1.0")
-	for k, v := range p.config.headers {
+
+	for k, v := range p.headers {
 		req.Header.Set(k, v)
 	}
 
@@ -113,6 +89,7 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList 
 	}
 
 	resp, err := p.client.Do(req)
+
 	if err != nil {
 		return errors.Errorf("[PromRemoteWrite] request failed: %s", err)
 	}
@@ -123,12 +100,12 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, tsList 
 		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
 	}
 
-	logger.Infof("prom remote wirte ts: %d", len(tsList))
+	p.logger.Infof("[RemoteWrite] push %d series to host: %s (Headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
 
 	return nil
 }
 
-func NewPrometheusWriterClient(config PrometheusWriterOptions) *PrometheusWriter {
+func NewPrometheusWriterClient(token, url string, headers map[string]string) *PrometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
@@ -137,8 +114,25 @@ func NewPrometheusWriterClient(config PrometheusWriterOptions) *PrometheusWriter
 		Timeout: 10 * time.Second,
 	}
 
+	h := make(map[string]string, len(headers))
+	maps.Copy(h, headers)
+	if _, exist := h["x-bk-token"]; !exist {
+		if _, oExist := h[tokenKey]; !oExist {
+			h[tokenKey] = token
+		}
+	} else {
+		h[tokenKey] = h["x-bk-token"]
+	}
+	isValid := false
+	if v, _ := h[tokenKey]; v != "" {
+		isValid = true
+	}
+
 	return &PrometheusWriter{
-		config: config,
-		client: client,
+		url:     url,
+		headers: h,
+		client:  client,
+		isValid: isValid,
+		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
 }

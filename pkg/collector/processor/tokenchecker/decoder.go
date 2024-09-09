@@ -22,6 +22,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -284,12 +285,12 @@ func (d proxyTokenDecoder) Skip() bool {
 
 func (d proxyTokenDecoder) Decode(s string) (define.Token, error) {
 	logger.Debugf("proxy token=%v", s)
-	if define.WrapProxyToken(define.Token{}) == s {
+	if tokenparser.WrapProxyToken(define.Token{}) == s {
 		return define.Token{}, errors.New("reject empty token")
 	}
 
 	token := define.Token{Original: d.token, ProxyDataId: d.dataId}
-	if define.WrapProxyToken(token) != s {
+	if tokenparser.WrapProxyToken(token) != s {
 		return define.Token{}, errors.Errorf("reject invalid token: %s", s)
 	}
 

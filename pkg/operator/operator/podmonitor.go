@@ -11,12 +11,14 @@ package operator
 
 import (
 	"fmt"
+	"strings"
 
 	promv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"gopkg.in/yaml.v2"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/feature"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/kubernetesd"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -34,7 +36,7 @@ func (c *Operator) handlePodMonitorAdd(obj interface{}) {
 	}
 
 	// 新增的 podmonitor 命中黑名单则流程终止
-	if IfRejectPodMonitor(podMonitor) {
+	if ifRejectPodMonitor(podMonitor) {
 		logger.Infof("add action match blacklist rules, podMonitor=%s", podMonitorID(podMonitor))
 		return
 	}
@@ -65,7 +67,7 @@ func (c *Operator) handlePodMonitorUpdate(oldObj interface{}, newObj interface{}
 	}
 
 	// 对于更新的 podmonitor 如果新的 spec 命中黑名单 则需要将原有的 podmonitor 移除
-	if IfRejectPodMonitor(cur) {
+	if ifRejectPodMonitor(cur) {
 		logger.Infof("update action match blacklist rules, podMonitor=%s", podMonitorID(cur))
 		for _, name := range c.getPodMonitorDiscoversName(cur) {
 			c.deleteDiscoverByName(name)
@@ -203,7 +205,7 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 			},
 			Client:            c.client,
 			Namespaces:        namespaces,
-			KubeConfig:        ConfKubeConfig,
+			KubeConfig:        configs.G().KubeConfig,
 			BasicAuth:         endpoint.BasicAuth.DeepCopy(),
 			BearerTokenSecret: endpoint.BearerTokenSecret.DeepCopy(),
 			TLSConfig:         &promv1.TLSConfig{SafeTLSConfig: safeTlsConfig},
@@ -214,4 +216,19 @@ func (c *Operator) createPodMonitorDiscovers(podMonitor *promv1.PodMonitor) []di
 		discovers = append(discovers, dis)
 	}
 	return discovers
+}
+
+func ifRejectPodMonitor(monitor *promv1.PodMonitor) bool {
+	if monitor == nil {
+		return false
+	}
+	for _, rule := range configs.G().MonitorBlacklistMatchRules {
+		if !rule.Validate() {
+			continue
+		}
+		if strings.ToUpper(rule.Kind) == strings.ToUpper(monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
+			return true
+		}
+	}
+	return false
 }

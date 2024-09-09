@@ -7,15 +7,26 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package config
+package tokenparser
 
 import (
-	eb "github.com/asaskevich/EventBus"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-var EventBus = eb.New()
+func TestFromString(t *testing.T) {
+	t.Run("invalid", func(t *testing.T) {
+		a, b := FromString("x")
+		assert.Equal(t, "x", a)
+		assert.Empty(t, b)
+	})
 
-const (
-	EventConfigPreParse  = "sys:config:pre-parse"
-	EventConfigPostParse = "sys:config:post-parse"
-)
+	t.Run("success", func(t *testing.T) {
+		a, b := FromString(define.KeyToken + ":" + "token:value")
+		assert.Equal(t, "value", a)
+		assert.Equal(t, "token", b)
+	})
+}

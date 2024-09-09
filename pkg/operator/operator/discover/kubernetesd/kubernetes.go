@@ -26,7 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/eplabels"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/k8sutils"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logconf"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/common/logx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover/shareddiscovery"
 )
@@ -106,7 +106,7 @@ func (d *Discover) Start() error {
 		cfg.NamespaceDiscovery.Names = d.getNamespaces()
 		cfg.KubeConfig = d.opts.KubeConfig
 
-		discovery, err := promk8ssd.New(logconf.New(d.Type()), &cfg)
+		discovery, err := promk8ssd.New(logx.New(d.Type()), &cfg)
 		if err != nil {
 			return nil, errors.Wrap(err, d.Type())
 		}

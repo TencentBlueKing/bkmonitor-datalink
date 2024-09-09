@@ -7,44 +7,34 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package pre_calculate
+package configs
 
 import (
-	"context"
 	"os"
-	"os/signal"
-	"syscall"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/stretchr/testify/assert"
 )
 
-const dataIdFilePath = "./connections_test.yaml"
+const content = `
+logger:
+ level: info
+task_type: daemonset
+pid_path: /data/pid/bkmonitorbeat.pid
+child_config_path: /data/bkmonitorbeat/config/child_configs
+watch_path: ["/data/bkmonitorbeat/config/bkmonitorbeat.conf", "/data/bkmonitorbeat/config/child_configs"]
+`
 
-func TestApmPreCalculateViaFile(t *testing.T) {
+func TestConfig(t *testing.T) {
+	f, err := os.CreateTemp("", "reloader-configs.yaml")
+	assert.NoError(t, err)
+	defer os.Remove(f.Name())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	op, err := Initial(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	errChan := make(chan error, 1)
-	go op.Run(errChan)
-	runErr := <-errChan
-	if runErr != nil {
-		logger.Fatal("failed to run")
-	}
-	close(errChan)
-	go op.WatchConnections(dataIdFilePath)
+	_, err = f.Write([]byte(content))
+	assert.NoError(t, err)
+	assert.NoError(t, Load(f.Name()))
 
-	s := make(chan os.Signal)
-	signal.Notify(s, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT)
-	for {
-		switch <-s {
-		case syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGINT:
-			cancel()
-			logger.Infof("Bye")
-			os.Exit(0)
-		}
-	}
+	t.Logf("configs: %#v", G())
+
+	assert.Equal(t, "daemonset", G().TaskType)
 }

@@ -16,12 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/config"
 )
 
 func TestServiceMonitorRelabel(t *testing.T) {
-	_ = config.InitConfig()
 	m := &promv1.ServiceMonitor{
 		TypeMeta:   metav1.TypeMeta{Kind: "serviceMonitor"},
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "testnamespace"},

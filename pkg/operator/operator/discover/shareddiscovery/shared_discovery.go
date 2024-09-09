@@ -157,6 +157,8 @@ func (sd *SharedDiscovery) start() {
 		case <-ticker.C:
 			sd.mut.Lock()
 			now := time.Now().Unix()
+
+			var total int
 			for source, tg := range sd.store {
 				// 超过 10 分钟未更新且已经没有目标的对象需要删除
 				if now-tg.updatedAt > 600 {
@@ -166,7 +168,11 @@ func (sd *SharedDiscovery) start() {
 						logger.Infof("sharedDiscovery %s delete tg source '%s'", sd.uk, source)
 					}
 				}
+				if tg.tg != nil {
+					total += len(tg.tg.Targets)
+				}
 			}
+			sd.mm.SetTargetCount(total)
 			sd.mut.Unlock()
 		}
 	}

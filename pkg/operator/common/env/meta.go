@@ -7,40 +7,20 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package logconf
+package env
 
-import (
-	"bytes"
+import "os"
 
-	"github.com/go-kit/log"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
-)
-
-type Logger struct {
-	prefix string
-	w      log.Logger
+type Metadata struct {
+	NodeName  string `yaml:"node_name"`
+	PodName   string `yaml:"pod_name"`
+	Namespace string `yaml:"namespace"`
 }
 
-func New(prefix string) *Logger {
-	l := &Logger{
-		w: log.NewLogfmtLogger(writer{
-			prefix: prefix,
-		}),
+func Load() Metadata {
+	return Metadata{
+		NodeName:  os.Getenv("BKMONITOR_NODE_NAME"),
+		PodName:   os.Getenv("BKMONITOR_POD"),
+		Namespace: os.Getenv("BKMONITOR_NAMESPACE"),
 	}
-	return l
-}
-
-func (l *Logger) Log(keyvals ...interface{}) error {
-	return l.w.Log(keyvals...)
-}
-
-type writer struct {
-	prefix string
-}
-
-func (w writer) Write(b []byte) (int, error) {
-	s := string(bytes.TrimSpace(b))
-	logger.Infof("%s\t%s", w.prefix, s)
-	return len(s), nil
 }

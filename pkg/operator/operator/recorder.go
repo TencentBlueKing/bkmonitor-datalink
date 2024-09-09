@@ -23,7 +23,7 @@ type Recorder struct {
 	activeConfigFile map[string]ConfigFileRecord
 }
 
-func NewRecorder() *Recorder {
+func newRecorder() *Recorder {
 	return &Recorder{activeConfigFile: make(map[string]ConfigFileRecord)}
 }
 
@@ -53,7 +53,7 @@ type MonitorLocationRecord struct {
 	DataID  int    `json:"dataid"`
 }
 
-func NewConfigFileRecord(dis discover.Discover, cfg *discover.ChildConfig) ConfigFileRecord {
+func newConfigFileRecord(dis discover.Discover, cfg *discover.ChildConfig) ConfigFileRecord {
 	return ConfigFileRecord{
 		Service:  dis.MonitorMeta().ID(),
 		Meta:     dis.MonitorMeta(),

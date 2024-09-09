@@ -10,17 +10,10 @@
 package core
 
 import (
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
-
-// Uuid return a random uuid
-func Uuid() string {
-	r, _ := uuid.NewRandom()
-	return r.String()
-}
 
 var logger = monitorLogger.With(
 	zap.String("location", "core"),

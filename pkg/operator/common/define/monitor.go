@@ -19,17 +19,10 @@ const (
 	UnknownNode      = "unknown"
 
 	ReSyncPeriod = 5 * time.Minute
-
-	ActionAdd            = "add"
-	ActionDelete         = "delete"
-	ActionUpdate         = "update"
-	ActionCreateOrUpdate = "createOrUpdate"
-	ActionSkip           = "skip"
-
-	EnvNodeName  = "NODE_NAME"
-	EnvPodName   = "POD"
-	EnvNamespace = "NAMESPACE"
 )
+
+// ConfigFilePath 主配置文件路径
+var ConfigFilePath string
 
 type CheckFunc func(string) (string, bool)
 

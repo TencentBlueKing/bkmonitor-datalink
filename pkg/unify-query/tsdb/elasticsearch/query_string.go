@@ -22,7 +22,7 @@ type QueryString struct {
 
 	checkNestedField func(string) string
 
-	nestedFields []string
+	nestedFields map[string]struct{}
 }
 
 // NewQueryString 解析 es query string，该逻辑暂时不使用，直接透传 query string 到 es 代替
@@ -31,11 +31,11 @@ func NewQueryString(q string, checkNestedField func(string) string) *QueryString
 		q:                q,
 		query:            elastic.NewBoolQuery(),
 		checkNestedField: checkNestedField,
-		nestedFields:     make([]string, 0),
+		nestedFields:     make(map[string]struct{}),
 	}
 }
 
-func (s *QueryString) NestedFields() []string {
+func (s *QueryString) NestedFields() map[string]struct{} {
 	return s.nestedFields
 }
 
@@ -62,7 +62,7 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 		return qs, nil
 	}
 
-	for _, nestedKey := range s.nestedFields {
+	for nestedKey := range s.nestedFields {
 		conditionQuery = elastic.NewNestedQuery(nestedKey, conditionQuery)
 	}
 
@@ -71,7 +71,9 @@ func (s *QueryString) Parser() (elastic.Query, error) {
 
 func (s *QueryString) check(field string) {
 	if key := s.checkNestedField(field); key != "" {
-		s.nestedFields = append(s.nestedFields, key)
+		if _, ok := s.nestedFields[key]; !ok {
+			s.nestedFields[key] = struct{}{}
+		}
 	}
 }
 

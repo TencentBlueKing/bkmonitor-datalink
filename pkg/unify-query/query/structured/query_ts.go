@@ -803,6 +803,7 @@ func (q *Query) BuildMetadataQuery(
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
+	query.Source = q.KeepColumns
 	query.DataSource = q.DataSource
 	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {

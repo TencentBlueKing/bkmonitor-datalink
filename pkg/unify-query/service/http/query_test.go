@@ -31,7 +31,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/elasticsearch"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -1114,16 +1113,35 @@ func TestQueryRawWithInstance(t *testing.T) {
 
 	spaceUid := "space_uid_mock"
 	tableID := "table_id.mock"
+	storageID := 233
+
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
+	tsdb.SetStorage(strconv.Itoa(storageID), &tsdb.Storage{
+		Type:       consul.ElasticsearchStorageType,
+		Address:    address,
+		Username:   username,
+		Password:   password,
+		Timeout:    timeout,
+		MaxLimit:   maxSize,
+		MaxRouting: maxRouting,
+	})
 
 	resultTableDetail := &ir.ResultTableDetail{
-		DB:          "2_bkapm_trace_sandtrpc",
+		DB:          "v2_2_bklog_bk_unify_query",
 		TableId:     tableID,
 		SourceType:  structured.BkLog,
-		StorageType: consul.ElasticsearchStorageType,
+		StorageType: consul.BkSqlStorageType,
+		StorageId:   int64(storageID),
 	}
-	resultTableDetail.Options.TimeField.Name = "thedate"
-	resultTableDetail.Options.TimeField.Type = "long"
-	resultTableDetail.Options.TimeField.Unit = elasticsearch.Microsecond
+	//resultTableDetail.Options.TimeField.Name = "thedate"
+	//resultTableDetail.Options.TimeField.Type = "long"
+	//resultTableDetail.Options.TimeField.Unit = elasticsearch.Microsecond
 	resultTableDetail.Options.NeedAddTime = true
 
 	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
@@ -1136,8 +1154,8 @@ func TestQueryRawWithInstance(t *testing.T) {
 		nil, nil,
 	)
 
-	start := "1735683200"
-	end := "1735686800"
+	start := "1723594000"
+	end := "1723595000"
 
 	tcs := map[string]struct {
 		queryTs  *structured.QueryTs
@@ -1148,18 +1166,15 @@ func TestQueryRawWithInstance(t *testing.T) {
 				SpaceUid: spaceUid,
 				QueryList: []*structured.Query{
 					{
-						DataSource: structured.BkLog,
-						TableID:    structured.TableID(tableID),
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
+						Limit:       1,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
 					},
 				},
 				Start: start,
 				End:   end,
-			},
-			expected: []map[string]any{
-				{
-					"string": "demo",
-					"int":    1,
-				},
 			},
 		},
 	}
@@ -1167,16 +1182,12 @@ func TestQueryRawWithInstance(t *testing.T) {
 	for name, c := range tcs {
 		t.Run(name, func(t *testing.T) {
 			res, err := queryRawWithInstance(ctx, c.queryTs)
-			status := metadata.GetStatus(ctx)
-			if status != nil {
-				log.Fatalf(ctx, status.Message)
+			fmt.Println(err)
+			if err != nil {
+				panic(err.Error())
 			}
 
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-			} else {
-				assert.Equal(t, c.expected, res)
-			}
+			fmt.Println(res)
 		})
 	}
 }

@@ -63,12 +63,7 @@ func (i *Instance) GetInstanceType() string {
 }
 
 // QueryRawData 直接查询原始返回
-func (i *Instance) QueryRawData(ctx context.Context,
-	query *metadata.Query,
-	start time.Time,
-	end time.Time,
-	dataCh <-chan map[string]any,
-) error {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) error {
 	return nil
 }
 

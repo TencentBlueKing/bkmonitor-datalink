@@ -53,6 +53,11 @@ const (
 )
 
 const (
+	KeyDocID     = "__doc_id"
+	KeyHighLight = "__highlight"
+)
+
+const (
 	KeyWord = "keyword"
 	Text    = "text"
 	Integer = "integer"
@@ -85,7 +90,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + structured.EsNewStep + k
+			k = prefix + structured.EsOldStep + k
 		}
 		switch v.(type) {
 		case map[string]any:
@@ -277,7 +282,7 @@ func (f *FormatFactory) termAgg(name string, isFirst bool) {
 
 	info.Order = make(map[string]bool, len(f.orders))
 	for key, asc := range f.orders {
-		if name == f.toEs(key) {
+		if name == key {
 			info.Order[KeyValue] = asc
 		} else if isFirst {
 			if key == FieldValue {
@@ -550,7 +555,6 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			}
 
 			for idx, dim := range am.Dimensions {
-				dim = f.toEs(dim)
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}
@@ -591,7 +595,7 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
 			q := elastic.NewBoolQuery()
-			key := f.toEs(con.DimensionName)
+			key := con.DimensionName
 
 			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 			fieldType, ok := f.mapping[key]
@@ -748,6 +752,10 @@ func (f *FormatFactory) Labels() (lbs *prompb.Labels, err error) {
 			if k == f.timeField.Name {
 				continue
 			}
+		}
+
+		if f.toProm != nil {
+			k = f.toProm(k)
 		}
 
 		lbl = append(lbl, k)

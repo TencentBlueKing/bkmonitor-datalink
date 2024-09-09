@@ -155,18 +155,41 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (lis
 		return
 	}
 
-	var wg sync.WaitGroup
-	dataCh := make(chan map[string]any)
-	errCh := make(chan error)
+	var (
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+		errCh     = make(chan error)
+
+		message strings.Builder
+	)
+
+	receiveWg.Add(2)
+	list = make([]map[string]any, 0)
+	// 启动合并数据
+	go func() {
+		defer receiveWg.Done()
+		for e := range errCh {
+			message.WriteString(e.Error())
+		}
+	}()
+	go func() {
+		defer receiveWg.Done()
+		for d := range dataCh {
+			list = append(list, d)
+		}
+	}()
 
 	// 多协程查询数据
+	var sendWg sync.WaitGroup
 	p, _ := ants.NewPool(QueryMaxRouting)
-	defer p.Release()
 	for _, ref := range queryReference {
 		for _, qry := range ref.QueryList {
-			wg.Add(1)
+			sendWg.Add(1)
 			err = p.Submit(func() {
-				defer wg.Done()
+				defer func() {
+					sendWg.Done()
+				}()
+
 				instance := prometheus.GetTsDbInstance(ctx, qry)
 				if instance == nil {
 					log.Warnf(ctx, "not instance in %s", qry.StorageID)
@@ -176,7 +199,6 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (lis
 				queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 				if queryErr != nil {
 					errCh <- fmt.Errorf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error())
-					return
 				}
 			})
 			if err != nil {
@@ -184,32 +206,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (lis
 			}
 		}
 	}
-	wg.Wait()
-
-	close(dataCh)
+	sendWg.Wait()
 	close(errCh)
-
-	var (
-		message strings.Builder
-		doneCh  = make(chan struct{}, 1)
-	)
-
-	list = make([]map[string]any, 0)
-	// 启动合并数据
-	go func() {
-		for e := range errCh {
-			message.WriteString(e.Error())
-		}
-
-		for d := range dataCh {
-			list = append(list, d)
-		}
-
-		doneCh <- struct{}{}
-	}()
+	close(dataCh)
 
 	// 等待数据组装完毕
-	<-doneCh
+	receiveWg.Wait()
 
 	if message.Len() > 0 {
 		err = errors.New(message.String())

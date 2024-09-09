@@ -44,6 +44,6 @@ func (r *response) success(ctx context.Context, data interface{}) {
 
 // ListData 数据返回格式
 type ListData struct {
-	List   []map[string]any `json:"list,omitempty"`
+	List   []map[string]any `json:"list"`
 	Status *metadata.Status `json:"status,omitempty"`
 }

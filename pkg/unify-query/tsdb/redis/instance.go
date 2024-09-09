@@ -43,7 +43,7 @@ type Instance struct {
 	ClusterMetricPrefix string
 }
 
-func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh <-chan map[string]any) error {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) error {
 	//TODO implement me
 	panic("implement me")
 }

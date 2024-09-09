@@ -507,6 +507,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	// 推送自定义上报数据
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		// 启动指标上报
 		reporter, err := remote.NewSpaceReporter(config.BuildInResultTableDetailKey, config.PromRemoteWriteUrl)
 		if err != nil {

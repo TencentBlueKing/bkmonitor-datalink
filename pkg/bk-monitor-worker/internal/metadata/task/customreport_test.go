@@ -11,6 +11,13 @@ package task
 
 import (
 	"context"
+	"testing"
+	"time"
+
+	goRedis "github.com/go-redis/redis/v8"
+	"github.com/jinzhu/gorm"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/common"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/customreport"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/resulttable"
@@ -19,11 +26,6 @@ import (
 	ta "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/task"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mocker"
-	goRedis "github.com/go-redis/redis/v8"
-	"github.com/jinzhu/gorm"
-	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
 )
 
 func TestRefreshTimeSeriesMetric_CreatedFromBkData(t *testing.T) {

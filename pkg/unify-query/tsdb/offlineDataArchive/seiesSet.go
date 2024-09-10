@@ -111,7 +111,7 @@ func StartStreamSeriesSet(
 				span.Set("resp-point-num", pointsNum)
 
 				user := metadata.GetUser(ctx)
-				metric.TsDBRequestMilliSecond(
+				metric.TsDBRequestSecond(
 					ctx, sub, user.SpaceUid, user.Source, fmt.Sprintf("%s_grpc", consul.InfluxDBStorageType),
 				)
 

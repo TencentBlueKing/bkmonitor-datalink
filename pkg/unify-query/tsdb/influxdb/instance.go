@@ -520,7 +520,7 @@ func (i *Instance) query(
 	queryCost := time.Since(startAnaylize)
 	span.Set("query-cost", queryCost.String())
 
-	metric.TsDBRequestMilliSecond(
+	metric.TsDBRequestSecond(
 		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.GetInstanceType()),
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())

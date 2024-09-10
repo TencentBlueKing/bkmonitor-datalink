@@ -82,7 +82,9 @@ type Config struct {
 	// 并发限制配置
 	ConcurrencyLimit ConcurrencyLimitConfig `config:"concurrency_limit"`
 
-	MetricbeatWorkers  int    `config:"metricbeat_workers"`
+	MetricbeatWorkers        int  `config:"metricbeat_workers"`
+	MetricbeatSpreadWorkload bool `config:"metricbeat_spread_workload"`
+
 	NodeID             string `config:"node_id" validate:"required"`
 	IP                 string `config:"ip" validate:"nonzero"`
 	BizID              int32  `config:"bk_biz_id" validate:"required"`

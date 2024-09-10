@@ -607,12 +607,8 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 
 	var total int64
-	if sr != nil {
-		if sr.Hits != nil {
-			if sr.Hits.TotalHits != nil {
-				total = sr.Hits.TotalHits.Value
-			}
-		}
+	if sr != nil && sr.Hits != nil && sr.Hits.TotalHits != nil {
+		total = sr.Hits.TotalHits.Value
 	}
 
 	return total, nil

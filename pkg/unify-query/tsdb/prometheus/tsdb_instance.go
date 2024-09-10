@@ -39,7 +39,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, fmt.Sprintf("get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error()))
+			log.Errorf(ctx, "get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error())
 		}
 		span.End(&err)
 	}()

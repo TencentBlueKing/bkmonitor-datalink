@@ -56,9 +56,10 @@ func NewTimeSeriesGroupSvc(obj *customreport.TimeSeriesGroup) TimeSeriesGroupSvc
 }
 
 // UpdateTimeSeriesMetrics 从远端存储中同步TS的指标和维度对应关系
-func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList bool) (bool, error) {
+func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, queryFromBkData bool) (bool, error) {
+	logger.Info("UpdateTimeSeriesMetrics stated, vm_rt: %s, query_from_bkdata: %v", vmRt, queryFromBkData)
 	// 如果在白名单中，则通过计算平台获取指标数据
-	if isInRtList {
+	if queryFromBkData {
 		// 获取 vm rt及metric
 		vmMetrics, err := s.QueryMetricAndDimension(vmRt)
 		if err != nil {
@@ -75,6 +76,7 @@ func (s *TimeSeriesGroupSvc) UpdateTimeSeriesMetrics(vmRt string, isInRtList boo
 		return false, nil
 	}
 	// 记录是否有更新，然后推送redis并发布通知
+	logger.Info("UpdateTimeSeriesMetrics get redis data for vm_rt: %s, metric_info: %v", vmRt, metricInfo)
 	return s.UpdateMetrics(metricInfo)
 }
 

@@ -82,6 +82,13 @@ const (
 	EpochNanoseconds  = "epoch_nanoseconds"
 )
 
+const (
+	Must      = "must"
+	MustNot   = "must_not"
+	Should    = "should"
+	ShouldNot = "should_not"
+)
+
 type TimeSeriesResult struct {
 	TimeSeriesMap map[string]*prompb.TimeSeries
 	Error         error
@@ -590,14 +597,39 @@ func (f *FormatFactory) Order() map[string]bool {
 	return order
 }
 
+func (f *FormatFactory) getQuery(key string, qs []elastic.Query) (q elastic.Query) {
+	if len(qs) == 0 {
+		return q
+	}
+
+	switch key {
+	case Must:
+		if len(qs) == 1 {
+			q = qs[0]
+		} else {
+			q = elastic.NewBoolQuery().Must(qs...)
+		}
+	case Should:
+		if len(qs) == 1 {
+			q = qs[0]
+		} else {
+			q = elastic.NewBoolQuery().Should(qs...)
+		}
+	case MustNot:
+		q = elastic.NewBoolQuery().MustNot(qs...)
+	}
+	return q
+}
+
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
+
+	nestedFields := make(map[string]struct{})
 	for _, conditions := range allConditions {
 		andQuery := make([]elastic.Query, 0, len(conditions))
 		for _, con := range conditions {
-			q := elastic.NewBoolQuery()
 			key := con.DimensionName
 
 			// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
@@ -618,9 +650,9 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 						query = elastic.NewExistsQuery(key)
 						switch con.Operator {
 						case structured.ConditionEqual, structured.Contains:
-							q.MustNot(query)
+							query = f.getQuery(MustNot, []elastic.Query{query})
 						case structured.ConditionNotEqual, structured.Ncontains:
-							q.Must(query)
+							query = f.getQuery(Must, []elastic.Query{query})
 						default:
 							return nil, fmt.Errorf("operator is not support with empty, %+v", con)
 						}
@@ -650,37 +682,60 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					query = elastic.NewQueryStringQuery(value)
 				}
 
-				queries = append(queries, query)
+				if query != nil {
+					queries = append(queries, query)
+				}
 			}
 
 			// 非空才进行验证
+			var q elastic.Query
 			switch con.Operator {
 			case structured.ConditionEqual, structured.ConditionContains, structured.ConditionRegEqual:
-				q.Should(queries...)
+				q = f.getQuery(Should, queries)
 			case structured.ConditionNotEqual, structured.ConditionNotContains, structured.ConditionNotRegEqual:
-				q.MustNot(queries...)
+				q = f.getQuery(MustNot, queries)
 			case structured.ConditionGt, structured.ConditionGte, structured.ConditionLt, structured.ConditionLte:
-				q.Must(queries...)
+				q = f.getQuery(Must, queries)
 			default:
 				return nil, fmt.Errorf("operator is not support, %+v", con)
 			}
 
-			var nq elastic.Query
 			nf := f.NestedField(con.DimensionName)
 			if nf != "" {
-				nq = elastic.NewNestedQuery(nf, q)
-			} else {
-				nq = q
+				nestedFields[nf] = struct{}{}
 			}
 
-			andQuery = append(andQuery, nq)
+			if q != nil {
+				andQuery = append(andQuery, q)
+			}
 		}
 
-		orQuery = append(orQuery, elastic.NewBoolQuery().Must(andQuery...))
+		aq := f.getQuery(Must, andQuery)
+		if aq != nil {
+			orQuery = append(orQuery, aq)
+		}
 	}
-	bootQueries = append(bootQueries, elastic.NewBoolQuery().Should(orQuery...))
 
-	return elastic.NewBoolQuery().Must(bootQueries...), nil
+	oq := f.getQuery(Should, orQuery)
+	if oq != nil {
+		bootQueries = append(bootQueries, oq)
+	}
+
+	var resQuery elastic.Query
+	if len(bootQueries) > 1 {
+		resQuery = elastic.NewBoolQuery().Must(bootQueries...)
+	} else if len(bootQueries) == 1 {
+		resQuery = bootQueries[0]
+	}
+
+	// 拼接 nested query
+	if len(nestedFields) > 0 {
+		for k := range nestedFields {
+			resQuery = elastic.NewNestedQuery(k, resQuery)
+		}
+	}
+
+	return resQuery, nil
 }
 
 func (f *FormatFactory) Sample() (prompb.Sample, error) {

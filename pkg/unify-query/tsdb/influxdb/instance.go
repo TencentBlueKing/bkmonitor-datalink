@@ -521,7 +521,7 @@ func (i *Instance) query(
 	span.Set("query-cost", queryCost.String())
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, fmt.Sprintf("%s_http", i.GetInstanceType()),
+		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.GetInstanceType()),
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
@@ -655,8 +655,13 @@ func (i *Instance) grpcStream(
 	return seriesSet
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start time.Time,

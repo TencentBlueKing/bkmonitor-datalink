@@ -91,7 +91,7 @@ var (
 			Help:      "tsdb request seconds",
 			Buckets:   secondsBuckets,
 		},
-		[]string{"space_uid", "tsdb_type"},
+		[]string{"space_uid", "source_type", "tsdb_type"},
 	)
 
 	vmQuerySpaceUidInfo = prometheus.NewGaugeVec(

@@ -39,13 +39,17 @@ func (s *QueryString) NestedFields() map[string]struct{} {
 	return s.nestedFields
 }
 
+func (s *QueryString) queryString(str string) elastic.Query {
+	return elastic.NewQueryStringQuery(str).AnalyzeWildcard(true)
+}
+
 func (s *QueryString) Parser() (elastic.Query, error) {
 	if s.q == "" || s.q == "*" {
 		return nil, nil
 	}
 
 	// 解析失败，或者没有 nested 字段，则使用透传的方式查询
-	qs := elastic.NewQueryStringQuery(s.q).AnalyzeWildcard(true)
+	qs := s.queryString(s.q)
 
 	ast, err := parser.Parse(s.q)
 	if err != nil {
@@ -115,7 +119,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			leftQ = elastic.NewMatchPhraseQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
-			leftQ = elastic.NewQueryStringQuery(fmt.Sprintf(`"%s"`, c.Value)).AnalyzeWildcard(true)
+			leftQ = s.queryString(fmt.Sprintf(`"%s"`, c.Value))
 		}
 	case *parser.NumberRangeCondition:
 		q := elastic.NewRangeQuery(c.Field)
@@ -136,7 +140,7 @@ func (s *QueryString) walk(condition parser.Condition) (elastic.Query, error) {
 			leftQ = elastic.NewWildcardQuery(c.Field, c.Value)
 			s.check(c.Field)
 		} else {
-			leftQ = elastic.NewQueryStringQuery(c.Value).AnalyzeWildcard(true)
+			leftQ = s.queryString(c.Value)
 		}
 	default:
 		err = fmt.Errorf("condition type is not match %T", condition)

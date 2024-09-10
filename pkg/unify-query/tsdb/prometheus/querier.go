@@ -176,7 +176,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 				startTime := time.UnixMilli(start)
 				endTime := time.UnixMilli(end)
 
-				setCh <- query.instance.QueryRaw(ctx, query.qry, startTime, endTime)
+				setCh <- query.instance.QuerySeriesSet(ctx, query.qry, startTime, endTime)
 				return
 
 			} else {

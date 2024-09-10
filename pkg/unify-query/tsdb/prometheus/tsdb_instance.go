@@ -39,7 +39,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			log.Errorf(ctx, "get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error())
 		}
 		span.End(&err)
 	}()
@@ -109,7 +109,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			opt.HealthCheck = false
 		} else {
 			if stg == nil {
-				err = fmt.Errorf("%s storage is nil in %s", consul.ElasticsearchStorageType, qry.StorageID)
+				err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
 				return nil
 			}
 			opt.Address = stg.Address
@@ -142,8 +142,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Curl:             curlGet,
 		})
 	default:
-		err = fmt.Errorf("sotrage type is error %+v", qry)
-		return nil
+		err = fmt.Errorf("storage type is error %+v", qry)
 	}
 
 	return instance

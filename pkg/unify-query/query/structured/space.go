@@ -149,6 +149,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		},
 		NeedAddTime: rtDetail.Options.NeedAddTime,
 		SourceType:  rtDetail.SourceType,
+		StorageType: rtDetail.StorageType,
 	}
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在

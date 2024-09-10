@@ -380,7 +380,12 @@ func (i *Instance) query(
 	return qr, err
 }
 
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	var (
 		err error
 	)

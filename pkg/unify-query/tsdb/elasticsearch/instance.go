@@ -81,12 +81,6 @@ type queryOption struct {
 	query *metadata.Query
 }
 
-type indexOpt struct {
-	tableID string
-	start   int64
-	end     int64
-}
-
 var TimeSeriesResultPool = sync.Pool{
 	New: func() any {
 		return &TimeSeriesResult{}
@@ -188,7 +182,6 @@ func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[str
 	mappings := make([]map[string]any, 0, len(mappingMap))
 	for _, index := range indexes {
 		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
-			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
 			mappings = append(mappings, mapping)
 		}
 	}
@@ -309,7 +302,7 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.ElasticsearchStorageType,
+		ctx, queryCost, user.SpaceUid, user.Source, consul.ElasticsearchStorageType,
 	)
 
 	return res, nil
@@ -553,8 +546,76 @@ func (i *Instance) getAlias(ctx context.Context, db string, needAddTime bool, st
 	return newAliases, nil
 }
 
-// QueryRaw 给 PromEngine 提供查询接口
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	var (
+		err error
+	)
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("es query error: %s", r)
+		}
+	}()
+
+	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-raw")
+	defer span.End(&err)
+
+	aliases, err := i.getAlias(ctx, query.DB, query.NeedAddTime, start, end, query.Timezone)
+	if err != nil {
+		return 0, err
+	}
+	mappings, err := i.getMappings(ctx, aliases)
+	if err != nil {
+		return 0, err
+	}
+	if len(mappings) == 0 {
+		err = fmt.Errorf("index is empty with %v，url: %s", aliases, i.address)
+		return 0, err
+	}
+
+	if query.Size > i.maxSize {
+		query.Size = i.maxSize
+	}
+
+	qo := &queryOption{
+		indexes: aliases,
+		start:   start.Unix(),
+		end:     end.Unix(),
+		query:   query,
+	}
+	fact := NewFormatFactory(ctx).
+		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
+		WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, query.Size).
+		WithMappings(mappings...).
+		WithOrders(query.Orders)
+
+	sr, err := i.esQuery(ctx, qo, fact)
+	for _, d := range sr.Hits.Hits {
+		data := make(map[string]any)
+		if err = json.Unmarshal(d.Source, &data); err != nil {
+			return 0, err
+		}
+
+		fact.SetData(data)
+		fact.data[KeyDocID] = d.Id
+
+		if len(d.Highlight) > 0 {
+			fact.data[KeyHighLight] = d.Highlight
+		}
+		dataCh <- fact.data
+	}
+
+	var total int64
+	if sr != nil && sr.Hits != nil && sr.Hits.TotalHits != nil {
+		total = sr.Hits.TotalHits.Value
+	}
+
+	return total, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start time.Time,
@@ -609,7 +670,7 @@ func (i *Instance) QueryRaw(
 			return
 		}
 		var size int
-		if query.Size > 0 || query.Size > i.maxSize {
+		if query.Size > 0 && query.Size < i.maxSize {
 			size = query.Size
 		} else {
 			size = i.maxSize

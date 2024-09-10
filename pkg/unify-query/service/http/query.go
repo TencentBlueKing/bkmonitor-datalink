@@ -14,14 +14,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/panjf2000/ants/v2"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/model/labels"
 	promPromql "github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
-	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/downsample"
@@ -139,115 +141,95 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 	return resp, err
 }
 
-func queryRawWithInstance(ctx context.Context, query *structured.QueryTs) (*PromData, error) {
+func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (total int64, list []map[string]any, err error) {
+	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
+	defer span.End(&err)
+
+	start, end, timeErr := queryTs.GetTime()
+	if timeErr != nil {
+		err = timeErr
+		return
+	}
+
 	var (
-		err  error
-		resp = NewPromData(query.ResultColumns)
+		receiveWg sync.WaitGroup
+		dataCh    = make(chan map[string]any)
+
+		message strings.Builder
+		lock    sync.Mutex
 	)
 
-	ctx, span := trace.NewSpan(ctx, "query-raw")
-	defer func() {
-		resp.Status = metadata.GetStatus(ctx)
-		span.End(&err)
+	receiveWg.Add(1)
+	list = make([]map[string]any, 0)
+	// 启动合并数据
+	go func() {
+		defer receiveWg.Done()
+		for d := range dataCh {
+			list = append(list, d)
+		}
 	}()
 
-	qStr, _ := json.Marshal(query)
-	span.Set("query-ts", string(qStr))
+	// 多协程查询数据
+	var sendWg sync.WaitGroup
+	p, _ := ants.NewPool(QueryMaxRouting)
+	go func() {
+		defer func() {
+			sendWg.Wait()
+			close(dataCh)
+		}()
 
-	for _, q := range query.QueryList {
-		q.IsReference = true
-		if q.TableID == "" {
-			err = fmt.Errorf("tableID is empty")
-			return nil, err
-		}
+		for _, ql := range queryTs.QueryList {
+			// 时间复用
+			ql.Timezone = queryTs.Timezone
+			ql.Start = queryTs.Start
+			ql.End = queryTs.End
 
-		if q.Limit == 0 {
-			q.Limit = TSQueryRawMAXLimit
-		}
-	}
+			// 排序复用
+			ql.OrderBy = queryTs.OrderBy
 
-	// 判断如果 step 为空，则补充默认 step
-	if query.Step == "" {
-		query.Step = promql.GetDefaultStep().String()
-	}
-
-	queryRef, err := query.ToQueryReference(ctx)
-	startInt, err := strconv.ParseInt(query.Start, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	start := time.Unix(startInt, 0)
-
-	endInt, err := strconv.ParseInt(query.End, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	end := time.Unix(endInt, 0)
-	step, err := model.ParseDuration(query.Step)
-	if err != nil {
-		return nil, err
-	}
-
-	// es 需要使用自己的查询时间范围
-	metadata.GetQueryParams(ctx).SetTime(start.Unix(), end.Unix()).SetIsReference(true)
-	err = metadata.SetQueryReference(ctx, queryRef)
-	if err != nil {
-		return nil, err
-	}
-
-	matcher, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, query.MetricMerge)
-	qr := prometheus.NewQuerier(ctx, start, end, QueryMaxRouting, SingleflightTimeout)
-	seriesSet := qr.Select(true, &storage.SelectHints{
-		Start: start.UnixMilli(),
-		End:   end.UnixMilli(),
-		Step:  time.Duration(step).Milliseconds(),
-	}, matcher)
-
-	// 异常返回
-	if seriesSet.Err() != nil {
-		return nil, seriesSet.Err()
-	}
-
-	tables := promql.NewTables()
-	seriesNum := 0
-	pointsNum := 0
-
-	i := 0
-	for seriesSet.Next() {
-		series := seriesSet.At()
-		lbs := series.Labels()
-		it := series.Iterator(nil)
-
-		if it.Err() != nil {
-			return nil, it.Err()
-		}
-
-		var t = new(promql.Table)
-		t.Name = fmt.Sprintf("%d", i)
-		t.GroupKeys = make([]string, 0, len(lbs))
-		t.GroupValues = make([]string, 0, len(lbs))
-		for _, lb := range lbs {
-			if structured.QueryRawFormat(ctx) != nil {
-				lb.Name = structured.QueryRawFormat(ctx)(lb.Name)
+			// 如果 qry.Step 不存在去外部统一的 step
+			if ql.Step == "" {
+				ql.Step = queryTs.Step
+			}
+			qm, qmErr := ql.ToQueryMetric(ctx, queryTs.SpaceUid)
+			if qmErr != nil {
+				err = qmErr
+				return
 			}
 
-			t.GroupKeys = append(t.GroupKeys, lb.Name)
-			t.GroupValues = append(t.GroupValues, lb.Value)
+			for _, qry := range qm.QueryList {
+				sendWg.Add(1)
+				qry := qry
+				err = p.Submit(func() {
+					defer func() {
+						sendWg.Done()
+					}()
+
+					instance := prometheus.GetTsDbInstance(ctx, qry)
+					if instance == nil {
+						log.Warnf(ctx, "not instance in %s", qry.StorageID)
+						return
+					}
+
+					size, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
+					if queryErr != nil {
+						lock.Lock()
+						message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+						lock.Unlock()
+					}
+					atomic.AddInt64(&total, size)
+				})
+			}
 		}
+	}()
 
-		seriesNum++
-		tables.Add(t)
+	// 等待数据组装完毕
+	receiveWg.Wait()
+	if message.Len() > 0 {
+		err = errors.New(message.String())
 	}
 
-	span.Set("resp-series-num", seriesNum)
-	span.Set("resp-points-num", pointsNum)
-
-	err = resp.Fill(tables)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
+	return
 }
 
 func queryReferenceWithPromEngine(ctx context.Context, query *structured.QueryTs) (*PromData, error) {

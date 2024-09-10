@@ -182,7 +182,6 @@ func (i *Instance) getMappings(ctx context.Context, aliases []string) ([]map[str
 	mappings := make([]map[string]any, 0, len(mappingMap))
 	for _, index := range indexes {
 		if mapping, ok := mappingMap[index].(map[string]any)["mappings"].(map[string]any); ok {
-			log.Infof(ctx, "elasticsearch-get-mapping: es [%s] mapping %+v", index, mapping)
 			mappings = append(mappings, mapping)
 		}
 	}

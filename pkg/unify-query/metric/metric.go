@@ -200,7 +200,8 @@ func observe(
 // init
 func init() {
 	prometheus.MustRegister(
-		apiRequestTotal, resultTableInfo, apiRequestMilliSecondHistogram,
-		vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
+		apiRequestTotal,
+		apiRequestMilliSecondHistogram, tsDBRequestMilliSecondHistogram, tsDBRequestBytesHistogram,
+		resultTableInfo, vmQuerySpaceUidInfo,
 	)
 }

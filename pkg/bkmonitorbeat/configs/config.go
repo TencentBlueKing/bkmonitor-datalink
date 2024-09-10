@@ -84,6 +84,7 @@ type Config struct {
 
 	MetricbeatWorkers        int  `config:"metricbeat_workers"`
 	MetricbeatSpreadWorkload bool `config:"metricbeat_spread_workload"`
+	MetricbeatAlignTs        bool `config:"metricbeat_align_ts"`
 
 	NodeID             string `config:"node_id" validate:"required"`
 	IP                 string `config:"ip" validate:"nonzero"`

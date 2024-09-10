@@ -51,7 +51,6 @@ func (t *Tool) Init(mbConfig *configs.MetricBeatConfig, globalConf define.Config
 		"period":            mbConfig.Period,
 		"temp_file_pattern": t.tempFilePattern,
 		"workers":           mbConfig.Workers,
-		"enable_align_ts":   mbConfig.EnableAlignTs,
 	})
 	if err != nil {
 		return errors.Wrap(err, "merge modules failed")

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/panjf2000/ants/v2"
@@ -155,6 +156,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		dataCh    = make(chan map[string]any)
 
 		message strings.Builder
+		lock    sync.Mutex
 	)
 
 	receiveWg.Add(1)
@@ -197,6 +199,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 			for _, qry := range qm.QueryList {
 				sendWg.Add(1)
+				qry := qry
 				err = p.Submit(func() {
 					defer func() {
 						sendWg.Done()
@@ -210,9 +213,11 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 					size, queryErr := instance.QueryRawData(ctx, qry, start, end, dataCh)
 					if queryErr != nil {
+						lock.Lock()
 						message.WriteString(fmt.Sprintf("query %s:%s is error: %s ", qry.TableID, qry.Fields, queryErr.Error()))
+						lock.Unlock()
 					}
-					total += size
+					atomic.AddInt64(&total, size)
 				})
 			}
 		}

@@ -397,8 +397,8 @@ func (i *Instance) vmQuery(
 	span.Set("query-cost", queryCost.String())
 	span.Set("response-size", size)
 
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	metric.TsDBRequestMilliSecond(
+		ctx, queryCost, user.Source, user.SpaceUid, i.GetInstanceType(),
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 	return nil

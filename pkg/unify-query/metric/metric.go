@@ -42,8 +42,8 @@ const (
 )
 
 var (
-	secondsBuckets = []float64{0, 0.05, 0.1, 0.2, 0.5, 1, 3, 5, 10, 20, 30, 60}
-	bytesBuckets   = []float64{0, KB, 100 * KB, 500 * KB, MB, 5 * MB, 20 * MB, 50 * MB, 100 * MB}
+	bytesBuckets        = []float64{0, KB, 100 * KB, 500 * KB, MB, 5 * MB, 20 * MB, 50 * MB, 100 * MB}
+	millisecondsBuckets = []float64{0, 5e1, 1e2, 3e2, 5e2, 1e3, 3e3, 5e3, 1e4, 2e4, 3e4, 6e4}
 )
 
 var (
@@ -56,14 +56,24 @@ var (
 		[]string{"api", "status", "space_uid", "source_type"},
 	)
 
-	apiRequestSecondHistogram = prometheus.NewHistogramVec(
+	apiRequestMilliSecondHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "unify_query",
-			Name:      "api_request_second",
-			Help:      "unify-query api request second",
-			Buckets:   secondsBuckets,
+			Name:      "api_request_millisecond",
+			Help:      "unify-query api request millisecond",
+			Buckets:   millisecondsBuckets,
 		},
-		[]string{"api", "space_uid"},
+		[]string{"api", "space_uid", "source_type"},
+	)
+
+	tsDBRequestMilliSecondHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "tsdb_request_millisecond",
+			Help:      "tsdb request millisecond",
+			Buckets:   millisecondsBuckets,
+		},
+		[]string{"space_uid", "source_type", "tsdb_type"},
 	)
 
 	resultTableInfo = prometheus.NewGaugeVec(
@@ -84,16 +94,6 @@ var (
 		[]string{"space_uid", "source_type", "tsdb_type"},
 	)
 
-	tsDBRequestSecondHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "unify_query",
-			Name:      "tsdb_request_seconds",
-			Help:      "tsdb request seconds",
-			Buckets:   secondsBuckets,
-		},
-		[]string{"space_uid", "tsdb_type"},
-	)
-
 	vmQuerySpaceUidInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "unify_query",
@@ -109,14 +109,14 @@ func APIRequestInc(ctx context.Context, params ...string) {
 	counterInc(ctx, metric)
 }
 
-func APIRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, _ := apiRequestSecondHistogram.GetMetricWithLabelValues(params...)
-	observe(ctx, metric, duration.Seconds())
+func APIRequestMilliSecond(ctx context.Context, duration time.Duration, params ...string) {
+	m, _ := apiRequestMilliSecondHistogram.GetMetricWithLabelValues(params...)
+	observe(ctx, m, float64(duration.Milliseconds()))
 }
 
-func TsDBRequestSecond(ctx context.Context, duration time.Duration, params ...string) {
-	metric, _ := tsDBRequestSecondHistogram.GetMetricWithLabelValues(params...)
-	observe(ctx, metric, duration.Seconds())
+func TsDBRequestMilliSecond(ctx context.Context, duration time.Duration, params ...string) {
+	m, _ := tsDBRequestMilliSecondHistogram.GetMetricWithLabelValues(params...)
+	observe(ctx, m, float64(duration.Milliseconds()))
 }
 
 func TsDBRequestBytes(ctx context.Context, bytes int, params ...string) {
@@ -200,7 +200,7 @@ func observe(
 // init
 func init() {
 	prometheus.MustRegister(
-		apiRequestTotal, apiRequestSecondHistogram, resultTableInfo,
-		tsDBRequestSecondHistogram, vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
+		apiRequestTotal, resultTableInfo, apiRequestMilliSecondHistogram,
+		vmQuerySpaceUidInfo, tsDBRequestBytesHistogram,
 	)
 }

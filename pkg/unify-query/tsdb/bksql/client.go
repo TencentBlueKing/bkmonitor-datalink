@@ -88,8 +88,8 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 		span.Set("query-cost", queryCost.String())
 	}
 
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.BkSqlStorageType,
+	metric.TsDBRequestMilliSecond(
+		ctx, queryCost, user.SpaceUid, user.Source, consul.BkSqlStorageType,
 	)
 	return nil
 }

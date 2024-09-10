@@ -147,8 +147,8 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 		return nil, df.Error()
 	}
 	queryCost := time.Since(startAnaylize)
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+	metric.TsDBRequestMilliSecond(
+		ctx, queryCost, user.Source, user.SpaceUid, i.GetInstanceType(),
 	)
 
 	return &df, nil

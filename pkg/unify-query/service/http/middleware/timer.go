@@ -95,7 +95,7 @@ func Timer(p *Params) gin.HandlerFunc {
 				span.Set("local-ips", ips)
 
 				sub := time.Since(start)
-				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)
+				metric.APIRequestMilliSecond(ctx, sub, c.Request.URL.Path, spaceUid, user.Source)
 
 				// 记录慢查询
 				if p.SlowQueryThreshold > 0 && sub.Milliseconds() > p.SlowQueryThreshold.Milliseconds() {

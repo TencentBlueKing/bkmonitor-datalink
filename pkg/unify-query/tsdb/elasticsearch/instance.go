@@ -301,8 +301,8 @@ func (i *Instance) esQuery(ctx context.Context, qo *queryOption, fact *FormatFac
 
 	queryCost := time.Since(startAnalyze)
 	span.Set("query-cost", queryCost.String())
-	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.ElasticsearchStorageType,
+	metric.TsDBRequestMilliSecond(
+		ctx, queryCost, user.SpaceUid, user.Source, consul.ElasticsearchStorageType,
 	)
 
 	return res, nil

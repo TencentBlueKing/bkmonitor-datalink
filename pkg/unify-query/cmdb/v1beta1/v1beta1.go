@@ -161,16 +161,30 @@ func (r *model) getResourceFromMatch(ctx context.Context, matcher cmdb.Matcher) 
 }
 
 func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool {
-	if len(graphPath) < len(pathResource) {
+	// 路径长度至少要 > 2
+	if len(graphPath) < 2 {
 		return false
 	}
 
+	// 如果不传则判断为命中
 	if len(pathResource) == 0 {
 		return true
 	}
 
+	// 如果长度为 1，且为空，则直接判断直连路径，长度为 2
+	if len(pathResource) == 1 && pathResource[0] == "" && len(graphPath) == 2 {
+		return true
+	}
+
 	hit := 0
-	startPath := graphPath
+	// 只取中间的部分来做判断，到这里 graphPath 的长度一定 > 2
+	startPath := graphPath[1 : len(graphPath)-1]
+
+	// 如果指定的路径大于需要判断的路径则完全无法命中
+	if len(pathResource) > len(startPath) {
+		return false
+	}
+
 	for _, pr := range pathResource {
 		for idx, sp := range startPath {
 			if sp == string(pr) {
@@ -179,6 +193,8 @@ func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool
 			}
 		}
 	}
+
+	// 判断 pathResource 是否全部都命中
 	return len(pathResource) == hit
 }
 

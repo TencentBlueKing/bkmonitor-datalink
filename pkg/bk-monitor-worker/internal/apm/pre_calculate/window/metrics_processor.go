@@ -334,7 +334,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("to_span_http_status_code", aloneNode.GetFieldValue(core.HttpStatusCodeField)),
 					pair("to_span_grpc_status_code", aloneNode.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("from_span_error", strconv.FormatBool(aloneNode.IsError())),
-					pair("to_apm_service_span_kind", strconv.FormatBool(aloneNode.IsError())),
+					pair("to_span_error", strconv.FormatBool(aloneNode.IsError())),
 				},
 				",",
 			)

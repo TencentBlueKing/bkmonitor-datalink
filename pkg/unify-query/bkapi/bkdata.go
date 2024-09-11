@@ -12,6 +12,7 @@ package bkapi
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/spf13/viper"
@@ -38,10 +39,23 @@ type BkDataAPI struct {
 	uriPath string
 
 	authConfig map[string]string
+
+	clusterMap map[string]string
 }
 
 func GetBkDataAPI() *BkDataAPI {
 	onceBkDataAPI.Do(func() {
+		clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
+		clusterMap := make(map[string]string)
+
+		for name, su := range clusterSpaceUid {
+			for _, s := range su {
+				if s != "" && name != "" {
+					clusterMap[s] = name
+				}
+			}
+		}
+
 		bkAPI := GetBkAPI()
 		defaultBkDataAPI = &BkDataAPI{
 			bkAPI:   bkAPI,
@@ -52,6 +66,7 @@ func GetBkDataAPI() *BkDataAPI {
 				BkUserNameKey:                 AdminUserName,
 				BkAppCodeKey:                  bkAPI.GetCode(),
 			},
+			clusterMap: clusterMap,
 		}
 	})
 	return defaultBkDataAPI
@@ -79,14 +94,17 @@ func (i *BkDataAPI) url(path string) string {
 	return url
 }
 
-func (i *BkDataAPI) QueryAsyncUrl() string {
-	return i.url(QueryAsync)
+func (i *BkDataAPI) QueryUrlForES(spaceUid string) string {
+	return fmt.Sprintf("%s/es", i.QueryUrl(spaceUid))
 }
 
-func (i *BkDataAPI) QuerySyncUrl() string {
-	return i.url(QuerySync)
-}
-
-func (i *BkDataAPI) QueryEsUrl() string {
-	return fmt.Sprintf("%s/es", i.QuerySyncUrl())
+func (i *BkDataAPI) QueryUrl(spaceUid string) string {
+	p := make([]string, 0)
+	if spaceUid != "" {
+		if v, ok := i.clusterMap[spaceUid]; ok {
+			p = append(p, v)
+		}
+	}
+	p = append(p, QuerySync)
+	return i.url(strings.Join(p, "/"))
 }

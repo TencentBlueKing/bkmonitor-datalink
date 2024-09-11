@@ -65,7 +65,6 @@ type MetricSet struct {
 	workers                int
 	disableCustomTimestamp bool
 	normalizeMetricName    bool
-	enableAlignTs          bool
 	remoteRelabelCache     []*relabel.Config
 	MetricRelabelRemote    string
 	MetricRelabelConfigs   []*relabel.Config
@@ -82,7 +81,6 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		MetricRelabelRemoteTimeout string            `config:"metric_relabel_remote_timeout"`
 		TempFilePattern            string            `config:"temp_file_pattern"`
 		Workers                    int               `config:"workers"`
-		EnableAlignTs              bool              `config:"enable_align_ts"`
 		DisableCustomTimestamp     bool              `config:"disable_custom_timestamp"`
 		NormalizeMetricName        bool              `config:"normalize_metric_name"`
 	}{}
@@ -152,7 +150,6 @@ func New(base mb.BaseMetricSet) (mb.MetricSet, error) {
 		disableCustomTimestamp: config.DisableCustomTimestamp,
 		normalizeMetricName:    config.NormalizeMetricName,
 		workers:                config.Workers,
-		enableAlignTs:          config.EnableAlignTs,
 	}, nil
 }
 

@@ -35,6 +35,8 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 
 	if gc, ok := g.GlobalConfig.(*configs.Config); ok {
 		g.config.Workers = gc.MetricbeatWorkers
+		g.config.SpreadWorkload = gc.MetricbeatSpreadWorkload
+		g.config.EnableAlignTs = gc.MetricbeatAlignTs
 	}
 
 	if g.tool == nil {

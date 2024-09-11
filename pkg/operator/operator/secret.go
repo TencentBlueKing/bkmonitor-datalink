@@ -432,7 +432,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 	}
 
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
-	for idx, configs := range groups {
+	for idx, cfgs := range groups {
 		Slowdown()
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
@@ -450,7 +450,7 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 		bytesTotal := 0
 		secret := newSecret(tasks.GetStatefulSetTaskSecretName(idx), tasks.TaskTypeStatefulSet)
-		for _, config := range configs {
+		for _, config := range cfgs {
 			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)

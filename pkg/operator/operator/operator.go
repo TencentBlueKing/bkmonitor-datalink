@@ -506,9 +506,8 @@ func (c *Operator) handleDiscoverNotify() {
 			return
 
 		case <-discover.Notify():
-			// 1min 内最多只能进行 2 次调度
-			if time.Now().Unix()-last <= 30 {
-				timer.Reset(time.Second * 30) // 保证信号不被丢弃
+			if time.Now().Unix()-last <= configs.G().DispatchInterval {
+				timer.Reset(time.Second * time.Duration(configs.G().DispatchInterval)) // 保证信号不被丢弃
 				continue
 			}
 			dispatch("notify")

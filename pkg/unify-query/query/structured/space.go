@@ -281,7 +281,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
-		isK8s = true
+		isK8s = !opt.IsSkipK8s
 		tableIDs = s.GetSpaceRtIDs()
 
 		if len(tableIDs) == 0 {
@@ -317,6 +317,7 @@ type TsDBOption struct {
 	SpaceUid    string
 	IsSkipSpace bool
 	IsSkipField bool
+	IsSkipK8s   bool
 
 	TableID   TableID
 	FieldName string

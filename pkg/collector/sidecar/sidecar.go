@@ -30,11 +30,12 @@ import (
 )
 
 type Config struct {
-	ConfigPath    string    `yaml:"config_path"`
-	PidPath       string    `yaml:"pid_path"`
-	Kubconfig     string    `yaml:"kubeconfig"`
-	ApiServerHost string    `yaml:"apiserver_host"`
-	Tls           TlsConfig `yaml:"tls"`
+	ConfigPath    string       `yaml:"config_path"`
+	PidPath       string       `yaml:"pid_path"`
+	Kubconfig     string       `yaml:"kubeconfig"`
+	ApiServerHost string       `yaml:"apiserver_host"`
+	Tls           TlsConfig    `yaml:"tls"`
+	Secret        SecretConfig `yaml:"secret"`
 }
 
 type TlsConfig struct {
@@ -44,11 +45,16 @@ type TlsConfig struct {
 	CAFile   string `yaml:"ca_file"`
 }
 
+type SecretConfig struct {
+	Namespace string `yaml:"namespace"`
+	Selector  string `yaml:"selector"`
+}
+
 type Sidecar struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	watcher *Watcher
-	config  *Config
+	ctx    context.Context
+	cancel context.CancelFunc
+	dw     *dataIDWatcher
+	config *Config
 }
 
 func New(ctx context.Context, config *Config) (*Sidecar, error) {
@@ -73,10 +79,10 @@ func New(ctx context.Context, config *Config) (*Sidecar, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	return &Sidecar{
-		ctx:     ctx,
-		cancel:  cancel,
-		watcher: newWatcher(ctx, client),
-		config:  config,
+		ctx:    ctx,
+		cancel: cancel,
+		dw:     newDataIDWatcher(ctx, client),
+		config: config,
 	}, nil
 }
 
@@ -108,7 +114,7 @@ type privilegedConfig struct {
 }
 
 func (s *Sidecar) Start() error {
-	if err := s.watcher.Start(); err != nil {
+	if err := s.dw.Start(); err != nil {
 		return err
 	}
 
@@ -134,7 +140,7 @@ func (s *Sidecar) Stop() {
 }
 
 func (s *Sidecar) getPrivilegedConfig() privilegedConfig {
-	ids := s.watcher.DataIDs()
+	ids := s.dw.DataIDs()
 
 	var config privilegedConfig
 	for _, id := range ids {
@@ -224,8 +230,12 @@ func (s *Sidecar) sendReloadSignal() error {
 	}
 
 	if err = process.Signal(syscall.SIGUSR1); err != nil {
-		return errors.Wrap(err, "publish signal failed")
+		return errors.Wrap(err, "send reload signal failed")
 	}
 	logger.Infof("reload finished, pid=%d", pid)
 	return nil
+}
+
+func (s *Sidecar) updateChildConfigFiles() {
+
 }

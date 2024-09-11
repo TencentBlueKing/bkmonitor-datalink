@@ -37,11 +37,8 @@ func mockSpace() {
 	fmt.Println("------------------------------------------------------------------------------------------------")
 	ctx := context.Background()
 	spaceId := "bkcc__2"
-	path := "infos_test.db"
-	bucketName := "infos_test"
 	mock.SetSpaceTsDbMockData(
-		ctx, path, bucketName,
-		ir.SpaceInfo{
+		ctx, ir.SpaceInfo{
 			spaceId: ir.Space{
 				"2_bkmonitor_time_series_1573076.__default__": &ir.SpaceResultTable{
 					TableId: "2_bkmonitor_time_series_1573076.__default__",

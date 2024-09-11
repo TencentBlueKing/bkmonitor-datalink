@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -347,6 +348,11 @@ func (i *Instance) vmQuery(
 	params := make(map[string]string)
 	params["sql"] = sql
 	params["prefer_storage"] = PreferStorage
+
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
+	}
 
 	body, err := json.Marshal(params)
 	if err != nil {

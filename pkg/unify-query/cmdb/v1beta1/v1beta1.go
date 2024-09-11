@@ -176,26 +176,34 @@ func (r *model) checkPath(graphPath []string, pathResource []cmdb.Resource) bool
 		return true
 	}
 
-	hit := 0
+	//hit := 0
 	// 只取中间的部分来做判断，到这里 graphPath 的长度一定 > 2
-	startPath := graphPath[1 : len(graphPath)-1]
+	//startPath := graphPath[1 : len(graphPath)-1]
 
 	// 如果指定的路径大于需要判断的路径则完全无法命中
-	if len(pathResource) > len(startPath) {
+	if len(pathResource) > len(graphPath) {
 		return false
 	}
 
-	for _, pr := range pathResource {
-		for idx, sp := range startPath {
-			if sp == string(pr) {
-				startPath = startPath[idx+1:]
-				hit++
-			}
+	var startIndex = -1
+	for idx, sp := range graphPath {
+		if sp == string(pathResource[0]) {
+			startIndex = idx
+			break
 		}
 	}
 
-	// 判断 pathResource 是否全部都命中
-	return len(pathResource) == hit
+	if startIndex < 0 {
+		return false
+	}
+
+	for idx, pr := range pathResource {
+		if string(pr) != graphPath[startIndex+idx] {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, pathResource []cmdb.Resource) ([][]string, error) {

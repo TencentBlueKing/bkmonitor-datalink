@@ -162,6 +162,23 @@ func TestModel_GetPath(t *testing.T) {
 				{"apm_service_instance", "system"},
 			},
 		},
+		"apm_service to system through empty": {
+			target: "system",
+			matcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			source: "apm_service",
+			indexMatcher: cmdb.Matcher{
+				"apm_application_name": "name",
+			},
+			pathResource: []cmdb.Resource{
+				"apm_service_instance", "system",
+			},
+			allMatch: false,
+			expected: [][]string{
+				{"apm_service", "apm_service_instance", "system"},
+			},
+		},
 		"apm_service to system through pod and node": {
 			target: "system",
 			matcher: cmdb.Matcher{

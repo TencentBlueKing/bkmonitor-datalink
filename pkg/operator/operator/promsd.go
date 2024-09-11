@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/config"
 	promhttpsd "github.com/prometheus/prometheus/discovery/http"
 	"gopkg.in/yaml.v2"
@@ -128,9 +129,16 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 	specLabels := dataID.Spec.Labels
 	httpClientConfig := scrapeConfig.HTTPClientConfig
 
-	var proxyUrl string
+	var proxyURL string
 	if httpClientConfig.ProxyURL.URL != nil {
-		proxyUrl = httpClientConfig.ProxyURL.String()
+		proxyURL = httpClientConfig.ProxyURL.String()
+	}
+
+	castDuration := func(d model.Duration) string {
+		if d <= 0 {
+			return ""
+		}
+		return d.String()
 	}
 	dis := httpd.New(c.ctx, c.objectsController.NodeNameExists, &httpd.Options{
 		CommonOptions: &discover.CommonOptions{
@@ -141,9 +149,9 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 			Path:                   scrapeConfig.MetricsPath,
 			Scheme:                 scrapeConfig.Scheme,
 			BearerTokenFile:        httpClientConfig.BearerTokenFile,
-			ProxyURL:               proxyUrl,
-			Period:                 scrapeConfig.ScrapeInterval.String(),
-			Timeout:                scrapeConfig.ScrapeTimeout.String(),
+			ProxyURL:               proxyURL,
+			Period:                 castDuration(scrapeConfig.ScrapeInterval),
+			Timeout:                castDuration(scrapeConfig.ScrapeTimeout),
 			DisableCustomTimestamp: !ifHonorTimestamps(&scrapeConfig.HonorTimestamps),
 			UrlValues:              scrapeConfig.Params,
 			ExtraLabels:            specLabels,

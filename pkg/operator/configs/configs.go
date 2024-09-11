@@ -170,6 +170,9 @@ type Config struct {
 	// EnableEndpointSlice 是否启用 endpointslice 特性（kubernetes 版本要求 >= 1.22
 	EnableEndpointSlice bool `yaml:"enable_endpointslice"`
 
+	// DispatchInterval 调度周期（单位秒）
+	DispatchInterval int64 `yaml:"dispatch_interval"`
+
 	// NodeSecretRatio 最大支持的 secrets 数量 maxSecrets = node x ratio
 	NodeSecretRatio float64 `yaml:"node_secret_ratio"`
 
@@ -249,6 +252,9 @@ func (c *Config) setup() {
 	}
 	if c.DefaultPeriod == "" {
 		c.DefaultPeriod = "60s" // 默认采集周期为 60s
+	}
+	if c.DispatchInterval <= 0 {
+		c.DispatchInterval = 30 // 默认调度周期为 30s
 	}
 	if c.NodeSecretRatio <= 0 {
 		c.NodeSecretRatio = 2.0

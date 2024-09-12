@@ -29,8 +29,6 @@ import (
 const (
 	VirtualSvrCallee = "bk_vServiceCallee"
 	VirtualSvrCaller = "bk_vServiceCaller"
-
-	VirtualSpan = "bk_vSpan"
 )
 
 var (
@@ -296,7 +294,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 					pair("from_apm_service_span_kind", strconv.Itoa(aloneNode.Kind)),
 					pair("from_span_http_status_code", aloneNode.GetFieldValue(core.HttpStatusCodeField)),
 					pair("from_span_grpc_status_code", aloneNode.GetFieldValue(core.RpcGrpcStatusCode)),
-					pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("to_span_name", spanName),
 					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCallee)),
 					pair("to_apm_application_name", m.appName),
 					pair("to_apm_service_category", storage.CategoryHttp),
@@ -317,7 +315,7 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			labelKey := strings.Join(
 				[]string{
 					pair("__name__", storage.ApmServiceFlow),
-					pair("from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("from_span_name", spanName),
 					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, VirtualSvrCaller)),
 					pair("from_apm_application_name", m.appName),
 					pair("from_apm_service_category", storage.CategoryHttp),
@@ -393,7 +391,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 				pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
 				pair("from_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 				pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
-				pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+				pair("to_span_name", spanName),
 				pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem)),
 				pair("to_apm_application_name", m.appName),
 				pair("to_apm_service_category", storage.CategoryDb),
@@ -426,7 +424,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 					pair("from_apm_service_span_kind", strconv.Itoa(span.Kind)),
 					pair("from_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 					pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
-					pair("to_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("to_span_name", spanName),
 					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
 					pair("to_apm_application_name", m.appName),
 					pair("to_apm_service_category", storage.CategoryMessaging),
@@ -448,7 +446,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 			messageCallerFlowLabelKey := strings.Join(
 				[]string{
 					pair("__name__", storage.ApmServiceFlow),
-					pair("from_span_name", fmt.Sprintf("%s-%s", spanName, VirtualSpan)),
+					pair("from_span_name", spanName),
 					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
 					pair("from_apm_application_name", m.appName),
 					pair("from_apm_service_category", storage.CategoryMessaging),

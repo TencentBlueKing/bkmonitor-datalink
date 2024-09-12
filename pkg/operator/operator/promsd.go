@@ -134,6 +134,12 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 		proxyURL = httpClientConfig.ProxyURL.String()
 	}
 
+	var bearerTokenFile string
+	auth := httpClientConfig.Authorization
+	if auth != nil && auth.Type == "Bearer" {
+		bearerTokenFile = auth.CredentialsFile
+	}
+
 	castDuration := func(d model.Duration) string {
 		if d <= 0 {
 			return ""
@@ -148,7 +154,7 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 			Relabels:               scrapeConfig.RelabelConfigs,
 			Path:                   scrapeConfig.MetricsPath,
 			Scheme:                 scrapeConfig.Scheme,
-			BearerTokenFile:        httpClientConfig.BearerTokenFile,
+			BearerTokenFile:        bearerTokenFile,
 			ProxyURL:               proxyURL,
 			Period:                 castDuration(scrapeConfig.ScrapeInterval),
 			Timeout:                castDuration(scrapeConfig.ScrapeTimeout),

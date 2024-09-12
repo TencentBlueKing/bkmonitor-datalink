@@ -50,7 +50,8 @@ func New(ctx context.Context, checkFn define.CheckFunc, opts *Options) *Discover
 
 	d.SetUK(fmt.Sprintf("%s:%s", d.Type(), opts.Name))
 	d.SetHelper(discover.Helper{
-		AccessBasicAuth: d.accessBasicAuth,
+		AccessBasicAuth:   d.accessBasicAuth,
+		AccessBearerToken: d.accessBearerToken,
 	})
 	return d
 }
@@ -88,4 +89,9 @@ func (d *Discover) accessBasicAuth() (string, string, error) {
 		return auth.Username, string(auth.Password), nil
 	}
 	return "", "", nil
+}
+
+func (d *Discover) accessBearerToken() (string, error) {
+	bearerToken := d.opts.HTTPClientConfig.BearerToken
+	return string(bearerToken), nil
 }

@@ -17,14 +17,12 @@ import (
 	"net/http"
 	"time"
 
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
-
-	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (
@@ -55,13 +53,12 @@ type PrometheusWriter struct {
 	headers map[string]string
 
 	client       *http.Client
-	isValid      bool
 	logger       monitorLogger.Logger
 	responseHook func(bool)
 }
 
 func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeReq prompb.WriteRequest) error {
-	if !p.isValid || len(writeReq.Timeseries) == 0 {
+	if len(writeReq.Timeseries) == 0 {
 		return nil
 	}
 
@@ -105,7 +102,7 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 	return nil
 }
 
-func NewPrometheusWriterClient(token, url string, headers map[string]string) *PrometheusWriter {
+func NewPrometheusWriterClient(url string, headers map[string]string) *PrometheusWriter {
 	client := &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        10,
@@ -114,25 +111,10 @@ func NewPrometheusWriterClient(token, url string, headers map[string]string) *Pr
 		Timeout: 10 * time.Second,
 	}
 
-	h := make(map[string]string, len(headers))
-	maps.Copy(h, headers)
-	if _, exist := h["x-bk-token"]; !exist {
-		if _, oExist := h[tokenKey]; !oExist {
-			h[tokenKey] = token
-		}
-	} else {
-		h[tokenKey] = h["x-bk-token"]
-	}
-	isValid := false
-	if v, _ := h[tokenKey]; v != "" {
-		isValid = true
-	}
-
 	return &PrometheusWriter{
 		url:     url,
-		headers: h,
+		headers: headers,
 		client:  client,
-		isValid: isValid,
 		logger:  monitorLogger.With(zap.String("name", "prometheus")),
 	}
 }

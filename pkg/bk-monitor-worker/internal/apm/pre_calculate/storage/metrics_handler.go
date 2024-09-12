@@ -70,6 +70,7 @@ func MetricFlowBuckets(b []float64) MetricConfigOption {
 
 type MetricDimensionsHandler struct {
 	dataId string
+	token  string
 
 	ctx context.Context
 	mu  sync.Mutex
@@ -102,7 +103,7 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 	writeReq := c.Collect()
 	metrics.RecordApmPreCalcOperateStorageCount(m.dataId, metrics.StoragePrometheus, metrics.OperateSave)
 	metrics.RecordApmPreCalcSaveStorageTotal(m.dataId, metrics.StoragePrometheus, len(writeReq.Timeseries))
-	if err := m.promClient.WriteBatch(context.Background(), "", writeReq); err != nil {
+	if err := m.promClient.WriteBatch(context.Background(), m.token, writeReq); err != nil {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
 		m.logger.Errorf("[TraceMetricsReport] DataId: %s report to prometheus failed, error: %s", m.dataId, err)
 	}
@@ -145,7 +146,8 @@ func NewMetricDimensionHandler(ctx context.Context, dataId string,
 
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
-		promClient:               remote.NewPrometheusWriterClient(token, config.Url, config.Headers),
+		token:                    token,
+		promClient:               remote.NewPrometheusWriterClient(config.Url, config.Headers),
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,

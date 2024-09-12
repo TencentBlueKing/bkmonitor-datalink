@@ -44,7 +44,7 @@ func NewSpaceReporter(key string, writerUrl string) (Reporter, error) {
 		return nil, fmt.Errorf("failed to create redis client")
 	}
 
-	writer := NewPrometheusWriterClient("", writerUrl, map[string]string{})
+	writer := NewPrometheusWriterClient(writerUrl, map[string]string{})
 
 	report := &reporter{
 		client: inst.Client,

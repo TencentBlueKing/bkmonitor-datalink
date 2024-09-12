@@ -158,10 +158,10 @@ func (c *Operator) createHttpSdDiscover(scrapeConfig config.ScrapeConfig, sdConf
 			MetricRelabelConfigs:   metricRelabelings,
 		},
 		SDConfig:         sdConfig,
-		HTTPClientConfig: scrapeConfig.HTTPClientConfig,
+		HTTPClientConfig: httpClientConfig,
 	})
+	logger.Infof("create httpsd discover %s, config=%+v", dis.Name(), scrapeConfig)
 
-	logger.Infof("create httpsd discover: %v", dis.Name())
 	return dis, nil
 }
 

@@ -94,8 +94,11 @@ func (d *Discover) accessBasicAuth() (string, string, error) {
 }
 
 func (d *Discover) accessBearerToken() (string, error) {
-	bearerToken := d.opts.HTTPClientConfig.BearerToken
-	return string(bearerToken), nil
+	auth := d.opts.HTTPClientConfig.Authorization
+	if auth == nil || auth.Type != "Bearer" {
+		return "", nil
+	}
+	return string(auth.Credentials), nil
 }
 
 func (d *Discover) accessTLSConfig() (*tlscommon.Config, error) {

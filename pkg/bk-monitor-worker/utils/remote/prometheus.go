@@ -17,12 +17,13 @@ import (
 	"net/http"
 	"time"
 
-	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/prompb"
 	"go.uber.org/zap"
+
+	monitorLogger "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 const (

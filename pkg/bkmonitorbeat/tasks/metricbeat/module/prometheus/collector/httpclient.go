@@ -99,7 +99,7 @@ func NewHTTPClient(base mb.BaseMetricSet) (*HTTPClient, error) {
 		IdleConnTimeout: time.Minute * 5,
 	}
 
-	if tlsConfig.Verification == transport.VerifyNone {
+	if tlsConfig != nil && tlsConfig.Verification == transport.VerifyNone {
 		trp.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 

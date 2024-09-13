@@ -79,7 +79,7 @@ func (e *Event) AsMapStr() common.MapStr {
 		"task_id":    e.TaskID,
 		"bk_biz_id":  e.BizID,
 		"task_type":  e.TaskType,
-		"error_code": e.ErrorCode,
+		"error_code": e.ErrorCode.Code(),
 		"cost_time":  int(e.TaskDuration().Seconds() * 1000),
 		"dimensions": e.Dimension,
 		"exemplar":   e.Exemplar,

@@ -34,12 +34,13 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 	var (
 		instance tsdb.Instance
 		err      error
+		user     = metadata.GetUser(ctx)
 	)
 
 	ctx, span := trace.NewSpan(ctx, "get-ts-db-instance")
 	defer func() {
 		if err != nil {
-			log.Errorf(ctx, err.Error())
+			log.Errorf(ctx, "get_ts_db_instance tableID: %s error: %s", qry.TableID, err.Error())
 		}
 		span.End(&err)
 	}()
@@ -104,12 +105,12 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			MaxRouting: tsDBService.EsMaxRouting,
 		}
 		if qry.SourceType == structured.BkData {
-			opt.Address = bkapi.GetBkDataAPI().QueryEsUrl()
+			opt.Address = bkapi.GetBkDataAPI().QueryUrlForES(user.SpaceUid)
 			opt.Headers = bkapi.GetBkDataAPI().Headers(nil)
 			opt.HealthCheck = false
 		} else {
 			if stg == nil {
-				err = fmt.Errorf("%s storage is nil in %s", consul.ElasticsearchStorageType, qry.StorageID)
+				err = fmt.Errorf("%s storage list is empty in %s", consul.ElasticsearchStorageType, qry.StorageID)
 				return nil
 			}
 			opt.Address = stg.Address
@@ -120,7 +121,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		instance, err = elasticsearch.NewInstance(ctx, opt)
 	case consul.BkSqlStorageType:
 		instance, err = bksql.NewInstance(ctx, &bksql.Options{
-			Address: bkapi.GetBkDataAPI().QuerySyncUrl(),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				bksql.ContentType: tsDBService.BkSqlContentType,
 			}),
@@ -131,7 +132,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 		})
 	case consul.VictoriaMetricsStorageType:
 		instance, err = victoriaMetrics.NewInstance(ctx, &victoriaMetrics.Options{
-			Address: bkapi.GetBkDataAPI().QuerySyncUrl(),
+			Address: bkapi.GetBkDataAPI().QueryUrl(user.SpaceUid),
 			Headers: bkapi.GetBkDataAPI().Headers(map[string]string{
 				victoriaMetrics.ContentType: tsDBService.VmContentType,
 			}),
@@ -142,8 +143,7 @@ func GetTsDbInstance(ctx context.Context, qry *metadata.Query) tsdb.Instance {
 			Curl:             curlGet,
 		})
 	default:
-		err = fmt.Errorf("sotrage type is error %+v", qry)
-		return nil
+		err = fmt.Errorf("storage type is error %+v", qry)
 	}
 
 	return instance

@@ -112,7 +112,13 @@ func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, st
 	return output.String()
 }
 
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
@@ -392,7 +398,7 @@ func (i *Instance) vmQuery(
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), i.url,
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 	return nil

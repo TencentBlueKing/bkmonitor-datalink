@@ -43,12 +43,17 @@ type Instance struct {
 	ClusterMetricPrefix string
 }
 
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
@@ -76,8 +81,6 @@ func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end
 func (i *Instance) GetInstanceType() string {
 	return consul.RedisStorageType
 }
-
-var _ tsdb.Instance = (*Instance)(nil)
 
 func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
 	df, err := i.rawQuery(ctx, time.Time{}, end, time.Duration(0))
@@ -145,7 +148,7 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	}
 	queryCost := time.Since(startAnaylize)
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), "",
 	)
 
 	return &df, nil

@@ -140,6 +140,11 @@ func (c *CommonField) Contain(collections map[string]string) bool {
 	return exist
 }
 
+// ToDimensionKey convert to metric dimension key
+func (c *CommonField) ToDimensionKey() string {
+	return strings.ReplaceAll(c.Key, ".", "_")
+}
+
 // FiledSource source of filed
 type FiledSource string
 

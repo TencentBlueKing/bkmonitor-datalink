@@ -124,6 +124,28 @@ func ToTime(startStr, endStr, stepStr, timezone string) (time.Time, time.Time, t
 	return start, stop, interval, timezone, nil
 }
 
+func (q *QueryTs) GetTime() (time.Time, time.Time, error) {
+	var (
+		start time.Time
+		end   time.Time
+	)
+	if q.Start == "" || q.End == "" {
+		return start, end, fmt.Errorf("query get time: start or end is empty")
+	}
+
+	startInt, err := strconv.ParseInt(q.Start, 10, 64)
+	if err != nil {
+		return start, end, err
+	}
+	start = time.Unix(startInt, 0)
+	endInt, err := strconv.ParseInt(q.End, 10, 64)
+	if err != nil {
+		return start, end, err
+	}
+	end = time.Unix(endInt, 0)
+	return start, end, err
+}
+
 func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference, error) {
 
 	queryReference := make(metadata.QueryReference)
@@ -504,6 +526,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		IsRegexp:    q.IsRegexp,
 		Conditions:  q.Conditions,
 		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
+		IsSkipK8s:   metadata.GetQueryParams(ctx).IsSkipK8s,
 		IsSkipField: isSkipField,
 	})
 	if err != nil {
@@ -752,6 +775,11 @@ func (q *Query) BuildMetadataQuery(
 	}
 
 	// 判断 rt 是否是 bkdata 的数据源
+	query.StorageType = tsDB.StorageType
+
+	// 在 metadata 还没有补充 storageType 字段之前
+	// 使用 sourceType 来判断是否是 es 查询
+	//  等后面支持了之后可以删除该段逻辑
 	if tsDB.SourceType == BkData {
 		query.StorageType = consul.ElasticsearchStorageType
 	}
@@ -776,6 +804,7 @@ func (q *Query) BuildMetadataQuery(
 
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
+	query.Source = q.KeepColumns
 	query.DataSource = q.DataSource
 	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {

@@ -14,6 +14,7 @@ const (
 	BkDataUriPathConfigPath              = "bk_data.uri_path"
 	BkDataAuthenticationMethodConfigPath = "bk_data.authentication_method"
 	BkDataTokenConfigPath                = "bk_data.token"
+	BkDataClusterSpaceUidConfigPath      = "bk_data.cluster_space_uid"
 
 	// BKAPI 配置
 	BkAPIAddressConfigPath = "bk_api.address"

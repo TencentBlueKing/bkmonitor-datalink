@@ -48,6 +48,11 @@ type instance struct {
 
 var _ tsdb.Instance = (*instance)(nil)
 
+func (i instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (i instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	//TODO implement me
 	panic("implement me")
@@ -69,7 +74,7 @@ func (i instance) Series(ctx context.Context, query *metadata.Query, start time.
 	panic("implement me")
 }
 
-func (i instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	return influxdb.StartStreamSeriesSet(ctx, i.name, i.opt)
 }
 

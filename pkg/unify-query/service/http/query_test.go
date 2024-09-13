@@ -72,232 +72,215 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 	victoriaMetricsStorageId := int64(1)
 	influxdbStorageId := int64(2)
 
-	mock.SetRedisClient(ctx, "demo")
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"bkcc__1068": ir.Space{
-				"table_id_1.metric": &ir.SpaceResultTable{
-					TableId: "table_id_1.metric",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-1",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-2",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-3",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-40899",
-							"namespace":      "ns-4",
-						},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"bkcc__1068": ir.Space{
+			"table_id_1.metric": &ir.SpaceResultTable{
+				TableId: "table_id_1.metric",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-1",
 					},
-				},
-				"table_id_2.metric": &ir.SpaceResultTable{
-					TableId: "table_id_2.metric",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "cls-2",
-							"namespace":      "ns-1",
-						},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-2",
 					},
-				},
-				"table_id_3.metric": &ir.SpaceResultTable{
-					TableId: "table_id_3.metric",
-					Filters: []map[string]string{
-						{
-							"bk_biz_id":      "bk_biz_id_1",
-							"bcs_cluster_id": "cls-3",
-						},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-3",
+					},
+					{
+						"bcs_cluster_id": "BCS-K8S-40899",
+						"namespace":      "ns-4",
 					},
 				},
 			},
-		}, ir.ResultTableDetailInfo{
-			"table_id_1.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_1",
-				BcsClusterID:    "BCS-K8S-40899",
+			"table_id_2.metric": &ir.SpaceResultTable{
+				TableId: "table_id_2.metric",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "cls-2",
+						"namespace":      "ns-1",
+					},
+				},
 			},
-			"table_id_2.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_2",
-				BcsClusterID:    "cls-2",
+			"table_id_3.metric": &ir.SpaceResultTable{
+				TableId: "table_id_3.metric",
+				Filters: []map[string]string{
+					{
+						"bk_biz_id":      "bk_biz_id_1",
+						"bcs_cluster_id": "cls-3",
+					},
+				},
 			},
-			"table_id_3.metric": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            "vm_rt_3",
-				BcsClusterID:    "cls-3",
-			},
-		}, nil, nil)
+		},
+	}, ir.ResultTableDetailInfo{
+		"table_id_1.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_1",
+			BcsClusterID:    "BCS-K8S-40899",
+		},
+		"table_id_2.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_2",
+			BcsClusterID:    "cls-2",
+		},
+		"table_id_3.metric": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            "vm_rt_3",
+			BcsClusterID:    "cls-3",
+		},
+	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			consul.VictoriaMetricsStorageType: ir.Space{
-				"a.b_2": &ir.SpaceResultTable{
-					TableId: "a.b_2",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		consul.VictoriaMetricsStorageType: ir.Space{
+			"a.b_2": &ir.SpaceResultTable{
+				TableId: "a.b_2",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
-				"a.b_1": &ir.SpaceResultTable{
-					TableId: "a.b_1",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
+			},
+			"a.b_1": &ir.SpaceResultTable{
+				TableId: "a.b_1",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
 			},
 		},
-		ir.ResultTableDetailInfo{
-			"a.b_2": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            consul.VictoriaMetricsStorageType,
-				BcsClusterID:    "cls-2",
-			},
-			"a.b_1": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              redis.BkSplitMeasurement,
-				VmRt:            consul.VictoriaMetricsStorageType,
-				BcsClusterID:    "cls-1",
-			},
+	}, ir.ResultTableDetailInfo{
+		"a.b_2": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            consul.VictoriaMetricsStorageType,
+			BcsClusterID:    "cls-2",
 		},
-		nil, nil,
-	)
+		"a.b_1": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              redis.BkSplitMeasurement,
+			VmRt:            consul.VictoriaMetricsStorageType,
+			BcsClusterID:    "cls-1",
+		},
+	}, nil, nil)
 
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			consul.InfluxDBStorageType: ir.Space{
-				"a.b": &ir.SpaceResultTable{
-					TableId: "a.b",
-					Filters: []map[string]string{
-						{
-							"filter": redis.BkSplitMeasurement,
-						},
-					},
-				},
-				"system.cpu_summary": &ir.SpaceResultTable{
-					TableId: "system.cpu_summary",
-				},
-			},
-		},
-		ir.ResultTableDetailInfo{
-			"a.b": &ir.ResultTableDetail{
-				Fields:          []string{redis.BkSplitMeasurement},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       influxdbStorageId,
-				DB:              redis.BkSplitMeasurement,
-			},
-			"system.cpu_summary": &ir.ResultTableDetail{
-				Fields:          []string{"usage", "rate"},
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       influxdbStorageId,
-				DB:              "system",
-				Measurement:     "cpu_summary",
-			},
-		},
-		nil, nil,
-	)
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"vm-query": ir.Space{
-				"table_id.__default__": &ir.SpaceResultTable{
-					TableId: "table_id.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "cls",
-							"namespace":      "",
-						},
-					},
-				},
-				"100147_bcs_prom_computation_result_table_25428.__default__": &ir.SpaceResultTable{
-					TableId: "100147_bcs_prom_computation_result_table_25428.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-25428",
-							"namespace":      "",
-						},
-						{
-							"bcs_cluster_id": "BCS-K8S-25430",
-							"namespace":      "",
-						},
-					},
-				},
-				"100147_bcs_prom_computation_result_table_25429.__default__": &ir.SpaceResultTable{
-					TableId: "100147_bcs_prom_computation_result_table_25429.__default__",
-					Filters: []map[string]string{
-						{
-							"bcs_cluster_id": "BCS-K8S-25429",
-							"namespace":      "",
-						},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		consul.InfluxDBStorageType: ir.Space{
+			"a.b": &ir.SpaceResultTable{
+				TableId: "a.b",
+				Filters: []map[string]string{
+					{
+						"filter": redis.BkSplitMeasurement,
 					},
 				},
 			},
-		},
-		ir.ResultTableDetailInfo{
-			"table_id.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"metric"},
-				MeasurementType: redis.BkSplitMeasurement,
-				Measurement:     "__default__",
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "table_id",
-				VmRt:            "vm_rt",
-			},
-			"100147_bcs_prom_computation_result_table_25428.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "100147_bcs_prom_computation_result_table_25428",
-				Measurement:     "__default__",
-				VmRt:            "100147_bcs_prom_computation_result_table_25428",
-				DataLabel:       "100147_bcs_prom_computation_result_table_25428",
-			},
-			"100147_bcs_prom_computation_result_table_25429.__default__": &ir.ResultTableDetail{
-				Fields:          []string{"container_cpu_usage_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       victoriaMetricsStorageId,
-				DB:              "100147_bcs_prom_computation_result_table_25429",
-				Measurement:     "__default__",
-				VmRt:            "100147_bcs_prom_computation_result_table_25429",
-				DataLabel:       "100147_bcs_prom_computation_result_table_25429",
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
 			},
 		},
-		nil, nil,
-	)
-	mock.SetSpaceTsDbMockData(ctx, path, bucket,
-		ir.SpaceInfo{
-			"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
-				TableId: "custom_report_aggate.base",
-			}}},
-		ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
-			Fields:          []string{"bkmonitor_action_notice_api_call_count_total"},
+	}, ir.ResultTableDetailInfo{
+		"a.b": &ir.ResultTableDetail{
+			Fields:          []string{redis.BkSplitMeasurement},
 			MeasurementType: redis.BkSplitMeasurement,
 			StorageId:       influxdbStorageId,
-			DB:              "custom_report_aggate",
-			Measurement:     "base",
-		}},
-		nil, nil,
-	)
+			DB:              redis.BkSplitMeasurement,
+		},
+		"system.cpu_summary": &ir.ResultTableDetail{
+			Fields:          []string{"usage", "rate"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       influxdbStorageId,
+			DB:              "system",
+			Measurement:     "cpu_summary",
+		},
+	}, nil, nil)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"vm-query": ir.Space{
+			"table_id.__default__": &ir.SpaceResultTable{
+				TableId: "table_id.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "cls",
+						"namespace":      "",
+					},
+				},
+			},
+			"100147_bcs_prom_computation_result_table_25428.__default__": &ir.SpaceResultTable{
+				TableId: "100147_bcs_prom_computation_result_table_25428.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-25428",
+						"namespace":      "",
+					},
+					{
+						"bcs_cluster_id": "BCS-K8S-25430",
+						"namespace":      "",
+					},
+				},
+			},
+			"100147_bcs_prom_computation_result_table_25429.__default__": &ir.SpaceResultTable{
+				TableId: "100147_bcs_prom_computation_result_table_25429.__default__",
+				Filters: []map[string]string{
+					{
+						"bcs_cluster_id": "BCS-K8S-25429",
+						"namespace":      "",
+					},
+				},
+			},
+		},
+	}, ir.ResultTableDetailInfo{
+		"table_id.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"metric"},
+			MeasurementType: redis.BkSplitMeasurement,
+			Measurement:     "__default__",
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "table_id",
+			VmRt:            "vm_rt",
+		},
+		"100147_bcs_prom_computation_result_table_25428.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "100147_bcs_prom_computation_result_table_25428",
+			Measurement:     "__default__",
+			VmRt:            "100147_bcs_prom_computation_result_table_25428",
+			DataLabel:       "100147_bcs_prom_computation_result_table_25428",
+		},
+		"100147_bcs_prom_computation_result_table_25429.__default__": &ir.ResultTableDetail{
+			Fields:          []string{"container_cpu_usage_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       victoriaMetricsStorageId,
+			DB:              "100147_bcs_prom_computation_result_table_25429",
+			Measurement:     "__default__",
+			VmRt:            "100147_bcs_prom_computation_result_table_25429",
+			DataLabel:       "100147_bcs_prom_computation_result_table_25429",
+		},
+	}, nil, nil)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		"bkcc__100147": ir.Space{"custom_report_aggate.base": &ir.SpaceResultTable{
+			TableId: "custom_report_aggate.base",
+		}}}, ir.ResultTableDetailInfo{"custom_report_aggate.base": &ir.ResultTableDetail{
+		Fields:          []string{"bkmonitor_action_notice_api_call_count_total"},
+		MeasurementType: redis.BkSplitMeasurement,
+		StorageId:       influxdbStorageId,
+		DB:              "custom_report_aggate",
+		Measurement:     "base",
+	}}, nil, nil)
 
 	mockCurl := &curl.MockCurl{}
 	mockCurl.WithF(func(opt curl.Options) []byte {
@@ -416,7 +399,7 @@ func mockData(ctx context.Context, path, bucket string) *curl.MockCurl {
 		Instance: vmInst,
 	})
 
-	mock.SetRedisClient(context.TODO(), "test")
+	mock.SetRedisClient(context.TODO())
 	return mockCurl
 }
 
@@ -438,25 +421,18 @@ func TestQueryTsWithEs(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx, "test")
-	mock.SetSpaceTsDbMockData(
-		ctx,
-		"query_reference.db",
-		"query_reference",
-		ir.SpaceInfo{
-			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	}, ir.ResultTableDetailInfo{
+		tableID: &ir.ResultTableDetail{
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       int64(esTestStorageID),
+			DB:              db,
+			Measurement:     measurement,
+			TableId:         tableID,
 		},
-		ir.ResultTableDetailInfo{
-			tableID: &ir.ResultTableDetail{
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       int64(esTestStorageID),
-				DB:              db,
-				Measurement:     measurement,
-				TableId:         tableID,
-			},
-		},
-		nil, nil,
-	)
+	}, nil, nil)
 
 	ctx = metadata.InitHashID(ctx)
 
@@ -585,26 +561,19 @@ func TestQueryReference(t *testing.T) {
 	esTestStorageID := 999
 
 	mock.Init()
-	mock.SetRedisClient(ctx, "test")
-	mock.SetSpaceTsDbMockData(
-		ctx,
-		"query_reference.db",
-		"query_reference",
-		ir.SpaceInfo{
-			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	mock.SetRedisClient(ctx)
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
+	}, ir.ResultTableDetailInfo{
+		tableID: &ir.ResultTableDetail{
+			Fields:          nil,
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       int64(esTestStorageID),
+			DB:              db,
+			Measurement:     measurement,
+			TableId:         tableID,
 		},
-		ir.ResultTableDetailInfo{
-			tableID: &ir.ResultTableDetail{
-				Fields:          nil,
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       int64(esTestStorageID),
-				DB:              db,
-				Measurement:     measurement,
-				TableId:         tableID,
-			},
-		},
-		nil, nil,
-	)
+	}, nil, nil)
 
 	ctx = metadata.InitHashID(ctx)
 
@@ -1138,6 +1107,115 @@ func TestQueryTs(t *testing.T) {
 	}
 }
 
+func TestQueryRawWithInstance(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	mock.SetRedisClient(ctx)
+
+	spaceUid := "space_uid_mock"
+	tableID := "table_id.mock"
+	storageID := 233
+
+	address := viper.GetString("mock.es.address")
+	username := viper.GetString("mock.es.username")
+	password := viper.GetString("mock.es.password")
+	timeout := viper.GetDuration("mock.es.timeout")
+	maxSize := viper.GetInt("mock.es.max_size")
+	maxRouting := viper.GetInt("mock.es.max_routing")
+
+	tsdb.SetStorage(strconv.Itoa(storageID), &tsdb.Storage{
+		Type:       consul.ElasticsearchStorageType,
+		Address:    address,
+		Username:   username,
+		Password:   password,
+		Timeout:    timeout,
+		MaxLimit:   maxSize,
+		MaxRouting: maxRouting,
+	})
+
+	resultTableDetail := &ir.ResultTableDetail{
+		DB:          "v2_2_bklog_bk_unify_query",
+		TableId:     tableID,
+		SourceType:  structured.BkLog,
+		StorageType: consul.BkSqlStorageType,
+		StorageId:   int64(storageID),
+	}
+	//resultTableDetail.Options.TimeField.Name = "thedate"
+	//resultTableDetail.Options.TimeField.Type = "long"
+	//resultTableDetail.Options.TimeField.Unit = elasticsearch.Microsecond
+	resultTableDetail.Options.NeedAddTime = true
+
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceUid: ir.Space{
+			tableID: &ir.SpaceResultTable{TableId: tableID, Filters: make([]map[string]string, 0)},
+		},
+	}, ir.ResultTableDetailInfo{
+		tableID: resultTableDetail,
+	},
+		nil, nil,
+	)
+
+	start := "1723594000"
+	end := "1723595000"
+
+	tcs := map[string]struct {
+		queryTs  *structured.QueryTs
+		expected []map[string]any
+	}{
+		"query_bk_base_es_with_raw": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
+						Limit:       10,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
+					},
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        20,
+						Limit:       10,
+						KeepColumns: []string{"__ext.io_kubernetes_pod", "dtEventTimeStamp"},
+					},
+				},
+				Start: start,
+				End:   end,
+			},
+		},
+		"query_bk_base_es_with_errors": {
+			queryTs: &structured.QueryTs{
+				SpaceUid: spaceUid,
+				QueryList: []*structured.Query{
+					{
+						DataSource:  structured.BkLog,
+						TableID:     structured.TableID(tableID),
+						From:        1,
+						Limit:       1,
+						KeepColumns: []string{"__ext.container_id", "dtEventTimeStamp"},
+					},
+				},
+				Start: start,
+				End:   end,
+			},
+		},
+	}
+
+	for name, c := range tcs {
+		t.Run(name, func(t *testing.T) {
+			total, list, err := queryRawWithInstance(ctx, c.queryTs)
+			if err != nil {
+				panic(err.Error())
+			}
+			fmt.Printf("total: %d \nlength: %d \n", total, len(list))
+			for _, l := range list {
+				fmt.Printf("%v\n", l)
+			}
+		})
+	}
+}
+
 // TestQueryExemplar comment lint rebel
 func TestQueryExemplar(t *testing.T) {
 	ctx := context.Background()
@@ -1266,7 +1344,7 @@ func TestVmQueryParams(t *testing.T) {
 
 func TestStructAndPromQLConvert(t *testing.T) {
 	ctx := context.Background()
-	mock.SetRedisClient(ctx, "test-struct-promql")
+	mock.SetRedisClient(ctx)
 
 	testCase := map[string]struct {
 		queryStruct bool
@@ -2326,7 +2404,7 @@ func TestQueryTs_ToQueryReference(t *testing.T) {
 func setupCluterMetricsData(ctx context.Context) {
 	var err error
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx, "handler_test")
+	mock.SetRedisClient(ctx)
 	_, err = redis.HSet(
 		ctx, "bkmonitor:cluster_metrics_meta", "influxdb_shard_write_points_ok",
 		"{\"metric_name\":\"influxdb_shard_write_points_ok\",\"tags\":[\"bkm_cluster\",\"database\",\"engine\",\"hostname\",\"id\",\"index_type\",\"path\",\"retention_policy\",\"wal_path\"]}")
@@ -2345,7 +2423,7 @@ func TestQueryTsClusterMetrics(t *testing.T) {
 	ctx := context.Background()
 	setupCluterMetricsData(ctx)
 	log.InitTestLogger()
-	mock.SetRedisClient(ctx, "handler_test")
+	mock.SetRedisClient(ctx)
 	testCases := map[string]struct {
 		query  string
 		result string

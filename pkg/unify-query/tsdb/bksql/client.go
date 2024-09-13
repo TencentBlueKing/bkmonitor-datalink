@@ -89,7 +89,7 @@ func (c *Client) curlGet(ctx context.Context, method, sql string, res *Result, s
 	}
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, consul.BkSqlStorageType,
+		ctx, queryCost, user.SpaceUid, user.Source, consul.BkSqlStorageType, c.url,
 	)
 	return nil
 }

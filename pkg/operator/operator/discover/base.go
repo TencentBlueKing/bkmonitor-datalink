@@ -354,10 +354,22 @@ func (d *BaseDiscover) LoopHandle() {
 func (d *BaseDiscover) loopHandleTargetGroup() {
 	defer Publish()
 
-	const duration = 10
 	const resync = 100 // 避免事件丢失
 
-	ticker := time.NewTicker(time.Second * duration)
+	// 保证在调度周期内至少能够同步一次即可
+	duration := configs.G().DispatchInterval / 2
+	if duration < 5 {
+		duration = 5
+	}
+
+	// 打散执行时刻 尽量减少内存抖动
+	delay := time.Now().Nanosecond() % int(duration)
+	if delay > 0 {
+		time.Sleep(time.Second * time.Duration(delay))
+	}
+	logger.Infof("%s delay %d seconds and ready to sync targets", d.Name(), delay)
+
+	ticker := time.NewTicker(time.Second * time.Duration(duration))
 	defer ticker.Stop()
 
 	counter := 0

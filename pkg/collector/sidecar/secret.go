@@ -271,7 +271,7 @@ func (s *Sidecar) handleChildConfigFiles(cf configFile) error {
 		}
 		return os.WriteFile(path, cf.data, 0o666)
 
-	default: // delete
+	default: // actionDelete
 		if !utils.PathExist(path) {
 			return nil
 		}

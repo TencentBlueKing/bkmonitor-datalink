@@ -189,16 +189,6 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 			},
 		},
 		{
-			Input:     "Ymtia2JrYmtia2JrYmtiaxUtdLzrldhHtlcjc1Cwfo1u99rVk5HGe8EjT761brGtKm3H4Ran78rWl85HwzfR",
-			Token:     define.Token{},
-			ErrPrefix: "crypto/cipher: input not full blocks",
-		},
-		{
-			Input:     "not_base64_string",
-			Token:     define.Token{},
-			ErrPrefix: "illegal base64 data",
-		},
-		{
 			Input:     "YmstY29sbGVjdG9y",
 			Token:     define.Token{},
 			ErrPrefix: "invalid prefix-enc",

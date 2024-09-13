@@ -104,9 +104,7 @@ func (innerMetaCacher) Set(k string, v define.Token) {
 	metacache.Set(k, v)
 }
 
-// Aes256WithMetaTokenDecoder 使用 aes256 加盐算法 所有字段均由配置项指定
-//
-//	同时使用 metacache 数据作为备份
+// Aes256WithMetaTokenDecoder 使用 aes256 加盐算法 所有字段均由配置项指定 同时使用 metacache 数据作为备份
 func newAes256WithMetaTokenDecoder(c Config, cacher metacache.Cacher) *aes256WithMetaTokenDecoder {
 	return &aes256WithMetaTokenDecoder{
 		decoder: newAes256TokenDecoder(c),
@@ -148,6 +146,7 @@ func (d *aes256WithMetaTokenDecoder) Decode(s string) (define.Token, error) {
 	return mergeToken(cache, token), nil
 }
 
+// mergeToken 合并 token 优先以 dst 为主
 func mergeToken(cache, dst define.Token) define.Token {
 	token := dst
 	if len(dst.AppName) == 0 && len(cache.AppName) > 0 {

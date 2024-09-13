@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 )
 
@@ -125,7 +125,7 @@ func TestAes256Decoder(t *testing.T) {
 }
 
 func TestAes256WithMetaDecoder(t *testing.T) {
-	var decoderConfig = Config{
+	decoderConfig := Config{
 		Type:       "aes256WithMeta",
 		Salt:       "bk",
 		DecodedIv:  "bkbkbkbkbkbkbkbk",

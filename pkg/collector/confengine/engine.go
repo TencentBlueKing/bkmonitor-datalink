@@ -12,13 +12,13 @@ package confengine
 import (
 	"path/filepath"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/elastic/go-ucfg"
 	"github.com/elastic/go-ucfg/yaml"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/metacache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )

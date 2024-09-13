@@ -20,12 +20,7 @@ redis:
   read_timeout: 10s
   service_name: bkmonitorv3:spaces
 victoria_metrics:
-  address: http://127.0.0.1
-  uri_path: query_sync
   timeout: 30s
-  code: bkmonitorv3
-  secret:
-  token:
 influxdb:
   ping:
     count: 3
@@ -87,10 +82,13 @@ metadata:
     raw_suffix: "_raw"
     cmdb_suffix: "_cmdb"
 bk_api:
+  address: 127.0.0.1
   code:
   secret:
 bk_data:
-  host:
   uri_path:
   authentication_method:
   token:
+  cluster_space_uid:
+    test:
+    - bkcc__test

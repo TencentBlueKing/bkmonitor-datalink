@@ -13,6 +13,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
@@ -22,4 +25,37 @@ func TestGetDataAuth(t *testing.T) {
 
 	headers := GetBkDataAPI().Headers(nil)
 	fmt.Println(headers)
+}
+
+func TestGetDataUrl(t *testing.T) {
+	mock.Path = `../dist/local/unify-query.yaml`
+	mock.Init()
+
+	testCase := map[string]struct {
+		spaceUid string
+		url      string
+	}{
+		"test-1": {
+			spaceUid: "default",
+			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/query_sync`,
+		},
+		"test-2": {
+			spaceUid: "bkcc__test",
+			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/test/query_sync`,
+		},
+		"test-3": {
+			spaceUid: "bkci__test",
+			url:      `http://127.0.0.1/api/bk-base/prod/v3/queryengine/test/query_sync`,
+		},
+	}
+
+	viper.Set(BkAPIAddressConfigPath, "http://127.0.0.1")
+
+	for name, c := range testCase {
+		t.Run(name, func(t *testing.T) {
+			url := GetBkDataAPI().QueryUrl(c.spaceUid)
+			assert.Equal(t, c.url, url)
+		})
+	}
+
 }

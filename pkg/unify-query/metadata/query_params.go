@@ -22,6 +22,13 @@ type QueryParams struct {
 
 	DataSource  map[string]struct{}
 	IsReference bool
+	IsSkipK8s   bool
+}
+
+func (q *QueryParams) SetIsSkipK8s(isSkipK8s bool) *QueryParams {
+	q.IsSkipK8s = isSkipK8s
+	q.set()
+	return q
 }
 
 func (q *QueryParams) SetIsReference(isReference bool) *QueryParams {

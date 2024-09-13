@@ -526,6 +526,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 		IsRegexp:    q.IsRegexp,
 		Conditions:  q.Conditions,
 		IsSkipSpace: metadata.GetUser(ctx).IsSkipSpace(),
+		IsSkipK8s:   metadata.GetQueryParams(ctx).IsSkipK8s,
 		IsSkipField: isSkipField,
 	})
 	if err != nil {

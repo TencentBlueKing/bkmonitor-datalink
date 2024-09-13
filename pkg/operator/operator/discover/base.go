@@ -367,7 +367,7 @@ func (d *BaseDiscover) loopHandleTargetGroup() {
 	if delay > 0 {
 		time.Sleep(time.Second * time.Duration(delay))
 	}
-	logger.Infof("%s delay %d seconds and ready to sync targets", d.Name(), delay)
+	logger.Infof("%s fetch interval (%ds), delay (%ds) and ready to sync targets", d.Name(), duration, delay)
 
 	ticker := time.NewTicker(time.Second * time.Duration(duration))
 	defer ticker.Stop()

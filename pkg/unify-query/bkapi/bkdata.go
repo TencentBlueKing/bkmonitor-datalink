@@ -45,6 +45,7 @@ type BkDataAPI struct {
 
 func GetBkDataAPI() *BkDataAPI {
 	onceBkDataAPI.Do(func() {
+		// 加载独立集群配置
 		clusterSpaceUid := viper.GetStringMapStringSlice(BkDataClusterSpaceUidConfigPath)
 		clusterMap := make(map[string]string)
 
@@ -102,7 +103,9 @@ func (i *BkDataAPI) QueryUrl(spaceUid string) string {
 	p := make([]string, 0)
 	if spaceUid != "" {
 		if v, ok := i.clusterMap[spaceUid]; ok {
-			p = append(p, v)
+			if v != "" {
+				p = append(p, v)
+			}
 		}
 	}
 	p = append(p, QuerySync)

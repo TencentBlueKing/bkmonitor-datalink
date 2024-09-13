@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/elastic/beats/libbeat/common/transport/tlscommon"
 	"github.com/pkg/errors"
 	promconfig "github.com/prometheus/common/config"
 	promhttpsd "github.com/prometheus/prometheus/discovery/http"
@@ -50,7 +51,9 @@ func New(ctx context.Context, checkFn define.CheckFunc, opts *Options) *Discover
 
 	d.SetUK(fmt.Sprintf("%s:%s", d.Type(), opts.Name))
 	d.SetHelper(discover.Helper{
-		AccessBasicAuth: d.accessBasicAuth,
+		AccessBasicAuth:   d.accessBasicAuth,
+		AccessBearerToken: d.accessBearerToken,
+		AccessTlsConfig:   d.accessTLSConfig,
 	})
 	return d
 }
@@ -88,4 +91,27 @@ func (d *Discover) accessBasicAuth() (string, string, error) {
 		return auth.Username, string(auth.Password), nil
 	}
 	return "", "", nil
+}
+
+func (d *Discover) accessBearerToken() (string, error) {
+	auth := d.opts.HTTPClientConfig.Authorization
+	if auth == nil || auth.Type != "Bearer" {
+		return "", nil
+	}
+	return string(auth.Credentials), nil
+}
+
+func (d *Discover) accessTLSConfig() (*tlscommon.Config, error) {
+	cfg := d.opts.HTTPClientConfig.TLSConfig
+	if len(cfg.CAFile) == 0 && len(cfg.KeyFile) == 0 && len(cfg.CertFile) == 0 {
+		return nil, nil
+	}
+
+	tlsConfig := &tlscommon.Config{
+		CAs: []string{cfg.CAFile},
+	}
+
+	tlsConfig.Certificate.Certificate = cfg.CertFile
+	tlsConfig.Certificate.Key = cfg.KeyFile
+	return tlsConfig, nil
 }

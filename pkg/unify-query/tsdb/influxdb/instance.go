@@ -64,15 +64,7 @@ var (
 )
 
 // NewInstance 初始化引擎
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
-	headers := map[string]string{}
-	if opt.Accept != "" {
-		headers[ContentType] = opt.Accept
-	}
-	if opt.AcceptEncoding != "" {
-		headers[ContentEncoding] = opt.AcceptEncoding
-	}
-
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Host == "" {
 		return nil, fmt.Errorf("host is empty %+v", opt)
 	}
@@ -106,6 +98,10 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 }
 
 var _ tsdb.Instance = (*Instance)(nil)
+
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
 
 // GetInstanceType 获取引擎类型
 func (i *Instance) GetInstanceType() string {
@@ -200,9 +196,9 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		ctx, curl.Get,
 		curl.Options{
 			UrlPath: urlPath,
-			Headers: map[string]string{
+			Headers: metadata.Headers(ctx, map[string]string{
 				ContentType: i.contentType,
-			},
+			}),
 			UserName: i.username,
 			Password: i.password,
 		},
@@ -525,7 +521,7 @@ func (i *Instance) query(
 	span.Set("query-cost", queryCost.String())
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, fmt.Sprintf("%s_http", i.GetInstanceType()),
+		ctx, queryCost, user.SpaceUid, user.Source, fmt.Sprintf("%s_http", i.GetInstanceType()), i.host,
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 
@@ -659,8 +655,13 @@ func (i *Instance) grpcStream(
 	return seriesSet
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start time.Time,

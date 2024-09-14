@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/notifier"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/apm/pre_calculate/window"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/remote"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
@@ -45,7 +46,8 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 		WithProcessorConfig(
 			window.EnabledTraceInfoCache(config.EnabledTraceInfoCache != 0),
 			window.TraceEsQueryRate(config.TraceEsQueryRate),
-			window.MetricSampleRate(config.RelationMetricSampleRate),
+			window.TraceMetricsReportEnabled(config.EnabledTraceMetricsReport),
+			window.TraceMetricsLayer4ReportEnabled(config.MetricsProcessLayer4ExportEnabled),
 		).
 		WithStorageConfig(
 			storage.WorkerCount(config.StorageWorkerCount),
@@ -80,10 +82,20 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 				),
 			),
 			storage.SaveReqBufferSize(config.StorageSaveRequestBufferSize),
+			storage.PrometheusWriterConfig(
+				remote.PrometheusWriterUrl(config.PromRemoteWriteUrl),
+				remote.PrometheusWriterHeaders(config.PromRemoteWriteHeaders),
+			),
+			storage.MetricsConfig(
+				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
+				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
+				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
+			),
 		).
 		WithMetricReport(
 			EnabledProfileReport(config.ProfileEnabled),
 			ProfileAddress(config.ProfileHost),
+			ProfileToken(config.ProfileToken),
 			ProfileAppIdx(config.ProfileAppIdx),
 			MetricReportInterval(config.SemaphoreReportInterval),
 		).

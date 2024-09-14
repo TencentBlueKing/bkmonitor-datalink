@@ -18,6 +18,8 @@ import (
 var (
 	// NotifierChanBufferSize queue chan size
 	NotifierChanBufferSize int
+	// NotifierMessageQps Qps of queue
+	NotifierMessageQps int
 	// WindowMaxSize The maximum amount that a single trace can handle,
 	// beyond which the window will be forced to expire.
 	WindowMaxSize int
@@ -50,11 +52,11 @@ var (
 	// EnabledTraceInfoCache Whether to enable Storing the latest trace data into cache.
 	// If this is enabled, the query frequency of elasticsearch is reduced.
 	EnabledTraceInfoCache int
+	// EnabledTraceMetricsReport enabled report metric
+	EnabledTraceMetricsReport bool
 	// TraceEsQueryRate To prevent too many es queries caused by bloom-filter,
 	// each dataId needs to set a threshold for the maximum number of requests in a minute. default is 20
 	TraceEsQueryRate int
-	// RelationMetricSampleRate rate of metric
-	RelationMetricSampleRate int
 	// StorageSaveRequestBufferSize Number of storage chan
 	StorageSaveRequestBufferSize int
 	// StorageWorkerCount The number of concurrent storage requests accepted simultaneously
@@ -95,23 +97,39 @@ var (
 	ProfileEnabled bool
 	// ProfileHost profile report host
 	ProfileHost string
+	// ProfileToken profile report token
+	ProfileToken string
 	// ProfileAppIdx app name of profile
 	ProfileAppIdx string
 	// SemaphoreReportInterval time interval for reporting chan amount at the current time
 	SemaphoreReportInterval time.Duration
 
-	// PromRemoteWriteEnabled Whether to enabled prometheus remote write
-	PromRemoteWriteEnabled bool
 	// PromRemoteWriteUrl remote write target url
 	PromRemoteWriteUrl string
 	// PromRemoteWriteHeaders remote write headers of http request
 	PromRemoteWriteHeaders map[string]string
+	// RelationMetricsInMemDuration duration of relation-metrics in memory
+	RelationMetricsInMemDuration time.Duration
+	// FlowMetricsInMemDuration duration of flow-metrics in memory
+	FlowMetricsInMemDuration time.Duration
+	// MetricsProcessLayer4ExportEnabled enabled layer-4 metrics indicators (include ip. )
+	MetricsProcessLayer4ExportEnabled bool
+	// MetricsDurationBuckets buckets of flow duration metric (unit: s)
+	MetricsDurationBuckets []float64
+
 	// HashSecret secret for hash
 	HashSecret string
 )
 
+var (
+	// DurationBuckets unit: s (10 ms -> 5s)
+	// 未来需要由用户确定 目前暂时固定
+	DurationBuckets = []float64{0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 5}
+)
+
 func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)
+	NotifierMessageQps = GetValue("taskConfig.apmPreCalculate.notifier.qps", 1000)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)
@@ -126,9 +144,9 @@ func initApmVariables() {
 	DistributiveWindowSubWindowMappingMaxSpanCount = GetValue("taskConfig.apmPreCalculate.window.distributive.mappingMaxSpanCount", 100000)
 
 	EnabledTraceInfoCache = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceInfoCache", 0)
+	EnabledTraceMetricsReport = GetValue("taskConfig.apmPreCalculate.processor.enabledTraceMetricsReport", false)
 
 	TraceEsQueryRate = GetValue("taskConfig.apmPreCalculate.processor.traceEsQueryRate", 20)
-	RelationMetricSampleRate = GetValue("taskConfig.apmPreCalculate.processor.relationMetricSampleRate", 100, viper.GetInt)
 	StorageSaveRequestBufferSize = GetValue("taskConfig.apmPreCalculate.storage.saveRequestBufferSize", 1000)
 	StorageWorkerCount = GetValue("taskConfig.apmPreCalculate.storage.workerCount", 10)
 	StorageSaveHoldMaxCount = GetValue("taskConfig.apmPreCalculate.storage.saveHoldMaxCount", 30)
@@ -143,16 +161,23 @@ func initApmVariables() {
 	StorageBloomDecreaseDivisor = GetValue("taskConfig.apmPreCalculate.storage.bloom.decreaseBloom.divisor", 2)
 
 	/*
-	   Metric Config
+	   Profile Config
 	*/
 	ProfileEnabled = GetValue("taskConfig.apmPreCalculate.metrics.profile.enabled", false)
 	ProfileHost = GetValue("taskConfig.apmPreCalculate.metrics.profile.host", "")
+	ProfileToken = GetValue("taskConfig.apmPreCalculate.metrics.profile.token", "")
 	ProfileAppIdx = GetValue("taskConfig.apmPreCalculate.metrics.profile.appIdx", "")
-	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
+	/*
+	   Metric Config
+	*/
+	RelationMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.relationMetric.duration", 10*time.Minute, viper.GetDuration)
+	FlowMetricsInMemDuration = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.duration", 1*time.Minute, viper.GetDuration)
+	MetricsDurationBuckets = GetValue("taskConfig.apmPreCalculate.metrics.flowMetric.buckets", DurationBuckets, GetFloatSlice)
+	MetricsProcessLayer4ExportEnabled = GetValue("taskConfig.apmPreCalculate.metrics.enabledLayer4", false)
 
-	PromRemoteWriteEnabled = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.enabled", false, viper.GetBool)
-	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.url", "")
-	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metricsDiscover.remoteWrite.headers", map[string]string{}, viper.GetStringMapString)
+	SemaphoreReportInterval = GetValue("taskConfig.apmPreCalculate.metrics.report.semaphoreReportInterval", 5*time.Second, viper.GetDuration)
+	PromRemoteWriteUrl = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.url", "")
+	PromRemoteWriteHeaders = GetValue("taskConfig.apmPreCalculate.metrics.report.prometheus.headers", map[string]string{}, viper.GetStringMapString)
 
 	HashSecret = GetValue("taskConfig.apmPreCalculate.hashSecret", "")
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
@@ -31,7 +30,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/cartesian"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 	tsdbInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/influxdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 	ir "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
@@ -117,100 +115,88 @@ func generateData(metricName string, startValue int, dimensionsPrefix string, di
 }
 
 func MockTsDB(t *testing.T) {
-	mockCurl := curl.NewMockCurl(map[string]string{
-		`http://127.0.0.1:80/query?db=2_bkmonitor_time_series_1582626&q=select+count%28%22value%22%29+as+_value%2C+time+as+_time+from+container_cpu_system_seconds_total+where+time+%3E+1669717379999000000+and+time+%3C+1669717739999000000+and+bcs_cluster_id%3D%27BCS-K8S-40949%27++group+by+time%281m0s%29+tz%28%27UTC%27%29`:                                                                                                                                                        ``,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                                                                                                                                                                   `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"35895"],[1669717440,"35900"],[1669717500,"39424"],[1669717560,"41380"],[1669717620,"43604"],[1669717680,"42659"]]}]}}`,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29+%2B+count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                     `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"70639"],[1669717440,"74007"],[1669717500,"79092"],[1669717560,"83808"],[1669717620,"85899"],[1669717680,"85261"]]}]}}`,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=sum+by%28pod_name%29+%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cpod_name%3D~%22actor.%2A%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                                       `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod_name":"actor-train-train-11291730-bot-1f42-0"},"values":[[1669717380,"2"],[1669717560,"2"],[1669717620,"2"],[1669717680,"2"]]}]}}`,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                                                                                       `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"34744"],[1669717440,"38107"],[1669717500,"39668"],[1669717560,"42428"],[1669717620,"42295"],[1669717680,"42602"]]}]}}`,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbk_biz_id%3D%22930%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                        `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"34744"],[1669717440,"38107"],[1669717500,"39668"],[1669717560,"42428"],[1669717620,"42295"],[1669717680,"42602"]]}]}}`,
-		`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbk_biz_id%3D%22930%22%7D%5B1m%5D+offset+-59s999ms%29%29+%2F+count%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`: `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"1"],[1669717440,"1"],[1669717500,"1"],[1669717560,"1"],[1669717620,"1"],[1669717680,"1"]]}]}}`,
-		`http://127.0.0.1:80/query?db=system&q=select+mean%28%22metric%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1629820739999000000+and+time+%3C+1630252859999000000+and+dim_0%3D%271%27++group+by+time%282m0s%29`:                                                                                                                                                                                                                                               generateData("metric", 0, "dim", 5, 1629861029, 1629861329, 2*time.Minute),
-	}, log.DefaultLogger)
-
-	// 加载实例
-	tsdb.SetStorage("10", &tsdb.Storage{
-		Type: consul.VictoriaMetricsStorageType,
-		Instance: &victoriaMetrics.Instance{
-			ctx:     context.TODO(),
-			Address: "127.0.0.1",
-			UriPath: "api",
-			Timeout: time.Minute,
-			Curl:    mockCurl,
-		},
+	mockCurl := &curl.MockCurl{}
+	mockCurl.WithF(func(opt curl.Options) []byte {
+		res := map[string]string{
+			`http://127.0.0.1:80/query?db=2_bkmonitor_time_series_1582626&q=select+count%28%22value%22%29+as+_value%2C+time+as+_time+from+container_cpu_system_seconds_total+where+time+%3E+1669717379999000000+and+time+%3C+1669717739999000000+and+bcs_cluster_id%3D%27BCS-K8S-40949%27++group+by+time%281m0s%29+tz%28%27UTC%27%29`:                                                                                                                                                        ``,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                                                                                                                                                                   `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"35895"],[1669717440,"35900"],[1669717500,"39424"],[1669717560,"41380"],[1669717620,"43604"],[1669717680,"42659"]]}]}}`,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29+%2B+count%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%29&start=1669717380&step=60`:                                                                                                                                                     `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"70639"],[1669717440,"74007"],[1669717500,"79092"],[1669717560,"83808"],[1669717620,"85899"],[1669717680,"85261"]]}]}}`,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=sum+by%28pod_name%29+%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cpod_name%3D~%22actor.%2A%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                                       `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{"pod_name":"actor-train-train-11291730-bot-1f42-0"},"values":[[1669717380,"2"],[1669717560,"2"],[1669717620,"2"],[1669717680,"2"]]}]}}`,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                                                                                       `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"34744"],[1669717440,"38107"],[1669717500,"39668"],[1669717560,"42428"],[1669717620,"42295"],[1669717680,"42602"]]}]}}`,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbk_biz_id%3D%22930%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`:                                                                                                                                                                                        `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"34744"],[1669717440,"38107"],[1669717500,"39668"],[1669717560,"42428"],[1669717620,"42295"],[1669717680,"42602"]]}]}}`,
+			`http://127.0.0.1/api/query_range?end=1669717680&query=sum%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbk_biz_id%3D%22930%22%7D%5B1m%5D+offset+-59s999ms%29%29+%2F+count%28count_over_time%28container_cpu_system_seconds_total_value%7Bbcs_cluster_id%3D%22BCS-K8S-40949%22%2Cbcs_cluster_id%3D%22BCS-K8S-40949%22%7D%5B1m%5D+offset+-59s999ms%29%29&start=1669717380&step=60`: `{"status":"success","isPartial":false,"data":{"resultType":"matrix","result":[{"metric":{},"values":[[1669717380,"1"],[1669717440,"1"],[1669717500,"1"],[1669717560,"1"],[1669717620,"1"],[1669717680,"1"]]}]}}`,
+			`http://127.0.0.1:80/query?db=system&q=select+mean%28%22metric%22%29+as+_value%2C+time+as+_time+from+cpu_summary+where+time+%3E+1629820739999000000+and+time+%3C+1630252859999000000+and+dim_0%3D%271%27++group+by+time%282m0s%29`:                                                                                                                                                                                                                                               generateData("metric", 0, "dim", 5, 1629861029, 1629861329, 2*time.Minute),
+		}
+		if v, ok := res[opt.UrlPath]; ok {
+			return []byte(v)
+		}
+		return nil
 	})
 
+	inst, _ := tsdbInfluxdb.NewInstance(
+		context.TODO(),
+		&tsdbInfluxdb.Options{
+			Host: "127.0.0.1",
+			Port: 80,
+			Curl: mockCurl,
+		},
+	)
 	tsdb.SetStorage("0", &tsdb.Storage{
-		Type: consul.InfluxDBStorageType,
-		Instance: tsdbInfluxdb.NewInstance(
-			context.TODO(),
-			tsdbInfluxdb.Options{
-				Host: "127.0.0.1",
-				Port: 80,
-				Curl: mockCurl,
-			},
-		),
+		Type:     consul.InfluxDBStorageType,
+		Instance: inst,
 	})
 }
 
 func MockSpace(t *testing.T) {
 	ctx := context.Background()
-	mock.SetRedisClient(context.TODO(), "test")
-	path := "tsquery_test.db"
-	bucketName := "tsquery_test"
+	mock.SetRedisClient(context.TODO())
 	spaceId := "bkcc__2"
-	mock.SetSpaceTsDbMockData(
-		ctx, path, bucketName,
-		ir.SpaceInfo{
-			spaceId: ir.Space{
-				"system.cpu_summary": &ir.SpaceResultTable{
-					TableId: "system.cpu_summary",
-					Filters: []map[string]string{},
-				},
-				"2_bkmonitor_time_series_1582626.__default__": &ir.SpaceResultTable{
-					TableId: "2_bkmonitor_time_series_1582626.__default__",
-					Filters: []map[string]string{
-						{"bcs_cluster_id": "BCS-K8S-40949"},
-					},
-				},
-				"64_bkmonitor_time_series_1573412.__default__": &ir.SpaceResultTable{
-					TableId: "64_bkmonitor_time_series_1573412.__default__",
-					Filters: []map[string]string{},
+	mock.SetSpaceTsDbMockData(ctx, ir.SpaceInfo{
+		spaceId: ir.Space{
+			"system.cpu_summary": &ir.SpaceResultTable{
+				TableId: "system.cpu_summary",
+				Filters: []map[string]string{},
+			},
+			"2_bkmonitor_time_series_1582626.__default__": &ir.SpaceResultTable{
+				TableId: "2_bkmonitor_time_series_1582626.__default__",
+				Filters: []map[string]string{
+					{"bcs_cluster_id": "BCS-K8S-40949"},
 				},
 			},
-		},
-		ir.ResultTableDetailInfo{
-			"system.cpu_summary": &ir.ResultTableDetail{
-				TableId:         "system.cpu_summary",
-				Fields:          []string{"metric", "metric2"},
-				MeasurementType: redis.BKTraditionalMeasurement,
-				StorageId:       0,
-				DB:              "system",
-				Measurement:     "cpu_summary",
-			},
-			"2_bkmonitor_time_series_1582626.__default__": &ir.ResultTableDetail{
-				TableId:         "2_bkmonitor_time_series_1582626.__default__",
-				Fields:          []string{"bkbcs_workqueue_adds_total", "container_cpu_usage_seconds_total_value", "container_cpu_system_seconds_total"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       0,
-				DB:              "2_bkmonitor_time_series_1582626",
-				Measurement:     "__default__",
-			},
-			"64_bkmonitor_time_series_1573412.__default__": &ir.ResultTableDetail{
-				TableId:         "64_bkmonitor_time_series_1573412.__default__",
-				Fields:          []string{"jvm_memory_bytes_used", "jvm_memory_bytes_max"},
-				MeasurementType: redis.BkSplitMeasurement,
-				StorageId:       0,
-				DB:              "64_bkmonitor_time_series_1573412",
-				Measurement:     "__default__",
-				ClusterName:     "default",
+			"64_bkmonitor_time_series_1573412.__default__": &ir.SpaceResultTable{
+				TableId: "64_bkmonitor_time_series_1573412.__default__",
+				Filters: []map[string]string{},
 			},
 		},
-		ir.FieldToResultTable{
-			"container_cpu_system_seconds_total": ir.ResultTableList{"2_bkmonitor_time_series_1582626.__default__"},
+	}, ir.ResultTableDetailInfo{
+		"system.cpu_summary": &ir.ResultTableDetail{
+			TableId:         "system.cpu_summary",
+			Fields:          []string{"metric", "metric2"},
+			MeasurementType: redis.BKTraditionalMeasurement,
+			StorageId:       0,
+			DB:              "system",
+			Measurement:     "cpu_summary",
 		},
-		nil,
-	)
+		"2_bkmonitor_time_series_1582626.__default__": &ir.ResultTableDetail{
+			TableId:         "2_bkmonitor_time_series_1582626.__default__",
+			Fields:          []string{"bkbcs_workqueue_adds_total", "container_cpu_usage_seconds_total_value", "container_cpu_system_seconds_total"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       0,
+			DB:              "2_bkmonitor_time_series_1582626",
+			Measurement:     "__default__",
+		},
+		"64_bkmonitor_time_series_1573412.__default__": &ir.ResultTableDetail{
+			TableId:         "64_bkmonitor_time_series_1573412.__default__",
+			Fields:          []string{"jvm_memory_bytes_used", "jvm_memory_bytes_max"},
+			MeasurementType: redis.BkSplitMeasurement,
+			StorageId:       0,
+			DB:              "64_bkmonitor_time_series_1573412",
+			Measurement:     "__default__",
+			ClusterName:     "default",
+		},
+	}, ir.FieldToResultTable{
+		"container_cpu_system_seconds_total": ir.ResultTableList{"2_bkmonitor_time_series_1582626.__default__"},
+	}, nil)
 }
 
 // TestPromQueryBasic

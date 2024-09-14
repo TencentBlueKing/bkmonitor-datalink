@@ -19,6 +19,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
@@ -48,6 +49,8 @@ func NewSpaceFilter(ctx context.Context, opt *TsDBOption) (*SpaceFilter, error) 
 	// 只有未跳过空间的时候进行异常判定
 	if !opt.IsSkipSpace {
 		if space == nil {
+			metric.SpaceRouterNotExistInc(ctx, opt.SpaceUid, "", "", metadata.SpaceIsNotExists)
+
 			msg := fmt.Sprintf("spaceUid: %s is not exists", opt.SpaceUid)
 			metadata.SetStatus(ctx, metadata.SpaceIsNotExists, msg)
 			log.Warnf(ctx, msg)
@@ -149,6 +152,7 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		},
 		NeedAddTime: rtDetail.Options.NeedAddTime,
 		SourceType:  rtDetail.SourceType,
+		StorageType: rtDetail.StorageType,
 	}
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
@@ -234,6 +238,8 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 	var routerMessage string
 	defer func() {
 		if routerMessage != "" {
+			metric.SpaceRouterNotExistInc(s.ctx, opt.SpaceUid, string(opt.TableID), opt.FieldName, metadata.SpaceTableIDFieldIsNotExists)
+
 			metadata.SetStatus(s.ctx, metadata.SpaceTableIDFieldIsNotExists, routerMessage)
 			log.Warnf(s.ctx, routerMessage)
 		}
@@ -280,7 +286,7 @@ func (s *SpaceFilter) DataList(opt *TsDBOption) ([]*query.TsDBV2, error) {
 		}
 	} else {
 		// 如果不指定 tableID 或者 dataLabel，则检索跟字段相关的 RT，且只获取容器指标的 TsDB
-		isK8s = true
+		isK8s = !opt.IsSkipK8s
 		tableIDs = s.GetSpaceRtIDs()
 
 		if len(tableIDs) == 0 {
@@ -316,6 +322,7 @@ type TsDBOption struct {
 	SpaceUid    string
 	IsSkipSpace bool
 	IsSkipField bool
+	IsSkipK8s   bool
 
 	TableID   TableID
 	FieldName string

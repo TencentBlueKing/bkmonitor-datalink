@@ -45,7 +45,7 @@ func TestInstance_queryReference(t *testing.T) {
 	metadata.GetQueryParams(ctx).SetDataSource(structured.BkLog)
 
 	if sourceType == "bkdata" {
-		address = bkapi.GetBkDataApi().QueryEsUrl()
+		address = bkapi.GetBkDataAPI().QueryEsUrl()
 	}
 
 	ins, err := NewInstance(ctx, &InstanceOption{
@@ -327,7 +327,7 @@ func TestInstance_queryReference(t *testing.T) {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			var output strings.Builder
 
-			ss := ins.QueryRaw(ctx, c.query, c.start, c.end)
+			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
 			if err != nil {
 				log.Fatalf(ctx, err.Error())
 				return

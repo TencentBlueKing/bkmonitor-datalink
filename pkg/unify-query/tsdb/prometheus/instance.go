@@ -49,6 +49,10 @@ func NewInstance(ctx context.Context, engine *promql.Engine, queryStorage storag
 
 var _ tsdb.Instance = (*Instance)(nil)
 
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
+	return ""
+}
+
 // GetInstanceType 获取引擎类型
 func (i *Instance) GetInstanceType() string {
 	if i.instanceType != "" {
@@ -58,8 +62,13 @@ func (i *Instance) GetInstanceType() string {
 	}
 }
 
-// QueryRaw 查询原始数据
-func (i *Instance) QueryRaw(
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
 	query *metadata.Query,
 	start, end time.Time,

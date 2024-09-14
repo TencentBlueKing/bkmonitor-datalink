@@ -34,6 +34,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
 
+var _ tsdb.Instance = (*Instance)(nil)
+
 // Instance redis 查询实例
 type Instance struct {
 	Ctx                 context.Context
@@ -41,54 +43,62 @@ type Instance struct {
 	ClusterMetricPrefix string
 }
 
-func (instance *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (instance *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
+func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (instance *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (instance *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (instance *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+func (i *Instance) LabelNames(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (instance *Instance) GetInstanceType() string {
+func (i *Instance) LabelValues(ctx context.Context, query *metadata.Query, name string, start, end time.Time, matchers ...*labels.Matcher) ([]string, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) Series(ctx context.Context, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) storage.SeriesSet {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (i *Instance) GetInstanceType() string {
 	return consul.RedisStorageType
 }
 
-var _ tsdb.Instance = (*Instance)(nil)
-
-func (instance *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
-	df, err := instance.rawQuery(ctx, time.Time{}, end, time.Duration(0))
+func (i *Instance) Query(ctx context.Context, qs string, end time.Time) (promql.Vector, error) {
+	df, err := i.rawQuery(ctx, time.Time{}, end, time.Duration(0))
 	if err != nil {
 		return nil, err
 	}
-	return instance.vectorFormat(ctx, *df)
+	return i.vectorFormat(ctx, *df)
 }
 
-func (instance *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
-	df, err := instance.rawQuery(ctx, start, end, step)
+func (i *Instance) QueryRange(ctx context.Context, promql string, start, end time.Time, step time.Duration) (promql.Matrix, error) {
+	df, err := i.rawQuery(ctx, start, end, step)
 	if err != nil {
 		return nil, err
 	}
-	return instance.matrixFormat(ctx, *df)
+	return i.matrixFormat(ctx, *df)
 }
 
-func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
+func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time.Duration) (*dataframe.DataFrame, error) {
 	var (
 		startAnaylize time.Time
 	)
@@ -111,10 +121,10 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 	if len(clusterNames) == 0 {
 		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
-	stoCtx, _ := context.WithTimeout(ctx, instance.Timeout)
+	stoCtx, _ := context.WithTimeout(ctx, i.Timeout)
 	startAnaylize = time.Now()
 
-	sto := MetricStorage{ctx: stoCtx, storagePrefix: instance.ClusterMetricPrefix}
+	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}
 	metricMeta, err := sto.GetMetricMeta(metricName)
 	if err != nil {
 		// 指标配置不存在，则返回空 DF
@@ -132,21 +142,21 @@ func (instance *Instance) rawQuery(ctx context.Context, start, end time.Time, st
 			df = df.RBind(*dfPointer)
 		}
 	}
-	df = instance.handleDFQuery(df, query, start, end, step)
+	df = i.handleDFQuery(df, query, start, end, step)
 	if df.Error() != nil {
 		return nil, df.Error()
 	}
 	queryCost := time.Since(startAnaylize)
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, instance.GetInstanceType(),
+		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), "",
 	)
 
 	return &df, nil
 }
 
-func (instance *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (promql.Vector, error) {
+func (i *Instance) vectorFormat(ctx context.Context, df dataframe.DataFrame) (promql.Vector, error) {
 	vector := make(promql.Vector, 0)
-	matrix, err := instance.matrixFormat(ctx, df)
+	matrix, err := i.matrixFormat(ctx, df)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +169,7 @@ func (instance *Instance) vectorFormat(ctx context.Context, df dataframe.DataFra
 	return vector, nil
 }
 
-func (instance *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, error) {
+func (i *Instance) matrixFormat(ctx context.Context, df dataframe.DataFrame) (promql.Matrix, error) {
 	names := df.Names()
 	groupPoints := map[string]promql.Series{}
 	for idx, row := range df.Records() {
@@ -220,7 +230,7 @@ func arrToPoint(colNames []string, row []string) (labels.Labels, *promql.Point, 
 }
 
 // handleDFQuery 根据传入的查询配置，处理 DF 数据
-func (instance *Instance) handleDFQuery(
+func (i *Instance) handleDFQuery(
 	df dataframe.DataFrame, query *metadata.QueryClusterMetric, start, end time.Time, step time.Duration) dataframe.DataFrame {
 	// 时间过滤
 	df = df.FilterAggregation(

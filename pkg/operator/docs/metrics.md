@@ -21,6 +21,7 @@
 | discover_handled_tg_total             | Counter | 已处理 targetgroup 计数器 |
 | discover_deleted_tg_source_total      | Counter | 已删除 targetgroup 计数器 |
 | monitor_scrape_interval_seconds       | Gauge   | 监控采集时间间隔            |
+| discover_targets_count                | Gauge   | 监听发现 targets 数量     |
 
 ### Operator
 

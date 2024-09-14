@@ -180,7 +180,7 @@ func CollectAndReportMetrics(c storage.ClusterInfo, timestamp int64) error {
 		if len(esMetrics) == 0 {
 			logger.Infof("skip to process es %s metrics [%s], all metric count: %v, current timestamp: %v ",
 				metricType, c.ClusterName, len(esMetrics), timestamp)
-			return nil
+			continue
 		}
 
 		logger.Infof("process es %s metrics success [%s], all metric count: %v, current timestamp: %v ",

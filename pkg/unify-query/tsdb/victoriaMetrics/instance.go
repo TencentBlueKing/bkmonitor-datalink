@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -20,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/storage"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
@@ -78,7 +80,7 @@ type Instance struct {
 
 var _ tsdb.Instance = (*Instance)(nil)
 
-func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
+func NewInstance(ctx context.Context, opt *Options) (*Instance, error) {
 	if opt.Address == "" {
 		return nil, fmt.Errorf("address is empty")
 	}
@@ -95,7 +97,28 @@ func NewInstance(ctx context.Context, opt Options) (*Instance, error) {
 	return instance, nil
 }
 
-func (i *Instance) QueryRaw(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
+func (i *Instance) Check(ctx context.Context, q string, start, end time.Time, step time.Duration) string {
+	var output strings.Builder
+
+	vmExpand := metadata.GetExpand(ctx)
+	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
+		output.WriteString(fmt.Sprintf("vm expand is empty with: %+v", vmExpand))
+		return output.String()
+	}
+
+	output.WriteString(fmt.Sprintf("promql: %s\n", q))
+
+	output.WriteString(fmt.Sprintf("vm_expand: %+v", vmExpand))
+	return output.String()
+}
+
+// QueryRawData 直接查询原始返回
+func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, start, end time.Time, dataCh chan<- map[string]any) (int64, error) {
+	return 0, nil
+}
+
+// QuerySeriesSet 给 PromEngine 提供查询接口
+func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, start, end time.Time) storage.SeriesSet {
 	//TODO implement me
 	panic("implement me")
 }
@@ -325,6 +348,12 @@ func (i *Instance) vmQuery(
 	params := make(map[string]string)
 	params["sql"] = sql
 	params["prefer_storage"] = PreferStorage
+
+	// body 增加 bkdata auth 信息
+	for k, v := range bkapi.GetBkDataAPI().GetDataAuth() {
+		params[k] = v
+	}
+
 	body, err := json.Marshal(params)
 	if err != nil {
 		return err
@@ -340,8 +369,10 @@ func (i *Instance) vmQuery(
 
 	span.Set("query-address", i.url)
 
-	headersString, _ := json.Marshal(i.headers)
-	span.Set("query-headers", headersString)
+	headers := metadata.Headers(ctx, i.headers)
+
+	headersString, _ := json.Marshal(headers)
+	span.Set("query-headers", string(headersString))
 
 	log.Infof(ctx,
 		"victoria metrics query: %s, headers: %s, body: %s",
@@ -353,7 +384,7 @@ func (i *Instance) vmQuery(
 		curl.Options{
 			UrlPath: i.url,
 			Body:    body,
-			Headers: i.headers,
+			Headers: headers,
 		},
 		data,
 	)
@@ -367,7 +398,7 @@ func (i *Instance) vmQuery(
 	span.Set("response-size", size)
 
 	metric.TsDBRequestSecond(
-		ctx, queryCost, user.SpaceUid, i.GetInstanceType(),
+		ctx, queryCost, user.SpaceUid, user.Source, i.GetInstanceType(), i.url,
 	)
 	metric.TsDBRequestBytes(ctx, size, user.SpaceUid, user.Source, i.GetInstanceType())
 	return nil

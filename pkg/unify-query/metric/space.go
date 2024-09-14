@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	spaceRequestCount = prometheus.NewCounterVec(
+	spaceRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
 			Name:      "space_request_total",
@@ -34,20 +34,35 @@ var (
 		},
 		[]string{"key", "type", "action"},
 	)
+
+	spaceRouterNotExistCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "space_router_total",
+			Help:      "space router not exist check",
+		},
+		[]string{"space_uid", "result_table", "metric", "reason"},
+	)
 )
 
-func SpaceRequestCountInc(ctx context.Context, params ...string) {
-	metric, _ := spaceRequestCount.GetMetricWithLabelValues(params...)
+func SpaceRouterNotExistInc(ctx context.Context, params ...string) {
+	metric, _ := spaceRouterNotExistCounter.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 
-func SpaceRequestCountAdd(ctx context.Context, val float64, params ...string) {
-	metric, _ := spaceRequestCount.GetMetricWithLabelValues(params...)
+func SpaceRequestCounterInc(ctx context.Context, params ...string) {
+	metric, _ := spaceRequestCounter.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+func SpaceRequestCounterAdd(ctx context.Context, val float64, params ...string) {
+	metric, _ := spaceRequestCounter.GetMetricWithLabelValues(params...)
 	counterAdd(ctx, metric, val)
 }
 
 func init() {
 	prometheus.MustRegister(
-		spaceRequestCount,
+		spaceRequestCounter,
+		spaceRouterNotExistCounter,
 	)
 }

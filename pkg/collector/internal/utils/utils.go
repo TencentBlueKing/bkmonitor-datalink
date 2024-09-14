@@ -13,7 +13,9 @@ import (
 	"context"
 	"math"
 	"net"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/TarsCloud/TarsGo/tars/util/current"
@@ -31,6 +33,12 @@ func ParseRequestIP(source string) string {
 		return ip.String()
 	}
 	return ""
+}
+
+func GetContentLength(header http.Header) int {
+	l := header.Get("Content-Length")
+	i, _ := strconv.Atoi(l)
+	return i
 }
 
 func GetGrpcIpFromContext(ctx context.Context) string {

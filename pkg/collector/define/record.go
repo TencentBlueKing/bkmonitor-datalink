@@ -10,19 +10,15 @@
 package define
 
 import (
-	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/propertyf"
 	"github.com/TarsCloud/TarsGo/tars/protocol/res/statf"
-	"github.com/TarsCloud/TarsGo/tars/util/current"
 	"github.com/google/pprof/profile"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/prometheus/prompb"
-	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -48,8 +44,6 @@ const (
 	KeyToken    = "X-BK-TOKEN"
 	KeyDataID   = "X-BK-DATA-ID"
 	KeyTenantID = "X-Tps-TenantID"
-
-	basicAuthUsername = "bkmonitor"
 )
 
 type RecordType string
@@ -311,85 +305,6 @@ func (t Token) GetDataID(rtype RecordType) int32 {
 		return t.BeatDataId
 	}
 	return -1
-}
-
-func WrapProxyToken(token Token) string {
-	return fmt.Sprintf("%d/%s", token.ProxyDataId, token.Original)
-}
-
-func TokenFromHttpRequest(req *http.Request) string {
-	// 1) 从 tokenKey 中读取
-	token := req.URL.Query().Get(KeyToken)
-	if token == "" {
-		token = req.Header.Get(KeyToken)
-	}
-	if token != "" {
-		return token
-	}
-
-	// 2) 从 tenantidKey 中读取
-	token = req.Header.Get(KeyTenantID)
-	if token == "" {
-		token = req.URL.Query().Get(KeyTenantID)
-	}
-	if token != "" {
-		return token
-	}
-
-	// 3）从 basicauth 中读取（当且仅当 username 为 bkmonitor 才生效
-	username, password, ok := req.BasicAuth()
-	if ok && username == basicAuthUsername && password != "" {
-		return password
-	}
-
-	// 4）从 bearerauth 中读取 token
-	bearer := strings.Split(req.Header.Get("Authorization"), "Bearer ")
-	if len(bearer) == 2 {
-		return bearer[1]
-	}
-
-	// 弃疗 ┓(-´∀`-)┏
-	return ""
-}
-
-func TokenFromGrpcMetadata(md metadata.MD) string {
-	// 1) 从 tokenKey 中读取
-	token := md.Get(KeyToken)
-	if len(token) > 0 {
-		return token[0]
-	}
-
-	// 2) 从 tenantidKey 中读取
-	token = md.Get(KeyTenantID)
-	if len(token) > 0 {
-		return token[0]
-	}
-	return ""
-}
-
-// TokenFromTarsCtx 从 Tars ctx（类似 gPRC MetaData）中提取 token
-func TokenFromTarsCtx(ctx context.Context) string {
-	rc, ok := current.GetRequestContext(ctx)
-	if !ok {
-		return ""
-	}
-	token, ok := rc[KeyToken]
-	if !ok {
-		return ""
-	}
-	return token
-}
-
-// TokenFromString 从 {KeyToken}:{token}:value 中提取 token
-func TokenFromString(s string) (string, string) {
-	if !strings.HasPrefix(s, KeyToken) {
-		return s, ""
-	}
-	parts := strings.SplitN(s, ":", 3)
-	if len(parts) != 3 {
-		return s, ""
-	}
-	return parts[2], parts[1]
 }
 
 const (

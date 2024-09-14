@@ -10,6 +10,7 @@
 package collector
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -97,6 +98,11 @@ func NewHTTPClient(base mb.BaseMetricSet) (*HTTPClient, error) {
 		DialTLS:         tlsDialer.Dial,
 		IdleConnTimeout: time.Minute * 5,
 	}
+
+	if tlsConfig != nil && tlsConfig.Verification == transport.VerifyNone {
+		trp.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+
 	if config.ProxyURL != "" {
 		parsed, err := url.Parse(config.ProxyURL)
 		if err != nil {

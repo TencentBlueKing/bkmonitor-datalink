@@ -11,6 +11,8 @@ package trace
 
 import (
 	"context"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,50 @@ type Service struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+}
+
+var (
+	once          sync.Once
+	localIP       string
+	localHostName string
+)
+
+// LoalHost 获取本机名称和 IP
+func GetLocalHost() (string, string) {
+	once.Do(func() {
+		localHostName, _ = os.Hostname()
+
+		func() {
+			interfaces, _ := net.Interfaces()
+			for _, i := range interfaces {
+				adders, err := i.Addrs()
+				if err != nil {
+					continue
+				}
+
+				for _, addr := range adders {
+					var ip net.IP
+					switch v := addr.(type) {
+					case *net.IPNet:
+						ip = v.IP
+					case *net.IPAddr:
+						ip = v.IP
+					}
+
+					if ip == nil || ip.IsLoopback() {
+						continue
+					}
+					ip = ip.To4()
+					if ip == nil {
+						continue
+					}
+					localIP = ip.String()
+					return
+				}
+			}
+		}()
+	})
+	return localHostName, localIP
 }
 
 // Type
@@ -70,11 +116,16 @@ func (s *Service) newGrpcClient() otlptrace.Client {
 
 // newResource
 func (s *Service) newResource() *resource.Resource {
+	name, ip := GetLocalHost()
+
 	return resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceNameKey.String(ServiceName),
 		attribute.Key("bk_data_id").Int64(DataID),
 		attribute.Key("bk.data.token").String(otlpToken),
+
+		attribute.Key("k8s.pod.name").String(name),
+		attribute.Key("k8s.pod.ip").String(ip),
 	)
 }
 

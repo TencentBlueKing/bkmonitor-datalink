@@ -269,6 +269,7 @@ func init() {
 	// register the metrics
 	Registry.MustRegister(
 		apmPreCalcNotifierReceiveMessageCount,
+		apmPreCalcNotifierRejectMessageCount,
 		apmPreCalcParseSpanDuration,
 		apmPreCalcSemaphoreTotal,
 		apmPreCalcProcessEventDuration,
@@ -279,5 +280,9 @@ func init() {
 		apmPreCalcLocateSpanDuration,
 		apmPreCalcWindowTraceTotal,
 		apmPreCalcWindowSpanTotal,
+		apmPreCalcRateLimitedCount,
+		apmRelationMetricFindCount,
+		apmQueueSpanDelta,
+		apmHandleTraceDelta,
 	)
 }

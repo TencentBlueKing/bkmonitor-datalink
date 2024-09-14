@@ -177,7 +177,35 @@ var (
 		},
 		[]string{"data_id", "metric"},
 	)
+
+	apmQueueSpanDelta = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "queue_message_delta",
+			Help:      "queue_message_delta",
+		},
+		[]string{"data_id"},
+	)
+
+	apmHandleTraceDelta = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: ApmNamespace,
+			Name:      "handle_trace_delta",
+			Help:      "handle_trace_delta",
+		},
+		[]string{"data_id"},
+	)
 )
+
+func RecordQueueSpanDelta(dataId string, t int) {
+	delta := time.Now().UnixMicro() - int64(t)
+	apmQueueSpanDelta.WithLabelValues(dataId).Set(float64(delta))
+}
+
+func RecordHandleTraceDelta(dataId string, t int) {
+	delta := time.Now().UnixMicro() - int64(t)
+	apmHandleTraceDelta.WithLabelValues(dataId).Set(float64(delta))
+}
 
 func RecordApmRelationMetricFindCount(dataId, metric string, n int) {
 	apmRelationMetricFindCount.WithLabelValues(dataId, metric).Add(float64(n))

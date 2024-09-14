@@ -314,6 +314,7 @@ func (p *Processor) ToTraceInfo(receiver chan<- storage.SaveRequest, event Event
 		processCategoryStatistics(span.Collections, categoryStatistics)
 		processKindCategoryStatistics(span.Kind, kindCategoryStatistics)
 		collectCollections(collections, span.Collections)
+		metrics.RecordHandleTraceDelta(p.dataId, span.StartTime)
 	}
 
 	sort.Ints(startTimes)

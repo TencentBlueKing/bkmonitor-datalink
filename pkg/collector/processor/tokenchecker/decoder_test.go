@@ -219,6 +219,73 @@ func TestAes256WithMetaDecoder(t *testing.T) {
 	}
 }
 
+func TestAes256WithMetaDecoderAndFixedBackup(t *testing.T) {
+	newConfig := func(mustEmptyToken bool) Config {
+		return Config{
+			// aes256
+			Type:       "aes256WithMeta|fixed",
+			Salt:       "bk",
+			DecodedIv:  "bkbkbkbkbkbkbkbk",
+			DecodedKey: "81be7fc6-5476-4934-9417-6d4d593728db",
+
+			// fixed
+			MustEmptyToken: mustEmptyToken,
+			TracesDataId:   3001,
+			MetricsDataId:  3002,
+			LogsDataId:     3003,
+			ProfilesDataId: 3004,
+		}
+	}
+
+	cases := []struct {
+		Input     string
+		Token     define.Token
+		ErrPrefix string
+		Decoder   combinedTokenDecoder
+	}{
+		{
+			Input: "",
+			Token: define.Token{
+				TracesDataId:   3001,
+				MetricsDataId:  3002,
+				LogsDataId:     3003,
+				ProfilesDataId: 3004,
+			},
+			Decoder: newCombinedTokenDecoder(newConfig(true)),
+		},
+		{
+			Input:     "foobar",
+			Token:     define.Token{},
+			Decoder:   newCombinedTokenDecoder(newConfig(true)),
+			ErrPrefix: "fixed tokenDecoder required empty token string",
+		},
+		{
+			Input: "foobar",
+			Token: define.Token{
+				TracesDataId:   3001,
+				MetricsDataId:  3002,
+				LogsDataId:     3003,
+				ProfilesDataId: 3004,
+			},
+			Decoder: newCombinedTokenDecoder(newConfig(false)),
+		},
+	}
+
+	for _, c := range cases {
+		token, err := c.Decoder.Decode(c.Input)
+		switch err {
+		case nil:
+			assert.Empty(t, c.ErrPrefix)
+		default:
+			assert.True(t, strings.Contains(err.Error(), c.ErrPrefix))
+		}
+
+		assert.Len(t, c.Decoder.decoders, 2)
+		assert.Equal(t, c.Token, token)
+		assert.Equal(t, "aes256WithMeta|fixed", c.Decoder.Type())
+	}
+}
+
 func TestProxyTokenDecoder(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		decoder := NewTokenDecoder(Config{

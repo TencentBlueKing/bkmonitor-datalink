@@ -33,9 +33,20 @@ const (
 	decoderTypeProxy          = "proxy"
 	decoderTypeBeat           = "beat"
 	decoderTypeAes256WithMeta = "aes256WithMeta"
+
+	combinedDecoderSep = "|"
 )
 
 func NewTokenDecoder(c Config) TokenDecoder {
+	if strings.Contains(c.Type, combinedDecoderSep) {
+		// 如果存在分割的多种 tokendeocer 串联
+		return newCombinedTokenDecoder(c)
+	}
+
+	return newTokenDecoder(c)
+}
+
+func newTokenDecoder(c Config) TokenDecoder {
 	switch c.Type {
 	case decoderTypeFixed:
 		return newFixedTokenDecoder(c)
@@ -63,9 +74,53 @@ type TokenDecoder interface {
 	Decode(s string) (define.Token, error)
 }
 
+type combinedTokenDecoder struct {
+	typ      string
+	decoders []TokenDecoder
+}
+
+func newCombinedTokenDecoder(c Config) combinedTokenDecoder {
+	var decoders []TokenDecoder
+	types := strings.Split(c.Type, combinedDecoderSep)
+	for _, typ := range types {
+		newConfig := c
+		newConfig.Type = typ
+		decoders = append(decoders, newTokenDecoder(newConfig))
+	}
+
+	return combinedTokenDecoder{
+		typ:      c.Type,
+		decoders: decoders,
+	}
+}
+
+func (d combinedTokenDecoder) Type() string {
+	return d.typ
+}
+
+func (d combinedTokenDecoder) Skip() bool {
+	return false
+}
+
+func (d combinedTokenDecoder) Decode(s string) (define.Token, error) {
+	var token define.Token
+	var err error
+	for i := 0; i < len(d.decoders); i++ {
+		decoder := d.decoders[i]
+		token, err = decoder.Decode(s)
+		if err != nil {
+			continue
+		}
+		return token, nil
+	}
+
+	return token, err
+}
+
 // newFixedTokenDecoder 根据配置生成固定 Token
 func newFixedTokenDecoder(c Config) TokenDecoder {
 	return fixedTokenDecoder{
+		mustEmptyToken: c.MustEmptyToken,
 		token: define.Token{
 			Original:       c.FixedToken,
 			TracesDataId:   c.TracesDataId,
@@ -79,7 +134,8 @@ func newFixedTokenDecoder(c Config) TokenDecoder {
 }
 
 type fixedTokenDecoder struct {
-	token define.Token
+	mustEmptyToken bool
+	token          define.Token
 }
 
 func (d fixedTokenDecoder) Type() string {
@@ -90,7 +146,17 @@ func (d fixedTokenDecoder) Skip() bool {
 	return true
 }
 
-func (d fixedTokenDecoder) Decode(string) (define.Token, error) {
+func (d fixedTokenDecoder) Decode(s string) (define.Token, error) {
+	var empty define.Token
+	if d.token == empty {
+		return define.Token{}, errors.New("undefined fixed tokenDecoder")
+	}
+
+	// 要求一定是空字符串才通过
+	if d.mustEmptyToken && s != "" {
+		return define.Token{}, errors.New("fixed tokenDecoder required empty token string")
+	}
+
 	return d.token, nil
 }
 

@@ -170,7 +170,9 @@ func (c consumeHandler) sendSpans(message []byte) {
 	}
 
 	for _, item := range msg.Items {
-		res = append(res, window.ToStandardSpan(item))
+		s := window.ToStandardSpan(item)
+		res = append(res, s)
+		metrics.RecordQueueSpanDelta(c.dataId, s.StartTime)
 	}
 	metrics.RecordNotifierParseSpanDuration(c.dataId, c.topic, start)
 	c.spans <- res

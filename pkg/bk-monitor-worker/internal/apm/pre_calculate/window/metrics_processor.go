@@ -65,6 +65,8 @@ func (m *MetricProcessor) findSpanMetric(
 	receiver chan<- storage.SaveRequest, fullTreeGraph DiGraph,
 ) []string {
 	var labels []string
+	var componentLabels []string
+
 	metricCount := make(map[string]int)
 
 	var discoverSpanIds []string
@@ -130,14 +132,13 @@ func (m *MetricProcessor) findSpanMetric(
 			}
 		}
 
-		discoverSpanIds = append(discoverSpanIds,
-			m.findComponentFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...,
-		)
-		discoverSpanIds = append(discoverSpanIds,
-			m.findCustomServiceFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...,
-		)
+		discoverComponentSpanIds, discoverComponentLabels := m.findComponentFlowAndRelationMetric(span, flowMetricRecordMapping, flowMetricCount, metricCount, componentLabels)
+		componentLabels = discoverComponentLabels
+		discoverSpanIds = append(discoverSpanIds, discoverComponentSpanIds...)
+		discoverSpanIds = append(discoverSpanIds, m.findCustomServiceFlowMetric(span, flowMetricRecordMapping, flowMetricCount)...)
 	}
 
+	labels = append(labels, componentLabels...)
 	if len(labels) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromRelationMetric, Value: labels}, metricCount, receiver)
 	}
@@ -363,16 +364,19 @@ func (m *MetricProcessor) getOppositeSpanKind(kind int) int {
 	}
 }
 
-func (m *MetricProcessor) findComponentFlowMetric(
+func (m *MetricProcessor) findComponentFlowAndRelationMetric(
 	span StandardSpan,
-	metricRecordMapping map[string]*storage.FlowMetricRecordStats,
+	flowMetricRecordMapping map[string]*storage.FlowMetricRecordStats,
+	flowMetricCount map[string]int,
 	metricCount map[string]int,
-) (discoverSpanIds []string) {
+	labels []string,
+) ([]string, []string) {
+	var discoverSpanIds []string
 	// Only support discover db or messaging component
 	dbSystem := span.GetFieldValue(core.DbSystemField)
 	messageSystem := span.GetFieldValue(core.MessagingSystemField)
 	if dbSystem == "" && messageSystem == "" {
-		return
+		return discoverSpanIds, labels
 	}
 	discoverSpanIds = append(discoverSpanIds, span.SpanId)
 	serviceName := span.GetFieldValue(core.ServiceNameField)
@@ -380,6 +384,7 @@ func (m *MetricProcessor) findComponentFlowMetric(
 
 	if dbSystem != "" && slices.Contains(CallerKinds, span.Kind) {
 		// service (caller) -> db (callee)
+		componentName := fmt.Sprintf("%s-%s", serviceName, dbSystem)
 		dbFlowLabelKey := strings.Join(
 			[]string{
 				pair("__name__", storage.ApmServiceFlow),
@@ -392,25 +397,27 @@ func (m *MetricProcessor) findComponentFlowMetric(
 				pair("from_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 				pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
 				pair("to_span_name", spanName),
-				pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, dbSystem)),
+				pair("to_apm_service_name", componentName),
 				pair("to_apm_application_name", m.appName),
 				pair("to_apm_service_category", storage.CategoryDb),
 				pair("to_apm_service_kind", storage.KindComponent),
 				pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
 				pair("to_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 				pair("to_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
-				pair("to_span_service_category_value", fmt.Sprintf("%s-%s", core.DbSystemField.ToDimensionKey(), dbSystem)),
 				pair("from_span_error", strconv.FormatBool(span.IsError())),
 				pair("to_span_error", strconv.FormatBool(span.IsError())),
 			},
 			",",
 		)
-		m.addToStats(dbFlowLabelKey, span.Elapsed(), metricRecordMapping)
-		metricCount[storage.ApmServiceFlow]++
-		return
+		m.addToStats(dbFlowLabelKey, span.Elapsed(), flowMetricRecordMapping)
+		flowMetricCount[storage.ApmServiceFlow]++
+
+		labels = m.findComponentInstanceRelation(storage.CategoryDb, componentName, span, metricCount, labels)
+		return discoverSpanIds, labels
 	}
 
 	if messageSystem != "" {
+		componentName := fmt.Sprintf("%s-%s", serviceName, messageSystem)
 		if slices.Contains(CallerKinds, span.Kind) {
 			// service (caller) -> messageQueue (callee)
 			messageCalleeFlowLabelKey := strings.Join(
@@ -425,36 +432,35 @@ func (m *MetricProcessor) findComponentFlowMetric(
 					pair("from_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 					pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
 					pair("to_span_name", spanName),
-					pair("to_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
+					pair("to_apm_service_name", componentName),
 					pair("to_apm_application_name", m.appName),
 					pair("to_apm_service_category", storage.CategoryMessaging),
 					pair("to_apm_service_kind", storage.KindComponent),
 					pair("to_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
 					pair("to_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 					pair("to_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
-					pair("to_span_service_category_value", fmt.Sprintf("%s-%s", core.MessagingSystemField.ToDimensionKey(), messageSystem)),
 					pair("from_span_error", strconv.FormatBool(span.IsError())),
 					pair("to_span_error", strconv.FormatBool(span.IsError())),
 				},
 				",",
 			)
-			m.addToStats(messageCalleeFlowLabelKey, span.Elapsed(), metricRecordMapping)
-			metricCount[storage.ApmServiceFlow]++
-			return
+			m.addToStats(messageCalleeFlowLabelKey, span.Elapsed(), flowMetricRecordMapping)
+			flowMetricCount[storage.ApmServiceFlow]++
+			labels = m.findComponentInstanceRelation(storage.CategoryMessaging, componentName, span, metricCount, labels)
+			return discoverSpanIds, labels
 		}
 		if slices.Contains(CalleeKinds, span.Kind) {
 			messageCallerFlowLabelKey := strings.Join(
 				[]string{
 					pair("__name__", storage.ApmServiceFlow),
 					pair("from_span_name", spanName),
-					pair("from_apm_service_name", fmt.Sprintf("%s-%s", serviceName, messageSystem)),
+					pair("from_apm_service_name", componentName),
 					pair("from_apm_application_name", m.appName),
 					pair("from_apm_service_category", storage.CategoryMessaging),
 					pair("from_apm_service_kind", storage.KindComponent),
 					pair("from_apm_service_span_kind", strconv.Itoa(m.getOppositeSpanKind(span.Kind))),
 					pair("from_span_http_status_code", span.GetFieldValue(core.HttpStatusCodeField)),
 					pair("from_span_grpc_status_code", span.GetFieldValue(core.RpcGrpcStatusCode)),
-					pair("from_span_service_category_value", fmt.Sprintf("%s-%s", core.MessagingSystemField.ToDimensionKey(), messageSystem)),
 					pair("to_span_name", spanName),
 					pair("to_apm_service_name", serviceName),
 					pair("to_apm_application_name", m.appName),
@@ -472,13 +478,64 @@ func (m *MetricProcessor) findComponentFlowMetric(
 			// the time consumption is the time spent receiving the message,
 			// and does not include the subsequent processing time of the message,
 			// so we get the elapsedTime
-			m.addToStats(messageCallerFlowLabelKey, span.Elapsed(), metricRecordMapping)
-			metricCount[storage.ApmServiceFlow]++
-			return
+			m.addToStats(messageCallerFlowLabelKey, span.Elapsed(), flowMetricRecordMapping)
+			flowMetricCount[storage.ApmServiceFlow]++
+			labels = m.findComponentInstanceRelation(storage.CategoryMessaging, componentName, span, metricCount, labels)
+			return discoverSpanIds, labels
 		}
 	}
 
-	return
+	return discoverSpanIds, labels
+}
+
+func (m *MetricProcessor) findComponentInstanceRelation(
+	category string,
+	componentName string,
+	span StandardSpan,
+	metricCount map[string]int,
+	labels []string) []string {
+
+	var fields []core.CommonField
+	// 不查询 discoverRule 表 固定字段生成实例 ID (因为组件类服务的实例 Id 组成字段正常情况下不会变化)
+	switch category {
+	case storage.CategoryDb:
+		// DB 类型服务的实例 Id 组成: attributes.db.system,attributes.net.peer.name,attributes.net.peer.ip,attributes.net.peer.port
+		fields = []core.CommonField{
+			core.DbSystemField,
+			core.NetPeerNameField,
+			core.NetPeerIpField,
+			core.NetPeerPortField,
+		}
+	case storage.CategoryMessaging:
+		// Messaging 类型服务的实例 Id 组成: attributes.messaging.system,attributes.net.peer.name,attributes.net.peer.ip,attributes.net.peer.port
+		fields = []core.CommonField{
+			core.MessagingSystemField,
+			core.NetPeerNameField,
+			core.NetPeerIpField,
+			core.NetPeerPortField,
+		}
+	default:
+		return labels
+	}
+	var instanceIds []string
+	for index := range fields {
+		instanceIds = append(instanceIds, span.GetFieldValue(fields[index]))
+	}
+
+	labelKey := strings.Join(
+		[]string{
+			pair("__name__", storage.ApmServiceInstanceRelation),
+			pair("apm_service_name", componentName),
+			pair("apm_application_name", m.appName),
+			pair("apm_service_instance_name", strings.Join(instanceIds, ":")),
+		},
+		",",
+	)
+	if !slices.Contains(labels, labelKey) {
+		labels = append(labels, labelKey)
+		metricCount[storage.ApmServiceInstanceRelation]++
+	}
+	return labels
 }
 
 func (m *MetricProcessor) findCustomServiceFlowMetric(

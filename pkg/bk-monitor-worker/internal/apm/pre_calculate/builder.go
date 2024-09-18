@@ -60,7 +60,7 @@ var (
 
 type StartInfo struct {
 	DataId string `json:"data_id"`
-	Qps    int    `json:"qps"`
+	Qps    *int   `json:"qps"`
 }
 
 type Precalculate struct {
@@ -303,6 +303,13 @@ type RunInstance struct {
 func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 	kafkaConfig := core.GetMetadataCenter().GetKafkaConfig(p.startInfo.DataId)
 	groupId := "go-apm-pre-calculate-consumer-group"
+	var qps int
+	if p.startInfo.Qps == nil {
+		qps = config.NotifierMessageQps
+	} else {
+		qps = *p.startInfo.Qps
+	}
+
 	n, err := notifier.NewNotifier(
 		notifier.KafkaNotifier,
 		p.startInfo.DataId,
@@ -313,7 +320,7 @@ func (p *RunInstance) startNotifier() (<-chan []window.StandardSpan, error) {
 			notifier.KafkaUsername(kafkaConfig.Username),
 			notifier.KafkaPassword(kafkaConfig.Password),
 			notifier.KafkaTopic(kafkaConfig.Topic),
-			notifier.Qps(p.startInfo.Qps),
+			notifier.Qps(qps),
 		}, p.config.notifierConfig...,
 		)...,
 	)

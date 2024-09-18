@@ -18,6 +18,8 @@ import (
 var (
 	// NotifierChanBufferSize queue chan size
 	NotifierChanBufferSize int
+	// NotifierMessageQps Qps of queue
+	NotifierMessageQps int
 	// WindowMaxSize The maximum amount that a single trace can handle,
 	// beyond which the window will be forced to expire.
 	WindowMaxSize int
@@ -127,6 +129,7 @@ var (
 
 func initApmVariables() {
 	NotifierChanBufferSize = GetValue("taskConfig.apmPreCalculate.notifier.chanBufferSize", 1000)
+	NotifierMessageQps = GetValue("taskConfig.apmPreCalculate.notifier.qps", 1000)
 
 	WindowMaxSize = GetValue("taskConfig.apmPreCalculate.window.maxSize", 100*100)
 	WindowExpireInterval = GetValue("taskConfig.apmPreCalculate.window.expireInterval", time.Minute, viper.GetDuration)

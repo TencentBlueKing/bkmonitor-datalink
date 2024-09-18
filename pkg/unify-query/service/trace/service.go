@@ -45,7 +45,7 @@ var (
 	localHostName string
 )
 
-// LoalHost 获取本机名称和 IP
+// GetLocalHost 获取本机名称和 IP
 func GetLocalHost() (string, string) {
 	once.Do(func() {
 		localHostName, _ = os.Hostname()
@@ -116,7 +116,7 @@ func (s *Service) newGrpcClient() otlptrace.Client {
 
 // newResource
 func (s *Service) newResource() *resource.Resource {
-	name, ip := GetLocalHost()
+	//name, ip := GetLocalHost()
 
 	return resource.NewWithAttributes(
 		semconv.SchemaURL,
@@ -124,8 +124,8 @@ func (s *Service) newResource() *resource.Resource {
 		attribute.Key("bk_data_id").Int64(DataID),
 		attribute.Key("bk.data.token").String(otlpToken),
 
-		attribute.Key("k8s.pod.name").String(name),
-		attribute.Key("k8s.pod.ip").String(ip),
+		//attribute.Key("k8s.pod.name").String(name),
+		//attribute.Key("k8s.pod.ip").String(ip),
 	)
 }
 

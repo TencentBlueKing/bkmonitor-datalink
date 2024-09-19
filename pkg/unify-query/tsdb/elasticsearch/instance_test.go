@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,16 +88,22 @@ func TestInstance_queryReference(t *testing.T) {
 				DB:    "2_bklog_nested_field_test_*_read",
 				Field: "fields.field_name",
 				From:  0,
-				Size:  10,
+				Size:  5,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},
+				Source: []string{"iterationIndex", "gseIndex"},
 				AllConditions: metadata.AllConditions{
 					{
 						{
 							DimensionName: "fields.field_name",
 							Operator:      "eq",
 							Value:         []string{"bk-dev-4"},
+						},
+						{
+							DimensionName: "iterationIndex",
+							Operator:      "eq",
+							Value:         []string{"0", "4"},
 						},
 					},
 				},
@@ -327,38 +334,68 @@ func TestInstance_queryReference(t *testing.T) {
 		t.Run(fmt.Sprintf("testing run: %s", idx), func(t *testing.T) {
 			var output strings.Builder
 
-			ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
-			if err != nil {
-				log.Fatalf(ctx, err.Error())
-				return
-			}
-
-			for ss.Next() {
-				series := ss.At()
-				lbs := series.Labels()
-				it := series.Iterator(nil)
-				output.WriteString("series: " + lbs.String() + "\n")
-				for it.Next() == chunkenc.ValFloat {
-					ts, val := it.At()
-					tt := time.UnixMilli(ts)
-
-					output.WriteString("sample: " + fmt.Sprintf("%g %s\n", val, tt.Format("2006-01-02 15:04:05")) + "\n")
+			if len(c.query.Aggregates) > 0 {
+				ss := ins.QuerySeriesSet(ctx, c.query, c.start, c.end)
+				if err != nil {
+					log.Fatalf(ctx, err.Error())
+					return
 				}
-				if it.Err() != nil {
-					panic(it.Err())
+
+				for ss.Next() {
+					series := ss.At()
+					lbs := series.Labels()
+					it := series.Iterator(nil)
+					output.WriteString("series: " + lbs.String() + "\n")
+					for it.Next() == chunkenc.ValFloat {
+						ts, val := it.At()
+						tt := time.UnixMilli(ts)
+
+						output.WriteString("sample: " + fmt.Sprintf("%g %s\n", val, tt.Format("2006-01-02 15:04:05")) + "\n")
+					}
+					if it.Err() != nil {
+						panic(it.Err())
+					}
+				}
+
+				if ws := ss.Warnings(); len(ws) > 0 {
+					panic(ws)
+				}
+
+				if ss.Err() != nil {
+					log.Errorf(ctx, ss.Err().Error())
+				}
+
+				fmt.Println("output:")
+				fmt.Println(output.String())
+			} else {
+				var (
+					wg   sync.WaitGroup
+					size int64
+				)
+				dataCh := make(chan map[string]any)
+				wg.Add(2)
+				go func() {
+					defer wg.Done()
+					i := 0
+					for d := range dataCh {
+						i++
+						var s []string
+						for k, v := range d {
+							s = append(s, fmt.Sprintf("%s: %v", k, v))
+						}
+						fmt.Println(i, " - ", strings.Join(s, ", "))
+					}
+				}()
+
+				size, err = ins.QueryRawData(ctx, c.query, c.start, c.end, dataCh)
+				fmt.Printf("read data %d\n", size)
+
+				wg.Wait()
+				if err != nil {
+					panic(err)
 				}
 			}
 
-			if ws := ss.Warnings(); len(ws) > 0 {
-				panic(ws)
-			}
-
-			if ss.Err() != nil {
-				log.Errorf(ctx, ss.Err().Error())
-			}
-
-			fmt.Println("output:")
-			fmt.Println(output.String())
 		})
 	}
 }

@@ -634,11 +634,6 @@ func (i *Instance) QuerySeriesSet(
 	ctx, span := trace.NewSpan(ctx, "elasticsearch-query-reference")
 	defer span.End(&err)
 
-	if len(query.Aggregates) == 0 {
-		err = fmt.Errorf("聚合函数不能为空以及聚合周期跟 Step 必须一样")
-		return storage.ErrSeriesSet(err)
-	}
-
 	rets := make(chan *TimeSeriesResult, 1)
 
 	go func() {

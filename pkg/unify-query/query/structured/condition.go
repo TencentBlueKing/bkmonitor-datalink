@@ -292,6 +292,11 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (string, int
 // 当存在 condition 的维度名与 key 相等，则进行比较操作, 一经出现不满足条件则直接返回 false
 // 当所有的 condition 维度都不与 key 相等 也会放行
 func (c AllConditions) Compare(key, value string) (bool, error) {
+	// 当没有任何条件的时候则默认返回 true
+	if len(c) == 0 {
+		return true, nil
+	}
+
 	// 循环 or 条件，只要任意一个 and 条件满足，则可以跳出该循环，否则继续判断
 	for _, cond := range c {
 		// 循环 and 条件，只要任意一个不满足则跳出该循环认为不满足，所有条件验证之后，则认为满足该判断

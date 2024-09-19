@@ -390,6 +390,9 @@ func TestConditionCompare(t *testing.T) {
 			condition: Conditions{},
 			expected:  true,
 		},
+		"cluster with nil": {
+			expected: true,
+		},
 	}
 
 	checkCluster := "k8s-1"

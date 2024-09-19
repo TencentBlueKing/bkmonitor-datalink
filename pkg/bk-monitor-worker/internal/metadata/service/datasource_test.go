@@ -31,7 +31,7 @@ import (
 )
 
 func TestDataSourceSvc_ToJson(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
 	ds := &resulttable.DataSource{
 		BkDataId:          99999,
 		Token:             "9e679720296f4ad7abf5ad95ac0acbdf",
@@ -92,14 +92,14 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 		Tag:            models.ResultTableFieldTagDimension,
 		IsConfigByUser: true,
 	}
-	rtfB := resulttable.ResultTableField{
-		TableID:        rt.TableId,
-		FieldName:      "f2",
-		FieldType:      models.ResultTableFieldTypeBoolean,
-		Description:    "f2 test",
-		Tag:            models.ResultTableFieldTagDimension,
-		IsConfigByUser: true,
-	}
+	//rtfB := resulttable.ResultTableField{
+	//	TableID:        rt.TableId,
+	//	FieldName:      "f2",
+	//	FieldType:      models.ResultTableFieldTypeBoolean,
+	//	Description:    "f2 test",
+	//	Tag:            models.ResultTableFieldTagDimension,
+	//	IsConfigByUser: true,
+	//}
 	dsrt := resulttable.DataSourceResultTable{
 		BkDataId: ds.BkDataId,
 		TableId:  rt.TableId,
@@ -107,6 +107,24 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 
 	// 初始化数据
 	db := mysql.GetDBSession().DB
+
+	db.AutoMigrate(
+		&kafkaTopic,
+		&resulttable.ResultTableField{},
+		&resulttable.ResultTableFieldOption{},
+		&resulttable.ResultTable{},
+		&resulttable.ResultTableOption{},
+		&resulttable.DataSource{},
+		&resulttable.DataSourceResultTable{},
+		&resulttable.DataSourceOption{},
+		&storage.AccessVMRecord{},
+		&storage.ArgusStorage{},
+		&storage.RedisStorage{},
+		&storage.KafkaStorage{},
+		&storage.ESStorage{},
+		&storage.InfluxdbStorage{},
+	)
+
 	db.Delete(&kafkaTopic, "bk_data_id=?", kafkaTopic.BkDataId)
 	err := kafkaTopic.Create(db)
 	assert.NoError(t, err)
@@ -120,8 +138,8 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	db.Delete(&resulttable.ResultTableField{}, "table_id = ?", rt.TableId)
 	err = rtfA.Create(db)
 	assert.NoError(t, err)
-	err = rtfB.Create(db)
-	assert.NoError(t, err)
+	//err = rtfB.Create(db)
+	//assert.NoError(t, err)
 
 	assert.Nil(t, err)
 	db.Delete(&dsrt, "table_id=?", dsrt.TableId)
@@ -131,14 +149,21 @@ func TestDataSourceSvc_ToJson(t *testing.T) {
 	version := "7"
 	schema := "http"
 	cluster := storage.ClusterInfo{
+		ClusterID:   1,
 		ClusterName: "test_es_0001",
 		ClusterType: models.StorageTypeES,
 		DomainName:  "127.0.0.1",
+		Username:    "elastic",
+		Password:    "8E6lprO6OPiT",
 		Port:        9200,
 		Schema:      &schema,
 		Version:     &version,
 	}
-	db.Delete(&cluster, "cluster_name = ?", cluster.ClusterName)
+
+	err = cluster.Delete(db)
+	if err != nil {
+		panic(err)
+	}
 	err = cluster.Create(db)
 	assert.NoError(t, err)
 

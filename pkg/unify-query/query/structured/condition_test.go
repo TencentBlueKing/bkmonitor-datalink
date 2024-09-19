@@ -245,6 +245,18 @@ func TestConditionCompare(t *testing.T) {
 			},
 			expected: true,
 		},
+		"cluster one contains": {
+			condition: Conditions{
+				FieldList: []ConditionField{
+					{
+						DimensionName: "bcs_cluster_id",
+						Operator:      ConditionContains,
+						Value:         []string{`k8s-2`},
+					},
+				},
+			},
+			expected: false,
+		},
 		"cluster two or not contains": {
 			condition: Conditions{
 				FieldList: []ConditionField{
@@ -384,6 +396,13 @@ func TestConditionCompare(t *testing.T) {
 				},
 				ConditionList: []string{"and", "or", "and"},
 			},
+			expected: true,
+		},
+		"cluster with empty": {
+			condition: Conditions{},
+			expected:  true,
+		},
+		"cluster with nil": {
 			expected: true,
 		},
 	}

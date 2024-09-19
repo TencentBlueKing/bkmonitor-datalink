@@ -386,6 +386,10 @@ func TestConditionCompare(t *testing.T) {
 			},
 			expected: true,
 		},
+		"cluster with empty": {
+			condition: Conditions{},
+			expected:  true,
+		},
 	}
 
 	checkCluster := "k8s-1"

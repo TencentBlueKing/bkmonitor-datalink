@@ -30,12 +30,13 @@ type Params struct {
 func Timer(p *Params) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var (
-			start     = time.Now()
-			source    = c.Request.Header.Get(metadata.BkQuerySourceHeader)
-			spaceUid  = c.Request.Header.Get(metadata.SpaceUIDHeader)
-			skipSpace = c.Request.Header.Get(metadata.SkipSpaceHeader)
-			ctx       = c.Request.Context()
-			err       error
+			start        = time.Now()
+			source       = c.Request.Header.Get(metadata.BkQuerySourceHeader)
+			spaceUid     = c.Request.Header.Get(metadata.SpaceUIDHeader)
+			skipSpace    = c.Request.Header.Get(metadata.SkipSpaceHeader)
+			ip, hostName = metadata.GetLocalHost()
+			ctx          = c.Request.Context()
+			err          error
 		)
 
 		ctx = metadata.InitHashID(ctx)
@@ -50,6 +51,9 @@ func Timer(p *Params) gin.HandlerFunc {
 
 		if span != nil {
 			defer func() {
+
+				span.Set("local-ip", ip)
+				span.Set("local-host-name", hostName)
 
 				sub := time.Since(start)
 				metric.APIRequestSecond(ctx, sub, c.Request.URL.Path, spaceUid)

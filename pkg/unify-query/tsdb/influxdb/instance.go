@@ -445,12 +445,12 @@ func (i *Instance) query(
 	}
 
 	if len(query.Aggregates) == 1 || withFieldTag {
-		//expandTag = []prompb.Label{
-		//	{
-		//		Name:  BKTaskIndex,
-		//		Value: bkTaskIndex,
-		//	},
-		//}
+		expandTag = []prompb.Label{
+			{
+				Name:  "__name__",
+				Value: bkTaskIndex,
+			},
+		}
 	}
 
 	sql, err := i.makeSQL(ctx, query, start, end)

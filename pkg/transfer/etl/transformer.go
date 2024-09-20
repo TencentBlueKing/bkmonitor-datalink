@@ -67,14 +67,19 @@ func TransformMapBySeparator(separator string, fields []string) TransformFn {
 		} else {
 			parts = strings.SplitN(value, separator, count)
 		}
+
+		var failed bool
 		total := len(parts)
 		for i, name := range fields {
 			if i < total {
 				results[name] = strings.TrimSpace(parts[i])
 			} else {
 				results[name] = nil
+				failed = true
 			}
 		}
+
+		results[config.LogCleanFailedFlag] = failed
 		return results, nil
 	}
 }
@@ -94,6 +99,7 @@ func TransformMapByRegexp(pattern string) TransformFn {
 			return nil, err
 		}
 
+		var failed bool
 		results := make(map[string]interface{}, count)
 		matched := regex.FindStringSubmatch(value)
 		matchedCount := len(matched)
@@ -107,9 +113,11 @@ func TransformMapByRegexp(pattern string) TransformFn {
 				results[fieldName] = matched[i]
 			} else {
 				results[fieldName] = nil
+				failed = true
 			}
 		}
 
+		results[config.LogCleanFailedFlag] = failed
 		return results, nil
 	}
 }
@@ -118,7 +126,7 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 	options := utils.NewMapHelper(table.Option)
 	retainExtraJSON, _ := options.GetBool(config.PipelineConfigOptionRetainExtraJson)
 	enableRetainContent, _ := options.GetBool(config.PipelineConfigOptionRetainContent)
-	retainContentKey, _ := options.GetString(config.PipelineConfigOptionRetainContentKey)
+	retainContentKey, rkExist := options.GetString(config.PipelineConfigOptionRetainContentKey)
 
 	userFieldMap := table.FieldListGroupByName()
 	return func(from interface{}) (to interface{}, err error) {
@@ -129,18 +137,23 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 		if value == "" {
 			return nil, nil
 		}
+
 		results := make(map[string]interface{})
 		err = json.Unmarshal([]byte(value), &results)
 		if err != nil {
 			if enableRetainContent {
 				rk := FieldRetainContentKey
-				if retainContentKey != "" {
+				if rkExist && retainContentKey != "" {
 					rk = retainContentKey
 				}
-				return map[string]interface{}{rk: value}, nil
+				return map[string]interface{}{
+					rk:                        value,
+					config.LogCleanFailedFlag: true,
+				}, nil
 			}
 			return nil, err
 		}
+
 		if retainExtraJSON {
 			extraJSONMap := make(map[string]interface{})
 			for key, value := range results {
@@ -150,6 +163,7 @@ func TransformMapByJsonWithRetainExtraJSON(table *config.MetaResultTableConfig) 
 			}
 			results[FieldExtJSON] = extraJSONMap
 		}
+		results[config.LogCleanFailedFlag] = false
 		return results, nil
 	}
 }

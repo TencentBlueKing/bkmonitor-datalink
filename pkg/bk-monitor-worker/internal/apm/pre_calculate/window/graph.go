@@ -189,7 +189,13 @@ func (g *DiGraph) FindDirectParentChildParisAndAloneNodes(parentKinds, childKind
 	descendantCache := make(map[string]bool)
 
 	var hasAncestorCaller func(node Node) bool
+	hasAncestorCallerVisited := make(map[string]bool)
 	hasAncestorCaller = func(node Node) bool {
+		if hasAncestorCallerVisited[node.SpanId] {
+			return false
+		}
+		hasAncestorCallerVisited[node.SpanId] = true
+
 		if result, exists := ancestorCache[node.SpanId]; exists {
 			return result
 		}
@@ -208,7 +214,13 @@ func (g *DiGraph) FindDirectParentChildParisAndAloneNodes(parentKinds, childKind
 	}
 
 	var hasChildCallee func(node Node) bool
+	hasChildCalleeVisited := make(map[string]bool)
 	hasChildCallee = func(node Node) bool {
+		if hasChildCalleeVisited[node.SpanId] {
+			return false
+		}
+		hasChildCalleeVisited[node.SpanId] = true
+
 		if result, exists := descendantCache[node.SpanId]; exists {
 			return result
 		}

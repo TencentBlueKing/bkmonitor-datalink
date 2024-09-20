@@ -27,12 +27,15 @@ func TestAESDecrypt(t *testing.T) {
 		"aes_str:::srCvsNoBIUsCtBfqASIAcTlQThp3GVHqu726bvhpVjo=":                     "5gYTZqvd7Z7s",
 		"aes_str:::dDFXjpGztB6DGLl6XzbKFStZF4WT4BXQMX8Edm/RAysSfG4OmtpI8OgyDH+EJG6L": "zRD6AqbG5XSBKzz0Flxf",
 		"aes_str:::X91jZcJtY5Yq3Y9oVZlHMqKwDakt950rV3IFY26YOXk=":                     "5gYTZqvd7Z7s",
+		"8E6lprO6OPiT": "8E6lprO6OPiT",
 	}
 	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
-	for encrypetd, plain := range encryptedAndPlainMap {
-		assert.Equal(t, plain, c.AESDecrypt(encrypetd))
-	}
 
+	for name, en := range encryptedAndPlainMap {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, en, c.AESDecrypt(name))
+		})
+	}
 }
 
 func TestAESEncrypt(t *testing.T) {

@@ -53,7 +53,7 @@ const (
 
 	ContentEncodingSnappy = "snappy"
 
-	BKTaskIndex = "bk_task_index"
+	BKTaskIndex = "__bk_task_index__"
 )
 
 var (

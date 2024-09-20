@@ -43,8 +43,10 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 			logger.Warnf("AESDecrypt：decrypt password [%v] failed, return '', %v\n%s", encryptedPwd, r, stack)
 		}
 	}()
+	logger.Infof("AESDecrypt：password %v,c.Prefix %v: ", encryptedPwd, c.Prefix)
 	// 非加密串返回原密码
 	if c.Prefix != "" && !strings.HasPrefix(encryptedPwd, c.Prefix) {
+		logger.Infof("AESDecrypt：password [%v] is not encrypted, return password", encryptedPwd)
 		return encryptedPwd, nil
 	}
 	// 截取实际加密数据段
@@ -78,6 +80,7 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 	length := len(decryptedData)
 	padSize := int(decryptedData[length-1])
 	// 若填充大小大于数据长度，则说明数据不正确
+	logger.Errorf("AESDecrypt：padding size: %d,length : %d,decryptedData : %s", padSize, length, decryptedData)
 	if padSize > length {
 		return "", fmt.Errorf("AESDecrypt：invalid padding size")
 	}

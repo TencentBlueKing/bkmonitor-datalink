@@ -12,9 +12,11 @@ package cipher
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -81,6 +83,50 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 	}
 	realPwd := string(decryptedData[:(length - padSize)])
 	return realPwd, nil
+}
+
+// AESEncrypt AES加密
+func (c AESCipher) AESEncrypt(raw string) string {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			logger.Warnf("AESEncrypt：encrypt password [%v] failed, return '', %v\n%s", raw, r, stack)
+		}
+	}()
+	rawBytes := []byte(raw)
+	padSize := aes.BlockSize - len(rawBytes)%aes.BlockSize
+	padText := make([]byte, padSize)
+	for i := range padText {
+		padText[i] = byte(padSize)
+	}
+	padData := append(rawBytes, padText...)
+
+	key := sha256.Sum256([]byte(c.XKey))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		logger.Errorf("new cipher error, %s", err)
+		return ""
+	}
+	var iv []byte
+	if len(c.IV) != 0 {
+		iv = c.IV
+	} else {
+		iv = make([]byte, aes.BlockSize)
+		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+			logger.Errorf("generating IV faield, %s", err)
+			return ""
+		}
+	}
+	encrypter := cipher.NewCBCEncrypter(block, iv)
+	encryptedData := make([]byte, len(padData))
+	encrypter.CryptBlocks(encryptedData, padData)
+	// 组合数据
+	var data []byte
+	data = append(data, iv...)
+	data = append(data, encryptedData...)
+	// base64编码
+	encodedData := base64.StdEncoding.EncodeToString(data)
+	return fmt.Sprintf("%s%s", c.Prefix, encodedData)
 }
 
 func NewAESCipher(xKey, prefix string, iv []byte) *AESCipher {

@@ -31,6 +31,7 @@ func TestAESDecrypt(t *testing.T) {
 	c := NewAESCipher("81be7fc6-5476-4934-9417-6d4d593728db", AESPrefix, nil)
 	for encrypetd, plain := range encryptedAndPlainMap {
 		pwd, err := c.AESDecrypt(encrypetd)
+		fmt.Printf("err:-> %v\n", err)
 		assert.Nil(t, err)
 		assert.Equal(t, plain, pwd)
 	}

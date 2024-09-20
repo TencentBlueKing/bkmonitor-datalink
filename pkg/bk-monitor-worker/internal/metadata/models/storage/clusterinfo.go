@@ -84,7 +84,10 @@ func (c ClusterInfo) GetESClient(ctx context.Context) (*elasticsearch.Elasticsea
 	esVersion := strings.Split(version, ".")[0]
 	address := elasticsearch.ComposeESHosts(schema, c.DomainName, c.Port)
 	// 密码解密
-	password := cipher.GetDBAESCipher().AESDecrypt(c.Password)
+	password, err := cipher.GetDBAESCipher().AESDecrypt(c.Password)
+	if err != nil {
+		return nil, err
+	}
 	client, err := elasticsearch.NewElasticsearch(esVersion, address, c.Username, password)
 	if err != nil {
 		return nil, err

@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/storage"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/cipher"
 	utilsKafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
 // ClusterInfoSvc cluster info service
@@ -36,8 +37,13 @@ func NewClusterInfoSvc(obj *storage.ClusterInfo) ClusterInfoSvc {
 
 // ConsulConfig 获取集群的consul配置信息
 func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
+	pwd, err := cipher.GetDBAESCipher().AESDecrypt(k.Password)
+	if err != nil {
+		logger.Errorf("ConsulConfig:get cluster info failed, err: %s", err.Error())
+		panic(err)
+	}
 	auth := AuthInfo{
-		Password: cipher.GetDBAESCipher().AESDecrypt(k.Password),
+		Password: pwd,
 		Username: k.Username,
 	}
 	if k.ClusterType == models.StorageTypeKafka && k.Username != "" && k.Password != "" {
@@ -87,10 +93,14 @@ func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {
 	// 组装配置
 	kafkaConfig := sarama.NewConfig()
 	kafkaConfig.Version = sarama.V0_10_2_0
+	pwd, err := cipher.GetDBAESCipher().AESDecrypt(k.Password)
+	if err != nil {
+		return nil, errors.Wrapf(err, "GetKafkaClient:get cluster info failed, err: %s", err.Error())
+	}
 	if k.Username != "" && k.Password != "" {
 		kafkaConfig.Net.SASL.Enable = true
 		kafkaConfig.Net.SASL.User = k.Username
-		kafkaConfig.Net.SASL.Password = cipher.GetDBAESCipher().AESDecrypt(k.Password)
+		kafkaConfig.Net.SASL.Password = pwd
 		kafkaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient { return &utilsKafka.XDGSCRAMClient{HashGeneratorFcn: utilsKafka.SHA512} }
 		kafkaConfig.Net.SASL.Mechanism = sarama.SASLMechanism(sarama.SASLTypeSCRAMSHA512)
 	}

@@ -432,13 +432,13 @@ func (i *Instance) query(
 	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-raw")
 	defer span.End(&err)
 
-	bkTaskIndex := query.TableID
-	if bkTaskIndex == "" {
-		bkTaskIndex = fmt.Sprintf("%s_%s", query.DB, query.Measurement)
-	}
-	if withFieldTag {
-		bkTaskIndex = bkTaskIndex + "_" + query.Field
-	}
+	//bkTaskIndex := query.TableID
+	//if bkTaskIndex == "" {
+	bkTaskIndex := fmt.Sprintf("%s_%s", query.DB, query.Measurement)
+	//}
+	//if withFieldTag {
+	bkTaskIndex = bkTaskIndex + "_" + query.Field
+	//}
 
 	if len(query.Aggregates) > 1 {
 		return nil, fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)

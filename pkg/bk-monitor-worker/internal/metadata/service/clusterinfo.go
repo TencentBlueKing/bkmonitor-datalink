@@ -37,6 +37,7 @@ func NewClusterInfoSvc(obj *storage.ClusterInfo) ClusterInfoSvc {
 
 // ConsulConfig 获取集群的consul配置信息
 func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
+	logger.Infof("ConsulConfig:ClusterInfo-> k: %v", k)
 	pwd, err := cipher.GetDBAESCipher().AESDecrypt(k.Password)
 	if err != nil {
 		logger.Errorf("ConsulConfig:get cluster info failed, err: %s", err.Error())

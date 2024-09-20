@@ -43,7 +43,7 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 			logger.Warnf("AESDecrypt：decrypt password [%v] failed, return '', %v\n%s", encryptedPwd, r, stack)
 		}
 	}()
-	logger.Infof("AESDecrypt：password %v,c.Prefix %v: ", encryptedPwd, c.Prefix)
+	logger.Infof("AESDecrypt：password -> [%v],c.Prefix -> [%v] ", encryptedPwd, c.Prefix)
 	// 非加密串返回原密码
 	if c.Prefix != "" && !strings.HasPrefix(encryptedPwd, c.Prefix) {
 		logger.Infof("AESDecrypt：password [%v] is not encrypted, return password", encryptedPwd)
@@ -80,7 +80,7 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 	length := len(decryptedData)
 	padSize := int(decryptedData[length-1])
 	// 若填充大小大于数据长度，则说明数据不正确
-	logger.Errorf("AESDecrypt：padding size: %d,length : %d,decryptedData : %s", padSize, length, decryptedData)
+	logger.Errorf("AESDecrypt：padding size ->  [%d] ,length ->  [%d] ,decryptedData ->  [%s]", padSize, length, decryptedData)
 	if padSize > length {
 		return "", fmt.Errorf("AESDecrypt：invalid padding size")
 	}
@@ -143,6 +143,8 @@ var aesOnce sync.Once
 // GetDBAESCipher 获取db中AES字段的AESCipher
 func GetDBAESCipher() *AESCipher {
 	aesOnce.Do(func() {
+		// 从配置文件中获取AESKey,AESKey为空时会产生异常
+		logger.Infof("GetDBAESCipher：config.AesKey -> [%v], AESPrefix -> [%v]", config.AesKey, AESPrefix)
 		dbAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
 	})
 	return dbAESCipher

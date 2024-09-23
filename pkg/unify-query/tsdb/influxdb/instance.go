@@ -574,7 +574,7 @@ func (i *Instance) query(
 func (i *Instance) grpcStream(
 	ctx context.Context,
 	db, rp, measurement, field, where string,
-	slimit, limit int64,
+	slimit, limit int64, metricLabel prompb.Label,
 ) storage.SeriesSet {
 	var (
 		client remote.QueryTimeSeriesServiceClient
@@ -628,10 +628,11 @@ func (i *Instance) grpcStream(
 	span.Set("start-stream-series-set", name)
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{
-			Span:    span,
-			Stream:  stream,
-			Limiter: limiter,
-			Timeout: i.timeout,
+			Span:        span,
+			Stream:      stream,
+			Limiter:     limiter,
+			Timeout:     i.timeout,
+			MetricLabel: metricLabel,
 		},
 	)
 
@@ -695,10 +696,11 @@ func (i *Instance) QuerySeriesSet(
 			var set storage.SeriesSet
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
-				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
+				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit, query.MetricLabels())
 			} else {
 				// 复制 Query 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
+					DataSource:      query.DataSource,
 					TableID:         query.TableID,
 					RetentionPolicy: query.RetentionPolicy,
 					DB:              query.DB,

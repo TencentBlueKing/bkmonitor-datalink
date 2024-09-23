@@ -12,6 +12,7 @@ package metadata
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
@@ -43,8 +44,9 @@ func (q *Query) UUID(prefix string) string {
 
 // MetricLabels 获取真实指标名称
 func (q *Query) MetricLabels() prompb.Label {
+	table := strings.Replace(q.TableID, `.`, `:`, -1)
 	return prompb.Label{
 		Name:  labels.MetricName,
-		Value: fmt.Sprintf("%s:%s:%s:%s", q.DataSource, q.DB, q.Measurement, q.Field),
+		Value: fmt.Sprintf("%s:%s:%s", q.DataSource, table, q.Field),
 	}
 }

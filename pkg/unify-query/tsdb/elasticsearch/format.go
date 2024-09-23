@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/olivere/elastic/v7"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -571,6 +572,10 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 			}
 
 			for idx, dim := range am.Dimensions {
+				if dim == labels.MetricName {
+					continue
+				}
+
 				f.termAgg(dim, idx == 0)
 				f.nestedAgg(dim)
 			}

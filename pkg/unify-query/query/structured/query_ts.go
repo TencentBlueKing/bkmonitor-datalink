@@ -496,6 +496,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			qry := &metadata.Query{
 				StorageType:    consul.BkSqlStorageType,
+				TableID:        string(tableID),
 				DataSource:     q.DataSource,
 				DB:             route.DB(),
 				Measurement:    route.Measurement(),

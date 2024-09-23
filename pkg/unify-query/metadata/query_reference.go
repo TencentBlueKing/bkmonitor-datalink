@@ -45,6 +45,6 @@ func (q *Query) UUID(prefix string) string {
 func (q *Query) MetricLabels() prompb.Label {
 	return prompb.Label{
 		Name:  labels.MetricName,
-		Value: fmt.Sprintf("%s:%s:%s:%s", q.SourceType, q.DB, q.Measurement, q.Field),
+		Value: fmt.Sprintf("%s:%s:%s:%s", q.DataSource, q.DB, q.Measurement, q.Field),
 	}
 }

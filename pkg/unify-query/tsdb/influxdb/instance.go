@@ -432,25 +432,16 @@ func (i *Instance) query(
 	ctx, span := trace.NewSpan(ctx, "influxdb-influxql-query-raw")
 	defer span.End(&err)
 
-	//bkTaskIndex := query.TableID
-	//if bkTaskIndex == "" {
-	bkTaskIndex := fmt.Sprintf("%s_%s", query.DB, query.Measurement)
-	//}
-	//if withFieldTag {
-	bkTaskIndex = bkTaskIndex + "_" + query.Field
-	//}
-
 	if len(query.Aggregates) > 1 {
 		return nil, fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
 	}
 
-	if len(query.Aggregates) == 1 || withFieldTag {
-		expandTag = []prompb.Label{
-			{
-				Name:  "__name__",
-				Value: bkTaskIndex,
-			},
-		}
+	// 将完整的指标名：tableID + field 放到 __name__ 里面，解决跨指标计算和同指标多 RT 的问题
+	expandTag = []prompb.Label{
+		{
+			Name:  "__name__",
+			Value: fmt.Sprintf("%s:%s:%s", query.DB, query.Measurement, query.Field),
+		},
 	}
 
 	sql, err := i.makeSQL(ctx, query, start, end)

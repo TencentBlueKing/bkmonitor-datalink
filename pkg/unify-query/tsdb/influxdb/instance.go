@@ -428,8 +428,7 @@ func (i *Instance) query(
 		seriesNum = 0
 		pointNum  = 0
 
-		expandTag []prompb.Label
-		err       error
+		err error
 
 		res = new(decoder.Response)
 	)
@@ -438,14 +437,6 @@ func (i *Instance) query(
 
 	if len(query.Aggregates) > 1 {
 		return nil, fmt.Errorf("influxdb 不支持多函数聚合查询, %+v", query.Aggregates)
-	}
-
-	// 将完整的指标名：tableID + field 放到 __name__ 里面，解决跨指标计算和同指标多 RT 的问题
-	expandTag = []prompb.Label{
-		{
-			Name:  labels.MetricName,
-			Value: fmt.Sprintf("%s:%s:%s", query.DB, query.Measurement, query.Field),
-		},
 	}
 
 	sql, err := i.makeSQL(ctx, query, start, end)
@@ -536,12 +527,10 @@ func (i *Instance) query(
 		Timeseries: make([]*prompb.TimeSeries, 0, len(series)),
 	}
 
-	span.Set("expand-tag", fmt.Sprintf("%+v", expandTag))
-
 	for _, s := range series {
 		pointNum += len(s.Values)
 
-		lbs := make([]prompb.Label, 0, len(s.Tags)+len(expandTag))
+		lbs := make([]prompb.Label, 0, len(s.Tags)+1)
 		for k, v := range s.Tags {
 			lbs = append(lbs, prompb.Label{
 				Name:  k,
@@ -549,9 +538,8 @@ func (i *Instance) query(
 			})
 		}
 
-		if len(expandTag) > 0 {
-			lbs = append(lbs, expandTag...)
-		}
+		// 拼接指标名
+		lbs = append(lbs, query.MetricLabels())
 
 		samples := make([]prompb.Sample, 0, len(s.Values))
 		for _, sv := range s.Values {

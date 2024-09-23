@@ -180,6 +180,8 @@ type FormatFactory struct {
 	start int64
 	end   int64
 
+	metricLabel prompb.Label
+
 	isReference bool
 }
 
@@ -198,7 +200,7 @@ func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
+func (f *FormatFactory) WithQuery(metricLabel prompb.Label, valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
 	if timeField.Name == "" {
 		timeField.Name = DefaultTimeFieldName
 	}
@@ -232,6 +234,7 @@ func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField,
 	f.start = start
 	f.end = end
 
+	f.metricLabel = metricLabel
 	f.valueField = valueKey
 	f.timeField = timeField
 	f.from = from
@@ -368,19 +371,22 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 	timeSeriesMap := make(map[string]*prompb.TimeSeries)
 	for _, im := range af.items {
 		var (
-			tsLabels          []prompb.Label
-			seriesNameBuilder strings.Builder
+			tsLabels []prompb.Label
 		)
 		if len(im.labels) > 0 {
 			tsLabels = make([]prompb.Label, 0, len(im.labels))
 			for _, dim := range af.dims {
-				seriesNameBuilder.WriteString(dim)
-				seriesNameBuilder.WriteString(im.labels[dim])
 				tsLabels = append(tsLabels, prompb.Label{
 					Name:  dim,
 					Value: im.labels[dim],
 				})
 			}
+		}
+
+		tsLabels = append(tsLabels, f.metricLabel)
+		var seriesNameBuilder strings.Builder
+		for _, l := range tsLabels {
+			seriesNameBuilder.WriteString(l.String())
 		}
 
 		seriesKey := seriesNameBuilder.String()

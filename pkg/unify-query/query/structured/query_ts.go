@@ -496,6 +496,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string) (*metadata.Q
 
 			qry := &metadata.Query{
 				StorageType:    consul.BkSqlStorageType,
+				DataSource:     q.DataSource,
 				DB:             route.DB(),
 				Measurement:    route.Measurement(),
 				Field:          q.FieldName,
@@ -784,6 +785,7 @@ func (q *Query) BuildMetadataQuery(
 		query.StorageType = consul.ElasticsearchStorageType
 	}
 
+	query.DataSource = q.DataSource
 	query.TableID = tsDB.TableID
 	query.ClusterName = clusterName
 	query.TagsKey = tagKeys
@@ -805,7 +807,6 @@ func (q *Query) BuildMetadataQuery(
 	// 写入 ES 所需内容
 	query.QueryString = q.QueryString
 	query.Source = q.KeepColumns
-	query.DataSource = q.DataSource
 	query.AllConditions = make(metadata.AllConditions, len(allCondition))
 	for i, conditions := range allCondition {
 		conds := make([]metadata.ConditionField, len(conditions))

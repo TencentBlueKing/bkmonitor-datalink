@@ -150,7 +150,7 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(start time.Time, field string, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -162,7 +162,7 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 	}
 
 	// 获取该指标的维度 key
-	dimensions := i.dims(keys, field)
+	dimensions := i.dims(keys, query.Field)
 
 	tsMap := make(map[string]*prompb.TimeSeries, 0)
 	for _, d := range list {
@@ -215,7 +215,6 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
 		}
 
-		var buf strings.Builder
 		lbl := make([]prompb.Label, 0, len(dimensions))
 		// 获取维度信息
 		for _, dimName := range dimensions {
@@ -224,11 +223,17 @@ func (i *Instance) formatData(start time.Time, field string, keys []string, list
 				return res, fmt.Errorf("dimensions %+v %s", dimensions, err.Error())
 			}
 
-			buf.WriteString(fmt.Sprintf("%s:%s,", dimName, val))
 			lbl = append(lbl, prompb.Label{
 				Name:  dimName,
 				Value: val,
 			})
+		}
+
+		lbl = append(lbl, query.MetricLabels())
+
+		var buf strings.Builder
+		for _, l := range lbl {
+			buf.WriteString(l.String())
 		}
 
 		// 同一个 series 进行合并分组
@@ -292,6 +297,10 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 		if len(agg.Dimensions) > 0 {
 			for _, dim := range agg.Dimensions {
 				newDim := dim
+				if newDim == labels.MetricName {
+					continue
+				}
+
 				if newDim != "*" {
 					newDim = fmt.Sprintf("`%s`", newDim)
 				}
@@ -331,53 +340,6 @@ func (i *Instance) bkSql(ctx context.Context, query *metadata.Query, start, end 
 	}
 
 	return sqlBuilder.String(), nil
-}
-
-func (i *Instance) query(
-	ctx context.Context,
-	query *metadata.Query,
-	start time.Time,
-	end time.Time,
-	step time.Duration,
-) (*prompb.QueryResult, error) {
-	var (
-		err error
-	)
-
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("es query error: %s", r)
-		}
-	}()
-
-	ctx, span := trace.NewSpan(ctx, "bk-sql-query")
-	defer span.End(&err)
-
-	if i.client == nil {
-		return nil, fmt.Errorf("es client is nil")
-	}
-
-	if i.maxLimit > 0 {
-		maxLimit := i.maxLimit + i.tolerance
-		// 如果不传 size，则取最大的限制值
-		if query.Size == 0 || query.Size > i.maxLimit {
-			query.Size = maxLimit
-		}
-	}
-
-	fact := NewQueryFactory(ctx, query).WithRangeTime(start, end, step)
-	err = fact.ParserQuery()
-	if err != nil {
-		return nil, fmt.Errorf("sql parser error: %v", err)
-	}
-
-	data, err := i.sqlQuery(ctx, fact.SQL(), span)
-	if err != nil {
-		return nil, err
-	}
-
-	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
-	return qr, err
 }
 
 // QueryRawData 直接查询原始返回
@@ -425,7 +387,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
-	qr, err := i.formatData(start, query.Field, data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(start, query, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

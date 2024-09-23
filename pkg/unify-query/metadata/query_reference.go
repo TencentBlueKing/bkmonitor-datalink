@@ -12,6 +12,9 @@ package metadata
 import (
 	"context"
 	"fmt"
+
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/prompb"
 )
 
 func SetQueryReference(ctx context.Context, reference QueryReference) error {
@@ -36,4 +39,12 @@ func (q *Query) UUID(prefix string) string {
 		q.RetentionPolicy, q.DB, q.Measurement, q.Field, q.Condition,
 	)
 	return str
+}
+
+// MetricLabels 获取真实指标名称
+func (q *Query) MetricLabels() prompb.Label {
+	return prompb.Label{
+		Name:  labels.MetricName,
+		Value: fmt.Sprintf("%s:%s:%s:%s", q.SourceType, q.DB, q.Measurement, q.Field),
+	}
 }

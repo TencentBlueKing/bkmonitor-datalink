@@ -52,8 +52,6 @@ const (
 	ContentTypeMsgpack  = "application/x-msgpack"
 
 	ContentEncodingSnappy = "snappy"
-
-	BKTaskIndex = "__bk_task_index__"
 )
 
 var (

@@ -301,8 +301,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		}
 	}
 
+	// 查询不到数据无需返回异常
 	if len(ts) == 0 {
-		err = fmt.Errorf("paths %+v data is empty", paths)
+		return
 	}
 
 	return

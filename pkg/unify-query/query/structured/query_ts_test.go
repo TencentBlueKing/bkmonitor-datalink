@@ -43,8 +43,6 @@ func TestQueryToMetric(t *testing.T) {
 	mock.SetRedisClient(ctx)
 	mock.SetSpaceTsDbMockData(
 		ctx,
-		"query_ts_test.db",
-		"query_ts_test",
 		ir.SpaceInfo{
 			spaceUid: ir.Space{tableID: &ir.SpaceResultTable{TableId: tableID}},
 		},

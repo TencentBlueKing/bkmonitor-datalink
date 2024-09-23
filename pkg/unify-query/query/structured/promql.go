@@ -80,7 +80,6 @@ func handleVectorExpr(m map[string]*PromExpr, e parser.Expr) (parser.Expr, []str
 	}
 	name = expr.Name
 	if promExpr, ok = m[name]; !ok {
-		log.Errorf(context.TODO(), "found metric->[%s] is missing is metric map", name)
 		return nil, nil, ErrMetricMissing
 	}
 	finalExpr = promExpr.Expr

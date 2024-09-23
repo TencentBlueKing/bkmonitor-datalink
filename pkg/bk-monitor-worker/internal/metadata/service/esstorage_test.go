@@ -23,27 +23,43 @@ import (
 )
 
 func TestEsStorageSvc_ConsulConfig(t *testing.T) {
-	mocker.InitTestDBConfig("../../../bmw_test.yaml")
-	version := "7.10.1"
-	schema := "https"
+	mocker.InitTestDBConfig("../../../dist/bmw.yaml")
+	version := "7.2"
+	schema := "http"
 	clusterInfo := storage.ClusterInfo{
-		ClusterID:        99,
-		ClusterType:      models.StorageTypeES,
-		Version:          &version,
-		Schema:           &schema,
-		DomainName:       "example.com",
-		Port:             9200,
-		Username:         "elastic",
-		Password:         "123456",
-		CreateTime:       time.Now(),
-		LastModifyTime:   time.Now(),
-		RegisteredSystem: "_default",
-		Creator:          "system",
-		GseStreamToId:    -1,
+		ClusterID:           3,
+		ClusterName:         "es7_cluster",
+		ClusterType:         models.StorageTypeES,
+		DomainName:          "127.0.0.1",
+		Port:                9200,
+		ExtranetDomainName:  "",
+		ExtranetPort:        0,
+		Description:         "default cluster for ES7",
+		IsDefaultCluster:    true,
+		Username:            "elastic",
+		Password:            "8E6lprO6OPiT",
+		Version:             &version,
+		CustomOption:        `{"bk_biz_id": 2, "hot_warm_config": {"is_enabled": false, "hot_attr_name": "", "hot_attr_value": "", "warm_attr_name": "", "warm_attr_value": ""}, "source_type": "other", "visible_config": {"visible_type": "all_biz", "visible_bk_biz": [], "bk_biz_labels": {}}, "setup_config": {"retention_days_max": 3, "retention_days_default": 1, "number_of_replicas_max": 1, "number_of_replicas_default": 0, "es_shards_default": 1, "es_shards_max": 3}, "admin": ["system"], "description": "", "enable_archive": false, "enable_assessment": true}`,
+		Schema:              &schema,
+		IsSslVerify:         false,
+		SslVerificationMode: "none",
+		RegisteredSystem:    "_default",
+		GseStreamToId:       -1,
+		CreateTime:          time.Now(),
+		LastModifyTime:      time.Now(),
+		Creator:             "system",
 	}
+
 	db := mysql.GetDBSession().DB
-	db.Delete(&clusterInfo, "cluster_id = ?", 99)
+
+	db.AutoMigrate(&storage.ClusterInfo{})
+
+	db.Delete(&clusterInfo, "cluster_id = ?", 3)
 	err := clusterInfo.Create(db)
+	if err != nil {
+		panic(err)
+	}
+
 	assert.NoError(t, err)
 	ess := &storage.ESStorage{
 		TableID:           "es_table_id",
@@ -55,12 +71,16 @@ func TestEsStorageSvc_ConsulConfig(t *testing.T) {
 		TimeZone:          0,
 		IndexSettings:     `{"a":"a"}`,
 		MappingSettings:   `{"b":"b"}`,
-		StorageClusterID:  99,
+		StorageClusterID:  3,
 		DateFormat:        "%Y%m%d",
 	}
 	svc := NewEsStorageSvc(ess)
 	config, err := svc.ConsulConfig()
 	assert.NoError(t, err)
+
+	if err != nil {
+		panic(err)
+	}
 
 	// 判断结构体中 InstanceClusterName 为空
 	assert.Equal(t, "", config.ClusterInfoConsulConfig.ClusterConfig.InstanceClusterName)

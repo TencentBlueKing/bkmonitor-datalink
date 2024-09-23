@@ -143,7 +143,7 @@ func getAllAlerts(startTime int64, strategyIDs []BkBizStrategy, allStrategyAggIn
 		// 分页获取告警数据
 		_, alerts, err = getFatalAlerts(conditions, startTime, page, MaxPageSize, bkBizID)
 		if err != nil {
-			return []Alert{}, errors.Wrapf(err, "failed to get page [%s] alerts", page)
+			return []Alert{}, errors.Wrapf(err, "failed to get page [%d] alerts", page)
 		}
 		alertList = append(alertList, alerts...)
 	}

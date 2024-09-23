@@ -73,7 +73,6 @@ func (s *Service) newResource() *resource.Resource {
 	return resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceNameKey.String(ServiceName),
-		attribute.Key("bk_data_id").Int64(DataID),
 		attribute.Key("bk.data.token").String(otlpToken),
 	)
 }
@@ -85,6 +84,10 @@ func (s *Service) Start(ctx context.Context) {
 		exporter *otlptrace.Exporter
 		err      error
 	)
+
+	if Enable == false {
+		return
+	}
 
 	switch OtlpType {
 	case "http":

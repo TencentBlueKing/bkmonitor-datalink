@@ -889,7 +889,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 					//    2. 因为多指标共用一个最大的计算周期，会增加较小计算周期的数据量，例如：sum(count_over_time(metric[1d]))  + sum(count_over_time(metric[1m]))，都会使用 1d 来计算；
 					// 这里选用方案一，使用 last_over_time 来扩展计算周期，如果因为增加 last_over_time 函数可能会引起的未知问题，需要考虑方案二；
 					q.TimeAggregation.Function = LastOT
-					q.AggregateMethodList = q.AggregateMethodList[1:]
+					//q.AggregateMethodList = q.AggregateMethodList[1:]
 				}
 			}
 		}

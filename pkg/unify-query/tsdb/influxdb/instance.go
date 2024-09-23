@@ -361,6 +361,10 @@ func (i *Instance) makeSQL(
 		if len(agg.Dimensions) > 0 {
 			for _, dim := range agg.Dimensions {
 				group := dim
+				if group == labels.MetricName {
+					continue
+				}
+
 				if group != "*" {
 					group = fmt.Sprintf(`"%s"`, group)
 				}
@@ -439,7 +443,7 @@ func (i *Instance) query(
 	// 将完整的指标名：tableID + field 放到 __name__ 里面，解决跨指标计算和同指标多 RT 的问题
 	expandTag = []prompb.Label{
 		{
-			Name:  "__name__",
+			Name:  labels.MetricName,
 			Value: fmt.Sprintf("%s:%s:%s", query.DB, query.Measurement, query.Field),
 		},
 	}

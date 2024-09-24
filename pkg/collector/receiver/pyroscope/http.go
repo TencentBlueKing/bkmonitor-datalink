@@ -56,9 +56,7 @@ const (
 // TagServiceName 需要忽略的服务 Tag 名称
 var ignoredTagNames = []string{"__session_id__"}
 
-var (
-	errNoTokenFound = errors.New("no profile token found")
-)
+var errNoTokenFound = errors.New("no profile token found")
 
 // HttpService 接收 pyroscope 上报的 profile 数据
 type HttpService struct {

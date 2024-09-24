@@ -36,11 +36,12 @@ func NewClusterInfoSvc(obj *storage.ClusterInfo) ClusterInfoSvc {
 }
 
 // ConsulConfig 获取集群的consul配置信息
-func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
+func (k ClusterInfoSvc) ConsulConfig() (ClusterInfoConsulConfig, error) {
 	logger.Infof("ConsulConfig:ClusterInfo-> k: %v,password -> [%s]", k, k.Password)
 	pwd, err := cipher.GetDBAESCipher().AESDecrypt(k.Password)
 	if err != nil {
 		logger.Errorf("ConsulConfig:get cluster info failed, err: %s", err.Error())
+		return ClusterInfoConsulConfig{}, err
 	}
 	auth := AuthInfo{
 		Password: pwd,
@@ -78,7 +79,7 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 		},
 		ClusterType: k.ClusterType,
 		AuthInfo:    auth,
-	}
+	}, nil
 }
 
 func (k ClusterInfoSvc) GetKafkaClient() (sarama.Client, error) {

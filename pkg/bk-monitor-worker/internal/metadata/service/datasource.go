@@ -243,7 +243,10 @@ func (d DataSourceSvc) ToJson(isConsulConfig, withRtInfo bool) (map[string]inter
 	if err != nil {
 		return nil, err
 	}
-	consulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	consulConfig, err := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	if err != nil {
+		return nil, err
+	}
 	mqConfig["cluster_config"] = consulConfig.ClusterConfig
 	mqConfig["cluster_type"] = consulConfig.ClusterType
 	mqConfig["auth_info"] = consulConfig.AuthInfo

@@ -42,7 +42,10 @@ func (a ArgusStorageSvc) ConsulConfig() (*StorageConsulConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	clusterConsulConfig := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	clusterConsulConfig, err := NewClusterInfoSvc(clusterInfo).ConsulConfig()
+	if err != nil {
+		return nil, err
+	}
 	// argus信息
 	consulConfig := &StorageConsulConfig{
 		ClusterInfoConsulConfig: clusterConsulConfig,

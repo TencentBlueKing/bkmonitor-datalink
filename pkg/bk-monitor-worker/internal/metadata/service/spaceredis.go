@@ -371,34 +371,12 @@ func (s *SpacePusher) refineTableIds(tableIdList []string) ([]string, error) {
 			return nil, err
 		}
 	}
-
-	// 添加关联空间的ES结果表
-	var esStorageList []storage.ESStorage
-	qs3 := storage.NewESStorageQuerySet(db).Select(storage.ESStorageDBSchema.TableID)
-	if len(tableIdList) != 0 {
-		for _, chunkTableIdList := range slicex.ChunkSlice(tableIdList, 0) {
-			var tempList []storage.ESStorage
-			qsTemp := qs3.TableIDIn(chunkTableIdList...)
-			if err := qsTemp.All(&tempList); err != nil {
-				return nil, err
-			}
-			esStorageList = append(esStorageList, tempList...)
-		}
-	} else {
-		if err := qs3.All(&esStorageList); err != nil {
-			return nil, err
-		}
-	}
-
 	var tableIds []string
 	for _, i := range influxdbStorageList {
 		tableIds = append(tableIds, i.TableID)
 	}
 	for _, i := range vmRecordList {
 		tableIds = append(tableIds, i.ResultTableId)
-	}
-	for _, i := range esStorageList {
-		tableIds = append(tableIds, i.TableID)
 	}
 	tableIds = slicex.RemoveDuplicate(&tableIds)
 	return tableIds, nil

@@ -7,31 +7,30 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package fasttime
+package metacache
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
 
-func TestFastTime(t *testing.T) {
-	t0 := UnixTimestamp()
-	t1 := time.Now().Unix()
-	assert.Equal(t, t0, t1)
-}
-
-func BenchmarkFastTime(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		UnixTimestamp()
+func TestCache(t *testing.T) {
+	items := map[string]define.Token{
+		"foo": {Original: "foo", BizId: 1},
+		"bar": {Original: "bar", BizId: 1},
 	}
-}
 
-func BenchmarkStdTime(b *testing.B) {
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		time.Now().Unix()
+	c := New()
+	for k, v := range items {
+		c.Set(k, v)
+	}
+
+	for k, v := range items {
+		got, ok := c.Get(k)
+		assert.True(t, ok)
+		assert.Equal(t, v, got)
 	}
 }

@@ -151,7 +151,7 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
 		var tempList []customreport.TimeSeriesMetric
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunkMetricNameList...).GroupIDEq(groupId).All(&tempList); err != nil {
-			return false, errors.Wrapf(err, "BulkUpdateMetrics:query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
+			return false, errors.Wrapf(err, "BulkUpdateMetrics：query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
 		}
 		tsmList = append(tsmList, tempList...)
 	}

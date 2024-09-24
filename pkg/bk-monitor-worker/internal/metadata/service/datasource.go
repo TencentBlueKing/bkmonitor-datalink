@@ -526,9 +526,10 @@ func (d DataSourceSvc) GseRouteConfig() (*bkgse.GSERoute, error) {
 
 // RefreshConsulConfig 更新consul配置，告知ETL等其他依赖模块配置有所更新
 func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
+	logger.Infof("RefreshConsulConfig:data_id [%d] started to refresh consul config", d.BkDataId)
 	// 如果数据源没有启用，则不用刷新 consul 配置
 	if !d.CanRefreshConfig() {
-		logger.Infof("data_id [%d] can not refresh consul config, skip", d.BkDataId)
+		logger.Infof("RefreshConsulConfig:data_id [%d] can not refresh consul config, skip", d.BkDataId)
 		return nil
 	}
 
@@ -544,7 +545,7 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	}
 	val, err := d.ToJson(true, true)
 	if err != nil {
-		return errors.Wrap(err, "datasource to_json failed")
+		return errors.Wrap(err, "RefreshConsulConfig:datasource to_json failed")
 	}
 	valStr, err := jsonx.MarshalString(val)
 	if err != nil {
@@ -552,10 +553,10 @@ func (d DataSourceSvc) RefreshConsulConfig(ctx context.Context) error {
 	}
 	err = hashconsul.Put(consulClient, d.ConsulConfigPath(), valStr)
 	if err != nil {
-		logger.Errorf("data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
+		logger.Errorf("RefreshConsulConfig:data_id [%v] put [%s] to [%s] failed, %v", d.BkDataId, valStr, d.ConsulConfigPath(), err)
 		return err
 	}
-	logger.Infof("data_id [%v] has update config [%s] to [%v] success", d.BkDataId, valStr, d.ConsulConfigPath())
+	logger.Infof("RefreshConsulConfig:data_id [%v] has update config [%s] to [%v] success", d.BkDataId, valStr, d.ConsulConfigPath())
 	return nil
 }
 

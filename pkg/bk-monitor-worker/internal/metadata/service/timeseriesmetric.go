@@ -151,17 +151,20 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 	for _, chunkMetricNameList := range slicex.ChunkSlice(metricNames, 0) {
 		var tempList []customreport.TimeSeriesMetric
 		if err := customreport.NewTimeSeriesMetricQuerySet(db).FieldNameIn(chunkMetricNameList...).GroupIDEq(groupId).All(&tempList); err != nil {
-			return false, errors.Wrapf(err, "query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
+			return false, errors.Wrapf(err, "BulkUpdateMetrics：query TimeSeriesMetric with group_id [%v], filed_name [%v] failed", groupId, chunkMetricNameList)
 		}
 		tsmList = append(tsmList, tempList...)
 	}
+	logger.Infof("BulkUpdateMetrics:Started to update TimeSeriesMetric, tsmList: %v", tsmList)
 	updated := false
 	whiteListDisabledMetricSet := mapset.NewSet[string]()
 	// 组装更新的数据
 	for _, tsm := range tsmList {
+		logger.Infof("BulkUpdateMetrics:tsm: %v", tsm)
 		metricInfo, ok := metricMap[tsm.FieldName]
 		if !ok {
 			// 如果获取不到指标数据，则跳过
+			logger.Errorf("BulkUpdateMetrics：getMetricInfo from [%#v] failed, %v", metricInfo, tsm)
 			continue
 		}
 		lastModifyTime, ok := metricInfo["last_modify_time"].(float64)
@@ -183,32 +186,36 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 		}
 		// 标识是否需要更新
 		isNeedUpdate := false
+		// 日志打印tsm和lastTime
+		logger.Infof("BulkUpdateMetrics:tsm: %v, lastTime: %v", tsm, lastTime)
 		// 先设置最后更新时间 1 天更新一次，减少对 db 的操作
 		if lastTime.Sub(tsm.LastModifyTime).Hours() >= 24 {
+			logger.Infof("BulkUpdateMetricstsm: %v, lastTime: %v,time interval more than 24 Hours ", tsm, lastTime)
 			isNeedUpdate = true
 			tsm.LastModifyTime = lastTime
 		}
 		// NOTE: 仅当时间变更超过有效期阈值时，才进行更新
 		if lastTime.Sub(tsm.LastModifyTime).Hours() >= float64(config.GlobalTimeSeriesMetricExpiredSeconds/3600) {
+			logger.Infof("BulkUpdateMetricstsm: %v, lastTime: %v,time interval more than ExpiredTime：30 Days ", tsm, lastTime)
 			updated = true
 		}
 
 		// 如果 tag 不一致，则进行更新
 		tagList, err := s.getMetricTagFromMetricInfo(metricInfo)
 		if err != nil {
-			logger.Errorf("getMetricTagFromMetricInfo from [%#v] failed, %v", metricInfo, tagList)
+			logger.Errorf("BulkUpdateMetrics：getMetricTagFromMetricInfo from [%#v] failed, %v", metricInfo, tagList)
 			continue
 		}
 		var dbTagList []string
 		if err := jsonx.UnmarshalString(tsm.TagList, &dbTagList); err != nil {
-			logger.Errorf("TimeSeriesMetric group_id [%v] table_id [%s] has wrong format tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.TagList)
+			logger.Errorf("BulkUpdateMetrics：TimeSeriesMetric group_id [%v] table_id [%s] has wrong format tag_list [%s]", tsm.GroupID, tsm.TableID, tsm.TagList)
 			continue
 		}
 		if !mapset.NewSet(dbTagList...).Equal(mapset.NewSet(tagList...)) {
 			isNeedUpdate = true
 			tagListStr, err := jsonx.MarshalString(tagList)
 			if err != nil {
-				logger.Errorf("marshal tagList for [%v] failed, %v", tagList, err)
+				logger.Errorf("BulkUpdateMetrics：marshal tagList for [%v] failed, %v", tagList, err)
 				continue
 			}
 			tsm.TagList = tagListStr
@@ -221,11 +228,11 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 				}), ""))
 			} else {
 				if err := tsm.Update(db, customreport.TimeSeriesMetricDBSchema.TagList, customreport.TimeSeriesMetricDBSchema.LastModifyTime); err != nil {
-					logger.Errorf("update TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, err)
+					logger.Errorf("uBulkUpdateMetrics：pdate TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v] failed, %v", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime, err)
 					continue
 				}
 			}
-			logger.Infof("updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
+			logger.Infof("BulkUpdateMetrics：updated TimeSeriesMetric group_id [%v] field_name [%s] with tag_list [%s] last_modify_time [%v]", tsm.GroupID, tsm.FieldName, tsm.TagList, tsm.LastModifyTime)
 		}
 	}
 	// 白名单模式，如果存在需要禁用的指标，则需要删除；应该不会太多，直接删除
@@ -238,11 +245,12 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetrics(metricMap map[string]map[string]
 			}), ""))
 		} else {
 			if err := customreport.NewTimeSeriesMetricQuerySet(db).GroupIDEq(groupId).FieldNameIn(disabledList...).Delete(); err != nil {
-				logger.Errorf("delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
+				logger.Errorf("BulkUpdateMetrics：delete whiteList disabeld TimeSeriesMetric with group_id [%v] field_name [%v] failed, %v", groupId, disabledList, err)
 			}
 		}
 	}
 	// 自动发现且有更新时需要推送路由数据
+	logger.Infof("BulkUpdateMetrics：isAutoDiscovery: %v, updated: %v,tsm : %v", isAutoDiscovery, updated, tsmList)
 	return updated && isAutoDiscovery, nil
 }
 

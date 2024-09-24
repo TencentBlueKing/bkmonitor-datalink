@@ -525,6 +525,8 @@ func (i *Instance) query(
 		Timeseries: make([]*prompb.TimeSeries, 0, len(series)),
 	}
 
+	metricLabel := query.MetricLabels(ctx)
+
 	for _, s := range series {
 		pointNum += len(s.Values)
 
@@ -537,7 +539,9 @@ func (i *Instance) query(
 		}
 
 		// 拼接指标名
-		lbs = append(lbs, query.MetricLabels())
+		if metricLabel != nil {
+			lbs = append(lbs, *metricLabel)
+		}
 
 		samples := make([]prompb.Sample, 0, len(s.Values))
 		for _, sv := range s.Values {
@@ -572,7 +576,7 @@ func (i *Instance) query(
 func (i *Instance) grpcStream(
 	ctx context.Context,
 	db, rp, measurement, field, where string,
-	slimit, limit int64, metricLabel prompb.Label,
+	slimit, limit int64,
 ) storage.SeriesSet {
 	var (
 		client remote.QueryTimeSeriesServiceClient
@@ -624,13 +628,16 @@ func (i *Instance) grpcStream(
 	name := fmt.Sprintf("%s://%s", i.protocol, i.host)
 
 	span.Set("start-stream-series-set", name)
+
+	qry := &metadata.Query{TableID: fmt.Sprintf("%s.%s", db, measurement), Field: field}
+
 	seriesSet := StartStreamSeriesSet(
 		ctx, name, &StreamSeriesSetOption{
 			Span:        span,
 			Stream:      stream,
 			Limiter:     limiter,
 			Timeout:     i.timeout,
-			MetricLabel: metricLabel,
+			MetricLabel: qry.MetricLabels(ctx),
 		},
 	)
 
@@ -694,7 +701,7 @@ func (i *Instance) QuerySeriesSet(
 			var set storage.SeriesSet
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
-				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit, query.MetricLabels())
+				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, slimit, limit)
 			} else {
 				// 复制 Query 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{

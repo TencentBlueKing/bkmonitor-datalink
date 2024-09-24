@@ -150,7 +150,7 @@ func (i *Instance) dims(dims []string, field string) []string {
 	return dimensions
 }
 
-func (i *Instance) formatData(start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
+func (i *Instance) formatData(ctx context.Context, start time.Time, query *metadata.Query, keys []string, list []map[string]interface{}) (*prompb.QueryResult, error) {
 	res := &prompb.QueryResult{}
 
 	if len(list) == 0 {
@@ -163,6 +163,9 @@ func (i *Instance) formatData(start time.Time, query *metadata.Query, keys []str
 
 	// 获取该指标的维度 key
 	dimensions := i.dims(keys, query.Field)
+
+	// 获取 metricLabel
+	metricLabel := query.MetricLabels(ctx)
 
 	tsMap := make(map[string]*prompb.TimeSeries, 0)
 	for _, d := range list {
@@ -215,7 +218,7 @@ func (i *Instance) formatData(start time.Time, query *metadata.Query, keys []str
 			return res, fmt.Errorf("%s type is error %T, %v", value, vvDouble, vvDouble)
 		}
 
-		lbl := make([]prompb.Label, 0, len(dimensions))
+		lbl := make([]prompb.Label, 0)
 		// 获取维度信息
 		for _, dimName := range dimensions {
 			val, err := getValue(dimName, d)
@@ -229,7 +232,10 @@ func (i *Instance) formatData(start time.Time, query *metadata.Query, keys []str
 			})
 		}
 
-		lbl = append(lbl, query.MetricLabels())
+		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+		if metricLabel != nil {
+			lbl = append(lbl, *metricLabel)
+		}
 
 		var buf strings.Builder
 		for _, l := range lbl {
@@ -387,7 +393,7 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 		return storage.ErrSeriesSet(fmt.Errorf("记录数(%d)超过限制(%d)", data.TotalRecords, i.maxLimit))
 	}
 
-	qr, err := i.formatData(start, query, data.SelectFieldsOrder, data.List)
+	qr, err := i.formatData(ctx, start, query, data.SelectFieldsOrder, data.List)
 	if err != nil {
 		return storage.ErrSeriesSet(err)
 	}

@@ -43,10 +43,23 @@ func (q *Query) UUID(prefix string) string {
 }
 
 // MetricLabels 获取真实指标名称
-func (q *Query) MetricLabels() prompb.Label {
-	table := strings.Replace(q.TableID, `.`, `:`, -1)
-	return prompb.Label{
+func (q *Query) MetricLabels(ctx context.Context) *prompb.Label {
+	if GetQueryParams(ctx).IsReference {
+		return nil
+	}
+
+	var metrics []string
+	if q.DataSource != "" {
+		metrics = append(metrics, q.DataSource)
+	}
+	for _, n := range strings.Split(q.TableID, ".") {
+		metrics = append(metrics, n)
+	}
+	if q.Field != "" {
+		metrics = append(metrics, q.Field)
+	}
+	return &prompb.Label{
 		Name:  labels.MetricName,
-		Value: fmt.Sprintf("%s:%s:%s", q.DataSource, table, q.Field),
+		Value: strings.Join(metrics, ":"),
 	}
 }

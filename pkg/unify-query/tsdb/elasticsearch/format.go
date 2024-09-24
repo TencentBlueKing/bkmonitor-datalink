@@ -181,8 +181,6 @@ type FormatFactory struct {
 	start int64
 	end   int64
 
-	metricLabel prompb.Label
-
 	isReference bool
 }
 
@@ -201,7 +199,7 @@ func (f *FormatFactory) WithIsReference(isReference bool) *FormatFactory {
 	return f
 }
 
-func (f *FormatFactory) WithQuery(metricLabel prompb.Label, valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
+func (f *FormatFactory) WithQuery(valueKey string, timeField metadata.TimeField, start, end int64, from, size int) *FormatFactory {
 	if timeField.Name == "" {
 		timeField.Name = DefaultTimeFieldName
 	}
@@ -235,7 +233,6 @@ func (f *FormatFactory) WithQuery(metricLabel prompb.Label, valueKey string, tim
 	f.start = start
 	f.end = end
 
-	f.metricLabel = metricLabel
 	f.valueField = valueKey
 	f.timeField = timeField
 	f.from = from
@@ -342,7 +339,7 @@ func (f *FormatFactory) nestedAgg(key string) {
 }
 
 // AggDataFormat 解析 es 的聚合计算
-func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*prompb.TimeSeries, error) {
+func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *prompb.Label) (map[string]*prompb.TimeSeries, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -375,7 +372,6 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 			tsLabels []prompb.Label
 		)
 		if len(im.labels) > 0 {
-			tsLabels = make([]prompb.Label, 0, len(im.labels))
 			for _, dim := range af.dims {
 				tsLabels = append(tsLabels, prompb.Label{
 					Name:  dim,
@@ -384,7 +380,10 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations) (map[string]*pr
 			}
 		}
 
-		tsLabels = append(tsLabels, f.metricLabel)
+		if metricLabel != nil {
+			tsLabels = append(tsLabels, *metricLabel)
+		}
+
 		var seriesNameBuilder strings.Builder
 		for _, l := range tsLabels {
 			seriesNameBuilder.WriteString(l.String())

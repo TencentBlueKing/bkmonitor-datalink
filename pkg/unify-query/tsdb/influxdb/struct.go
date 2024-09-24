@@ -80,5 +80,5 @@ type StreamSeriesSetOption struct {
 	Stream      remote.QueryTimeSeriesService_RawClient
 	Limiter     *rate.Limiter
 	Timeout     time.Duration
-	MetricLabel prompb.Label
+	MetricLabel *prompb.Label
 }

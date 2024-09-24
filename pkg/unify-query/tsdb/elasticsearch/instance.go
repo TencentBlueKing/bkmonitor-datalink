@@ -320,12 +320,15 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 		rets <- ret
 	}()
 
+	metricLabel := qo.query.MetricLabels(ctx)
+
 	sr, err := i.esQuery(ctx, qo, fact)
 	if err != nil {
 		return
 	}
 
-	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations)
+	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
+	ret.TimeSeriesMap, err = fact.AggDataFormat(sr.Aggregations, metricLabel)
 	if err != nil {
 		return
 	}
@@ -586,7 +589,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	}
 	fact := NewFormatFactory(ctx).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(query.MetricLabels(), query.Field, query.TimeField, qo.start, qo.end, query.From, query.Size).
+		WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, query.Size).
 		WithMappings(mappings...).
 		WithOrders(query.Orders)
 
@@ -678,7 +681,7 @@ func (i *Instance) QuerySeriesSet(
 
 		fact := NewFormatFactory(ctx).
 			WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-			WithQuery(query.MetricLabels(), query.Field, query.TimeField, qo.start, qo.end, query.From, size).
+			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
 			WithTransform(i.toEs, i.toProm)

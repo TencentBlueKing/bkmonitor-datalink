@@ -41,7 +41,6 @@ func (k ClusterInfoSvc) ConsulConfig() ClusterInfoConsulConfig {
 	pwd, err := cipher.GetDBAESCipher().AESDecrypt(k.Password)
 	if err != nil {
 		logger.Errorf("ConsulConfig:get cluster info failed, err: %s", err.Error())
-		panic(err)
 	}
 	auth := AuthInfo{
 		Password: pwd,

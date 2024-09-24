@@ -492,6 +492,7 @@ func (c *Operator) handleDiscoverNotify() {
 		c.mm.IncDispatchedTaskCounter(trigger)
 		c.dispatchTasks()
 		c.mm.ObserveDispatchedTaskDuration(trigger, now)
+		logger.Infof("trigger %s dispatch take: %v", trigger, time.Since(now))
 		last = now.Unix() // 更新最近一次调度的时间
 	}
 

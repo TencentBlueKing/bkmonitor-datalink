@@ -31,6 +31,7 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/planetscale/vtprotobuf v0.6.0
+	github.com/prometheus-operator/prometheus-operator v0.59.1
 	github.com/prometheus/client_golang v1.13.0
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.37.0
@@ -49,6 +50,7 @@ require (
 	google.golang.org/grpc v1.63.1
 	google.golang.org/protobuf v1.33.0
 	gopkg.in/yaml.v2 v2.4.0
+	k8s.io/api v0.25.0
 	k8s.io/apimachinery v0.25.0
 	k8s.io/client-go v0.25.0
 	lukechampine.com/frand v1.4.2
@@ -143,7 +145,6 @@ require (
 	github.com/philhofer/fwd v1.1.1 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus-operator/prometheus-operator v0.59.1 // indirect
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.59.1 // indirect
 	github.com/prometheus-operator/prometheus-operator/pkg/client v0.59.1 // indirect
 	github.com/prometheus/procfs v0.8.0 // indirect
@@ -180,7 +181,6 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v0.0.0-20181124034731-591f970eefbb // indirect
-	k8s.io/api v0.25.0 // indirect
 	k8s.io/apiextensions-apiserver v0.25.0 // indirect
 	k8s.io/component-base v0.25.0 // indirect
 	k8s.io/klog/v2 v2.80.0 // indirect

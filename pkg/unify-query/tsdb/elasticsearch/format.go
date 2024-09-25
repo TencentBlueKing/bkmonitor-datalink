@@ -50,6 +50,8 @@ const (
 
 	Nested = "nested"
 	Terms  = "terms"
+
+	ESStep = "."
 )
 
 const (
@@ -97,7 +99,7 @@ type TimeSeriesResult struct {
 func mapData(prefix string, data map[string]any, res map[string]any) {
 	for k, v := range data {
 		if prefix != "" {
-			k = prefix + structured.EsOldStep + k
+			k = prefix + ESStep + k
 		}
 		switch v.(type) {
 		case map[string]any:
@@ -121,7 +123,7 @@ func mapProperties(prefix string, data map[string]any, res map[string]string) {
 	if properties, ok := data[Properties]; ok {
 		for k, v := range properties.(map[string]any) {
 			if prefix != "" {
-				k = prefix + structured.EsOldStep + k
+				k = prefix + ESStep + k
 			}
 			switch v.(type) {
 			case map[string]any:
@@ -310,9 +312,9 @@ func (f *FormatFactory) valueAgg(name, funcType string, args ...any) {
 }
 
 func (f *FormatFactory) NestedField(field string) string {
-	lbs := strings.Split(field, structured.EsOldStep)
+	lbs := strings.Split(field, ESStep)
 	for i := len(lbs) - 1; i >= 0; i-- {
-		checkKey := strings.Join(lbs[0:i], structured.EsOldStep)
+		checkKey := strings.Join(lbs[0:i], ESStep)
 		if v, ok := f.mapping[checkKey]; ok {
 			if v == Nested {
 				return checkKey

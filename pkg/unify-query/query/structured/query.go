@@ -71,41 +71,6 @@ var dataSourceMap = map[string]struct{}{
 	BkApm:          {},
 }
 
-const (
-	EsOldStep = "."
-	EsNewStep = "___"
-)
-
-// PromDataFormat prom engine 计算过程中对维度有要求，必须是：[a-zA-Z_][0-9a-zA-Z_]*，所以需要在 prom engine 计算之前对维度进行转义
-//func PromDataFormat(ctx context.Context) func(k string) string {
-//	qp := metadata.GetQueryParams(ctx)
-//	return func(k string) string {
-//		if len(qp.DataSource) == 1 {
-//			switch qp.DataSource[BkLog] {
-//			case struct{}{}:
-//				vs := strings.Split(k, EsOldStep)
-//				k = strings.Join(vs, EsNewStep)
-//			}
-//		}
-//		return k
-//	}
-//}
-//
-//// QueryTsFormat 经过 prom engine 计算之后，如果有转义，需要还原回来
-//func QueryTsFormat(ctx context.Context) func(k string) string {
-//	qp := metadata.GetQueryParams(ctx)
-//	return func(k string) string {
-//		if len(qp.DataSource) == 1 {
-//			switch qp.DataSource[BkLog] {
-//			case struct{}{}:
-//				vs := strings.Split(k, EsNewStep)
-//				k = strings.Join(vs, EsOldStep)
-//			}
-//		}
-//		return k
-//	}
-//}
-
 // ToProm 结构化数据 -> promql -> 判断查询
 func (q *CombinedQueryParams) ToProm(ctx context.Context, options *Option) (*PromExpr, error) {
 	var (

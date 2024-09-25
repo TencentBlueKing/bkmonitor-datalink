@@ -203,8 +203,7 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 	}
 
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
-	for node, configs := range nodeMap {
-		Slowdown()
+	for node, cfgs := range nodeMap {
 		secretName := tasks.GetDaemonSetTaskSecretName(node)
 		cache := c.daemonSetTaskCache[node]
 		if len(cache) > 0 && EqualMap(currTasksCache[node], cache) {
@@ -220,9 +219,11 @@ func (c *Operator) createOrUpdateDaemonSetTaskSecrets(childConfigs []*discover.C
 			continue
 		}
 
+		Slowdown()
+
 		bytesTotal := 0
 		secret := newSecret(secretName, tasks.TaskTypeDaemonSet)
-		for _, config := range configs {
+		for _, config := range cfgs {
 			compressed, err := gzip.Compress(config.Data)
 			if err != nil {
 				logger.Errorf("failed to compress config content, addr=%s, err: %v", config.Address, err)
@@ -433,7 +434,6 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 
 	secretClient := c.client.CoreV1().Secrets(configs.G().MonitorNamespace)
 	for idx, cfgs := range groups {
-		Slowdown()
 		secretName := tasks.GetStatefulSetTaskSecretName(idx)
 		cache := c.statefulSetTaskCache[idx]
 		if len(cache) > 0 && EqualMap(currTasksCache[idx], cache) {
@@ -447,6 +447,8 @@ func (c *Operator) createOrUpdateStatefulSetTaskSecrets(childConfigs []*discover
 			logger.Errorf("statefulset tasks exceeded, maxAllowed=%d, current=%d", maxSecretsAllowed, count)
 			continue
 		}
+
+		Slowdown()
 
 		bytesTotal := 0
 		secret := newSecret(tasks.GetStatefulSetTaskSecretName(idx), tasks.TaskTypeStatefulSet)

@@ -45,7 +45,7 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 		tablesCh = make(chan *influxdb.Tables, 1)
 		recvDone = make(chan struct{})
 
-		resp        = &PromData{}
+		resp        = NewPromData(query.ResultColumns)
 		totalTables = influxdb.NewTables()
 	)
 
@@ -80,6 +80,16 @@ func queryExemplar(ctx context.Context, query *structured.QueryTs) (interface{},
 
 		totalTables = influxdb.MergeTables(tableList, false)
 	}()
+
+	ref, err := query.ToQueryReference(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ok, _, err := ref.CheckVmQuery(ctx)
+	// 如果查询 vm 的情况下则直接退出，因为 vm 不支持 Exemplar 数据
+	if ok {
+		return resp, nil
+	}
 
 	for _, qList := range query.QueryList {
 		queryMetric, err := qList.ToQueryMetric(ctx, query.SpaceUid)

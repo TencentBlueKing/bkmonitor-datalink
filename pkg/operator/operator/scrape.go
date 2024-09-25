@@ -13,8 +13,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/discover"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator/operator/scraper"
@@ -39,11 +39,57 @@ type scrapeStat struct {
 	Errors      int    `json:"errors"`
 }
 
+type scrapeAnalyze struct {
+	Metric string `json:"metric"`
+	Count  int    `json:"count"`
+}
+
 func (s scrapeStat) ID() string {
 	return fmt.Sprintf("%s/%s", s.Namespace, s.MonitorName)
 }
 
-func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, workers int) chan string {
+func parseMetricName(s string) string {
+	i := strings.Index(s, "{")
+	if i > 0 {
+		return strings.TrimSpace(s[0:i])
+	}
+
+	parts := strings.Fields(s)
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		return strings.TrimSpace(part)
+	}
+	return ""
+}
+
+func (c *Operator) scrapeAnalyze(ctx context.Context, namespace, monitor string, workers int) []scrapeAnalyze {
+	ch := c.scrapeLines(ctx, namespace, monitor, workers)
+
+	stats := make(map[string]int)
+	for line := range ch {
+		s := parseMetricName(line)
+		if s != "" {
+			stats[s]++
+		}
+	}
+
+	ret := make([]scrapeAnalyze, 0, len(stats))
+	for k, v := range stats {
+		ret = append(ret, scrapeAnalyze{
+			Metric: k,
+			Count:  v,
+		})
+	}
+
+	sort.Slice(ret, func(i, j int) bool {
+		return ret[i].Count > ret[j].Count
+	})
+	return ret
+}
+
+func (c *Operator) scrapeLines(ctx context.Context, namespace, monitor string, workers int) chan string {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -100,7 +146,7 @@ func (c *Operator) scrapeForce(ctx context.Context, namespace, monitor string, w
 	return out
 }
 
-func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
+func (c *Operator) scrapeAllStats(ctx context.Context, workers int) *scrapeStats {
 	statefulset, daemonset := c.collectChildConfigs()
 	childConfigs := make([]*discover.ChildConfig, 0, len(statefulset)+len(daemonset))
 	childConfigs = append(childConfigs, statefulset...)
@@ -176,7 +222,6 @@ func (c *Operator) scrapeAll(ctx context.Context, workers int) *scrapeStats {
 		ErrorsTotal:  errorsTotal,
 		Stats:        stats,
 	}
-	c.scrapeUpdated = time.Now()
 
 	return ret
 }

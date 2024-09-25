@@ -84,7 +84,6 @@ type Operator struct {
 	daemonSetTaskCache   map[string]map[string]struct{}
 	statefulSetTaskCache map[int]map[string]struct{}
 	eventTaskCache       string
-	scrapeUpdated        time.Time
 
 	promSdConfigsBytes map[string][]byte // 无并发读写
 }

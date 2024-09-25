@@ -149,12 +149,12 @@ func (d fixedTokenDecoder) Skip() bool {
 func (d fixedTokenDecoder) Decode(s string) (define.Token, error) {
 	var empty define.Token
 	if d.token == empty {
-		return define.Token{}, errors.New("undefined fixed tokenDecoder")
+		return define.Token{}, errors.New("invalid token: undefined decoder")
 	}
 
 	// 要求一定是空字符串才通过
 	if d.mustEmptyToken && s != "" {
-		return define.Token{}, errors.New("fixed tokenDecoder required empty token string")
+		return define.Token{}, errors.New("invalid token: empty token")
 	}
 
 	return d.token, nil

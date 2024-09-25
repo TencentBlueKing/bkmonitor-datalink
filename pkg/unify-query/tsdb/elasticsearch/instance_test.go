@@ -116,8 +116,8 @@ func TestInstance_queryReference(t *testing.T) {
 			query: &metadata.Query{
 				DB:    "2_bklog_nested_field_test_*_read",
 				Field: "fields.field_name",
-				From:  0,
-				Size:  10,
+				//From:  0,
+				//Size:  10,
 				Orders: metadata.Orders{
 					FieldTime: false,
 				},

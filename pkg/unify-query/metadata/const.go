@@ -22,6 +22,8 @@ const (
 	QueryReferenceKey     = "query_reference"
 	QueryClusterMetricKey = "query_cluster_metric"
 
+	PromDataFormatKey = "prom_data_format"
+
 	ExceedsMaximumLimit  = "EXCEEDS_MAXIMUM_LIMIT"
 	ExceedsMaximumSlimit = "EXCEEDS_MAXIMUM_SLIMIT"
 

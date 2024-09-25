@@ -33,7 +33,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/pool"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
 )
@@ -55,9 +54,6 @@ type Instance struct {
 
 	timeout time.Duration
 	maxSize int
-
-	toEs   func(string) string
-	toProm func(string) string
 }
 
 type InstanceOption struct {
@@ -98,9 +94,6 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 		headers:     opt.Headers,
 		healthCheck: opt.HealthCheck,
 		timeout:     opt.Timeout,
-
-		toEs:   structured.QueryRawFormat(ctx),
-		toProm: structured.PromQueryFormat(ctx),
 	}
 
 	if opt.Address == "" {
@@ -686,7 +679,7 @@ func (i *Instance) QuerySeriesSet(
 			WithQuery(query.Field, query.TimeField, qo.start, qo.end, query.From, size).
 			WithMappings(mappings...).
 			WithOrders(query.Orders).
-			WithTransform(i.toEs, i.toProm)
+			WithTransform(metadata.GetPromDataFormat(ctx).EncodeFunc())
 
 		if len(query.Aggregates) > 0 {
 			i.queryWithAgg(ctx, qo, fact, rets)

@@ -981,7 +981,7 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 		}
 	}
 
-	pqFormat := PromQueryFormat(ctx)
+	decodeFunc := metadata.GetPromDataFormat(ctx).DecodeFunc()
 
 	for idx := 0; idx < funcNums; idx++ {
 		if idx == timeIdx {
@@ -998,8 +998,8 @@ func (q *Query) ToPromExpr(ctx context.Context, promExprOpt *PromExprOption) (pa
 
 			// 查询维度转换，不同的 datasource 比如说 bk_log，使用 . 作分隔符，在 promql 不支持，需要转换为 ___
 			for i, dim := range method.Dimensions {
-				if pqFormat != nil {
-					method.Dimensions[i] = pqFormat(dim)
+				if decodeFunc != nil {
+					method.Dimensions[i] = decodeFunc(dim)
 				}
 			}
 
